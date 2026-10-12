@@ -797,7 +797,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* Agent slots and the New Team drop target share one full-width slot height,
    so a roster reads as a stack of equal rows. */
-.app-spice-topology { --app-topology-slot-block: 50px; }
+.app-spice-topology,
+.room-group-section { --app-topology-slot-block: 50px; }
 .app-topology-member { min-width: 0; }
 .app-topology-member[draggable="true"] { cursor: grab; }
 .app-topology-member[draggable="true"]:active { cursor: grabbing; }

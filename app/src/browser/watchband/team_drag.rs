@@ -353,7 +353,7 @@ fn team_drag_movement(
         let lift = {
             let mut session = state.0.borrow_mut();
             let Some(active) = session.movement(
-                team,
+                &team,
                 event.pointer_id(),
                 event.client_x(),
                 event.client_y(),
@@ -391,10 +391,11 @@ fn team_drag_finish(
             let preview = team_preview_at(team, &topology, event.client_x(), event.client_y());
             set_team_preview(team, preview, &state);
         }
-        let Some(active) = state
-            .0
-            .borrow_mut()
-            .finish(team, event.pointer_id(), topology_revision)
+        let Some(active) =
+            state
+                .0
+                .borrow_mut()
+                .finish(&team, event.pointer_id(), topology_revision)
         else {
             return;
         };
@@ -429,7 +430,7 @@ fn team_drag_finish(
 fn team_drag_cancel(team: CanonicalUuid, state: &TeamDragState) -> Callback<PointerEvent> {
     let state = state.clone();
     Callback::from(move |event: PointerEvent| {
-        if state.0.borrow_mut().cancel(team, event.pointer_id()) {
+        if state.0.borrow_mut().cancel(&team, event.pointer_id()) {
             release_team_pointer(&event);
             state.clear();
             event.prevent_default();

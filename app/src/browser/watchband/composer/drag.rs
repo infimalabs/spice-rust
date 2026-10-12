@@ -450,7 +450,7 @@ fn composer_drag_movement(
         let lift = {
             let mut session = state.0.borrow_mut();
             let Some(active) = session.movement(
-                lane,
+                &lane,
                 event.pointer_id(),
                 event.client_x(),
                 event.client_y(),
@@ -485,10 +485,11 @@ fn composer_drag_finish(
 ) -> Callback<PointerEvent> {
     let state = state.clone();
     Callback::from(move |event: PointerEvent| {
-        let Some(active) = state
-            .0
-            .borrow_mut()
-            .finish(lane, event.pointer_id(), topology_revision)
+        let Some(active) =
+            state
+                .0
+                .borrow_mut()
+                .finish(&lane, event.pointer_id(), topology_revision)
         else {
             return;
         };
@@ -529,7 +530,7 @@ fn composer_drag_cancel(
 ) -> Callback<PointerEvent> {
     let state = state.clone();
     Callback::from(move |event: PointerEvent| {
-        if state.0.borrow_mut().cancel(lane, event.pointer_id()) {
+        if state.0.borrow_mut().cancel(&lane, event.pointer_id()) {
             release_composer_pointer(&event);
             state.clear();
         }

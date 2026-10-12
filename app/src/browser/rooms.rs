@@ -12,6 +12,7 @@ use wire::{CommandKind, TaskStamp};
 use yew::prelude::*;
 
 mod conversation;
+mod designs;
 
 use super::sender::{SenderHandle, admit_action};
 use crate::AppRuntime;
@@ -178,33 +179,46 @@ pub(super) fn render_catalog(
         RoomProjectionStatus::Available => {
             let create_name = NodeRef::default();
             let create_room = NodeRef::default();
+            let drops = designs::Drops::new(
+                sender.clone(),
+                controls.clone(),
+                projection
+                    .groups()
+                    .values()
+                    .map(|positioned| (positioned.value.clone(), positioned.position))
+                    .collect(),
+                create_name.clone(),
+                board,
+                can_put,
+            );
             html! {
                 <>
                     if let Some(notice) = (*controls.notice).clone() {
                         <p class="room-notice" role="status">{notice}</p>
                     }
                     {conversation::render_inbox(runtime, &controls.reporter(), sender)}
-                    {render_new_group(
-                        board,
-                        can_put,
-                        create_name,
-                        create_room,
-                        controls.clone(),
-                        sender.clone(),
-                    )}
                     <div class="room-group-catalog">
                         {for projection.groups().values().map(|positioned| {
                             render_catalog_group(
                                 runtime,
                                 &positioned.value,
                                 positioned.position,
-                                can_put,
                                 can_remove,
+                                &drops,
                                 controls,
                                 sender,
                             )
                         })}
                     </div>
+                    {render_new_group(
+                        board,
+                        create_name,
+                        create_room,
+                        &drops,
+                        controls.clone(),
+                        sender.clone(),
+                    )}
+                    {designs::render_designs(board, &drops)}
                 </>
             }
         }
@@ -223,12 +237,13 @@ fn section(title: &'static str, body: Html) -> Html {
 
 fn render_new_group(
     board: Option<&crate::runtime::BoardView>,
-    enabled: bool,
     name_ref: NodeRef,
     room_ref: NodeRef,
+    drops: &designs::Drops,
     controls: Controls,
     sender: SenderHandle,
 ) -> Html {
+    let enabled = drops.enabled();
     let create = new_group_callback(
         name_ref.clone(),
         room_ref.clone(),
@@ -238,8 +253,15 @@ fn render_new_group(
     );
     let create_open =
         new_group_callback(name_ref.clone(), room_ref.clone(), true, controls, sender);
+    let designs::DropHandlers { ondragover, ondrop } = designs::new_group_target(drops);
     html! {
-        <div class="room-group-create">
+        <div
+            class="room-group-create"
+            data-design-drop={designs::new_group_value()}
+            data-drop-enabled={enabled.to_string()}
+            {ondragover}
+            {ondrop}
+        >
             <label>
                 <span>{"New working group"}</span>
                 <input ref={name_ref} type="text" maxlength="120" placeholder="Group name" disabled={!enabled} />
@@ -255,6 +277,7 @@ fn render_new_group(
                 <button type="button" disabled={!enabled} onclick={create}>{"Create"}</button>
                 <button type="button" disabled={!enabled} onclick={create_open}>{"Create & open"}</button>
             </div>
+            <div class="app-drop-target">{"Drop design here"}</div>
         </div>
     }
 }
@@ -304,11 +327,12 @@ fn render_catalog_group(
     runtime: &AppRuntime,
     group: &WorkingGroup,
     head: wire::Seq,
-    can_put: bool,
     can_remove: bool,
+    drops: &designs::Drops,
     controls: &Controls,
     sender: &SenderHandle,
 ) -> Html {
+    let can_put = drops.enabled();
     let full = group.anchors.len() >= WORKING_GROUP_DESIGN_LIMIT;
     let can_add = can_put && !full;
     let add_title =
@@ -341,8 +365,17 @@ fn render_catalog_group(
         let controls = controls.clone();
         Callback::from(move |_| controls.open(group.clone(), None))
     };
+    let designs::DropHandlers { ondragover, ondrop } = designs::group_target(drops, &group.group);
     html! {
-        <article class="room-group-row" key={group.group.to_string()} data-group={group.group.to_string()}>
+        <article
+            class="room-group-row"
+            key={group.group.to_string()}
+            data-group={group.group.to_string()}
+            data-design-drop={group.group.to_string()}
+            data-drop-enabled={can_put.to_string()}
+            {ondragover}
+            {ondrop}
+        >
             <header>
                 <strong>{group.name.clone()}</strong>
                 <code>{group.group.to_string()}</code>
@@ -507,10 +540,7 @@ fn submit_group_remove(
 
 /// Every Design task a working group could hold.
 fn task_options(board: Option<&crate::runtime::BoardView>) -> Vec<Html> {
-    board
-        .into_iter()
-        .flat_map(|board| &board.tasks)
-        .filter(|task| task.statement.body.intent == Some(wire::TaskIntent::Design))
+    designs::designs(board)
         .map(|task| {
             let statement = &task.statement.body;
             html! {
