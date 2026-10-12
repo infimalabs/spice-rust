@@ -1034,7 +1034,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
             format!(
                 "  Update the task statement with spice task modify {handle} so the complete current taste policy rechecks it."
             ),
-            "  Taste review clears only after that recheck finds no current matches; planning changes board state, not repository files."
+            "  Taste review clears only after that recheck finds no current matches. If this plan was inserted by the hold, clearance releases its claim and returns the authored phase through task next; planning changes board state, not repository files."
                 .to_owned(),
         ];
     }

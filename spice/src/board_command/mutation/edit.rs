@@ -70,13 +70,16 @@ fn prepare_correction(
         &snapshot.answer.environment(),
         at,
     )?;
+    let claim = released
+        .as_ref()
+        .map_or_else(|| entry.claim().cloned(), ReleasedPlan::claim);
     let post = Entry::new(
         statement.clone(),
         released.as_ref().map_or_else(
             || entry.workflow().clone(),
             |released| released.workflow().clone(),
         ),
-        entry.claim().cloned(),
+        claim,
         requirement_change
             .lease()
             .cloned()
@@ -278,6 +281,10 @@ fn publish_correction(
         taste_review,
         released,
     } = publication;
+    let status = released.as_ref().map_or_else(
+        || "edited".to_owned(),
+        |released| format!("edited; phase:{}", released.workflow().phase),
+    );
     let revision = u32::try_from(statement.revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
@@ -323,7 +330,7 @@ fn publish_correction(
     requirement_change.write_lease(&mut write, edited);
     let answer = wire::intent::TaskAnswer {
         task: rendered,
-        status: "edited".to_owned(),
+        status,
         completion: None,
         claim: None,
         next,

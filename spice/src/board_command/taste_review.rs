@@ -159,10 +159,13 @@ pub(super) fn resync_taste_hold(
 }
 
 /// The workflow a cleared hold returns its task to, guarded on the workflow
-/// head the clearance read.
+/// and claim heads the clearance read.
 pub(super) struct ReleasedPlan {
-    witness: Witness,
+    workflow_witness: Witness,
+    claim_witness: Witness,
     workflow: wire::WorkflowHead,
+    claim: Option<ClaimHead>,
+    release_actor: Option<Actor>,
 }
 
 impl ReleasedPlan {
@@ -182,9 +185,22 @@ impl ReleasedPlan {
                     "validated board snapshot lost a task entry",
                 )
             })?;
+        let mut claim = observed.claim.as_ref().map(|claim| claim.body.clone());
+        let release_actor = claim
+            .as_ref()
+            .filter(|claim| claim.disposition == ClaimDisposition::Active)
+            .map(|claim| claim.actor.clone());
+        if let Some(claim) = claim.as_mut()
+            && release_actor.is_some()
+        {
+            claim.disposition = ClaimDisposition::Freed;
+        }
         Ok(Self {
-            witness: workflow_witness(observed),
+            workflow_witness: workflow_witness(observed),
+            claim_witness: claim_witness(observed),
             workflow,
+            claim,
+            release_actor,
         })
     }
 
@@ -192,15 +208,35 @@ impl ReleasedPlan {
         &self.workflow
     }
 
-    /// Record the phase change as a `task::phased` fact caused by the edit that
-    /// cleared the hold, so every phase replay follows it.
+    pub(super) fn claim(&self) -> Option<ClaimHead> {
+        self.claim.clone()
+    }
+
+    /// Record the phase change and any exact active-claim release in one write,
+    /// so replay never exposes authored execution under the synthetic-plan claim.
     pub(super) fn write(
         self,
         write: &mut JournalWrite,
         task: &wire::TaskStamp,
         edited: PendingFact,
     ) -> Result<PendingFact, Outcome<CommandAnswer>> {
-        guard(write, vec![self.witness]);
+        guard(write, vec![self.workflow_witness, self.claim_witness]);
+        if let Some(actor) = self.release_actor {
+            let freed = write
+                .fact(
+                    body::ClaimFreed {
+                        task: task.clone(),
+                        actor,
+                        parked: None,
+                    },
+                    FactCause::Pending(edited),
+                )
+                .map_err(|error| store_fault("claim::free-build", &error.to_string()))?;
+            let claim = self
+                .claim
+                .expect("an active synthetic-plan claim has a projected release");
+            write.claim_head(task.clone(), freed, move |fact| ClaimHead { fact, ..claim });
+        }
         let phased = write
             .fact(
                 body::TaskPhased {
