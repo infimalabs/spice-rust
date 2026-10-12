@@ -97,13 +97,7 @@ impl JournalRead<'_> {
                 break;
             }
             let length = indexed_length(row, 2, "working-group body")?;
-            if decoded.saturating_add(length) > budget.decoded_bytes() {
-                if heads.is_empty() {
-                    return Err(GuardError::Invalid(format!(
-                        "working-group head {indexed:?} has {length} body bytes, exceeding this call's {}-byte decoded budget",
-                        budget.decoded_bytes(),
-                    )));
-                }
+            if !heads.is_empty() && decoded.saturating_add(length) > budget.decoded_bytes() {
                 continuation = heads.last().map(|head| head.body.group.clone());
                 break;
             }
@@ -163,13 +157,7 @@ impl JournalRead<'_> {
                 break;
             }
             let length = indexed_length(row, 0, "working-group identity")?;
-            if decoded.saturating_add(length) > budget.decoded_bytes() {
-                if groups.is_empty() {
-                    return Err(GuardError::Invalid(format!(
-                        "working-group identity has {length} bytes, exceeding this call's {}-byte decoded budget",
-                        budget.decoded_bytes(),
-                    )));
-                }
+            if !groups.is_empty() && decoded.saturating_add(length) > budget.decoded_bytes() {
                 continuation = groups.last().cloned();
                 break;
             }

@@ -10,7 +10,7 @@ use wire::{Producer, SequenceCode, TaskPreparation};
 
 use super::*;
 use crate::guard::Applied;
-use crate::{CommitError, FactCause, GuardError, JournalHead, JournalWrite, ProposalAuthority};
+use crate::{CommitError, FactCause, JournalHead, JournalWrite, ProposalAuthority};
 
 type Commit = Result<Applied, CommitError>;
 
@@ -859,10 +859,11 @@ fn group_indexes_page_by_bytes_and_fanout_without_gaps() {
     );
     assert_eq!(third.continuation, None);
     let too_small = FactReadBudget::new(8, group_bytes - 1).expect("smaller body budget");
-    assert!(matches!(
-        journal.read(|read| read.group_head_page(None, too_small)),
-        Err(GuardError::Invalid(_))
-    ));
+    let indivisible = journal
+        .read(|read| read.group_head_page(None, too_small))
+        .expect("first indivisible group head advances the page");
+    assert_eq!(indivisible.rows[0].body().group, groups[0]);
+    assert_eq!(indivisible.continuation, Some(groups[0].clone()));
 
     let identity_bytes = groups[0].to_string().len();
     let anchor_budget = FactReadBudget::new(8, identity_bytes).expect("one identity");
@@ -882,10 +883,11 @@ fn group_indexes_page_by_bytes_and_fanout_without_gaps() {
     assert_eq!(third.rows, vec![groups[2].clone()]);
     assert_eq!(third.continuation, None);
     let too_small = FactReadBudget::new(8, identity_bytes - 1).expect("smaller identity budget");
-    assert!(matches!(
-        journal.read(|read| read.anchor_group_page(&anchor, None, too_small)),
-        Err(GuardError::Invalid(_))
-    ));
+    let indivisible = journal
+        .read(|read| read.anchor_group_page(&anchor, None, too_small))
+        .expect("first indivisible membership advances the page");
+    assert_eq!(indivisible.rows, vec![groups[0].clone()]);
+    assert_eq!(indivisible.continuation, Some(groups[0].clone()));
 }
 
 #[test]
