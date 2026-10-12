@@ -148,6 +148,10 @@ mod report;
 use report::read_report;
 mod room;
 use room::room_post;
+mod room_coordination;
+pub(crate) use room_coordination::{
+    coordination_lane, room_coordinate, room_coordination_read, room_put_aside,
+};
 mod steering_origin;
 use steering_origin::*;
 mod task_step;

@@ -4,6 +4,8 @@ mod group;
 mod requirements;
 use group::{client_group_list, client_group_put, client_group_remove};
 use requirements::environment_requirements;
+mod room;
+use room::dispatch_room_client;
 
 /// Execute one generated board-family CLI leaf.
 pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
@@ -46,11 +48,13 @@ fn dispatch_client(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
+    if let Some(outcome) = dispatch_room_client(repository, contract, matches) {
+        return outcome;
+    }
     match contract.path {
         ["dev", "report-page"] => client_report(repository, contract, matches),
         ["doc"] => run_doc(repository, contract, matches, dialect::emit),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
-        ["room", "post"] => client_room_post(repository, contract, matches),
         ["group", "list"] => client_group_list(repository, contract, matches),
         ["group", "put"] => client_group_put(repository, contract, matches),
         ["group", "remove"] => client_group_remove(repository, contract, matches),
@@ -79,24 +83,6 @@ fn dispatch_client(
             "use a registered board, task, or doc leaf",
         ),
     }
-}
-
-fn client_room_post(
-    repository: &Repository,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    mutate_task(repository, contract, matches, |room, heads| {
-        Ok((
-            CommandKind::RoomPost,
-            vec![statement_witness(heads)],
-            serde_json::to_value(RoomPost {
-                room,
-                text: required(matches, "TEXT"),
-            })
-            .expect("typed room post encodes"),
-        ))
-    })
 }
 
 fn client_report(

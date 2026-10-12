@@ -450,50 +450,38 @@ impl NativeInvocation<'_> {
         }
     }
 
-    fn dispatch_controls(&self, contract: &cli::Contract) {
+    fn dispatch_session_control(&self, contract: &cli::Contract) -> bool {
         let &Self(leaf, form, configuration) = self;
-        match contract.path {
-            ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
+        if !matches!(
+            contract.path,
             ["session"]
-            | ["session", "briefing"]
-            | ["session", "commands"]
-            | ["session", "context"]
-            | ["session", "commits"]
-            | ["session", "compactions"]
-            | ["session", "messages"]
-            | ["session", "phases"]
-            | ["session", "slices"]
-            | ["session", "summary"]
-            | ["session", "sweep"]
-            | ["session", "thread"]
-            | ["session", "timeline"]
-            | ["session", "tokens"]
-            | ["session", "turns"] => deliver_with_reply_text(
-                &session_command::run(leaf, contract.path, &session_environment(), configuration),
-                form,
-                session_command::Report::text,
-            ),
-            ["lane", "list"] => deliver_display(&lane_command::list(leaf, contract), form),
-            ["lane"]
-            | ["lane", "add"]
-            | ["lane", "drain"]
-            | ["lane", "wake"]
-            | ["lane", "model"]
-            | ["lane", "effort"]
-            | ["lane", "fast"]
-            | ["lane", "remove"]
-            | ["lane", "import"]
-            | ["recall"] => {
-                deliver_command_answer(&lane_command::run(leaf, contract, configuration), form)
-            }
-            ["lane", "purge"] => deliver(&lane_command::purge::run(), form),
-            ["release", "publish"] => match release_command::run(leaf, contract) {
-                release_command::RunResult::Plan(outcome) => {
-                    deliver_with_reply_text(&outcome, form, release_command::PlanPreview::text)
-                }
-                release_command::RunResult::Published(outcome) => deliver(&outcome, form),
-            },
-            ["release", "seal"] => deliver(&release_seal::run(contract), form),
+                | ["session", "briefing"]
+                | ["session", "commands"]
+                | ["session", "context"]
+                | ["session", "commits"]
+                | ["session", "compactions"]
+                | ["session", "messages"]
+                | ["session", "phases"]
+                | ["session", "slices"]
+                | ["session", "summary"]
+                | ["session", "sweep"]
+                | ["session", "thread"]
+                | ["session", "timeline"]
+                | ["session", "tokens"]
+                | ["session", "turns"]
+        ) {
+            return false;
+        }
+        deliver_with_reply_text(
+            &session_command::run(leaf, contract.path, &session_environment(), configuration),
+            form,
+            session_command::Report::text,
+        )
+    }
+
+    fn dispatch_board_control(&self, contract: &cli::Contract) -> bool {
+        let &Self(leaf, form, ..) = self;
+        match contract.path {
             ["board"] => deliver_with_reply_text(
                 &board_command::board_view(leaf, contract),
                 form,
@@ -504,8 +492,12 @@ impl NativeInvocation<'_> {
                 form,
                 board_command::GraphView::text,
             ),
-            ["room", "post"] => deliver_command_answer(&board_command::run(leaf, contract), form),
-            ["task", "list"]
+            ["room", "post"]
+            | ["room", "status"]
+            | ["room", "start"]
+            | ["room", "resume"]
+            | ["room", "put-aside"]
+            | ["task", "list"]
             | ["task", "status"]
             | ["task", "show"]
             | ["task", "recover"]
@@ -530,13 +522,45 @@ impl NativeInvocation<'_> {
             | ["group", "remove"]
             | ["doc"]
             | ["doc", "ledger"] => {
-                deliver_command_answer(&board_command::run(leaf, contract), form)
+                deliver_command_answer(&board_command::run(leaf, contract), form);
             }
             ["task", "next"] => task_next_delivery::deliver(
                 &board_command::run_task_next(contract),
                 form,
                 bootstrap_environment(steer::hook::LANE).is_some(),
             ),
+            _ => false,
+        }
+    }
+
+    fn dispatch_controls(&self, contract: &cli::Contract) {
+        let &Self(leaf, form, configuration) = self;
+        if self.dispatch_session_control(contract) || self.dispatch_board_control(contract) {
+            return;
+        }
+        match contract.path {
+            ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
+            ["lane", "list"] => deliver_display(&lane_command::list(leaf, contract), form),
+            ["lane"]
+            | ["lane", "add"]
+            | ["lane", "drain"]
+            | ["lane", "wake"]
+            | ["lane", "model"]
+            | ["lane", "effort"]
+            | ["lane", "fast"]
+            | ["lane", "remove"]
+            | ["lane", "import"]
+            | ["recall"] => {
+                deliver_command_answer(&lane_command::run(leaf, contract, configuration), form)
+            }
+            ["lane", "purge"] => deliver(&lane_command::purge::run(), form),
+            ["release", "publish"] => match release_command::run(leaf, contract) {
+                release_command::RunResult::Plan(outcome) => {
+                    deliver_with_reply_text(&outcome, form, release_command::PlanPreview::text)
+                }
+                release_command::RunResult::Published(outcome) => deliver(&outcome, form),
+            },
+            ["release", "seal"] => deliver(&release_seal::run(contract), form),
             ["steer"] | ["steer", "cancel"] | ["steer", "resend"] | ["steer", "recover"] => {
                 deliver(
                     &steering_command::run(

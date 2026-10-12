@@ -476,6 +476,38 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "room::post"
     ),
     operator!(
+        ["room", "status"],
+        "room status HANDLE",
+        Read,
+        [],
+        Reply,
+        "room::coordination-read"
+    ),
+    operator!(
+        ["room", "start"],
+        "room start HANDLE ADDRESS [--criterion CRITERION] [--contribution CONTRIBUTION] [--stop STOP]",
+        Command,
+        [SteerSent, RoomCoordinationStarted],
+        Reply,
+        "room::coordinate"
+    ),
+    operator!(
+        ["room", "resume"],
+        "room resume HANDLE ADDRESS [--criterion CRITERION] [--contribution CONTRIBUTION] [--stop STOP]",
+        Command,
+        [SteerSent, RoomCoordinationStarted],
+        Reply,
+        "room::coordinate"
+    ),
+    operator!(
+        ["room", "put-aside"],
+        "room put-aside HANDLE",
+        Command,
+        [SteerCanceled, SteerSent, RoomPutAside],
+        Reply,
+        "room::put-aside"
+    ),
+    operator!(
         ["group", "list"],
         "group list [--after GROUP] [--limit N]",
         Read,

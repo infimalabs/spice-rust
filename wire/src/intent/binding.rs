@@ -14,7 +14,8 @@ use super::{
     LaneAnswer, LaneArrange, LaneChangeAnswer, LaneEffortRetune, LaneFastRetune, LaneJobAnswer,
     LaneJobRef, LaneJobsAnswer, LaneJobsRead, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer,
     LaneRetune, LaneSeat, LaneState, QuoteRead, RecallAnswer, RecognitionAnswer, Recognize,
-    ReleasePublish, ReportAnswer, ReportRead, StateAnswer, SteerDispose, SteerHistory, SteerInbox,
+    ReleasePublish, ReportAnswer, ReportRead, RoomCoordinate, RoomCoordinationRead,
+    RoomCoordinationView, RoomPutAside, StateAnswer, SteerDispose, SteerHistory, SteerInbox,
     SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskDefer, TaskDelete, TaskDepends,
     TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef,
     TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake,
@@ -44,6 +45,12 @@ pub enum BodyShape {
     DocLedger,
     /// [`RoomPost`]
     RoomPost,
+    /// [`RoomCoordinationRead`]
+    RoomCoordinationRead,
+    /// [`RoomCoordinate`]
+    RoomCoordinate,
+    /// [`RoomPutAside`]
+    RoomPutAside,
     /// [`WorkingGroupRead`]
     WorkingGroupRead,
     /// [`WorkingGroupPut`]
@@ -171,6 +178,8 @@ pub enum AnswerShape {
     Text,
     /// [`RoomPostAnswer`]
     RoomPost,
+    /// [`RoomCoordinationView`]
+    RoomCoordination,
     /// [`TaskAnswer`]
     Task,
     /// [`ClaimAnswer`]
@@ -239,6 +248,8 @@ pub enum CommandAnswer {
     Text(TextAnswer),
     /// [`AnswerShape::RoomPost`]
     RoomPost(RoomPostAnswer),
+    /// [`AnswerShape::RoomCoordination`]
+    RoomCoordination(RoomCoordinationView),
     /// [`AnswerShape::Task`]
     Task(TaskAnswer),
     /// [`AnswerShape::Claim`]
@@ -290,17 +301,57 @@ impl CommandAnswer {
     #[must_use]
     pub const fn shape(&self) -> AnswerShape {
         match self {
+            Self::WorkingGroupPage(_) | Self::WorkingGroupChange(_) => self.working_group_shape(),
+            Self::Board(_)
+            | Self::Report(_)
+            | Self::TaskDetail(_)
+            | Self::TaskRelations(_)
+            | Self::TaskTimeline(_)
+            | Self::Text(_)
+            | Self::RoomPost(_)
+            | Self::RoomCoordination(_)
+            | Self::Task(_)
+            | Self::Claim(_)
+            | Self::Doc(_) => self.board_shape(),
+            Self::Directive(_)
+            | Self::Inbox(_)
+            | Self::DirectionHistory(_)
+            | Self::Consent(_)
+            | Self::ConsentQueue(_)
+            | Self::ConsentPolicy(_)
+            | Self::GlobalSettings(_)
+            | Self::VendorCatalog(_)
+            | Self::Trust(_)
+            | Self::Lane(_)
+            | Self::LaneJobs(_)
+            | Self::LaneJob(_)
+            | Self::LaneChange(_)
+            | Self::LaneRenewal(_)
+            | Self::State(_)
+            | Self::Recall(_)
+            | Self::Taste(_)
+            | Self::Recognition(_)
+            | Self::Quote(_) => self.runtime_shape(),
+        }
+    }
+    const fn board_shape(&self) -> AnswerShape {
+        match self {
             Self::Board(_) => AnswerShape::Board,
             Self::Report(_) => AnswerShape::Report,
             Self::TaskDetail(_) => AnswerShape::TaskDetail,
             Self::TaskRelations(_) => AnswerShape::TaskRelations,
             Self::TaskTimeline(_) => AnswerShape::TaskTimeline,
-            Self::WorkingGroupPage(_) | Self::WorkingGroupChange(_) => self.working_group_shape(),
             Self::Text(_) => AnswerShape::Text,
             Self::RoomPost(_) => AnswerShape::RoomPost,
+            Self::RoomCoordination(_) => AnswerShape::RoomCoordination,
             Self::Task(_) => AnswerShape::Task,
             Self::Claim(_) => AnswerShape::Claim,
             Self::Doc(_) => AnswerShape::Doc,
+            _ => panic!("board answer shape partition is closed"),
+        }
+    }
+    const fn runtime_shape(&self) -> AnswerShape {
+        match self {
             Self::Directive(_) => AnswerShape::Directive,
             Self::Inbox(_) => AnswerShape::Inbox,
             Self::DirectionHistory(_) => AnswerShape::DirectionHistory,
@@ -320,6 +371,7 @@ impl CommandAnswer {
             Self::Taste(_) => AnswerShape::Taste,
             Self::Recognition(_) => AnswerShape::Recognition,
             Self::Quote(_) => AnswerShape::Quote,
+            _ => panic!("runtime answer shape partition is closed"),
         }
     }
     const fn working_group_shape(&self) -> AnswerShape {
@@ -363,13 +415,13 @@ impl AnswerShape {
             Self::LaneJobs => Ok(CommandAnswer::LaneJobs(Box::new(source.read()?))),
             Self::LaneJob => Ok(CommandAnswer::LaneJob(Box::new(source.read()?))),
             Self::WorkingGroupPage | Self::WorkingGroupChange => self.decode_working_group(source),
+            Self::RoomPost | Self::RoomCoordination => self.decode_room(source),
             Self::Board
             | Self::Report
             | Self::TaskDetail
             | Self::TaskRelations
             | Self::TaskTimeline
             | Self::Text
-            | Self::RoomPost
             | Self::Task
             | Self::Claim
             | Self::Doc
@@ -401,7 +453,6 @@ impl AnswerShape {
             Self::TaskRelations => CommandAnswer::TaskRelations(Box::new(body.read()?)),
             Self::TaskTimeline => CommandAnswer::TaskTimeline(Box::new(body.read()?)),
             Self::Text => CommandAnswer::Text(body.read()?),
-            Self::RoomPost => CommandAnswer::RoomPost(body.read()?),
             Self::Task => CommandAnswer::Task(body.read()?),
             Self::Claim => CommandAnswer::Claim(Box::new(body.read()?)),
             Self::Doc => CommandAnswer::Doc(body.read()?),
@@ -410,6 +461,14 @@ impl AnswerShape {
             Self::Consent => CommandAnswer::Consent(body.read()?),
             Self::ConsentQueue => CommandAnswer::ConsentQueue(body.read()?),
             _ => unreachable!("answer-shape decode partition is closed"),
+        })
+    }
+
+    fn decode_room(self, body: impl AnswerSource) -> Result<CommandAnswer, serde_json::Error> {
+        Ok(match self {
+            Self::RoomPost => CommandAnswer::RoomPost(body.read()?),
+            Self::RoomCoordination => CommandAnswer::RoomCoordination(body.read()?),
+            _ => unreachable!("room answer decode partition is closed"),
         })
     }
 
@@ -495,6 +554,10 @@ impl CommandKind {
             Self::WorkingGroupRead | Self::WorkingGroupPut | Self::WorkingGroupRemove => {
                 self.working_group_binding()
             }
+            Self::RoomPost
+            | Self::RoomCoordinationRead
+            | Self::RoomCoordinate
+            | Self::RoomPutAside => self.room_binding(),
             Self::BoardRead
             | Self::ReportRead
             | Self::TaskDetail
@@ -503,7 +566,6 @@ impl CommandKind {
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
-            | Self::RoomPost
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TasteProposalAdd
@@ -575,7 +637,6 @@ impl CommandKind {
             Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
-            Self::RoomPost => Binding::of(B::RoomPost, A::RoomPost),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
             Self::TasteProposalAdd => Binding::of(B::TasteProposalAdd, A::Task),
@@ -598,6 +659,19 @@ impl CommandKind {
             _ => panic!("command binding partition is closed"),
         }
     }
+    const fn room_binding(self) -> Binding {
+        use AnswerShape as A;
+        use BodyShape as B;
+
+        match self {
+            Self::RoomPost => Binding::of(B::RoomPost, A::RoomPost),
+            Self::RoomCoordinationRead => Binding::of(B::RoomCoordinationRead, A::RoomCoordination),
+            Self::RoomCoordinate => Binding::of(B::RoomCoordinate, A::RoomCoordination),
+            Self::RoomPutAside => Binding::of(B::RoomPutAside, A::RoomCoordination),
+            _ => panic!("room command binding partition is closed"),
+        }
+    }
+
     const fn working_group_binding(self) -> Binding {
         use AnswerShape as A;
         use BodyShape as B;
@@ -686,6 +760,12 @@ pub enum Intent {
     DocLedger(DocLedger),
     /// [`BodyShape::RoomPost`]
     RoomPost(RoomPost),
+    /// [`BodyShape::RoomCoordinationRead`]
+    RoomCoordinationRead(RoomCoordinationRead),
+    /// [`BodyShape::RoomCoordinate`]
+    RoomCoordinate(RoomCoordinate),
+    /// [`BodyShape::RoomPutAside`]
+    RoomPutAside(RoomPutAside),
     /// [`BodyShape::WorkingGroupRead`]
     WorkingGroupRead(WorkingGroupRead),
     /// [`BodyShape::WorkingGroupPut`]
@@ -802,6 +882,10 @@ impl Intent {
             Self::WorkingGroupRead(_) | Self::WorkingGroupPut(_) | Self::WorkingGroupRemove(_) => {
                 self.working_group_shape()
             }
+            Self::RoomPost(_)
+            | Self::RoomCoordinationRead(_)
+            | Self::RoomCoordinate(_)
+            | Self::RoomPutAside(_) => self.room_shape(),
             Self::BoardRead(_)
             | Self::ReportRead(_)
             | Self::TaskDetail(_)
@@ -810,7 +894,6 @@ impl Intent {
             | Self::BoardGraph(_)
             | Self::BoardHandout(_)
             | Self::DocLedger(_)
-            | Self::RoomPost(_)
             | Self::TaskAdd(_)
             | Self::TaskOopsAdd(_)
             | Self::TasteProposalAdd(_)
@@ -871,7 +954,6 @@ impl Intent {
             Self::BoardGraph(_) => BodyShape::BoardGraph,
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
-            Self::RoomPost(_) => BodyShape::RoomPost,
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
             Self::TasteProposalAdd(_) => BodyShape::TasteProposalAdd,
@@ -894,6 +976,16 @@ impl Intent {
             _ => panic!("intent shape partition is closed"),
         }
     }
+    const fn room_shape(&self) -> BodyShape {
+        match self {
+            Self::RoomPost(_) => BodyShape::RoomPost,
+            Self::RoomCoordinationRead(_) => BodyShape::RoomCoordinationRead,
+            Self::RoomCoordinate(_) => BodyShape::RoomCoordinate,
+            Self::RoomPutAside(_) => BodyShape::RoomPutAside,
+            _ => panic!("room intent shape partition is closed"),
+        }
+    }
+
     const fn working_group_shape(&self) -> BodyShape {
         match self {
             Self::WorkingGroupRead(_) => BodyShape::WorkingGroupRead,
@@ -966,6 +1058,9 @@ impl BodyShape {
                 | Self::BoardHandout
                 | Self::DocLedger
                 | Self::RoomPost
+                | Self::RoomCoordinationRead
+                | Self::RoomCoordinate
+                | Self::RoomPutAside
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
                 | Self::WorkingGroupRemove
@@ -1003,6 +1098,9 @@ impl BodyShape {
                 | Self::BoardHandout
                 | Self::DocLedger
                 | Self::RoomPost
+                | Self::RoomCoordinationRead
+                | Self::RoomCoordinate
+                | Self::RoomPutAside
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
                 | Self::WorkingGroupRemove
@@ -1031,6 +1129,9 @@ impl BodyShape {
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
             Self::RoomPost => Intent::RoomPost(crate::decode(bytes)?),
+            Self::RoomCoordinationRead => Intent::RoomCoordinationRead(crate::decode(bytes)?),
+            Self::RoomCoordinate => Intent::RoomCoordinate(crate::decode(bytes)?),
+            Self::RoomPutAside => Intent::RoomPutAside(crate::decode(bytes)?),
             Self::WorkingGroupRead => Intent::WorkingGroupRead(crate::decode(bytes)?),
             _ => return self.decode_task_statement_body(bytes),
         })

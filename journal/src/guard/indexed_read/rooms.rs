@@ -305,7 +305,10 @@ impl JournalRead<'_> {
             let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
             if !matches!(
                 fact.fact.kind(),
-                wire::FactKind::RoomPublished | wire::FactKind::RoomMessaged
+                wire::FactKind::RoomPublished
+                    | wire::FactKind::RoomMessaged
+                    | wire::FactKind::RoomCoordinationStarted
+                    | wire::FactKind::RoomPutAside
             ) {
                 return Err(GuardError::Invalid(format!(
                     "room publication index names {} fact {seq}",

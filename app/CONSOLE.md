@@ -28,6 +28,27 @@ other repository clients, but never mount, reorder, or close a browser's
 foreground views. **New Team** therefore remains lane creation; **New working
 group** is repository organization.
 
+## Room coordination
+
+Start and Resume are explicit coordination, not browser-open events. The
+operator names a seated occupant's current base-52 address plus the unresolved
+criterion, bounded contribution, and stop condition. Spice records one ordinary
+durable direction with the room marker; the recipient then acquires the exact
+anchor or related preparation through ordinary native task possession. Filing
+visibility keeps hidden controller anchors out of automatic allocation; the
+room command adds no other eligibility or possession rule.
+
+Put aside cancels only unanswered coordination for that room. If the anchor has
+a native holder, it sends that holder a checkpoint/free direction and shows a
+stop request until that exact claim is completed, freed, or lapsed; it never
+force-frees work or releases child claims and unrelated direction. The
+initiating browser hides the room locally. Room history, drafts, groups,
+selected outputs, other browsers, and repository authority remain unchanged.
+
+The native command surface is `spice room status HANDLE`,
+`spice room start|resume HANDLE ADDRESS --criterion TEXT --contribution TEXT
+--stop TEXT`, and `spice room put-aside HANDLE`.
+
 ## Toolbar
 
 The toolbar has two rows: the team's task strip, then one status band holding

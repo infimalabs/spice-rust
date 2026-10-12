@@ -18,8 +18,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
     DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomMessaged, RoomPublicationContent, RoomPublished,
-    RoomSource, TranscriptHunk, WorkingGroupRemoved, WorkingGroupStored,
+    RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomMessaged,
+    RoomPublicationContent, RoomPublished, RoomPutAside, RoomSource, TranscriptHunk,
+    WorkingGroupRemoved, WorkingGroupStored,
 };
 use wire::{Actor, AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
@@ -381,6 +382,12 @@ pub(crate) fn fold(
     }
     if let Some(body) = fact.read::<RoomMessaged>() {
         require_hunk(authority, &body.hunk)?;
+        return publish(authority, seq, &body.room, &body.publication);
+    }
+    if let Some(body) = fact.read::<RoomCoordinationStarted>() {
+        return publish(authority, seq, &body.room, &body.publication);
+    }
+    if let Some(body) = fact.read::<RoomPutAside>() {
         return publish(authority, seq, &body.room, &body.publication);
     }
     if let Some(WorkingGroupStored { group }) = fact.read() {
