@@ -834,7 +834,7 @@ fn insert_receipt(journal: &Journal) {
         epoch,
         kind: CommandKind::TaskDone,
         expected: Vec::new(),
-        body: json!({"task": "JOURNAL-a1", "validation": "fixture"}),
+        body: json!({"task": "JOURNAL-1kKRRsDP", "validation": "fixture"}),
     };
     let response = Response {
         v: WireVersion::CURRENT,
@@ -845,7 +845,7 @@ fn insert_receipt(journal: &Journal) {
                 first: Seq::new(1).expect("first seq"),
                 last: Seq::new(2).expect("last seq"),
             }),
-            body: json!({"task": "JOURNAL-a1", "status": "review"}),
+            body: json!({"task": "JOURNAL-1kKRRsDP", "status": "review"}),
         }),
     };
     journal.connection.execute(

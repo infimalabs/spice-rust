@@ -225,7 +225,6 @@ fn settle(
     let answer = wire::intent::TaskAnswer {
         task: entry.handle().clone(),
         status: settlement.status().to_owned(),
-        guidance: None,
         completion: None,
         claim: None,
         next,

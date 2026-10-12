@@ -275,7 +275,7 @@ fn an_omitted_residency_table_without_one_closed_team_life_refuses_atomically() 
         let before = authority();
 
         let error = Journal::open(&path).expect_err("an underivable table refuses");
-        let OpenError::Migration(MigrationError::RetainedHead {
+        let OpenError::Migration(MigrationError::RetainedRow {
             table,
             row,
             release,
@@ -389,6 +389,142 @@ fn writable_open_crosses_retired_gate_facts_into_inert_current_evidence_once() {
         crossed,
         "the retained crossing runs exactly once",
     );
+}
+
+const RETIRED_GUIDANCE: &str = "phase ownership: this advance released your claim; only the held plan phase was completed. Run spice task next for another assignment; it may select any eligible work and does not guarantee this task's next phase.";
+
+/// A schema-36 authority, already carrying the room projection, whose
+/// completion fact and its receipt carry guidance, with the canonical current
+/// bytes of both rows before guidance was planted.
+fn retained_guidance_fixture(path: &Path, guidance: &str) -> (Vec<u8>, Vec<u8>) {
+    let journal = authority_file_fixture(path);
+    insert_fact(
+        &journal,
+        fact(
+            3,
+            Some(2),
+            FactKind::TaskDone,
+            json!({
+                "task": "1kKRRsDP",
+                "validation": "fixture",
+                "terminal": {
+                    "operation": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+                    "status": "completed",
+                    "next": "spice task next",
+                },
+            }),
+        ),
+    );
+    journal
+        .connection
+        .execute_batch(
+            "INSERT INTO thread_index(seq, origin, cause, root, depth)
+             VALUES (3, 'task:1kKRRsDP', 2, 1, 2);
+             UPDATE cursor_head SET seq = 3, wake = 3 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 3 WHERE singleton = 1;",
+        )
+        .expect("completion fact thread is planted");
+    let canonical = guidance_rows(&journal);
+    journal
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT), \
+             '$.fact.terminal.guidance', ?1) AS BLOB) WHERE seq = 3",
+            [guidance],
+        )
+        .expect("completion guidance is planted");
+    journal
+        .connection
+        .execute(
+            "UPDATE command_receipts SET response = CAST(json_set(CAST(response AS TEXT), \
+             '$.outcome.body.guidance', ?1) AS BLOB)",
+            [guidance],
+        )
+        .expect("receipt guidance is planted");
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE journal_schema SET version = 36 WHERE singleton = 1;
+             PRAGMA user_version = 36;",
+        )
+        .expect("predecessor identity is restored");
+    drop(journal);
+    canonical
+}
+
+fn guidance_rows(journal: &Journal) -> (Vec<u8>, Vec<u8>) {
+    let row = |sql: &str| {
+        journal
+            .connection
+            .query_row(sql, [], |row| row.get::<_, Vec<u8>>(0))
+            .expect("guidance-bearing row reads")
+    };
+    (
+        row("SELECT envelope FROM fact_envelopes WHERE seq = 3"),
+        row("SELECT response FROM command_receipts"),
+    )
+}
+
+#[test]
+fn writable_open_drops_retired_task_guidance_from_completions_and_receipts_once() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("retained-guidance.sqlite3");
+    let canonical = retained_guidance_fixture(&path, RETIRED_GUIDANCE);
+
+    let journal = Journal::open(&path).expect("retained guidance crosses on writable open");
+    assert_eq!(
+        journal
+            .migration()
+            .map(|migration| (migration.from(), migration.to())),
+        Some((36, SCHEMA_VERSION)),
+    );
+    assert_eq!(
+        guidance_rows(&journal),
+        canonical,
+        "each row keeps every other field in its canonical current encoding",
+    );
+    journal.verify().expect("crossed authority verifies");
+    let (_, receipt) = guidance_rows(&journal);
+    let response: Response<serde_json::Value> =
+        wire::decode(&receipt).expect("the crossed response decodes");
+    let Outcome::Reply(reply) = response.outcome else {
+        panic!("a completion receipt holds a reply");
+    };
+    let answer = wire::encode(&reply.body)
+        .and_then(|body| CommandKind::TaskDone.binding().answer.decode(&body))
+        .expect("the crossed answer decodes as an exact retry would");
+    let wire::intent::CommandAnswer::Task(answer) = answer else {
+        panic!("a completion receipt replays a task answer");
+    };
+    assert_eq!(answer.status, "review");
+    drop(journal);
+
+    let reopened = Journal::open(&path).expect("crossed authority reopens");
+    assert_eq!(reopened.migration(), None);
+    assert_eq!(guidance_rows(&reopened), canonical);
+}
+
+#[test]
+fn guidance_other_than_the_retired_spelling_refuses_without_mutation() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("foreign-guidance.sqlite3");
+    retained_guidance_fixture(&path, "same-task-next-phase");
+    let before = fs::read(&path).expect("authority bytes read");
+
+    let error = Journal::open(&path).expect_err("unknown guidance refuses the crossing");
+    assert!(
+        matches!(
+            &error,
+            OpenError::Migration(MigrationError::RetainedRow {
+                table: "fact_envelopes",
+                row,
+                ..
+            }) if row == "3"
+        ),
+        "{error}"
+    );
+    assert!(error.to_string().contains("979b72704"), "{error}");
+    assert_eq!(fs::read(&path).expect("authority bytes reread"), before);
 }
 #[test]
 fn schema_admission_requires_trusted_schema_to_be_disabled_before_inspection() {
