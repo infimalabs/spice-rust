@@ -27,6 +27,45 @@ pub(super) fn dispatch_preparation(
     })
 }
 
+/// Refuse a positive controller conclusion while any live controlled output
+/// still lacks that controller's exact execution authorization.
+///
+/// Operator close and delete are separate, explicit negative dispositions.
+/// They intentionally leave controlled outputs gated and do not call this
+/// guard.
+pub(super) fn require_no_pending_controlled_outputs(
+    snapshot: &ValidatedSnapshot,
+    controller: &Entry,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let mut outputs = snapshot
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.workflow().status == "pending"
+                && entry.statement().authorization.is_none()
+                && entry
+                    .statement()
+                    .preparation
+                    .as_ref()
+                    .is_some_and(|preparation| preparation.controller == *controller.born())
+        })
+        .map(|entry| entry.handle().to_string())
+        .collect::<Vec<_>>();
+    if outputs.is_empty() {
+        return Ok(());
+    }
+    outputs.sort();
+    Err(refusal(
+        "preparation::controlled-outputs-pending",
+        Some(outputs.join(", ")),
+        &format!(
+            "authorize the exact accepted selection with `spice preparation authorize \
+             AUTHORIZATION_JSON`, or close or delete each unselected output before concluding {}",
+            controller.handle()
+        ),
+    ))
+}
+
 pub(super) fn retain_candidate(
     bus: &Bus,
     command: &wire::AdmittedCommand,

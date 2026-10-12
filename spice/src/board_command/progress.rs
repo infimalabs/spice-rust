@@ -285,6 +285,9 @@ fn done_transition(
             "complete only the currently held workflow phase",
         )
     })?;
+    if matches!(transition.kind(), board::TransitionKind::Complete { .. }) {
+        require_no_pending_controlled_outputs(snapshot, entry)?;
+    }
     admit_plan_transition(snapshot, entry, command, &transition)?;
     Ok((at, active.lane(), transition))
 }
@@ -650,6 +653,11 @@ fn prepare_review(
         .source_boundary(&lane)
         .map_err(|error| store_fault("review::boundary-unreadable", &error.to_string()))?;
     let (verdict, finding, note) = review_verdict(review)?;
+    if verdict == body::Verdict::Clean
+        && matches!(transition.kind(), board::TransitionKind::Complete { .. })
+    {
+        require_no_pending_controlled_outputs(&snapshot, entry)?;
+    }
     let statement = match verdict {
         body::Verdict::Clean => {
             admit_plan_transition(&snapshot, entry, command, &transition)?;

@@ -9,6 +9,10 @@ use wire::rooms::{
 };
 
 fn add_plan(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
+    add_controller(bus, epoch, name, None)
+}
+
+fn add_controller(bus: &Bus, epoch: CanonicalUuid, name: &str, flow: Option<&str>) -> TaskHandle {
     let born = stamp(name);
     let task = TaskHandle::for_project("board.test", &born);
     assert_committed(issue(
@@ -26,7 +30,7 @@ fn add_plan(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
             acceptance: vec!["The exact selected output is justified".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
             origin: Some("fixture:preparation".parse().expect("fixture origin")),
-            flow: None,
+            flow: flow.map(str::to_owned),
             depends: Vec::new(),
             claim: false,
         },
@@ -451,4 +455,122 @@ fn adoption_refuses_claimed_work_and_proposal_writes_refuse_stale_subjects() {
         Outcome::Refusal(refusal) if refusal.reason() == "preparation::witness-missing"
     ));
     clean(&root, bus);
+}
+
+fn assert_controlled_output_refusal(outcome: Outcome<CommandAnswer>, outputs: &[&TaskHandle]) {
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("expected controlled-output refusal, got {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "preparation::controlled-outputs-pending");
+    let observed = refusal
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::observed)
+        .expect("refusal names the pending outputs");
+    for output in outputs {
+        assert!(
+            observed.contains(&output.to_string()),
+            "refusal omitted pending output {output}: {observed}"
+        );
+    }
+}
+
+#[test]
+fn clean_review_refuses_to_strand_controlled_outputs() {
+    let (root, bus, epoch, seats) = fixture("preparation-review-controller", 1);
+    let controller = add_controller(&bus, epoch, "Review controller", Some("review"));
+    let (output, spare) = adopted_outputs(&bus, epoch, &controller);
+    let reviewer = Actor::Lane(seats[0].lane);
+    claim_task(&bus, epoch, &seats[0], &reviewer, &controller);
+    connect_child(&bus, epoch, &controller, &output);
+    let assigned = board(&bus, epoch, reviewer.clone());
+    assert_controlled_output_refusal(
+        issue(
+            &bus,
+            epoch,
+            reviewer,
+            CommandKind::TaskReview,
+            progress_witnesses(
+                &assigned,
+                at(&assigned, &controller),
+                seats[0].lane,
+                seats[0].occupant,
+                true,
+            )
+            .expect("review completion witnesses"),
+            &TaskReview {
+                task: controller.clone(),
+                finding: "clean".to_owned(),
+                note: Some("selected contracts are coherent".to_owned()),
+                then: Vec::new(),
+                followup: Vec::new(),
+            },
+        ),
+        &[&output, &spare],
+    );
+    assert_eq!(
+        at(&board(&bus, epoch, Actor::Operator), &controller)
+            .workflow
+            .body
+            .status,
+        "pending"
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn operator_negative_settlements_leave_controlled_outputs_pending_and_unauthorized() {
+    for (fixture_name, deleted) in [
+        ("preparation-close-controller", false),
+        ("preparation-delete-controller", true),
+    ] {
+        let (root, bus, epoch, _) = fixture(fixture_name, 1);
+        let controller = add_plan(&bus, epoch, fixture_name);
+        let (output, spare) = adopted_outputs(&bus, epoch, &controller);
+        let visible = board(&bus, epoch, Actor::Operator);
+        let heads = at(&visible, &controller);
+        let expected = vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ];
+        let outcome = if deleted {
+            issue(
+                &bus,
+                epoch,
+                Actor::Operator,
+                CommandKind::TaskDelete,
+                expected,
+                &TaskDelete {
+                    task: controller.clone(),
+                    reason: "candidate rejected".to_owned(),
+                    force_claimed: false,
+                },
+            )
+        } else {
+            issue(
+                &bus,
+                epoch,
+                Actor::Operator,
+                CommandKind::TaskClose,
+                expected,
+                &TaskClose {
+                    task: controller.clone(),
+                    validation: "no selected execution is justified".to_owned(),
+                    force_claimed: false,
+                },
+            )
+        };
+        assert_committed(outcome);
+        let settled = board(&bus, epoch, Actor::Operator);
+        assert_eq!(
+            at(&settled, &controller).workflow.body.status,
+            if deleted { "deleted" } else { "completed" }
+        );
+        for controlled in [&output, &spare] {
+            let heads = at(&settled, controlled);
+            assert_eq!(heads.workflow.body.status, "pending");
+            assert_eq!(heads.statement.body.authorization, None);
+        }
+        clean(&root, bus);
+    }
 }

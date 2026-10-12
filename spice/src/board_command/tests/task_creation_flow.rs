@@ -304,7 +304,7 @@ fn accepted_child() -> TaskAdd {
 }
 
 #[test]
-fn implicit_plan_children_stay_gated_until_execution_authorization() {
+fn implicit_plan_controller_refuses_completion_that_would_strand_its_output() {
     let (root, bus, epoch, seats) = fixture("ambient-plan-child", 2);
     let seat = &seats[0];
     let lane = Actor::Lane(seat.lane);
@@ -370,8 +370,8 @@ fn implicit_plan_children_stay_gated_until_execution_authorization() {
     offered("the held plan must keep its child out of allocation");
 
     let expected = progress_witnesses(&linked, at(&linked, &plan), seat.lane, seat.occupant, false)
-        .expect("the linked accepted child admits plan completion");
-    assert_committed(issue(
+        .expect("the linked accepted child witnesses the attempted conclusion");
+    let refused = issue(
         &bus,
         epoch,
         lane.clone(),
@@ -382,10 +382,18 @@ fn implicit_plan_children_stay_gated_until_execution_authorization() {
             validation: "accepted implementation child is connected".to_owned(),
             operation: Some(completion_operation()),
         },
+    );
+    assert!(matches!(
+        refused,
+        Outcome::Refusal(refusal)
+            if refusal.reason() == "preparation::controlled-outputs-pending"
+                && refusal.diagnostic().and_then(wire::RefusalDiagnostic::observed)
+                    .is_some_and(|observed| observed.contains(&child.to_string()))
     ));
-    offered("completion without execution authorization selects no output");
-    let settled = board(&bus, epoch, worker.clone());
-    assert_eq!(at(&settled, &child).workflow.body.status, "pending");
+    offered("refused completion leaves the controlled output gated");
+    let unsettled = board(&bus, epoch, worker.clone());
+    assert_eq!(at(&unsettled, &plan).workflow.body.status, "pending");
+    assert_eq!(at(&unsettled, &child).workflow.body.status, "pending");
 
     let declare = TaskEdit {
         task: child.clone(),
