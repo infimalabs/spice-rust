@@ -51,9 +51,7 @@ fn require_no_planning_implementation(
     action: &str,
 ) -> Result<(), Outcome<CommandAnswer>> {
     match claim_capture_from_board(board) {
-        gate::ClaimCapture::Active { task, phase }
-            if matches!(phase.as_str(), "plan" | "design") =>
-        {
+        gate::ClaimCapture::Active { task, phase } if gate::is_planning_phase(phase.as_str()) => {
             Err(refusal(
                 "task::planning-implementation",
                 Some(format!(

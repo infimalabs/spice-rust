@@ -86,7 +86,7 @@ pub(super) fn dispatch_captured(
 
 pub(super) fn require_non_planning_claim(claim: &gate::ClaimCapture) -> Result<(), WorkerFailure> {
     if let gate::ClaimCapture::Active { task, phase } = claim
-        && matches!(phase.as_str(), "plan" | "design")
+        && gate::is_planning_phase(phase.as_str())
     {
         return Err(WorkerFailure {
             reason: "gate::pre-commit-planning-implementation".to_owned(),

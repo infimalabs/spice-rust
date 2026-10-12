@@ -33,9 +33,9 @@ pub use declaration::{
     CoreArmDeclaration, CoreTimeoutContract, CoreToolContract, GitCommandContract,
     PredecessorObservation, core_declarations,
 };
-pub use evaluate::evaluate_core;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use evaluate::evaluate_core_arm;
+pub use evaluate::{evaluate_core, is_planning_phase};
 
 use crate::GateId;
 use crate::state::BoundDecision;
