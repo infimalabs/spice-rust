@@ -714,9 +714,9 @@ fn peer_origin(
     let Some((lane, locus)) = answer else {
         return Ok(None);
     };
-    let Some(source) = locus.source else {
-        return Ok(None);
-    };
+    let source = locus
+        .source
+        .expect("source-qualified steering retirement carries a tape generation");
     let session = reader
         .transcript_session(lane, source, locus.member, locus.offset)
         .map_err(|error| format!("{error:?}"))?;
