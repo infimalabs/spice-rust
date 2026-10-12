@@ -152,6 +152,8 @@ mod room;
 use room::room_post;
 pub(crate) use room::{project_attention, room_publications};
 mod room_coordination;
+#[cfg(test)]
+pub(crate) use room_coordination::room_coordinate_with;
 pub(crate) use room_coordination::{
     coordination_lane, room_coordinate, room_coordination_read, room_put_aside,
 };
