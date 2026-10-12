@@ -16,9 +16,10 @@ use wire::intent::{RoomClose, RoomControl, RoomControlAnswer, RoomItemMove, Room
 use wire::rooms::{
     QuestionClosure, QuestionResultHead, QuestionResultRecord, QuestionResultRef,
     QuestionResultState, ROOM_CONTROL_RETURN_RESERVE_BYTES, ROOM_PUBLICATION_BYTES_LIMIT,
-    RoomAnchor, RoomAuthorityStamp, RoomDestination, RoomDisposed, RoomPosted, RoomPublicationKind,
-    RoomQuestionClosed, RoomReceiptDisposition, RoomReceiptHead, RoomReceiptRecord,
-    RoomReceiptRecovered, RoomReceiptRef, RoomReceiptState,
+    ROOM_RELEVANCE_TEXT_LIMIT, RoomAnchor, RoomAuthorityStamp, RoomDestination, RoomDisposed,
+    RoomPosted, RoomPublicationKind, RoomQuestionClosed, RoomReceiptDisposition, RoomReceiptHead,
+    RoomReceiptRecord, RoomReceiptRecovered, RoomReceiptRef, RoomReceiptState,
+    RoomRelevanceAssessed, RoomRelevanceAssessment, RoomRelevanceVerdict,
 };
 
 /// Guard reason when an item, result, or requester seat moved between this
@@ -63,6 +64,12 @@ pub(crate) fn room_control(
         RoomControl::Recover { item } => {
             recover(bus, command, control, config, item).map(|answer| (answer, None))
         }
+        RoomControl::Assess {
+            observation,
+            verdict,
+            explanation,
+        } => assess(bus, command, control, observation, *verdict, explanation)
+            .map(|answer| (answer, None)),
     };
     match applied {
         Ok((outcome, lane)) => (outcome, lane),
@@ -113,6 +120,7 @@ fn dispose(
         results: Vec::new(),
         answer: None,
         returned: None,
+        assessed: None,
     };
     for key in control_shape.keys() {
         let (_, head) = item(bus, key)?;
@@ -201,6 +209,7 @@ fn answer(
         }],
         answer: Some(publication.clone()),
         returned: Some(key),
+        assessed: None,
     };
     if let Some(item_key) = record.item() {
         let (_, item_head) = item(bus, &item_key)?;
@@ -353,6 +362,84 @@ fn recover(
         results: Vec::new(),
         answer: None,
         returned: None,
+        assessed: None,
+    };
+    Ok(commit(bus, command, control, write, answer))
+}
+
+/// Record the operator's one assessment of a shadow relevance observation.
+/// The assessment measures shadow quality and moves no other authority.
+fn assess(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    control: &RoomControl,
+    observation: &RoomAuthorityStamp,
+    verdict: RoomRelevanceVerdict,
+    explanation: &str,
+) -> Result<Outcome<CommandAnswer>, Outcome<CommandAnswer>> {
+    if explanation.trim().is_empty() || explanation.len() > ROOM_RELEVANCE_TEXT_LIMIT {
+        return Err(refusal(
+            "room::assessment-invalid",
+            Some(explanation.len().to_string()),
+            &format!(
+                "explain the verdict in 1..={ROOM_RELEVANCE_TEXT_LIMIT} bytes of non-blank text"
+            ),
+        ));
+    }
+    let probe = observation.clone();
+    let record = bus
+        .read(move |read| read.room_relevance_record(&probe))
+        .map_err(|error| store_fault("room::relevance-unreadable", &error.to_string()))?
+        .ok_or_else(|| {
+            refusal(
+                "room::observation-unknown",
+                Some(observation.to_string()),
+                "name an observation as `spice room relevance HANDLE` lists it",
+            )
+        })?;
+    if let Some(assessed) = &record.assessment {
+        return Err(refusal(
+            "room::observation-assessed",
+            Some(observation.to_string()),
+            &format!(
+                "observation {observation} was already assessed {} at {}; each observation \
+                 takes one assessment",
+                assessed.body().verdict.name(),
+                assessed.position()
+            ),
+        ));
+    }
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        resident_origin(command)?,
+        now()?,
+        Producer::CommandDoor,
+    );
+    let probe = observation.clone();
+    write.guard(JournalGuard::new(move |read| {
+        match read.room_relevance_record(&probe)? {
+            Some(record) if record.assessment.is_none() => Ok(()),
+            _ => Err(GuardError::refused(MOVED)),
+        }
+    }));
+    write
+        .fact(
+            RoomRelevanceAssessed {
+                assessment: RoomRelevanceAssessment {
+                    observation: observation.clone(),
+                    verdict,
+                    explanation: explanation.to_owned(),
+                },
+            },
+            FactCause::Root,
+        )
+        .map_err(|error| store_fault("room::assessment-build", &error.to_string()))?;
+    let answer = RoomControlAnswer {
+        items: Vec::new(),
+        results: Vec::new(),
+        answer: None,
+        returned: None,
+        assessed: Some((observation.clone(), verdict)),
     };
     Ok(commit(bus, command, control, write, answer))
 }
@@ -431,6 +518,7 @@ fn closed(
         }],
         answer: None,
         returned: None,
+        assessed: None,
     };
     if let Some(item_key) = record.item() {
         let (_, item_head) = item(bus, &item_key)?;

@@ -15,6 +15,7 @@
 
 mod conversation;
 pub(crate) mod inbox;
+pub(crate) mod relevance;
 pub(crate) mod result;
 
 use std::collections::BTreeSet;
@@ -317,24 +318,7 @@ fn recorded(
     page: &Page,
     projects: &board::ProjectPolicy,
 ) -> Result<Recorded, Failure> {
-    let heads = read.task_heads_for(anchor).map_err(store)?.ok_or_else(|| {
-        Failure::Refusal(crate::read_page::refusal(
-            "room",
-            "task-unknown",
-            Some(anchor.to_string()),
-            "read the board and pass an existing task handle",
-        ))
-    })?;
-    let room = board::Entry::new(
-        heads.statement().body().clone(),
-        heads.workflow().body().clone(),
-        heads.claim().map(|head| head.body().clone()),
-        heads.lease().map(|head| head.body().clone()),
-        projects,
-    )
-    .map_err(|error| fault(FaultClass::Store, "room::task-head-invalid", error))?
-    .handle()
-    .clone();
+    let room = current_handle(read, anchor, projects)?;
     let cursor = read.cursor().map_err(store)?.ok_or_else(|| {
         fault(
             FaultClass::Store,
@@ -379,6 +363,33 @@ fn recorded(
         population,
         rows,
     })
+}
+
+/// The current handle of the room anchored at `anchor`, refusing an anchor
+/// that names no task.
+fn current_handle(
+    read: &journal::JournalRead<'_>,
+    anchor: &TaskStamp,
+    projects: &board::ProjectPolicy,
+) -> Result<TaskHandle, Failure> {
+    let heads = read.task_heads_for(anchor).map_err(store)?.ok_or_else(|| {
+        Failure::Refusal(crate::read_page::refusal(
+            "room",
+            "task-unknown",
+            Some(anchor.to_string()),
+            "read the board and pass an existing task handle",
+        ))
+    })?;
+    Ok(board::Entry::new(
+        heads.statement().body().clone(),
+        heads.workflow().body().clone(),
+        heads.claim().map(|head| head.body().clone()),
+        heads.lease().map(|head| head.body().clone()),
+        projects,
+    )
+    .map_err(|error| fault(FaultClass::Store, "room::task-head-invalid", error))?
+    .handle()
+    .clone())
 }
 
 fn row(

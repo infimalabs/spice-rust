@@ -336,8 +336,8 @@ fn observe(
         seq: seq.get(),
         through: observation.through.get(),
         body: wire::encode(&observation)?,
-        classification: class_name(observation.classification),
-        progress: progress_name(observation.progress),
+        classification: observation.classification.name(),
+        progress: observation.progress.name(),
     };
     authority.change(Change::Relevance(Edit::Observed {
         observation: key,
@@ -369,43 +369,13 @@ fn assess(
     require_text(&assessment.explanation, "assessment", &key, false)?;
     let row = AssessmentRow {
         seq: seq.get(),
-        verdict: verdict_name(assessment.verdict),
+        verdict: assessment.verdict.name(),
         body: wire::encode(&assessment)?,
     };
     authority.change(Change::Relevance(Edit::Assessed {
         observation: key,
         row,
     }))
-}
-fn class_name(classification: RoomRelevanceClass) -> &'static str {
-    match classification {
-        RoomRelevanceClass::RelevantContribution => "relevant-contribution",
-        RoomRelevanceClass::Declined => "declined",
-        RoomRelevanceClass::Duplicate => "duplicate",
-        RoomRelevanceClass::StaleActivity => "stale-activity",
-        RoomRelevanceClass::MissedOpportunity => "missed-opportunity",
-        RoomRelevanceClass::Agreement => "agreement",
-        RoomRelevanceClass::MessageCount => "message-count",
-        RoomRelevanceClass::Silence => "silence",
-        RoomRelevanceClass::ElapsedTime => "elapsed-time",
-        RoomRelevanceClass::Unknown => "unknown",
-    }
-}
-
-fn progress_name(progress: RoomProgressStanding) -> &'static str {
-    match progress {
-        RoomProgressStanding::Advanced => "advanced",
-        RoomProgressStanding::NoProgress => "no-progress",
-        RoomProgressStanding::Unknown => "unknown",
-    }
-}
-
-fn verdict_name(verdict: wire::rooms::RoomRelevanceVerdict) -> &'static str {
-    match verdict {
-        wire::rooms::RoomRelevanceVerdict::Confirmed => "confirmed",
-        wire::rooms::RoomRelevanceVerdict::FalsePositive => "false-positive",
-        wire::rooms::RoomRelevanceVerdict::Unknown => "unknown",
-    }
 }
 
 fn stored_name(name: String) -> &'static str {

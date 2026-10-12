@@ -447,6 +447,11 @@ impl ClientAction {
                         result.as_str().len().saturating_add(text.len())
                     }
                     wire::intent::RoomControl::Recover { .. } => 0,
+                    wire::intent::RoomControl::Assess {
+                        observation,
+                        explanation,
+                        ..
+                    } => observation.as_str().len().saturating_add(explanation.len()),
                 },
                 crate::client_action::RoomControlRequest::Close(close) => close
                     .result

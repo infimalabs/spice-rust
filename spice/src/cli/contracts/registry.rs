@@ -570,6 +570,24 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "room::control"
     ),
+    operator!(
+        ["room", "assess"],
+        "room assess OBSERVATION VERDICT TEXT",
+        Command,
+        [RoomRelevanceAssessed],
+        Reply,
+        "room::control"
+    ),
+    row!(
+        ["room", "relevance"],
+        "room relevance HANDLE [--limit N] [--max-bytes N] [--after OBSERVATION]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "room::relevance"
+    ),
     row!(
         ["room", "decline"],
         "room decline RESULT [--clause TEXT] [--override]",

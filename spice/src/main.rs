@@ -400,6 +400,9 @@ impl NativeInvocation<'_> {
             ["room", "history"] => deliver_display(&room_command::run(leaf, contract), form),
             ["room", "inbox"] => deliver_display(&room_command::inbox::run(leaf, contract), form),
             ["room", "result"] => deliver_display(&room_command::result::run(leaf, contract), form),
+            ["room", "relevance"] => {
+                deliver_display(&room_command::relevance::run(leaf, contract), form)
+            }
             ["preparation", "show"] => {
                 deliver_display(&preparation_command::run(leaf, contract), form)
             }
@@ -454,6 +457,7 @@ impl NativeInvocation<'_> {
             ["room", "history"]
             | ["room", "inbox"]
             | ["room", "result"]
+            | ["room", "relevance"]
             | ["preparation", "show"] => {
                 self.dispatch_retained_read(contract);
             }
@@ -521,6 +525,7 @@ impl NativeInvocation<'_> {
             | ["room", "nak"]
             | ["room", "answer"]
             | ["room", "recover"]
+            | ["room", "assess"]
             | ["room", "decline"]
             | ["room", "cancel"]
             | ["task", "list"]

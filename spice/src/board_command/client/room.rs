@@ -11,7 +11,7 @@ pub(super) fn dispatch_room_client(
         ["room", "status"] => client_room_status(repository, contract, matches),
         ["room", "start" | "resume"] => client_room_coordinate(repository, contract, matches),
         ["room", "put-aside"] => client_room_put_aside(repository, contract, matches),
-        ["room", "ack" | "nak" | "answer" | "recover"] => {
+        ["room", "ack" | "nak" | "answer" | "recover" | "assess"] => {
             client_room_control(repository, contract, matches)
         }
         ["room", "decline" | "cancel"] => client_room_close(repository, contract, matches),
@@ -279,6 +279,27 @@ fn room_control(
                 text: required(matches, "TEXT"),
             });
         }
+        ["room", "assess"] => {
+            let observation = required(matches, "OBSERVATION");
+            let observation = observation.parse::<RoomAuthorityStamp>().map_err(|error| {
+                refusal(
+                    "room::observation-invalid",
+                    Some(observation.clone()),
+                    &format!(
+                        "name an observation as `spice room relevance HANDLE` lists it: {error}"
+                    ),
+                )
+            })?;
+            let verdict = required(matches, "VERDICT");
+            let verdict = verdict
+                .parse::<wire::rooms::RoomRelevanceVerdict>()
+                .map_err(|error| refusal("room::verdict-invalid", Some(verdict.clone()), error))?;
+            return Ok(RoomControl::Assess {
+                observation,
+                verdict,
+                explanation: required(matches, "TEXT"),
+            });
+        }
         _ => {
             return Ok(RoomControl::Recover {
                 item: item_ref(&required(matches, "ITEM"))?,
@@ -379,6 +400,12 @@ fn render_control(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
     }
     if let Some(key) = &answer.returned {
         lines.push(format!("returned {key}"));
+    }
+    if let Some((observation, verdict)) = &answer.assessed {
+        lines.push(format!(
+            "observation {observation} assessed {}",
+            verdict.name()
+        ));
     }
     Outcome::Reply(Reply {
         position,
