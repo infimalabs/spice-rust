@@ -39,6 +39,27 @@ exact remaining public task count; the badge is exact through 99, then `99+`,
 and zero is explicit. Reconnect keeps the last count marked stale until current
 data returns. Speech never retitles the tab.
 
+## Room authority and browser preferences
+
+The authenticated fact stream owns one deterministic projection of task-keyed
+room timelines, repository working groups, participant reasons, preparation
+evidence, output controls, decisions, authorizations, and claim-bound stop
+requests. Durable task stamps and room publication stamps key cards across
+reloads and unavailable source bytes. The current board snapshot alone resolves
+an anchor's displayed handle; absence is shown as unavailable or missing rather
+than reconstructed from an old handle.
+
+Packed fact continuations may skip facts hidden from the app, but they never
+move backward. A regressed page, non-monotone row sequence, or stream overflow
+invalidates the projection and reconnects without a resume cursor so the next
+generation supplies a fresh snapshot. It is never merged speculatively.
+
+Working groups are shared catalog organization only. Open room views, view
+order and layout, composer drafts, reader and scroll positions, and focus
+anchors remain browser preferences. Those preferences cannot grant task, room,
+group, team, or lane authority, and a group edit never mounts, reorders, or
+closes a browser view.
+
 ## Resident topology in the global menu
 
 The Spice view leads with connection state, the inspectable version stack, and

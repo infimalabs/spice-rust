@@ -24,6 +24,8 @@ mod member_control;
 mod message_history;
 #[path = "runtime/renewal.rs"]
 mod renewal;
+#[path = "runtime/rooms.rs"]
+mod rooms;
 #[path = "runtime/stream_terminal.rs"]
 mod stream_terminal;
 mod support;
