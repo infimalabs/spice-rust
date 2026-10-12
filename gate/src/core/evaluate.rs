@@ -145,12 +145,21 @@ fn evaluate_merge(evidence: &MergeIntegrityEvidence) -> (CoreStanding, String) {
     }
 }
 
+/// Whether an active claim in `phase` forbids task-owned implementation history.
+///
+/// This is the one planning-phase deny-list. Only `plan` and `design` refuse
+/// commits, captures, and completions that would publish repository work; every
+/// other phase, named or not, keeps its native permission, so the board's phase
+/// vocabulary stays open.
+#[must_use]
+pub fn is_planning_phase(phase: &str) -> bool {
+    matches!(phase, "plan" | "design")
+}
+
 fn evaluate_planning_phase(evidence: &PlanningPhaseEvidence) -> (CoreStanding, String) {
     match evidence {
         PlanningPhaseEvidence::NoActiveClaim => passed("planning phase: no active claim"),
-        PlanningPhaseEvidence::Active { task, phase }
-            if matches!(phase.as_str(), "plan" | "design") =>
-        {
+        PlanningPhaseEvidence::Active { task, phase } if is_planning_phase(phase.as_str()) => {
             failed(format!(
                 "git commit refused: active claimed task {task} is in {} phase",
                 phase.as_str()

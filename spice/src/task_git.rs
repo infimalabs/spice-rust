@@ -717,7 +717,7 @@ fn publish_inner(
 
 /// The holder's routes for dirty completion; planning phases admit no commit.
 fn completion_dirty_remedy(meta: Metadata<'_>) -> String {
-    if is_planning_phase(meta.phase) {
+    if gate::is_planning_phase(meta.phase) {
         format!(
             "run spice task free {} to park the reported paths on the task",
             meta.label
@@ -760,16 +760,12 @@ fn prepare_completion_target(
     Ok(Some((target, upstream_head)))
 }
 
-fn is_planning_phase(phase: &str) -> bool {
-    matches!(phase, "plan" | "design")
-}
-
 fn require_planning_opening(
     phase: &str,
     resolution_state: bool,
     opening: Option<&GitBoundary>,
 ) -> Result<(), Error> {
-    if !is_planning_phase(phase) {
+    if !gate::is_planning_phase(phase) {
         return Ok(());
     }
     if resolution_state {
@@ -798,7 +794,7 @@ fn require_planning_synchronization(
     observed_head: &str,
     target: Option<(&Target, &str)>,
 ) -> Result<(), Error> {
-    if !is_planning_phase(phase) {
+    if !gate::is_planning_phase(phase) {
         return Ok(());
     }
     let opening = opening.expect("planning opening was admitted before target resolution");

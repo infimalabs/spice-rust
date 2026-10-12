@@ -128,7 +128,7 @@ pub(super) fn task_done(
         Err(outcome) => return outcome,
     };
     let phase = entry.workflow().phase.as_str();
-    let parked = if matches!(phase, "plan" | "design") {
+    let parked = if gate::is_planning_phase(phase) {
         let claimed = entry.claim().expect("completion requires a claim").claimed;
         match release::prepare_release(&snapshot, command, claimed, repository, Some(phase)) {
             Ok(parked) => parked,
