@@ -82,6 +82,7 @@ fn wake(
         &TaskWake {
             task: task.clone(),
             into: into.map(str::to_owned),
+            preparation: None,
             claim: false,
         },
     );

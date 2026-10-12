@@ -69,6 +69,15 @@ fn fact_count(bus: &Bus) -> usize {
         .len()
 }
 
+fn wake(task: &TaskHandle, claim: bool) -> TaskWake {
+    TaskWake {
+        task: task.clone(),
+        into: None,
+        preparation: None,
+        claim,
+    }
+}
+
 #[test]
 fn deferred_wake_claims_in_one_transaction_and_an_existing_claim_refuses_without_waking() {
     let (root, bus, epoch, seats) = fixture("wake-claim", 1);
@@ -108,11 +117,7 @@ fn deferred_wake_claims_in_one_transaction_and_an_existing_claim_refuses_without
         actor.clone(),
         CommandKind::TaskWake,
         claim_wake_expected(&deferred, &task, seat, false),
-        &TaskWake {
-            task: task.clone(),
-            into: None,
-            claim: true,
-        },
+        &wake(&task, true),
     )
     else {
         panic!("wake-and-claim did not commit")
@@ -166,11 +171,7 @@ fn deferred_wake_claims_in_one_transaction_and_an_existing_claim_refuses_without
         actor.clone(),
         CommandKind::TaskWake,
         claim_wake_expected(&deferred, &second, seat, false),
-        &TaskWake {
-            task: second.clone(),
-            into: None,
-            claim: true,
-        },
+        &wake(&second, true),
     );
     assert!(
         matches!(refused, Outcome::Refusal(ref refusal)
@@ -262,6 +263,7 @@ fn self_defer_releases_the_claim_but_peer_defer_leaves_it_held() {
         &TaskWake {
             task: task.clone(),
             into: None,
+            preparation: None,
             claim: false,
         },
     ));
@@ -311,6 +313,7 @@ fn parked_oops_wake_promotes_and_claims_in_one_transaction() {
         &TaskWake {
             task: parked.clone(),
             into: None,
+            preparation: None,
             claim: true,
         },
     );
@@ -333,6 +336,7 @@ fn parked_oops_wake_promotes_and_claims_in_one_transaction() {
         &TaskWake {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
+            preparation: None,
             claim: true,
         },
     )
@@ -396,6 +400,7 @@ fn settled_task_refuses_wake_claim_without_side_effects() {
         &TaskWake {
             task,
             into: None,
+            preparation: None,
             claim: true,
         },
     );

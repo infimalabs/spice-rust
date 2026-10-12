@@ -17,8 +17,9 @@ use wire::intent::{
     TextAnswer,
 };
 use wire::rooms::{
-    RoomListenerAvailability, RoomListenerDelivery, RoomPost, RoomPostAnswer, RoomPostListener,
-    RoomPostNext, RoomPostOutcome, RoomPublicationContent, RoomPublished,
+    OopsGrooming, OutputControlled, RoomListenerAvailability, RoomListenerDelivery, RoomPost,
+    RoomPostAnswer, RoomPostListener, RoomPostNext, RoomPostOutcome, RoomPublicationContent,
+    RoomPublished,
 };
 use wire::{
     Actor, ClaimDisposition, ClaimHead, Command, CommandKind, Digest, Domain, Fault, FaultClass,

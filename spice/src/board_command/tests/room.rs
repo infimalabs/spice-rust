@@ -5,9 +5,9 @@ use wire::intent::{
     RoomCoordinate, RoomCoordinateAction, RoomCoordinationRead, RoomCoordinationView, RoomPutAside,
 };
 use wire::rooms::{
-    CoordinationControl, RoomAuthorityStamp, RoomCoordinationStarted, RoomListenerAvailability,
-    RoomListenerDelivery, RoomMessaged, RoomPost, RoomPostOutcome, RoomPublicationContent,
-    RoomPublished, TranscriptHunk,
+    CoordinationControl, OopsDisposition, OopsGrooming, RoomAuthorityStamp,
+    RoomCoordinationStarted, RoomListenerAvailability, RoomListenerDelivery, RoomMessaged,
+    RoomPost, RoomPostOutcome, RoomPublicationContent, RoomPublished, TranscriptHunk,
 };
 
 fn room_projects() -> ProjectPolicy {
@@ -252,6 +252,7 @@ fn post_command(
         &RoomPost {
             room: room.clone(),
             text: text.to_owned(),
+            grooming: None,
         },
     )
 }
@@ -412,6 +413,120 @@ fn room_post_records_once_and_retains_its_exact_retry_answer() {
 }
 
 #[test]
+fn oops_grooming_records_source_preserving_negative_triage_without_mutating_reports() {
+    let (_root, bus, epoch, _seats) = fixture("room-oops-grooming", 0);
+    let batch_stamp = stamp("room-oops-batch");
+    let batch = TaskHandle::for_project("board.test", &batch_stamp);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: batch_stamp }],
+        &TaskAdd {
+            preparation: None,
+            title: "Bounded OOPS batch".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["Each selected source receives a typed disposition".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:oops-grooming".parse().expect("fixture origin")),
+            flow: Some("design,review".to_owned()),
+            depends: Vec::new(),
+            intent: Some(wire::TaskIntent::Design),
+            claim: false,
+        },
+    ));
+    let report_stamp = stamp("room-oops-report");
+    let report = TaskHandle::for_project(".oops", &report_stamp);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskOopsAdd,
+        vec![Witness::Absence {
+            task: report_stamp.clone(),
+        }],
+        &TaskOopsAdd {
+            title: "Observed friction".to_owned(),
+            description: "Evidence retained by the report".to_owned(),
+            origin: Some("fixture:oops-source".parse().expect("fixture origin")),
+            project: None,
+        },
+    ));
+    let before = board(&bus, epoch, Actor::Operator);
+    let batch_heads = at(&before, &batch);
+    let report_heads = at(&before, &report);
+    let statement = report_heads.statement.clone();
+    let workflow = report_heads.workflow.clone();
+    let oversized = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::RoomPost,
+        vec![
+            statement_witness(batch_heads),
+            statement_witness(report_heads),
+        ],
+        &RoomPost {
+            room: batch.clone(),
+            text: String::new(),
+            grooming: Some(OopsGrooming {
+                reports: vec![report_stamp.clone(); wire::rooms::OOPS_GROOMING_REPORT_LIMIT + 1],
+                disposition: OopsDisposition::NoWork,
+                cause: "One unbounded cluster.".to_owned(),
+                exceptions: String::new(),
+                uncertainty: String::new(),
+            }),
+        },
+    );
+    assert!(matches!(
+        oversized,
+        Outcome::Refusal(refusal) if refusal.reason() == "room::oops-batch-too-large"
+    ));
+    let grooming = OopsGrooming {
+        reports: vec![report_stamp],
+        disposition: OopsDisposition::NoWork,
+        cause: "The report names expected bounded behavior.".to_owned(),
+        exceptions: "A changed invariant requires a new batch.".to_owned(),
+        uncertainty: "No production counterexample is retained.".to_owned(),
+    };
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::RoomPost,
+        vec![
+            statement_witness(batch_heads),
+            statement_witness(report_heads),
+        ],
+        &RoomPost {
+            room: batch.clone(),
+            text: String::new(),
+            grooming: Some(grooming.clone()),
+        },
+    ));
+
+    let page = publication_page(&bus, &batch);
+    let recorded = page.rows[0]
+        .fact
+        .read::<RoomPublished>()
+        .expect("grooming publication has a typed body");
+    assert_eq!(
+        recorded.content,
+        RoomPublicationContent::OopsGroomed { grooming }
+    );
+    let after = board(&bus, epoch, Actor::Operator);
+    let retained = at(&after, &report);
+    assert_eq!(retained.statement, statement);
+    assert_eq!(retained.workflow, workflow);
+    assert!(matches!(
+        retained.visibility,
+        wire::intent::ProjectVisibility::Hidden { .. }
+    ));
+}
+
+#[test]
 fn room_post_reports_occupied_vacant_and_unknown_listeners_without_waking() {
     let (_root, bus, epoch, seats) = fixture("room-post-listeners", 2);
     let room = add(
@@ -486,6 +601,7 @@ fn room_post_refuses_unknown_anchor_without_recording() {
         &RoomPost {
             room: unknown.clone(),
             text: "Do not record.".to_owned(),
+            grooming: None,
         },
     );
     let outcome = dispatch(&bus, &command).expect("room command dispatches");

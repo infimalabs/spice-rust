@@ -19,6 +19,32 @@ fn add_parked(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
     task
 }
 
+fn add_design(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
+    let born = stamp(name);
+    let task = TaskHandle::for_project("board.test", &born);
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born }],
+        &TaskAdd {
+            preparation: None,
+            title: name.to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["The bounded grooming batch records its disposition".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:oops-grooming".parse().expect("fixture origin")),
+            flow: Some("design,review".to_owned()),
+            depends: Vec::new(),
+            intent: Some(wire::TaskIntent::Design),
+            claim: false,
+        },
+    ));
+    task
+}
+
 fn fact_count(bus: &Bus) -> usize {
     bus.fact_snapshot()
         .expect("fixture facts remain readable")
@@ -331,6 +357,7 @@ fn assert_unwitnessed_promotion_refuses(
         body: serde_json::to_value(TaskWake {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
+            preparation: None,
             claim: false,
         })
         .expect("promotion body encodes"),
@@ -375,6 +402,7 @@ fn assert_unrelated_promotion_witness_refuses(
         body: serde_json::to_value(TaskWake {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
+            preparation: None,
             claim: false,
         })
         .expect("promotion body encodes"),
@@ -442,6 +470,7 @@ fn stale_promotion_after_edit(
         &TaskWake {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
+            preparation: None,
             claim: false,
         },
     );
@@ -543,6 +572,7 @@ fn wake_is_the_only_unclaimed_oops_project_exit() {
         &TaskWake {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
+            preparation: None,
             claim: false,
         },
     )) else {
@@ -582,6 +612,7 @@ fn wake_is_the_only_unclaimed_oops_project_exit() {
         &TaskWake {
             task: promoted,
             into: Some("board.identity".to_owned()),
+            preparation: None,
             claim: false,
         },
     );
@@ -634,6 +665,7 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
         &TaskWake {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
+            preparation: None,
             claim: false,
         },
     )) else {
@@ -699,5 +731,74 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
             .as_str(),
         "todo",
     );
+    clean(&root, bus);
+}
+
+#[test]
+fn parked_report_promotion_atomically_becomes_controlled_and_unauthorized() {
+    let (root, bus, epoch, _seats) = fixture("oops-controlled-promotion", 0);
+    let controller = add_design(&bus, epoch, "OOPS-batch001");
+    let parked = add_parked(&bus, epoch, "OOPS-report01");
+    let current = board(&bus, epoch, Actor::Operator);
+    let report = at(&current, &parked);
+    let design = at(&current, &controller);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskWake,
+        vec![
+            statement_witness(report),
+            workflow_witness(report),
+            deferral_witness(report),
+            statement_witness(design),
+            workflow_witness(design),
+            claim_witness(design),
+        ],
+        &TaskWake {
+            task: parked.clone(),
+            into: Some("board.test".to_owned()),
+            preparation: Some(controller.clone()),
+            claim: false,
+        },
+    ));
+
+    let promoted = TaskHandle::for_project(
+        "board.test",
+        &parked.born().expect("fixture report has a birth stamp"),
+    );
+    let visible = board(&bus, epoch, Actor::Operator);
+    let output = at(&visible, &promoted);
+    let preparation = output
+        .statement
+        .body
+        .preparation
+        .as_ref()
+        .expect("promotion records controlling preparation");
+    assert_eq!(
+        preparation.parent,
+        controller
+            .born()
+            .expect("fixture controller has a birth stamp")
+    );
+    assert_eq!(preparation.controller, preparation.parent);
+    assert_eq!(preparation.construction, output.statement.body.born);
+    assert_eq!(output.statement.body.authorization, None);
+    assert_eq!(output.claim, None);
+
+    let facts = bus.fact_snapshot().expect("fixture facts read");
+    let control = facts
+        .facts()
+        .iter()
+        .find_map(|envelope| {
+            envelope
+                .fact
+                .read::<wire::rooms::OutputControlled>()
+                .filter(|body| body.output == output.statement.body.born)
+                .map(|body| (envelope.seq, body))
+        })
+        .expect("promotion writes its control fact");
+    assert_eq!(control.0, output.statement.position);
+    assert_eq!(control.1.preparation, *preparation);
     clean(&root, bus);
 }

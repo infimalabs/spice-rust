@@ -13,7 +13,7 @@ use yew::prelude::*;
 
 use super::sender::{SenderHandle, admit_action};
 use crate::AppRuntime;
-use crate::client_action::ClientAction;
+use crate::client_action::{ClientAction, RoomPostAction};
 use crate::room_views::{GroupView, RoomViewAction, RoomViews};
 use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 
@@ -601,15 +601,21 @@ fn render_room(
         Callback::from(move |_| controls.move_room(group.clone(), room.clone(), delta))
     };
     let cards = runtime
-        .and_then(|runtime| runtime.room_projection().room(room))
-        .map(|room| {
+        .and_then(|runtime| {
+            runtime
+                .room_projection()
+                .room(room)
+                .map(|state| (runtime, state))
+        })
+        .map(|(runtime, room)| {
             room.events()
                 .iter()
-                .map(|(publication, event)| render_event(publication, event))
+                .map(|(publication, event)| render_event(runtime, publication, event))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
     let post = room_post_form(runtime, controls, sender, view, room);
+    let grooming = oops_grooming_form(runtime, controls, sender, room);
     let reader = {
         let controls = controls.clone();
         let group = group.clone();
@@ -638,18 +644,26 @@ fn render_room(
                     <p class="room-empty" aria-busy="true">{"Loading room…"}</p>
                 }
             </RoomReader>
+            {grooming}
             {post}
         </article>
     }
 }
 
-fn render_event(publication: &RoomAuthorityStamp, event: &crate::runtime::RoomEvent) -> Html {
+fn render_event(
+    runtime: &AppRuntime,
+    publication: &RoomAuthorityStamp,
+    event: &crate::runtime::RoomEvent,
+) -> Html {
     let (kind, body) = match &event.kind {
         RoomEventKind::Published(wire::rooms::RoomPublicationContent::Authored { text }) => {
             ("Operator", text.clone())
         }
         RoomEventKind::Published(wire::rooms::RoomPublicationContent::Linked { link }) => {
             ("Source", format!("Linked source: {link:?}"))
+        }
+        RoomEventKind::Published(wire::rooms::RoomPublicationContent::OopsGroomed { grooming }) => {
+            ("OOPS", grooming_summary(runtime, grooming))
         }
         RoomEventKind::Messaged {
             source, directed, ..
@@ -689,6 +703,217 @@ fn render_event(publication: &RoomAuthorityStamp, event: &crate::runtime::RoomEv
             <p>{body}</p>
         </article>
     }
+}
+
+fn grooming_summary(runtime: &AppRuntime, grooming: &wire::rooms::OopsGrooming) -> String {
+    let reports = grooming
+        .reports
+        .iter()
+        .map(|report| {
+            let Some(task) = runtime.board().and_then(|board| {
+                board
+                    .tasks
+                    .iter()
+                    .find(|task| task.statement.body.born == *report)
+            }) else {
+                return format!("{report} · unavailable");
+            };
+            let standing = if wire::is_oops_project(&task.statement.body.project) {
+                "parked input"
+            } else if task.statement.body.authorization.is_some() {
+                "selected authorization"
+            } else if task.statement.body.preparation.is_some() {
+                "controlled · authorization pending"
+            } else {
+                "public · uncontrolled"
+            };
+            format!("{} · {standing}", task.statement.body.handle)
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let mut body = format!(
+        "{} · {} · {}",
+        grooming.disposition, grooming.cause, reports
+    );
+    if !grooming.exceptions.is_empty() {
+        body.push_str(" · exceptions: ");
+        body.push_str(&grooming.exceptions);
+    }
+    if !grooming.uncertainty.is_empty() {
+        body.push_str(" · uncertainty: ");
+        body.push_str(&grooming.uncertainty);
+    }
+    body
+}
+
+type OopsReport = (TaskStamp, wire::Seq, wire::TaskHandle);
+
+#[derive(Clone)]
+struct OopsInputs {
+    report: NodeRef,
+    disposition: NodeRef,
+    cause: NodeRef,
+    exceptions: NodeRef,
+    uncertainty: NodeRef,
+}
+
+fn oops_grooming_form(
+    runtime: Option<&AppRuntime>,
+    controls: &Controls,
+    sender: &SenderHandle,
+    room: &TaskStamp,
+) -> Html {
+    let Some(runtime) = runtime else {
+        return Html::default();
+    };
+    let Some(board) = runtime.board() else {
+        return Html::default();
+    };
+    let Some(batch) = board.tasks.iter().find(|task| {
+        task.statement.body.born == *room
+            && task.statement.body.intent == Some(wire::TaskIntent::Design)
+            && task.workflow.body.status == "pending"
+            && task.workflow.body.completion.is_none()
+    }) else {
+        return Html::default();
+    };
+    let reports = board
+        .tasks
+        .iter()
+        .filter(|task| {
+            matches!(
+                task.visibility,
+                wire::intent::ProjectVisibility::Hidden { .. }
+            ) && task.workflow.body.completion.is_none()
+        })
+        .map(|task| {
+            (
+                task.statement.body.born.clone(),
+                task.statement.position,
+                task.statement.body.handle.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let inputs = OopsInputs {
+        report: NodeRef::default(),
+        disposition: NodeRef::default(),
+        cause: NodeRef::default(),
+        exceptions: NodeRef::default(),
+        uncertainty: NodeRef::default(),
+    };
+    let submit = oops_submit(
+        controls.clone(),
+        sender.clone(),
+        reports.clone(),
+        batch.statement.body.handle.clone(),
+        batch.statement.position,
+        inputs.clone(),
+    );
+    html! {
+        <form class="room-grooming" onsubmit={submit}>
+            <strong>{"OOPS grooming"}</strong>
+            <label>
+                <span>{"Parked report"}</span>
+                <select ref={inputs.report.clone()} disabled={reports.is_empty()}>
+                    <option value="">{"Choose report"}</option>
+                    {for reports.iter().map(|(report, _, handle)| html! {
+                        <option value={report.to_string()}>{handle.to_string()}</option>
+                    })}
+                </select>
+            </label>
+            <label>
+                <span>{"Disposition"}</span>
+                <select ref={inputs.disposition.clone()}>
+                    <option value="duplicate">{"Duplicate"}</option>
+                    <option value="no-work">{"No work"}</option>
+                    <option value="deferred-for-later">{"Deferred for later"}</option>
+                    <option value="covered">{"Covered"}</option>
+                    <option value="proposed-work">{"Proposed work"}</option>
+                </select>
+            </label>
+            <label><span>{"Evidenced cause / basis"}</span><input ref={inputs.cause} type="text" /></label>
+            <label><span>{"Exceptions"}</span><input ref={inputs.exceptions} type="text" /></label>
+            <label><span>{"Uncertainty"}</span><input ref={inputs.uncertainty} type="text" /></label>
+            <button type="submit" disabled={reports.is_empty()}>{"Record disposition"}</button>
+        </form>
+    }
+}
+
+fn oops_submit(
+    controls: Controls,
+    sender: SenderHandle,
+    reports: Vec<OopsReport>,
+    batch_handle: wire::TaskHandle,
+    batch_head: wire::Seq,
+    inputs: OopsInputs,
+) -> Callback<SubmitEvent> {
+    Callback::from(move |event: SubmitEvent| {
+        event.prevent_default();
+        let Some(selected) =
+            input_value(&inputs.report).and_then(|value| value.parse::<TaskStamp>().ok())
+        else {
+            controls.report("Choose one parked OOPS report.".into());
+            return;
+        };
+        let Some((report, report_head, report_handle)) = reports
+            .iter()
+            .find(|(report, _, _)| *report == selected)
+            .cloned()
+        else {
+            controls.report("The selected OOPS report is no longer parked.".into());
+            return;
+        };
+        let Some(disposition) = input_value(&inputs.disposition)
+            .and_then(|value| value.parse::<wire::rooms::OopsDisposition>().ok())
+        else {
+            controls.report("Choose an OOPS disposition.".into());
+            return;
+        };
+        let cause = input_value(&inputs.cause).unwrap_or_default();
+        let cause = cause.trim().to_owned();
+        if cause.is_empty() {
+            controls.report("An evidenced cause or negative basis is required.".into());
+            return;
+        }
+        let grooming = wire::rooms::OopsGrooming {
+            reports: vec![report],
+            disposition,
+            cause,
+            exceptions: input_value(&inputs.exceptions)
+                .map_or_else(String::new, |value| value.trim().to_owned()),
+            uncertainty: input_value(&inputs.uncertainty)
+                .map_or_else(String::new, |value| value.trim().to_owned()),
+        };
+        let success_controls = controls.clone();
+        let batch_for_next = batch_handle.clone();
+        let next = (disposition == wire::rooms::OopsDisposition::ProposedWork).then(|| {
+            format!(
+                " Promote with `spice task wake {report_handle} --preparation {batch_for_next}`; capture remains gated until selected authorization."
+            )
+        });
+        let respond =
+            Rc::new(
+                move |result: Result<wire::rooms::RoomPostAnswer, String>| match result {
+                    Ok(answer) => success_controls.report(format!(
+                        "{}{}",
+                        room_post_notice(&answer.outcome),
+                        next.as_deref().unwrap_or_default()
+                    )),
+                    Err(error) => success_controls.report(error),
+                },
+            );
+        let _ = admit_action(
+            &sender,
+            ClientAction::RoomPost(RoomPostAction {
+                room: batch_handle.clone(),
+                head: batch_head,
+                text: String::new(),
+                grooming: Some(grooming),
+                report_heads: vec![report_head],
+                respond,
+            }),
+        );
+    })
 }
 
 #[derive(Properties, PartialEq)]
@@ -828,12 +1053,14 @@ fn room_post_form(
                 );
             let _ = admit_action(
                 &sender,
-                ClientAction::RoomPost {
+                ClientAction::RoomPost(RoomPostAction {
                     room,
                     head,
                     text,
+                    grooming: None,
+                    report_heads: Vec::new(),
                     respond,
-                },
+                }),
             );
         })
     };

@@ -420,7 +420,21 @@ impl ClientAction {
                 })
             }
             Self::WorkingGroupRemove { .. } => 0,
-            Self::RoomPost { room, text, .. } => room.as_str().len().saturating_add(text.len()),
+            Self::RoomPost(post) => post
+                .room
+                .as_str()
+                .len()
+                .saturating_add(post.text.len())
+                .saturating_add(post.grooming.as_ref().map_or(0, |grooming| {
+                    grooming.reports.iter().fold(
+                        grooming
+                            .cause
+                            .len()
+                            .saturating_add(grooming.exceptions.len())
+                            .saturating_add(grooming.uncertainty.len()),
+                        |bytes, report| bytes.saturating_add(report.as_str().len()),
+                    )
+                })),
             Self::ArrangeTeams { teams, .. } => teams.iter().fold(
                 teams.len() * std::mem::size_of::<wire::intent::TeamArrangement>(),
                 |bytes, team| {

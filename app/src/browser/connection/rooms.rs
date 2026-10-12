@@ -68,11 +68,35 @@ pub(super) async fn send_room_post(
     principal: &Principal,
     writer: &mut SocketWriter,
     actions: &ActionQueue,
-    room: &wire::TaskHandle,
-    head: wire::Seq,
-    text: &str,
-    respond: &crate::client_action::RoomPostResponse,
+    post: &crate::client_action::RoomPostAction,
 ) -> Result<CanonicalUuid, String> {
+    let crate::client_action::RoomPostAction {
+        room,
+        head,
+        text,
+        grooming,
+        report_heads,
+        respond,
+    } = post;
+    let mut expected = vec![Witness::Task {
+        task: room
+            .born()
+            .map_err(|error| format!("room anchor is invalid: {error}"))?,
+        head: *head,
+    }];
+    if let Some(grooming) = grooming {
+        if grooming.reports.len() != report_heads.len() {
+            return Err("OOPS report witnesses do not match the selected sources".into());
+        }
+        expected.extend(
+            grooming
+                .reports
+                .iter()
+                .cloned()
+                .zip(report_heads.iter().copied())
+                .map(|(task, head)| Witness::Task { task, head }),
+        );
+    }
     send_typed(
         principal,
         writer,
@@ -81,15 +105,11 @@ pub(super) async fn send_room_post(
             respond: respond.clone(),
         },
         CommandKind::RoomPost,
-        vec![Witness::Task {
-            task: room
-                .born()
-                .map_err(|error| format!("room anchor is invalid: {error}"))?,
-            head,
-        }],
+        expected,
         wire::rooms::RoomPost {
             room: room.clone(),
             text: text.to_owned(),
+            grooming: grooming.clone(),
         },
     )
     .await
