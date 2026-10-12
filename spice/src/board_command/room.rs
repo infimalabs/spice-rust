@@ -102,11 +102,27 @@ pub(crate) fn room_publications(
     bus: &Bus,
     room: &wire::TaskStamp,
 ) -> Result<Vec<wire::Envelope<wire::AnyFact>>, Outcome<CommandAnswer>> {
+    bounded_room_publications(bus, room, None)
+}
+
+pub(crate) fn room_publications_after(
+    bus: &Bus,
+    room: &wire::TaskStamp,
+    after: wire::Seq,
+) -> Result<Vec<wire::Envelope<wire::AnyFact>>, Outcome<CommandAnswer>> {
+    bounded_room_publications(bus, room, Some(after))
+}
+
+fn bounded_room_publications(
+    bus: &Bus,
+    room: &wire::TaskStamp,
+    after: Option<wire::Seq>,
+) -> Result<Vec<wire::Envelope<wire::AnyFact>>, Outcome<CommandAnswer>> {
     let room = room.clone();
     let (rows, more) = bus
         .read(move |read| {
             let mut rows = Vec::new();
-            let mut after = None;
+            let mut after = after;
             for _ in 0..ROOM_PUBLICATION_PAGES {
                 let page =
                     read.room_publications(&room, after, journal::FactReadBudget::RETAINED)?;

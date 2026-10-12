@@ -582,6 +582,79 @@ fn one_write_maintains_the_projection_that_rebuild_reproduces_without_touching_f
 }
 
 #[test]
+fn publication_reads_start_after_the_cursor_without_decoding_older_room_history() {
+    const PRE_HORIZON_PUBLICATIONS: usize = 1_025;
+    const POST_HORIZON_PUBLICATIONS: usize = 3;
+
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = authorized(&mut journal);
+    let room = preparation.controller;
+    let mut retained = write();
+    for index in 0..PRE_HORIZON_PUBLICATIONS {
+        retained
+            .fact(
+                publication(
+                    &room,
+                    i64::try_from(index).expect("fixture index") + 1,
+                    RoomPublicationContent::Authored {
+                        text: format!("retained {index}"),
+                    },
+                ),
+                FactCause::Root,
+            )
+            .expect("retained publication builds");
+    }
+    journal
+        .apply(retained)
+        .expect("retained publications commit");
+    let retained_start = journal
+        .read(|read| read.room_publications(&room, None, fact_budget(1)))
+        .expect("retained start reads")
+        .rows[0]
+        .seq;
+    let after = cursor(&journal).expect("retained horizon");
+
+    let mut current = write();
+    for index in 0..POST_HORIZON_PUBLICATIONS {
+        current
+            .fact(
+                publication(
+                    &room,
+                    i64::try_from(PRE_HORIZON_PUBLICATIONS + index + 1).expect("fixture index"),
+                    RoomPublicationContent::Authored {
+                        text: format!("current {index}"),
+                    },
+                ),
+                FactCause::Root,
+            )
+            .expect("current publication builds");
+    }
+    journal.apply(current).expect("current publications commit");
+
+    journal
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = x'00' WHERE seq = ?1",
+            [i64::try_from(retained_start.get()).expect("fixture sequence")],
+        )
+        .expect("make an older publication undecodable");
+    let (page, latest) = journal
+        .read(|read| {
+            Ok((
+                read.room_publications(&room, Some(after), fact_budget(8))?,
+                read.latest_room_publication(&room, &Actor::Operator)?,
+            ))
+        })
+        .expect("post-horizon authority reads without touching older bytes");
+    assert_eq!(page.rows.len(), POST_HORIZON_PUBLICATIONS);
+    assert!(page.rows.iter().all(|publication| publication.seq > after));
+    assert_eq!(
+        latest.map(|publication| publication.seq),
+        page.rows.last().map(|publication| publication.seq)
+    );
+}
+
+#[test]
 fn duplicate_recordings_refuse_and_a_duplicated_history_fails_verification() {
     let mut journal = Journal::in_memory().expect("journal");
     let preparation = authorized(&mut journal);
