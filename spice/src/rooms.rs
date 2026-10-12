@@ -690,6 +690,7 @@ mod tests {
                 controller: room.clone(),
                 construction: room.clone(),
             }),
+            authorization: None,
             provenance: format!("task:{room}").parse().expect("fixture provenance"),
             creation: wire::body::TaskCreationContext::unavailable(
                 wire::body::TaskCreationUnavailable::SpiceActor,
