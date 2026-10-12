@@ -900,6 +900,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-send {
   grid-row: 4; grid-column: 1 / -1;
   width: var(--team-control-send-size); min-width: var(--team-control-send-size); max-width: var(--team-control-send-size); height: var(--team-control-send-size); min-height: var(--team-control-send-size);
+  /* The uniform emitter stays behind these slider-like glass edge catches. */
+  background: radial-gradient(ellipse 82% 36% at 50% -8%, color-mix(in srgb, var(--app-highlight-source) 30%, transparent), transparent 76%), radial-gradient(ellipse 84% 42% at 50% 108%, color-mix(in srgb, var(--app-highlight-source) 14%, transparent), transparent 72%), linear-gradient(90deg, color-mix(in srgb, var(--app-highlight-source) 11%, transparent), transparent 14%, transparent 86%, color-mix(in srgb, var(--app-highlight-source) 11%, transparent)), linear-gradient(color-mix(in srgb, var(--app-highlight-source) 2.5%, transparent), color-mix(in srgb, var(--app-highlight-source) 2.5%, transparent));
+  box-shadow: var(--team-send-command-ring), var(--team-control-rest), inset 2px -2px 1px -1px color-mix(in srgb, var(--app-highlight-source) 12%, transparent);
+  backdrop-filter: blur(2px) saturate(1.45) brightness(1.08) contrast(1.22);
+  -webkit-backdrop-filter: blur(2px) saturate(1.45) brightness(1.08) contrast(1.22);
 }
 .team-composer :is(.team-send, .team-turbo, .team-menu):not(:disabled):hover,
 .app-spice-settings .app-spice-turbo:not(:disabled):hover, .agent-menu > .agent-menu-button:hover { background-color: color-mix(in srgb, var(--app-highlight-source) 7.5%, transparent); }
