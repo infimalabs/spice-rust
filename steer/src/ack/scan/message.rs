@@ -1,10 +1,15 @@
-//! Authored `MSG ADDRESS [ADDRESS ...]: BODY` peer-publication packets.
+//! Authored `MSG SELECTOR [SELECTOR ...]: BODY` publication packets.
 //!
 //! MSG shares the authored-context rules of acknowledgment headers: the same
 //! quotation, code, rendered-source, negation, hypothetical and narration
 //! exclusions decide whether the marker speaks at all. It never names a
-//! steering key and never retires anything; its header names recipients by
-//! [`OccupantAddress`] and its body is the source hunk it owns.
+//! steering key and never retires anything; its body is the source hunk it
+//! owns.
+//!
+//! Each selector is one route, `audience[#context]` or `#context`: an
+//! [`OccupantAddress`] directs attention to that occupant, and a `#` qualifier
+//! names the [`TaskHandle`] whose room records the packet. A selector owns its
+//! qualifier; an unqualified route borrows no context from its neighbors.
 //!
 //! A body begins after the header's colon and runs to the next placed ACK,
 //! NAK, or MSG header or to the end of the scanned prose, with surrounding
@@ -16,67 +21,91 @@
 
 use std::ops::Range;
 
-use wire::{OccupantAddress, OccupantAddressError};
+use wire::{OccupantAddress, OccupantAddressError, TaskHandle, TaskHandleError};
 
 use super::{skip_emphasis, skip_header_space};
 
-/// The word an authored peer-publication packet leads with.
+/// The word an authored publication packet leads with.
 pub const MARKER: &str = "MSG";
+
+/// The byte that opens a selector's task context.
+const CONTEXT: u8 = b'#';
 
 /// One placed MSG packet: its header and what it publishes, or why it
 /// publishes nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     /// Header bytes from the marker, including touching emphasis, through the
-    /// colon and any emphasis closing it; through the last recipient token
-    /// when the colon is missing.
+    /// colon and any emphasis closing it; through the last selector when the
+    /// colon is missing.
     pub header: Range<usize>,
     /// The publication the packet requests, refused whole on any defect.
     pub publication: Result<Publication, MessageRefusal>,
 }
 
-/// A well-formed packet: distinct recipients and the body hunk sent to each.
+/// A well-formed packet: distinct routes and the body hunk each publishes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Publication {
-    /// Every named recipient in source order.
-    pub recipients: Vec<Recipient>,
+    /// Every route in source order.
+    pub routes: Vec<Route>,
     /// The nonempty trimmed body hunk, protocol headers excluded.
     pub body: Range<usize>,
 }
 
-/// One recipient token and the address it spells.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Recipient {
-    /// Address the token spells.
-    pub address: OccupantAddress,
-    /// Half-open byte range of the token.
-    pub start: usize,
-    /// End of the token.
-    pub end: usize,
+impl Publication {
+    /// Every occupant the packet directs attention to, in source order.
+    pub fn addresses(&self) -> impl Iterator<Item = OccupantAddress> + '_ {
+        self.routes.iter().filter_map(|route| route.address)
+    }
+}
+
+/// One selector: an audience, a task context, or an audience in a context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Route {
+    /// Occupant the route directs attention to; absent on a room-only route.
+    pub address: Option<OccupantAddress>,
+    /// Task whose room the route records in; absent on a direct route.
+    pub context: Option<TaskHandle>,
+    /// Byte range of the whole selector.
+    pub span: Range<usize>,
 }
 
 /// Why one placed MSG packet publishes nothing.
 ///
-/// Refusal covers the whole packet: no recipient is guessed, deduplicated, or
+/// Refusal covers the whole packet: no route is guessed, deduplicated, or
 /// dropped, and no neighboring packet lends its body. The first defect in
-/// source order decides: the header's colon, then each recipient token, then
-/// the body.
+/// source order decides: the header's colon, then each selector, then the
+/// body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageRefusal {
-    /// The recipient list is not closed by a colon.
+    /// The selector list is not closed by a colon.
     Unterminated,
-    /// A recipient token does not spell an occupant address.
+    /// A selector's audience does not spell an occupant address.
     Recipient {
-        /// Byte range of the token.
+        /// Byte range of the audience.
         span: Range<usize>,
-        /// Why the token is not an address.
+        /// Why the audience is not an address.
         error: OccupantAddressError,
+    },
+    /// A selector's `#` qualifier does not spell a task handle.
+    Context {
+        /// Byte range of the qualifier after its `#`.
+        span: Range<usize>,
+        /// Why the qualifier is not a task handle.
+        error: TaskHandleError,
     },
     /// An address is named more than once.
     Repeated {
         /// The repeated address.
         address: OccupantAddress,
         /// Byte range of its later naming.
+        span: Range<usize>,
+    },
+    /// A room-only route names a task another room-only route already names.
+    RepeatedContext {
+        /// The later spelling of the repeated task.
+        context: TaskHandle,
+        /// Byte range of the later selector.
         span: Range<usize>,
     },
     /// Nothing but whitespace lies between the colon and the next boundary.
@@ -90,26 +119,30 @@ impl MessageRefusal {
         match self {
             Self::Unterminated => "msg::unterminated",
             Self::Recipient { .. } => "msg::recipient-malformed",
+            Self::Context { .. } => "msg::context-malformed",
             Self::Repeated { .. } => "msg::recipient-repeated",
+            Self::RepeatedContext { .. } => "msg::context-repeated",
             Self::EmptyBody => "msg::body-empty",
         }
     }
 }
 
-/// The recipient list after one marker, before its body is bounded.
+/// The selector list after one marker, before its body is bounded.
 pub(super) struct Header {
-    /// Each recipient token as a half-open byte range.
+    /// Each selector as a half-open byte range.
     pub(super) tokens: Vec<(usize, usize)>,
     /// Header end: past the colon and closing emphasis, or past the last token.
     pub(super) end: usize,
     pub(super) terminated: bool,
 }
 
-/// The recipient list after one `MSG` marker, if the marker opens an attempt.
+/// The selector list after one `MSG` marker, if the marker opens an attempt.
 ///
-/// Recipient tokens are ASCII-alphanumeric runs separated by header space or a
-/// comma. A colon-closed list is an attempt when any token spells an address;
-/// an unclosed list is one only when its first token does. Anything else is
+/// A selector is an ASCII-alphanumeric audience run, optionally followed by
+/// `#` and an ASCII-alphanumeric-or-hyphen context run; selectors are separated
+/// by header space or a comma. A colon-closed list is an attempt when any
+/// selector's audience spells an address or its context spells a task handle;
+/// an unclosed list is one only when its first selector does. Anything else is
 /// prose that happens to use the word.
 pub(super) fn header_after(prose: &str, marker_end: usize) -> Option<Header> {
     let marker_boundary = skip_emphasis(prose, marker_end);
@@ -117,33 +150,42 @@ pub(super) fn header_after(prose: &str, marker_end: usize) -> Option<Header> {
     if cursor == marker_boundary {
         return None;
     }
+    let bytes = prose.as_bytes();
+    let run = |from: usize, admits: fn(&u8) -> bool| {
+        from + bytes[from..].iter().take_while(|byte| admits(byte)).count()
+    };
     let mut tokens = Vec::new();
     let mut last = cursor;
     loop {
         let start = skip_emphasis(prose, cursor);
-        let end = start
-            + prose.as_bytes()[start..]
-                .iter()
-                .take_while(|byte| byte.is_ascii_alphanumeric())
-                .count();
+        let mut end = run(start, u8::is_ascii_alphanumeric);
+        if bytes.get(end) == Some(&CONTEXT) {
+            end = run(end + 1, |byte| {
+                byte.is_ascii_alphanumeric() || *byte == b'-'
+            });
+        }
         if end == start {
             break;
         }
         tokens.push((start, end));
         last = skip_emphasis(prose, end);
         cursor = skip_header_space(prose, last);
-        if prose.as_bytes().get(cursor) == Some(&b',') {
+        if bytes.get(cursor) == Some(&b',') {
             cursor = skip_header_space(prose, cursor + 1);
         }
     }
-    let &(first_start, first_end) = tokens.first()?;
+    let first = *tokens.first()?;
     let colon = skip_header_space(prose, last);
-    let terminated = prose.as_bytes().get(colon) == Some(&b':');
-    let addresses = |(start, end): &(usize, usize)| prose[*start..*end].parse::<OccupantAddress>();
+    let terminated = bytes.get(colon) == Some(&b':');
+    let spells = |&(start, end): &(usize, usize)| {
+        let (audience, context) = split(prose, start, end);
+        prose[audience].parse::<OccupantAddress>().is_ok()
+            || context.is_some_and(|context| prose[context].parse::<TaskHandle>().is_ok())
+    };
     let attempt = if terminated {
-        tokens.iter().any(|token| addresses(token).is_ok())
+        tokens.iter().any(spells)
     } else {
-        addresses(&(first_start, first_end)).is_ok()
+        spells(&first)
     };
     attempt.then(|| Header {
         end: if terminated {
@@ -154,6 +196,14 @@ pub(super) fn header_after(prose: &str, marker_end: usize) -> Option<Header> {
         tokens,
         terminated,
     })
+}
+
+/// One selector's audience range and, when qualified, its context range.
+fn split(prose: &str, start: usize, end: usize) -> (Range<usize>, Option<Range<usize>>) {
+    match prose[start..end].find(char::from(CONTEXT)) {
+        Some(at) => (start..start + at, Some(start + at + 1..end)),
+        None => (start..end, None),
+    }
 }
 
 /// Judge one placed header against the boundary its body runs to.
@@ -172,28 +222,29 @@ fn publication(
     if !header.terminated {
         return Err(MessageRefusal::Unterminated);
     }
-    let mut recipients: Vec<Recipient> = Vec::with_capacity(header.tokens.len());
+    let mut routes: Vec<Route> = Vec::with_capacity(header.tokens.len());
     for &(start, end) in &header.tokens {
-        let address = prose[start..end]
-            .parse::<OccupantAddress>()
-            .map_err(|error| MessageRefusal::Recipient {
-                span: start..end,
-                error,
-            })?;
-        if recipients
-            .iter()
-            .any(|recipient| recipient.address == address)
+        let route = route(prose, start, end)?;
+        if let Some(address) = route.address
+            && routes.iter().any(|known| known.address == Some(address))
         {
             return Err(MessageRefusal::Repeated {
                 address,
-                span: start..end,
+                span: split(prose, start, end).0,
             });
         }
-        recipients.push(Recipient {
-            address,
-            start,
-            end,
-        });
+        if route.address.is_none()
+            && let Some(context) = &route.context
+            && routes
+                .iter()
+                .any(|known| known.address.is_none() && same_task(known.context.as_ref(), context))
+        {
+            return Err(MessageRefusal::RepeatedContext {
+                context: context.clone(),
+                span: route.span,
+            });
+        }
+        routes.push(route);
     }
     let hunk = &prose[header.end..boundary.max(header.end)];
     let leading = hunk.len() - hunk.trim_start().len();
@@ -203,9 +254,43 @@ fn publication(
     }
     let start = header.end + leading;
     Ok(Publication {
-        recipients,
+        routes,
         body: start..start + body.len(),
     })
+}
+
+/// Judge one selector: its audience, if written, then its qualifier.
+fn route(prose: &str, start: usize, end: usize) -> Result<Route, MessageRefusal> {
+    let (audience, context) = split(prose, start, end);
+    let address = if audience.is_empty() {
+        None
+    } else {
+        Some(
+            prose[audience.clone()]
+                .parse::<OccupantAddress>()
+                .map_err(|error| MessageRefusal::Recipient {
+                    span: audience,
+                    error,
+                })?,
+        )
+    };
+    let context = context
+        .map(|span| {
+            prose[span.clone()]
+                .parse::<TaskHandle>()
+                .map_err(|error| MessageRefusal::Context { span, error })
+        })
+        .transpose()?;
+    Ok(Route {
+        address,
+        context,
+        span: start..end,
+    })
+}
+
+/// Whether two spellings name one task: a renamed handle keeps its birth stamp.
+fn same_task(known: Option<&TaskHandle>, context: &TaskHandle) -> bool {
+    known.is_some_and(|known| known.born().ok() == context.born().ok())
 }
 
 /// Where a body preceding the header at `start` ends.

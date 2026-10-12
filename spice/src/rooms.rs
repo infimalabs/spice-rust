@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use wire::rooms::{RoomAuthorityStamp, RoomPublished};
+use wire::rooms::{RoomAuthorityStamp, RoomMessaged, RoomPublished};
 use wire::{Actor, CanonicalUuid, Instant, TaskStamp};
 
 /// Most authority signals one projection may inspect.
@@ -417,33 +417,42 @@ fn fold_publications(
 ) -> Result<(), RoomProjectionError> {
     let mut seen = BTreeMap::<RoomAuthorityStamp, (CanonicalUuid, Instant)>::new();
     for envelope in publications {
-        let Some(publication) = envelope.fact.read::<RoomPublished>() else {
+        let Some((anchor, publication)) = envelope
+            .fact
+            .read::<RoomPublished>()
+            .map(|body| (body.room, body.publication))
+            .or_else(|| {
+                envelope
+                    .fact
+                    .read::<RoomMessaged>()
+                    .map(|body| (body.room, body.publication))
+            })
+        else {
             continue;
         };
-        if publication.room != *room {
+        if anchor != *room {
             continue;
         }
         let Actor::Lane(lane) = &envelope.actor else {
             continue;
         };
         let lane = *lane;
-        if let Some((known_lane, known_at)) = seen.get(&publication.publication) {
+        if let Some((known_lane, known_at)) = seen.get(&publication) {
             if *known_lane != lane || *known_at != envelope.at {
                 return Err(RoomProjectionError::InvalidAuthority(format!(
-                    "publication {} has conflicting authorship or time",
-                    publication.publication
+                    "publication {publication} has conflicting authorship or time"
                 )));
             }
             continue;
         }
-        seen.insert(publication.publication.clone(), (lane, envelope.at));
+        seen.insert(publication.clone(), (lane, envelope.at));
         let folded = lane_fold(lanes, lane, maximum)?;
         folded
             .participation
             .insert(ParticipationReason::Contribution {
-                publication: publication.publication.clone(),
+                publication: publication.clone(),
             });
-        let observed = (envelope.at, publication.publication);
+        let observed = (envelope.at, publication);
         if folded
             .latest_activity
             .as_ref()

@@ -26,7 +26,7 @@ use crate::ack::keys::{Key, MARKERS, Marker};
 
 pub mod message;
 
-pub use message::{Message, MessageRefusal, Publication, Recipient};
+pub use message::{Message, MessageRefusal, Publication, Route};
 
 /// Where in the scanned prose a recognition sits.
 ///

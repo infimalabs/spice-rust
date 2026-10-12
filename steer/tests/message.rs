@@ -1,14 +1,15 @@
 //! Reading authored MSG packets out of assistant prose.
 //!
 //! MSG shares the acknowledgment header grammar's authored-context rules but
-//! publishes rather than retires: each placed packet names occupant addresses
-//! and owns exactly the body hunk up to the next placed packet.
+//! publishes rather than retires: each placed packet names its routes, each an
+//! occupant address, a task context, or an address in a context, and owns
+//! exactly the body hunk up to the next placed packet.
 
 use steer::ack::keys::Key;
 use steer::ack::scan::{
     Message, MessageRefusal, Outcome, Standing, answer, scan, scan_acknowledgements, scan_messages,
 };
-use wire::{Disposition, OccupantAddress, OccupantAddressError};
+use wire::{Disposition, OccupantAddress, OccupantAddressError, TaskHandle};
 
 /// Every key any fixture names is live.
 struct Live;
@@ -23,22 +24,34 @@ fn address(text: &str) -> OccupantAddress {
     text.parse().expect("fixture address")
 }
 
-/// Recipients as written and the exact body bytes one packet publishes.
+/// Selectors as written and the exact body bytes one packet publishes.
 fn sent<'prose>(prose: &'prose str, message: &Message) -> (Vec<&'prose str>, &'prose str) {
     let publication = message
         .publication
         .as_ref()
         .unwrap_or_else(|refusal| panic!("refused {refusal:?} in {prose:?}"));
-    let recipients = publication
-        .recipients
+    let selectors = publication
+        .routes
         .iter()
-        .map(|recipient| {
-            let written = &prose[recipient.start..recipient.end];
-            assert_eq!(recipient.address, address(written));
+        .map(|route| {
+            let written = &prose[route.span.clone()];
+            let (audience, context) = written.split_once('#').unwrap_or((written, ""));
+            assert_eq!(
+                route.address,
+                (!audience.is_empty()).then(|| address(audience))
+            );
+            assert_eq!(
+                route.context,
+                (!context.is_empty()).then(|| handle(context))
+            );
             written
         })
         .collect();
-    (recipients, &prose[publication.body.clone()])
+    (selectors, &prose[publication.body.clone()])
+}
+
+fn handle(text: &str) -> TaskHandle {
+    text.parse().expect("fixture handle")
 }
 
 fn refusal(prose: &str) -> MessageRefusal {
@@ -48,6 +61,65 @@ fn refusal(prose: &str) -> MessageRefusal {
         .publication
         .clone()
         .expect_err("packet is refused")
+}
+
+/// Each selector owns its own qualifier: room-only, directed-in-room, and
+/// direct routes share one body without lending each other context.
+#[test]
+fn selectors_route_to_occupants_rooms_or_both() {
+    let prose = "MSG #ROOMS-dVrD244Jd: Background note.\n\
+                 MSG 6HmS#ROOMS-dVrD244Jd 7Bc, #DESIGN-dVrD1Kz1l: Shared.";
+    let messages = scan_messages(prose);
+    assert_eq!(messages.len(), 2);
+    assert_eq!(
+        sent(prose, &messages[0]),
+        (vec!["#ROOMS-dVrD244Jd"], "Background note.")
+    );
+    assert_eq!(
+        sent(prose, &messages[1]),
+        (
+            vec!["6HmS#ROOMS-dVrD244Jd", "7Bc", "#DESIGN-dVrD1Kz1l"],
+            "Shared."
+        )
+    );
+    let publication = messages[1].publication.as_ref().expect("published");
+    assert_eq!(
+        publication.addresses().collect::<Vec<_>>(),
+        [address("6HmS"), address("7Bc")]
+    );
+}
+
+/// A malformed qualifier or a room named twice refuses the whole packet, and
+/// two spellings of one birth stamp are the same room.
+#[test]
+fn malformed_or_repeated_contexts_refuse_the_packet() {
+    assert!(matches!(
+        refusal("MSG 6HmS#rooms-x: lower stem."),
+        MessageRefusal::Context { span, .. } if span == (9..16)
+    ));
+    assert!(matches!(
+        refusal("MSG 6HmS#: empty."),
+        MessageRefusal::Context { span, .. } if span == (9..9)
+    ));
+    assert_eq!(
+        refusal("MSG #ROOMS-dVrD244Jd 7Bc #PLAN-dVrD244Jd: renamed."),
+        MessageRefusal::RepeatedContext {
+            context: handle("PLAN-dVrD244Jd"),
+            span: 25..40,
+        }
+    );
+    assert_eq!(
+        refusal("MSG 6HmS#ROOMS-dVrD244Jd 6HmS#DESIGN-dVrD1Kz1l: one audience."),
+        MessageRefusal::Repeated {
+            address: address("6HmS"),
+            span: 25..29,
+        }
+    );
+    let prose = "MSG #ROOMS-dVrD244Jd 6HmS#ROOMS-dVrD244Jd: room and directed.";
+    assert_eq!(
+        sent(prose, &scan_messages(prose)[0]).0,
+        ["#ROOMS-dVrD244Jd", "6HmS#ROOMS-dVrD244Jd"]
+    );
 }
 
 /// A body runs from its colon to the next placed packet, keeping its own bytes
@@ -171,6 +243,9 @@ fn prose_that_only_uses_the_word_is_not_a_packet() {
         "MSGS 6HmS: plural",
         "aMSG 6HmS: embedded",
         "MSG hello there",
+        "MSG #1: first heading",
+        "MSG #: hash only",
+        "MSG #rooms-dVrD244Jd tag",
     ] {
         assert_eq!(scan_messages(prose), [], "published {prose:?}");
     }

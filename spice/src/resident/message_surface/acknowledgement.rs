@@ -14,12 +14,13 @@
 //! Presentation never grants repeated response retirement, a disposition, or
 //! automatic-speech authority.
 //!
-//! A placed, well-formed `MSG ADDRESS ...: BODY` packet whose every address
-//! names a proved occupant birth presents its body verbatim as one quote block
-//! in place of the header, and the block's range carries those recipients.
-//! The quote states what the author addressed, not delivery: whether the
-//! resident published or withheld the packet is the journal's record. Any
-//! other packet stays the agent's literal prose.
+//! A placed, well-formed `MSG ADDRESS ...: BODY` packet of plain addresses
+//! that each name a proved occupant birth presents its body verbatim as one
+//! quote block in place of the header, and the block's range carries those
+//! recipients. The quote states what the author addressed, not delivery:
+//! whether the resident published or withheld the packet is the journal's
+//! record. Any other packet, including one naming a `#TASK` room context,
+//! stays the agent's literal prose.
 
 use std::iter::Peekable;
 use std::ops::Range;
@@ -226,10 +227,16 @@ fn placed_sends(
         .into_iter()
         .filter_map(|message| {
             let publication = message.publication.ok()?;
-            let recipients = publication
-                .recipients
+            if publication
+                .routes
                 .iter()
-                .map(|recipient| directives.recipients.get(&recipient.address).copied())
+                .any(|route| route.context.is_some())
+            {
+                return None;
+            }
+            let recipients = publication
+                .addresses()
+                .map(|address| directives.recipients.get(&address).copied())
                 .collect::<Option<Vec<_>>>()?;
             Some(PlacedSend {
                 start: send_framing_start(text, message.header.start),

@@ -3,8 +3,8 @@ use wire::rooms::{
     CandidateReference, CandidateRetained, CoverageAuthority, CoverageRef, CritiqueRef,
     CritiqueStanding, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorized,
     NegativeDecision, OutputControlled, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomPublicationContent, RoomPublished, RoomSource,
-    WorkingGroup, WorkingGroupRemoved, WorkingGroupStored,
+    RetainedCandidate, RoomAuthorityStamp, RoomMessaged, RoomPublicationContent, RoomPublished,
+    RoomSource, TextRange, TranscriptHunk, WorkingGroup, WorkingGroupRemoved, WorkingGroupStored,
 };
 use wire::{Producer, SequenceCode, TaskPreparation};
 
@@ -929,7 +929,7 @@ fn links_must_name_existing_authority() {
     let preparation = Preparation::new(&mut journal);
     let room = preparation.controller.clone();
     let future = cursor(&journal).expect("nonempty").get() + 1;
-    let transcript = RoomSource::Transcript {
+    let transcript = RoomSource::Transcript(TranscriptHunk {
         head: transcript_source_head(),
         locus: wire::MessageLocus {
             member: 1,
@@ -937,7 +937,8 @@ fn links_must_name_existing_authority() {
             length: 1,
             event: 0,
         },
-    };
+        text: TextRange { start: 0, end: 1 },
+    });
     for link in [journal_source(0), journal_source(future), transcript] {
         let result = commit(
             &mut journal,
@@ -996,7 +997,11 @@ fn transcript_links_stay_within_the_accounted_generation_and_extent() {
     );
     let linked =
         |head: TranscriptSourceHead, locus: wire::MessageLocus| RoomPublicationContent::Linked {
-            link: RoomSource::Transcript { head, locus },
+            link: RoomSource::Transcript(TranscriptHunk {
+                head,
+                locus,
+                text: TextRange { start: 0, end: 1 },
+            }),
         };
     let locus = |offset, length| wire::MessageLocus {
         member: 1,
@@ -1087,4 +1092,84 @@ fn transcript_links_stay_within_the_accounted_generation_and_extent() {
     journal.verify().expect("accounted links verify");
     journal.reindex().expect("accounted links rebuild");
     assert_eq!(projection(&journal), expected);
+}
+
+/// A packet's room record links only its exact decoded-event bytes inside the
+/// accounted transcript, and pages beside operator publications in its room.
+#[test]
+fn messaged_packets_record_exact_transcript_hunks_beside_room_publications() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let room = task(&mut journal, 1, None);
+    let head = transcript_source_head();
+    ingest(
+        &mut journal,
+        head.clone(),
+        TranscriptPosition {
+            member: 1,
+            offset: 0,
+        },
+        None,
+    );
+    let messaged = |journal: &mut Journal, room: &TaskStamp, micros, event, start, end| {
+        let mut write = JournalWrite::new(
+            Actor::Lane(head.lane),
+            "task:rooms".parse().expect("room origin"),
+            instant(),
+            Producer::AckScanner,
+        );
+        write
+            .fact(
+                RoomMessaged {
+                    room: room.clone(),
+                    publication: authority(micros),
+                    hunk: TranscriptHunk {
+                        head: head.clone(),
+                        locus: wire::MessageLocus {
+                            member: 1,
+                            offset: 0,
+                            length: 64,
+                            event,
+                        },
+                        text: TextRange { start, end },
+                    },
+                },
+                FactCause::Root,
+            )
+            .expect("messaged fact builds");
+        journal.apply(write)
+    };
+
+    commit(
+        &mut journal,
+        publication(
+            &room,
+            30,
+            RoomPublicationContent::Authored {
+                text: "operator".to_owned(),
+            },
+        ),
+    )
+    .expect("operator publication");
+    messaged(&mut journal, &room, 31, 2, 4, 9).expect("the packet hunk records");
+    let absent = TaskStamp::for_micros(99_999).expect("absent stamp");
+    for result in [
+        messaged(&mut journal, &room, 31, 2, 4, 9),
+        messaged(&mut journal, &room, 32, 2, 9, 9),
+        messaged(&mut journal, &room, 33, u32::MAX, 0, 1),
+        messaged(&mut journal, &absent, 34, 2, 4, 9),
+    ] {
+        refused(&journal, result);
+    }
+
+    let page = journal
+        .read(|read| read.room_publications(&room, None, fact_budget(8)))
+        .expect("room publications read");
+    assert_eq!(
+        page.rows
+            .iter()
+            .map(|row| row.fact.kind())
+            .collect::<Vec<_>>(),
+        [FactKind::RoomPublished, FactKind::RoomMessaged]
+    );
+    journal.verify().expect("messaged publications verify");
 }
