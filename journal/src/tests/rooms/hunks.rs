@@ -7,19 +7,6 @@ use wire::{Disposition, SteeringHead};
 
 use super::*;
 
-fn hunk(head: &TranscriptSourceHead) -> TranscriptHunk {
-    TranscriptHunk {
-        head: head.clone(),
-        locus: wire::MessageLocus {
-            member: 1,
-            offset: 0,
-            length: 64,
-            event: 0,
-        },
-        text: TextRange { start: 0, end: 8 },
-    }
-}
-
 fn deliver(journal: &mut Journal, head: &TranscriptSourceHead, through: Seq) -> Commit {
     let mut write = JournalWrite::new(
         Actor::Spice,

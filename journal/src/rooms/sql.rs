@@ -7,7 +7,7 @@ use wire::{AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
 use super::{
     Authority, AuthorizationRow, Change, CoordinationRecord, Direction, Projection, ProposalRow,
-    Refusal, unsound,
+    Refusal, conversation, unsound,
 };
 
 /// Stored authority as one commit transaction sees it, overlaid with the
@@ -203,6 +203,23 @@ impl Authority for Stored<'_> {
     fn set_direction(&mut self, key: &str, direction: Direction) {
         self.directions.insert(key.to_owned(), direction);
     }
+
+    fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal> {
+        conversation::stored_publication(self.connection, publication)
+    }
+
+    fn room_receipt(&self, receipt: &str) -> Result<Option<conversation::ReceiptRow>, Refusal> {
+        conversation::stored_receipt(self.connection, receipt)
+    }
+
+    fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal> {
+        conversation::stored_result(self.connection, result)
+    }
+
+    fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
+        conversation::stored_pending_results(self.connection, requester)
+    }
+
     fn change(&mut self, change: Change) -> Result<(), Refusal> {
         apply(self.connection, change)?;
         Ok(())
@@ -282,6 +299,7 @@ fn apply(connection: &Connection, change: Change) -> Result<(), rusqlite::Error>
                 params![room, sql(seq), body],
             )?;
         }
+        Change::Conversation(edit) => conversation::apply_sql(connection, edit)?,
     }
     Ok(())
 }
@@ -380,6 +398,7 @@ impl Projection {
                 connection,
                 "SELECT room, head_seq, body FROM room_shelvings",
             )?,
+            conversation: conversation::Heads::load(connection)?,
         })
     }
 }
@@ -460,7 +479,7 @@ pub(crate) fn write_projection(
             )?;
         }
     }
-    Ok(())
+    projection.conversation.write(connection)
 }
 
 /// Execution authorization is its controller's conclusion, so each controller
@@ -591,10 +610,10 @@ fn stored<T: serde::de::DeserializeOwned>(
     Ok(Some((head_seq, wire::decode(&body)?)))
 }
 
-fn sql(seq: u64) -> i64 {
+pub(super) fn sql(seq: u64) -> i64 {
     i64::try_from(seq).expect("journal positions fit SQLite")
 }
 
-fn unsql(seq: i64) -> u64 {
+pub(super) fn unsql(seq: i64) -> u64 {
     u64::try_from(seq).unwrap_or_default()
 }

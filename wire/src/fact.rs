@@ -104,6 +104,33 @@ macro_rules! registered_body {
     (RoomHorizon) => {
         crate::rooms::RoomHorizon
     };
+    (RoomConversed) => {
+        crate::rooms::RoomConversed
+    };
+    (RoomPosted) => {
+        crate::rooms::RoomPosted
+    };
+    (RoomReceipted) => {
+        crate::rooms::RoomReceipted
+    };
+    (RoomDisposed) => {
+        crate::rooms::RoomDisposed
+    };
+    (RoomQuestionClosed) => {
+        crate::rooms::RoomQuestionClosed
+    };
+    (RoomQuestionTimedOut) => {
+        crate::rooms::RoomQuestionTimedOut
+    };
+    (RoomReceiptLapsed) => {
+        crate::rooms::RoomReceiptLapsed
+    };
+    (RoomReceiptUnavailable) => {
+        crate::rooms::RoomReceiptUnavailable
+    };
+    (RoomReceiptRecovered) => {
+        crate::rooms::RoomReceiptRecovered
+    };
     (WorkingGroupStored) => {
         crate::rooms::WorkingGroupStored
     };
@@ -267,6 +294,24 @@ vocabulary! {
     RoomDelivered = "room::delivered" by ResidentRecognition;
     /// A lane with no delivery cursor began owing room catch-up here.
     RoomHorizon = "room::horizon" by ResidentRecognition;
+    /// A lane's authored MSG, ASK, or ANS opened its route receipts and results.
+    RoomConversed = "room::conversed" by AckScanner;
+    /// An operator MSG, ASK, or ANS opened its route receipts and results.
+    RoomPosted = "room::posted" by CommandDoor;
+    /// A lane's ACK or NAK settled exact room delivery keys.
+    RoomReceipted = "room::receipted" by AckScanner;
+    /// The operator's ACK or NAK settled exact room delivery keys.
+    RoomDisposed = "room::disposed" by CommandDoor;
+    /// A pending question result was explicitly declined or cancelled.
+    RoomQuestionClosed = "room::closed" by CommandDoor;
+    /// A pending question result reached its immutable deadline.
+    RoomQuestionTimedOut = "room::timedout" by BusTimer;
+    /// A pending room receipt expired without a disposition.
+    RoomReceiptLapsed = "room::lapsed" by BusTimer;
+    /// A pending room receipt's destination could not be reached.
+    RoomReceiptUnavailable = "room::unavailable" by ResidentRecognition;
+    /// Operator recovery returned a lapsed room receipt to pending.
+    RoomReceiptRecovered = "room::recovered" by CommandDoor;
     /// A working group's complete ordered anchor state was saved.
     WorkingGroupStored = "group::stored" by CommandDoor;
     /// A working group was removed without touching its anchor rooms.

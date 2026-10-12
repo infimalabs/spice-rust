@@ -15,7 +15,12 @@ pub(super) fn expected(
 ) -> Projection {
     let (projection, refusals) = History::rebuild(facts.iter().filter_map(|(seq, record)| {
         let envelope = record.envelope.as_ref()?;
-        Some((wire::Seq::new(*seq)?, &envelope.actor, &envelope.fact))
+        Some((
+            wire::Seq::new(*seq)?,
+            &envelope.actor,
+            envelope.at,
+            &envelope.fact,
+        ))
     }));
     for (seq, refusal) in refusals {
         violations.push(Violation::new(
@@ -83,12 +88,33 @@ pub(super) fn verify(
         &stored.shelved,
         violations,
     );
+    compare(
+        "room_conversations",
+        &expected.conversation.publications,
+        &stored.conversation.publications,
+        violations,
+    );
+    compare(
+        "room_receipts",
+        &expected.conversation.receipts,
+        &stored.conversation.receipts,
+        violations,
+    );
+    compare(
+        "room_results",
+        &expected.conversation.results,
+        &stored.conversation.results,
+        violations,
+    );
     Ok(stored.groups.len()
         + stored.proposals.len()
         + stored.authorizations.len()
         + stored.cursors.len()
         + stored.directed.len()
-        + stored.shelved.len())
+        + stored.shelved.len()
+        + stored.conversation.publications.len()
+        + stored.conversation.receipts.len()
+        + stored.conversation.results.len())
 }
 
 fn compare<K: Ord + Debug, V: PartialEq>(

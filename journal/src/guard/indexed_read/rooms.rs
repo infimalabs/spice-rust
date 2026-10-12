@@ -4,8 +4,9 @@ use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued, CandidateRetained,
     ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
-    ProposalRef, RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered,
-    RoomHorizon, RoomMessaged, RoomPublished, RoomPutAside, WorkingGroup,
+    ProposalRef, QuestionResultHead, QuestionResultRecord, QuestionResultRef, RetainedCandidate,
+    RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomHorizon, RoomMessaged,
+    RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord, RoomReceiptRef, WorkingGroup,
 };
 
 use super::{
@@ -539,6 +540,99 @@ impl JournalRead<'_> {
     ) -> Result<Option<JournalHead<RoomPutAside>>, GuardError> {
         let head = self.text_head::<RoomPutAside>("room_shelvings", "room", room.as_str())?;
         require_room(head, room, |body| &body.room)
+    }
+
+    /// One room receipt's immutable record and current guarded head, absent
+    /// before its publication opens it; the head's position is its latest move.
+    pub fn room_receipt(
+        &self,
+        receipt: &RoomReceiptRef,
+    ) -> Result<Option<(RoomReceiptRecord, JournalHead<RoomReceiptHead>)>, GuardError> {
+        let key = crate::rooms::room_receipt_key(receipt)
+            .map_err(|refusal| GuardError::Invalid(refusal.to_string()))?;
+        let head = self.conversation_head::<RoomReceiptRecord, RoomReceiptHead>(
+            "room_receipts",
+            "receipt",
+            &key,
+        )?;
+        if let Some((record, head)) = &head
+            && (record.receipt() != receipt || head.body.receipt() != receipt)
+        {
+            return Err(GuardError::Invalid(format!(
+                "room receipt indexed as {key} names another receipt"
+            )));
+        }
+        Ok(head)
+    }
+
+    /// One question's immutable result record and current guarded result
+    /// head, absent before its ASK; the head's position is its latest move.
+    pub fn question_result(
+        &self,
+        result: &QuestionResultRef,
+    ) -> Result<Option<(QuestionResultRecord, JournalHead<QuestionResultHead>)>, GuardError> {
+        let key = result.to_string();
+        let head = self.conversation_head::<QuestionResultRecord, QuestionResultHead>(
+            "room_results",
+            "result",
+            &key,
+        )?;
+        if let Some((record, head)) = &head
+            && (record.result() != result || head.body.result() != result)
+        {
+            return Err(GuardError::Invalid(format!(
+                "question result indexed as {key} names another result"
+            )));
+        }
+        Ok(head)
+    }
+
+    fn conversation_head<R, H>(
+        &self,
+        table: &'static str,
+        key_column: &'static str,
+        key: &str,
+    ) -> Result<Option<(R, JournalHead<H>)>, GuardError>
+    where
+        R: serde::de::DeserializeOwned + serde::Serialize,
+        H: serde::de::DeserializeOwned + serde::Serialize,
+    {
+        let statement =
+            format!("SELECT head_seq, record, head FROM {table} WHERE {key_column} = ?1");
+        read_metrics::observe_query();
+        let row = self
+            .connection
+            .query_row(&statement, [key], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .optional()
+            .map_err(GuardError::Store)?;
+        let Some((position, record, head)) = row else {
+            return Ok(None);
+        };
+        read_metrics::observe_row();
+        read_metrics::observe_decode(record.len() + head.len());
+        let invalid = |error: GuardError| {
+            let detail = match error {
+                GuardError::Invalid(detail) => detail,
+                other => other.to_string(),
+            };
+            GuardError::Invalid(format!("{table} {key_column} {key:?} is invalid: {detail}"))
+        };
+        let record = decode_head::<R>(position, &record).map_err(invalid)?.body;
+        let head = decode_head::<H>(position, &head).map_err(invalid)?;
+        if self.cursor.is_none_or(|cursor| head.position > cursor) {
+            return Err(GuardError::Invalid(format!(
+                "{table} {key_column} {key:?} head position {} is beyond cursor {:?}",
+                head.position,
+                self.cursor.map(wire::Seq::get)
+            )));
+        }
+        Ok(Some((record, head)))
     }
 
     /// One bounded page of a room's publications strictly after `after`, in
