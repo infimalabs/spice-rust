@@ -17,6 +17,9 @@ mod room_history;
 #[path = "steering_message/conversation.rs"]
 mod conversation;
 
+#[path = "steering_message/deadline.rs"]
+mod deadline;
+
 const SENDER: u8 = 2;
 const FIRST: u8 = 4;
 const SECOND: u8 = 6;

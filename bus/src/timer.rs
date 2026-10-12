@@ -26,6 +26,8 @@ pub enum TimerKind {
     LaneHold,
     LaneResume,
     TaskWake,
+    RoomTimeout,
+    RoomLapse,
 }
 
 /// One explicit event emitted when an armed monotonic wait completes.

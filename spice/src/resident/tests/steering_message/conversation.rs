@@ -12,7 +12,10 @@ use wire::rooms::{
 use super::*;
 
 impl Lanes {
-    fn question(&self, result: &QuestionResultRef) -> (QuestionResultRecord, QuestionResultHead) {
+    pub(super) fn question(
+        &self,
+        result: &QuestionResultRef,
+    ) -> (QuestionResultRecord, QuestionResultHead) {
         let result = result.clone();
         let (record, head) = self
             .bus
@@ -33,7 +36,7 @@ impl Lanes {
     }
 
     /// Author `text` on `lane`, account it, and hear its newest packet.
-    fn say(&self, lane: u8, text: &str) -> Result<Published, Unpublished> {
+    pub(super) fn say(&self, lane: u8, text: &str) -> Result<Published, Unpublished> {
         self.author(lane, text);
         self.account(lane);
         let (_, outcomes) = self.hear_newest(lane);
@@ -43,7 +46,7 @@ impl Lanes {
 }
 
 /// The result an ASK reports opening.
-fn asked(outcome: &Result<Published, Unpublished>) -> QuestionResultRef {
+pub(super) fn asked(outcome: &Result<Published, Unpublished>) -> QuestionResultRef {
     match outcome {
         Ok(Published::Sent {
             conversed:
