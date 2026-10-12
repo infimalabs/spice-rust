@@ -186,7 +186,9 @@ fn compaction_and_refusals_are_typed_while_lifecycle_frames_stay_silent() {
     assert!(matches!(
         failure.events(),
         [Event::Failure(failure)]
-            if failure.message == "prompt refused: Agent is already processing"
+            if failure.message
+                == "prompt not accepted: agent is already processing; queue it with \
+                    steer/followUp or retry after completion"
     ));
     assert!(matches!(
         failure.context().and_then(|context| context.response.as_ref()),

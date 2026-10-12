@@ -74,6 +74,10 @@ fn only_a_seat_whose_registration_succeeded_is_told_the_scheme_and_handed_urls()
             "one first turn, settled by the first answer"
         );
         assert_eq!(frames[1]["id"], vendor::omp::PROMPT_REQUEST_ID);
+        assert_eq!(
+            frames[1]["streamingBehavior"], "followUp",
+            "a restored in-flight turn queues this one first prompt"
+        );
         let message = frames[1]["message"].as_str().expect("a prompt message");
         if success {
             assert!(message.contains("# spice:// reads"), "{message}");
