@@ -73,6 +73,19 @@ impl fmt::Display for QuestionResultRef {
     }
 }
 
+/// Public key a directed recipient's ACK, NAK, or ANS names.
+///
+/// A MSG route and an answer return issue their own route receipt; an ASK
+/// issues only its result handle, whose route receipt stays internal.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RoomDeliveryKey {
+    /// One directed MSG route or one answer-return delivery.
+    Route(RoomReceiptRef),
+    /// One ASK, named by its public result handle.
+    Result { result: QuestionResultRef },
+}
+
 /// Semantic publication verb. Receipt controls use [`RoomReceiptControl`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "verb", rename_all = "lowercase", deny_unknown_fields)]
@@ -229,6 +242,51 @@ impl RoomPublication {
         &self.routes
     }
 
+    /// Public key issued for one route receipt of this publication.
+    ///
+    /// MSG issues one per directed audience route, ASK issues its result
+    /// handle for its single route, and ANS issues its answer-return receipt.
+    #[must_use]
+    pub fn delivery_key(&self, route: SequenceCode) -> Option<RoomDeliveryKey> {
+        let index = usize::try_from(route.get()).ok()?;
+        let receipt = || {
+            RoomDeliveryKey::Route(RoomReceiptRef {
+                publication: self.publication.clone(),
+                route,
+            })
+        };
+        match &self.kind {
+            RoomPublicationKind::Msg {} => self
+                .routes
+                .get(index)
+                .filter(|route| route.destination.is_audience())
+                .map(|_| receipt()),
+            RoomPublicationKind::Ask { result, .. } => {
+                (index == 0).then(|| RoomDeliveryKey::Result {
+                    result: result.clone(),
+                })
+            }
+            RoomPublicationKind::Ans { .. } => (index == 0).then(receipt),
+        }
+    }
+
+    /// Route receipt a public key settles, or `None` for any key this
+    /// publication never issued, including an ASK's internal route receipt.
+    #[must_use]
+    pub fn receipt_for(&self, key: &RoomDeliveryKey) -> Option<RoomReceiptRef> {
+        let route = match key {
+            RoomDeliveryKey::Route(receipt) if receipt.publication == self.publication => {
+                receipt.route
+            }
+            RoomDeliveryKey::Result { .. } => SequenceCode::new(0),
+            RoomDeliveryKey::Route(_) => return None,
+        };
+        (self.delivery_key(route).as_ref() == Some(key)).then(|| RoomReceiptRef {
+            publication: self.publication.clone(),
+            route,
+        })
+    }
+
     /// Capacity atomically charged with this content, including later controls.
     pub fn admission_charge(
         &self,
@@ -297,30 +355,23 @@ pub struct RoomReceiptRef {
     pub route: SequenceCode,
 }
 
-/// Immutable identity, destination, and lapse horizon behind one receipt head.
+/// Immutable identity, destination, and source behind one receipt head.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomReceiptRecord {
     receipt: RoomReceiptRef,
     route: RoomRoute,
     source: RoomSource,
-    deadline: Instant,
 }
 
 impl RoomReceiptRecord {
     /// Create the immutable authority behind one route receipt.
     #[must_use]
-    pub const fn new(
-        receipt: RoomReceiptRef,
-        route: RoomRoute,
-        source: RoomSource,
-        deadline: Instant,
-    ) -> Self {
+    pub const fn new(receipt: RoomReceiptRef, route: RoomRoute, source: RoomSource) -> Self {
         Self {
             receipt,
             route,
             source,
-            deadline,
         }
     }
 
@@ -338,30 +389,52 @@ impl RoomReceiptRecord {
     pub const fn source(&self) -> &RoomSource {
         &self.source
     }
-
-    #[must_use]
-    pub const fn deadline(&self) -> Instant {
-        self.deadline
-    }
 }
 
 /// Current semantic recipient disposition of one directed route.
+///
+/// Expired and unavailable are lapses, never decisions: recovery returns the
+/// same receipt to pending with a fresh bounded expiry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RoomReceiptState {
-    Pending {},
+    Pending { expires: Instant },
     Acked { source: RoomSource },
     Declined { source: RoomSource },
-    Expired {},
-    Unavailable {},
+    Expired { at: Instant },
+    Unavailable { at: Instant },
     Cancelled { source: RoomSource },
 }
 
 impl RoomReceiptState {
+    /// Whether a semantic decision retired this receipt for good.
     #[must_use]
     pub const fn is_terminal(&self) -> bool {
-        !matches!(self, Self::Pending {})
+        matches!(
+            self,
+            Self::Acked { .. } | Self::Declined { .. } | Self::Cancelled { .. }
+        )
     }
+
+    /// Instant of a recoverable lapse, if this receipt lapsed.
+    #[must_use]
+    pub const fn lapsed_at(&self) -> Option<Instant> {
+        match self {
+            Self::Expired { at } | Self::Unavailable { at } => Some(*at),
+            _ => None,
+        }
+    }
+}
+
+/// Why a receipt head refused a transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum RoomReceiptTransitionError {
+    #[error("only a pending room receipt can be settled or lapse")]
+    NotPending,
+    #[error("only a lapsed room receipt can recover")]
+    NotLapsed,
+    #[error("a recovered room receipt must expire after its lapse")]
+    Expiry,
 }
 
 /// Guarded head of one route receipt.
@@ -373,12 +446,12 @@ pub struct RoomReceiptHead {
 }
 
 impl RoomReceiptHead {
-    /// Open one receipt at its only mutable semantic head.
+    /// Open one receipt pending until its bounded expiry.
     #[must_use]
-    pub const fn pending(receipt: RoomReceiptRef) -> Self {
+    pub const fn pending(receipt: RoomReceiptRef, expires: Instant) -> Self {
         Self {
             receipt,
-            state: RoomReceiptState::Pending {},
+            state: RoomReceiptState::Pending { expires },
         }
     }
 
@@ -392,18 +465,40 @@ impl RoomReceiptHead {
         &self.state
     }
 
-    /// Admit one terminal winner or replay that exact winner.
-    pub fn settle(&mut self, next: RoomReceiptState) -> Result<(), TerminalConflict> {
-        settle_once(&mut self.state, next)
+    /// Move a pending receipt to a decision or a lapse, or replay that exact move.
+    pub fn settle(&mut self, next: RoomReceiptState) -> Result<(), RoomReceiptTransitionError> {
+        if self.state == next {
+            return Ok(());
+        }
+        if !matches!(self.state, RoomReceiptState::Pending { .. })
+            || matches!(next, RoomReceiptState::Pending { .. })
+        {
+            return Err(RoomReceiptTransitionError::NotPending);
+        }
+        self.state = next;
+        Ok(())
+    }
+
+    /// Return a lapsed receipt to pending under the same key with a fresh expiry.
+    pub fn recover(&mut self, expires: Instant) -> Result<(), RoomReceiptTransitionError> {
+        let lapsed_at = self
+            .state
+            .lapsed_at()
+            .ok_or(RoomReceiptTransitionError::NotLapsed)?;
+        if expires <= lapsed_at {
+            return Err(RoomReceiptTransitionError::Expiry);
+        }
+        self.state = RoomReceiptState::Pending { expires };
+        Ok(())
     }
 }
 
-/// ACK or NAK control over exact receipt keys; it has no retargeting fields.
+/// ACK or NAK control over exact public delivery keys; it has no retargeting fields.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RoomReceiptControlWire", into = "RoomReceiptControlWire")]
 pub struct RoomReceiptControl {
     disposition: RoomReceiptDisposition,
-    receipts: Vec<RoomReceiptRef>,
+    keys: Vec<RoomDeliveryKey>,
     source: RoomSource,
 }
 
@@ -411,12 +506,12 @@ impl RoomReceiptControl {
     /// Admit one exact bounded ACK or NAK control.
     pub fn try_new(
         disposition: RoomReceiptDisposition,
-        receipts: Vec<RoomReceiptRef>,
+        keys: Vec<RoomDeliveryKey>,
         source: RoomSource,
     ) -> Result<Self, &'static str> {
         RoomReceiptControlWire {
             disposition,
-            receipts,
+            keys,
             source,
         }
         .try_into()
@@ -428,13 +523,23 @@ impl RoomReceiptControl {
     }
 
     #[must_use]
-    pub fn receipts(&self) -> &[RoomReceiptRef] {
-        &self.receipts
+    pub fn keys(&self) -> &[RoomDeliveryKey] {
+        &self.keys
     }
 
     #[must_use]
     pub const fn source(&self) -> &RoomSource {
         &self.source
+    }
+
+    /// Decision this control settles on each named route receipt.
+    #[must_use]
+    pub fn receipt_state(&self) -> RoomReceiptState {
+        let source = self.source.clone();
+        match self.disposition {
+            RoomReceiptDisposition::Ack => RoomReceiptState::Acked { source },
+            RoomReceiptDisposition::Nak => RoomReceiptState::Declined { source },
+        }
     }
 }
 
@@ -449,7 +554,7 @@ pub enum RoomReceiptDisposition {
 #[serde(deny_unknown_fields)]
 struct RoomReceiptControlWire {
     disposition: RoomReceiptDisposition,
-    receipts: Vec<RoomReceiptRef>,
+    keys: Vec<RoomDeliveryKey>,
     source: RoomSource,
 }
 
@@ -457,15 +562,15 @@ impl TryFrom<RoomReceiptControlWire> for RoomReceiptControl {
     type Error = &'static str;
 
     fn try_from(value: RoomReceiptControlWire) -> Result<Self, Self::Error> {
-        if value.receipts.is_empty()
-            || value.receipts.len() > ROOM_ROUTE_FANOUT_LIMIT
-            || !all_unique(&value.receipts)
+        if value.keys.is_empty()
+            || value.keys.len() > ROOM_ROUTE_FANOUT_LIMIT
+            || !all_unique(&value.keys)
         {
-            return Err("ACK/NAK receipt keys must be nonempty, unique, and bounded");
+            return Err("ACK/NAK delivery keys must be nonempty, unique, and bounded");
         }
         Ok(Self {
             disposition: value.disposition,
-            receipts: value.receipts,
+            keys: value.keys,
             source: value.source,
         })
     }
@@ -475,7 +580,7 @@ impl From<RoomReceiptControl> for RoomReceiptControlWire {
     fn from(value: RoomReceiptControl) -> Self {
         Self {
             disposition: value.disposition,
-            receipts: value.receipts,
+            keys: value.keys,
             source: value.source,
         }
     }
@@ -647,7 +752,14 @@ impl QuestionResultHead {
 
     /// Admit one terminal winner or replay that exact winner.
     pub fn settle(&mut self, next: QuestionResultState) -> Result<(), TerminalConflict> {
-        settle_once(&mut self.state, next)
+        if self.state == next {
+            return Ok(());
+        }
+        if self.state.is_terminal() || !next.is_terminal() {
+            return Err(TerminalConflict);
+        }
+        self.state = next;
+        Ok(())
     }
 }
 
@@ -714,6 +826,25 @@ impl QuestionResultRecord {
         self.deadline
     }
 
+    /// The one public key this ASK issues for ACK, NAK, and ANS.
+    #[must_use]
+    pub fn public_key(&self) -> RoomDeliveryKey {
+        RoomDeliveryKey::Result {
+            result: self.result.clone(),
+        }
+    }
+
+    /// Result consequence of a control naming this ASK's public key: NAK
+    /// declines the pending result, while ACK settles only the route receipt.
+    #[must_use]
+    pub fn control_result(&self, control: &RoomReceiptControl) -> Option<QuestionResultState> {
+        (control.disposition == RoomReceiptDisposition::Nak
+            && control.keys.contains(&self.public_key()))
+        .then(|| QuestionResultState::Declined {
+            source: control.source.clone(),
+        })
+    }
+
     /// Validate ANS against the frozen question and derive its one return receipt.
     pub fn answer_state(
         &self,
@@ -775,36 +906,6 @@ pub enum QuestionAnswerError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("a terminal room authority already has another winner")]
 pub struct TerminalConflict;
-
-fn settle_once<T>(current: &mut T, next: T) -> Result<(), TerminalConflict>
-where
-    T: Clone + PartialEq + TerminalState,
-{
-    if current == &next {
-        return Ok(());
-    }
-    if current.is_terminal() || !next.is_terminal() {
-        return Err(TerminalConflict);
-    }
-    *current = next;
-    Ok(())
-}
-
-trait TerminalState {
-    fn is_terminal(&self) -> bool;
-}
-
-impl TerminalState for RoomReceiptState {
-    fn is_terminal(&self) -> bool {
-        RoomReceiptState::is_terminal(self)
-    }
-}
-
-impl TerminalState for QuestionResultState {
-    fn is_terminal(&self) -> bool {
-        QuestionResultState::is_terminal(self)
-    }
-}
 
 fn all_unique<T: PartialEq>(values: &[T]) -> bool {
     values
@@ -890,83 +991,182 @@ mod tests {
         assert!(serde_json::from_value::<RoomPublication>(unknown).is_err());
     }
 
-    #[test]
-    fn ask_receipt_result_and_answer_return_are_distinct_authorities() {
-        let result = QuestionResultRef::new(authority("1kKRRsDR3"));
-        let question = authority("1kKRRsDR1");
-        let receipt = RoomReceiptRef {
-            publication: question.clone(),
-            route: SequenceCode::new(0),
-        };
-        let record: QuestionResultRecord = serde_json::from_value(serde_json::json!({
-            "result": result,
-            "question": question,
-            "receipt": receipt,
+    fn ask() -> RoomPublication {
+        serde_json::from_value(serde_json::json!({
+            "publication": "1kKRRsDR1",
+            "author": {"kind": "operator"},
+            "source": {"kind": "journal", "fact": "1"},
+            "content_bytes": 10,
+            "kind": {"verb": "ask", "result": "1kKRRsDR3", "deadline": "2030-01-02T00:00:00.000Z"},
+            "routes": [{"destination": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"}, "context": "1kKRRsDR2"}],
+        }))
+        .expect("ask")
+    }
+
+    fn question() -> QuestionResultRecord {
+        serde_json::from_value(serde_json::json!({
+            "result": "1kKRRsDR3",
+            "question": "1kKRRsDR1",
+            "receipt": {"publication": "1kKRRsDR1", "route": "0"},
             "requester": {"kind": "operator"},
             "respondent": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"},
             "context": "1kKRRsDR2",
             "source": {"kind": "journal", "fact": "1"},
             "deadline": "2030-01-02T00:00:00.000Z",
         }))
-        .expect("question");
-        let conflated: Result<QuestionResultRecord, _> =
-            serde_json::from_value(serde_json::json!({
-                "result": "1kKRRsDR1",
-                "question": "1kKRRsDR1",
-                "receipt": {"publication": "1kKRRsDR1", "route": "0"},
-                "requester": {"kind": "operator"},
-                "respondent": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"},
-                "source": {"kind": "journal", "fact": "1"},
-                "deadline": "2030-01-02T00:00:00.000Z",
-            }));
-        assert!(conflated.is_err());
-        let wrong_receipt_route: Result<QuestionResultRecord, _> =
-            serde_json::from_value(serde_json::json!({
-                "result": "1kKRRsDR3",
-                "question": "1kKRRsDR1",
-                "receipt": {"publication": "1kKRRsDR1", "route": "1"},
-                "requester": {"kind": "operator"},
-                "respondent": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"},
-                "source": {"kind": "journal", "fact": "1"},
-                "deadline": "2030-01-02T00:00:00.000Z",
-            }));
-        assert!(wrong_receipt_route.is_err());
-        let mut receipt_head = RoomReceiptHead::pending(record.receipt.clone());
-        receipt_head
-            .settle(RoomReceiptState::Acked { source: source(2) })
-            .expect("ACK settles only delivery");
-        let result_head = QuestionResultHead::pending(record.result.clone());
-        assert_eq!(result_head.state, QuestionResultState::Pending {});
+        .expect("question")
+    }
+
+    fn control(disposition: &str, key: &RoomDeliveryKey) -> RoomReceiptControl {
+        serde_json::from_value(serde_json::json!({
+            "disposition": disposition,
+            "keys": [key],
+            "source": {"kind": "journal", "fact": "2"},
+        }))
+        .expect("control")
+    }
+
+    #[test]
+    fn ask_issues_one_public_result_key_for_ack_nak_and_ans() {
+        let ask = ask();
+        let record = question();
+        for conflated in [
+            serde_json::json!({"result": "1kKRRsDR1", "receipt": {"publication": "1kKRRsDR1", "route": "0"}}),
+            serde_json::json!({"result": "1kKRRsDR3", "receipt": {"publication": "1kKRRsDR1", "route": "1"}}),
+        ] {
+            let mut wire = serde_json::to_value(&record).unwrap();
+            wire.as_object_mut()
+                .unwrap()
+                .extend(conflated.as_object().unwrap().clone());
+            assert!(serde_json::from_value::<QuestionResultRecord>(wire).is_err());
+        }
+
+        let key = record.public_key();
+        assert_eq!(ask.delivery_key(SequenceCode::new(0)), Some(key.clone()));
+        assert_eq!(ask.delivery_key(SequenceCode::new(1)), None);
+        assert_eq!(ask.receipt_for(&key).as_ref(), Some(record.receipt()));
+        let internal = RoomDeliveryKey::Route(record.receipt().clone());
+        assert_eq!(ask.receipt_for(&internal), None);
+        for malformed in [
+            serde_json::json!({"kind": "route", "publication": "1kKRRsDR1", "route": "0", "result": "1kKRRsDR3"}),
+            serde_json::json!({"kind": "result", "result": "1kKRRsDR3", "route": "0"}),
+            serde_json::json!({"kind": "receipt", "publication": "1kKRRsDR1", "route": "0"}),
+        ] {
+            assert!(serde_json::from_value::<RoomDeliveryKey>(malformed).is_err());
+        }
+        let foreign = RoomDeliveryKey::Result {
+            result: QuestionResultRef::new(authority("1kKRRsDR9")),
+        };
+        assert_eq!(ask.receipt_for(&foreign), None);
+
+        let ack = control("ack", &key);
+        assert_eq!(
+            crate::decode::<RoomReceiptControl>(&crate::encode(&ack).unwrap()).unwrap(),
+            ack
+        );
+        let mut receipt = RoomReceiptHead::pending(
+            record.receipt().clone(),
+            instant("2030-01-01T00:00:00.000Z"),
+        );
+        receipt
+            .settle(ack.receipt_state())
+            .expect("ACK settles the receipt");
+        assert_eq!(record.control_result(&ack), None);
+        let nak = control("nak", &key);
+        assert_eq!(
+            record.control_result(&nak),
+            Some(QuestionResultState::Declined { source: source(2) })
+        );
+        assert_eq!(record.control_result(&control("nak", &foreign)), None);
 
         let answer: RoomPublication = serde_json::from_value(serde_json::json!({
             "publication": "1kKRRsDR4",
             "author": {"kind": "lane", "lane": "018f82d4-6f59-7d06-92e3-bce913116302"},
             "source": {"kind": "journal", "fact": "3"},
             "content_bytes": 20,
-            "kind": {"verb": "ans", "result": "1kKRRsDR3", "context": "1kKRRsDR2"},
+            "kind": {"verb": "ans", "result": key_result(&key), "context": "1kKRRsDR2"},
             "routes": [],
         }))
         .expect("answer");
-        let returned = record
-            .answer_state(
-                &answer,
-                instant("2030-01-01T00:00:00.000Z"),
-                RoomReceiptRef {
-                    publication: authority("1kKRRsDR4"),
-                    route: SequenceCode::new(0),
-                },
-            )
-            .expect("answer derives return delivery");
+        let return_key = answer
+            .delivery_key(SequenceCode::new(0))
+            .expect("answer issues its return key");
+        let return_receipt = answer
+            .receipt_for(&return_key)
+            .expect("return key resolves");
         let QuestionResultState::Answered {
             return_delivery, ..
-        } = returned
+        } = record
+            .answer_state(&answer, instant("2030-01-01T00:00:00.000Z"), return_receipt)
+            .expect("ANS on the public key answers")
         else {
             panic!("answer is terminal");
         };
         assert_eq!(return_delivery.destination, RoomDestination::Operator {});
-        assert_ne!(
-            record.result.to_string(),
-            record.receipt.publication.to_string()
+        assert_eq!(answer.delivery_key(SequenceCode::new(1)), None);
+    }
+
+    fn key_result(key: &RoomDeliveryKey) -> &QuestionResultRef {
+        let RoomDeliveryKey::Result { result } = key else {
+            panic!("ASK key is its result handle");
+        };
+        result
+    }
+
+    #[test]
+    fn lapsed_receipt_recovers_under_its_key_without_touching_the_result() {
+        let record = question();
+        let first = instant("2030-01-01T00:00:00.000Z");
+        let mut receipt = RoomReceiptHead::pending(record.receipt().clone(), first);
+        let mut result = QuestionResultHead::pending(record.result().clone());
+        for lapse in [
+            RoomReceiptState::Expired { at: first },
+            RoomReceiptState::Unavailable { at: first },
+        ] {
+            receipt
+                .settle(lapse.clone())
+                .expect("pending receipt lapses");
+            receipt.settle(lapse).expect("exact lapse replays");
+            assert_eq!(
+                receipt.settle(RoomReceiptState::Acked { source: source(2) }),
+                Err(RoomReceiptTransitionError::NotPending)
+            );
+            assert_eq!(
+                receipt.recover(first),
+                Err(RoomReceiptTransitionError::Expiry)
+            );
+            let fresh = instant("2030-01-01T01:00:00.000Z");
+            receipt.recover(fresh).expect("lapse recovers");
+            assert_eq!(receipt.receipt(), record.receipt());
+            assert_eq!(
+                receipt.state(),
+                &RoomReceiptState::Pending { expires: fresh }
+            );
+            receipt = RoomReceiptHead::pending(record.receipt().clone(), first);
+        }
+        assert_eq!(
+            receipt.recover(instant("2030-01-01T01:00:00.000Z")),
+            Err(RoomReceiptTransitionError::NotLapsed)
+        );
+        receipt
+            .settle(RoomReceiptState::Acked { source: source(2) })
+            .expect("ACK settles");
+        assert_eq!(
+            receipt.recover(instant("2030-01-01T01:00:00.000Z")),
+            Err(RoomReceiptTransitionError::NotLapsed)
+        );
+        assert_eq!(
+            receipt.settle(RoomReceiptState::Expired { at: first }),
+            Err(RoomReceiptTransitionError::NotPending)
+        );
+
+        result
+            .settle(QuestionResultState::TimedOut {})
+            .expect("deadline wins");
+        assert_eq!(record.deadline(), instant("2030-01-02T00:00:00.000Z"));
+        assert_eq!(
+            result.settle(QuestionResultState::Pending {}),
+            Err(TerminalConflict)
         );
     }
 
@@ -1008,7 +1208,7 @@ mod tests {
 
         let control: RoomReceiptControl = serde_json::from_value(serde_json::json!({
             "disposition": "ack",
-            "receipts": [{"publication": "1kKRRsDR1", "route": "0"}],
+            "keys": [{"kind": "route", "publication": "1kKRRsDR1", "route": "0"}],
             "source": {"kind": "journal", "fact": "5"},
         }))
         .expect("reserved ACK remains admissible independently of content saturation");
