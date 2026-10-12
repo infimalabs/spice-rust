@@ -98,6 +98,10 @@ fn malformed_or_repeated_contexts_refuse_the_packet() {
         MessageRefusal::Context { span, .. } if span == (9..16)
     ));
     assert!(matches!(
+        refusal("MSG #ROOMS-not-a-stamp: malformed room."),
+        MessageRefusal::Context { span, .. } if span == (5..22)
+    ));
+    assert!(matches!(
         refusal("MSG 6HmS#: empty."),
         MessageRefusal::Context { span, .. } if span == (9..9)
     ));
