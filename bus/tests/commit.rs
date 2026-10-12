@@ -414,9 +414,7 @@ fn completion_terminal_lookup_probes_logarithmic_levels() {
                         next: None,
                     }),
                     git: None,
-                    source: body::SourceBoundary::Incomplete {
-                        reason: "in-process fixture".to_owned(),
-                    },
+                    source: body::SourceBoundary::Proven { heads: Vec::new() },
                 },
                 cause,
             )
@@ -466,9 +464,7 @@ fn terminal_index_distinguishes_stamp_widths_for_the_same_moment() {
             next: None,
         }),
         git: None,
-        source: body::SourceBoundary::Incomplete {
-            reason: "in-process fixture".to_owned(),
-        },
+        source: body::SourceBoundary::Proven { heads: Vec::new() },
     };
     let first = write
         .fact(terminal(legacy.clone()), FactCause::Root)
@@ -578,9 +574,7 @@ fn terminal_workflow_with_an_active_claim_is_an_allocation_fault() {
                 validation: "malformed terminal possession fixture".to_owned(),
                 terminal: None,
                 git: None,
-                source: body::SourceBoundary::Incomplete {
-                    reason: "in-process fixture".to_owned(),
-                },
+                source: body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Pending(added),
         )
@@ -964,9 +958,7 @@ fn append_retained_terminal(
                 validation: "terminal fleet fixture".to_owned(),
                 terminal: None,
                 git: None,
-                source: body::SourceBoundary::Incomplete {
-                    reason: "in-process fixture".to_owned(),
-                },
+                source: body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Pending(added),
         )

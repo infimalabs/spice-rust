@@ -30,7 +30,7 @@ const PREPARED: &str = "prepared";
 /// and head shapes in [`residual`], and creates the room-authority projection
 /// before the schema identity advances. Current readers therefore need no
 /// execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 6] = [33, 34, 35, 36, 37, 38];
+const PREDECESSOR_SCHEMAS: [u32; 8] = [33, 34, 35, 36, 37, 38, 39, 40];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 /// Release that added the residency subscription table without a schema step.
@@ -1134,8 +1134,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 39, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 41, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 39;
+PRAGMA user_version = 41;
 "#;

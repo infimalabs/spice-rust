@@ -85,7 +85,7 @@ mod tests {
             validation: "fixture validation".to_owned(),
             terminal: None,
             git,
-            source: body::SourceBoundary::unrecorded(),
+            source: body::SourceBoundary::Proven { heads: Vec::new() },
         }
     }
 

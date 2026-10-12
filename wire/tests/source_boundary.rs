@@ -1,5 +1,6 @@
-//! Current task source boundaries preserve attributed transcript heads across wire encoding.
+//! Lifecycle source boundaries are always proven and preserve attributed transcript heads.
 
+use serde::{Serialize, de::DeserializeOwned};
 use wire::{Actor, CanonicalUuid, Instant, TaskStamp, TranscriptSourceHead, body};
 
 fn uuid(text: &str) -> CanonicalUuid {
@@ -52,13 +53,73 @@ fn claim_won() -> body::ClaimWon {
     }
 }
 
+/// Decode `value` after replacing its stored boundary, or removing it when `source` is `None`.
+fn decode_with_source<T: Serialize + DeserializeOwned>(
+    value: &T,
+    source: Option<serde_json::Value>,
+) -> Result<T, serde_json::Error> {
+    let mut fields = serde_json::to_value(value).expect("fixture encodes");
+    let object = fields.as_object_mut().expect("lifecycle body is an object");
+    match source {
+        Some(source) => object.insert("source".to_owned(), source),
+        None => object.remove("source"),
+    };
+    wire::decode(&serde_json::to_vec(&fields).expect("edited fixture encodes"))
+}
+
+fn refuses_unproven_sources<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(
+    value: &T,
+) {
+    let current = serde_json::to_value(proven()).expect("boundary encodes");
+    let unproven = serde_json::json!({"incomplete": {"reason": "nothing accounted"}});
+    assert_eq!(
+        decode_with_source(value, Some(current)).expect("a proven boundary decodes"),
+        *value
+    );
+    assert!(decode_with_source(value, None).is_err(), "{value:?}");
+    assert!(
+        decode_with_source(value, Some(unproven)).is_err(),
+        "{value:?}"
+    );
+}
+
 #[test]
 fn a_claim_boundary_survives_the_current_wire_round_trip() {
     let decoded: body::ClaimWon =
         wire::decode(&wire::encode(&claim_won()).expect("fixture encodes")).expect("fact decodes");
 
     assert_eq!(decoded.source, proven());
-    assert_ne!(decoded.source, body::SourceBoundary::unrecorded());
+}
+
+#[test]
+fn every_lifecycle_fact_refuses_an_absent_or_unproven_boundary() {
+    let won = claim_won();
+    refuses_unproven_sources(&won);
+    refuses_unproven_sources(&body::ClaimCarried {
+        task: won.task.clone(),
+        lane: won.lane,
+        occupant: won.occupant,
+        ancestor: won.occupant,
+        epoch: won.epoch,
+        source: proven(),
+    });
+    refuses_unproven_sources(&body::TaskDone {
+        task: won.task.clone(),
+        validation: "fixture validation".to_owned(),
+        terminal: None,
+        git: None,
+        source: proven(),
+    });
+    refuses_unproven_sources(&body::TaskReviewed {
+        task: won.task,
+        reviewer: Actor::Operator,
+        verdict: body::Verdict::Clean,
+        finding: None,
+        note: None,
+        followups: Vec::new(),
+        git: None,
+        source: proven(),
+    });
 }
 
 #[test]

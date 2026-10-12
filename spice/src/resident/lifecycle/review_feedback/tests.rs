@@ -306,7 +306,7 @@ fn complete_author_phase(bus: &Bus, task: &TaskStamp) {
                 validation: "author validation".to_owned(),
                 terminal: None,
                 git: None,
-                source: wire::body::SourceBoundary::unrecorded(),
+                source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Root,
         )
@@ -357,7 +357,7 @@ fn claim_review(
                 until: expiry,
                 git: None,
                 recovery: None,
-                source: wire::body::SourceBoundary::unrecorded(),
+                source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Root,
         )
@@ -414,7 +414,7 @@ fn complete_review(bus: &Bus, task: &TaskStamp, lane: CanonicalUuid, verdict: wi
                 note: None,
                 followups: Vec::new(),
                 git: None,
-                source: wire::body::SourceBoundary::unrecorded(),
+                source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Root,
         )

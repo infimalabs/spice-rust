@@ -15,6 +15,11 @@ fn hour(hours: u32) -> String {
     format!("2026-01-0{}T{:02}:00:00.000Z", 1 + hours / 24, hours % 24)
 }
 
+/// Current lifecycle boundary of a lane with nothing accounted.
+fn proven() -> Value {
+    json!({"proven": {"heads": []}})
+}
+
 fn fact(seq: u64, at: &str, cause: Option<u64>, body: Value) -> StreamFact {
     let mut envelope = json!({
         "v": 1, "seq": seq, "at": at, "actor": format!("lane:{LANE}"), "origin": "task:fixture",
@@ -44,7 +49,7 @@ fn claim(seq: u64, at: u32, task: &str, occupant: u8, until: u32) -> StreamFact 
         None,
         json!({"kind": "claim::won", "task": task, "actor": format!("lane:{LANE}"), "lane": LANE,
             "occupant": uuid(occupant), "epoch": EPOCH, "until": hour(until),
-            "cell": {"phase": "todo", "project": "report.fixture"}}),
+            "cell": {"phase": "todo", "project": "report.fixture"}, "source": proven()}),
     )
 }
 
@@ -53,7 +58,7 @@ fn done(seq: u64, at: u32, task: &str) -> StreamFact {
         seq,
         &hour(at),
         None,
-        json!({"kind": "task::done", "task": task, "validation": "fixture"}),
+        json!({"kind": "task::done", "task": task, "validation": "fixture", "source": proven()}),
     )
 }
 
@@ -86,7 +91,8 @@ fn history(facts: Vec<StreamFact>) -> History {
 #[test]
 fn a_finding_stays_terminal_until_its_parent_statement_is_causally_revised() {
     let finding = json!({"kind": "task::reviewed", "task": PARENT,
-        "reviewer": format!("lane:{LANE}"), "verdict": "finding", "finding": "fixture"});
+        "reviewer": format!("lane:{LANE}"), "verdict": "finding", "finding": "fixture",
+        "source": proven()});
     let mut history = history(vec![
         added(1, None, PARENT),
         done(2, 1, PARENT),

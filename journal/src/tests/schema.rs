@@ -56,7 +56,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
-    for predecessor in [33, 34, 35, 36, 37, 38] {
+    for predecessor in [33, 34, 35, 36, 37, 38, 39, 40] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);
@@ -412,6 +412,7 @@ fn retained_guidance_fixture(path: &Path, guidance: &str) -> (Vec<u8>, Vec<u8>) 
                     "status": "completed",
                     "next": "spice task next",
                 },
+                "source": {"proven": {"heads": []}},
             }),
         ),
     );
@@ -886,6 +887,28 @@ fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutatio
             "UPDATE fact_envelopes SET envelope = CAST(json_remove(CAST(envelope AS TEXT), \
              '$.fact.locus.source') AS BLOB) WHERE seq = 3",
             plant_steering_locus,
+        ),
+    ];
+    assert_retained_refusals(&cases);
+}
+
+#[test]
+fn retained_lifecycle_facts_without_a_proven_boundary_refuse_without_mutation() {
+    let cases: [RetainedCase; 2] = [
+        (
+            "fact_envelopes",
+            "b18f556c3",
+            "UPDATE fact_envelopes SET envelope = CAST(json_remove(CAST(envelope AS TEXT), \
+             '$.fact.source') AS BLOB) WHERE seq = 3",
+            plant_claim_without_current_spelling,
+        ),
+        (
+            "fact_envelopes",
+            "b18f556c3",
+            "UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT), \
+             '$.fact.source', json('{\"incomplete\": {\"reason\": \"unrecorded\"}}')) AS BLOB) \
+             WHERE seq = 3",
+            plant_claim_without_current_spelling,
         ),
     ];
     assert_retained_refusals(&cases);
