@@ -679,11 +679,11 @@ fn position_at_or_before(
 }
 
 fn locus_within(locus: wire::MessageLocus, boundary: wire::body::TranscriptPosition) -> bool {
-    locus.length != 0
-        && (locus.member < boundary.member
-            || (locus.member == boundary.member
-                && locus
-                    .offset
-                    .checked_add(locus.length)
-                    .is_some_and(|end| end <= boundary.offset)))
+    if locus.length == 0 {
+        return false;
+    }
+    let Some(end) = locus.offset.checked_add(locus.length) else {
+        return false;
+    };
+    locus.member < boundary.member || (locus.member == boundary.member && end <= boundary.offset)
 }
