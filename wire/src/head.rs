@@ -302,7 +302,7 @@ pub struct LeaseHead {
 /// Closed classes of authoritative witness heads.
 ///
 /// This classifies seven stored predicate-head rows. Command preconditions use
-/// the 23-variant [`crate::witness::WitnessKind`] vocabulary instead. They
+/// the closed [`crate::witness::WitnessKind`] vocabulary instead. They
 /// overlap on assignment, directive, consent, budget, and transition, but
 /// neither contains the other: only heads name review and document classes,
 /// while only commands name task, workflow, claim, and other concrete subjects.

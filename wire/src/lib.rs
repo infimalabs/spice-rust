@@ -62,6 +62,7 @@ pub mod packed;
 pub mod quota;
 pub mod quote;
 pub mod reply;
+pub mod rooms;
 mod sequence_code;
 pub use sequence_code::{SequenceCode, SequenceCodeError};
 mod speech;

@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::envelope::{Actor, Seq};
 use crate::head::{ResidentState, TrustState};
 use crate::ident::{CanonicalUuid, Digest};
+use crate::rooms::{ProposalRef, RoomAuthorityStamp};
 
 pub(crate) const TASK_STAMP_ALPHABET: &[u8; 52] =
     b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
@@ -636,6 +637,47 @@ pub enum Witness {
         /// Digest of the canonical release manifest.
         manifest: Digest,
     },
+    /// Exact source authority referenced by a room mutation exists.
+    Source {
+        /// Digest of the canonical [`crate::rooms::RoomSource`] link.
+        source: Digest,
+    },
+    /// A saved working group's current head, or its witnessed absence.
+    Group {
+        /// Stable repository-shared group identity.
+        group: RoomAuthorityStamp,
+        /// Current group head, absent before creation or after deletion.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        head: Option<Seq>,
+    },
+    /// One proposal-authority subject's current head, or witnessed absence.
+    Proposal {
+        /// Exact candidate, critique, coverage, or decision subject.
+        proposal: ProposalRef,
+        /// Current authority head, absent before its first recording.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        head: Option<Seq>,
+    },
+    /// A selected output's current authorization head, or witnessed absence.
+    Authorization {
+        /// Gated output whose exact selection is constrained.
+        output: TaskStamp,
+        /// Current authorization head, absent while unauthorized.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        head: Option<Seq>,
+    },
     /// The resident lifecycle edge the command requests.
     Transition {
         /// State the resident currently occupies.
@@ -700,6 +742,14 @@ pub enum WitnessKind {
     Observation,
     /// A sealed proof receipt and canonical manifest.
     Sealed,
+    /// Exact source authority referenced by a room mutation.
+    Source,
+    /// A saved working group's current head.
+    Group,
+    /// One candidate, critique, coverage, or decision authority head.
+    Proposal,
+    /// A selected output's current authorization head.
+    Authorization,
     /// A resident lifecycle edge.
     Transition,
 }
@@ -732,6 +782,10 @@ impl WitnessKind {
         Self::Taste,
         Self::Observation,
         Self::Sealed,
+        Self::Source,
+        Self::Group,
+        Self::Proposal,
+        Self::Authorization,
         Self::Transition,
     ];
 }
@@ -763,6 +817,10 @@ impl Witness {
             Self::Taste { .. } => WitnessKind::Taste,
             Self::Observation { .. } => WitnessKind::Observation,
             Self::Sealed { .. } => WitnessKind::Sealed,
+            Self::Source { .. } => WitnessKind::Source,
+            Self::Group { .. } => WitnessKind::Group,
+            Self::Proposal { .. } => WitnessKind::Proposal,
+            Self::Authorization { .. } => WitnessKind::Authorization,
             Self::Transition { .. } => WitnessKind::Transition,
         }
     }
