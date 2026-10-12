@@ -90,7 +90,7 @@ pub(super) fn render_card(
         Some(conversation) => (
             Some(verb(conversation)),
             routes(act, conversation),
-            result(act, publication, conversation),
+            result(act, conversation),
         ),
         // A packet that admitted no conversation still delivers its directed
         // messages under native steering receipts.
@@ -141,7 +141,8 @@ pub(super) fn render_card(
     })
 }
 
-/// Open operator items, each with its own receipt controls, for the catalog.
+/// Operator receipts and answer duties, each with its exact controls, for the
+/// catalog. An ACKed ASK remains here until its separate result terminates.
 pub(super) fn render_inbox(
     runtime: &AppRuntime,
     controls: &Controls,
@@ -153,15 +154,15 @@ pub(super) fn render_inbox(
         sender,
     };
     let projection = runtime.room_projection().conversation();
-    let open = projection.open_items();
+    let open = projection.inbox_items();
     html! {
         <section class="room-inbox" data-room-inbox="" aria-label="Operator inbox" tabindex="-1">
             <header><strong>{"Operator inbox"}</strong><span>{open.len()}</span></header>
             if open.is_empty() {
-                <p class="room-empty">{"No operator item awaits a receipt."}</p>
+                <p class="room-empty">{"No operator receipt or answer awaits action."}</p>
             }
-            {for open.into_iter().map(|(key, item)| {
-                let publication = item.value.record.publication();
+            {for open.into_iter().map(|entry| {
+                let publication = entry.item.value.record.publication();
                 let summary = projection
                     .conversation(publication)
                     .map_or_else(String::new, |conversation| {
@@ -171,21 +172,36 @@ pub(super) fn render_inbox(
                             party(runtime, conversation.publication.author()),
                         )
                     });
-                let room = item
+                let room = entry
+                    .item
                     .value
                     .record
                     .context()
                     .map_or_else(|| "no room".to_owned(), |room| super::anchor_label(runtime, room));
+                let result = entry.result.map_or_else(Html::default, |result| {
+                    question_result(
+                        act,
+                        result.value.record.result(),
+                        &result.value,
+                    )
+                });
                 html! {
-                    <article class="room-card room-flow-card" key={key.to_string()} data-item={key.to_string()} tabindex="0">
+                    <article
+                        class="room-card room-flow-card"
+                        key={entry.key.to_string()}
+                        data-item={entry.key.to_string()}
+                        data-admitted={entry.item.value.admitted.to_string()}
+                        tabindex="0"
+                    >
                         <header>
                             <strong class="room-flow-route">{summary}</strong>
                             <span>{room}</span>
                             <code>{publication.to_string()}</code>
                         </header>
                         <ul class="room-flow-statuses">
-                            {item_status(act, key, &item.value, "Operator")}
+                            {item_status(act, entry.key, &entry.item.value, "Operator")}
                         </ul>
+                        {result}
                     </article>
                 }
             })}
@@ -373,7 +389,7 @@ fn item_status(act: Act<'_>, key: &RoomReceiptRef, item: &OperatorItem, destinat
 }
 
 /// A question's substantive result, separate from every receipt.
-fn result(act: Act<'_>, publication: &RoomAuthorityStamp, conversation: &Conversation) -> Html {
+fn result(act: Act<'_>, conversation: &Conversation) -> Html {
     let projection = act.runtime.room_projection().conversation();
     let (result, lead) = match conversation.publication.kind() {
         RoomPublicationKind::Ask { result, .. } => (result, "Result"),
@@ -398,6 +414,11 @@ fn result(act: Act<'_>, publication: &RoomAuthorityStamp, conversation: &Convers
             </p>
         };
     }
+    question_result(act, result, question)
+}
+
+fn question_result(act: Act<'_>, result: &QuestionResultRef, question: &QuestionResult) -> Html {
+    let projection = act.runtime.room_projection().conversation();
     let state = question.state.name();
     let label = match &question.state {
         QuestionResultState::Pending {} => format!(
@@ -406,9 +427,6 @@ fn result(act: Act<'_>, publication: &RoomAuthorityStamp, conversation: &Convers
             party(act.runtime, question.record.requester()),
             projection.pending_results(question.record.requester()),
         ),
-        QuestionResultState::Answered { answer, .. } if answer == publication => {
-            "answered".to_owned()
-        }
         QuestionResultState::Answered { answer, .. } => format!("answered by {answer}"),
         QuestionResultState::Declined { .. } => "declined".to_owned(),
         QuestionResultState::Cancelled { .. } => "cancelled".to_owned(),
