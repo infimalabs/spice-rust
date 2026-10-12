@@ -290,7 +290,7 @@ fn historical_agent<'a>(
 }
 
 /// The lead of an MSG the card's author sent: its exact authoring occupant,
-/// an outgoing arrow, then every addressed occupant in header order. A quoted
+/// an outgoing arrow, then every addressed occupant and the operator. A quoted
 /// peer context uses the same direction lead with its own recorded destination;
 /// badges never change either side's attribution.
 pub(super) fn send_signoff_html(send: &wire::MessageSend, agents: &super::QuoteAgents) -> String {
@@ -307,10 +307,8 @@ pub(super) fn send_signoff_html(send: &wire::MessageSend, agents: &super::QuoteA
         sender.map(|agent| agent.accent),
     );
     let mut recipients = String::new();
-    for (index, recipient) in send.recipients.iter().enumerate() {
-        if index > 0 {
-            recipients.push_str("<span class=\"message-quote-recipient-separator\">, </span>");
-        }
+    for recipient in &send.recipients {
+        push_recipient_separator(&mut recipients);
         recipients.push_str(&participant_html(
             recipient.lane,
             recipient.occupant,
@@ -318,7 +316,30 @@ pub(super) fn send_signoff_html(send: &wire::MessageSend, agents: &super::QuoteA
             agents,
         ));
     }
+    if send.operator {
+        push_recipient_separator(&mut recipients);
+        recipients.push_str(&quote_name_html(
+            "Operator",
+            " data-quote-recipient=\"operator\"",
+            None,
+        ));
+    }
     packet_signoff_html("", &sender, &recipients, "outgoing")
+}
+
+fn push_recipient_separator(recipients: &mut String) {
+    if !recipients.is_empty() {
+        recipients.push_str("<span class=\"message-quote-recipient-separator\">, </span>");
+    }
+}
+
+/// Task/room contexts the MSG recorded, mounted after the quoted body's final
+/// word as the same task chips ordinary authored prose uses.
+pub(super) fn send_contexts_html(send: &wire::MessageSend) -> String {
+    send.contexts
+        .iter()
+        .map(|context| super::task_chip_html(context, None, ""))
+        .collect()
 }
 
 /// The accent slot of the occupant that sent one MSG, which its quote's rail

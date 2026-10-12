@@ -567,8 +567,8 @@ pub(super) fn steering_ledger(
             .filter_map(listen::Event::assistant_text)
     };
     let acknowledges = authored().any(steer::has_acknowledgement);
-    let addresses = message_addresses(authored());
-    if !acknowledges && addresses.is_empty() {
+    let (messages, addresses) = message_destinations(authored());
+    if !acknowledges && !messages {
         return Ok(None);
     }
     let reader = bus.reader();
@@ -583,8 +583,32 @@ pub(super) fn steering_ledger(
     Ok(Some(ledger))
 }
 
-/// Every address a placed, well-formed MSG, ASK, or ANS packet in `texts`
-/// names.
+/// Whether `texts` hold a placed, well-formed MSG and every occupant address
+/// those messages name.
+fn message_destinations<'a>(
+    texts: impl IntoIterator<Item = &'a str>,
+) -> (bool, BTreeSet<wire::OccupantAddress>) {
+    let mut messages = false;
+    let mut addresses = BTreeSet::new();
+    for publication in texts
+        .into_iter()
+        .filter(|text| {
+            steer::ack::scan::message::MARKERS
+                .iter()
+                .any(|marker| text.contains(marker))
+        })
+        .flat_map(steer::ack::scan::scan_messages)
+        .filter_map(|message| message.publication.ok())
+    {
+        if !matches!(&publication.request, steer::ack::scan::Request::Msg { .. }) {
+            continue;
+        }
+        messages = true;
+        addresses.extend(publication.addresses());
+    }
+    (messages, addresses)
+}
+
 fn message_addresses<'a>(
     texts: impl IntoIterator<Item = &'a str>,
 ) -> BTreeSet<wire::OccupantAddress> {
@@ -1016,6 +1040,8 @@ fn hydrate_sends(
                 from: event.lane,
                 sender,
                 recipients: send.recipients.clone(),
+                operator: send.operator,
+                contexts: send.contexts.clone(),
             })
         })
         .collect()

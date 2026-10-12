@@ -644,7 +644,7 @@ fn send_attribution(send: &MessageSend, quote_agents: &QuoteAgents) -> image_flo
         signoff: quotes::send_signoff_html(send, quote_agents),
         disposition: String::new(),
         badge: String::new(),
-        task_tail: String::new(),
+        task_tail: quotes::send_contexts_html(send),
     }
 }
 
@@ -1229,7 +1229,7 @@ fn task_context_edge(character: char) -> bool {
     )
 }
 
-fn task_chip_html(
+pub(super) fn task_chip_html(
     task: &wire::TaskHandle,
     context: Option<&str>,
     trailing_punctuation: &str,

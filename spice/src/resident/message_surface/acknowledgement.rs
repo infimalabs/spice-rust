@@ -14,13 +14,12 @@
 //! Presentation never grants repeated response retirement, a disposition, or
 //! automatic-speech authority.
 //!
-//! A placed, well-formed `MSG ADDRESS ...: BODY` packet of plain addresses
-//! that each name a proved occupant birth presents its body verbatim as one
-//! quote block in place of the header, and the block's range carries those
-//! recipients. The quote states what the author addressed, not delivery:
-//! whether the resident published or withheld the packet is the journal's
-//! record. Any other packet, including one naming a `#TASK` room context,
-//! stays the agent's literal prose.
+//! A placed, well-formed `MSG SELECTOR ...: BODY` packet whose addressed
+//! occupants each have a proved birth presents its body verbatim as one quote
+//! block in place of the header. The block carries its addressed recipients,
+//! operator destination, and distinct task/room contexts. The quote states
+//! what the author addressed, not delivery: whether the resident published or
+//! withheld the packet is the journal's record.
 
 use std::iter::Peekable;
 use std::ops::Range;
@@ -40,6 +39,8 @@ pub(super) struct PresentedDirectiveContext {
 pub(super) struct PresentedSend {
     pub(super) range: Range<usize>,
     pub(super) recipients: Vec<wire::MessageRecipient>,
+    pub(super) operator: bool,
+    pub(super) contexts: Vec<wire::TaskHandle>,
 }
 
 /// One placed packet in the source text, ready to present.
@@ -49,6 +50,8 @@ struct PlacedSend {
     /// The packet's trimmed body in the source text.
     body: Range<usize>,
     recipients: Vec<wire::MessageRecipient>,
+    operator: bool,
+    contexts: Vec<wire::TaskHandle>,
 }
 
 /// One presented message and the quote blocks the resident itself wrote into it.
@@ -211,14 +214,15 @@ fn append_directive_contexts<'k>(
 }
 
 /// Every presentable MSG packet in `text`, in source order. Only an event
-/// whose authoring occupant is known presents sends.
+/// whose authoring occupant is known presents sends. One unproved occupant
+/// address keeps its whole packet literal; operator and room-only routes need
+/// no occupant proof.
 fn placed_sends(
     text: &str,
     directives: &PresentationDirectives,
     event: PresentationEvent,
 ) -> Vec<PlacedSend> {
     if event.author.is_none()
-        || directives.recipients.is_empty()
         || !steer::ack::scan::message::MARKERS
             .iter()
             .any(|marker| text.contains(marker))
@@ -232,23 +236,30 @@ fn placed_sends(
             let steer::ack::scan::Request::Msg { routes } = &publication.request else {
                 return None;
             };
-            if routes.iter().any(|route| {
-                route.context.is_some()
-                    || !matches!(
-                        route.audience,
-                        Some(steer::ack::scan::Audience::Occupant(_))
-                    )
-            }) {
-                return None;
-            }
-            let recipients = publication
-                .addresses()
-                .map(|address| directives.recipients.get(&address).copied())
+            let recipients = routes
+                .iter()
+                .filter_map(|route| match route.audience {
+                    Some(steer::ack::scan::Audience::Occupant(address)) => {
+                        Some(directives.recipients.get(&address).copied())
+                    }
+                    Some(steer::ack::scan::Audience::Operator) | None => None,
+                })
                 .collect::<Option<Vec<_>>>()?;
+            let operator = routes
+                .iter()
+                .any(|route| route.audience == Some(steer::ack::scan::Audience::Operator));
+            let mut contexts = Vec::new();
+            for context in routes.iter().filter_map(|route| route.context.as_ref()) {
+                if !contexts.contains(context) {
+                    contexts.push(context.clone());
+                }
+            }
             Some(PlacedSend {
                 start: send_framing_start(text, message.header.start),
                 body: publication.body,
                 recipients,
+                operator,
+                contexts,
             })
         })
         .collect()
@@ -299,6 +310,8 @@ fn append_authored(
         sends.push(PresentedSend {
             range: start..rendered.len(),
             recipients: send.recipients,
+            operator: send.operator,
+            contexts: send.contexts,
         });
         cursor =
             skip_line_breaks(text, skip_horizontal_space(text, send.body.end)).min(segment.end);

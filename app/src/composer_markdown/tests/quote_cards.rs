@@ -840,11 +840,12 @@ fn peer_context_destination_survives_badges_and_reseating() {
     }
 }
 
-/// An outgoing MSG names its exact sender and every addressed occupant in
-/// header order; a departed recipient and a vacant lane both keep their lane's
-/// name, and a lane gone from the roster falls back to its address.
+/// An outgoing MSG names its exact sender, every addressed occupant in header
+/// order, the operator, and its room context without exposing protocol syntax.
+/// A departed recipient and a vacant lane both keep their lane's name, and a
+/// lane gone from the roster falls back to its address.
 #[test]
-fn a_sent_msg_names_every_recipient_in_header_order_by_lane() {
+fn a_sent_msg_names_every_destination_without_its_protocol_header() {
     let id = |suffix: &str| -> wire::CanonicalUuid {
         format!("018f82d4-6f59-7d06-92e3-bce9131165{suffix}")
             .parse()
@@ -873,6 +874,12 @@ fn a_sent_msg_names_every_recipient_in_header_order_by_lane() {
             recipient("6K26", departed_lane, departed),
             recipient("6KB3", vacant_lane, vacated),
             recipient("6KC4", absent_lane, absent),
+        ],
+        operator: true,
+        contexts: vec![
+            "ROOMS-dVrD244Jd"
+                .parse()
+                .expect("fixture task handle parses"),
         ],
     }];
     let agent = |accent: usize, label: &str| QuoteAgent {
@@ -906,8 +913,8 @@ fn a_sent_msg_names_every_recipient_in_header_order_by_lane() {
     let named = recipients[..words]
         .split("message-quote-recipient-separator")
         .collect::<Vec<_>>();
-    assert_eq!(named.len(), 4, "{html}");
-    for (name, (occupant, label, state)) in named.iter().zip([
+    assert_eq!(named.len(), 5, "{html}");
+    for (name, (occupant, label, state)) in named[..4].iter().zip([
         (seated, ">seated-agent</span>", "current"),
         (departed, ">departed-lane</span>", "historical"),
         (vacated, ">vacant-lane</span>", "historical"),
@@ -917,4 +924,13 @@ fn a_sent_msg_names_every_recipient_in_header_order_by_lane() {
         assert!(name.contains(label), "{name}");
         assert!(name.contains(&format!("data-quote-author-state=\"{state}\"")));
     }
+    assert!(
+        named[4].contains("data-quote-recipient=\"operator\""),
+        "{html}"
+    );
+    assert!(named[4].contains(">Operator</span>"), "{html}");
+    assert!(
+        html.contains("data-task-handle=\"ROOMS-dVrD244Jd\""),
+        "{html}"
+    );
 }
