@@ -117,6 +117,10 @@ impl Authority for Stored<'_> {
             .optional()?)
     }
 
+    fn horizon(&self, lane: &str) -> Result<bool, Refusal> {
+        self.exists("SELECT 1 FROM room_horizons WHERE lane = ?1", [lane])
+    }
+
     fn grouped(&self, group: &str) -> Result<bool, Refusal> {
         self.exists(
             "SELECT 1 FROM group_heads WHERE working_group = ?1",
@@ -257,6 +261,12 @@ fn apply(connection: &Connection, change: Change) -> Result<(), rusqlite::Error>
                 params![lane, sql(seq), body],
             )?;
         }
+        Change::Horizon { lane, seq, body } => {
+            connection.execute(
+                "INSERT INTO room_horizons(lane, head_seq, body) VALUES (?1, ?2, ?3)",
+                params![lane, sql(seq), body],
+            )?;
+        }
         Change::Coordination {
             record,
             room,
@@ -361,6 +371,7 @@ impl Projection {
                 },
             )?,
             cursors: heads(connection, "SELECT lane, head_seq, body FROM room_cursors")?,
+            horizons: heads(connection, "SELECT lane, head_seq, body FROM room_horizons")?,
             directed: heads(
                 connection,
                 "SELECT room, head_seq, body FROM room_directions",
@@ -400,7 +411,7 @@ pub(crate) fn write_projection(
     connection.execute_batch(
         "DELETE FROM room_publications; DELETE FROM group_anchors; DELETE FROM group_heads; \
          DELETE FROM proposal_heads; DELETE FROM authorization_heads; DELETE FROM room_cursors; \
-         DELETE FROM room_directions; DELETE FROM room_shelvings;",
+         DELETE FROM room_horizons; DELETE FROM room_directions; DELETE FROM room_shelvings;",
     )?;
     for ((room, publication), seq) in &projection.publications {
         connection.execute(
@@ -426,6 +437,12 @@ pub(crate) fn write_projection(
     for (lane, (seq, body)) in &projection.cursors {
         connection.execute(
             "INSERT INTO room_cursors(lane, head_seq, body) VALUES (?1, ?2, ?3)",
+            params![lane, sql(*seq), body],
+        )?;
+    }
+    for (lane, (seq, body)) in &projection.horizons {
+        connection.execute(
+            "INSERT INTO room_horizons(lane, head_seq, body) VALUES (?1, ?2, ?3)",
             params![lane, sql(*seq), body],
         )?;
     }

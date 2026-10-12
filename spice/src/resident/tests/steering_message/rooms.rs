@@ -211,20 +211,25 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     lanes.finish();
 }
 
-/// The resident projects both current listeners from native room authority,
-/// gives each the same bounded source-backed page, and never turns delivery
-/// into lifecycle authority.
+/// More retained room publications than several catch-up pages hold.
+const RETAINED_BACKLOG: usize = 40;
+
+/// Each listener starts at a horizon the resident records once, so a large
+/// retained backlog is never owed; both current listeners then receive the
+/// same bounded source-backed page of what followed, and delivery never
+/// becomes lifecycle authority.
 #[test]
-fn resident_catch_up_pages_two_listeners_without_waking_them() {
+fn resident_catch_up_pages_two_listeners_from_their_horizons_without_waking_them() {
     let lanes = Lanes::new("room-catch-up");
     let room = lanes.room("dVrD245Kc");
+    let (first_lane, second_lane) = (test_uuid(FIRST), test_uuid(SECOND));
     for (lane, body) in [(FIRST, "first joined"), (SECOND, "second joined")] {
         lanes.author(lane, &format!("MSG #{room}: {body}"));
         lanes.account(lane);
         let _ = lanes.hear(lane, test_uuid(lane + 1));
     }
-    for item in 0..18 {
-        lanes.author(SENDER, &format!("MSG #{room}: publication {item}"));
+    for item in 0..RETAINED_BACKLOG {
+        lanes.author(SENDER, &format!("MSG #{room}: retained {item}"));
     }
     lanes.account(SENDER);
     let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
@@ -243,8 +248,59 @@ fn resident_catch_up_pages_two_listeners_without_waking_them() {
             )
             .expect("listener seats");
     }
-    let before = lanes.cursor();
+    let notice = |lane| room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, lane));
+    let appended = |after: u64| {
+        lanes
+            .bus
+            .fact_snapshot()
+            .expect("facts read")
+            .facts()
+            .iter()
+            .filter(|envelope| envelope.seq.get() > after)
+            .map(|envelope| {
+                envelope
+                    .fact
+                    .read::<wire::rooms::RoomHorizon>()
+                    .map(|body| body.lane)
+            })
+            .collect::<Vec<_>>()
+    };
     let mut diagnostics = Vec::new();
+    let before = lanes.cursor();
+    for _ in 0..2 {
+        room_catch_up::reconcile(
+            &lanes.bus,
+            &lanes.paths,
+            &startup.config,
+            &seats,
+            &mut diagnostics,
+        )
+        .expect("catch-up reconciles");
+    }
+    let mut started = appended(before);
+    started.sort();
+    assert_eq!(
+        started,
+        [Some(first_lane), Some(second_lane)],
+        "a retried reconciliation records one horizon per listener and nothing else"
+    );
+    assert!(
+        notice(first_lane).is_none() && notice(second_lane).is_none(),
+        "retained history before the horizons is never owed: {}",
+        String::from_utf8_lossy(&diagnostics)
+    );
+
+    for (lane, body) in [(FIRST, "first spoke"), (SECOND, "second spoke")] {
+        lanes.author(lane, &format!("MSG #{room}: {body}"));
+        lanes.account(lane);
+        let _ = lanes.hear(lane, test_uuid(lane + 1));
+    }
+    for item in 0..18 {
+        lanes.author(SENDER, &format!("MSG #{room}: publication {item}"));
+    }
+    lanes.account(SENDER);
+    let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
+    let before = lanes.cursor();
     room_catch_up::reconcile(
         &lanes.bus,
         &lanes.paths,
@@ -259,25 +315,22 @@ fn resident_catch_up_pages_two_listeners_without_waking_them() {
         "room delivery never writes lifecycle authority or wakes a lane"
     );
 
-    let first =
-        room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, test_uuid(FIRST)))
-            .unwrap_or_else(|| {
-                panic!(
-                    "first listener has catch-up: {}",
-                    String::from_utf8_lossy(&diagnostics)
-                )
-            });
-    let second =
-        room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, test_uuid(SECOND)))
-            .expect("second listener has catch-up");
+    let first = notice(first_lane).unwrap_or_else(|| {
+        panic!(
+            "first listener has catch-up: {}",
+            String::from_utf8_lossy(&diagnostics)
+        )
+    });
+    let second = notice(second_lane).expect("second listener has catch-up");
     for notice in [&first, &second] {
         assert!(notice.text.contains("publication 0"));
         assert!(notice.text.contains("continue: spice://task/"));
+        assert!(!notice.text.contains("retained") && !notice.text.contains("joined"));
     }
-    assert!(!first.text.contains("first joined"));
-    assert!(first.text.contains("second joined"));
-    assert!(!second.text.contains("second joined"));
-    assert!(second.text.contains("first joined"));
+    assert!(!first.text.contains("first spoke"));
+    assert!(first.text.contains("second spoke"));
+    assert!(!second.text.contains("second spoke"));
+    assert!(second.text.contains("first spoke"));
     land_delivery(&lanes, &room, &startup.config, &mut seats, &first);
     seats.release_all();
     lanes.finish();

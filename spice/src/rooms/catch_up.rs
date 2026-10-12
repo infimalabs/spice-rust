@@ -78,15 +78,16 @@ pub struct CatchUp {
     pub continuation: Option<Seq>,
 }
 
-/// Select `lane`'s next catch-up after `cursor` from `sources`, judging
-/// listening by the current `rooms` projection.
+/// Select `lane`'s next catch-up from `sources` admitted after `after`, its
+/// delivery cursor or, before any delivery, its horizon, judging listening by
+/// the current `rooms` projection.
 ///
 /// The first owed item always fits, so one oversized publication cannot stall
-/// the cursor; rendering bounds what a single item says. An unchanged cursor
+/// the cursor; rendering bounds what a single item says. An unchanged start
 /// selects the same delivery again.
 pub fn select_catch_up(
     lane: CanonicalUuid,
-    cursor: Option<Seq>,
+    after: Seq,
     rooms: &[RoomAttention],
     mut sources: Vec<CatchUpSource>,
     budget: CatchUpBudget,
@@ -110,10 +111,7 @@ pub fn select_catch_up(
     let mut selected = CatchUp::default();
     let mut bytes = 0usize;
     let mut passed = None;
-    for source in sources
-        .into_iter()
-        .filter(|source| cursor.is_none_or(|cursor| source.seq > cursor))
-    {
+    for source in sources.into_iter().filter(|source| source.seq > after) {
         let owed = listened.contains(&source.room)
             && source.author != Some(lane)
             && !source.recipients.contains(&lane);
@@ -156,6 +154,11 @@ mod tests {
         Seq::new(value).expect("fixture position")
     }
 
+    /// The lane's cursor or horizon in every fixture.
+    fn start() -> Seq {
+        seq(10)
+    }
+
     fn listening(room: &TaskStamp, lanes: &[CanonicalUuid]) -> RoomAttention {
         RoomAttention {
             room: room.clone(),
@@ -189,10 +192,10 @@ mod tests {
         catch_up.items.iter().map(|item| item.seq.get()).collect()
     }
 
-    /// One budget spans every room: items and bytes each saturate it, the
-    /// first withheld publication is the continuation, an unchanged cursor
-    /// reselects the same delivery, and a landed one resumes at the
-    /// continuation.
+    /// One budget spans every room: items and bytes each saturate it, nothing
+    /// at or before the start is owed, the first withheld publication is the
+    /// continuation, an unchanged cursor reselects the same delivery, and a
+    /// landed one resumes at the continuation.
     #[test]
     fn one_budget_spans_rooms_and_resumes_exactly_at_its_continuation() {
         let lane = uuid("05");
@@ -203,23 +206,27 @@ mod tests {
             source(11, &first, 10),
             source(12, &second, 10),
             source(14, &first, 10),
+            source(10, &first, 10),
         ];
         let by_items = CatchUpBudget::new(2, MAX_CATCH_UP_BYTES).expect("budget");
         let selected =
-            select_catch_up(lane, None, &rooms, sources.clone(), by_items).expect("selects");
+            select_catch_up(lane, start(), &rooms, sources.clone(), by_items).expect("selects");
         assert_eq!(positions(&selected), [11, 12]);
         assert_eq!(
             (selected.through, selected.continuation),
             (Some(seq(12)), Some(seq(13)))
         );
         assert_eq!(
-            select_catch_up(lane, None, &rooms, sources.clone(), by_items).expect("retries"),
+            select_catch_up(lane, start(), &rooms, sources.clone(), by_items).expect("retries"),
             selected,
             "an unchanged cursor reselects the same delivery"
         );
 
-        let resumed = select_catch_up(lane, selected.through, &rooms, sources.clone(), by_items)
-            .expect("resumes");
+        let landed = selected
+            .through
+            .expect("the first page lands through a position");
+        let resumed =
+            select_catch_up(lane, landed, &rooms, sources.clone(), by_items).expect("resumes");
         assert_eq!(positions(&resumed), [13, 14]);
         assert_eq!(
             (resumed.through, resumed.continuation),
@@ -227,12 +234,13 @@ mod tests {
         );
 
         let by_bytes = CatchUpBudget::new(MAX_CATCH_UP_ITEMS, 25).expect("budget");
-        let selected = select_catch_up(lane, None, &rooms, sources, by_bytes).expect("selects");
+        let selected = select_catch_up(lane, start(), &rooms, sources, by_bytes).expect("selects");
         assert_eq!(positions(&selected), [11, 12]);
         assert_eq!(selected.continuation, Some(seq(13)));
 
         let oversized = vec![source(21, &first, 100), source(22, &first, 1)];
-        let selected = select_catch_up(lane, None, &rooms, oversized, by_bytes).expect("selects");
+        let selected =
+            select_catch_up(lane, start(), &rooms, oversized, by_bytes).expect("selects");
         assert_eq!(
             (positions(&selected), selected.continuation),
             (vec![21], Some(seq(22))),
@@ -267,9 +275,14 @@ mod tests {
             trailing,
         ];
 
-        let selected =
-            select_catch_up(lane, None, &rooms, sources.clone(), CatchUpBudget::STANDARD)
-                .expect("selects");
+        let selected = select_catch_up(
+            lane,
+            start(),
+            &rooms,
+            sources.clone(),
+            CatchUpBudget::STANDARD,
+        )
+        .expect("selects");
         assert_eq!(positions(&selected), [14, 15]);
         assert_eq!(
             (selected.through, selected.continuation),
@@ -278,7 +291,7 @@ mod tests {
 
         let author_view = select_catch_up(
             peer,
-            None,
+            start(),
             &rooms,
             sources[..3].to_vec(),
             CatchUpBudget::STANDARD,
@@ -291,7 +304,7 @@ mod tests {
         );
         let nothing_owed = select_catch_up(
             lane,
-            None,
+            start(),
             &rooms,
             sources[..3].to_vec(),
             CatchUpBudget::STANDARD,
@@ -308,7 +321,7 @@ mod tests {
         assert!(matches!(
             select_catch_up(
                 lane,
-                None,
+                start(),
                 &rooms,
                 vec![source(11, &first, 1), source(11, &first, 1)],
                 CatchUpBudget::STANDARD,

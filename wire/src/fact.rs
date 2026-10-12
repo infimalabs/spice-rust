@@ -101,6 +101,9 @@ macro_rules! registered_body {
     (RoomDelivered) => {
         crate::rooms::RoomDelivered
     };
+    (RoomHorizon) => {
+        crate::rooms::RoomHorizon
+    };
     (WorkingGroupStored) => {
         crate::rooms::WorkingGroupStored
     };
@@ -262,6 +265,8 @@ vocabulary! {
     RoomPutAside = "room::shelved" by CommandDoor;
     /// A lane's room catch-up landed in its transcript and advanced its cursor.
     RoomDelivered = "room::delivered" by ResidentRecognition;
+    /// A lane with no delivery cursor began owing room catch-up here.
+    RoomHorizon = "room::horizon" by ResidentRecognition;
     /// A working group's complete ordered anchor state was saved.
     WorkingGroupStored = "group::stored" by CommandDoor;
     /// A working group was removed without touching its anchor rooms.

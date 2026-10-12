@@ -18,8 +18,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
     DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomDelivered, RoomMessaged, RoomPublicationContent,
-    RoomPublished, RoomSource, TranscriptHunk, WorkingGroupRemoved, WorkingGroupStored,
+    RetainedCandidate, RoomAuthorityStamp, RoomDelivered, RoomHorizon, RoomMessaged,
+    RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk, WorkingGroupRemoved,
+    WorkingGroupStored,
 };
 use wire::{Actor, AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
@@ -72,6 +73,15 @@ CREATE INDEX authorization_heads_decision ON authorization_heads(decision);
 /// Per-lane room catch-up cursors, created with the current schema.
 pub(crate) const CURSOR_SCHEMA_SQL: &str = r#"
 CREATE TABLE room_cursors (
+    lane TEXT PRIMARY KEY,
+    head_seq INTEGER NOT NULL UNIQUE REFERENCES fact_envelopes(seq),
+    body BLOB NOT NULL
+) STRICT;
+"#;
+
+/// Per-lane room catch-up horizons, created with the current schema.
+pub(crate) const HORIZON_SCHEMA_SQL: &str = r#"
+CREATE TABLE room_horizons (
     lane TEXT PRIMARY KEY,
     head_seq INTEGER NOT NULL UNIQUE REFERENCES fact_envelopes(seq),
     body BLOB NOT NULL
@@ -146,6 +156,8 @@ pub(crate) struct Projection {
     pub(crate) authorizations: BTreeMap<String, AuthorizationRow>,
     /// Logical lane to its catch-up cursor head position and canonical body.
     pub(crate) cursors: BTreeMap<String, (u64, Vec<u8>)>,
+    /// Logical lane to its catch-up horizon position and canonical body.
+    pub(crate) horizons: BTreeMap<String, (u64, Vec<u8>)>,
     /// Room to its latest `room::directed` head position and canonical body.
     pub(crate) directed: BTreeMap<String, (u64, Vec<u8>)>,
     /// Room to its latest `room::shelved` head position and canonical body.
@@ -176,6 +188,8 @@ pub(crate) trait Authority {
     fn publication_at(&self, seq: u64) -> Result<bool, Refusal>;
     /// The canonical body of one lane's current catch-up cursor.
     fn cursor(&self, lane: &str) -> Result<Option<Vec<u8>>, Refusal>;
+    /// Whether one lane already has a catch-up horizon.
+    fn horizon(&self, lane: &str) -> Result<bool, Refusal>;
     /// Whether this working group currently exists.
     fn grouped(&self, group: &str) -> Result<bool, Refusal>;
     /// The canonical body of one proposal head.
@@ -219,6 +233,11 @@ pub(crate) enum Change {
         row: AuthorizationRow,
     },
     Cursor {
+        lane: String,
+        seq: u64,
+        body: Vec<u8>,
+    },
+    Horizon {
         lane: String,
         seq: u64,
         body: Vec<u8>,
@@ -267,6 +286,9 @@ impl Projection {
             }
             Change::Cursor { lane, seq, body } => {
                 self.cursors.insert(lane, (seq, body));
+            }
+            Change::Horizon { lane, seq, body } => {
+                self.horizons.insert(lane, (seq, body));
             }
             Change::Coordination {
                 record,
@@ -360,6 +382,10 @@ impl Authority for History {
             .cursors
             .get(lane)
             .map(|(_, body)| body.clone()))
+    }
+
+    fn horizon(&self, lane: &str) -> Result<bool, Refusal> {
+        Ok(self.projection.horizons.contains_key(lane))
     }
 
     fn grouped(&self, group: &str) -> Result<bool, Refusal> {
@@ -528,8 +554,11 @@ fn fold_coordination(
     if let Some(result) = coordination::fold(authority, seq, actor, fact) {
         return Some(result);
     }
-    fact.read::<RoomDelivered>()
-        .map(|body| deliver(authority, seq, &body))
+    if let Some(body) = fact.read::<RoomDelivered>() {
+        return Some(deliver(authority, seq, &body));
+    }
+    fact.read::<RoomHorizon>()
+        .map(|body| begin(authority, seq, actor, &body))
 }
 
 /// Each room record of a packet names exactly the directives the same write's
@@ -620,6 +649,30 @@ fn deliver(
         lane,
         seq: seq.get(),
         body: wire::encode(delivered)?,
+    })
+}
+
+/// The resident records one horizon for a lane that no delivery has ever
+/// advanced; a lane with a cursor or an earlier horizon already has its start.
+fn begin(
+    authority: &mut impl Authority,
+    seq: Seq,
+    actor: &Actor,
+    horizon: &RoomHorizon,
+) -> Result<(), Refusal> {
+    if *actor != Actor::Spice {
+        return unsound(format!(
+            "a room catch-up horizon is resident-owned, not written by {actor}"
+        ));
+    }
+    let lane = horizon.lane.to_string();
+    if authority.cursor(&lane)?.is_some() || authority.horizon(&lane)? {
+        return unsound(format!("lane {lane} already has a room catch-up start"));
+    }
+    authority.change(Change::Horizon {
+        lane,
+        seq: seq.get(),
+        body: wire::encode(horizon)?,
     })
 }
 

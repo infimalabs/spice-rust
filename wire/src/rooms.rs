@@ -315,6 +315,21 @@ pub struct RoomDelivered {
     pub hunk: TranscriptHunk,
 }
 
+/// The journal position from which a logical lane with no delivery cursor is
+/// owed room catch-up: the position of this fact itself.
+///
+/// The resident records it once, the first time it observes the lane occupied
+/// without a cursor, so a lane never inherits retained room history it
+/// predates, while every publication admitted after it stays owed in journal
+/// order. It claims no delivery, so it neither moves the cursor nor implies
+/// participation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomHorizon {
+    /// Logical lane whose catch-up starts here.
+    pub lane: CanonicalUuid,
+}
+
 /// One scoped operator request to coordinate an anchor through native steering.
 ///
 /// The steering fact owns the request text. This fact only links that existing
