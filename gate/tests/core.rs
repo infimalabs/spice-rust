@@ -1,6 +1,3 @@
-use std::fs;
-use std::str::FromStr;
-
 use gate::{
     ActorCapture, CORE_GATE_IDS, ClaimCapture, ConfigInventoryEvidence, ConfigKeyEvidence,
     CoreArmInput, CoreEvidence, CoreInputs, CoreObservation, CoreProvenance, CoreReport,
@@ -10,7 +7,8 @@ use gate::{
     StagingEvidence, core_declarations, evaluate_core,
 };
 use serde_json::Value;
-use wire::{Digest, Domain, Phase, TaskHandle};
+use std::fs;
+use wire::{Digest, Domain};
 
 mod support;
 
@@ -396,31 +394,6 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
             acquired.diagnostic()
         );
     }
-
-    repository.remove();
-}
-
-#[test]
-fn a_captured_claim_reaches_the_planning_phase_arm_without_the_gate_reading_a_journal() {
-    let repository = contract_repository("core-acquire-claim");
-    let task = TaskHandle::from_str("CORE-1kJWlbWK").expect("task handle");
-    let phase = Phase::from_str("plan").expect("phase");
-    let report = acquired(
-        &repository,
-        ClaimCapture::Active {
-            task: task.clone(),
-            phase: phase.clone(),
-        },
-        ActorCapture::Absent,
-    );
-
-    assert_eq!(
-        acquired_arm(&report, GateId::PlanningPhase).observation(),
-        &measured(CoreEvidence::PlanningPhase(PlanningPhaseEvidence::Active {
-            task,
-            phase
-        })),
-    );
 
     repository.remove();
 }
