@@ -1060,7 +1060,8 @@ fn accept_timer_fired(
         | timers::Fired::DeferredTaskWoken(_)
         | timers::Fired::ClaimLapse
         | timers::Fired::ClaimRenew
-        | timers::Fired::TaskWake(_) => Ok(()),
+        | timers::Fired::TaskWake(_)
+        | timers::Fired::Room => Ok(()),
     }
 }
 

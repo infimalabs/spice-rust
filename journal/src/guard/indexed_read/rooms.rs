@@ -613,6 +613,108 @@ impl JournalRead<'_> {
         let Some((position, record, head)) = row else {
             return Ok(None);
         };
+        self.conversation_row(table, key_column, key, position, &record, &head)
+            .map(Some)
+    }
+
+    /// Every pending question result's immutable record and current guarded
+    /// head, in result order.
+    pub fn pending_question_results(
+        &self,
+    ) -> Result<Vec<(QuestionResultRecord, JournalHead<QuestionResultHead>)>, GuardError> {
+        let rows = self.conversation_rows::<QuestionResultRecord, QuestionResultHead>(
+            "room_results",
+            "result",
+            "pending = 1",
+        )?;
+        rows.into_iter()
+            .map(|(key, record, head)| {
+                if record.result().to_string() != key || head.body.result().to_string() != key {
+                    return Err(GuardError::Invalid(format!(
+                        "question result indexed as {key} names another result"
+                    )));
+                }
+                Ok((record, head))
+            })
+            .collect()
+    }
+
+    /// Every operator item that still owes a disposition, pending or lapsed,
+    /// with its immutable record and current guarded head, in item order.
+    pub fn open_room_items(
+        &self,
+    ) -> Result<Vec<(RoomReceiptRecord, JournalHead<RoomReceiptHead>)>, GuardError> {
+        let rows = self.conversation_rows::<RoomReceiptRecord, RoomReceiptHead>(
+            "room_items",
+            "item",
+            "open = 1",
+        )?;
+        rows.into_iter()
+            .map(|(key, record, head)| {
+                if record.receipt().to_string() != key || head.body.receipt().to_string() != key {
+                    return Err(GuardError::Invalid(format!(
+                        "operator item indexed as {key} names another item"
+                    )));
+                }
+                Ok((record, head))
+            })
+            .collect()
+    }
+
+    /// Every conversation head row of `table` meeting `condition`, keyed by
+    /// its stored key, in key order.
+    fn conversation_rows<R, H>(
+        &self,
+        table: &'static str,
+        key_column: &'static str,
+        condition: &'static str,
+    ) -> Result<Vec<(String, R, JournalHead<H>)>, GuardError>
+    where
+        R: serde::de::DeserializeOwned + serde::Serialize,
+        H: serde::de::DeserializeOwned + serde::Serialize,
+    {
+        let statement = format!(
+            "SELECT {key_column}, head_seq, record, head FROM {table} \
+             WHERE {condition} ORDER BY {key_column}"
+        );
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(&statement)
+            .map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                ))
+            })
+            .map_err(GuardError::Store)?;
+        let mut heads = Vec::new();
+        for row in rows {
+            let (key, position, record, head) = row.map_err(GuardError::Store)?;
+            let (record, head) =
+                self.conversation_row(table, key_column, &key, position, &record, &head)?;
+            heads.push((key, record, head));
+        }
+        Ok(heads)
+    }
+
+    fn conversation_row<R, H>(
+        &self,
+        table: &'static str,
+        key_column: &'static str,
+        key: &str,
+        position: i64,
+        record: &[u8],
+        head: &[u8],
+    ) -> Result<(R, JournalHead<H>), GuardError>
+    where
+        R: serde::de::DeserializeOwned + serde::Serialize,
+        H: serde::de::DeserializeOwned + serde::Serialize,
+    {
         read_metrics::observe_row();
         read_metrics::observe_decode(record.len() + head.len());
         let invalid = |error: GuardError| {
@@ -622,8 +724,8 @@ impl JournalRead<'_> {
             };
             GuardError::Invalid(format!("{table} {key_column} {key:?} is invalid: {detail}"))
         };
-        let record = decode_head::<R>(position, &record).map_err(invalid)?.body;
-        let head = decode_head::<H>(position, &head).map_err(invalid)?;
+        let record = decode_head::<R>(position, record).map_err(invalid)?.body;
+        let head = decode_head::<H>(position, head).map_err(invalid)?;
         if self.cursor.is_none_or(|cursor| head.position > cursor) {
             return Err(GuardError::Invalid(format!(
                 "{table} {key_column} {key:?} head position {} is beyond cursor {:?}",
@@ -631,7 +733,7 @@ impl JournalRead<'_> {
                 self.cursor.map(wire::Seq::get)
             )));
         }
-        Ok(Some((record, head)))
+        Ok((record, head))
     }
 
     /// One bounded page of a room's publications strictly after `after`, in

@@ -14,7 +14,13 @@ use wire::{
 
 use super::{CommandResult, environment_fault, new_uuid, steering, store_fault};
 
-/// Process-local waits mirror durable claim, steering, and lifecycle authority.
+mod rooms;
+
+use rooms::RoomAuthority;
+pub(super) use rooms::RoomDue;
+
+/// Process-local waits mirror durable claim, steering, lifecycle, and room
+/// authority.
 /// Each fired event re-proves its captured durable state before appending, so
 /// restart catch-up and stale races use the same guarded transition path.
 pub(super) struct Runtime {
@@ -31,12 +37,21 @@ pub(super) struct Runtime {
     renewals: BTreeMap<TaskHandle, ArmedRenewal>,
     directives: BTreeMap<CanonicalUuid, ArmedDirective>,
     wake: Option<ArmedWake>,
+    rooms: BTreeMap<RoomDue, ArmedRoom>,
     horizon: Option<wire::Seq>,
 }
 
 struct TimerSnapshot {
     authority: bus::TaskSnapshot,
     steering: Vec<journal::JournalHead<wire::SteeringHead>>,
+    results: Vec<(
+        wire::rooms::QuestionResultRecord,
+        journal::JournalHead<wire::rooms::QuestionResultHead>,
+    )>,
+    items: Vec<(
+        wire::rooms::RoomReceiptRecord,
+        journal::JournalHead<wire::rooms::RoomReceiptHead>,
+    )>,
     horizon: Option<wire::Seq>,
 }
 
@@ -104,6 +119,11 @@ struct ArmedWake {
     kind: super::lifecycle::WakeKind,
 }
 
+struct ArmedRoom {
+    id: TimerId,
+    authority: RoomAuthority,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Fired {
     Stale,
@@ -113,6 +133,8 @@ pub(super) enum Fired {
     Steering,
     TaskWake(CanonicalUuid),
     LaneResume(CanonicalUuid),
+    /// A room result timed out or an operator item lapsed.
+    Room,
 }
 
 impl Runtime {
@@ -154,6 +176,7 @@ impl Runtime {
             renewals: BTreeMap::new(),
             directives: BTreeMap::new(),
             wake: None,
+            rooms: BTreeMap::new(),
             horizon: None,
         })
     }
@@ -215,6 +238,7 @@ impl Runtime {
         let desired_renewals =
             desired_renewals(tasks, residency, |lane| vacated_bound(supervisors, lane))?;
         let desired_directives = desired_directives(&snapshot.steering, &self.steering)?;
+        let desired_rooms = rooms::desired(&snapshot.results, &snapshot.items, residency);
         self.synchronize_deferrals(desired_deferrals)?;
         let stale = self
             .claims
@@ -274,6 +298,50 @@ impl Runtime {
             self.directives
                 .insert(directive, ArmedDirective { id, authority });
         }
+        self.synchronize_rooms(desired_rooms)?;
+        Ok(())
+    }
+
+    fn synchronize_rooms(
+        &mut self,
+        desired: BTreeMap<RoomDue, RoomAuthority>,
+    ) -> CommandResult<()> {
+        let stale = self
+            .rooms
+            .iter()
+            .filter_map(|(due, armed)| {
+                (desired.get(due) != Some(&armed.authority)).then_some(due.clone())
+            })
+            .collect::<Vec<_>>();
+        for due in stale {
+            let armed = self
+                .rooms
+                .remove(&due)
+                .expect("stale room deadline came from the armed map");
+            self.worker()?
+                .cancel(armed.id)
+                .map_err(|error| store_fault("bus::timer-cancel-failed", &error.to_string()))?;
+        }
+        for (due, authority) in desired {
+            if self.rooms.contains_key(&due) {
+                continue;
+            }
+            self.arm_room(authority)?;
+        }
+        Ok(())
+    }
+
+    fn arm_room(&mut self, authority: RoomAuthority) -> CommandResult<()> {
+        let id = self
+            .worker()?
+            .arm(
+                authority.due.owner(),
+                authority.due.kind(),
+                authority.deadline,
+            )
+            .map_err(|error| store_fault("bus::timer-arm-failed", &error.to_string()))?;
+        self.rooms
+            .insert(authority.due.clone(), ArmedRoom { id, authority });
         Ok(())
     }
 
@@ -372,6 +440,7 @@ impl Runtime {
             }
             TimerKind::ClaimLapse => self.consume_claim(bus, event),
             TimerKind::ClaimRenew => self.consume_renewal(bus, event),
+            TimerKind::RoomTimeout | TimerKind::RoomLapse => self.consume_room(bus, event),
             kind => Err(environment_fault(
                 "bus::timer-kind-unhandled",
                 &format!("production received unarmed timer kind {kind:?}"),
@@ -605,6 +674,63 @@ impl Runtime {
         steering::apply_deadline(bus, &armed.authority.body, at).map(drop)
     }
 
+    fn consume_room(&mut self, bus: &Bus, event: TimerEvent) -> CommandResult<Fired> {
+        let Some(due) = self
+            .rooms
+            .iter()
+            .find_map(|(due, armed)| (armed.id == event.id()).then(|| due.clone()))
+        else {
+            return Ok(Fired::Stale);
+        };
+        let armed = &self.rooms[&due];
+        if event.owner() != due.owner()
+            || event.kind() != due.kind()
+            || event.deadline() != armed.authority.deadline
+        {
+            return Err(environment_fault(
+                "bus::timer-authority-mismatch",
+                "fired timer identity disagreed with its captured room authority",
+            ));
+        }
+        let at = Instant::new(jiff::Timestamp::now())
+            .map_err(|error| environment_fault("bus::timer-clock-invalid", &error.to_string()))?;
+        self.fire_room(bus, &due, at)
+    }
+
+    /// Settle one armed room deadline at `at`. A wait that fires before its
+    /// wall-clock deadline re-arms for it rather than dropping it.
+    fn fire_room(&mut self, bus: &Bus, due: &RoomDue, at: Instant) -> CommandResult<Fired> {
+        let Some(armed) = self.rooms.remove(due) else {
+            return Ok(Fired::Stale);
+        };
+        if at < armed.authority.deadline {
+            self.arm_room(armed.authority)?;
+            return Ok(Fired::Stale);
+        }
+        if rooms::settle(bus, &armed.authority, at)? {
+            Ok(Fired::Room)
+        } else {
+            Ok(Fired::Stale)
+        }
+    }
+
+    /// Fire the armed room deadline of `due` as if the wall clock read `at`.
+    #[cfg(test)]
+    pub(super) fn fire_room_at(
+        &mut self,
+        bus: &Bus,
+        due: &RoomDue,
+        at: Instant,
+    ) -> CommandResult<Fired> {
+        self.fire_room(bus, due, at)
+    }
+
+    /// The deadline armed for `due`, absent when nothing is armed for it.
+    #[cfg(test)]
+    pub(super) fn room_deadline(&self, due: &RoomDue) -> Option<Instant> {
+        self.rooms.get(due).map(|armed| armed.authority.deadline)
+    }
+
     fn worker(&self) -> CommandResult<&TimerWorker> {
         self.worker.as_ref().ok_or_else(|| {
             environment_fault(
@@ -687,8 +813,15 @@ fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
         let authority = bus
             .task_snapshot()
             .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))?;
-        let (steering, horizon) = bus
-            .read(|read| Ok((crate::steering_read::pending(read, None)?, read.cursor()?)))
+        let (steering, results, items, horizon) = bus
+            .read(|read| {
+                Ok((
+                    crate::steering_read::pending(read, None)?,
+                    read.pending_question_results()?,
+                    read.open_room_items()?,
+                    read.cursor()?,
+                ))
+            })
             .map_err(|error| store_fault("bus::timer-snapshot-failed", &error.to_string()))?;
         if horizon != authority.cursor() {
             continue;
@@ -696,6 +829,8 @@ fn timer_snapshot(bus: &Bus) -> CommandResult<TimerSnapshot> {
         return Ok(TimerSnapshot {
             authority,
             steering,
+            results,
+            items,
             horizon,
         });
     }
