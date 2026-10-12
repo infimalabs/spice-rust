@@ -28,7 +28,8 @@ pub(super) fn append_terminal_tasks(
         .parse()
         .expect("history fixture origin");
     let at = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
-    let creation = body::TaskCreationContext::legacy_unavailable();
+    let creation =
+        body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::OperatorActor);
     let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     let tasks = (0..count)
         .map(|index| {
@@ -300,7 +301,8 @@ fn open_reads_index_the_work_each_direction_caused_until_it_is_deleted() {
     let ack: wire::Origin = "ack:dTVQdQfLw".parse().expect("ack fixture origin");
     let unrelated: wire::Origin = "fixture:unrelated".parse().expect("fixture origin");
     let at = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
-    let creation = body::TaskCreationContext::legacy_unavailable();
+    let creation =
+        body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::OperatorActor);
     let mut write = JournalWrite::new(
         Actor::Operator,
         unrelated.clone(),
@@ -410,7 +412,8 @@ fn append_filtered_history(bus: &Bus) -> FilteredHistoryFixture {
     let third: Instant = "2030-04-12T18:44:03.000Z"
         .parse()
         .expect("third completion instant");
-    let creation = body::TaskCreationContext::legacy_unavailable();
+    let creation =
+        body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::OperatorActor);
     let mut write = JournalWrite::new(
         Actor::Operator,
         origin.clone(),

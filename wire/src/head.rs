@@ -167,10 +167,6 @@ pub struct TaskHead {
     /// Creation provenance, immutable across statement revisions.
     pub provenance: Origin,
     /// Creation-time transcript authority, immutable across statement revisions.
-    #[serde(
-        default = "crate::body::TaskCreationContext::legacy_unavailable",
-        skip_serializing_if = "crate::body::TaskCreationContext::is_legacy_unavailable"
-    )]
     pub creation: crate::body::TaskCreationContext,
     /// Fact that established this statement revision.
     pub revision: Seq,

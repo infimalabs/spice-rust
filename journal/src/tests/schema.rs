@@ -38,7 +38,7 @@ fn current_schema_is_the_only_executable_journal_shape() {
 
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
-    for predecessor in [33, 34] {
+    for predecessor in [33, 34, 35] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);
@@ -90,6 +90,45 @@ fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_row
 
         let reopened = Journal::open(&path).expect("current authority reopens");
         assert_eq!(reopened.migration(), None, "the crossing runs exactly once");
+    }
+}
+
+#[test]
+fn a_predecessor_omitting_task_creation_context_refuses_before_crossing() {
+    for (table, omit) in [
+        (
+            "fact_envelopes",
+            "UPDATE fact_envelopes SET envelope = CAST(json_remove(CAST(envelope AS TEXT), '$.fact.creation') AS BLOB) WHERE kind = 'task::added'",
+        ),
+        (
+            "task_heads",
+            "UPDATE task_heads SET body = CAST(json_remove(CAST(body AS TEXT), '$.creation') AS BLOB)",
+        ),
+    ] {
+        let scratch = Scratch::new();
+        let path = scratch.path().join("authority.sqlite3");
+        let journal = authority_file_fixture(&path);
+        journal
+            .connection
+            .execute_batch(&format!(
+                "{omit};
+                 UPDATE journal_schema SET version = 35 WHERE singleton = 1;
+                 PRAGMA user_version = 35;"
+            ))
+            .expect("plant a retained omission");
+        drop(journal);
+        let authority = || fs::read(&path).expect("authority bytes read");
+        let before = authority();
+
+        let error = Journal::open(&path).expect_err("an omission refuses the crossing");
+        let OpenError::Migration(MigrationError::CreationContextOmitted { table: named, .. }) =
+            &error
+        else {
+            panic!("{table}: expected a creation-context refusal, got {error}");
+        };
+        assert_eq!(named, table);
+        assert!(error.to_string().contains("6ad57c713"), "{error}");
+        assert_eq!(authority(), before, "{table}: the refusal changes nothing");
     }
 }
 #[test]

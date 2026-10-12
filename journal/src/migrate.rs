@@ -20,7 +20,12 @@ const PREPARED: &str = "prepared";
 ///
 /// Writable admission advances only the schema identity; retained facts and
 /// heads remain byte-for-byte intact. Older writers refuse the new boundary.
-const PREDECESSOR_SCHEMAS: [u32; 2] = [33, 34];
+/// Schema 35 is the last whose wire still defaulted an omitted task creation
+/// context, so the crossing first proves that no retained row omits one.
+const PREDECESSOR_SCHEMAS: [u32; 3] = [33, 34, 35];
+
+/// Release that migrated task facts and heads to explicit creation context.
+const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 
 /// Admit exact-current authority, cross the predecessor once, or initialize
 /// one truly empty database.
@@ -190,6 +195,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
+    refuse_creation_omission(&transaction)?;
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -204,6 +210,32 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         from: version,
         to: SCHEMA_VERSION,
     }))
+}
+
+/// Refuse a predecessor whose retained task authority omits its creation
+/// context, before the crossing changes anything.
+///
+/// The current wire requires the field, so such a row could never be read
+/// again. Inspection reads the stored JSON directly rather than any decoder.
+fn refuse_creation_omission(connection: &Connection) -> Result<(), OpenError> {
+    let omission = connection
+        .query_row(
+            "SELECT 'fact_envelopes', CAST(seq AS TEXT) FROM fact_envelopes \
+             WHERE kind = 'task::added' \
+             AND json_type(CAST(envelope AS TEXT), '$.fact.creation') IS NULL \
+             UNION ALL \
+             SELECT 'task_heads', stamp FROM task_heads \
+             WHERE json_type(CAST(body AS TEXT), '$.creation') IS NULL \
+             LIMIT 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(OpenError::Sqlite)?;
+    match omission {
+        Some((table, row)) => Err(MigrationError::CreationContextOmitted { table, row }.into()),
+        None => Ok(()),
+    }
 }
 
 /// Validate a finalized schema identity before applying the current cutoff.
@@ -417,6 +449,11 @@ pub enum MigrationError {
     PendingCrossing {
         found: u32,
     },
+    /// Retained task authority omitting the creation context its schema requires.
+    CreationContextOmitted {
+        table: String,
+        row: String,
+    },
     VersionDisagreement {
         row: u32,
         pragma: u32,
@@ -456,6 +493,12 @@ impl fmt::Display for MigrationError {
                 formatter,
                 "journal schema {found} crosses once to schema {SCHEMA_VERSION} at the next \
                  writable open; start the resident with this build before reading it"
+            ),
+            Self::CreationContextOmitted { table, row } => write!(
+                formatter,
+                "journal {table} row {row} omits task creation context, which release \
+                 {CREATION_CONTEXT_RELEASE} migrated into every task fact and head; restore \
+                 authority that release crossed before opening it with this build"
             ),
             Self::UnknownVersion { found } => {
                 if let Some(release) = retired_release(*found) {
@@ -681,8 +724,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 35, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 36, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 35;
+PRAGMA user_version = 36;
 "#;

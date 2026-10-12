@@ -108,7 +108,7 @@ fn team_history_follows_the_claim_lane_not_the_winning_principal() {
     let task = super::read_scope::push_terminal_task(
         &mut write,
         &origin,
-        &body::TaskCreationContext::legacy_unavailable(),
+        &body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::OperatorActor),
         super::read_scope::TerminalTaskFixture {
             micros: OPERATOR_CLAIMED_MICROS,
             title: "Operator claim on a member lane".to_owned(),
