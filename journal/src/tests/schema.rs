@@ -61,7 +61,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
-    for predecessor in [33, 34, 35, 36, 37, 38, 39, 40, 41] {
+    for predecessor in [33, 34, 35, 36, 37, 38, 39, 40, 41, 42] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);
@@ -864,6 +864,36 @@ fn plant_steering_locus(journal: &Journal) -> String {
     "3".to_owned()
 }
 
+fn plant_room_packet(journal: &Journal) -> String {
+    let packet = wire::rooms::RoomMessaged {
+        room: "1kKRRsDP".parse().expect("fixture room"),
+        publication: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_000)
+            .expect("fixture publication"),
+        hunk: wire::rooms::TranscriptHunk {
+            head: transcript_source_head(),
+            locus: wire::MessageLocus {
+                member: 1,
+                offset: 0,
+                length: 64,
+                event: 0,
+            },
+            text: wire::rooms::TextRange { start: 0, end: 8 },
+        },
+        author: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),
+        directed: Vec::new(),
+    };
+    insert_fact(
+        journal,
+        fact(
+            3,
+            Some(2),
+            FactKind::RoomMessaged,
+            serde_json::to_value(packet).expect("room packet encodes"),
+        ),
+    );
+    "3".to_owned()
+}
+
 fn plant_millisecond_steering_head(journal: &Journal) -> String {
     journal
         .connection
@@ -945,7 +975,7 @@ fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
 
 #[test]
 fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutation() {
-    let cases: [RetainedCase; 5] = [
+    let cases: [RetainedCase; 6] = [
         (
             "fact_envelopes",
             "3903331e5",
@@ -980,6 +1010,13 @@ fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutatio
             "UPDATE fact_envelopes SET envelope = CAST(json_remove(CAST(envelope AS TEXT), \
              '$.fact.locus.source') AS BLOB) WHERE seq = 3",
             plant_steering_locus,
+        ),
+        (
+            "fact_envelopes",
+            "98a3243fa",
+            "UPDATE fact_envelopes SET envelope = CAST(json_remove(CAST(envelope AS TEXT), \
+             '$.fact.author', '$.fact.directed') AS BLOB) WHERE seq = 3",
+            plant_room_packet,
         ),
     ];
     assert_retained_refusals(&cases);

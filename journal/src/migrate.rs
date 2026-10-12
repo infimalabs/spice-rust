@@ -27,11 +27,12 @@ const PREPARED: &str = "prepared";
 /// guidance from task completions and their receipts, refuses vendor holds
 /// without exact input, incomplete launch identity, and source-less session or
 /// steering authority, crosses or refuses the remaining retired fact, receipt,
-/// and head shapes, projects frozen peer-message rooms from their creating
+/// and head shapes, refuses room packet records that omit their author and
+/// directed routes, projects frozen peer-message rooms from their creating
 /// facts into steering heads, and creates the room-authority projection and
 /// per-lane room catch-up cursors a predecessor lacks before the schema
 /// identity advances. Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 9] = [33, 34, 35, 36, 37, 38, 39, 40, 41];
+const PREDECESSOR_SCHEMAS: [u32; 10] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 /// Release that added the residency subscription table without a schema step.
@@ -1146,8 +1147,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 42, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 43, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 42;
+PRAGMA user_version = 43;
 "#;

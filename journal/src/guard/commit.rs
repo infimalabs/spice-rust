@@ -59,11 +59,9 @@ impl Journal {
         let prepared = prepare_facts(&write, &assigned, current)?;
         insert_facts(&transaction, &write, &prepared)?;
         fold_rooms(&transaction, &write.actor, &write.facts, &assigned)?;
-        crate::rooms::require_open_controllers(
-            &transaction,
-            write.facts.iter().map(|proposed| &proposed.fact),
-        )
-        .map_err(room_refusal)?;
+        let proposed = || write.facts.iter().map(|proposed| &proposed.fact);
+        crate::rooms::require_packet_routes(proposed()).map_err(room_refusal)?;
+        crate::rooms::require_open_controllers(&transaction, proposed()).map_err(room_refusal)?;
         apply_heads(
             &transaction,
             write.id,

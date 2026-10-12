@@ -418,6 +418,12 @@ pub(crate) fn fold(
         return publish(authority, seq, &body.room, &body.publication);
     }
     if let Some(body) = fact.read::<RoomMessaged>() {
+        if *actor != Actor::Lane(body.hunk.head.lane) {
+            return unsound(format!(
+                "room packet in {} is written by {actor}, not its hunk's lane {}",
+                body.room, body.hunk.head.lane
+            ));
+        }
         require_hunk(authority, &body.hunk)?;
         return publish(authority, seq, &body.room, &body.publication);
     }
@@ -468,6 +474,60 @@ pub(crate) fn fold(
     if let Some(ExecutionAuthorized { authorization }) = fact.read() {
         require_operator(actor, "execution authorization")?;
         return authorize(authority, seq, authorization);
+    }
+    Ok(())
+}
+
+/// Each room record of a packet names exactly the directives the same write's
+/// peer messages opened into that room, in write order, and each of those
+/// messages was sent from the packet's lane by its author at its hunk's tape
+/// record. A write publishes at most one packet, so these are its routes.
+pub(crate) fn require_packet_routes<'a>(
+    facts: impl IntoIterator<Item = &'a AnyFact>,
+) -> Result<(), Refusal> {
+    let mut messages = Vec::new();
+    let mut packets = Vec::new();
+    for fact in facts {
+        if let Some(message) = fact.read::<wire::body::SteerMessaged>() {
+            messages.push(message);
+        } else if let Some(packet) = fact.read::<RoomMessaged>() {
+            packets.push(packet);
+        }
+    }
+    for packet in &packets {
+        let opened = messages
+            .iter()
+            .filter(|message| message.room.as_ref() == Some(&packet.room))
+            .collect::<Vec<_>>();
+        if !opened
+            .iter()
+            .map(|message| message.directive)
+            .eq(packet.directed.iter().copied())
+        {
+            return unsound(format!(
+                "room packet in {} names directed routes other than those its write opened there",
+                packet.room
+            ));
+        }
+        let hunk = &packet.hunk;
+        if let Some(message) = opened.into_iter().find(|message| {
+            let locus = &message.locus;
+            message.from != hunk.head.lane
+                || message.sender != packet.author
+                || locus.source != Some(hunk.head.source)
+                || (locus.member, locus.offset, locus.length, locus.event)
+                    != (
+                        hunk.locus.member,
+                        hunk.locus.offset,
+                        hunk.locus.length,
+                        hunk.locus.event,
+                    )
+        }) {
+            return unsound(format!(
+                "directive {} in room {} was not sent from this packet's lane by its author at its record",
+                message.directive, packet.room
+            ));
+        }
     }
     Ok(())
 }

@@ -1,7 +1,9 @@
 //! Room authority linked to exact transcript hunks: packets recorded in rooms
 //! and per-lane catch-up cursors.
 
+use wire::body::{SteerMessaged, SteeringStage, TranscriptLocus};
 use wire::rooms::{RoomDelivered, RoomMessaged};
+use wire::{Disposition, SteeringHead};
 
 use super::*;
 
@@ -206,4 +208,199 @@ fn messaged_packets_record_exact_transcript_hunks_beside_room_publications() {
         [FactKind::RoomPublished, FactKind::RoomMessaged]
     );
     journal.verify().expect("messaged publications verify");
+}
+
+/// One packet's write: the peer messages its directed routes open, then its
+/// record in `room`.
+struct Packet {
+    writer: Actor,
+    messages: Vec<SteerMessaged>,
+    author: CanonicalUuid,
+    directed: Vec<CanonicalUuid>,
+}
+
+fn peer_message(head: &TranscriptSourceHead, ordinal: u8, room: &TaskStamp) -> SteerMessaged {
+    SteerMessaged {
+        directive: uuid(&format!("018f82d4-6f59-7d06-92e3-bce9131164{ordinal:02}")),
+        key: format!("1kJK6N{}", char::from(b'A' + ordinal)),
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce913116307"),
+        occupant: uuid("018f82d4-6f59-7d06-92e3-bce913116308"),
+        from: head.lane,
+        sender: uuid(AUTHOR),
+        text: "for the room".to_owned(),
+        locus: TranscriptLocus {
+            source: Some(head.source),
+            member: 1,
+            offset: 0,
+            length: 64,
+            event: 0,
+            line: 1,
+            column: 1,
+        },
+        room: Some(room.clone()),
+        expires: "2030-04-12T19:44:09.271Z".parse().expect("fixture expiry"),
+    }
+}
+
+const AUTHOR: &str = "018f82d4-6f59-7d06-92e3-bce913116309";
+
+fn record_packet(
+    journal: &mut Journal,
+    head: &TranscriptSourceHead,
+    room: &TaskStamp,
+    micros: i64,
+    packet: Packet,
+) -> Commit {
+    let origin: wire::Origin = "resident:018f82d4-6f59-7d06-92e3-bce913116305"
+        .parse()
+        .expect("resident origin");
+    let at = instant();
+    let mut write = JournalWrite::new(packet.writer, origin.clone(), at, Producer::AckScanner);
+    for message in packet.messages {
+        let created = write
+            .fact(message.clone(), FactCause::Root)
+            .expect("peer message builds");
+        let origin = origin.clone();
+        write.steering_head(created, move |created| SteeringHead {
+            directive: message.directive,
+            fanout: None,
+            key: message.key,
+            lane: message.lane,
+            text: message.text,
+            from: Some(message.from),
+            room: message.room,
+            control: None,
+            attachments: Vec::new(),
+            published: at,
+            expires: message.expires,
+            stage: SteeringStage::Published,
+            escalations: Vec::new(),
+            disposition: Disposition::Live,
+            origin,
+            created,
+            minted_micros: None,
+        });
+    }
+    write
+        .fact(
+            RoomMessaged {
+                room: room.clone(),
+                publication: authority(micros),
+                hunk: hunk(head),
+                author: packet.author,
+                directed: packet.directed,
+            },
+            FactCause::Root,
+        )
+        .expect("room packet builds");
+    journal.apply(write)
+}
+
+/// A packet's room record is written by its hunk's lane and names exactly the
+/// directed routes its own write opened into that room, each sent from that
+/// lane by its author at its record; replay rebuilds what was admitted.
+#[test]
+fn a_room_packet_names_exactly_the_routes_its_write_opened_there() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let room = task(&mut journal, 1, None);
+    let other_room = task(&mut journal, 2, None);
+    let head = transcript_source_head();
+    ingest(
+        &mut journal,
+        head.clone(),
+        TranscriptPosition {
+            member: 1,
+            offset: 0,
+        },
+        None,
+    );
+    let lane = Actor::Lane(head.lane);
+    let author = uuid(AUTHOR);
+    let packet = |messages: Vec<SteerMessaged>, directed: Vec<CanonicalUuid>| Packet {
+        writer: lane.clone(),
+        messages,
+        author,
+        directed,
+    };
+    let directives = |messages: &[SteerMessaged]| {
+        messages
+            .iter()
+            .map(|message| message.directive)
+            .collect::<Vec<_>>()
+    };
+
+    let routes = [peer_message(&head, 1, &room), peer_message(&head, 2, &room)];
+    let elsewhere = peer_message(&head, 3, &other_room);
+    let mut messages = routes.to_vec();
+    messages.push(elsewhere.clone());
+    record_packet(
+        &mut journal,
+        &head,
+        &room,
+        1,
+        packet(messages, directives(&routes)),
+    )
+    .expect("a packet names its routes into the room in write order");
+    record_packet(
+        &mut journal,
+        &head,
+        &room,
+        2,
+        packet(Vec::new(), Vec::new()),
+    )
+    .expect("a room-only packet names no route");
+
+    let fresh = [peer_message(&head, 4, &room), peer_message(&head, 5, &room)];
+    let mut reordered = directives(&fresh);
+    reordered.reverse();
+    let mut from_elsewhere = peer_message(&head, 6, &room);
+    from_elsewhere.from = uuid("018f82d4-6f59-7d06-92e3-bce913116306");
+    let mut other_sender = peer_message(&head, 7, &room);
+    other_sender.sender = uuid("018f82d4-6f59-7d06-92e3-bce913116310");
+    let mut other_record = peer_message(&head, 8, &room);
+    other_record.locus.offset = 64;
+    let mut other_generation = peer_message(&head, 9, &room);
+    other_generation.locus.source = Some(uuid("018f82d4-6f59-7d06-92e3-bce913116311"));
+    let unrouted = peer_message(&head, 10, &other_room);
+    let mut foreign_writer = packet(Vec::new(), Vec::new());
+    foreign_writer.writer = Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce913116306"));
+    for (micros, refused_packet) in (10..).zip([
+        foreign_writer,
+        packet(fresh.to_vec(), Vec::new()),
+        packet(Vec::new(), directives(&fresh)),
+        packet(fresh.to_vec(), reordered),
+        packet(fresh[..1].to_vec(), directives(&fresh)),
+        packet(vec![unrouted.clone()], directives(&[unrouted])),
+        packet(vec![from_elsewhere.clone()], directives(&[from_elsewhere])),
+        packet(vec![other_sender.clone()], directives(&[other_sender])),
+        packet(vec![other_record.clone()], directives(&[other_record])),
+        packet(
+            vec![other_generation.clone()],
+            directives(&[other_generation]),
+        ),
+    ]) {
+        let result = record_packet(&mut journal, &head, &room, micros, refused_packet);
+        let Err(CommitError::Refused(refusal)) = &result else {
+            panic!("the packet record was admitted: {result:?}");
+        };
+        let reason = refusal.to_string();
+        assert!(
+            reason.contains("room packet") || reason.contains("not sent from this packet's lane"),
+            "refused for another reason: {reason}"
+        );
+        refused(&journal, result);
+    }
+
+    let page = journal
+        .read(|read| read.room_publications(&room, None, fact_budget(8)))
+        .expect("room publications read");
+    assert_eq!(
+        page.rows
+            .iter()
+            .filter_map(|row| row.fact.read::<RoomMessaged>())
+            .map(|packet| packet.directed)
+            .collect::<Vec<_>>(),
+        [directives(&routes), Vec::new()]
+    );
+    journal.verify().expect("admitted packets verify");
 }
