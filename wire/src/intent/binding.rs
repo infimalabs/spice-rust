@@ -4,7 +4,10 @@ use serde::Serialize;
 
 use crate::QuoteResolution;
 use crate::command::CommandKind;
-use crate::rooms::{RoomPost, RoomPostAnswer};
+use crate::rooms::{
+    CandidateCoverageRecord, CandidateCritiqueRecord, CandidateRetain, ExecutionAuthorize,
+    OutputAdopt, PreparationDecide, RoomPost, RoomPostAnswer,
+};
 
 use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
@@ -50,6 +53,18 @@ pub enum BodyShape {
     WorkingGroupPut,
     /// [`WorkingGroupRemove`]
     WorkingGroupRemove,
+    /// [`CandidateRetain`]
+    CandidateRetain,
+    /// [`CandidateCritiqueRecord`]
+    CandidateCritiqueRecord,
+    /// [`CandidateCoverageRecord`]
+    CandidateCoverageRecord,
+    /// [`PreparationDecide`]
+    PreparationDecide,
+    /// [`ExecutionAuthorize`]
+    ExecutionAuthorize,
+    /// [`OutputAdopt`]
+    OutputAdopt,
     /// [`GlobalSettingsRead`]
     GlobalSettingsRead,
     /// [`GlobalSettingsSet`]
@@ -290,6 +305,41 @@ impl CommandAnswer {
     #[must_use]
     pub const fn shape(&self) -> AnswerShape {
         match self {
+            Self::Board(_)
+            | Self::Report(_)
+            | Self::TaskDetail(_)
+            | Self::TaskRelations(_)
+            | Self::TaskTimeline(_)
+            | Self::WorkingGroupPage(_)
+            | Self::WorkingGroupChange(_)
+            | Self::Text(_)
+            | Self::RoomPost(_)
+            | Self::Task(_)
+            | Self::Claim(_)
+            | Self::Doc(_) => self.board_answer_shape(),
+            Self::Directive(_) => AnswerShape::Directive,
+            Self::Inbox(_) => AnswerShape::Inbox,
+            Self::DirectionHistory(_) => AnswerShape::DirectionHistory,
+            Self::Consent(_) => AnswerShape::Consent,
+            Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
+            Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
+            Self::GlobalSettings(_) => AnswerShape::GlobalSettings,
+            Self::VendorCatalog(_) => AnswerShape::VendorCatalog,
+            Self::Trust(_) => AnswerShape::Trust,
+            Self::Lane(_)
+            | Self::LaneJobs(_)
+            | Self::LaneJob(_)
+            | Self::LaneChange(_)
+            | Self::LaneRenewal(_) => self.lane_shape(),
+            Self::State(_) => AnswerShape::State,
+            Self::Recall(_) => AnswerShape::Recall,
+            Self::Taste(_) => AnswerShape::Taste,
+            Self::Recognition(_) => AnswerShape::Recognition,
+            Self::Quote(_) => AnswerShape::Quote,
+        }
+    }
+    const fn board_answer_shape(&self) -> AnswerShape {
+        match self {
             Self::Board(_) => AnswerShape::Board,
             Self::Report(_) => AnswerShape::Report,
             Self::TaskDetail(_) => AnswerShape::TaskDetail,
@@ -301,32 +351,25 @@ impl CommandAnswer {
             Self::Task(_) => AnswerShape::Task,
             Self::Claim(_) => AnswerShape::Claim,
             Self::Doc(_) => AnswerShape::Doc,
-            Self::Directive(_) => AnswerShape::Directive,
-            Self::Inbox(_) => AnswerShape::Inbox,
-            Self::DirectionHistory(_) => AnswerShape::DirectionHistory,
-            Self::Consent(_) => AnswerShape::Consent,
-            Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
-            Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
-            Self::GlobalSettings(_) => AnswerShape::GlobalSettings,
-            Self::VendorCatalog(_) => AnswerShape::VendorCatalog,
-            Self::Trust(_) => AnswerShape::Trust,
-            Self::Lane(_) => AnswerShape::Lane,
-            Self::LaneJobs(_) => AnswerShape::LaneJobs,
-            Self::LaneJob(_) => AnswerShape::LaneJob,
-            Self::LaneChange(_) => AnswerShape::LaneChange,
-            Self::LaneRenewal(_) => AnswerShape::LaneRenewal,
-            Self::State(_) => AnswerShape::State,
-            Self::Recall(_) => AnswerShape::Recall,
-            Self::Taste(_) => AnswerShape::Taste,
-            Self::Recognition(_) => AnswerShape::Recognition,
-            Self::Quote(_) => AnswerShape::Quote,
+            _ => panic!("board answer shape partition is closed"),
         }
     }
+
     const fn working_group_shape(&self) -> AnswerShape {
         match self {
             Self::WorkingGroupPage(_) => AnswerShape::WorkingGroupPage,
             Self::WorkingGroupChange(_) => AnswerShape::WorkingGroupChange,
             _ => panic!("working-group answer shape partition is closed"),
+        }
+    }
+    const fn lane_shape(&self) -> AnswerShape {
+        match self {
+            Self::Lane(_) => AnswerShape::Lane,
+            Self::LaneJobs(_) => AnswerShape::LaneJobs,
+            Self::LaneJob(_) => AnswerShape::LaneJob,
+            Self::LaneChange(_) => AnswerShape::LaneChange,
+            Self::LaneRenewal(_) => AnswerShape::LaneRenewal,
+            _ => panic!("lane answer shape partition is closed"),
         }
     }
 }
@@ -495,7 +538,13 @@ impl CommandKind {
             Self::WorkingGroupRead | Self::WorkingGroupPut | Self::WorkingGroupRemove => {
                 self.working_group_binding()
             }
-            Self::BoardRead
+            Self::CandidateRetain
+            | Self::CandidateCritiqueRecord
+            | Self::CandidateCoverageRecord
+            | Self::PreparationDecide
+            | Self::ExecutionAuthorize
+            | Self::OutputAdopt
+            | Self::BoardRead
             | Self::ReportRead
             | Self::TaskDetail
             | Self::TaskRelations
@@ -576,6 +625,12 @@ impl CommandKind {
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
             Self::RoomPost => Binding::of(B::RoomPost, A::RoomPost),
+            Self::CandidateRetain
+            | Self::CandidateCritiqueRecord
+            | Self::CandidateCoverageRecord
+            | Self::PreparationDecide
+            | Self::ExecutionAuthorize
+            | Self::OutputAdopt => self.preparation_binding(),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
             Self::TasteProposalAdd => Binding::of(B::TasteProposalAdd, A::Task),
@@ -590,14 +645,43 @@ impl CommandKind {
             Self::TaskDone => Binding::of(B::TaskDone, A::Task),
             Self::TaskReview => Binding::of(B::TaskReview, A::Task),
             Self::TaskAssign => Binding::of(B::TaskAssign, A::Task),
-            Self::ClaimWin => Binding::of(B::ClaimWin, A::Claim),
-            Self::ClaimCarry => Binding::of(B::ClaimCarry, A::Claim),
-            Self::ClaimRenew => Binding::of(B::ClaimRenew, A::Claim),
-            Self::ClaimFree | Self::ClaimLapse => Binding::of(B::TaskRef, A::Claim),
+            Self::ClaimWin
+            | Self::ClaimCarry
+            | Self::ClaimRenew
+            | Self::ClaimFree
+            | Self::ClaimLapse => self.claim_binding(),
             Self::DocApply => Binding::of(B::DocApply, A::Doc),
             _ => panic!("command binding partition is closed"),
         }
     }
+    const fn preparation_binding(self) -> Binding {
+        use AnswerShape as A;
+        use BodyShape as B;
+
+        match self {
+            Self::CandidateRetain => Binding::of(B::CandidateRetain, A::Text),
+            Self::CandidateCritiqueRecord => Binding::of(B::CandidateCritiqueRecord, A::Text),
+            Self::CandidateCoverageRecord => Binding::of(B::CandidateCoverageRecord, A::Text),
+            Self::PreparationDecide => Binding::of(B::PreparationDecide, A::Text),
+            Self::ExecutionAuthorize => Binding::of(B::ExecutionAuthorize, A::Text),
+            Self::OutputAdopt => Binding::of(B::OutputAdopt, A::Text),
+            _ => panic!("preparation command binding partition is closed"),
+        }
+    }
+
+    const fn claim_binding(self) -> Binding {
+        use AnswerShape as A;
+        use BodyShape as B;
+
+        match self {
+            Self::ClaimWin => Binding::of(B::ClaimWin, A::Claim),
+            Self::ClaimCarry => Binding::of(B::ClaimCarry, A::Claim),
+            Self::ClaimRenew => Binding::of(B::ClaimRenew, A::Claim),
+            Self::ClaimFree | Self::ClaimLapse => Binding::of(B::TaskRef, A::Claim),
+            _ => panic!("claim command binding partition is closed"),
+        }
+    }
+
     const fn working_group_binding(self) -> Binding {
         use AnswerShape as A;
         use BodyShape as B;
@@ -692,6 +776,18 @@ pub enum Intent {
     WorkingGroupPut(WorkingGroupPut),
     /// [`BodyShape::WorkingGroupRemove`]
     WorkingGroupRemove(WorkingGroupRemove),
+    /// [`BodyShape::CandidateRetain`]
+    CandidateRetain(CandidateRetain),
+    /// [`BodyShape::CandidateCritiqueRecord`]
+    CandidateCritiqueRecord(CandidateCritiqueRecord),
+    /// [`BodyShape::CandidateCoverageRecord`]
+    CandidateCoverageRecord(CandidateCoverageRecord),
+    /// [`BodyShape::PreparationDecide`]
+    PreparationDecide(PreparationDecide),
+    /// [`BodyShape::ExecutionAuthorize`]
+    ExecutionAuthorize(ExecutionAuthorize),
+    /// [`BodyShape::OutputAdopt`]
+    OutputAdopt(OutputAdopt),
     /// [`BodyShape::GlobalSettingsRead`]
     GlobalSettingsRead(GlobalSettingsRead),
     /// [`BodyShape::GlobalSettingsSet`]
@@ -802,7 +898,13 @@ impl Intent {
             Self::WorkingGroupRead(_) | Self::WorkingGroupPut(_) | Self::WorkingGroupRemove(_) => {
                 self.working_group_shape()
             }
-            Self::BoardRead(_)
+            Self::CandidateRetain(_)
+            | Self::CandidateCritiqueRecord(_)
+            | Self::CandidateCoverageRecord(_)
+            | Self::PreparationDecide(_)
+            | Self::ExecutionAuthorize(_)
+            | Self::OutputAdopt(_)
+            | Self::BoardRead(_)
             | Self::ReportRead(_)
             | Self::TaskDetail(_)
             | Self::TaskRelations(_)
@@ -872,6 +974,12 @@ impl Intent {
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
             Self::RoomPost(_) => BodyShape::RoomPost,
+            Self::CandidateRetain(_)
+            | Self::CandidateCritiqueRecord(_)
+            | Self::CandidateCoverageRecord(_)
+            | Self::PreparationDecide(_)
+            | Self::ExecutionAuthorize(_)
+            | Self::OutputAdopt(_) => self.preparation_shape(),
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
             Self::TasteProposalAdd(_) => BodyShape::TasteProposalAdd,
@@ -887,13 +995,32 @@ impl Intent {
             Self::TaskDone(_) => BodyShape::TaskDone,
             Self::TaskReview(_) => BodyShape::TaskReview,
             Self::TaskAssign(_) => BodyShape::TaskAssign,
-            Self::ClaimWin(_) => BodyShape::ClaimWin,
-            Self::ClaimCarry(_) => BodyShape::ClaimCarry,
-            Self::ClaimRenew(_) => BodyShape::ClaimRenew,
+            Self::ClaimWin(_) | Self::ClaimCarry(_) | Self::ClaimRenew(_) => self.claim_shape(),
             Self::DocApply(_) => BodyShape::DocApply,
             _ => panic!("intent shape partition is closed"),
         }
     }
+    const fn preparation_shape(&self) -> BodyShape {
+        match self {
+            Self::CandidateRetain(_) => BodyShape::CandidateRetain,
+            Self::CandidateCritiqueRecord(_) => BodyShape::CandidateCritiqueRecord,
+            Self::CandidateCoverageRecord(_) => BodyShape::CandidateCoverageRecord,
+            Self::PreparationDecide(_) => BodyShape::PreparationDecide,
+            Self::ExecutionAuthorize(_) => BodyShape::ExecutionAuthorize,
+            Self::OutputAdopt(_) => BodyShape::OutputAdopt,
+            _ => panic!("preparation intent shape partition is closed"),
+        }
+    }
+
+    const fn claim_shape(&self) -> BodyShape {
+        match self {
+            Self::ClaimWin(_) => BodyShape::ClaimWin,
+            Self::ClaimCarry(_) => BodyShape::ClaimCarry,
+            Self::ClaimRenew(_) => BodyShape::ClaimRenew,
+            _ => panic!("claim intent shape partition is closed"),
+        }
+    }
+
     const fn working_group_shape(&self) -> BodyShape {
         match self {
             Self::WorkingGroupRead(_) => BodyShape::WorkingGroupRead,
@@ -969,6 +1096,12 @@ impl BodyShape {
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
                 | Self::WorkingGroupRemove
+                | Self::CandidateRetain
+                | Self::CandidateCritiqueRecord
+                | Self::CandidateCoverageRecord
+                | Self::PreparationDecide
+                | Self::ExecutionAuthorize
+                | Self::OutputAdopt
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TasteProposalAdd
@@ -1006,6 +1139,12 @@ impl BodyShape {
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
                 | Self::WorkingGroupRemove
+                | Self::CandidateRetain
+                | Self::CandidateCritiqueRecord
+                | Self::CandidateCoverageRecord
+                | Self::PreparationDecide
+                | Self::ExecutionAuthorize
+                | Self::OutputAdopt
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TasteProposalAdd
@@ -1032,7 +1171,24 @@ impl BodyShape {
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
             Self::RoomPost => Intent::RoomPost(crate::decode(bytes)?),
             Self::WorkingGroupRead => Intent::WorkingGroupRead(crate::decode(bytes)?),
+            Self::CandidateRetain
+            | Self::CandidateCritiqueRecord
+            | Self::CandidateCoverageRecord
+            | Self::PreparationDecide
+            | Self::ExecutionAuthorize
+            | Self::OutputAdopt => return self.decode_preparation_body(bytes),
             _ => return self.decode_task_statement_body(bytes),
+        })
+    }
+    fn decode_preparation_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
+        Ok(match self {
+            Self::CandidateRetain => Intent::CandidateRetain(crate::decode(bytes)?),
+            Self::CandidateCritiqueRecord => Intent::CandidateCritiqueRecord(crate::decode(bytes)?),
+            Self::CandidateCoverageRecord => Intent::CandidateCoverageRecord(crate::decode(bytes)?),
+            Self::PreparationDecide => Intent::PreparationDecide(crate::decode(bytes)?),
+            Self::ExecutionAuthorize => Intent::ExecutionAuthorize(crate::decode(bytes)?),
+            Self::OutputAdopt => Intent::OutputAdopt(crate::decode(bytes)?),
+            _ => unreachable!("preparation body partition is closed"),
         })
     }
 

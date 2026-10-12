@@ -1,6 +1,7 @@
 use super::*;
 
 mod group;
+mod preparation;
 mod requirements;
 use group::{client_group_list, client_group_put, client_group_remove};
 use requirements::environment_requirements;
@@ -54,6 +55,7 @@ fn dispatch_client(
         ["group", "list"] => client_group_list(repository, contract, matches),
         ["group", "put"] => client_group_put(repository, contract, matches),
         ["group", "remove"] => client_group_remove(repository, contract, matches),
+        ["preparation", verb] => preparation::dispatch_client(repository, contract, matches, verb),
         ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),
         ["task", "show"] => client_show(repository, contract, matches),
@@ -1334,6 +1336,19 @@ pub(crate) fn dispatch(
     .expect("board command test project policy");
     dispatch_with_repository(bus, command, None, &projects, &board::NextConfig::default())
 }
+fn dispatch_working_group(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+) -> Option<Outcome<CommandAnswer>> {
+    Some(match command.body() {
+        wire::intent::Intent::WorkingGroupRead(read) => read_working_groups(bus, read),
+        wire::intent::Intent::WorkingGroupPut(put) => put_working_group(bus, command, put),
+        wire::intent::Intent::WorkingGroupRemove(remove) => {
+            remove_working_group(bus, command, remove)
+        }
+        _ => return None,
+    })
+}
 
 /// Dispatch with the resident repository required by production Git boundaries.
 pub(crate) fn dispatch_with_repository(
@@ -1343,6 +1358,13 @@ pub(crate) fn dispatch_with_repository(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Option<Outcome<CommandAnswer>> {
+    if let Some(outcome) = super::dispatch_preparation(bus, command) {
+        return Some(outcome);
+    }
+    if let Some(outcome) = dispatch_working_group(bus, command) {
+        return Some(outcome);
+    }
+
     let outcome = match command.body() {
         wire::intent::Intent::ReportRead(read) => read_report(bus, read, command, projects),
         wire::intent::Intent::BoardRead(read) => {
@@ -1376,11 +1398,6 @@ pub(crate) fn dispatch_with_repository(
             read_ledger(bus, ledger, command.actor().clone(), projects, allocation)
         }
         wire::intent::Intent::RoomPost(post) => room_post(bus, command, post, projects, allocation),
-        wire::intent::Intent::WorkingGroupRead(read) => read_working_groups(bus, read),
-        wire::intent::Intent::WorkingGroupPut(put) => put_working_group(bus, command, put),
-        wire::intent::Intent::WorkingGroupRemove(remove) => {
-            remove_working_group(bus, command, remove)
-        }
         wire::intent::Intent::TaskAdd(add) => {
             task_add(bus, command, add, repository, projects, allocation)
         }

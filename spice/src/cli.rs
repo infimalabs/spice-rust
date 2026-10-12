@@ -178,6 +178,12 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::WorkingGroupRead
         | CommandKind::WorkingGroupPut
         | CommandKind::WorkingGroupRemove
+        | CommandKind::CandidateRetain
+        | CommandKind::CandidateCritiqueRecord
+        | CommandKind::CandidateCoverageRecord
+        | CommandKind::PreparationDecide
+        | CommandKind::ExecutionAuthorize
+        | CommandKind::OutputAdopt
         | CommandKind::GlobalSettingsRead
         | CommandKind::GlobalSettingsSet
         | CommandKind::VendorCatalog

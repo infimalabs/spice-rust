@@ -40,6 +40,12 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::WorkingGroupRead
         | CommandKind::WorkingGroupPut
         | CommandKind::WorkingGroupRemove
+        | CommandKind::CandidateRetain
+        | CommandKind::CandidateCritiqueRecord
+        | CommandKind::CandidateCoverageRecord
+        | CommandKind::PreparationDecide
+        | CommandKind::ExecutionAuthorize
+        | CommandKind::OutputAdopt
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TasteProposalAdd

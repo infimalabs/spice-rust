@@ -500,6 +500,60 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "group::remove"
     ),
     row!(
+        ["preparation", "retain"],
+        "preparation retain CANDIDATE_JSON",
+        OperatorOrLane,
+        Command,
+        [CandidateRetained],
+        [Resident],
+        Reply,
+        "preparation::retain"
+    ),
+    row!(
+        ["preparation", "critique"],
+        "preparation critique CRITIQUE_JSON",
+        OperatorOrLane,
+        Command,
+        [CandidateCritiqued],
+        [Resident],
+        Reply,
+        "preparation::critique"
+    ),
+    row!(
+        ["preparation", "cover"],
+        "preparation cover COVERAGE_JSON",
+        OperatorOrLane,
+        Command,
+        [CandidateCovered],
+        [Resident],
+        Reply,
+        "preparation::cover"
+    ),
+    operator!(
+        ["preparation", "decide"],
+        "preparation decide DECISION_JSON",
+        Command,
+        [PreparationDecided],
+        Reply,
+        "preparation::decide"
+    ),
+    operator!(
+        ["preparation", "authorize"],
+        "preparation authorize AUTHORIZATION_JSON",
+        Command,
+        [ExecutionAuthorized],
+        Reply,
+        "preparation::authorize"
+    ),
+    operator!(
+        ["preparation", "adopt"],
+        "preparation adopt OUTPUT PREPARATION",
+        Command,
+        [OutputControlled],
+        Reply,
+        "preparation::adopt"
+    ),
+    row!(
         ["task", "list"],
         "task list [--all] [--project PROJECT] [--limit N] [--max-bytes N] \
          [--max-text N] [--after HANDLE] [--status pending|waiting|completed|deleted]",

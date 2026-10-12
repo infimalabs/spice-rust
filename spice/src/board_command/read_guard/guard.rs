@@ -75,6 +75,12 @@ fn witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool, Guar
         Witness::Group { group, head } => {
             Ok(read.group_head(group)?.map(|head| head.position()) == *head)
         }
+        Witness::Proposal { proposal, head } => {
+            Ok(read.proposal_head(proposal)?.map(|head| head.position()) == *head)
+        }
+        Witness::Authorization { output, head } => {
+            Ok(read.authorization_head(output)?.map(|head| head.position()) == *head)
+        }
         Witness::Directive { .. }
         | Witness::Recoverable { .. }
         | Witness::Consent { .. }
@@ -85,8 +91,6 @@ fn witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool, Guar
         | Witness::Observation { .. }
         | Witness::Sealed { .. }
         | Witness::Source { .. }
-        | Witness::Proposal { .. }
-        | Witness::Authorization { .. }
         | Witness::Transition { .. } => Err(GuardError::Invalid(
             "board transaction carried a witness outside its authority plane".to_owned(),
         )),

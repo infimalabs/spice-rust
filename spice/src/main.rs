@@ -450,10 +450,9 @@ impl NativeInvocation<'_> {
         }
     }
 
-    fn dispatch_controls(&self, contract: &cli::Contract) {
+    fn dispatch_session_control(&self, contract: &cli::Contract) -> bool {
         let &Self(leaf, form, configuration) = self;
         match contract.path {
-            ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
             ["session"]
             | ["session", "briefing"]
             | ["session", "commands"]
@@ -473,27 +472,13 @@ impl NativeInvocation<'_> {
                 form,
                 session_command::Report::text,
             ),
-            ["lane", "list"] => deliver_display(&lane_command::list(leaf, contract), form),
-            ["lane"]
-            | ["lane", "add"]
-            | ["lane", "drain"]
-            | ["lane", "wake"]
-            | ["lane", "model"]
-            | ["lane", "effort"]
-            | ["lane", "fast"]
-            | ["lane", "remove"]
-            | ["lane", "import"]
-            | ["recall"] => {
-                deliver_command_answer(&lane_command::run(leaf, contract, configuration), form)
-            }
-            ["lane", "purge"] => deliver(&lane_command::purge::run(), form),
-            ["release", "publish"] => match release_command::run(leaf, contract) {
-                release_command::RunResult::Plan(outcome) => {
-                    deliver_with_reply_text(&outcome, form, release_command::PlanPreview::text)
-                }
-                release_command::RunResult::Published(outcome) => deliver(&outcome, form),
-            },
-            ["release", "seal"] => deliver(&release_seal::run(contract), form),
+            _ => false,
+        }
+    }
+
+    fn dispatch_board_control(&self, contract: &cli::Contract) -> bool {
+        let &Self(leaf, form, _) = self;
+        match contract.path {
             ["board"] => deliver_with_reply_text(
                 &board_command::board_view(leaf, contract),
                 form,
@@ -528,6 +513,12 @@ impl NativeInvocation<'_> {
             | ["group", "list"]
             | ["group", "put"]
             | ["group", "remove"]
+            | ["preparation", "retain"]
+            | ["preparation", "critique"]
+            | ["preparation", "cover"]
+            | ["preparation", "decide"]
+            | ["preparation", "authorize"]
+            | ["preparation", "adopt"]
             | ["doc"]
             | ["doc", "ledger"] => {
                 deliver_command_answer(&board_command::run(leaf, contract), form)
@@ -537,6 +528,38 @@ impl NativeInvocation<'_> {
                 form,
                 bootstrap_environment(steer::hook::LANE).is_some(),
             ),
+            _ => false,
+        }
+    }
+
+    fn dispatch_controls(&self, contract: &cli::Contract) {
+        let &Self(leaf, form, configuration) = self;
+        if self.dispatch_session_control(contract) || self.dispatch_board_control(contract) {
+            return;
+        }
+        match contract.path {
+            ["restore", "verify"] => deliver(&restore_command::verify(leaf), form),
+            ["lane", "list"] => deliver_display(&lane_command::list(leaf, contract), form),
+            ["lane"]
+            | ["lane", "add"]
+            | ["lane", "drain"]
+            | ["lane", "wake"]
+            | ["lane", "model"]
+            | ["lane", "effort"]
+            | ["lane", "fast"]
+            | ["lane", "remove"]
+            | ["lane", "import"]
+            | ["recall"] => {
+                deliver_command_answer(&lane_command::run(leaf, contract, configuration), form)
+            }
+            ["lane", "purge"] => deliver(&lane_command::purge::run(), form),
+            ["release", "publish"] => match release_command::run(leaf, contract) {
+                release_command::RunResult::Plan(outcome) => {
+                    deliver_with_reply_text(&outcome, form, release_command::PlanPreview::text)
+                }
+                release_command::RunResult::Published(outcome) => deliver(&outcome, form),
+            },
+            ["release", "seal"] => deliver(&release_seal::run(contract), form),
             ["steer"] | ["steer", "cancel"] | ["steer", "resend"] | ["steer", "recover"] => {
                 deliver(
                     &steering_command::run(
