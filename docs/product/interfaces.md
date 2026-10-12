@@ -151,6 +151,16 @@ isolated seeded root, with no model call and no mutation of the caller's
 repository. Nothing opens on the operator's display without an explicit
 `--open`.
 
+Interrupting a running demo stops its resident and preserves the root, and
+every demo reply prints that root's `spice demo --reuse ROOT` launch command,
+which restarts the resident over the state lanes left behind. Reuse admits a
+root by seed identity, not seed state: its manifest and canned transcript are
+unchanged, its journal still holds the seeded task, lanes, and turns, and its
+HEAD descends from the seed commit. Its branch, project policy, residency, and
+journal may all have advanced. A root that fails any identity check refuses
+with a named repair, and a root whose resident is still up refuses as
+`resident::already-up`.
+
 ## Media
 
 An attachment is part of the operating record, not a transient upload: it

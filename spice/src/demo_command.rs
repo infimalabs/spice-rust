@@ -419,23 +419,16 @@ fn reopen_environment(root: &Path, executable: &Path) -> DemoResult<Environment>
         )
         .into());
     }
-    if !matches!(fs::read(root.join(CONFIG_NAME)), Ok(bytes) if bytes == CONFIG_BYTES) {
-        return Err(refusal(
-            "demo::config-moved",
-            Some("the deterministic demo project policy"),
-            Some(&root.join(CONFIG_NAME).display().to_string()),
-            "restore the seeded config or remove this disposable root",
-        )
-        .into());
-    }
-    let expected = expected_head();
-    let head = seeded_head(&root)?;
-    if head != expected {
+    // Lanes legitimately advance a demo root's branch, policy, residency, and
+    // journal. Reopening proves only that this root was born from the seed:
+    // its history still contains the seed commit and its journal still holds
+    // the seeded facts, which append-only writes never remove.
+    if !descends_from_seed(&root)? {
         return Err(refusal(
             "demo::commit-moved",
-            Some(&expected),
-            Some(&head),
-            "reset this demo root to its seeded commit or seed a new one",
+            Some(&format!("a HEAD commit descending from {SEED_COMMIT}")),
+            Some(&seeded_head(&root)?),
+            "check out a commit descending from the seeded commit or seed a new one",
         )
         .into());
     }
@@ -608,7 +601,7 @@ fn born_repository(root: &Path) -> DemoResult<()> {
 /// Name the branch and commit a demo root is parked on, however it got there.
 ///
 /// A detached, unborn, or moved head all describe themselves in this one
-/// spelling, so the seeded expectation is a single string to compare against.
+/// spelling, which both the seed contract and reuse refusals report.
 fn seeded_head(root: &Path) -> DemoResult<String> {
     let repository = gix::open(root).map_err(|error| {
         environment_fault(
@@ -627,6 +620,31 @@ fn seeded_head(root: &Path) -> DemoResult<String> {
         .id()
         .map_or_else(|| "no commit".to_owned(), |id| id.detach().to_string());
     Ok(format!("{branch} at {commit}"))
+}
+
+/// Whether the demo root's HEAD commit is the seed commit or descends from it.
+///
+/// An unborn head, or one whose history cannot be walked to the seed, did not
+/// grow from this seed and is not reusable as a demo root.
+fn descends_from_seed(root: &Path) -> DemoResult<bool> {
+    let repository = gix::open(root).map_err(|error| {
+        environment_fault(
+            "demo::repository-unavailable",
+            format!("{}: {error}", root.display()),
+        )
+    })?;
+    let head = repository
+        .head()
+        .map_err(|error| environment_fault("demo::repository-unavailable", error.to_string()))?;
+    let Some(tip) = head.id() else {
+        return Ok(false);
+    };
+    let seed = gix::ObjectId::from_hex(SEED_COMMIT.as_bytes())
+        .expect("the demo seed commit constant is a full object id");
+    let Ok(walk) = repository.rev_walk([tip.detach()]).all() else {
+        return Ok(false);
+    };
+    Ok(walk.map_while(Result::ok).any(|commit| commit.id == seed))
 }
 
 fn seed_journal(state: &spice::repository::StatePaths, root: &Path) -> DemoResult<()> {
@@ -1001,35 +1019,17 @@ fn validate_seeded_journal(state: &spice::repository::StatePaths) -> DemoResult<
                 })
         })
     });
-    let residency = reader
-        .read(|read| read.residency_head())
-        .map_err(|error| environment_fault("demo::journal-invalid", error.to_string()))?;
-    let simulated = residency.is_some_and(|head| {
-        head.body().lanes.len() == DEMO_LANES.len()
-            && DEMO_LANES.iter().all(|seed| {
-                head.body().lanes.iter().any(|lane| {
-                    lane.lane == uuid(seed.lane)
-                        && lane.team == uuid(DEMO_LANE)
-                        && lane.capabilities == [uuid(seed.capability)]
-                        && lane.occupant == Some(uuid(seed.occupant))
-                        && lane.lineage == [uuid(seed.occupant)]
-                        && lane.vendor.as_str() == crate::resident::SIMULATED_VENDOR
-                        && lane.disposition == crate::resident::SIMULATED_DISPOSITION
-                        && lane.session.is_none()
-                })
-            })
-    });
     let notes = snapshot
         .facts()
         .iter()
         .filter(|envelope| envelope.fact.kind() == wire::FactKind::TaskNoted)
         .count();
-    if !task || !lanes || !starts || !simulated || notes < CANNED_TRANSCRIPT.len() {
+    if !task || !lanes || !starts || notes < CANNED_TRANSCRIPT.len() {
         return Err(refusal(
             "demo::seed-moved",
-            Some("the seeded task, two simulated lanes, and four canned turns"),
+            Some("the seeded task, two seated simulated lanes, and four canned turns"),
             Some(&format!(
-                "task={task}, lanes={lanes}, starts={starts}, simulated={simulated}, turns={notes}"
+                "task={task}, lanes={lanes}, starts={starts}, turns={notes}"
             )),
             "restore the seeded journal or remove this disposable root",
         )

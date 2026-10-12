@@ -16,10 +16,6 @@ pub(super) fn transcript_bytes() -> DemoResult<Vec<u8>> {
     Ok(bytes)
 }
 
-pub(super) fn expected_head() -> String {
-    format!("{SEED_BRANCH} at {SEED_COMMIT}")
-}
-
 pub(super) fn expected_manifest() -> DemoManifest {
     DemoManifest {
         schema: 1,

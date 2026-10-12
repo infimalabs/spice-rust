@@ -156,7 +156,10 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_parent_state() {
         environment.root.join(TRANSCRIPT_NAME)
     );
     assert!(environment.state.journal().is_file());
-    assert_eq!(seeded_head(&environment.root).unwrap(), expected_head());
+    assert_eq!(
+        seeded_head(&environment.root).unwrap(),
+        format!("{SEED_BRANCH} at {SEED_COMMIT}")
+    );
     assert_eq!(
         fs::read(&environment.transcript).unwrap(),
         transcript_bytes().unwrap()
@@ -239,49 +242,181 @@ fn seeded_roots_are_born_on_one_commit_wherever_they_are_created() {
         "a longer root path moved the seeded commit"
     );
     assert_eq!(
-        expected_head(),
+        format!("{SEED_BRANCH} at {SEED_COMMIT}"),
         born,
-        "reopening expects a commit the seed never writes"
+        "reuse requires descent from a commit the seed never writes"
     );
 }
 
+/// Advance a seeded root the way working lanes do: a commit on its branch, an
+/// edited project policy, and a residency that seats one more lane.
+fn advance_seeded_root(environment: &Environment) {
+    let repository = gix::open(&environment.root).unwrap();
+    let tree = repository.write_object(gix::objs::Tree::default()).unwrap();
+    let identity = gix::actor::SignatureRef {
+        name: "lane".into(),
+        email: "lane@spice.invalid".into(),
+        time: "1783746000 +0000",
+    };
+    let seed = gix::ObjectId::from_hex(SEED_COMMIT.as_bytes()).unwrap();
+    repository
+        .commit_as(identity, identity, SEED_BRANCH, "lane work\n", tree, [seed])
+        .unwrap();
+    fs::write(
+        environment.root.join(CONFIG_NAME),
+        b"[tasks]\nstems = [\"rim\", \"probe\"]\n",
+    )
+    .unwrap();
+
+    let reader = journal::JournalReader::open(environment.state.journal()).unwrap();
+    let mut head = reader
+        .read(|read| read.residency_head())
+        .unwrap()
+        .expect("the seed seats a resident")
+        .body()
+        .clone();
+    drop(reader);
+    let probe = uuid("018f82d4-6f59-7d06-92e3-bce913116418");
+    let capability = uuid("018f82d4-6f59-7d06-92e3-bce913116419");
+    let mut lane = head.lanes[0].clone();
+    lane.lane = probe;
+    lane.name = Some("Probe".to_owned());
+    lane.capabilities = vec![capability];
+    lane.occupant = None;
+    lane.lineage.clear();
+    head.topology_revision += 1;
+    head.lanes.push(lane);
+
+    let mut journal = journal::Journal::open(environment.state.journal()).unwrap();
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("resident:{DEMO_EPOCH}").parse().unwrap(),
+        instant("2026-07-11T06:00:00.000000Z"),
+        Producer::ResidentRecognition,
+    );
+    let seated = write
+        .fact(
+            body::LaneSeated {
+                lane: probe,
+                team: uuid(DEMO_LANE),
+                capability,
+                name: Some("Probe".to_owned()),
+                worktree: environment.root.display().to_string(),
+                life: "drive".to_owned(),
+                vendor: crate::resident::SIMULATED_VENDOR.parse().unwrap(),
+                model: None,
+                effort: None,
+            },
+            FactCause::Root,
+        )
+        .unwrap();
+    write.residency_head(seated, move |_| head);
+    journal.apply(write).unwrap();
+}
+
 #[test]
-fn reuse_refuses_a_seeded_root_whose_branch_or_commit_moved() {
-    let scratch = Scratch::new("moved");
-    let root = scratch.child("moved-root");
+fn reuse_admits_a_root_its_lanes_advanced_but_not_one_grown_from_another_seed() {
+    let scratch = Scratch::new("advanced");
+    let root = scratch.child("advanced-root");
     let executable = Path::new("/opt/spice");
     let environment =
-        seed_test_environment(Some(&root), executable).expect("moved-root seed succeeds");
+        seed_test_environment(Some(&root), executable).expect("advanced-root seed succeeds");
+    advance_seeded_root(&environment);
+    let reopened = reopen_environment(&root, executable).expect("an advanced demo root reopens");
+    assert_eq!(reopened.root, environment.root);
+
     let head = environment.root.join(".git/HEAD");
     let branch = environment.root.join(".git/refs/heads/main");
-    let seeded = fs::read(&branch).unwrap();
+    let advanced = fs::read(&branch).unwrap();
     let refuses = |observed: &str| {
-        let outcome = *reopen_environment(&root, executable).expect_err("a moved seed refuses");
+        let outcome = *reopen_environment(&root, executable).expect_err("a foreign head refuses");
         let Outcome::Refusal(refusal) = outcome else {
-            panic!("a moved seed must refuse: {outcome:?}");
+            panic!("a foreign head must refuse: {outcome:?}");
         };
         assert_eq!(refusal.reason(), "demo::commit-moved");
         let diagnostic = refusal.diagnostic().expect("demo refusal is diagnostic");
-        assert_eq!(diagnostic.expected(), Some(expected_head().as_str()));
         assert_eq!(diagnostic.observed(), Some(observed));
         assert_eq!(
             diagnostic.detail(),
-            Some("reset this demo root to its seeded commit or seed a new one")
+            Some("check out a commit descending from the seeded commit or seed a new one")
         );
     };
 
+    let repository = gix::open(&environment.root).unwrap();
+    let tree = repository.write_object(gix::objs::Tree::default()).unwrap();
+    let identity = gix::actor::SignatureRef {
+        name: "other".into(),
+        email: "other@spice.invalid".into(),
+        time: "1783746000 +0000",
+    };
+    let foreign = repository
+        .commit_as(
+            identity,
+            identity,
+            "refs/heads/foreign",
+            "another root\n",
+            tree,
+            gix::commit::NO_PARENT_IDS,
+        )
+        .unwrap();
+    fs::write(&head, "ref: refs/heads/foreign\n").unwrap();
+    refuses(&format!("refs/heads/foreign at {foreign}"));
+
+    fs::write(&head, format!("ref: {SEED_BRANCH}\n")).unwrap();
     fs::write(&branch, "9c3f4bd0bd0b1e2ee59a1e0e9d2b47a3f7c4a5d6\n").unwrap();
     refuses("refs/heads/main at 9c3f4bd0bd0b1e2ee59a1e0e9d2b47a3f7c4a5d6");
 
-    fs::write(&branch, &seeded).unwrap();
     fs::write(&head, "ref: refs/heads/operator\n").unwrap();
     refuses("refs/heads/operator at no commit");
 
     fs::write(&head, format!("ref: {SEED_BRANCH}\n")).unwrap();
+    fs::write(&branch, &advanced).unwrap();
     assert!(
         reopen_environment(&root, executable).is_ok(),
-        "the named recovery restores a reusable demo root"
+        "returning to the seed's descendant restores a reusable demo root"
     );
+}
+
+#[test]
+fn reuse_refuses_roots_whose_demo_identity_does_not_match() {
+    let scratch = Scratch::new("identity");
+    let executable = Path::new("/opt/spice");
+    let refusal_of = |root: &Path| {
+        let outcome = *reopen_environment(root, executable).expect_err("a foreign root refuses");
+        let Outcome::Refusal(refusal) = outcome else {
+            panic!("a foreign root must refuse: {outcome:?}");
+        };
+        assert!(
+            refusal
+                .diagnostic()
+                .and_then(|diagnostic| diagnostic.detail())
+                .is_some(),
+            "{} names no repair",
+            refusal.reason()
+        );
+        refusal.reason().to_owned()
+    };
+
+    let plain = scratch.child("plain repository");
+    fs::create_dir(&plain).unwrap();
+    born_repository(&plain).unwrap();
+    assert_eq!(refusal_of(&plain), "demo::seed-unrecognized");
+
+    let transcript = scratch.child("edited transcript");
+    let environment = seed_test_environment(Some(&transcript), executable).unwrap();
+    fs::write(&environment.transcript, b"{}\n").unwrap();
+    assert_eq!(refusal_of(&transcript), "demo::transcript-moved");
+
+    let reseeded = scratch.child("foreign journal");
+    let environment = seed_test_environment(Some(&reseeded), executable).unwrap();
+    let journal = environment.state.journal();
+    for suffix in ["", "-wal", "-shm"] {
+        let mut path = journal.as_os_str().to_owned();
+        path.push(suffix);
+        let _ = fs::remove_file(PathBuf::from(path));
+    }
+    drop(journal::Journal::open(journal).unwrap());
+    assert_eq!(refusal_of(&reseeded), "demo::seed-moved");
 }
 
 #[test]
