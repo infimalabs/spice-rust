@@ -18,7 +18,8 @@ use super::{
     TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef,
     TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake,
     TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer,
-    TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
+    TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer, WorkingGroupChange,
+    WorkingGroupPage, WorkingGroupPut, WorkingGroupRead, WorkingGroupRemove,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -40,6 +41,12 @@ pub enum BodyShape {
     BoardHandout,
     /// [`DocLedger`]
     DocLedger,
+    /// [`WorkingGroupRead`]
+    WorkingGroupRead,
+    /// [`WorkingGroupPut`]
+    WorkingGroupPut,
+    /// [`WorkingGroupRemove`]
+    WorkingGroupRemove,
     /// [`GlobalSettingsRead`]
     GlobalSettingsRead,
     /// [`GlobalSettingsSet`]
@@ -153,6 +160,10 @@ pub enum AnswerShape {
     TaskRelations,
     /// [`TaskTimelineAnswer`]
     TaskTimeline,
+    /// [`WorkingGroupPage`]
+    WorkingGroupPage,
+    /// [`WorkingGroupChange`]
+    WorkingGroupChange,
     /// [`TextAnswer`]
     Text,
     /// [`TaskAnswer`]
@@ -215,6 +226,10 @@ pub enum CommandAnswer {
     TaskRelations(Box<TaskRelationsAnswer>),
     /// [`AnswerShape::TaskTimeline`]
     TaskTimeline(Box<TaskTimelineAnswer>),
+    /// [`AnswerShape::WorkingGroupPage`]
+    WorkingGroupPage(WorkingGroupPage),
+    /// [`AnswerShape::WorkingGroupChange`]
+    WorkingGroupChange(WorkingGroupChange),
     /// [`AnswerShape::Text`]
     Text(TextAnswer),
     /// [`AnswerShape::Task`]
@@ -273,6 +288,7 @@ impl CommandAnswer {
             Self::TaskDetail(_) => AnswerShape::TaskDetail,
             Self::TaskRelations(_) => AnswerShape::TaskRelations,
             Self::TaskTimeline(_) => AnswerShape::TaskTimeline,
+            Self::WorkingGroupPage(_) | Self::WorkingGroupChange(_) => self.working_group_shape(),
             Self::Text(_) => AnswerShape::Text,
             Self::Task(_) => AnswerShape::Task,
             Self::Claim(_) => AnswerShape::Claim,
@@ -296,6 +312,13 @@ impl CommandAnswer {
             Self::Taste(_) => AnswerShape::Taste,
             Self::Recognition(_) => AnswerShape::Recognition,
             Self::Quote(_) => AnswerShape::Quote,
+        }
+    }
+    const fn working_group_shape(&self) -> AnswerShape {
+        match self {
+            Self::WorkingGroupPage(_) => AnswerShape::WorkingGroupPage,
+            Self::WorkingGroupChange(_) => AnswerShape::WorkingGroupChange,
+            _ => panic!("working-group answer shape partition is closed"),
         }
     }
 }
@@ -331,6 +354,7 @@ impl AnswerShape {
         match self {
             Self::LaneJobs => Ok(CommandAnswer::LaneJobs(Box::new(source.read()?))),
             Self::LaneJob => Ok(CommandAnswer::LaneJob(Box::new(source.read()?))),
+            Self::WorkingGroupPage | Self::WorkingGroupChange => self.decode_working_group(source),
             Self::Board
             | Self::Report
             | Self::TaskDetail
@@ -397,6 +421,16 @@ impl AnswerShape {
             _ => unreachable!("answer-shape decode partition is closed"),
         })
     }
+    fn decode_working_group(
+        self,
+        body: impl AnswerSource,
+    ) -> Result<CommandAnswer, serde_json::Error> {
+        Ok(match self {
+            Self::WorkingGroupPage => CommandAnswer::WorkingGroupPage(body.read()?),
+            Self::WorkingGroupChange => CommandAnswer::WorkingGroupChange(body.read()?),
+            _ => unreachable!("working-group answer decode partition is closed"),
+        })
+    }
 }
 
 /// Where one answer body's JSON comes from: received bytes, or a value its
@@ -447,6 +481,9 @@ impl CommandKind {
             Self::LaneJobsRead => Binding::of(BodyShape::LaneJobs, AnswerShape::LaneJobs),
             Self::LaneJobRead | Self::LaneJobStop => {
                 Binding::of(BodyShape::LaneJob, AnswerShape::LaneJob)
+            }
+            Self::WorkingGroupRead | Self::WorkingGroupPut | Self::WorkingGroupRemove => {
+                self.working_group_binding()
             }
             Self::BoardRead
             | Self::ReportRead
@@ -549,6 +586,17 @@ impl CommandKind {
             _ => panic!("command binding partition is closed"),
         }
     }
+    const fn working_group_binding(self) -> Binding {
+        use AnswerShape as A;
+        use BodyShape as B;
+
+        match self {
+            Self::WorkingGroupRead => Binding::of(B::WorkingGroupRead, A::WorkingGroupPage),
+            Self::WorkingGroupPut => Binding::of(B::WorkingGroupPut, A::WorkingGroupChange),
+            Self::WorkingGroupRemove => Binding::of(B::WorkingGroupRemove, A::WorkingGroupChange),
+            _ => panic!("working-group command binding partition is closed"),
+        }
+    }
 
     const fn runtime_binding(self) -> Binding {
         use AnswerShape as A;
@@ -624,6 +672,12 @@ pub enum Intent {
     BoardHandout(BoardHandout),
     /// [`BodyShape::DocLedger`]
     DocLedger(DocLedger),
+    /// [`BodyShape::WorkingGroupRead`]
+    WorkingGroupRead(WorkingGroupRead),
+    /// [`BodyShape::WorkingGroupPut`]
+    WorkingGroupPut(WorkingGroupPut),
+    /// [`BodyShape::WorkingGroupRemove`]
+    WorkingGroupRemove(WorkingGroupRemove),
     /// [`BodyShape::GlobalSettingsRead`]
     GlobalSettingsRead(GlobalSettingsRead),
     /// [`BodyShape::GlobalSettingsSet`]
@@ -731,6 +785,9 @@ impl Intent {
         match self {
             Self::LaneJobs(_) => BodyShape::LaneJobs,
             Self::LaneJob(_) => BodyShape::LaneJob,
+            Self::WorkingGroupRead(_) | Self::WorkingGroupPut(_) | Self::WorkingGroupRemove(_) => {
+                self.working_group_shape()
+            }
             Self::BoardRead(_)
             | Self::ReportRead(_)
             | Self::TaskDetail(_)
@@ -821,6 +878,14 @@ impl Intent {
             _ => panic!("intent shape partition is closed"),
         }
     }
+    const fn working_group_shape(&self) -> BodyShape {
+        match self {
+            Self::WorkingGroupRead(_) => BodyShape::WorkingGroupRead,
+            Self::WorkingGroupPut(_) => BodyShape::WorkingGroupPut,
+            Self::WorkingGroupRemove(_) => BodyShape::WorkingGroupRemove,
+            _ => panic!("working-group intent shape partition is closed"),
+        }
+    }
 
     const fn runtime_shape(&self) -> BodyShape {
         match self {
@@ -884,6 +949,9 @@ impl BodyShape {
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
+                | Self::WorkingGroupRead
+                | Self::WorkingGroupPut
+                | Self::WorkingGroupRemove
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TasteProposalAdd
@@ -917,6 +985,9 @@ impl BodyShape {
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
+                | Self::WorkingGroupRead
+                | Self::WorkingGroupPut
+                | Self::WorkingGroupRemove
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TasteProposalAdd
@@ -941,6 +1012,7 @@ impl BodyShape {
             Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
+            Self::WorkingGroupRead => Intent::WorkingGroupRead(crate::decode(bytes)?),
             _ => return self.decode_task_statement_body(bytes),
         })
     }
@@ -954,6 +1026,8 @@ impl BodyShape {
             Self::TaskDelete => Intent::TaskDelete(crate::decode(bytes)?),
             Self::TaskClose => Intent::TaskClose(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),
+            Self::WorkingGroupPut => Intent::WorkingGroupPut(crate::decode(bytes)?),
+            Self::WorkingGroupRemove => Intent::WorkingGroupRemove(crate::decode(bytes)?),
             _ => unreachable!("board body partition is closed"),
         })
     }

@@ -136,6 +136,8 @@ mod planning;
 use planning::*;
 mod progress;
 use progress::*;
+mod group;
+use group::*;
 mod read_guard;
 use read_guard::*;
 mod report;

@@ -467,6 +467,30 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "board::handout"
     ),
+    operator!(
+        ["group", "list"],
+        "group list [--after GROUP] [--limit N]",
+        Read,
+        [],
+        Reply,
+        "group::read"
+    ),
+    operator!(
+        ["group", "put"],
+        "group put NAME [ANCHOR...] [--group GROUP]",
+        Command,
+        [WorkingGroupStored],
+        Reply,
+        "group::put"
+    ),
+    operator!(
+        ["group", "remove"],
+        "group remove GROUP",
+        Command,
+        [WorkingGroupRemoved],
+        Reply,
+        "group::remove"
+    ),
     row!(
         ["task", "list"],
         "task list [--all] [--project PROJECT] [--limit N] [--max-bytes N] \

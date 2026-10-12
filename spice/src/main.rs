@@ -524,6 +524,9 @@ impl NativeInvocation<'_> {
             | ["task", "modify"]
             | ["task", "require"]
             | ["task", "delete"]
+            | ["group", "list"]
+            | ["group", "put"]
+            | ["group", "remove"]
             | ["doc"]
             | ["doc", "ledger"] => {
                 deliver_command_answer(&board_command::run(leaf, contract), form)

@@ -19,6 +19,8 @@ use crate::{
 
 /// The identity of a room: exactly the anchor task's durable birth stamp.
 pub type RoomAnchor = TaskStamp;
+/// Most room anchors one saved working group may associate.
+pub const WORKING_GROUP_ANCHOR_LIMIT: usize = 100;
 
 /// A current nine-digit native moment stamp for non-task room authority.
 ///
@@ -282,6 +284,9 @@ impl TryFrom<WorkingGroupWire> for WorkingGroup {
         }
         if !all_unique(&value.anchors) {
             return Err("working-group anchors must be unique and ordered");
+        }
+        if value.anchors.len() > WORKING_GROUP_ANCHOR_LIMIT {
+            return Err("working-group anchor count exceeds 100");
         }
         Ok(Self {
             group: value.group,
@@ -873,6 +878,14 @@ mod tests {
             "anchors": ["1kKRRsDR0", "1kKRRsDR0"]
         });
         assert!(serde_json::from_value::<WorkingGroup>(duplicate).is_err());
+        let oversized = serde_json::json!({
+            "group": "1kKRRsDR1",
+            "name": "OOPS grooming",
+            "anchors": (0..=WORKING_GROUP_ANCHOR_LIMIT)
+                .map(|micros| TaskStamp::for_micros(micros as i64).unwrap().to_string())
+                .collect::<Vec<_>>()
+        });
+        assert!(serde_json::from_value::<WorkingGroup>(oversized).is_err());
         let smuggled_membership = serde_json::json!({
             "group": "1kKRRsDR1",
             "name": "OOPS grooming",

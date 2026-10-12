@@ -62,6 +62,11 @@ pub use direction::{
 };
 mod simple_answers;
 pub use simple_answers::{RecognitionAnswer, TasteAnswer};
+mod rooms;
+pub use rooms::{
+    WORKING_GROUP_PAGE_LIMIT_MAX, WorkingGroupAnchor, WorkingGroupChange, WorkingGroupChangeStatus,
+    WorkingGroupPage, WorkingGroupPut, WorkingGroupRead, WorkingGroupRemove, WorkingGroupView,
+};
 
 mod task;
 pub use task::*;
