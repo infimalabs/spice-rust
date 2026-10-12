@@ -601,7 +601,7 @@ fn task_flow_for_dependencies(
     };
     let mut flow = task_flow(requested, &add.acceptance)?;
     if (captures_implementation(command) || recovers_implementation(command))
-        && (add.intent.is_some() || matches!(flow[0].as_str(), "plan" | "design"))
+        && (add.intent.is_some() || gate::is_planning_phase(flow[0].as_str()))
     {
         return Err(refusal(
             "task::capture-planning",
