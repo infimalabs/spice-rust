@@ -308,65 +308,112 @@ fn validate_steering_updates(write: &JournalWrite) -> Result<(), CommitError> {
 }
 
 fn steering_subject(fact: &wire::AnyFact) -> Option<String> {
-    let (directive, key) = steering_fact_identity(fact)?;
-    Some(directive.map_or_else(
-        || format!("key:{key}"),
+    let identity = steering_fact_identity(fact)?;
+    Some(identity.directive.map_or_else(
+        || format!("key:{}", identity.key),
         |value| format!("directive:{value}"),
     ))
 }
 
-pub(crate) fn steering_fact_identity(
-    fact: &wire::AnyFact,
-) -> Option<(Option<wire::CanonicalUuid>, String)> {
+/// Who one steering authority fact names: its directive, absent on a fact
+/// that names only the key, the key, and the lane it steers.
+pub(crate) struct SteeringIdentity {
+    pub(crate) directive: Option<wire::CanonicalUuid>,
+    pub(crate) key: String,
+    pub(crate) lane: wire::CanonicalUuid,
+}
+
+/// The standing a steering authority fact of `kind` leaves its directive in,
+/// or `None` when `kind` is not steering authority.
+pub(crate) fn steering_disposition(kind: wire::FactKind) -> Option<wire::Disposition> {
+    use wire::FactKind as Kind;
+    match kind {
+        Kind::SteerSent
+        | Kind::SteerReplied
+        | Kind::SteerMessaged
+        | Kind::SteerQueued
+        | Kind::TasteReminded
+        | Kind::ClaimLeaseWarned
+        | Kind::TasteJudged
+        | Kind::SteerEscalated
+        | Kind::SteerRecovered => Some(wire::Disposition::Live),
+        Kind::SteerAcked => Some(wire::Disposition::Acked),
+        Kind::SteerDeclined => Some(wire::Disposition::Declined),
+        Kind::SteerDeadLettered => Some(wire::Disposition::DeadLettered),
+        Kind::SteerLapsed => Some(wire::Disposition::Lapsed),
+        Kind::SteerCanceled => Some(wire::Disposition::Canceled),
+        _ => None,
+    }
+}
+
+pub(crate) fn steering_fact_identity(fact: &wire::AnyFact) -> Option<SteeringIdentity> {
+    steering_disposition(fact.kind())?;
+    let named = |directive, key, lane| {
+        Some(SteeringIdentity {
+            directive: Some(directive),
+            key,
+            lane,
+        })
+    };
     match fact.kind() {
         wire::FactKind::SteerSent => fact
             .read::<wire::body::SteerSent>()
-            .map(|body| (Some(body.directive), body.key)),
+            .and_then(|body| named(body.directive, body.key, body.lane)),
         wire::FactKind::SteerReplied => fact
             .read::<wire::body::SteerReplied>()
-            .map(|body| (Some(body.directive), body.key)),
+            .and_then(|body| named(body.directive, body.key, body.lane)),
         wire::FactKind::SteerMessaged => fact
             .read::<wire::body::SteerMessaged>()
-            .map(|body| (Some(body.directive), body.key)),
+            .and_then(|body| named(body.directive, body.key, body.lane)),
         wire::FactKind::SteerQueued => fact
             .read::<wire::body::SteerQueued>()
-            .map(|body| (Some(body.directive), body.key)),
+            .and_then(|body| named(body.directive, body.key, body.lane)),
         wire::FactKind::TasteReminded => fact
             .read::<wire::body::TasteReminded>()
-            .map(|body| (Some(body.directive), body.key)),
+            .and_then(|body| named(body.directive, body.key, body.lane)),
         wire::FactKind::ClaimLeaseWarned => fact
             .read::<wire::body::ClaimLeaseWarned>()
-            .map(|body| (Some(body.directive), body.key)),
+            .and_then(|body| named(body.directive, body.key, body.lane)),
         wire::FactKind::TasteJudged => {
             fact.read::<wire::body::TasteJudged>()
                 .and_then(|body| match body.decision {
                     wire::body::TasteDecision::Confirmed { directive, key, .. } => {
-                        Some((Some(directive), key))
+                        named(directive, key, body.lane)
                     }
                     wire::body::TasteDecision::Cleared => None,
                 })
         }
         wire::FactKind::SteerEscalated => fact
             .read::<wire::body::SteerEscalated>()
-            .map(|body| (Some(body.directive), body.key)),
+            .and_then(|body| named(body.directive, body.key, body.lane)),
         wire::FactKind::SteerRecovered => fact
             .read::<wire::body::SteerRecovered>()
-            .map(|body| (Some(body.directive), body.key)),
+            .and_then(|body| named(body.directive, body.key, body.lane)),
         wire::FactKind::SteerAcked => fact
             .read::<wire::body::SteerAcked>()
-            .map(|body| (Some(body.directive), body.key)),
+            .and_then(|body| named(body.directive, body.key, body.lane)),
         wire::FactKind::SteerDeclined => fact
             .read::<wire::body::SteerDeclined>()
-            .map(|body| (Some(body.directive), body.key)),
+            .and_then(|body| named(body.directive, body.key, body.lane)),
         wire::FactKind::SteerDeadLettered => fact
             .read::<wire::steering::SteerDeadLettered>()
-            .map(|body| (Some(body.directive), body.key)),
-        wire::FactKind::SteerLapsed => fact
-            .read::<wire::body::SteerLapsed>()
-            .map(|body| (None, body.key)),
-        wire::FactKind::SteerCanceled => fact
-            .read::<wire::body::SteerCanceled>()
-            .map(|body| (None, body.key)),
+            .and_then(|body| named(body.directive, body.key, body.lane)),
+        wire::FactKind::SteerLapsed => {
+            fact.read::<wire::body::SteerLapsed>()
+                .map(|body| SteeringIdentity {
+                    directive: None,
+                    key: body.key,
+                    lane: body.lane,
+                })
+        }
+        wire::FactKind::SteerCanceled => {
+            fact.read::<wire::body::SteerCanceled>()
+                .map(|body| SteeringIdentity {
+                    directive: None,
+                    key: body.key,
+                    lane: body.lane,
+                })
+        }
         _ => None,
     }
 }

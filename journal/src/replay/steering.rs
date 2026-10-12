@@ -71,7 +71,9 @@ fn remember_fact(
         remember_miss(seq, body, &mut fold.misses, violations);
         return;
     }
-    let Some((directive, key)) = crate::guard::steering_fact_identity(fact) else {
+    let Some(crate::guard::SteeringIdentity { directive, key, .. }) =
+        crate::guard::steering_fact_identity(fact)
+    else {
         return;
     };
     let directive = resolve_directive(

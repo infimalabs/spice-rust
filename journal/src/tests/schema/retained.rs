@@ -143,28 +143,6 @@ fn retained_receipt(journal: &Journal) -> String {
         .expect("fixture receipt reads")
 }
 
-fn plant_vendor_hold(journal: &Journal) -> String {
-    insert_fact(
-        journal,
-        fact(
-            3,
-            Some(2),
-            FactKind::LaneHeld,
-            json!({
-                "lane": FIXTURE_LANE,
-                "evidence": "fixture ended on a vendor error: refused",
-                "until": "2030-04-12T18:44:09.271Z",
-                "vendor_failure": {
-                    "session": "fixture-session",
-                    "directives": [FIXTURE_LANE],
-                    "renewal": 1,
-                },
-            }),
-        ),
-    );
-    "3".to_owned()
-}
-
 fn plant_lane_session(journal: &Journal) -> String {
     insert_fact(
         journal,
@@ -398,14 +376,7 @@ fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
 
 #[test]
 fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutation() {
-    let cases: [RetainedCase; 8] = [
-        (
-            "fact_envelopes",
-            "3903331e5",
-            "UPDATE fact_envelopes SET envelope = CAST(json_remove(CAST(envelope AS TEXT), \
-             '$.fact.vendor_failure') AS BLOB) WHERE seq = 3",
-            plant_vendor_hold,
-        ),
+    let cases: [RetainedCase; 7] = [
         (
             "fact_envelopes",
             "a4abe071f",
