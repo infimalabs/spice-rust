@@ -32,6 +32,9 @@ const STEERING_SOURCE_RELEASE: &str = "cb609bd56";
 const LIFECYCLE_SOURCE_RELEASE: &str = "b18f556c3";
 /// Release from which peer-message steering heads retain their frozen room.
 const STEERING_ROOM_HEAD_RELEASE: &str = "400b421de";
+/// Release from which room packet records name their author occupant and the
+/// directives their directed routes opened.
+const ROOM_PACKET_AUTHOR_RELEASE: &str = "98a3243fa";
 
 /// Refuse every retained shape without a current spelling before mutation.
 pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<(), OpenError> {
@@ -113,6 +116,12 @@ pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<(), OpenError> {
         SESSION_LAUNCH_RELEASE,
         "the resumable lane session omits its launch identity",
     )?;
+    refuse_unbound_provenance(transaction)
+}
+
+/// Refuse retained facts that omit what binds them to their tape generation,
+/// proven source boundary, or packet author and routes.
+fn refuse_unbound_provenance(transaction: &Transaction<'_>) -> Result<(), OpenError> {
     for kind in [
         wire::FactKind::SteerAcked,
         wire::FactKind::SteerDeclined,
@@ -146,6 +155,16 @@ pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<(), OpenError> {
             "the lifecycle fact has no proven source boundary",
         )?;
     }
+    refuse_first(
+        transaction,
+        "fact_envelopes",
+        "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
+         AND (json_type(CAST(envelope AS TEXT), '$.fact.author') IS NULL \
+              OR json_type(CAST(envelope AS TEXT), '$.fact.directed') IS NULL) ORDER BY seq",
+        [wire::FactKind::RoomMessaged.as_str()],
+        ROOM_PACKET_AUTHOR_RELEASE,
+        "the room packet record omits its author occupant and directed routes",
+    )?;
     Ok(())
 }
 
