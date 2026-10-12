@@ -96,6 +96,21 @@ impl Authority for Stored<'_> {
         )
     }
 
+    fn publication_at(&self, seq: u64) -> Result<bool, Refusal> {
+        self.exists("SELECT 1 FROM room_publications WHERE seq = ?1", [sql(seq)])
+    }
+
+    fn cursor(&self, lane: &str) -> Result<Option<Vec<u8>>, Refusal> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT body FROM room_cursors WHERE lane = ?1",
+                [lane],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     fn grouped(&self, group: &str) -> Result<bool, Refusal> {
         self.exists(
             "SELECT 1 FROM group_heads WHERE working_group = ?1",
@@ -199,6 +214,13 @@ fn apply(connection: &Connection, change: Change) -> Result<(), rusqlite::Error>
                 insert_authorization(connection, &output, &row)?;
             }
         }
+        Change::Cursor { lane, seq, body } => {
+            connection.execute(
+                "INSERT INTO room_cursors(lane, head_seq, body) VALUES (?1, ?2, ?3) \
+                 ON CONFLICT(lane) DO UPDATE SET head_seq = excluded.head_seq, body = excluded.body",
+                params![lane, sql(seq), body],
+            )?;
+        }
     }
     Ok(())
 }
@@ -288,6 +310,11 @@ impl Projection {
                     ))
                 },
             )?,
+            cursors: table(
+                connection,
+                "SELECT lane, head_seq, body FROM room_cursors",
+                |row| Ok((row.get(0)?, (unsql(row.get(1)?), row.get(2)?))),
+            )?,
         })
     }
 }
@@ -308,7 +335,7 @@ pub(crate) fn write_projection(
 ) -> Result<(), rusqlite::Error> {
     connection.execute_batch(
         "DELETE FROM room_publications; DELETE FROM group_anchors; DELETE FROM group_heads; \
-         DELETE FROM proposal_heads; DELETE FROM authorization_heads;",
+         DELETE FROM proposal_heads; DELETE FROM authorization_heads; DELETE FROM room_cursors;",
     )?;
     for ((room, publication), seq) in &projection.publications {
         connection.execute(
@@ -330,6 +357,12 @@ pub(crate) fn write_projection(
     }
     for (output, row) in &projection.authorizations {
         insert_authorization(connection, output, row)?;
+    }
+    for (lane, (seq, body)) in &projection.cursors {
+        connection.execute(
+            "INSERT INTO room_cursors(lane, head_seq, body) VALUES (?1, ?2, ?3)",
+            params![lane, sql(*seq), body],
+        )?;
     }
     Ok(())
 }

@@ -44,10 +44,15 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
+    let cursors = if predecessor < crate::migrate::ROOM_CURSOR_SCHEMA {
+        "DROP TABLE room_cursors;"
+    } else {
+        ""
+    };
     journal
         .connection
         .execute_batch(&format!(
-            "{rooms}
+            "{rooms} {cursors}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",
         ))
@@ -56,7 +61,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
-    for predecessor in [33, 34, 35, 36, 37, 38] {
+    for predecessor in [33, 34, 35, 36, 37, 38, 39] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);
@@ -441,13 +446,7 @@ fn retained_guidance_fixture(path: &Path, guidance: &str) -> (Vec<u8>, Vec<u8>) 
             [guidance],
         )
         .expect("receipt guidance is planted");
-    journal
-        .connection
-        .execute_batch(
-            "UPDATE journal_schema SET version = 36 WHERE singleton = 1;
-             PRAGMA user_version = 36;",
-        )
-        .expect("predecessor identity is restored");
+    restore_predecessor(&journal, 36);
     drop(journal);
     canonical
 }

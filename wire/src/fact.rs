@@ -92,6 +92,9 @@ macro_rules! registered_body {
     (RoomMessaged) => {
         crate::rooms::RoomMessaged
     };
+    (RoomDelivered) => {
+        crate::rooms::RoomDelivered
+    };
     (WorkingGroupStored) => {
         crate::rooms::WorkingGroupStored
     };
@@ -247,6 +250,8 @@ vocabulary! {
     RoomPublished = "room::published" by CommandDoor;
     /// An authored MSG packet recorded its transcript-owned body in a room.
     RoomMessaged = "room::messaged" by AckScanner;
+    /// A lane's room catch-up landed in its transcript and advanced its cursor.
+    RoomDelivered = "room::delivered" by ResidentRecognition;
     /// A working group's complete ordered anchor state was saved.
     WorkingGroupStored = "group::stored" by CommandDoor;
     /// A working group was removed without touching its anchor rooms.
