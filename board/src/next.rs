@@ -7,7 +7,8 @@ use crate::urgency::{Urgency, declared_priority};
 
 /// Settled prerequisites; each value records a positive rather than negative ending.
 /// Ordinary dependencies require resolution. Controlled outputs require positive
-/// completion of their immediate preparation and their controller.
+/// completion of their immediate preparation and their controller, and their
+/// controller's execution authorization selecting them.
 pub type ResolvedTasks = BTreeMap<TaskStamp, bool>;
 
 /// Deterministic answer from the board's sole allocation query.
@@ -601,15 +602,23 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
         && control_satisfied(entry, completed)
 }
 
+/// A controlled output waits for its preparation and controller to conclude
+/// positively and for its own selection by that controller's execution
+/// authorization; nothing else, including operator closure, releases it.
 fn control_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
-    let Some(preparation) = &entry.statement().preparation else {
+    let statement = entry.statement();
+    let Some(preparation) = &statement.preparation else {
         return true;
     };
-    if entry.statement().intent.is_some() || preparation.construction != *entry.born() {
+    if statement.intent.is_some() || preparation.construction != *entry.born() {
         return true;
     }
     completed.get(&preparation.parent) == Some(&true)
         && completed.get(&preparation.controller) == Some(&true)
+        && statement
+            .authorization
+            .as_ref()
+            .is_some_and(|decision| decision.controller == preparation.controller)
 }
 
 /// Whether no claim currently possesses the entry.
@@ -745,8 +754,7 @@ pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
         .map(|candidate| {
             (
                 candidate.born().clone(),
-                candidate.workflow().status == "completed"
-                    && candidate.workflow().review != "closed",
+                candidate.workflow().concluded_positively(),
             )
         })
         .collect()

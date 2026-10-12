@@ -901,6 +901,7 @@ fn attach_task_heads_with_project(
     let statement_task = task.clone();
     write.task_head(added, move |position| TaskHead {
         preparation: None,
+        authorization: None,
         intent: None,
         born: statement_task,
         queue_origin: position,

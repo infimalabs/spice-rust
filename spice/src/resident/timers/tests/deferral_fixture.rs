@@ -58,6 +58,7 @@ pub(super) fn seed_timer_task(
     let statement_project = project.to_owned();
     write.task_head(added, move |position| TaskHead {
         preparation: None,
+        authorization: None,
         intent: None,
         born: statement_stamp,
         queue_origin: position,

@@ -242,6 +242,7 @@ fn board_task(
             body: wire::intent::BoardStatement {
                 intent: None,
                 preparation: None,
+                authorization: None,
                 handle: wire::TaskHandle::for_project(project, &born),
                 born: born.clone(),
                 queue_origin: seq(1),

@@ -112,6 +112,7 @@ fn push_task(
     let statement_creation = creation.clone();
     write.task_head(added, move |position| TaskHead {
         preparation: None,
+        authorization: None,
         intent: None,
         born: statement_task,
         queue_origin: position,

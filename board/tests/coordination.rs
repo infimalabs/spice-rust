@@ -98,6 +98,7 @@ fn statement(name: &str) -> TaskHead {
     let born = stamp(name);
     TaskHead {
         preparation: None,
+        authorization: None,
         intent: None,
         born: born.clone(),
         queue_origin: seq(1),
@@ -1047,6 +1048,99 @@ fn live_frontier_selection_distinguishes_settled_open_and_missing_dependencies()
         )
         .is_none(),
         "an open dependency cycle terminates and remains blocked"
+    );
+}
+
+#[test]
+fn a_controlled_output_is_eligible_only_under_its_controllers_authorization() {
+    let actor = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e408"));
+    let parent = stamp("BOARD-parent");
+    let controller = stamp("BOARD-controller");
+    let blocker = stamp("BOARD-blocker");
+    let settled = |name: &str, status: &str, review: &str| {
+        let workflow = WorkflowHead {
+            status: status.to_owned(),
+            review: review.to_owned(),
+            completion: Some(instant("2026-08-01T06:00:00.000Z")),
+            ..workflow("review")
+        };
+        admitted(statement(name), workflow, None, None).expect("settled heads")
+    };
+    let decided_by = |owner: &TaskStamp| wire::rooms::DecisionRef {
+        controller: owner.clone(),
+        decision: wire::SequenceCode::new(1),
+    };
+    let output = |authorization: Option<wire::rooms::DecisionRef>, dependencies: Vec<TaskStamp>| {
+        let head = TaskHead {
+            preparation: Some(wire::TaskPreparation {
+                parent: parent.clone(),
+                controller: controller.clone(),
+                construction: stamp("BOARD-output"),
+            }),
+            authorization,
+            dependencies,
+            ..statement("BOARD-output")
+        };
+        admitted(head, workflow("todo"), None, None).expect("output heads")
+    };
+    let eligible = |output: Entry, parent: Entry, controller: Entry| {
+        let entries = vec![output, parent, controller, entry("BOARD-blocker")];
+        let satisfied = board::resolved_tasks(&entries);
+        board::eligible_entry(&satisfied, &entries[0], &actor, &environment())
+    };
+    let positive = |name: &str| settled(name, "completed", "clean");
+    let authorized = || Some(decided_by(&controller));
+
+    for (reason, output, parent, controller) in [
+        (
+            "positive completion alone",
+            output(None, Vec::new()),
+            positive("BOARD-parent"),
+            positive("BOARD-controller"),
+        ),
+        (
+            "another controller's authorization",
+            output(Some(decided_by(&parent)), Vec::new()),
+            positive("BOARD-parent"),
+            positive("BOARD-controller"),
+        ),
+        (
+            "an operator-closed controller",
+            output(authorized(), Vec::new()),
+            positive("BOARD-parent"),
+            settled("BOARD-controller", "completed", "closed"),
+        ),
+        (
+            "a deleted controller",
+            output(authorized(), Vec::new()),
+            positive("BOARD-parent"),
+            settled("BOARD-controller", "deleted", "unassigned"),
+        ),
+        (
+            "an open parent",
+            output(authorized(), Vec::new()),
+            entry("BOARD-parent"),
+            positive("BOARD-controller"),
+        ),
+        (
+            "an open ordinary dependency",
+            output(authorized(), vec![blocker.clone()]),
+            positive("BOARD-parent"),
+            positive("BOARD-controller"),
+        ),
+    ] {
+        assert!(
+            !eligible(output, parent, controller),
+            "{reason} must leave the output gated"
+        );
+    }
+    assert!(
+        eligible(
+            output(authorized(), Vec::new()),
+            positive("BOARD-parent"),
+            positive("BOARD-controller"),
+        ),
+        "an authorized output of a positively concluded preparation is eligible"
     );
 }
 

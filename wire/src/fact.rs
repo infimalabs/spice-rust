@@ -666,30 +666,36 @@ impl AnyFact {
         F::registered(&self.decoded).cloned()
     }
 
-    /// The task whose content or workflow this fact changes, if any.
+    /// Every task whose content or workflow this fact changes.
     ///
     /// This is the one classification behind the task generation: a journal
-    /// transaction holding any such fact advances that task's generation once.
-    /// Claim, lease, and notification facts are maintenance and answer
-    /// [`None`], as does every fact outside the task vocabulary.
-    #[must_use]
-    pub fn mutated_task(&self) -> Option<&crate::witness::TaskStamp> {
+    /// transaction holding any such fact advances each named task's generation
+    /// once. Execution authorization completes its controller and authorizes
+    /// each selected output in one fact, so it names all of them. Claim, lease,
+    /// and notification facts are maintenance and name none, as does every
+    /// fact outside the task vocabulary.
+    pub fn mutated_tasks(&self) -> impl Iterator<Item = &crate::witness::TaskStamp> {
         use sealed::RegisteredBody as Decoded;
-        match &self.decoded {
-            Decoded::TaskAdded(body) => Some(&body.task),
-            Decoded::TaskPhased(body) => Some(&body.task),
-            Decoded::TaskDone(body) => Some(&body.task),
-            Decoded::TaskReviewed(body) => Some(&body.task),
-            Decoded::TaskAssigned(body) => Some(&body.task),
-            Decoded::TaskNoted(body) => Some(&body.task),
-            Decoded::TaskDeferred(body) => Some(&body.task),
-            Decoded::TaskWoken(body) => Some(&body.task),
-            Decoded::TaskEdited(body) => Some(&body.task),
-            Decoded::TaskDeleted(body) => Some(&body.task),
-            Decoded::TaskClosed(body) => Some(&body.task),
-            Decoded::OutputControlled(body) => Some(&body.output),
-            _ => None,
-        }
+        let (task, selected): (_, &[crate::witness::TaskStamp]) = match &self.decoded {
+            Decoded::TaskAdded(body) => (Some(&body.task), &[]),
+            Decoded::TaskPhased(body) => (Some(&body.task), &[]),
+            Decoded::TaskDone(body) => (Some(&body.task), &[]),
+            Decoded::TaskReviewed(body) => (Some(&body.task), &[]),
+            Decoded::TaskAssigned(body) => (Some(&body.task), &[]),
+            Decoded::TaskNoted(body) => (Some(&body.task), &[]),
+            Decoded::TaskDeferred(body) => (Some(&body.task), &[]),
+            Decoded::TaskWoken(body) => (Some(&body.task), &[]),
+            Decoded::TaskEdited(body) => (Some(&body.task), &[]),
+            Decoded::TaskDeleted(body) => (Some(&body.task), &[]),
+            Decoded::TaskClosed(body) => (Some(&body.task), &[]),
+            Decoded::OutputControlled(body) => (Some(&body.output), &[]),
+            Decoded::ExecutionAuthorized(body) => (
+                Some(&body.authorization.candidate.controller),
+                body.authorization.selected_outputs.as_slice(),
+            ),
+            _ => (None, &[]),
+        };
+        task.into_iter().chain(selected)
     }
 
     /// Task intent this fact declares, when it declares one.
@@ -731,9 +737,11 @@ impl AnyFact {
 
     /// Task addressed by a task-content, workflow, claim, or lease fact.
     ///
-    /// Unlike [`Self::mutated_task`], this includes maintenance that does not
-    /// advance the task generation. Read-scope admission must include those
-    /// subjects without changing mutation-generation semantics.
+    /// Unlike [`Self::mutated_tasks`], this includes maintenance that does not
+    /// advance the task generation, and names one primary subject: an
+    /// execution authorization addresses its controller. Read-scope admission
+    /// must include those subjects without changing mutation-generation
+    /// semantics.
     #[must_use]
     pub fn task_subject(&self) -> Option<&crate::witness::TaskStamp> {
         use sealed::RegisteredBody as Decoded;
@@ -745,7 +753,7 @@ impl AnyFact {
             Decoded::ClaimLapsed(body) => Some(&body.task),
             Decoded::ClaimRenewed(body) => Some(&body.task),
             Decoded::ClaimLeaseWarned(body) => Some(&body.task),
-            _ => self.mutated_task(),
+            _ => self.mutated_tasks().next(),
         }
     }
 }

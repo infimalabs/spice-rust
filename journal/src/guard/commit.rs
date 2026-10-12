@@ -58,7 +58,12 @@ impl Journal {
         let assigned = assign_positions(current, write.facts.len())?;
         let prepared = prepare_facts(&write, &assigned, current)?;
         insert_facts(&transaction, &write, &prepared)?;
-        fold_rooms(&transaction, &write.facts, &assigned)?;
+        fold_rooms(&transaction, &write.actor, &write.facts, &assigned)?;
+        crate::rooms::require_open_controllers(
+            &transaction,
+            write.facts.iter().map(|proposed| &proposed.fact),
+        )
+        .map_err(room_refusal)?;
         apply_heads(
             &transaction,
             write.id,
@@ -525,12 +530,13 @@ fn insert_facts(
 /// head moves, so an unsound reference refuses the whole write.
 fn fold_rooms(
     transaction: &Transaction<'_>,
+    actor: &wire::Actor,
     facts: &[ProposedFact],
     assigned: &[wire::Seq],
 ) -> Result<(), CommitError> {
     let mut stored = crate::rooms::Stored::new(transaction);
     for (seq, proposed) in assigned.iter().zip(facts) {
-        crate::rooms::fold(&mut stored, *seq, &proposed.fact).map_err(room_refusal)?;
+        crate::rooms::fold(&mut stored, *seq, actor, &proposed.fact).map_err(room_refusal)?;
     }
     Ok(())
 }

@@ -390,6 +390,7 @@ fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
     let statement_origin = origin;
     write.task_head(fact, move |position| TaskHead {
         preparation: None,
+        authorization: None,
         intent: None,
         born: born(),
         queue_origin: position,

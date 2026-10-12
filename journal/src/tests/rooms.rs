@@ -15,8 +15,12 @@ use crate::{CommitError, FactCause, JournalHead, JournalWrite, ProposalAuthority
 type Commit = Result<Applied, CommitError>;
 
 fn write() -> JournalWrite {
+    write_as(Actor::Operator)
+}
+
+fn write_as(actor: Actor) -> JournalWrite {
     JournalWrite::new(
-        Actor::Operator,
+        actor,
         "task:rooms".parse().expect("room origin"),
         instant(),
         Producer::CommandDoor,
@@ -24,8 +28,81 @@ fn write() -> JournalWrite {
 }
 
 fn commit<F: wire::Body>(journal: &mut Journal, body: F) -> Commit {
-    let mut write = write();
+    commit_as(journal, Actor::Operator, body)
+}
+
+fn commit_as<F: wire::Body>(journal: &mut Journal, actor: Actor, body: F) -> Commit {
+    let mut write = write_as(actor);
     write.fact(body, FactCause::Root).expect("room fact builds");
+    journal.apply(write)
+}
+
+/// How an authorization write moves its controller's workflow.
+#[derive(Clone, Copy)]
+enum Conclusion {
+    Completed,
+    Closed,
+    Untouched,
+}
+
+/// One write holding `body` that moves the controller per `conclusion` and,
+/// when `outputs`, each existing selected output's statement to carry the
+/// decision.
+fn authorization_write(
+    journal: &Journal,
+    actor: Actor,
+    body: ExecutionAuthorized,
+    conclusion: Conclusion,
+    outputs: bool,
+) -> JournalWrite {
+    let decision = body.authorization.decision.clone();
+    let controller = body.authorization.candidate.controller.clone();
+    let heads = body
+        .authorization
+        .selected_outputs
+        .iter()
+        .filter(|_| outputs)
+        .filter_map(|output| journal.read(|read| read.task_head(output)).expect("reads"))
+        .map(JournalHead::into_body)
+        .collect::<Vec<_>>();
+    let workflow = journal
+        .read(|read| read.workflow_head(&controller))
+        .expect("controller workflow reads")
+        .expect("controller exists")
+        .into_body();
+    let mut write = write_as(actor);
+    let fact = write
+        .fact(body, FactCause::Root)
+        .expect("authorization builds");
+    let review = match conclusion {
+        Conclusion::Completed => workflow.review.clone(),
+        Conclusion::Closed => "closed".to_owned(),
+        Conclusion::Untouched => String::new(),
+    };
+    if !matches!(conclusion, Conclusion::Untouched) {
+        write.workflow_head(controller, fact, move |_| WorkflowHead {
+            status: "completed".to_owned(),
+            review,
+            completion: Some(instant()),
+            assignment: None,
+            ..workflow
+        });
+    }
+    for head in heads {
+        let decision = decision.clone();
+        write.task_head(fact, move |revision| TaskHead {
+            authorization: Some(decision),
+            revision,
+            ..head
+        });
+    }
+    write
+}
+
+/// Commit `body` as its controller's positive completion, moving each existing
+/// selected output's statement to carry the decision.
+fn authorize(journal: &mut Journal, body: ExecutionAuthorized) -> Commit {
+    let write = authorization_write(journal, Actor::Operator, body, Conclusion::Completed, true);
     journal.apply(write)
 }
 
@@ -72,6 +149,7 @@ fn task(journal: &mut Journal, offset: i64, preparation: Option<TaskPreparation>
     let born = task.clone();
     write.task_head(fact, move |revision| TaskHead {
         preparation,
+        authorization: None,
         intent: None,
         born,
         queue_origin: revision,
@@ -366,7 +444,7 @@ fn authorized(journal: &mut Journal) -> Preparation {
         ),
     )
     .expect("decision recorded");
-    commit(
+    authorize(
         journal,
         preparation.authorization(
             1,
@@ -672,7 +750,7 @@ fn authorization_selects_exactly_an_accepted_candidate() {
     .expect("returned decision");
     let input = vec![preparation.input.clone()];
     let output = vec![preparation.output.clone()];
-    let result = commit(
+    let result = authorize(
         &mut journal,
         preparation.authorization(1, 1, input.clone(), output.clone()),
     );
@@ -703,10 +781,10 @@ fn authorization_selects_exactly_an_accepted_candidate() {
             },
         },
     ] {
-        let result = commit(&mut journal, inexact);
+        let result = authorize(&mut journal, inexact);
         refused(&journal, result);
     }
-    commit(
+    authorize(
         &mut journal,
         preparation.authorization(2, 1, input.clone(), output.clone()),
     )
@@ -723,12 +801,12 @@ fn authorization_selects_exactly_an_accepted_candidate() {
         ),
     )
     .expect("second acceptance");
-    let result = commit(
+    let result = authorize(
         &mut journal,
         preparation.authorization(3, 1, input.clone(), output.clone()),
     );
     refused(&journal, result);
-    let result = commit(&mut journal, preparation.authorization(2, 1, input, output));
+    let result = authorize(&mut journal, preparation.authorization(2, 1, input, output));
     refused(&journal, result);
     journal.verify().expect("exact authority verifies");
 }
@@ -746,7 +824,7 @@ fn negative_and_no_work_outcomes_authorize_nothing() {
             preparation.decision(sequence, DecisionOutcome::Negative { conclusion }),
         )
         .expect("negative decision needs no candidate");
-        let result = commit(
+        let result = authorize(
             &mut journal,
             preparation.authorization(
                 sequence,
@@ -772,6 +850,258 @@ fn negative_and_no_work_outcomes_authorize_nothing() {
         .expect("authorization reads");
     assert_eq!(granted, None);
     journal.verify().expect("negative authority verifies");
+}
+
+fn covered_by(
+    preparation: &Preparation,
+    sequence: u64,
+    authority: CoverageAuthority,
+) -> CandidateCovered {
+    CandidateCovered {
+        coverage: CandidateCoverage {
+            authority,
+            ..preparation.coverage(1, sequence).coverage
+        },
+    }
+}
+
+#[test]
+fn coverage_authority_is_its_writer_and_self_review_alone_authorizes_nothing() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = Preparation::new(&mut journal);
+    let author = uuid("019fe57c-a453-7ec1-a400-26e6901aaeb1");
+    let reviewer = uuid("019fe57c-a453-7ec1-a400-26e6901aaeb2");
+    let independent = |lane| CoverageAuthority::Independent {
+        lane,
+        occupant: lane,
+    };
+    let self_review = |lane| CoverageAuthority::SelfReview {
+        lane,
+        occupant: lane,
+    };
+    commit_as(
+        &mut journal,
+        Actor::Lane(author),
+        preparation.retained(1, vec![preparation.output.clone()]),
+    )
+    .expect("a lane retains the candidate");
+
+    for (writer, authority) in [
+        (Actor::Lane(author), CoverageAuthority::Operator {}),
+        (Actor::Lane(author), independent(author)),
+        (Actor::Lane(reviewer), self_review(reviewer)),
+        (Actor::Lane(author), independent(reviewer)),
+        (Actor::Operator, independent(reviewer)),
+    ] {
+        let result = commit_as(&mut journal, writer, covered_by(&preparation, 1, authority));
+        refused(&journal, result);
+    }
+    commit_as(
+        &mut journal,
+        Actor::Lane(author),
+        covered_by(&preparation, 1, self_review(author)),
+    )
+    .expect("the author labels its own review");
+
+    let accepted = preparation.decision(
+        1,
+        DecisionOutcome::Accepted {
+            candidate: preparation.candidate(1),
+        },
+    );
+    let result = commit_as(&mut journal, Actor::Lane(reviewer), accepted.clone());
+    refused(&journal, result);
+    commit(&mut journal, accepted).expect("the operator decides");
+
+    let input = vec![preparation.input.clone()];
+    let output = vec![preparation.output.clone()];
+    let result = authorize(
+        &mut journal,
+        preparation.authorization(1, 1, input.clone(), output.clone()),
+    );
+    refused(&journal, result);
+
+    commit_as(
+        &mut journal,
+        Actor::Lane(reviewer),
+        covered_by(&preparation, 2, independent(reviewer)),
+    )
+    .expect("an independent lane covers the candidate");
+    let covered = ExecutionAuthorized {
+        authorization: ExecutionAuthorization {
+            coverage: [1, 2]
+                .map(|sequence| CoverageRef {
+                    candidate: preparation.candidate(1),
+                    coverage: SequenceCode::new(sequence),
+                })
+                .to_vec(),
+            ..preparation.authorization(1, 1, input, output).authorization
+        },
+    };
+    let write = authorization_write(
+        &journal,
+        Actor::Lane(reviewer),
+        covered.clone(),
+        Conclusion::Completed,
+        true,
+    );
+    let result = journal.apply(write);
+    refused(&journal, result);
+    authorize(&mut journal, covered).expect("independent coverage authorizes");
+    journal.verify().expect("principal-bound coverage verifies");
+}
+
+#[test]
+fn authorization_lands_only_as_the_controllers_positive_completion_and_no_edit_moves_it() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = Preparation::new(&mut journal);
+    commit(
+        &mut journal,
+        preparation.retained(1, vec![preparation.output.clone()]),
+    )
+    .expect("candidate retained");
+    commit(&mut journal, preparation.coverage(1, 1)).expect("coverage");
+    commit(
+        &mut journal,
+        preparation.decision(
+            1,
+            DecisionOutcome::Accepted {
+                candidate: preparation.candidate(1),
+            },
+        ),
+    )
+    .expect("accepted decision");
+    let exact = preparation.authorization(
+        1,
+        1,
+        vec![preparation.input.clone()],
+        vec![preparation.output.clone()],
+    );
+
+    for (conclusion, outputs) in [
+        (Conclusion::Untouched, false),
+        (Conclusion::Untouched, true),
+        (Conclusion::Closed, true),
+        (Conclusion::Completed, false),
+    ] {
+        let write = authorization_write(
+            &journal,
+            Actor::Operator,
+            exact.clone(),
+            conclusion,
+            outputs,
+        );
+        let result = journal.apply(write);
+        refused(&journal, result);
+    }
+    authorize(&mut journal, exact).expect("exact selection authorized");
+    let granted = statement(&journal, &preparation.output).authorization;
+    assert_eq!(granted, Some(preparation.decision_ref(1)));
+
+    // An ordinary edit keeps the grant; no edit drops it or forges another.
+    edit_project(&mut journal, &preparation.output, "elsewhere");
+    assert_eq!(
+        statement(&journal, &preparation.output).authorization,
+        granted
+    );
+    for (task, authorization) in [
+        (&preparation.output, None),
+        (&preparation.spare, granted.clone()),
+    ] {
+        let head = statement(&journal, task);
+        let mut write = write();
+        let fact = write
+            .fact(
+                wire::body::TaskEdited {
+                    task: task.clone(),
+                    revision: 3,
+                    dependencies: None,
+                    intent: None,
+                    notice: None,
+                },
+                FactCause::Root,
+            )
+            .expect("edit fact builds");
+        write.task_head(fact, move |revision| TaskHead {
+            authorization,
+            revision,
+            ..head
+        });
+        let result = journal.apply(write);
+        assert!(
+            matches!(&result, Err(CommitError::Refused(refusal))
+                if refusal.to_string().contains("statement authorization")),
+            "an edit cannot move an authorization: {result:?}"
+        );
+        refused(&journal, result);
+    }
+    journal.verify().expect("settled authorization verifies");
+}
+
+#[test]
+fn a_controller_concluded_without_authorization_never_authorizes() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = Preparation::new(&mut journal);
+    commit(
+        &mut journal,
+        preparation.retained(1, vec![preparation.output.clone()]),
+    )
+    .expect("candidate retained");
+    commit(&mut journal, preparation.coverage(1, 1)).expect("coverage");
+    commit(
+        &mut journal,
+        preparation.decision(
+            1,
+            DecisionOutcome::Accepted {
+                candidate: preparation.candidate(1),
+            },
+        ),
+    )
+    .expect("accepted decision");
+
+    let controller = preparation.controller.clone();
+    let workflow = journal
+        .read(|read| read.workflow_head(&controller))
+        .expect("controller workflow reads")
+        .expect("controller exists")
+        .into_body();
+    let mut write = write();
+    let done = write
+        .fact(
+            wire::body::TaskDone {
+                task: controller.clone(),
+                validation: "ordinary completion".to_owned(),
+                terminal: None,
+                git: None,
+                source: wire::body::SourceBoundary::unrecorded(),
+            },
+            FactCause::Root,
+        )
+        .expect("completion builds");
+    write.workflow_head(controller, done, move |_| WorkflowHead {
+        status: "completed".to_owned(),
+        completion: Some(instant()),
+        ..workflow
+    });
+    journal.apply(write).expect("ordinary completion commits");
+
+    let result = authorize(
+        &mut journal,
+        preparation.authorization(
+            1,
+            1,
+            vec![preparation.input.clone()],
+            vec![preparation.output.clone()],
+        ),
+    );
+    assert!(
+        matches!(&result, Err(CommitError::Refused(refusal))
+            if refusal.to_string().contains("already concluded")),
+        "authorization cannot follow completion: {result:?}"
+    );
+    refused(&journal, result);
+    assert_eq!(statement(&journal, &preparation.output).authorization, None);
+    journal.verify().expect("unauthorized completion verifies");
 }
 
 #[test]

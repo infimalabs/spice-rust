@@ -641,6 +641,7 @@ mod tests {
             .expect("task fact");
         write.task_head(fact, move |position| TaskHead {
             preparation: None,
+            authorization: None,
             intent: None,
             born: born(),
             queue_origin: position,

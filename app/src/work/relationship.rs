@@ -665,6 +665,7 @@ mod tests {
                 position: seq(1),
                 body: BoardStatement {
                     preparation: None,
+                    authorization: None,
                     intent: None,
                     handle: wire::TaskHandle::for_project("canvas.work", &born),
                     born: born.clone(),
