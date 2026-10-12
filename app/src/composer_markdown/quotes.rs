@@ -6,6 +6,9 @@ use std::fmt::Write as _;
 use pulldown_cmark::{Event as MarkdownEvent, Tag, TagEnd};
 use wire::{Disposition, QuoteAuthor, QuotePresentation, QuoteTarget};
 
+/// The name an agent wears when its lane is absent from the roster.
+const UNAVAILABLE: &str = "unavailable";
+
 pub(super) fn expand<'a>(
     events: Vec<MarkdownEvent<'a>>,
     presentations: &[QuotePresentation],
@@ -210,16 +213,9 @@ fn participant_html(
         .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
     let label = agent.map_or_else(
         || {
-            Cow::Owned(address.map_or_else(
-                || {
-                    format!(
-                        "{}/{}",
-                        crate::watchband::short(lane),
-                        crate::watchband::short(occupant)
-                    )
-                },
-                |address| address.to_string(),
-            ))
+            Cow::Owned(
+                address.map_or_else(|| UNAVAILABLE.to_owned(), |address| address.to_string()),
+            )
         },
         |agent| Cow::Borrowed(agent.label.as_str()),
     );
@@ -267,9 +263,9 @@ fn author_accent(
 
 /// The roster entry that names one occupant's prose, and whether it is that
 /// occupant's current seat or a historical attribution: its own seat first,
-/// then the agent its source card recorded, then its lane while that lane sits
-/// vacant. A vacant lane's entry names the lane, not an occupant; a lane a
-/// later occupant sits in lends nothing, so no successor inherits the prose.
+/// then the agent its source card recorded, then its lane. A lane's name and
+/// accent belong to the lane, so an occupant that has since left still reads
+/// under them.
 fn agent_author<'a>(
     agents: &'a super::QuoteAgents,
     source: &'a super::QuoteSource,
@@ -287,7 +283,10 @@ fn historical_agent<'a>(
     source: &'a super::QuoteSource,
     lane: wire::CanonicalUuid,
 ) -> Option<&'a super::QuoteAgent> {
-    source.agent.as_ref().or_else(|| agents.get(&(lane, None)))
+    source
+        .agent
+        .as_ref()
+        .or_else(|| lane_member_agent(agents, lane))
 }
 
 /// The lead of an MSG the card's author sent: its exact authoring occupant,
@@ -297,18 +296,9 @@ fn historical_agent<'a>(
 pub(super) fn send_signoff_html(send: &wire::MessageSend, agents: &super::QuoteAgents) -> String {
     let (sender, state) = occupant_agent(agents, send.from, send.sender)
         .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
-    let label = sender.map_or_else(
-        || {
-            Cow::Owned(format!(
-                "{}/{}",
-                crate::watchband::short(send.from),
-                crate::watchband::short(send.sender),
-            ))
-        },
-        |agent| Cow::Borrowed(agent.label.as_str()),
-    );
+    let label = sender.map_or(UNAVAILABLE, |agent| agent.label.as_str());
     let sender = quote_name_html(
-        &label,
+        label,
         &format!(
             " data-quote-author=\"agent\" data-quote-agent-lane=\"{}\" \
              data-quote-agent-occupant=\"{}\" data-quote-author-state=\"{state}\"",
@@ -338,8 +328,7 @@ pub(super) fn send_accent(send: &wire::MessageSend, agents: &super::QuoteAgents)
 }
 
 /// The roster entry naming one exact occupant with no source card to consult:
-/// its own seat, else its lane while that lane sits vacant. A lane a later
-/// occupant sits in lends nothing, so no successor inherits the name.
+/// its own seat, else its lane, whose name and accent outlast any one seat.
 fn occupant_agent(
     agents: &super::QuoteAgents,
     lane: wire::CanonicalUuid,
@@ -348,7 +337,7 @@ fn occupant_agent(
     agents
         .get(&(lane, Some(occupant)))
         .map(|agent| (agent, "current"))
-        .or_else(|| agents.get(&(lane, None)).map(|agent| (agent, "historical")))
+        .or_else(|| lane_member_agent(agents, lane).map(|agent| (agent, "historical")))
 }
 
 /// Empty portal target that board provenance fills at the quoted content's
@@ -446,18 +435,9 @@ fn quote_author_name_html(
         QuoteAuthor::Agent { lane, occupant } => {
             let (agent, state) = agent_author(agents, source, *lane, *occupant)
                 .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
-            let label = agent.map_or_else(
-                || {
-                    Cow::Owned(format!(
-                        "{}/{}",
-                        crate::watchband::short(*lane),
-                        crate::watchband::short(*occupant),
-                    ))
-                },
-                |agent| Cow::Borrowed(agent.label.as_str()),
-            );
+            let label = agent.map_or(UNAVAILABLE, |agent| agent.label.as_str());
             quote_name_html(
-                &label,
+                label,
                 &format!(
                     " data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
                      data-quote-author-state=\"{state}\""

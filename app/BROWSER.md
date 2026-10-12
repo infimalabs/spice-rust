@@ -273,7 +273,10 @@ owner stays ordinary Markdown.
 A quoted peer MSG keeps its original sender, arrow, and exact destination from
 the creating journal fact; a fanout reply quotes only its own delivered
 destination. An outgoing packet lists every addressed occupant in header order.
-Departed occupants never inherit a successor's name or accent.
+A lane's name and accent belong to the lane, so an occupant that has since left,
+whether its lane is vacant or reseated, still reads under them as a historical
+attribution. A lane absent from the roster reads as unavailable, or as the
+recipient's address, never as raw identifiers.
 
 Each quote layer ends with one task target after its speaker's last word,
 filled with origin-task badges; it repeats on no other hunk, and Play never

@@ -699,12 +699,12 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
     assert!(html.contains("[REVIEW] missing coverage"), "{html}");
 }
 
-/// A quoted MSG names the occupant that wrote it; the sending lane's later
-/// occupant never inherits its authorship. Once the author departs, a vacant
-/// lane still names itself as the historical author, and a lane gone from the
-/// roster leaves the exact identities unresolved.
+/// A quoted MSG names the occupant that wrote it while that occupant holds
+/// the seat. Once it leaves, whether the lane is vacant or reseated, the
+/// lane's own name and accent attribute it historically. A lane gone from
+/// the roster reads as unavailable, never as raw identifiers.
 #[test]
-fn a_quoted_msg_context_names_its_authoring_occupant_not_the_lanes_successor() {
+fn a_quoted_msg_context_keeps_its_lane_identity_across_seats() {
     let id = |suffix: &str| -> wire::CanonicalUuid {
         format!("018f82d4-6f59-7d06-92e3-bce9131164{suffix}")
             .parse()
@@ -734,12 +734,6 @@ fn a_quoted_msg_context_names_its_authoring_occupant_not_the_lanes_successor() {
     let render = |agents: &QuoteAgents| {
         render_prose_card(&markdown, &[], &directives, &[], &[], agents, &sources).html
     };
-
-    let reseated = BTreeMap::from([((lane, Some(successor)), agent("successor-agent"))]);
-    assert!(!render(&reseated).contains("successor-agent"));
-    let seated = BTreeMap::from([((lane, Some(author)), agent("author-agent"))]);
-    assert!(render(&seated).contains("author-agent"));
-
     let name = |state: &str, label: &str| {
         format!(
             "data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{author}\" \
@@ -751,21 +745,27 @@ fn a_quoted_msg_context_names_its_authoring_occupant_not_the_lanes_successor() {
             }
         )
     };
-    let vacant = render(&BTreeMap::from([((lane, None), agent("vacant-lane"))]));
-    assert!(
-        vacant.contains(&name("historical", "vacant-lane")),
-        "{vacant}"
-    );
+
+    for (agents, state) in [
+        (
+            BTreeMap::from([((lane, Some(author)), agent("lane-name"))]),
+            "current",
+        ),
+        (
+            BTreeMap::from([((lane, Some(successor)), agent("lane-name"))]),
+            "historical",
+        ),
+        (
+            BTreeMap::from([((lane, None), agent("lane-name"))]),
+            "historical",
+        ),
+    ] {
+        let html = render(&agents);
+        assert!(html.contains(&name(state, "lane-name")), "{html}");
+    }
     let absent = render(&QuoteAgents::new());
     assert!(
-        absent.contains(&name(
-            "unresolved",
-            &format!(
-                "{}/{}",
-                crate::watchband::short(lane),
-                crate::watchband::short(author)
-            )
-        )),
+        absent.contains(&name("unresolved", "unavailable")),
         "{absent}"
     );
 }
@@ -808,14 +808,14 @@ fn peer_context_destination_survives_badges_and_reseating() {
         Some(wire::DirectiveBadge::Taste),
     ] {
         context.badge = badge;
-        for (seat, label, expected_state) in [
-            (Some(recipient), "recipient", "current"),
-            (None, "vacant", "historical"),
-            (Some(successor), "successor", "unresolved"),
+        for (seat, expected_state) in [
+            (Some(recipient), "current"),
+            (None, "historical"),
+            (Some(successor), "historical"),
         ] {
             let roster = BTreeMap::from([
                 ((sender_lane, Some(sender)), agent("sender")),
-                ((recipient_lane, seat), agent(label)),
+                ((recipient_lane, seat), agent("recipient-lane")),
             ]);
             let projection =
                 referenced_quote_agents(&[], std::slice::from_ref(&context), &[], &roster);
@@ -833,10 +833,7 @@ fn peer_context_destination_survives_badges_and_reseating() {
             let destination = html.split("message-quote-recipients").nth(1).unwrap();
             assert!(destination.contains(&format!("data-quote-agent-occupant=\"{recipient}\"")));
             assert!(destination.contains(&format!("data-quote-author-state=\"{expected_state}\"")));
-            assert!(!destination.contains("successor"));
-            if seat != Some(successor) {
-                assert!(destination.contains(&format!(">{label}</span>")));
-            }
+            assert!(destination.contains(">recipient-lane</span>"));
             assert!(html.contains("Check the boundary."));
             assert!(html.contains("Checked."));
         }
@@ -844,10 +841,10 @@ fn peer_context_destination_survives_badges_and_reseating() {
 }
 
 /// An outgoing MSG names its exact sender and every addressed occupant in
-/// header order; a departed recipient falls back to its address rather than
-/// the lane's successor, and a vacant lane keeps its own name.
+/// header order; a departed recipient and a vacant lane both keep their lane's
+/// name, and a lane gone from the roster falls back to its address.
 #[test]
-fn a_sent_msg_names_every_recipient_in_header_order_without_successors() {
+fn a_sent_msg_names_every_recipient_in_header_order_by_lane() {
     let id = |suffix: &str| -> wire::CanonicalUuid {
         format!("018f82d4-6f59-7d06-92e3-bce9131165{suffix}")
             .parse()
@@ -857,6 +854,7 @@ fn a_sent_msg_names_every_recipient_in_header_order_without_successors() {
     let (seated_lane, seated) = (id("0b"), id("1b"));
     let (departed_lane, departed, successor) = (id("0c"), id("1c"), id("2c"));
     let (vacant_lane, vacated) = (id("0d"), id("1d"));
+    let (absent_lane, absent) = (id("0e"), id("1e"));
     let recipient = |address: &str, lane, occupant| wire::MessageRecipient {
         address: address.parse().expect("fixture address parses"),
         lane,
@@ -874,6 +872,7 @@ fn a_sent_msg_names_every_recipient_in_header_order_without_successors() {
             recipient("6Jv5", seated_lane, seated),
             recipient("6K26", departed_lane, departed),
             recipient("6KB3", vacant_lane, vacated),
+            recipient("6KC4", absent_lane, absent),
         ],
     }];
     let agent = |accent: usize, label: &str| QuoteAgent {
@@ -883,10 +882,7 @@ fn a_sent_msg_names_every_recipient_in_header_order_without_successors() {
     let agents = BTreeMap::from([
         ((sender_lane, Some(sender)), agent(1, "sender-agent")),
         ((seated_lane, Some(seated)), agent(2, "seated-agent")),
-        (
-            (departed_lane, Some(successor)),
-            agent(3, "successor-agent"),
-        ),
+        ((departed_lane, Some(successor)), agent(3, "departed-lane")),
         ((vacant_lane, None), agent(4, "vacant-lane")),
     ]);
     let html = render_prose_card(
@@ -901,7 +897,6 @@ fn a_sent_msg_names_every_recipient_in_header_order_without_successors() {
     .html;
 
     assert!(!html.contains("MSG 6Jv5"), "{html}");
-    assert!(!html.contains("successor-agent"), "{html}");
     let (lead, recipients) = html
         .split_once("data-quote-direction=\"outgoing\"")
         .and_then(|(_, signoff)| signoff.split_once("message-quote-recipients"))
@@ -911,11 +906,12 @@ fn a_sent_msg_names_every_recipient_in_header_order_without_successors() {
     let named = recipients[..words]
         .split("message-quote-recipient-separator")
         .collect::<Vec<_>>();
-    assert_eq!(named.len(), 3, "{html}");
+    assert_eq!(named.len(), 4, "{html}");
     for (name, (occupant, label, state)) in named.iter().zip([
         (seated, ">seated-agent</span>", "current"),
-        (departed, ">6K26</span>", "unresolved"),
+        (departed, ">departed-lane</span>", "historical"),
         (vacated, ">vacant-lane</span>", "historical"),
+        (absent, ">6KC4</span>", "unresolved"),
     ]) {
         assert!(name.contains(&format!("data-quote-agent-occupant=\"{occupant}\"")));
         assert!(name.contains(label), "{name}");
