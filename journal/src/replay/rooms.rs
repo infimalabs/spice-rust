@@ -106,6 +106,12 @@ pub(super) fn verify(
         &stored.conversation.results,
         violations,
     );
+    compare(
+        "task_evidence",
+        &expected.evidence,
+        &stored.evidence,
+        violations,
+    );
     Ok(stored.groups.len()
         + stored.proposals.len()
         + stored.authorizations.len()
@@ -114,7 +120,8 @@ pub(super) fn verify(
         + stored.shelved.len()
         + stored.conversation.publications.len()
         + stored.conversation.items.len()
-        + stored.conversation.results.len())
+        + stored.conversation.results.len()
+        + stored.evidence.len())
 }
 
 fn compare<K: Ord + Debug, V: PartialEq>(

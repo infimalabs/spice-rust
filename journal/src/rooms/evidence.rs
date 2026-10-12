@@ -5,6 +5,8 @@
 //! a task and execution authorization of a candidate read required results
 //! against their current state: answered makes a result available for
 //! assessment, and every other state leaves the requirement unsatisfied.
+//! Commit admission and history replay must both use [`fold`], leaving
+//! `task_evidence` an exactly rebuildable and independently verified index.
 
 use rusqlite::{Connection, params};
 use wire::rooms::{QuestionResultHead, QuestionResultRecord, QuestionResultRef, RetainedCandidate};

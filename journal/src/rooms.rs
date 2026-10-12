@@ -377,6 +377,10 @@ impl History {
             if fact.read::<CandidateRetained>().is_some() {
                 history.authors.insert(seq.get(), actor.clone());
             }
+            if let Err(refusal) = evidence::fold(&mut history, seq, actor, fact) {
+                refusals.push((seq, refusal));
+                continue;
+            }
             if let Err(refusal) = fold(&mut history, seq, at, actor, fact) {
                 refusals.push((seq, refusal));
             }
