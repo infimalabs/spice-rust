@@ -1056,9 +1056,22 @@ fn accept_timer_fired(
             }
             Ok(())
         }
+        timers::Fired::ClaimLapse(Some(lapsed)) => {
+            let residency = bus
+                .residency_head()
+                .map_err(|error| store_fault("claim::residency-unreadable", &error.to_string()))?;
+            if let Some((lane, notice)) = residency.and_then(|head| lapsed.notice(head.body())) {
+                crate::resident::supervisor::command::claim_lapse(
+                    command_surface.paths,
+                    lane,
+                    notice,
+                );
+            }
+            Ok(())
+        }
         timers::Fired::Stale
         | timers::Fired::DeferredTaskWoken(_)
-        | timers::Fired::ClaimLapse
+        | timers::Fired::ClaimLapse(None)
         | timers::Fired::ClaimRenew
         | timers::Fired::TaskWake(_)
         | timers::Fired::Room => Ok(()),
