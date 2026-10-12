@@ -75,3 +75,58 @@ fn decoded(bytes: &[u8]) -> Decoded {
     listen::decode(Dialect::Omp, bytes, Locus::new(1, 0, bytes.len() as u64))
         .expect("matching locus")
 }
+
+#[test]
+fn room_catch_up_retries_a_missing_delivery_and_stays_with_its_occupant() {
+    let sink = Sink::default();
+    let driver = driver(&sink);
+    let occupant = crate::resident::new_uuid();
+    let other = crate::resident::new_uuid();
+    let root = std::env::temp_dir().join(format!("spice-room-catch-up-{}", occupant));
+    let path = root.join("notice.json");
+    fs::create_dir_all(&root).expect("fixture directory");
+    driver.configure_room_catch_up(path.clone(), occupant);
+
+    driver.deliver_room_catch_up();
+    assert!(
+        sink.answered(0).is_empty(),
+        "a missing delivery stays pending"
+    );
+
+    let write = |occupant, text: &str| {
+        fs::write(
+            &path,
+            serde_json::to_vec(&crate::resident::room_catch_up::Notice {
+                occupant,
+                through: wire::Seq::new(7).expect("fixture position"),
+                text: text.to_owned(),
+            })
+            .expect("notice serializes"),
+        )
+        .expect("notice writes");
+    };
+    write(other, "wrong occupant");
+    driver.deliver_room_catch_up();
+    assert!(
+        sink.answered(0).is_empty(),
+        "renewal never inherits another occupant's delivery"
+    );
+
+    write(occupant, "retry landed");
+    driver.deliver_room_catch_up();
+    let frames = sink.answered(1);
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0]["type"], "aside");
+    assert_eq!(frames[0]["purpose"], "room-catch-up");
+    assert_eq!(frames[0]["message"], "retry landed");
+    let observed = br#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"retry landed"}]}}
+"#;
+    assert!(driver.observe(&decoded(observed)).is_none());
+    driver.deliver_room_catch_up();
+    assert_eq!(
+        sink.answered(2).len(),
+        2,
+        "an observed but not yet accounted delivery releases its retry slot"
+    );
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}

@@ -10,6 +10,7 @@
 //! that withholds any continues at the first withheld publication. Reading
 //! writes nothing.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
 
@@ -232,6 +233,24 @@ fn history(
     Ok((ReplyPosition::Snapshot(recorded.cursor), body))
 }
 
+/// Project admitted room envelopes through the same source-backed rendering as
+/// the room history read.
+pub(crate) fn project_publications(
+    bus: &bus::Bus,
+    tape: &Path,
+    envelopes: Vec<wire::Envelope<wire::AnyFact>>,
+) -> Result<Vec<Publication>, String> {
+    let rows = bus
+        .read(move |read| {
+            envelopes
+                .into_iter()
+                .map(|envelope| row(read, envelope).map_err(Failure::guard))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|error| error.to_string())?;
+    Ok(rows.into_iter().map(|row| row.project(tape)).collect())
+}
+
 /// What one read snapshot of the journal holds of a room.
 struct Recorded {
     cursor: Seq,
@@ -417,6 +436,36 @@ impl Row {
     }
 }
 
+impl Publication {
+    pub(crate) fn seq(&self) -> Seq {
+        self.seq
+    }
+
+    pub(crate) fn publication(&self) -> &RoomAuthorityStamp {
+        &self.publication
+    }
+
+    pub(crate) fn author_lane(&self) -> Option<CanonicalUuid> {
+        match self.actor {
+            Actor::Lane(lane) => Some(lane),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn recipients(&self) -> Result<BTreeSet<CanonicalUuid>, String> {
+        self.directed
+            .iter()
+            .map(|route| match &route.receipt {
+                Receipt::Steering { lane, .. } => Ok(*lane),
+                Receipt::Missing => Err(format!(
+                    "room publication {} has no steering head for directive {}",
+                    self.publication, route.directive
+                )),
+            })
+            .collect()
+    }
+}
+
 /// The hunk's bytes from its lane's durable tape, or why the tape cannot
 /// supply them.
 fn transcript(tape: &Path, hunk: TranscriptHunk) -> Content {
@@ -570,7 +619,6 @@ impl fmt::Display for Unavailable<'_> {
     }
 }
 
-#[derive(Debug)]
 enum Failure {
     Refusal(Refusal),
     Fault(Fault),
@@ -587,6 +635,15 @@ impl Failure {
         match self {
             Self::Refusal(refusal) => Outcome::Refusal(refusal),
             Self::Fault(fault) => Outcome::Fault(fault),
+        }
+    }
+
+    fn guard(self) -> journal::GuardError {
+        match self {
+            Self::Refusal(refusal) => journal::GuardError::Invalid(format!("{refusal:?}")),
+            Self::Fault(fault) => {
+                journal::GuardError::Invalid(format!("{}: {}", fault.reason, fault.detail))
+            }
         }
     }
 }

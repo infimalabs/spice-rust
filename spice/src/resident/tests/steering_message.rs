@@ -118,6 +118,34 @@ impl Lanes {
         locus
     }
 
+    /// Land one complete operator record and return the resident capture view.
+    fn operator(&self, lane: u8, text: &str) -> lane::capture::CaptureRecord {
+        let bytes = format!(
+            "{}\n",
+            serde_json::json!({
+                "type": "message_end",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": text}],
+                },
+            })
+        );
+        let locus = self
+            .tape(lane)
+            .tee(bytes.as_bytes())
+            .expect("the operator record is durable");
+        lane::capture::CaptureRecord {
+            lane: test_uuid(lane),
+            occupant: test_uuid(lane + 1),
+            stream: vendor::RecordStream::Stdout,
+            boundary: sill::RecordBoundary::Complete,
+            locus,
+            declaration: None,
+            decoded: listen::decode(listen::Dialect::Omp, bytes.as_bytes(), locus)
+                .expect("operator record decodes"),
+        }
+    }
+
     /// Read every record on a lane's tape, as a sweep would.
     fn records(&self, lane: u8) -> (CanonicalUuid, Vec<listen::Record>) {
         let root = self

@@ -55,6 +55,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Latest queued background notice per purpose. Superseded notices are
     /// coalesced in the extension until omp's next step boundary.
     background: Mutex<BTreeMap<String, String>>,
+    /// Current resident-produced room delivery file and its exact occupant.
+    room_catch_up: Mutex<Option<(PathBuf, CanonicalUuid)>>,
     /// Keys whose original was queued without replacement, or whose recovery
     /// was observed on the transcript. Reminders can point at that telling.
     /// Compaction drops the context and this set.
@@ -167,6 +169,8 @@ pub(in crate::resident) enum LiveRetuneResult {
 pub(in crate::resident) enum Kick {
     /// The lane's journal-backed steering inbox changed.
     Inbox,
+    /// A bounded room catch-up is ready for this already-running lane.
+    RoomCatchUp,
     /// Consent ruled on a request the occupant raised.
     Answer {
         request: CanonicalUuid,
@@ -284,6 +288,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             background: Mutex::new(BTreeMap::new()),
+            room_catch_up: Mutex::new(None),
             told: Mutex::new(BTreeSet::new()),
             recognized: Mutex::new(BTreeSet::new()),
             replied: Mutex::new(BTreeSet::new()),
@@ -381,6 +386,31 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// is interrupted before unheard direction is written.
     pub(in crate::resident) fn deliver_inbox(&self) {
         self.interject(InboxDelivery::Update);
+    }
+
+    fn configure_room_catch_up(&self, path: PathBuf, occupant: CanonicalUuid) {
+        *self
+            .room_catch_up
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some((path, occupant));
+    }
+
+    /// Queue the current source-backed room delivery without interrupting work.
+    fn deliver_room_catch_up(&self) {
+        let configured = self
+            .room_catch_up
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let Some((path, occupant)) = configured else {
+            return;
+        };
+        let Some(notice) = crate::resident::room_catch_up::read_notice(&path) else {
+            return;
+        };
+        if notice.occupant == occupant {
+            let _ = self.background("room-catch-up", &notice.text);
+        }
     }
 
     /// Replace the progress reminder waiting for the next step boundary.
@@ -619,6 +649,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             drop(delivered);
             self.interject(InboxDelivery::PostCompaction);
             self.deliver_briefing();
+            self.deliver_room_catch_up();
             self.reasoning_reminder
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -811,6 +842,7 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// to its end on a thread of its own.
     pub(in crate::resident) fn catch_up(self: &Arc<Self>) {
         self.deliver_inbox();
+        self.deliver_room_catch_up();
         let Some(terminal) = self.terminal.clone() else {
             return;
         };
@@ -916,6 +948,12 @@ fn kick_path_beneath(root: &Path, identity: &str) -> PathBuf {
 /// the send is fire-and-forget.
 pub(in crate::resident) fn kick(paths: &RuntimePaths, lane: CanonicalUuid) {
     send(paths, lane, &Kick::Inbox);
+}
+
+/// Tell an already-running lane that its bounded room catch-up file changed.
+/// A vacant lane has no kick door, so this operation has no wake authority.
+pub(in crate::resident) fn room_catch_up(paths: &RuntimePaths, lane: CanonicalUuid) {
+    send(paths, lane, &Kick::RoomCatchUp);
 }
 
 /// A committed prod is also available at the next shell/hook meter boundary.
@@ -1102,17 +1140,21 @@ pub(in crate::resident) fn listen_for_kicks(
 ) -> io::Result<KickDoor> {
     let path = kick_path(paths, lane);
     #[cfg(unix)]
+    let room_catch_up = crate::resident::room_catch_up::notice_path(paths, lane);
+    #[cfg(unix)]
     {
         let _ = fs::remove_file(&path);
         let socket = std::os::unix::net::UnixDatagram::bind(&path)?;
         std::thread::Builder::new()
             .name("spice-kick".to_owned())
             .spawn(move || {
+                driver.configure_room_catch_up(room_catch_up, occupant);
                 driver.catch_up();
                 let mut kick = [0u8; KICK_BYTES];
                 while let Ok(length) = socket.recv(&mut kick) {
                     match serde_json::from_slice(&kick[..length]) {
                         Ok(Kick::Inbox) => driver.deliver_inbox(),
+                        Ok(Kick::RoomCatchUp) => driver.deliver_room_catch_up(),
                         Ok(Kick::Answer { request, confirmed }) => {
                             driver.answer(request, confirmed);
                         }
@@ -1154,7 +1196,7 @@ pub(in crate::resident) fn listen_for_kicks(
             })?;
     }
     #[cfg(not(unix))]
-    let _ = driver;
+    let _ = (driver, occupant);
     Ok(KickDoor { path })
 }
 
