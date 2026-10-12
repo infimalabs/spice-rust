@@ -1187,12 +1187,7 @@ pub(super) fn committed_with_task_git(
             if let Err(error) = prepared.rollback() {
                 return task_git_outcome(error);
             }
-            Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
-                "board::witness-moved".to_owned(),
-                Some("current durable heads".to_owned()),
-                None,
-                Some(refusal.reason().to_owned()),
-            )))
+            guard_refusal(refusal)
         }
         Ok(CommitOutcome::Fault(fault)) => {
             if let Err(error) = prepared.rollback() {
@@ -1250,17 +1245,26 @@ fn committed_with_guard_refusal(
                 None,
             )))
         }
-        Ok(CommitOutcome::Refused(refusal)) => {
-            Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
-                "board::witness-moved".to_owned(),
-                Some("current durable heads".to_owned()),
-                None,
-                Some(refusal.reason().to_owned()),
-            )))
-        }
+        Ok(CommitOutcome::Refused(refusal)) => guard_refusal(refusal),
         Ok(CommitOutcome::Fault(fault)) => store_fault("board::commit-failed", fault.detail()),
         Err(error) => store_fault("board::bus-closed", &error.to_string()),
     }
+}
+
+/// A guarded commit refused by a durable-head comparison lost a race, so the
+/// caller may read again and retry. Room authority instead judged the request
+/// itself unsound against current authority; that keeps its own reason and
+/// names the offending subject, because retrying it unchanged cannot succeed.
+fn guard_refusal(refusal: journal::GuardRefusal) -> Outcome<CommandAnswer> {
+    if refusal.reason() == journal::ROOM_AUTHORITY_REFUSED {
+        return Outcome::Refusal(Refusal::bare(refusal.into_diagnostic().0));
+    }
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        "board::witness-moved".to_owned(),
+        Some("current durable heads".to_owned()),
+        None,
+        Some(refusal.reason().to_owned()),
+    )))
 }
 
 pub(super) fn phases(flow: Option<&str>) -> Result<Vec<wire::Phase>, Outcome<CommandAnswer>> {
