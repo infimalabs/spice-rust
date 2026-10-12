@@ -87,6 +87,7 @@ pub(super) struct AppRender<'a> {
     pub team_fleet: &'a NodeRef,
     pub unsafe_intent: bool,
     pub sender: &'a SenderHandle,
+    pub room_controls: &'a super::rooms::Controls,
     pub agents: &'a AgentControls,
     pub sidebar_content: &'a UseStateHandle<Option<super::sidebar::Content>>,
     pub sidebar_presented: bool,
@@ -146,9 +147,11 @@ pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>
 }
 
 fn render_workspace(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
+    let surface = render.surface.read();
     html! {
         <div class="workspace mosaic-workspace">
             <main class="mosaic-content content">
+                {super::rooms::render_consoles(surface.as_ref(), render.room_controls, render.sender)}
                 {watchband::render_team(render, work)}
             </main>
         </div>
@@ -211,6 +214,7 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
                 render.sender,
             )}
             {spice_sidebar::render_operator(runtime)}
+            {super::rooms::render_catalog(runtime, render.room_controls, render.sender)}
             {spice_jobs::render(standings.clone(), render.connection, runtime, render.sender)}
             {render_spice_topology(render, runtime, standings.as_deref().map(Vec::as_slice))}
             {quota::render_sidebar(runtime)}

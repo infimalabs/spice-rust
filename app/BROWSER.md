@@ -70,6 +70,23 @@ anchors remain browser preferences. Those preferences cannot grant task, room,
 group, team, or lane authority, and a group edit never mounts, reorders, or
 closes a browser view.
 
+The Spice sidebar is the working-group catalog. **Create** stores an empty or
+task-associated group without mounting it; **Create & open** and **Open in
+group** are the explicit foreground actions. **Add to group**, association
+order controls, and **Remove group** replace shared organization through the
+guarded group commands. Removing shared organization leaves any already-open
+local console as an unavailable placeholder.
+
+Each mounted group is a peer console beside team consoles, not a team and not a
+roster. Only explicitly opened task rooms occupy it. Their durable task and
+publication stamps key room panels and cards; linked bytes that are not present
+stay labeled source placeholders. **Close view** and **Close group** change
+only this browser. Group/room order, drafts, reader offsets, and the last
+focused composer use `spice:room-views:v1` local storage. Room composers send
+the guarded native room-post command and clear only after its admitted reply;
+a refusal retains the draft. Incoming cards, receipts, conclusions, and
+participant changes never mount, close, reorder, or focus a console.
+
 ## Resident topology in the global menu
 
 The Spice view leads with connection state, the inspectable version stack, and

@@ -236,6 +236,29 @@ fn settle_topology(
     }
 }
 
+fn apply_callback_reply<T: for<'de> serde::Deserialize<'de>>(
+    session: &Session,
+    bytes: &[u8],
+    label: &str,
+    respond: &std::rc::Rc<dyn Fn(Result<T, String>)>,
+) -> Result<CommandApplication, String> {
+    let admitted: crate::Admitted<Response<T>> = match admit_response(session, bytes) {
+        Ok(admitted) => admitted,
+        Err(error) => {
+            respond(Err(error.clone()));
+            return Err(error);
+        }
+    };
+    let result = match admitted.into_inner().outcome {
+        wire::Outcome::Reply(reply) => Ok(reply.body),
+        outcome => {
+            Err(outcome_issue(label, &outcome).expect("a non-reply outcome describes its issue"))
+        }
+    };
+    respond(result);
+    Ok(CommandApplication::ordinary(false))
+}
+
 fn apply_command_response(
     session: &Session,
     handles: &SurfaceHandles,
@@ -304,6 +327,12 @@ fn apply_command_response(
                 publish: false,
                 stale: crate::Stale::default(),
             }
+        }
+        PendingKind::WorkingGroup { respond } => {
+            apply_callback_reply(session, bytes, "Working-group change failed", &respond)?
+        }
+        PendingKind::RoomPost { respond } => {
+            apply_callback_reply(session, bytes, "Room post failed", &respond)?
         }
         PendingKind::TaskDetail { task } => {
             let admitted: crate::Admitted<Response<wire::intent::TaskDetailAnswer>> =

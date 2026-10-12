@@ -591,3 +591,217 @@
     -webkit-line-clamp: 2;
   }
 }
+.room-group-section {
+  display: grid;
+  gap: 10px;
+}
+.room-group-section > header,
+.room-group-row > header,
+.room-console-header,
+.room-pane-header,
+.room-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.room-group-section > header h2,
+.room-console-header h2,
+.room-pane-header h3 {
+  margin: 0;
+}
+
+.room-group-section > header span,
+.room-console-kicker,
+.room-group-row code,
+.room-card code {
+  color: var(--muted);
+  font-size: var(--app-type-meta);
+}
+
+.room-group-create,
+.room-group-row {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: var(--app-edge-soft);
+  border-radius: var(--app-radius-inset);
+  background: var(--control-surface-soft);
+}
+
+.room-group-create label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: var(--app-type-label);
+}
+
+.room-group-create :is(input, select),
+.room-group-add select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+}
+
+.room-group-catalog {
+  display: grid;
+  gap: 8px;
+}
+
+.room-group-row ol {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.room-group-row li,
+.room-group-add,
+.room-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.room-group-row li > :first-child,
+.room-group-add select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.room-group-row button,
+.room-inline-actions button,
+.room-composer button {
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: var(--app-radius-control);
+  cursor: pointer;
+}
+
+.room-group-row button:disabled,
+.room-inline-actions button:disabled,
+.room-composer button:disabled {
+  cursor: not-allowed;
+  opacity: .52;
+}
+
+.room-danger { color: var(--danger); }
+.room-notice { margin: 0; color: var(--muted); font-size: var(--app-type-detail); }
+
+.room-console-fleet { display: contents; }
+
+.room-console {
+  --room-console-width: 24rem;
+  display: flex;
+  flex: 1 1 var(--room-console-width);
+  flex-direction: column;
+  min-width: min(100%, 20rem);
+  max-width: 32rem;
+  min-height: 100%;
+  border-inline-end: var(--app-edge);
+  background: var(--panel);
+  container-type: inline-size;
+}
+
+.room-console-header {
+  flex: 0 0 auto;
+  min-height: var(--app-status-line-band);
+  padding: 8px;
+  border-block-end: var(--app-edge-soft);
+  background: var(--control-surface-soft);
+}
+
+.room-console-header h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--app-type-section);
+}
+
+.room-console-kicker { display: block; }
+.room-unavailable,
+.room-empty {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted);
+  font-size: var(--app-type-detail);
+}
+
+.room-console-rooms {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto hidden;
+  overscroll-behavior-inline: contain;
+}
+
+.room-pane {
+  display: flex;
+  flex: 1 0 100%;
+  flex-direction: column;
+  min-width: 100%;
+  min-height: 0;
+  border-inline-end: var(--app-edge-soft);
+}
+
+.room-pane-header {
+  flex: 0 0 auto;
+  padding: 7px 8px;
+  border-block-end: var(--app-edge-soft);
+}
+
+.room-pane-header h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--app-type-body);
+}
+
+.room-timeline {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 8rem;
+  padding: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: color-mix(in srgb, var(--page) 50%, var(--control));
+}
+
+.room-card {
+  padding: 9px 10px;
+  border: var(--app-edge-soft);
+  border-inline-start: var(--message-rail) solid var(--accent-neutral);
+  border-radius: var(--app-radius-card);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.room-card:focus-visible { outline: var(--app-focus-ring-width) solid var(--focus); }
+.room-card p { margin: 6px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.room-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 8px;
+  border-block-start: var(--app-edge-soft);
+  background: var(--control-surface-soft);
+}
+
+.room-composer textarea {
+  min-height: 3.5rem;
+  max-height: 10rem;
+  padding: 8px;
+  resize: vertical;
+}
+
+@media (max-width: 760px) {
+  .room-console { min-width: 100%; max-width: 100%; }
+  .room-console-header { align-items: flex-start; }
+  .room-inline-actions { flex-wrap: wrap; justify-content: flex-end; }
+}
