@@ -1214,6 +1214,26 @@ pub(super) fn committed(
     write: JournalWrite,
     body: CommandAnswer,
 ) -> Outcome<CommandAnswer> {
+    committed_with_guard_refusal(bus, write, body, None)
+}
+
+/// Commit one answer while allowing a command-specific atomic guard refusal
+/// to remain its public reason rather than the generic stale-witness reason.
+pub(super) fn committed_preserving_guard_refusal(
+    bus: &Bus,
+    write: JournalWrite,
+    body: CommandAnswer,
+    reason: &'static str,
+) -> Outcome<CommandAnswer> {
+    committed_with_guard_refusal(bus, write, body, Some(reason))
+}
+
+fn committed_with_guard_refusal(
+    bus: &Bus,
+    write: JournalWrite,
+    body: CommandAnswer,
+    preserved: Option<&str>,
+) -> Outcome<CommandAnswer> {
     match bus.commit(write) {
         Ok(CommitOutcome::Committed(commit)) => Outcome::Reply(Reply {
             position: ReplyPosition::Committed(SeqRange {
@@ -1222,6 +1242,14 @@ pub(super) fn committed(
             }),
             body,
         }),
+        Ok(CommitOutcome::Refused(refusal)) if preserved == Some(refusal.reason()) => {
+            Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+                refusal.reason().to_owned(),
+                None,
+                None,
+                None,
+            )))
+        }
         Ok(CommitOutcome::Refused(refusal)) => {
             Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
                 "board::witness-moved".to_owned(),

@@ -97,6 +97,19 @@ pub(crate) fn room_coordinate(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
+    room_coordinate_with(bus, command, request, config, projects, allocation, || {})
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn room_coordinate_with(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    request: &wire::intent::RoomCoordinate,
+    config: &steer::Config,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    before_commit: impl FnOnce(),
+) -> Outcome<CommandAnswer> {
     if let Err(outcome) = admit_request(request) {
         return outcome;
     }
@@ -153,6 +166,7 @@ pub(crate) fn room_coordinate(
     let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     coordination.guard(&room, &mut write);
+    guard_target_claim(&mut write, lane, &room);
     let (key, _) = match crate::resident::append_operator_directive(
         bus,
         origin,
@@ -194,6 +208,17 @@ pub(crate) fn room_coordinate(
         stop: None,
         hide: false,
     };
+    commit_coordinate(bus, command, request, write, view, before_commit)
+}
+
+fn commit_coordinate(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    request: &wire::intent::RoomCoordinate,
+    mut write: JournalWrite,
+    view: wire::intent::RoomCoordinationView,
+    before_commit: impl FnOnce(),
+) -> Outcome<CommandAnswer> {
     if let Err(error) = write.command_result(
         request_command(command, request.clone()),
         command.epoch(),
@@ -201,7 +226,13 @@ pub(crate) fn room_coordinate(
     ) {
         return store_fault("room::coordination-receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::RoomCoordination(view))
+    before_commit();
+    committed_preserving_guard_refusal(
+        bus,
+        write,
+        CommandAnswer::RoomCoordination(view),
+        "room::lane-busy",
+    )
 }
 
 pub(crate) fn room_put_aside(
@@ -475,6 +506,21 @@ fn admit_target(
         ));
     }
     Ok(lane)
+}
+
+/// Recheck the target's one active-claim slot in the same transaction that
+/// publishes the coordination direction. Holding this room's anchor is the
+/// one admitted active claim; every other claim makes the lane busy.
+fn guard_target_claim(write: &mut JournalWrite, lane: CanonicalUuid, room: &wire::TaskStamp) {
+    let actor = Actor::Lane(lane);
+    let room = room.clone();
+    write.guard(JournalGuard::new(move |read| {
+        match read.active_claim_for_actor(&actor)? {
+            None => Ok(()),
+            Some(active) if active.statement().body().born == room => Ok(()),
+            Some(_) => Err(GuardError::refused("room::lane-busy")),
+        }
+    }));
 }
 
 fn target_for_lane(

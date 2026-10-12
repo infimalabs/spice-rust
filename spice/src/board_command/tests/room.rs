@@ -5,8 +5,9 @@ use wire::intent::{
     RoomCoordinate, RoomCoordinateAction, RoomCoordinationRead, RoomCoordinationView, RoomPutAside,
 };
 use wire::rooms::{
-    RoomAuthorityStamp, RoomListenerAvailability, RoomListenerDelivery, RoomMessaged, RoomPost,
-    RoomPostOutcome, RoomPublicationContent, RoomPublished, TranscriptHunk,
+    CoordinationControl, RoomAuthorityStamp, RoomCoordinationStarted, RoomListenerAvailability,
+    RoomListenerDelivery, RoomMessaged, RoomPost, RoomPostOutcome, RoomPublicationContent,
+    RoomPublished, TranscriptHunk,
 };
 
 fn room_projects() -> ProjectPolicy {
@@ -91,6 +92,25 @@ fn coordinate(bus: &Bus, command: &wire::AdmittedCommand) -> Outcome<CommandAnsw
         &steer::Config::default(),
         &room_projects(),
         &board::NextConfig::default(),
+    )
+}
+
+fn coordinate_after_validation(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    before_commit: impl FnOnce(),
+) -> Outcome<CommandAnswer> {
+    let wire::intent::Intent::RoomCoordinate(request) = command.body() else {
+        panic!("fixture command carries room coordination");
+    };
+    room_coordinate_with(
+        bus,
+        command,
+        request,
+        &steer::Config::default(),
+        &room_projects(),
+        &board::NextConfig::default(),
+        before_commit,
     )
 }
 
@@ -729,5 +749,75 @@ fn room_coordination_refuses_a_lane_that_won_other_work() {
         "a lane cannot acquire a second native claim: {outcome:?}",
     );
     assert!(publication_page(&bus, &room).rows.is_empty());
+    clean(&root, bus);
+}
+
+#[test]
+fn room_coordination_refuses_a_claim_won_after_validation_without_recording() {
+    let (root, bus, epoch, seats) = fixture("room-coordinate-claim-race", 1);
+    prove_seat_addresses(&bus, epoch, &seats);
+    let room = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "room-coordinate-race-room",
+        "Room controller",
+        None,
+    );
+    let other = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "room-coordinate-race-other",
+        "Other work",
+        None,
+    );
+    let command = coordinate_command(&bus, epoch, &room, &seats[0], RoomCoordinateAction::Start);
+    let lane = Actor::Lane(seats[0].lane);
+    let outcome = coordinate_after_validation(&bus, &command, || {
+        claim_task(&bus, epoch, &seats[0], &lane, &other);
+    });
+    assert!(
+        matches!(&outcome, Outcome::Refusal(refusal) if refusal.reason() == "room::lane-busy"),
+        "a claim won after validation must refuse the coordination write: {outcome:?}",
+    );
+
+    let room_stamp = room.born().expect("fixture room has a birth stamp");
+    let control = CoordinationControl::Coordinate(room_stamp.clone()).to_string();
+    let facts = bus.fact_snapshot().expect("coordination race facts read");
+    assert!(
+        !facts.facts().iter().any(|envelope| {
+            envelope
+                .fact
+                .read::<wire::body::SteerSent>()
+                .is_some_and(|sent| sent.control.as_deref() == Some(&control))
+        }),
+        "refused coordination published a steering direction",
+    );
+    assert!(
+        !facts.facts().iter().any(|envelope| {
+            envelope
+                .fact
+                .read::<RoomCoordinationStarted>()
+                .is_some_and(|started| started.room == room_stamp)
+        }),
+        "refused coordination published a room record",
+    );
+
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimFree,
+        claim_free_witnesses(&bus, epoch, &lane, &seats[0], &other),
+        &TaskRef {
+            task: other.clone(),
+        },
+    ));
+    claim_task(&bus, epoch, &seats[0], &lane, &room);
+    assert_committed(coordinate(
+        &bus,
+        &coordinate_command(&bus, epoch, &room, &seats[0], RoomCoordinateAction::Resume),
+    ));
     clean(&root, bus);
 }
