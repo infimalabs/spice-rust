@@ -115,7 +115,7 @@ fn completed(position: u64, task: TaskStamp, author: Actor) -> Envelope<AnyFact>
             validation: "focused checks pass".to_owned(),
             terminal: None,
             git: None,
-            source: body::SourceBoundary::unrecorded(),
+            source: body::SourceBoundary::Proven { heads: Vec::new() },
         },
     )
 }
@@ -148,7 +148,7 @@ fn reviewed(
             note: None,
             followups: Vec::new(),
             git: None,
-            source: body::SourceBoundary::unrecorded(),
+            source: body::SourceBoundary::Proven { heads: Vec::new() },
         },
     )
 }

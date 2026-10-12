@@ -208,23 +208,12 @@ pub struct GitBoundary {
 /// Accounted transcript proven at one task lifecycle boundary.
 ///
 /// A phase interval is bounded by two of these, and the usage spent inside it
-/// is whatever the accounted transcript advanced between them. The two states
-/// are distinct keys rather than one nullable field, for the same reason
-/// [`crate::ReplyPosition`] keeps three: a reader must never guess which one it
-/// received. [`Self::Proven`] carrying no heads is a real boundary, because a
-/// lane whose transcript has not been accounted yet opens at position zero,
-/// while [`Self::Incomplete`] is the absence of an answer. Collapsing the two
-/// would let a reducer read *no usage* where the truth is *unknown usage*.
+/// is whatever the accounted transcript advanced between them. Every boundary
+/// is proven: a lane whose transcript has not been accounted yet opens at
+/// position zero, so no heads is a real boundary, and a producer that cannot
+/// read the boundary it asked for fails rather than recording *unknown*.
 ///
-/// The fields carrying this are not optional, so a reader always holds one of
-/// the two states and never a third *absent* one. On the wire a fact stored
-/// before boundaries were recorded is the omitted key, which decodes through
-/// [`Self::unrecorded`] and encodes back to the same omission. That round trip
-/// is not cosmetic: [`crate::AnyFact`] admits a body only when re-encoding it
-/// reproduces the supplied fields exactly, so writing the migrated value out
-/// instead would make every fact already in the journal undecodable. Absence
-/// therefore spells exactly one value, and every boundary a live producer
-/// proves is written explicitly.
+/// The single variant is the durable spelling every stored boundary carries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SourceBoundary {
     /// Every stream accounted for the lane when the boundary was fixed.
@@ -233,49 +222,6 @@ pub enum SourceBoundary {
         /// Accounted heads, ordered by composed stream key.
         heads: Vec<TranscriptSourceHead>,
     },
-    /// The lane's accounted transcript could not be named at the boundary.
-    #[serde(rename = "incomplete")]
-    Incomplete {
-        /// Why the boundary could not be proven.
-        reason: String,
-    },
-}
-
-impl SourceBoundary {
-    /// Reason naming the shape a migrated boundary was decoded from.
-    pub const UNRECORDED: &'static str =
-        "recorded before task lifecycle facts carried source boundaries";
-
-    /// Migrate a fact stored without a boundary field into an explicit one.
-    ///
-    /// The journal is append-only, so a fact already written can never grow the
-    /// field; decode is the only place this migration can happen. It is a
-    /// migration rather than a fallback because it is total and because it
-    /// produces a value that states in [`Self::UNRECORDED`] what it was
-    /// migrated from.
-    ///
-    /// It is also the only producer of [`Self::Incomplete`] anywhere. Every
-    /// live producer admits a claim before it writes and a claim carries a
-    /// lane, so none of them has nothing to ask about; one that cannot read the
-    /// boundary it asked for fails loudly rather than recording *unknown*.
-    #[must_use]
-    pub fn unrecorded() -> Self {
-        Self::Incomplete {
-            reason: Self::UNRECORDED.to_owned(),
-        }
-    }
-
-    /// Whether this is the migrated stand-in for a fact stored without the field.
-    ///
-    /// Omitting the key on encode restores the exact bytes a stored fact
-    /// arrived as. The match is on the reason rather than on the variant so
-    /// that it can only ever be true of the migration's own value: an
-    /// incomplete boundary carrying any other reason encodes explicitly, and no
-    /// answer a producer actually gave can be dropped on the way back out.
-    #[must_use]
-    pub fn is_unrecorded(&self) -> bool {
-        matches!(self, Self::Incomplete { reason } if reason == Self::UNRECORDED)
-    }
 }
 
 /// A task completed under a re-proven active claim.
@@ -300,10 +246,6 @@ pub struct TaskDone {
     )]
     pub git: Option<GitBoundary>,
     /// Accounted transcript the completed phase closes at.
-    #[serde(
-        default = "SourceBoundary::unrecorded",
-        skip_serializing_if = "SourceBoundary::is_unrecorded"
-    )]
     pub source: SourceBoundary,
 }
 
@@ -358,10 +300,6 @@ pub struct TaskReviewed {
     )]
     pub git: Option<GitBoundary>,
     /// Accounted transcript the reviewed phase closes at.
-    #[serde(
-        default = "SourceBoundary::unrecorded",
-        skip_serializing_if = "SourceBoundary::is_unrecorded"
-    )]
     pub source: SourceBoundary,
 }
 
@@ -507,10 +445,6 @@ pub struct ClaimWon {
     )]
     pub recovery: Option<String>,
     /// Accounted transcript the possessed phase opens at.
-    #[serde(
-        default = "SourceBoundary::unrecorded",
-        skip_serializing_if = "SourceBoundary::is_unrecorded"
-    )]
     pub source: SourceBoundary,
 }
 
@@ -533,10 +467,6 @@ pub struct ClaimCarried {
     /// *within* one interval rather than a closing one: it names the exact
     /// source locus where the preceding authority's accounting stops and the
     /// current authority's begins.
-    #[serde(
-        default = "SourceBoundary::unrecorded",
-        skip_serializing_if = "SourceBoundary::is_unrecorded"
-    )]
     pub source: SourceBoundary,
 }
 

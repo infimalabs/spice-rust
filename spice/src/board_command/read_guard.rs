@@ -471,12 +471,7 @@ pub(super) fn task_creation_capture(
             &error.to_string(),
         )
     })?;
-    let body::SourceBoundary::Proven { heads } = &source else {
-        return Err(protocol_fault(
-            "task::creation-context-source-incomplete",
-            "a live lane task boundary is not proven",
-        ));
-    };
+    let body::SourceBoundary::Proven { heads } = &source;
     let matching = heads
         .iter()
         .filter(|head| head.lane == lane && head.vendor == session.vendor)
@@ -584,14 +579,7 @@ pub(super) fn claim_transcript_recovery(
         String,
     >,
 ) -> wire::intent::TaskTranscriptRecovery {
-    let body::SourceBoundary::Proven { heads } = &won.source else {
-        let body::SourceBoundary::Incomplete { reason } = &won.source else {
-            unreachable!("source boundary has a closed wire vocabulary")
-        };
-        return wire::intent::TaskTranscriptRecovery::Unavailable {
-            reason: format!("source-incomplete: {reason}"),
-        };
-    };
+    let body::SourceBoundary::Proven { heads } = &won.source;
     let mut registered = heads
         .iter()
         .filter(|head| head.stream == body::TASK_CREATION_CONTEXT_STREAM);

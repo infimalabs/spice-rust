@@ -317,9 +317,7 @@ fn claim_context_recovery_requires_one_exact_session_authority() {
         }
     );
 
-    let body::SourceBoundary::Proven { heads } = &mut won.source else {
-        unreachable!("fixture source is proven")
-    };
+    let body::SourceBoundary::Proven { heads } = &mut won.source;
     heads[0].lane = lane;
     sessions.insert(
         (lane, occupant, vendor.clone(), uuid(9_415)),
@@ -430,9 +428,7 @@ fn assert_claim_context(
         unreachable!("authorized lane creation has transcript context")
     };
     assert_eq!(session, expected_session);
-    let body::SourceBoundary::Proven { heads } = &context.source else {
-        panic!("fixture claim source must be proven")
-    };
+    let body::SourceBoundary::Proven { heads } = &context.source;
     let boundary = heads
         .iter()
         .find(|head| head.stream == body::TASK_CREATION_CONTEXT_STREAM)
@@ -587,9 +583,7 @@ fn task_show_keeps_git_provenance_compact_and_prints_its_exact_lookup() {
                     upstream_head: Some("baseline-head".to_owned()),
                     local_commits: 2,
                 }),
-                source: body::SourceBoundary::Incomplete {
-                    reason: "fixture has no transcript".to_owned(),
-                },
+                source: body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Root,
         )
