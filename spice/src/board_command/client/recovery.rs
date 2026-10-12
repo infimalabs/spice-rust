@@ -563,7 +563,6 @@ fn reconcile_client_recovery(
                         CommandAnswer::Task(wire::intent::TaskAnswer {
                             task: task.clone(),
                             status: "pending".to_owned(),
-                            guidance: None,
                             completion: None,
                             claim: Some(Box::new(claim)),
                             next: None,

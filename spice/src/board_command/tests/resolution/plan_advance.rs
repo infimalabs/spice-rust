@@ -322,7 +322,6 @@ fn complete_plan_phase(
     };
     assert_eq!(answer.status, "pending");
     assert_eq!(answer.next.as_deref(), Some("spice task next"));
-    assert_eq!(answer.guidance, None);
     (done, answer)
 }
 

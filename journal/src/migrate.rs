@@ -22,8 +22,9 @@ const PREPARED: &str = "prepared";
 /// before any mutation, that no retained task fact or head omits the creation
 /// context schema 35 was the last to default. It then writes the explicit
 /// subscription table a residency head may still omit, replaces retired fact
-/// kinds with inert current-schema evidence, and creates the room-authority
-/// projection, which no predecessor could have populated, empty before the
+/// kinds with inert current-schema evidence, drops retired plan-advance
+/// guidance from task completions and their receipts, and creates the
+/// room-authority projection, which no predecessor could have populated, empty before the
 /// schema identity advances, so no current reader needs a retired DTO or
 /// decode arm.
 const PREDECESSOR_SCHEMAS: [u32; 4] = [33, 34, 35, 36];
@@ -35,6 +36,14 @@ const RESIDENCY_SUBSCRIPTIONS_RELEASE: &str = "4047a2a4f";
 pub(crate) const ROOM_AUTHORITY_SCHEMA: u32 = 36;
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
+/// Last release whose wire decoded task completion guidance.
+const RETIRED_TASK_GUIDANCE_RELEASE: &str = "979b72704";
+/// The sole guidance spelling that release could decode.
+const RETIRED_TASK_GUIDANCE: &str = concat!(
+    "phase ownership: this advance released your claim; only the held plan phase ",
+    "was completed. Run spice task next for another assignment; it may select any ",
+    "eligible work and does not guarantee this task's next phase."
+);
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -236,6 +245,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     refuse_creation_omission(&transaction)?;
     cross_residency_subscriptions(&transaction)?;
     cross_retired_gate_filed(&transaction)?;
+    cross_retired_task_guidance(&transaction)?;
     if version < ROOM_AUTHORITY_SCHEMA {
         transaction
             .execute_batch(crate::rooms::SCHEMA_SQL)
@@ -377,7 +387,7 @@ fn derived_subscriptions(
 }
 
 fn residency_error(detail: impl Into<String>) -> OpenError {
-    MigrationError::RetainedHead {
+    MigrationError::RetainedRow {
         table: "residency_head",
         row: "1".to_owned(),
         release: RESIDENCY_SUBSCRIPTIONS_RELEASE,
@@ -500,6 +510,128 @@ fn retained_fact_error(seq: i64, detail: impl Into<String>) -> OpenError {
         kind: RETIRED_GATE_FILED_KIND,
         release: RETIRED_GATE_FILED_RELEASE,
         detail: detail.into(),
+    }
+    .into()
+}
+
+/// Drop retired plan-advance guidance from retained task completions and the
+/// receipts that replay their exact retries.
+///
+/// Unlike the identity-only crossings, this rewrites retained bytes in place.
+/// Each `task::done` envelope and each `task::done` receipt response loses only
+/// its guidance member and is re-encoded canonically through the current strict
+/// DTO, keeping its seq or command id, indexed columns, and every other field.
+/// No digest covers an individual envelope or receipt, so nothing downstream
+/// disagrees with the new bytes; the advisory text itself is unrecoverable.
+/// Any guidance other than the one retired spelling refuses the crossing.
+fn cross_retired_task_guidance(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
+    let task_done = wire::FactKind::TaskDone.as_str();
+    let facts = guidance_rows::<i64>(
+        transaction,
+        "SELECT seq, envelope FROM fact_envelopes WHERE kind = ?1 \
+         AND json_type(CAST(envelope AS TEXT), '$.fact.terminal.guidance') IS NOT NULL \
+         ORDER BY seq",
+        task_done,
+    )?;
+    for (seq, bytes) in facts {
+        let refuse = |detail: String| guidance_error("fact_envelopes", &seq, detail);
+        let mut envelope: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|error| refuse(format!("the stored envelope does not decode: {error}")))?;
+        take_retired_guidance(envelope.pointer_mut("/fact/terminal")).map_err(refuse)?;
+        let current = serde_json::to_vec(&envelope)
+            .map_err(|error| refuse(format!("the crossed envelope cannot encode: {error}")))
+            .and_then(|crossed| {
+                wire::decode::<wire::Envelope<wire::AnyFact>>(&crossed).map_err(|error| {
+                    refuse(format!("the crossed envelope is not current: {error}"))
+                })
+            })?;
+        let bytes = wire::encode(&current)
+            .map_err(|error| refuse(format!("the crossed envelope cannot encode: {error}")))?;
+        let changed = transaction
+            .execute(
+                "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = ?2 AND kind = ?3",
+                params![bytes, seq, task_done],
+            )
+            .map_err(OpenError::Sqlite)?;
+        if changed != 1 {
+            return Err(refuse(
+                "the row changed under the exclusive crossing".to_owned(),
+            ));
+        }
+    }
+
+    let command = wire::CommandKind::TaskDone;
+    let receipts = guidance_rows::<String>(
+        transaction,
+        "SELECT command_id, response FROM command_receipts WHERE command_kind = ?1 \
+         AND json_type(CAST(response AS TEXT), '$.outcome.body.guidance') IS NOT NULL \
+         ORDER BY command_id",
+        command.as_str(),
+    )?;
+    for (command_id, bytes) in receipts {
+        let refuse = |detail: String| guidance_error("command_receipts", &command_id, detail);
+        let mut response: wire::Response<serde_json::Value> = wire::decode(&bytes)
+            .map_err(|error| refuse(format!("the stored response does not decode: {error}")))?;
+        let wire::Outcome::Reply(reply) = &mut response.outcome else {
+            return Err(refuse("the stored response is not a reply".to_owned()));
+        };
+        take_retired_guidance(Some(&mut reply.body)).map_err(refuse)?;
+        let answer = wire::encode(&reply.body)
+            .and_then(|body| command.binding().answer.decode(&body))
+            .and_then(serde_json::to_value)
+            .map_err(|error| refuse(format!("the crossed answer is not current: {error}")))?;
+        reply.body = answer;
+        let bytes = wire::encode(&response)
+            .map_err(|error| refuse(format!("the crossed response cannot encode: {error}")))?;
+        let changed = transaction
+            .execute(
+                "UPDATE command_receipts SET response = ?1 \
+                 WHERE command_id = ?2 AND command_kind = ?3",
+                params![bytes, command_id, command.as_str()],
+            )
+            .map_err(OpenError::Sqlite)?;
+        if changed != 1 {
+            return Err(refuse(
+                "the row changed under the exclusive crossing".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn guidance_rows<K: rusqlite::types::FromSql>(
+    transaction: &rusqlite::Transaction<'_>,
+    sql: &str,
+    kind: &str,
+) -> Result<Vec<(K, Vec<u8>)>, OpenError> {
+    let mut statement = transaction.prepare(sql).map_err(OpenError::Sqlite)?;
+    let rows = statement
+        .query_map([kind], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(OpenError::Sqlite)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(OpenError::Sqlite)
+}
+
+/// Remove the guidance member, refusing anything but the retired spelling.
+fn take_retired_guidance(object: Option<&mut serde_json::Value>) -> Result<(), String> {
+    match object
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|object| object.remove("guidance"))
+    {
+        Some(serde_json::Value::String(guidance)) if guidance == RETIRED_TASK_GUIDANCE => Ok(()),
+        Some(other) => Err(format!(
+            "guidance {other} is not the retired plan-advance spelling"
+        )),
+        None => Err("guidance is not a member of the completion it was indexed under".to_owned()),
+    }
+}
+
+fn guidance_error(table: &'static str, row: &impl ToString, detail: String) -> OpenError {
+    MigrationError::RetainedRow {
+        table,
+        row: row.to_string(),
+        release: RETIRED_TASK_GUIDANCE_RELEASE,
+        detail,
     }
     .into()
 }
@@ -727,8 +859,8 @@ pub enum MigrationError {
         release: &'static str,
         detail: String,
     },
-    /// Retained head authority that cannot cross without its last owning release.
-    RetainedHead {
+    /// Retained authority row that cannot cross without its last owning release.
+    RetainedRow {
         table: &'static str,
         row: String,
         release: &'static str,
@@ -807,7 +939,7 @@ impl fmt::Display for MigrationError {
                 "journal fact {seq} kind {kind} was last owned by release {release} and cannot \
                  cross to schema {SCHEMA_VERSION}: {detail}"
             ),
-            Self::RetainedHead {
+            Self::RetainedRow {
                 table,
                 row,
                 release,

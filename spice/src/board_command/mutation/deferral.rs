@@ -235,7 +235,6 @@ fn promote_oops(
     let answer = wire::intent::TaskAnswer {
         task: post.handle().clone(),
         status: "promoted".to_owned(),
-        guidance: None,
         completion: None,
         claim: claim_answer,
         next,
@@ -517,7 +516,6 @@ fn change_deferral<B: serde::Serialize + Clone>(
         } else {
             "pending".to_owned()
         },
-        guidance: None,
         completion: None,
         claim: claim_answer,
         next,
