@@ -168,7 +168,12 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&omp::first_prompt_request(first))
             .expect("one JSON request"),
-        serde_json::json!({"id": "spice-prompt", "type": "prompt", "message": first}),
+        serde_json::json!({
+            "id": "spice-prompt",
+            "type": "prompt",
+            "message": first,
+            "streamingBehavior": "followUp",
+        }),
     );
 }
 

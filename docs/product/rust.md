@@ -34,6 +34,12 @@ extension clears OMP's steering flag on the copy handed to the provider, so a
 steered message reaches the model as the lane wrote it, not inside OMP's
 generated priority notice.
 
+The first turn is one `prompt` request with follow-up admission. A fresh or
+idle session starts it immediately; a resumed session that restored an
+in-flight turn queues it once behind that owner. OMP therefore answers the
+request as accepted or queued instead of exposing its transient busy refusal.
+Other prompt refusals remain visible and state that no message was accepted.
+
 Owners: [`vendor/src/omp.rs`](../../vendor/src/omp.rs),
 [`vendor/src/omp/frame.rs`](../../vendor/src/omp/frame.rs),
 [`vendor/src/omp/steering.mjs`](../../vendor/src/omp/steering.mjs), and

@@ -561,7 +561,8 @@ pub(crate) fn command_response(
 /// A command reply. Only `get_state` carries content: the exact session
 /// identity a resumed launch names again. A refused command is a failure the
 /// lane must see, except a live retune its own driver answers and the
-/// host-URI registration a lane runs on without.
+/// host-URI registration a lane runs on without. A busy prompt refusal states
+/// that it accepted nothing and names both deterministic repairs.
 fn response(record: &Object, locus: Locus) -> Events {
     let response = command_response(record)?.expect("response records carry response context");
     let command = response.command.as_str();
@@ -572,7 +573,14 @@ fn response(record: &Object, locus: Locus) -> Events {
         }) {
             return Ok(Vec::new());
         }
-        let mut message = format!("{command} refused: {reason}");
+        let mut message =
+            if command == "prompt" && reason.starts_with("Agent is already processing") {
+                "prompt not accepted: agent is already processing; queue it with steer/followUp or \
+             retry after completion"
+                    .to_owned()
+            } else {
+                format!("{command} refused: {reason}")
+            };
         if command == "negotiate_protocol" {
             // The wire spice cannot read is not a wire it may run on, so the
             // refusal states what the lane asked for rather than leaving the

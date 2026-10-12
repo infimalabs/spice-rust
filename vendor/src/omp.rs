@@ -611,13 +611,18 @@ pub fn opening_request(launch: &Launch) -> Vec<u8> {
 
 /// The prompt that starts the first turn, naming the skill the system prompt
 /// already carries so the agent re-grounds in it.
+///
+/// A resumed session can still own the turn it was processing when its prior
+/// RPC process ended. Follow-up admission starts immediately when idle and
+/// otherwise queues this one prompt behind that restored turn, rather than
+/// rejecting it as a second owner.
 #[must_use]
 pub fn first_prompt_request(message: &str) -> Vec<u8> {
     request_line(&Request {
         id: PROMPT_REQUEST_ID.to_owned(),
         kind: "prompt",
         message: Some(message.to_owned()),
-        streaming_behavior: None,
+        streaming_behavior: Some("followUp"),
     })
 }
 
