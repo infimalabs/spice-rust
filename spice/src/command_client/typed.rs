@@ -50,6 +50,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["lane", "list"] => CommandKind::BoardRead,
         ["board", "graph"] => CommandKind::BoardGraph,
         ["board", "handout"] => CommandKind::BoardHandout,
+        ["room", "post"] => CommandKind::RoomPost,
         ["task", verb] => return task_kind_for(verb),
         ["taste", "add"] | ["taste", "drop"] => CommandKind::TaskAdd,
         ["taste", "mine"] => CommandKind::TasteProposalAdd,

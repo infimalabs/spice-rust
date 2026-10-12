@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use crate::QuoteResolution;
 use crate::command::CommandKind;
+use crate::rooms::{RoomPost, RoomPostAnswer};
 
 use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
@@ -41,6 +42,8 @@ pub enum BodyShape {
     BoardHandout,
     /// [`DocLedger`]
     DocLedger,
+    /// [`RoomPost`]
+    RoomPost,
     /// [`WorkingGroupRead`]
     WorkingGroupRead,
     /// [`WorkingGroupPut`]
@@ -166,6 +169,8 @@ pub enum AnswerShape {
     WorkingGroupChange,
     /// [`TextAnswer`]
     Text,
+    /// [`RoomPostAnswer`]
+    RoomPost,
     /// [`TaskAnswer`]
     Task,
     /// [`ClaimAnswer`]
@@ -232,6 +237,8 @@ pub enum CommandAnswer {
     WorkingGroupChange(WorkingGroupChange),
     /// [`AnswerShape::Text`]
     Text(TextAnswer),
+    /// [`AnswerShape::RoomPost`]
+    RoomPost(RoomPostAnswer),
     /// [`AnswerShape::Task`]
     Task(TaskAnswer),
     /// [`AnswerShape::Claim`]
@@ -290,6 +297,7 @@ impl CommandAnswer {
             Self::TaskTimeline(_) => AnswerShape::TaskTimeline,
             Self::WorkingGroupPage(_) | Self::WorkingGroupChange(_) => self.working_group_shape(),
             Self::Text(_) => AnswerShape::Text,
+            Self::RoomPost(_) => AnswerShape::RoomPost,
             Self::Task(_) => AnswerShape::Task,
             Self::Claim(_) => AnswerShape::Claim,
             Self::Doc(_) => AnswerShape::Doc,
@@ -361,6 +369,7 @@ impl AnswerShape {
             | Self::TaskRelations
             | Self::TaskTimeline
             | Self::Text
+            | Self::RoomPost
             | Self::Task
             | Self::Claim
             | Self::Doc
@@ -392,6 +401,7 @@ impl AnswerShape {
             Self::TaskRelations => CommandAnswer::TaskRelations(Box::new(body.read()?)),
             Self::TaskTimeline => CommandAnswer::TaskTimeline(Box::new(body.read()?)),
             Self::Text => CommandAnswer::Text(body.read()?),
+            Self::RoomPost => CommandAnswer::RoomPost(body.read()?),
             Self::Task => CommandAnswer::Task(body.read()?),
             Self::Claim => CommandAnswer::Claim(Box::new(body.read()?)),
             Self::Doc => CommandAnswer::Doc(body.read()?),
@@ -493,6 +503,7 @@ impl CommandKind {
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
+            | Self::RoomPost
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TasteProposalAdd
@@ -564,6 +575,7 @@ impl CommandKind {
             Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
+            Self::RoomPost => Binding::of(B::RoomPost, A::RoomPost),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
             Self::TasteProposalAdd => Binding::of(B::TasteProposalAdd, A::Task),
@@ -672,6 +684,8 @@ pub enum Intent {
     BoardHandout(BoardHandout),
     /// [`BodyShape::DocLedger`]
     DocLedger(DocLedger),
+    /// [`BodyShape::RoomPost`]
+    RoomPost(RoomPost),
     /// [`BodyShape::WorkingGroupRead`]
     WorkingGroupRead(WorkingGroupRead),
     /// [`BodyShape::WorkingGroupPut`]
@@ -796,6 +810,7 @@ impl Intent {
             | Self::BoardGraph(_)
             | Self::BoardHandout(_)
             | Self::DocLedger(_)
+            | Self::RoomPost(_)
             | Self::TaskAdd(_)
             | Self::TaskOopsAdd(_)
             | Self::TasteProposalAdd(_)
@@ -856,6 +871,7 @@ impl Intent {
             Self::BoardGraph(_) => BodyShape::BoardGraph,
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
+            Self::RoomPost(_) => BodyShape::RoomPost,
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
             Self::TasteProposalAdd(_) => BodyShape::TasteProposalAdd,
@@ -949,6 +965,7 @@ impl BodyShape {
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
+                | Self::RoomPost
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
                 | Self::WorkingGroupRemove
@@ -985,6 +1002,7 @@ impl BodyShape {
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
+                | Self::RoomPost
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
                 | Self::WorkingGroupRemove
@@ -1012,6 +1030,7 @@ impl BodyShape {
             Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
+            Self::RoomPost => Intent::RoomPost(crate::decode(bytes)?),
             Self::WorkingGroupRead => Intent::WorkingGroupRead(crate::decode(bytes)?),
             _ => return self.decode_task_statement_body(bytes),
         })

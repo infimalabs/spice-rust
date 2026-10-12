@@ -36,6 +36,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::BoardGraph
         | CommandKind::BoardHandout
         | CommandKind::DocLedger
+        | CommandKind::RoomPost
         | CommandKind::WorkingGroupRead
         | CommandKind::WorkingGroupPut
         | CommandKind::WorkingGroupRemove

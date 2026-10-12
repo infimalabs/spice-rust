@@ -468,6 +468,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "board::handout"
     ),
     operator!(
+        ["room", "post"],
+        "room post HANDLE TEXT",
+        Command,
+        [RoomPublished],
+        Reply,
+        "room::post"
+    ),
+    operator!(
         ["group", "list"],
         "group list [--after GROUP] [--limit N]",
         Read,

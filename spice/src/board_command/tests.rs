@@ -30,6 +30,7 @@ mod origin;
 mod planning;
 mod read_scope;
 mod report;
+mod room;
 mod task_list;
 mod task_listing;
 mod taste_review;

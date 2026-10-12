@@ -16,6 +16,10 @@ use wire::intent::{
     TaskHistoryPage, TaskNote, TaskOopsAdd, TaskRef, TaskReview, TaskWake, TasteProposalAdd,
     TextAnswer,
 };
+use wire::rooms::{
+    RoomListenerAvailability, RoomListenerDelivery, RoomPost, RoomPostAnswer, RoomPostListener,
+    RoomPostNext, RoomPostOutcome, RoomPublicationContent, RoomPublished,
+};
 use wire::{
     Actor, ClaimDisposition, ClaimHead, Command, CommandKind, Digest, Domain, Fault, FaultClass,
     Instant, LeaseHead, Name, Outcome, Producer, Refusal, Reply, ReplyPosition, Seq, SeqRange,
@@ -142,6 +146,8 @@ mod read_guard;
 use read_guard::*;
 mod report;
 use report::read_report;
+mod room;
+use room::room_post;
 mod steering_origin;
 use steering_origin::*;
 mod task_step;
