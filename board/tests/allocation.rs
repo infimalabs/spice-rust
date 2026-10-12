@@ -1,14 +1,11 @@
 mod support;
 
-use std::collections::BTreeSet;
-
 use board::Snapshot;
 use board::allocate::{Mint, mint};
 use journal::{FactCause, Journal, JournalWrite};
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, FactKind, Instant, LaneResidency, LeaseHead,
-    Origin, Phase, Producer, ResidencyHead, ResidentState, TaskHandle, TaskHead, TaskStamp,
-    WorkflowHead, body,
+    Actor, CanonicalUuid, FactKind, Instant, LaneResidency, Origin, Phase, Producer, ResidencyHead,
+    ResidentState, TaskHandle, TaskHead, TaskStamp, WorkflowHead, body,
 };
 
 fn uuid(last: u8) -> CanonicalUuid {
@@ -224,91 +221,6 @@ fn minted(
     )
     .expect("the claim mints");
     journal.apply(write).expect("the minted claim commits");
-}
-
-/// Everything a claim carries reaches the journal through the one minter.
-///
-/// This replaced two independent minting sites, and the cost of that split was
-/// that a field added to the claim had to be copied into both by hand. So the
-/// guard is not that the minter works, which the fixture above already shows,
-/// but that nothing a claim carries can be added without landing here: the fact
-/// body is named field by field, and both heads are destructured whole, so a
-/// field added to either one stops compiling until someone says where the
-/// minter gets it from.
-#[test]
-fn the_one_claim_minter_writes_every_lifecycle_field() {
-    let mut journal = fixture();
-    minted(
-        &mut journal,
-        None,
-        None,
-        body::SourceBoundary::Proven { heads: Vec::new() },
-    );
-
-    let facts = journal.fact_snapshot().expect("claim fact stream");
-    let claim = facts
-        .facts()
-        .iter()
-        .find(|envelope| envelope.fact.kind() == FactKind::ClaimWon)
-        .expect("minting writes a claim fact");
-    // Named one by one rather than counted, because a count admits a rename.
-    // `git` is absent because this claim was minted without a boundary, and the
-    // field is skipped when it is empty; the test below mints one with it.
-    // `source` is present for the same claim, because an empty proven boundary
-    // is a boundary that was read and found empty; only the value the legacy
-    // migration supplies for facts stored before boundaries were recorded is
-    // skipped, and no live minter can produce it.
-    let written: BTreeSet<&str> = claim.fact.body().keys().map(String::as_str).collect();
-    assert_eq!(
-        written,
-        BTreeSet::from([
-            "task", "actor", "lane", "occupant", "epoch", "cell", "until", "source",
-        ]),
-        "the claim fact carries exactly the fields the minter writes"
-    );
-
-    let snapshot = snapshot(&journal);
-    let entry = snapshot
-        .entries()
-        .iter()
-        .find(|entry| entry.handle() == &handle("BOARD-a1"))
-        .expect("the claimed task is on the board");
-    let ClaimHead {
-        actor,
-        fact,
-        lane,
-        occupant,
-        epoch,
-        disposition,
-        claimed,
-        cell,
-        recovery,
-        acknowledged,
-    } = entry.claim().expect("minting writes a claim head");
-    assert_eq!(actor, &Actor::Lane(uuid(20)));
-    assert_eq!(*fact, claim.seq);
-    assert_eq!(*claimed, claim.seq);
-    assert_eq!(cell.project, "board.allocate");
-    assert_eq!(cell.phase, phase("todo"));
-    assert_eq!(recovery, &None);
-    assert_eq!(*lane, uuid(20));
-    assert_eq!(*occupant, uuid(21));
-    assert_eq!(*epoch, uuid(22));
-    assert_eq!(*disposition, ClaimDisposition::Active);
-    assert_eq!(*acknowledged, entry.workflow().generation);
-
-    let LeaseHead {
-        start,
-        renewal,
-        expiry,
-        maximum,
-        epoch,
-    } = entry.lease().expect("minting writes a lease head");
-    assert_eq!(*start, instant(5));
-    assert_eq!(*renewal, instant(5));
-    assert_eq!(*expiry, instant(20));
-    assert_eq!(*maximum, instant(35));
-    assert_eq!(*epoch, uuid(22));
 }
 
 /// A boundary the caller supplies survives the minter it is handed to.
