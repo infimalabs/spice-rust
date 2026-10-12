@@ -119,6 +119,75 @@ fn atomic_recovery_cannot_create_a_declared_planning_task() {
 }
 
 #[test]
+fn claimed_wake_cannot_adopt_implementation_into_a_planning_deliverable() {
+    let (root, bus, epoch, seats) = fixture("planning-wake-capture", 1);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    authorize_lane_creation(&bus, epoch, seat);
+    let task = add_planning(&bus, epoch, "Woken plan", wire::TaskIntent::Plan, None);
+    let before = board(&bus, epoch, lane.clone());
+    let heads = at(&before, &task);
+    let until = instant_after(current_instant().expect("clock"), 300).expect("future instant");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDefer,
+        vec![workflow_witness(heads), deferral_witness(heads)],
+        &TaskDefer {
+            task: task.clone(),
+            wait: until,
+        },
+    ));
+    let deferred = board(&bus, epoch, lane.clone());
+    let heads = at(&deferred, &task);
+    let wake = |rule: &str| {
+        issue(
+            &bus,
+            epoch,
+            lane.clone(),
+            CommandKind::TaskWake,
+            vec![
+                workflow_witness(heads),
+                deferral_witness(heads),
+                Witness::Eligibility {
+                    rule: rule.parse().expect("possession rule"),
+                },
+                residency(&deferred, seat),
+            ],
+            &TaskWake {
+                task: task.clone(),
+                into: None,
+                claim: true,
+            },
+        )
+    };
+    let facts = || bus.fact_snapshot().expect("facts read").facts().len();
+    let written = facts();
+    for rule in [CAPTURE_WORK_RULE, "recover"] {
+        let refused = wake(rule);
+        assert!(
+            matches!(
+                &refused,
+                Outcome::Refusal(refusal) if refusal.reason() == "task::capture-planning"
+            ),
+            "{rule} wake must not adopt implementation into a plan: {refused:?}",
+        );
+    }
+    assert_eq!(facts(), written, "a refused wake writes nothing");
+
+    let CommandAnswer::Task(woken) = assert_committed(wake("capture")) else {
+        panic!("wake answers with a task status");
+    };
+    assert_eq!(
+        woken.claim.and_then(|claim| claim.holder),
+        Some(lane),
+        "an ordinary claimed wake still holds the plan",
+    );
+    clean(&root, bus);
+}
+
+#[test]
 fn plan_review_cannot_replace_required_child_construction_with_own_acceptance() {
     let (root, bus, epoch, seats) = fixture("planning-construction", 1);
     let task = add_planning(

@@ -71,7 +71,7 @@ pub(super) fn preparation_parent<'a>(
     }
     Ok((parent.statement.body.intent.is_some()
         || requires_construction(parent.statement.body.intent, &parent.workflow.body.flow)
-        || matches!(parent.workflow.body.phase.as_str(), "plan" | "design"))
+        || gate::is_planning_phase(parent.workflow.body.phase.as_str()))
     .then_some(parent))
 }
 
@@ -95,7 +95,7 @@ pub(super) fn admit_preparation(
     if add.intent == Some(wire::TaskIntent::Design)
         || parent.workflow.body.status != "pending"
         || (parent.statement.body.intent.is_none()
-            && !matches!(parent.workflow.body.phase.as_str(), "plan" | "design")
+            && !gate::is_planning_phase(parent.workflow.body.phase.as_str())
             && !requires_construction(parent.statement.body.intent, &parent.workflow.body.flow))
     {
         return Err(refusal(
