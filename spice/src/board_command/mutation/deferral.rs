@@ -124,6 +124,7 @@ fn append_promotion(
     let edited = write
         .fact(
             body::TaskEdited {
+                intent: None,
                 task: entry.born().clone(),
                 revision,
                 dependencies,

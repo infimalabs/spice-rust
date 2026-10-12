@@ -233,6 +233,7 @@ fn add_born(bus: &Bus, epoch: CanonicalUuid, born: wire::TaskStamp, title: &str)
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born.clone() }],
         &TaskAdd {
+            intent: None,
             title: title.to_owned(),
             project: Some("board.identity".to_owned()),
             description: None,
@@ -1091,6 +1092,9 @@ use edit::*;
 // Whole-text replacement of a description or acceptance through the modify
 // intent, admitted only over the digest of the text its writer read.
 mod task_text;
+// Declared Plan and Design intent: durable across phases and corrections,
+// moved only by its own witnessed edit.
+mod intent;
 
 // Claimed dependency edits carry possession through one atomic statement-head
 // replacement and keep the complete graph acyclic.

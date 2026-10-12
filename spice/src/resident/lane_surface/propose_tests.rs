@@ -271,6 +271,7 @@ pub(in crate::resident) fn seed_task_claim(
     let statement_task = task.clone();
     let statement_phase = phase.clone();
     write.task_head(added, move |position| wire::TaskHead {
+        intent: None,
         born: statement_task,
         queue_origin: position,
         title: "Restore claimed work".to_owned(),
@@ -341,6 +342,7 @@ fn append_seed_claim_facts(
     let added = write
         .fact(
             wire::body::TaskAdded {
+                intent: None,
                 task: task.clone(),
                 title: "Restore claimed work".to_owned(),
                 description: None,

@@ -368,6 +368,7 @@ fn a_withdrawn_prerequisite_releases_the_task_that_waited_on_it() {
             task: dependent_stamp,
         }],
         &TaskAdd {
+            intent: None,
             title: "Work waiting on the mistake".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
@@ -437,6 +438,7 @@ fn a_released_dependent_is_not_still_reported_blocked() {
             task: dependent_stamp,
         }],
         &TaskAdd {
+            intent: None,
             title: "Work waiting on the mistake".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
@@ -505,6 +507,7 @@ fn a_withdrawn_task_refuses_the_moves_a_completed_task_refuses() {
         epoch,
         Actor::Operator,
         &TaskEdit {
+            intent: None,
             task: task.clone(),
             title: None,
             description: Some("a meaning the withdrawn row will never carry".to_owned()),

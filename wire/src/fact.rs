@@ -647,6 +647,23 @@ impl AnyFact {
         }
     }
 
+    /// Task intent this fact declares, when it declares one.
+    ///
+    /// Creation declares the statement's opening intent, including none; an
+    /// edit declares one only when it admitted an explicit intent change.
+    /// Folding these in journal order yields each statement's declared intent.
+    #[must_use]
+    pub fn declared_intent(
+        &self,
+    ) -> Option<(&crate::witness::TaskStamp, Option<crate::TaskIntent>)> {
+        use sealed::RegisteredBody as Decoded;
+        match &self.decoded {
+            Decoded::TaskAdded(body) => Some((&body.task, body.intent)),
+            Decoded::TaskEdited(body) => body.intent.map(|change| (&body.task, change.intent())),
+            _ => None,
+        }
+    }
+
     /// Task addressed by a task-content, workflow, claim, or lease fact.
     ///
     /// Unlike [`Self::mutated_task`], this includes maintenance that does not

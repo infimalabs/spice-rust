@@ -620,6 +620,7 @@ fn seed_write_seated(
     let added = write
         .fact(
             body::TaskAdded {
+                intent: None,
                 task: task.clone(),
                 title: "Project incremental lifecycle".to_owned(),
                 description: None,
@@ -685,6 +686,7 @@ fn ready_task_write(moment: &str, at: Instant) -> JournalWrite {
     let added = write
         .fact(
             body::TaskAdded {
+                intent: None,
                 task: task.clone(),
                 title: "Newer ready lifecycle candidate".to_owned(),
                 description: None,
@@ -842,6 +844,7 @@ fn invalid_late_suffix() -> JournalWrite {
     let added = write
         .fact(
             body::TaskAdded {
+                intent: None,
                 task: invalid_task.clone(),
                 title: "Invalid late project".to_owned(),
                 description: None,
@@ -894,6 +897,7 @@ fn attach_task_heads_with_project(
 ) {
     let statement_task = task.clone();
     write.task_head(added, move |position| TaskHead {
+        intent: None,
         born: statement_task,
         queue_origin: position,
         title: "Project incremental lifecycle".to_owned(),

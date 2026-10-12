@@ -699,6 +699,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
         statement: Positioned {
             position: seq(2),
             body: BoardStatement {
+                intent: None,
                 handle: handle("SPICE-1kKRRsDP"),
                 born: "1kKRRsDP".parse().expect("a task stamp"),
                 queue_origin: seq(2),

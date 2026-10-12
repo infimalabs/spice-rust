@@ -1061,6 +1061,7 @@ fn seed_write_with_lanes(authority: &Authority, lanes: Vec<LaneResidency>) -> Jo
     let added = write
         .fact(
             body::TaskAdded {
+                intent: None,
                 task: authority.born(),
                 title: "Capture commit after lapse".to_owned(),
                 description: None,
@@ -1137,6 +1138,7 @@ fn attach_heads(
     let statement_task = authority.born();
     let statement_phase = phase.clone();
     write.task_head(added, move |position| TaskHead {
+        intent: None,
         born: statement_task,
         queue_origin: position,
         title: "Capture commit after lapse".to_owned(),

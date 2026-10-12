@@ -796,16 +796,18 @@ fn client_modify(
             .unwrap_or_default();
         let priority = matches.get_one::<String>("priority").cloned();
         let project = matches.get_one::<String>("project").cloned();
+        let intent = intent_edit(matches)?;
         if title.is_none()
             && description.is_none()
             && acceptance.is_empty()
             && priority.is_none()
             && project.is_none()
+            && intent.is_none()
         {
             return Err(refusal(
                 "task::edit-empty",
                 None,
-                "name at least one of --title, --description, --acceptance, --priority, or --project",
+                "name at least one of --title, --description, --acceptance, --priority, --project, --intent, or --clear-intent",
             ));
         }
         // Law::EDIT names the statement head alone. A workflow witness here is
@@ -816,6 +818,7 @@ fn client_modify(
             CommandKind::TaskEdit,
             vec![statement_witness(heads)],
             serde_json::to_value(TaskEdit {
+                intent,
                 task,
                 title,
                 description,
@@ -827,6 +830,41 @@ fn client_modify(
             .expect("typed intent encodes"),
         ))
     })
+}
+
+/// The explicit intent change one `task modify` names, if any.
+fn intent_edit(
+    matches: &ArgMatches,
+) -> Result<Option<wire::TaskIntentEdit>, Outcome<CommandAnswer>> {
+    let declared = declared_intent(matches)?;
+    match (declared, matches.get_flag("clear-intent")) {
+        (Some(intent), false) => Ok(Some(wire::TaskIntentEdit::Set { intent })),
+        (None, true) => Ok(Some(wire::TaskIntentEdit::Clear {})),
+        (None, false) => Ok(None),
+        (Some(_), true) => Err(refusal(
+            "task::intent-shape",
+            None,
+            "name --intent plan|design or --clear-intent, never both",
+        )),
+    }
+}
+
+/// The Plan or Design intent named by `--intent`, if any.
+pub(super) fn declared_intent(
+    matches: &ArgMatches,
+) -> Result<Option<wire::TaskIntent>, Outcome<CommandAnswer>> {
+    matches
+        .get_one::<String>("intent")
+        .map(|text| {
+            text.parse().map_err(|error: String| {
+                refusal(
+                    "task::intent-invalid",
+                    Some(error),
+                    "name --intent plan or --intent design",
+                )
+            })
+        })
+        .transpose()
 }
 
 fn client_require(
@@ -879,6 +917,7 @@ fn client_require(
             CommandKind::TaskEdit,
             requirements::witnesses(heads),
             serde_json::to_value(TaskEdit {
+                intent: None,
                 task,
                 title: None,
                 description: None,

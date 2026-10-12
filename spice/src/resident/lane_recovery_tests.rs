@@ -123,6 +123,7 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
     let added = seed
         .fact(
             wire::body::TaskAdded {
+                intent: None,
                 task: fixture.task.clone(),
                 title: "Carry active work".into(),
                 description: None,
@@ -143,6 +144,7 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
         .expect("task fact");
     let task = fixture.task.clone();
     seed.task_head(added, move |position| wire::TaskHead {
+        intent: None,
         born: task,
         queue_origin: position,
         title: "Carry active work".into(),

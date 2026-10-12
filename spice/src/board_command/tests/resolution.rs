@@ -251,6 +251,7 @@ pub(super) fn complete_review_with_finding(
             then: vec![ReviewFollowup {
                 task: tracked,
                 add: TaskAdd {
+                    intent: None,
                     title: "Cover the negative path the review named".to_owned(),
                     project: None,
                     description: None,
@@ -508,6 +509,7 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
             then: vec![ReviewFollowup {
                 task: created_stamp,
                 add: TaskAdd {
+                    intent: None,
                     title: "Create the missing review fixture".to_owned(),
                     project: Some("board.test".to_owned()),
                     description: None,
@@ -705,6 +707,7 @@ fn unclean_review_blocks_downstream_until_correction_and_later_clean_review() {
             then: vec![ReviewFollowup {
                 task: followup_stamp,
                 add: TaskAdd {
+                    intent: None,
                     title: "Correct the reviewed prerequisite".to_owned(),
                     project: Some("board.test".to_owned()),
                     description: None,
@@ -966,6 +969,7 @@ fn add_raw_task(
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born }],
         &TaskAdd {
+            intent: None,
             title: title.to_owned(),
             project: Some("board.test".to_owned()),
             description: None,

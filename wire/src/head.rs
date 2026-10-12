@@ -23,6 +23,81 @@ pub struct ClaimCell {
     pub phase: Phase,
 }
 
+/// Declared planning purpose of a task, independent of its workflow phase.
+///
+/// A task's phase says which step of its flow is current; its intent says
+/// what the task as a whole exists to deliver. A Plan constructs and reviews
+/// executable contracts; a Design decides which assembly is justified, or
+/// concludes that none is. Neither grants permission to implement or
+/// authorizes the outputs it plans. A task without declared intent carries no
+/// value: intent is never inferred from a flow or a phase name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskIntent {
+    /// Construct and review executable contracts.
+    Plan,
+    /// Justify an assembly, or a negative disposition.
+    Design,
+}
+
+impl TaskIntent {
+    /// Every declared intent, in presentation order.
+    pub const ALL: [Self; 2] = [Self::Plan, Self::Design];
+
+    /// Stable text spelling shared by the wire and the command line.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Plan => "plan",
+            Self::Design => "design",
+        }
+    }
+}
+
+impl std::fmt::Display for TaskIntent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for TaskIntent {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|intent| intent.as_str() == text)
+            .ok_or_else(|| format!("task intent {text:?} is not one of plan, design"))
+    }
+}
+
+/// One explicit change to a task's declared intent.
+///
+/// Omission means unchanged; declaring and withdrawing are distinct
+/// spellings, so no statement correction can move intent by accident.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "lowercase", deny_unknown_fields)]
+pub enum TaskIntentEdit {
+    /// Declare this intent, replacing any previous one.
+    Set {
+        /// Intent the task declares from this revision on.
+        intent: TaskIntent,
+    },
+    /// Withdraw the declared intent.
+    Clear {},
+}
+
+impl TaskIntentEdit {
+    /// Declared intent after this change.
+    #[must_use]
+    pub const fn intent(self) -> Option<TaskIntent> {
+        match self {
+            Self::Set { intent } => Some(intent),
+            Self::Clear {} => None,
+        }
+    }
+}
+
 /// One current task statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +131,16 @@ pub struct TaskHead {
     pub tags: Vec<String>,
     /// Tasks that must complete first.
     pub dependencies: Vec<TaskStamp>,
+    /// Declared Plan or Design intent, stable across every phase change.
+    ///
+    /// Only creation and an explicit [`TaskIntentEdit`] admitted through a
+    /// statement correction establish it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub intent: Option<TaskIntent>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: Origin,
     /// Creation-time transcript authority, immutable across statement revisions.

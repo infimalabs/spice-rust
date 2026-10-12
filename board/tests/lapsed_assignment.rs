@@ -72,6 +72,7 @@ fn bystander() -> Actor {
 /// One review row assigned to `assignee`, with `holder`'s claim in `disposition`.
 fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -> Entry {
     let statement = TaskHead {
+        intent: None,
         born: stamp("BOARD-r1"),
         queue_origin: seq(1),
         title: "Review the lapsed assignment".to_owned(),

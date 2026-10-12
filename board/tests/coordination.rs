@@ -97,6 +97,7 @@ fn admitted(
 fn statement(name: &str) -> TaskHead {
     let born = stamp(name);
     TaskHead {
+        intent: None,
         born: born.clone(),
         queue_origin: seq(1),
         title: format!("Implement {name}"),
@@ -192,6 +193,7 @@ fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journa
     let fact = write
         .fact(
             body::TaskAdded {
+                intent: None,
                 task: task.clone(),
                 title: statement.title.clone(),
                 description: statement.description.clone(),

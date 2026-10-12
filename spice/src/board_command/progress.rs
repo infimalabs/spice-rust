@@ -900,6 +900,7 @@ fn append_review_statement(
     let edited = write
         .fact(
             body::TaskEdited {
+                intent: None,
                 task: entry.born().clone(),
                 revision,
                 dependencies,
@@ -1364,6 +1365,7 @@ fn edit_doc_task(
     let edited = write
         .fact(
             body::TaskEdited {
+                intent: None,
                 task: existing.born().clone(),
                 revision,
                 dependencies,
@@ -1405,6 +1407,7 @@ fn add_doc_task(
     let added = write
         .fact(
             body::TaskAdded {
+                intent: None,
                 task: spec.born.clone(),
                 title: spec.title.clone(),
                 description: spec.description.clone(),
@@ -1425,6 +1428,7 @@ fn add_doc_task(
     let statement_origin = origin.clone();
     let statement_creation = creation.context();
     write.task_head(added, move |position| TaskHead {
+        intent: None,
         born: statement_task,
         queue_origin: position,
         title: spec.title,

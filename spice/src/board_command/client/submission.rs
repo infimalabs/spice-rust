@@ -45,6 +45,10 @@ pub(super) fn client_add(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
+    let intent = match super::declared_intent(matches) {
+        Ok(intent) => intent,
+        Err(outcome) => return outcome,
+    };
     let claim = matches.get_flag("claim");
     let recover = matches.get_flag("recover");
     if claim && recover {
@@ -55,6 +59,7 @@ pub(super) fn client_add(
         );
     }
     let body = TaskAdd {
+        intent,
         title,
         project,
         description,
@@ -189,6 +194,7 @@ fn capture_new_task(
         repository,
         add_contract,
         TaskAdd {
+            intent: None,
             title,
             project: Some(project),
             description: None,

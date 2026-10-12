@@ -63,6 +63,7 @@ fn plan_claim_allows_board_team_but_classifies_repository_work_as_forbidden() {
         CommandKind::TaskEdit,
         vec![statement_witness(at(&held, &plan))],
         &TaskEdit {
+            intent: None,
             task: plan.clone(),
             title: None,
             description: Some("Sequence the implementation children".to_owned()),
@@ -233,6 +234,7 @@ fn prepare_plan_advance_competitor(
         CommandKind::TaskEdit,
         vec![statement_witness(at(&visible, plan))],
         &TaskEdit {
+            intent: None,
             task: plan.clone(),
             title: None,
             description: None,
@@ -258,6 +260,7 @@ fn prepare_plan_advance_competitor(
         CommandKind::TaskEdit,
         vec![statement_witness(at(&visible, &sibling))],
         &TaskEdit {
+            intent: None,
             task: sibling.clone(),
             title: None,
             description: None,
@@ -405,6 +408,7 @@ fn selected_plan_reads_gate_completion_with_current_reverse_child_heads() {
         CommandKind::TaskEdit,
         vec![statement_witness(at(&visible, &child))],
         &TaskEdit {
+            intent: None,
             task: child.clone(),
             title: None,
             description: None,

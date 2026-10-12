@@ -172,6 +172,7 @@ impl EntryFixture {
 fn statement() -> TaskHead {
     let born = TaskStamp::for_micros(1).expect("fixture task stamp");
     TaskHead {
+        intent: None,
         born,
         queue_origin: seq(1),
         title: "Run full verification".to_owned(),

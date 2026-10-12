@@ -394,6 +394,10 @@ pub(in crate::board_command) fn task_show_bounded(
         format!("title {}", task.presentation_title()),
         format!("project {}", statement.project),
         format!("priority {}", task_priority(&statement.tags).unwrap_or("-")),
+        format!(
+            "intent {}",
+            statement.intent.map_or("-", wire::TaskIntent::as_str)
+        ),
         format!("phase {}", workflow.phase),
         format!("status {}", workflow.status),
         format!("claim {}", claim_line(task)),

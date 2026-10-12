@@ -713,6 +713,13 @@ pub struct BoardStatement {
     pub tags: Vec<String>,
     /// Tasks that must complete first.
     pub dependencies: Vec<crate::TaskStamp>,
+    /// Declared Plan or Design intent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub intent: Option<crate::TaskIntent>,
     /// Creation provenance, immutable across statement revisions.
     pub provenance: crate::Origin,
     /// Creation-time transcript authority, immutable across statement revisions.
@@ -733,6 +740,7 @@ impl From<&crate::TaskHead> for BoardStatement {
             project: statement.project.clone(),
             tags: statement.tags.clone(),
             dependencies: statement.dependencies.clone(),
+            intent: statement.intent,
             provenance: statement.provenance.clone(),
             creation: statement.creation.clone(),
             revision: statement.revision,
@@ -758,6 +766,7 @@ impl BoardStatement {
             project: self.project.clone(),
             tags: self.tags.clone(),
             dependencies: self.dependencies.clone(),
+            intent: self.intent,
             provenance: self.provenance.clone(),
             creation: self.creation.clone(),
             revision: self.revision,

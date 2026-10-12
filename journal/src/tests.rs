@@ -34,6 +34,7 @@ mod renewal;
 mod schema;
 mod steering_index;
 mod steering_verification;
+mod task_intent;
 mod thread;
 mod transcript;
 mod wal;
@@ -857,6 +858,7 @@ fn insert_receipt(journal: &Journal) {
 
 fn task_head() -> TaskHead {
     TaskHead {
+        intent: None,
         born: "1kKRRsDP".parse().expect("task stamp"),
         queue_origin: Seq::new(1).expect("queue origin"),
         title: "Lay journal baseline".to_owned(),

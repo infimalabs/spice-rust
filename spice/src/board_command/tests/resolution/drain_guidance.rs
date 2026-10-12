@@ -131,6 +131,21 @@ fn explicit_release_clears_possession_and_ranks_the_row_last_for_that_lane() {
     clean(&root, bus);
 }
 
+fn drain_add(title: &str, origin: &wire::Origin) -> TaskAdd {
+    TaskAdd {
+        title: title.to_owned(),
+        project: Some("board.test".to_owned()),
+        description: None,
+        acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
+        origin: Some(origin.clone()),
+        flow: Some("todo".to_owned()),
+        depends: Vec::new(),
+        claim: false,
+        intent: None,
+    }
+}
+
 #[test]
 fn drain_guidance_follows_lane_ownership_across_add_release_and_wake() {
     let (root, bus, epoch, seats) = fixture("drain-continuation", 1);
@@ -141,17 +156,7 @@ fn drain_guidance_follows_lane_ownership_across_add_release_and_wake() {
     let origin: wire::Origin = "fixture:drain-continuation"
         .parse()
         .expect("fixture origin is valid");
-    let add = |title: &str| TaskAdd {
-        title: title.to_owned(),
-        project: Some("board.test".to_owned()),
-        description: None,
-        acceptance: Vec::new(),
-        requirements: wire::EnvironmentRequirements::default(),
-        origin: Some(origin.clone()),
-        flow: Some("todo".to_owned()),
-        depends: Vec::new(),
-        claim: false,
-    };
+    let add = |title: &str| drain_add(title, &origin);
     let idle_add = assert_committed(issue(
         &bus,
         epoch,

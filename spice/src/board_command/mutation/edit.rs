@@ -160,13 +160,14 @@ fn corrected_statement(
         && edit.description.is_none()
         && edit.acceptance.is_empty()
         && edit.requirements.is_none()
+        && edit.intent.is_none()
         && edit.priority.is_none()
         && edit.project.is_none()
     {
         return Err(refusal(
             "task::edit-empty",
             Some(edit.task.to_string()),
-            "name at least one statement field or an environmental requirement edit",
+            "name at least one statement field, an environmental requirement edit, or an intent edit",
         ));
     }
     let mut statement = entry.statement().clone();
@@ -181,6 +182,9 @@ fn corrected_statement(
     }
     if let Some(requirements) = &edit.requirements {
         statement.requirements = requirements.requirements();
+    }
+    if let Some(intent) = edit.intent {
+        statement.intent = intent.intent();
     }
     if let Some(priority) = &edit.priority {
         correct_priority(&mut statement.tags, priority)?;
@@ -272,6 +276,7 @@ fn publish_correction(
     requirement_change.guard(&mut write);
     let edited = match write.fact(
         body::TaskEdited {
+            intent: edit.intent,
             task: statement.born.clone(),
             revision,
             dependencies: None,

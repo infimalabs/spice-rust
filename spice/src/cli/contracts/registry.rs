@@ -534,7 +534,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "add"],
         "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
-         [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] \
+         [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--intent INTENT] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
          [--origin ORIGIN] [--claim] [--recover]",
         OperatorOrLane,
@@ -645,7 +645,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "modify"],
         "task modify HANDLE [--title TITLE] [--description DESCRIPTION] \
-         [--acceptance ACCEPTANCE...] [--priority PRIORITY] [--project PROJECT]",
+         [--acceptance ACCEPTANCE...] [--priority PRIORITY] [--project PROJECT] \
+         [--intent INTENT] [--clear-intent]",
         OperatorOrLane,
         Command,
         [TaskEdited, TaskNoted],

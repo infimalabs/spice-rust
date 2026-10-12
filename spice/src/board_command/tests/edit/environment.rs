@@ -35,6 +35,7 @@ fn appliance_requirement_holds_a_task_until_a_later_appliance_runs() {
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born }],
         &TaskAdd {
+            intent: None,
             title: "Wait for the next appliance".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
@@ -296,6 +297,7 @@ fn add_blocked_requirement(
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born }],
         &TaskAdd {
+            intent: None,
             title: "Require a future journal".to_owned(),
             project: Some("board.test".to_owned()),
             description: None,

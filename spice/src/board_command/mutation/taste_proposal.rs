@@ -78,6 +78,7 @@ pub(in crate::board_command) fn taste_proposal_add(
         );
     }
     let normalized = TaskAdd {
+        intent: None,
         title: add.title.clone(),
         project: None,
         description: Some(add.description.clone()),

@@ -168,6 +168,13 @@ pub struct TaskAdded {
     pub tags: Vec<String>,
     /// Tasks this one waits behind.
     pub depends: Vec<TaskStamp>,
+    /// Declared Plan or Design intent the statement opens with.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub intent: Option<crate::TaskIntent>,
     /// Ordered phases the workflow head will walk.
     pub flow: Vec<Phase>,
     /// Phase the initial workflow head sits in.
@@ -472,6 +479,16 @@ pub struct TaskEdited {
         deserialize_with = "crate::optional::present"
     )]
     pub dependencies: Option<Vec<TaskStamp>>,
+    /// Explicit intent change this edit admitted.
+    ///
+    /// The fold of creation intent and these changes is the statement head's
+    /// declared intent; edits that leave intent alone omit this field.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub intent: Option<crate::TaskIntentEdit>,
     /// Claimant notice authority recorded by an earlier build; never written.
     #[serde(
         default,

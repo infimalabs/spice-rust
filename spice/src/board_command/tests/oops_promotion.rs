@@ -258,6 +258,7 @@ fn task_add_oops_dependency_refuses(
             CommandKind::TaskAdd,
             vec![Witness::Absence { task: born }],
             &TaskAdd {
+                intent: None,
                 title: "Creation cannot bypass parked dependency policy".to_owned(),
                 project: Some("board.test".to_owned()),
                 description: None,
@@ -414,6 +415,7 @@ fn stale_promotion_after_edit(
         CommandKind::TaskEdit,
         vec![stale_statement.clone()],
         &TaskEdit {
+            intent: None,
             task: parked.clone(),
             title: None,
             description: Some("Edited during promotion capture".to_owned()),
@@ -509,6 +511,7 @@ fn wake_is_the_only_unclaimed_oops_project_exit() {
         CommandKind::TaskEdit,
         vec![statement_witness(heads)],
         &TaskEdit {
+            intent: None,
             task: parked.clone(),
             title: None,
             description: None,

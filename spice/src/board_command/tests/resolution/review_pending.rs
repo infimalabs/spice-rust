@@ -209,6 +209,7 @@ fn finding_command_replays_once_and_allocator_selects_its_correction() {
         then: vec![ReviewFollowup {
             task: correction_stamp.clone(),
             add: TaskAdd {
+                intent: None,
                 title: "Replay-safe correction".to_owned(),
                 project: Some("board.test".to_owned()),
                 description: None,
@@ -275,6 +276,7 @@ fn finding_command_replays_once_and_allocator_selects_its_correction() {
 
 fn correction_add(title: &str, flow: Option<&str>) -> TaskAdd {
     TaskAdd {
+        intent: None,
         title: title.to_owned(),
         project: Some("board.test".to_owned()),
         description: None,
@@ -355,6 +357,7 @@ fn repeated_finding_reuses_one_completed_correction_without_a_duplicate_edge() {
             then: vec![ReviewFollowup {
                 task: correction_stamp.clone(),
                 add: TaskAdd {
+                    intent: None,
                     title: "One durable correction".to_owned(),
                     project: Some("board.test".to_owned()),
                     description: None,

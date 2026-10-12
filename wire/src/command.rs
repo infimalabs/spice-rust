@@ -925,18 +925,18 @@ impl CommandKind {
                 });
             }
         }
-        if let (
-            Self::TaskEdit,
-            Intent::TaskEdit(
-                edit @ crate::intent::TaskEdit {
-                    requirements: Some(_),
-                    ..
-                },
-            ),
-        ) = (self, body)
+        // Requirement and intent edits are guarded authority changes, so the
+        // statement witness they carry must name the edited task itself.
+        if let (Self::TaskEdit, Intent::TaskEdit(edit)) = (self, body)
+            && (edit.requirements.is_some() || edit.intent.is_some())
         {
             let target = edit.task.born().ok();
-            for kind in [WitnessKind::Task, WitnessKind::Claim] {
+            let kinds: &[WitnessKind] = if edit.requirements.is_some() {
+                &[WitnessKind::Task, WitnessKind::Claim]
+            } else {
+                &[WitnessKind::Task]
+            };
+            for &kind in kinds {
                 let target_is_witnessed = expected.iter().any(|witness| {
                     matches!(
                         (kind, witness, target.as_ref()),
