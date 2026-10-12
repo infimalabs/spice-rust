@@ -7,6 +7,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use crate::SCHEMA_VERSION;
 
 mod fact_bounds;
+mod residual;
 
 #[cfg(test)]
 pub(crate) use fact_bounds::bounds_sql;
@@ -23,11 +24,12 @@ const PREPARED: &str = "prepared";
 /// context schema 35 was the last to default. It then writes the explicit
 /// subscription table a residency head may still omit, replaces retired fact
 /// kinds with inert current-schema evidence, drops retired plan-advance
-/// guidance from task completions and their receipts, and creates the
-/// room-authority projection, which no predecessor could have populated, empty before the
-/// schema identity advances, so no current reader needs a retired DTO or
-/// decode arm.
-const PREDECESSOR_SCHEMAS: [u32; 4] = [33, 34, 35, 36];
+/// guidance from task completions and their receipts, crosses or refuses the
+/// remaining retired fact, receipt, and head shapes in [`residual`], and
+/// creates the room-authority projection, which no predecessor could have
+/// populated, empty before the schema identity advances, so no current reader
+/// needs a retired DTO or decode arm.
+const PREDECESSOR_SCHEMAS: [u32; 5] = [33, 34, 35, 36, 37];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 /// Release that added the residency subscription table without a schema step.
@@ -246,6 +248,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     cross_residency_subscriptions(&transaction)?;
     cross_retired_gate_filed(&transaction)?;
     cross_retired_task_guidance(&transaction)?;
+    residual::cross(&transaction)?;
     if version < ROOM_AUTHORITY_SCHEMA {
         transaction
             .execute_batch(crate::rooms::SCHEMA_SQL)
@@ -525,40 +528,13 @@ fn retained_fact_error(seq: i64, detail: impl Into<String>) -> OpenError {
 /// disagrees with the new bytes; the advisory text itself is unrecoverable.
 /// Any guidance other than the one retired spelling refuses the crossing.
 fn cross_retired_task_guidance(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
-    let task_done = wire::FactKind::TaskDone.as_str();
-    let facts = guidance_rows::<i64>(
+    residual::rewrite_facts(
         transaction,
-        "SELECT seq, envelope FROM fact_envelopes WHERE kind = ?1 \
-         AND json_type(CAST(envelope AS TEXT), '$.fact.terminal.guidance') IS NOT NULL \
-         ORDER BY seq",
-        task_done,
+        wire::FactKind::TaskDone,
+        "json_type(CAST(envelope AS TEXT), '$.fact.terminal.guidance') IS NOT NULL",
+        RETIRED_TASK_GUIDANCE_RELEASE,
+        |fact| take_retired_guidance(fact.get_mut("terminal")),
     )?;
-    for (seq, bytes) in facts {
-        let refuse = |detail: String| guidance_error("fact_envelopes", &seq, detail);
-        let mut envelope: serde_json::Value = serde_json::from_slice(&bytes)
-            .map_err(|error| refuse(format!("the stored envelope does not decode: {error}")))?;
-        take_retired_guidance(envelope.pointer_mut("/fact/terminal")).map_err(refuse)?;
-        let current = serde_json::to_vec(&envelope)
-            .map_err(|error| refuse(format!("the crossed envelope cannot encode: {error}")))
-            .and_then(|crossed| {
-                wire::decode::<wire::Envelope<wire::AnyFact>>(&crossed).map_err(|error| {
-                    refuse(format!("the crossed envelope is not current: {error}"))
-                })
-            })?;
-        let bytes = wire::encode(&current)
-            .map_err(|error| refuse(format!("the crossed envelope cannot encode: {error}")))?;
-        let changed = transaction
-            .execute(
-                "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = ?2 AND kind = ?3",
-                params![bytes, seq, task_done],
-            )
-            .map_err(OpenError::Sqlite)?;
-        if changed != 1 {
-            return Err(refuse(
-                "the row changed under the exclusive crossing".to_owned(),
-            ));
-        }
-    }
 
     let command = wire::CommandKind::TaskDone;
     let receipts = guidance_rows::<String>(
@@ -1156,8 +1132,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 37, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 38, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 37;
+PRAGMA user_version = 38;
 "#;

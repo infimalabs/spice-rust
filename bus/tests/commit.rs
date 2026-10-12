@@ -521,7 +521,6 @@ fn complete_head_materialization_is_shared_and_delta_bounded() {
                     task: current.born.clone(),
                     revision: u32::try_from(revision).expect("fixture revision"),
                     dependencies: None,
-                    notice: None,
                 },
                 FactCause::Existing(snapshot.cursor().expect("prior cursor")),
             )
@@ -607,10 +606,10 @@ fn terminal_workflow_with_an_active_claim_is_an_allocation_fault() {
                 lane,
                 occupant,
                 epoch: uuid(COMMAND_ONE),
-                cell: Some(ClaimCell {
+                cell: ClaimCell {
                     project: "bus".to_owned(),
                     phase: task_phase.clone(),
-                }),
+                },
                 until: instant("2030-04-12T18:54:10.271Z"),
                 git: None,
                 recovery: None,
@@ -1171,15 +1170,9 @@ fn task_snapshot_indexes_the_newest_claim_per_actor_and_each_occupants_context_a
     assert_eq!((landed.first(), landed.last()), (1, 2));
 
     let mut write = bare_write();
-    claim_won(&mut write, "bus.first", Some(phase("todo")), lane, first);
-    claim_won(&mut write, "bus.second", None, lane, first);
-    claim_won(
-        &mut write,
-        "bus.third",
-        Some(phase("review")),
-        lane,
-        successor,
-    );
+    claim_won(&mut write, "bus.first", phase("todo"), lane, first);
+    claim_won(&mut write, "bus.second", phase("todo"), lane, first);
+    claim_won(&mut write, "bus.third", phase("review"), lane, successor);
     let landed = committed(bus.commit(write).expect("writer answers"));
     assert_eq!((landed.first(), landed.last()), (3, 5));
 
@@ -1189,10 +1182,10 @@ fn task_snapshot_indexes_the_newest_claim_per_actor_and_each_occupants_context_a
         facts.latest_claim(&Actor::Operator),
         Some((
             Seq::new(5).expect("position"),
-            Some(ClaimCell {
+            ClaimCell {
                 project: "bus.third".to_owned(),
                 phase: phase("review"),
-            })
+            }
         )),
         "the newest win wins, whatever cells the older ones carried"
     );
@@ -1218,7 +1211,7 @@ fn task_snapshot_indexes_the_newest_claim_per_actor_and_each_occupants_context_a
     let landed = committed(bus.commit(write).expect("writer answers"));
     assert_eq!((landed.first(), landed.last()), (6, 6));
     let mut write = bare_write();
-    claim_won(&mut write, "bus.fourth", None, lane, successor);
+    claim_won(&mut write, "bus.fourth", phase("todo"), lane, successor);
     let landed = committed(bus.commit(write).expect("writer answers"));
     assert_eq!((landed.first(), landed.last()), (7, 7));
 
@@ -1228,8 +1221,14 @@ fn task_snapshot_indexes_the_newest_claim_per_actor_and_each_occupants_context_a
     assert_eq!(facts.context_anchor(lane, successor), Seq::new(6));
     assert_eq!(
         facts.latest_claim(&Actor::Operator),
-        Some((Seq::new(7).expect("position"), None)),
-        "a legacy win without a cell still supersedes the cell before it"
+        Some((
+            Seq::new(7).expect("position"),
+            ClaimCell {
+                project: "bus.fourth".to_owned(),
+                phase: phase("todo"),
+            }
+        )),
+        "a later commit's win supersedes the cell before it"
     );
     bus.shutdown().expect("writer shuts down");
 }
@@ -1246,7 +1245,7 @@ fn recognition_write() -> JournalWrite {
 fn claim_won(
     write: &mut JournalWrite,
     project: &str,
-    cell: Option<Phase>,
+    phase: Phase,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) {
@@ -1258,10 +1257,10 @@ fn claim_won(
                 lane,
                 occupant,
                 epoch: uuid(COMMAND_ONE),
-                cell: cell.map(|phase| ClaimCell {
+                cell: ClaimCell {
                     project: project.to_owned(),
                     phase,
-                }),
+                },
                 until: instant("2030-04-12T18:54:10.271Z"),
                 git: None,
                 recovery: None,

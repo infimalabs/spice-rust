@@ -871,7 +871,6 @@ fn append_review_statement(
                 task: entry.born().clone(),
                 revision,
                 dependencies,
-                notice: None,
             },
             FactCause::Pending(reviewed),
         )
@@ -1330,7 +1329,6 @@ fn edit_doc_task(
                 task: existing.born().clone(),
                 revision,
                 dependencies,
-                notice: None,
             },
             cause,
         )

@@ -371,10 +371,10 @@ fn append_seed_claim_facts(
                 lane: durable.lane,
                 occupant: durable.occupant.expect("durable occupant"),
                 epoch: old_epoch,
-                cell: Some(wire::ClaimCell {
+                cell: wire::ClaimCell {
                     project: "task.claim".to_owned(),
                     phase: phase.clone(),
-                }),
+                },
                 until: expiry,
                 git: None,
                 recovery: None,

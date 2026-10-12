@@ -184,10 +184,8 @@ impl TerminalIndex {
 struct Indexes {
     trust_surfaces: HashMap<String, journal::crossing::Digest>,
     terminals: TerminalIndex,
-    claims: HashMap<
-        journal::crossing::Actor,
-        (journal::crossing::Seq, Option<journal::crossing::ClaimCell>),
-    >,
+    claims:
+        HashMap<journal::crossing::Actor, (journal::crossing::Seq, journal::crossing::ClaimCell)>,
     context_anchors: HashMap<
         (
             journal::crossing::CanonicalUuid,
@@ -480,7 +478,7 @@ impl TaskFacts {
     pub fn latest_claim(
         &self,
         actor: &journal::crossing::Actor,
-    ) -> Option<(journal::crossing::Seq, Option<journal::crossing::ClaimCell>)> {
+    ) -> Option<(journal::crossing::Seq, journal::crossing::ClaimCell)> {
         self.indexes.claims.get(actor).cloned()
     }
 
@@ -1117,7 +1115,7 @@ fn advance_trust(
         });
         let allocation = match &build.prior {
             Some(prior) => advance_allocation_index(read, prior, &build.tasks),
-            None => rebuild_allocation_index(&build.tasks, &build.facts),
+            None => rebuild_allocation_index(&build.tasks),
         }
         .map_err(BusReadError::Head)?;
         build.facts.retain_allocation_origins(&allocation.frontier);
@@ -1134,7 +1132,6 @@ fn advance_trust(
             allocation_frontier: allocation.frontier,
             dependency_standing: allocation.standing,
             dependency_references: allocation.references,
-            legacy_recent_claim_cells: allocation.legacy_recent_claim_cells,
             allocation_faults: allocation.faults,
             trust: Arc::from(build.trust),
             residency,
@@ -1148,14 +1145,10 @@ struct AllocationIndex {
     frontier: Arc<[journal::TaskHeads]>,
     references: Arc<HashMap<journal::crossing::TaskStamp, usize>>,
     standing: Arc<HashMap<journal::crossing::TaskStamp, DependencyStanding>>,
-    legacy_recent_claim_cells: Arc<HashMap<journal::crossing::Actor, journal::crossing::ClaimCell>>,
     faults: Arc<[AllocationFault]>,
 }
 
-fn rebuild_allocation_index(
-    tasks: &[journal::TaskHeads],
-    facts: &TaskFacts,
-) -> Result<AllocationIndex, GuardError> {
+fn rebuild_allocation_index(tasks: &[journal::TaskHeads]) -> Result<AllocationIndex, GuardError> {
     let mut frontier = Vec::new();
     let mut references = HashMap::new();
     let mut faults = Vec::new();
@@ -1189,29 +1182,10 @@ fn rebuild_allocation_index(
             standing.insert(task.clone(), task_standing(heads));
         }
     }
-    let mut legacy_recent_claim_cells = HashMap::new();
-    let missing = facts
-        .indexes
-        .claims
-        .iter()
-        .filter(|&(_, (_, cell))| cell.is_none())
-        .map(|(actor, (claimed, _))| ((actor.clone(), *claimed), actor.clone()))
-        .collect::<HashMap<_, _>>();
-    if !missing.is_empty() {
-        for heads in tasks {
-            let Some(claim) = heads.claim() else {
-                continue;
-            };
-            if let Some(actor) = missing.get(&(claim.body().actor.clone(), claim.body().claimed)) {
-                legacy_recent_claim_cells.insert(actor.clone(), claim.body().cell.clone());
-            }
-        }
-    }
     Ok(AllocationIndex {
         frontier: Arc::from(frontier),
         references: Arc::new(references),
         standing: Arc::new(standing),
-        legacy_recent_claim_cells: Arc::new(legacy_recent_claim_cells),
         faults: Arc::from(faults),
     })
 }
@@ -1226,7 +1200,6 @@ fn advance_allocation_index(
             frontier: Arc::clone(&prior.allocation_frontier),
             references: Arc::clone(&prior.dependency_references),
             standing: Arc::clone(&prior.dependency_standing),
-            legacy_recent_claim_cells: Arc::clone(&prior.legacy_recent_claim_cells),
             faults: Arc::clone(&prior.allocation_faults),
         });
     }
@@ -1291,7 +1264,6 @@ fn advance_allocation_index(
         frontier: Arc::from(frontier),
         references: Arc::new(references),
         standing: Arc::new(standing),
-        legacy_recent_claim_cells: Arc::clone(&prior.legacy_recent_claim_cells),
         faults: Arc::from(faults),
     })
 }

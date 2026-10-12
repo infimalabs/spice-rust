@@ -949,7 +949,6 @@ fn commit_dependency_edit(
             task: entry.born().clone(),
             revision,
             dependencies: Some(dependencies),
-            notice: None,
         },
         FactCause::Root,
     ) {

@@ -192,10 +192,10 @@ fn seed_active_claim(
                 lane,
                 occupant,
                 epoch,
-                cell: Some(wire::ClaimCell {
+                cell: wire::ClaimCell {
                     project: "journal.effort".into(),
                     phase: "todo".parse().expect("fixture phase"),
-                }),
+                },
                 until: "2030-08-01T07:00:00.000Z"
                     .parse()
                     .expect("fixture claim expiry"),

@@ -102,7 +102,7 @@ pub use hello::{
     Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,
     OperatorIdentity, Rejected, SpeechPlayback,
 };
-pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
+pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
 pub use media::{AgentMediaReference, MarkdownImageBinding, Media, MediaError};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use quota::{

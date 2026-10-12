@@ -1048,10 +1048,10 @@ fn seed_write_with_lanes(authority: &Authority, lanes: Vec<LaneResidency>) -> Jo
                 lane: authority.lane,
                 occupant: authority.occupant,
                 epoch: authority.epoch,
-                cell: Some(wire::ClaimCell {
+                cell: wire::ClaimCell {
                     project: "timer.claim".to_owned(),
                     phase: phase.clone(),
-                }),
+                },
                 until: authority.expiry,
                 git: Some(GitBoundary {
                     head: "local-commit".to_owned(),

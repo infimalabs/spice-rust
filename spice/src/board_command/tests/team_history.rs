@@ -129,7 +129,7 @@ fn team_history_follows_the_claim_lane_not_the_winning_principal() {
                 lane: member.lane,
                 occupant: member.occupant,
                 epoch,
-                cell: Some(cell.clone()),
+                cell: cell.clone(),
                 until: at,
                 git: None,
                 recovery: None,

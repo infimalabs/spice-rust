@@ -12,7 +12,7 @@
 use std::collections::BTreeSet;
 
 use wire::intent::{
-    AnswerShape, BoardStatement, BoardTask, CommandAnswer, Intent, Positioned, ProjectVisibility,
+    AnswerShape, BoardStatement, BoardTask, CommandAnswer, Positioned, ProjectVisibility,
     TaskDetailAnswer, TaskDetailClosure, TaskDetailNote, TaskRelationEdge, TaskRelationFrontier,
     TaskRelationKind, TaskRelationNode, TaskRelationNodeRef, TaskRelationTruncation,
     TaskRelationsAnswer, TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent,
@@ -770,32 +770,6 @@ fn a_body_spelled_for_another_kind_is_refused() {
         shape.decode(bare.as_bytes()).is_err(),
         "a body missing its required validation decoded as task::done",
     );
-}
-
-#[test]
-fn release_publication_requires_an_explicit_current_or_historical_note_state() {
-    let shape = CommandKind::ReleasePublish.binding().body;
-    let missing = r#"{
-        "key": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-        "manifest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-    }"#;
-    assert!(
-        shape.decode(missing.as_bytes()).is_err(),
-        "unmigrated publication intent must not enter the current decoder"
-    );
-
-    let historical = r#"{
-        "key": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-        "manifest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-        "notes": null
-    }"#;
-    let Intent::ReleasePublish(publish) = shape
-        .decode(historical.as_bytes())
-        .expect("migrated historical absence decodes")
-    else {
-        panic!("release body decoded as another intent")
-    };
-    assert_eq!(publish.notes, wire::ReleaseNotesIdentity::HistoricalAbsent);
 }
 
 #[test]

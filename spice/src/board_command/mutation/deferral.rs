@@ -128,7 +128,6 @@ fn append_promotion(
                 task: entry.born().clone(),
                 revision,
                 dependencies,
-                notice: None,
             },
             FactCause::Pending(woken),
         )

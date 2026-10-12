@@ -97,13 +97,7 @@ fn validated_snapshot_from_with_occupant(
     // neither consumes nor synthesizes a partial one.
     let recent_cell = selected
         .is_none()
-        .then(|| {
-            board::recent_claim_cell(
-                &entries,
-                observed.facts().latest_claim(&principal),
-                &principal,
-            )
-        })
+        .then(|| observed.recent_claim_cell(&principal))
         .flatten();
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();

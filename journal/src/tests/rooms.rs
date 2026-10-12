@@ -148,7 +148,6 @@ fn edit_project(journal: &mut Journal, task: &TaskStamp, project: &str) {
                 revision: 2,
                 dependencies: None,
                 intent: None,
-                notice: None,
             },
             FactCause::Root,
         )
