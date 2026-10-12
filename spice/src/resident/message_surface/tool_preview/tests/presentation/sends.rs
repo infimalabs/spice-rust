@@ -77,6 +77,43 @@ fn an_addressed_packet_presents_its_body_as_one_outgoing_quote_in_header_order()
 }
 
 #[test]
+fn contextual_packets_present_room_only_and_directed_destinations() {
+    let [_, addressed] = reviewers();
+    let presented = present(
+        concat!(
+            "MSG #ROOMS-dVrD244Jd: Record this in the room.\n",
+            "MSG 6Jv5#ROOMS-dVrD255Kf operator: Send this too.",
+        ),
+        &proved(&[addressed]),
+        authored(),
+    );
+
+    assert_eq!(
+        presented.text,
+        "> Record this in the room.\n\n> Send this too."
+    );
+    let [room_only, directed] = presented.sends.as_slice() else {
+        panic!("both contextual packets present: {:?}", presented.sends)
+    };
+    assert!(room_only.recipients.is_empty());
+    assert!(!room_only.operator);
+    assert_eq!(
+        room_only.contexts,
+        ["ROOMS-dVrD244Jd"
+            .parse::<wire::TaskHandle>()
+            .expect("fixture task parses")]
+    );
+    assert_eq!(directed.recipients, [addressed]);
+    assert!(directed.operator);
+    assert_eq!(
+        directed.contexts,
+        ["ROOMS-dVrD255Kf"
+            .parse::<wire::TaskHandle>()
+            .expect("fixture task parses")]
+    );
+}
+
+#[test]
 fn a_packet_and_a_following_acknowledgement_present_as_separate_quotes() {
     let key = "1kQnrzNZ";
     let directive = "Keep one tested path.";

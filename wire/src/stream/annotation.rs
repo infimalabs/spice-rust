@@ -109,9 +109,9 @@ pub fn valid_message_directives(text: &str, directives: &[MessageDirective]) -> 
 ///
 /// The range covers the rendered quote block exactly. The packet's header
 /// does not survive presentation; this annotation carries what it said:
-/// the exact occupant that wrote it and every occupant its addresses name,
-/// in header order. An address names one occupant birth forever, so these
-/// identities attribute the packet even after either side leaves its lane.
+/// the exact occupant that wrote it, every occupant its addresses name in
+/// header order, whether it names the operator, and every distinct room
+/// context in header order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageSend {
@@ -125,6 +125,12 @@ pub struct MessageSend {
     pub sender: crate::CanonicalUuid,
     /// Every addressed occupant, in header order.
     pub recipients: Vec<MessageRecipient>,
+    /// Whether one or more selectors name the operator.
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub operator: bool,
+    /// Every distinct task/room context, in first header order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub contexts: Vec<crate::TaskHandle>,
 }
 
 /// One occupant an MSG header addressed.
@@ -141,7 +147,7 @@ pub struct MessageRecipient {
 
 impl MessageSend {
     /// Whether this send names a non-empty UTF-8 range and at least one
-    /// distinct recipient.
+    /// destination.
     #[must_use]
     pub fn is_valid_for(&self, text: &str) -> bool {
         let (Ok(start), Ok(end)) = (usize::try_from(self.start), usize::try_from(self.end)) else {
@@ -149,7 +155,7 @@ impl MessageSend {
         };
         start < end
             && text.get(start..end).is_some()
-            && !self.recipients.is_empty()
+            && (!self.recipients.is_empty() || self.operator || !self.contexts.is_empty())
             && self
                 .recipients
                 .iter()
@@ -159,6 +165,11 @@ impl MessageSend {
                         .iter()
                         .all(|earlier| earlier.address != recipient.address)
                 })
+            && self.contexts.iter().enumerate().all(|(index, context)| {
+                !self.contexts[..index]
+                    .iter()
+                    .any(|earlier| earlier == context)
+            })
     }
 }
 

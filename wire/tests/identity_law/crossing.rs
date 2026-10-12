@@ -966,6 +966,8 @@ fn send_sample(first_id: CanonicalUuid, second_id: CanonicalUuid) -> wire::Messa
             lane: second_id,
             occupant: first_id,
         }],
+        operator: false,
+        contexts: Vec::new(),
     }
 }
 
