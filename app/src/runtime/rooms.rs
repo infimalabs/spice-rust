@@ -1,4 +1,5 @@
-//! Deterministic room, group, and preparation authority projected from facts.
+//! Deterministic room, group, preparation, and conversation authority
+//! projected from facts.
 
 use std::collections::BTreeMap;
 
@@ -6,6 +7,12 @@ use wire::rooms::{self as authority, RoomAuthorityStamp};
 use wire::{CanonicalUuid, FactKind, Packed, Seq, StreamFact, TaskHandle, TaskStamp};
 
 use super::BoardView;
+
+mod conversation;
+
+pub use conversation::{
+    Conversation, ConversationProjection, Delivery, OperatorItem, QuestionResult,
+};
 
 /// Whether the room snapshot can be rendered as current authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,7 +96,11 @@ pub enum RoomEventKind {
         author: CanonicalUuid,
         /// Directed messages opened atomically with the room publication.
         directed: Vec<CanonicalUuid>,
+        /// The MSG, ASK, or ANS conversation this packet admitted, if any.
+        conversation: Option<RoomAuthorityStamp>,
     },
+    /// Operator MSG, ASK, or ANS; its publication is its conversation.
+    Posted,
     /// Scoped request linked to ordinary steering.
     Coordination {
         /// Human steering key.
@@ -190,6 +201,10 @@ pub struct RoomProjection {
     groups: BTreeMap<RoomAuthorityStamp, RoomPositioned<authority::WorkingGroup>>,
     rooms: BTreeMap<TaskStamp, RoomState>,
     preparation: PreparationProjection,
+    conversation: ConversationProjection,
+    /// The run of room packet records directly before the current position,
+    /// which a conversation record ends when the packet admitted one.
+    messaged: Vec<(Seq, TaskStamp, RoomAuthorityStamp)>,
     coordination: BTreeMap<String, CoordinationState>,
     stops: BTreeMap<TaskStamp, RoomPositioned<authority::RoomStopRequest>>,
 }
@@ -206,6 +221,8 @@ impl Default for RoomProjection {
             groups: BTreeMap::new(),
             rooms: BTreeMap::new(),
             preparation: PreparationProjection::default(),
+            conversation: ConversationProjection::default(),
+            messaged: Vec::new(),
             coordination: BTreeMap::new(),
             stops: BTreeMap::new(),
         }
@@ -231,6 +248,11 @@ impl RoomProjection {
     /// Preparation, decision, and authorization authority.
     pub const fn preparation(&self) -> &PreparationProjection {
         &self.preparation
+    }
+
+    /// Conversation, operator item, result, and lane delivery authority.
+    pub const fn conversation(&self) -> &ConversationProjection {
+        &self.conversation
     }
 
     /// Resolve the durable room identity only through the latest board snapshot.
@@ -438,10 +460,17 @@ impl RoomProjection {
     }
 
     fn apply_fact(&mut self, fact: &StreamFact) -> bool {
-        self.apply_room_fact(fact)
+        let delivered = self.conversation.apply_delivery(fact);
+        let changed = self
+            .apply_room_fact(fact)
+            .or_else(|| self.conversation.apply(fact))
             .or_else(|| self.apply_preparation_fact(fact))
             .or_else(|| self.apply_steering_fact(fact))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if fact.kind() != FactKind::RoomMessaged {
+            self.messaged.clear();
+        }
+        delivered | changed
     }
 
     fn apply_room_fact(&mut self, fact: &StreamFact) -> Option<bool> {
@@ -473,22 +502,18 @@ impl RoomProjection {
                     )
                 }))
             }
-            FactKind::RoomMessaged => {
-                Some(fact.read::<authority::RoomMessaged>().is_some_and(|body| {
-                    self.insert_event(
-                        body.room,
-                        body.publication,
-                        RoomEvent {
-                            position: fact.seq(),
-                            kind: RoomEventKind::Messaged {
-                                source: body.hunk,
-                                author: body.author,
-                                directed: body.directed,
-                            },
-                        },
-                    )
-                }))
-            }
+            FactKind::RoomMessaged => Some(
+                fact.read::<authority::RoomMessaged>()
+                    .is_some_and(|body| self.apply_messaged(fact.seq(), body)),
+            ),
+            FactKind::RoomConversed => Some(
+                fact.read::<authority::RoomConversed>()
+                    .is_some_and(|body| self.apply_conversed(fact, body)),
+            ),
+            FactKind::RoomPosted => Some(
+                fact.read::<authority::RoomPosted>()
+                    .is_some_and(|body| self.apply_posted(fact, body)),
+            ),
             FactKind::RoomCoordinationStarted => Some(
                 fact.read::<authority::RoomCoordinationStarted>()
                     .is_some_and(|body| self.apply_coordination(fact.seq(), body)),
@@ -499,6 +524,108 @@ impl RoomProjection {
             ),
             _ => None,
         }
+    }
+
+    fn apply_messaged(&mut self, position: Seq, body: authority::RoomMessaged) -> bool {
+        self.conversation.name(&body.directed);
+        self.messaged
+            .push((position, body.room.clone(), body.publication.clone()));
+        self.insert_event(
+            body.room,
+            body.publication,
+            RoomEvent {
+                position,
+                kind: RoomEventKind::Messaged {
+                    source: body.hunk,
+                    author: body.author,
+                    directed: body.directed,
+                    conversation: None,
+                },
+            },
+        )
+    }
+
+    /// A lane conversation directly follows the room packet records of its
+    /// own write, which own the same transcript hunk; each links to it.
+    fn apply_conversed(&mut self, fact: &StreamFact, body: authority::RoomConversed) -> bool {
+        let Ok(publication) = body.publication() else {
+            return false;
+        };
+        let stamp = body.publication.clone();
+        let admitted = self.conversation.admit(
+            fact.seq(),
+            *fact.at(),
+            publication,
+            body.directed,
+            body.expires,
+            None,
+        );
+        let mut expected = fact.seq().get();
+        let mut linked = false;
+        for (position, room, packet) in self.messaged.iter().rev() {
+            expected -= 1;
+            if position.get() != expected {
+                break;
+            }
+            let Some(RoomEventKind::Messaged {
+                source,
+                conversation,
+                ..
+            }) = self
+                .rooms
+                .get_mut(room)
+                .and_then(|state| state.events.get_mut(packet))
+                .map(|event| &mut event.kind)
+            else {
+                break;
+            };
+            if *source != body.hunk {
+                break;
+            }
+            linked |= conversation.replace(stamp.clone()).as_ref() != Some(&stamp);
+        }
+        admitted | linked
+    }
+
+    /// An operator post records in the one room its routes, or an answer's
+    /// stored question, speak in.
+    fn apply_posted(&mut self, fact: &StreamFact, body: authority::RoomPosted) -> bool {
+        let Ok(publication) = body.publication(wire::SequenceCode::new(fact.seq().get())) else {
+            return false;
+        };
+        let room = match publication.kind() {
+            authority::RoomPublicationKind::Ans { result, .. } => self
+                .conversation
+                .result(result)
+                .and_then(|result| result.value.record.context().cloned()),
+            _ => publication
+                .routes()
+                .iter()
+                .find_map(|route| match &route.destination {
+                    authority::RoomDestination::Task { task } => Some(task.clone()),
+                    _ => route.context.clone(),
+                }),
+        };
+        let stamp = body.publication.clone();
+        let admitted = self.conversation.admit(
+            fact.seq(),
+            *fact.at(),
+            publication,
+            body.directed,
+            body.expires,
+            Some(body.text),
+        );
+        let recorded = room.is_some_and(|room| {
+            self.insert_event(
+                room,
+                stamp,
+                RoomEvent {
+                    position: fact.seq(),
+                    kind: RoomEventKind::Posted,
+                },
+            )
+        });
+        admitted | recorded
     }
 
     /// A coordination record directly follows the direction it links, which

@@ -1027,9 +1027,11 @@ impl JournalRead<'_> {
 
     /// One page of the facts behind current room authority through
     /// `horizon`, in journal order: every room publication, the current head
-    /// of each working group, proposal, and authorization, and for each room
+    /// of each working group, proposal, and authorization, for each room
     /// coordination the direction it follows and that direction's current
-    /// steering head.
+    /// steering head, every conversation record with the current head of
+    /// each operator item and question result, and the opening and current
+    /// steering head of each directive a publication or conversation names.
     ///
     /// A head that moves past `horizon` leaves this set, so the facts after
     /// `horizon` complete the authority it describes without overlap.
@@ -1129,19 +1131,34 @@ impl JournalRead<'_> {
 
 /// Positions of the facts behind current room authority; `?1` spells the
 /// room-coordination kind, whose direction always sits one position earlier.
+/// A publication's or conversation's lane deliveries are the directives its
+/// own fact names.
 macro_rules! room_authority {
     () => {
         "WITH directed(seq) AS ( \
              SELECT p.seq FROM room_publications p \
              JOIN fact_envelopes f ON f.seq = p.seq WHERE f.kind = ?1 \
-         ), authority(seq) AS ( \
+         ), recorded(seq) AS ( \
              SELECT seq FROM room_publications \
+             UNION SELECT head_seq FROM room_conversations \
+         ), delivered(directive) AS ( \
+             SELECT j.value FROM recorded r \
+             JOIN fact_envelopes f ON f.seq = r.seq, \
+             json_each(CAST(f.envelope AS TEXT), '$.fact.directed') j \
+         ), authority(seq) AS ( \
+             SELECT seq FROM recorded \
              UNION SELECT head_seq FROM group_heads \
              UNION SELECT head_seq FROM proposal_heads \
              UNION SELECT head_seq FROM authorization_heads \
+             UNION SELECT head_seq FROM room_items \
+             UNION SELECT head_seq FROM room_results \
              UNION SELECT seq - 1 FROM directed \
              UNION SELECT h.head_seq FROM directed d \
              JOIN steering_heads h ON h.created_seq = d.seq - 1 \
+             UNION SELECT h.created_seq FROM delivered d \
+             JOIN steering_heads h ON h.directive = d.directive \
+             UNION SELECT h.head_seq FROM delivered d \
+             JOIN steering_heads h ON h.directive = d.directive \
          ) "
     };
 }

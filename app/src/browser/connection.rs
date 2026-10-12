@@ -915,6 +915,11 @@ async fn dispatch_action(
         ClientAction::RoomPost(post) => rooms::send_room_post(principal, writer, actions, post)
             .await
             .map(Some),
+        ClientAction::RoomControl { request, respond } => {
+            rooms::send_room_control(principal, writer, actions, request, respond)
+                .await
+                .map(Some)
+        }
         ClientAction::DrainSubmissions => {
             drain_submissions(principal, writer, actions, submissions)
                 .await

@@ -115,7 +115,10 @@ pub(super) fn settle(bus: &Bus, authority: &RoomAuthority, at: Instant) -> Comma
             Err(GuardError::refused(MOVED))
         }
     }));
-    let cause = FactCause::Existing(authority.position);
+    // The settled head may come from any origin (an earlier epoch's resident,
+    // or a room's task), and a cause never crosses origins; the guard above
+    // pins the head instead.
+    let cause = FactCause::Root;
     let staged = match &authority.due {
         RoomDue::Result(result) => proposal.fact(
             RoomQuestionTimedOut {

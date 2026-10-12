@@ -95,6 +95,9 @@ pub(crate) enum PendingKind {
     RoomPost {
         respond: client_action::RoomPostResponse,
     },
+    RoomControl {
+        respond: client_action::RoomControlResponse,
+    },
     Board,
     Lanes {
         wakes: Vec<wire::CanonicalUuid>,
@@ -162,8 +165,9 @@ mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
-    AppRuntime, AppSurface, BlockerActionState, BoardView, LaneActivity, LaneMember, LaneRow,
-    LaneStatus, LaneView, ParticipantReason, PreparationProjection, RoomAnchorAuthority,
+    AppRuntime, AppSurface, BlockerActionState, BoardView, Conversation, ConversationProjection,
+    Delivery, LaneActivity, LaneMember, LaneRow, LaneStatus, LaneView, OperatorItem,
+    ParticipantReason, PreparationProjection, QuestionResult, RoomAnchorAuthority,
     RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomParticipant, RoomPositioned,
     RoomProjection, RoomProjectionStatus, RoomState, Stale, StreamApplication, StreamDirective,
     StreamTerminal, TaskDetailState, TaskRelationsKey, TaskRelationsState, stale_reads,

@@ -1204,3 +1204,62 @@ fn conversation_heads_rebuild_from_facts() {
     assert_eq!(fact_bytes(&room.journal), facts);
     room.journal.verify().expect("rebuilt heads verify");
 }
+
+/// A room snapshot carries every conversation record, the current head of each
+/// operator item and result, and both the opening and current steering head of
+/// each directive a conversation names, so a reader folds the same state.
+#[test]
+fn room_snapshots_carry_conversation_and_delivery_heads() {
+    let mut room = Conversation::new();
+    let asked = room.asked.clone();
+    let question = room.ask_lane(20);
+    let asking = cursor(&room.journal).expect("asked");
+    let opened = room.directive_head(directive(20)).position();
+    room.answer(21, &asked, &question, minute(3))
+        .expect("the respondent answers");
+    let answering = cursor(&room.journal).expect("answered");
+    let acknowledged = room.directive_head(directive(20)).position();
+    let returned = room.directive_head(directive(21)).position();
+    room.ask_operator(30);
+    let of_operator = cursor(&room.journal).expect("asked the operator");
+    room.dispose(RoomReceiptDisposition::Ack, item(31))
+        .expect("the operator acknowledges");
+    let disposed = cursor(&room.journal).expect("disposed");
+    assert_eq!(
+        room.item_head(&item(31)).1,
+        disposed,
+        "the item head moved past its opening record"
+    );
+
+    let horizon = disposed;
+    let mut start = crate::FactPageStart::After(None);
+    let mut rows = Vec::new();
+    loop {
+        let page = room
+            .journal
+            .read(|read| read.room_authority_page(start, horizon, fact_budget(4)))
+            .expect("room authority reads");
+        rows.extend(page.rows.iter().map(|fact| fact.seq));
+        let Some(overflow) = page.overflow else {
+            break;
+        };
+        start = crate::FactPageStart::At(overflow.continuation);
+    }
+    for (seq, what) in [
+        (opened, "the ASK delivery's opening"),
+        (
+            asking,
+            "the ASK record and its pending-then-answered result",
+        ),
+        (acknowledged, "the ASK delivery's current receipt"),
+        (returned, "the answer's return delivery"),
+        (answering, "the ANS record and the result head it settled"),
+        (
+            of_operator,
+            "the operator ASK record and its pending result",
+        ),
+        (disposed, "the operator item's current head"),
+    ] {
+        assert!(rows.contains(&seq), "{what} at {seq} is in the snapshot");
+    }
+}

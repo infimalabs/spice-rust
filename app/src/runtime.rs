@@ -36,7 +36,8 @@ pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 pub use publication::AppSurface;
 pub use rooms::{
-    ParticipantReason, PreparationProjection, RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent,
+    Conversation, ConversationProjection, Delivery, OperatorItem, ParticipantReason,
+    PreparationProjection, QuestionResult, RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent,
     RoomEventKind, RoomParticipant, RoomPositioned, RoomProjection, RoomProjectionStatus,
     RoomState,
 };
