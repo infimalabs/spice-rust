@@ -40,7 +40,7 @@ spice:// resources: views of spice CLI reads; a task's description and acceptanc
 spice://board  task status
 spice://board/graph/VIEW  board graph VIEW (origin, dependencies, review, workflow, claims), live work by default [?all&limit=N&max-bytes=N&max-text=N&at=BORN&after=CURSOR]; all includes settled history; after resumes a snapshot while held by this seat's bounded cache
 spice://task  task list [?all | ?project=PROJECT] [&status=STATUS] [&limit=N&max-bytes=N&max-text=N&after=HANDLE]
-spice://task/HANDLE  task show HANDLE
+spice://task/HANDLE  task show HANDLE; takes no query: /context, /history, and /detail take the paging and text keys
 spice://task/HANDLE/context  task show HANDLE --context [?limit=N&max-bytes=N&max-text=N&after=CURSOR]
 spice://task/HANDLE/history  task show HANDLE --history [same paging]
 spice://task/HANDLE/detail  task show HANDLE --context --history [same paging]
@@ -301,7 +301,11 @@ const SERVED: &[&[&str]] = &[
 impl Shape {
     fn admitted(&self) -> &'static [Key] {
         match self {
-            Self::Board => &[],
+            Self::Board
+            | Self::Task {
+                detail: Detail::Summary,
+                ..
+            } => &[],
             Self::Graph { .. } => GRAPH,
             Self::Tasks => TASK_LIST,
             Self::Task { .. } | Self::Inbox => PAGE,
@@ -434,7 +438,15 @@ impl Query {
     pub(crate) fn from_arguments(arguments: &[String]) -> Option<Self> {
         let words = arguments.iter().map(String::as_str).collect::<Vec<_>>();
         let (mut shape, rest) = Shape::from_command(&words)?;
-        let (mut context, mut history) = (false, false);
+        // Detail decides which keys a task read admits, so settle it first.
+        if let Shape::Task { detail, .. } = &mut shape {
+            *detail = match (rest.contains(&"--context"), rest.contains(&"--history")) {
+                (false, false) => Detail::Summary,
+                (true, false) => Detail::Context,
+                (false, true) => Detail::History,
+                (true, true) => Detail::Both,
+            };
+        }
         let mut options = Vec::new();
         let mut words = rest.iter();
         while let Some(word) = words.next() {
@@ -447,8 +459,7 @@ impl Query {
                 continue;
             };
             match (&shape, key) {
-                (Shape::Task { .. }, "context") => context = true,
-                (Shape::Task { .. }, "history") => history = true,
+                (Shape::Task { .. }, "context" | "history") => {}
                 _ => {
                     let value = match shape.arity(key)? {
                         Arity::Flag => None,
@@ -460,14 +471,6 @@ impl Query {
                     options.push((key.to_owned(), value));
                 }
             }
-        }
-        if let Shape::Task { detail, .. } = &mut shape {
-            *detail = match (context, history) {
-                (false, false) => Detail::Summary,
-                (true, false) => Detail::Context,
-                (false, true) => Detail::History,
-                (true, true) => Detail::Both,
-            };
         }
         shape
             .missing(&options)
@@ -716,13 +719,23 @@ fn options(shape: &Shape, query: &str, url: &str) -> Result<Vec<(String, Option<
                 .iter()
                 .map(|admitted| admitted.name)
                 .collect::<Vec<_>>();
-            return Err(if names.is_empty() {
-                format!("{url} takes no query; drop ?{query}")
-            } else {
-                format!(
+            return Err(match shape {
+                Shape::Task {
+                    handle,
+                    detail: Detail::Summary,
+                } => format!(
+                    "{url} takes no query; read {SCHEME}task/{handle}/context, /history, or \
+                     /detail, which take {}",
+                    PAGE.iter()
+                        .map(|admitted| admitted.name)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                _ if names.is_empty() => format!("{url} takes no query; drop ?{query}"),
+                _ => format!(
                     "{url} takes no query key {key}; it takes {}",
                     names.join(", ")
-                )
+                ),
             });
         };
         match (&value, arity) {
