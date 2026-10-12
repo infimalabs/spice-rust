@@ -164,6 +164,8 @@ fn messaged_packets_record_exact_transcript_hunks_beside_room_publications() {
                         },
                         text: TextRange { start, end },
                     },
+                    author: head.lane,
+                    directed: Vec::new(),
                 },
                 FactCause::Root,
             )
