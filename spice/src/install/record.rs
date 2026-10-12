@@ -18,7 +18,6 @@ pub(super) struct InstallRecord {
     repository: RepositoryIdentity,
     pub(super) plan: InstallPlan,
     pub(super) plan_digest: Digest,
-    reversals: Vec<Option<super::ObservedFile>>,
     destinations: Vec<(super::Location, String)>,
     pub(super) status: InstallStatus,
     pub(super) completed: usize,
@@ -71,11 +70,6 @@ impl InstallRecord {
     pub(super) fn new(plan: InstallPlan) -> Result<Self, InstallError> {
         let plan_digest = plan.digest()?;
         let repository = plan.repository.clone();
-        let reversals = plan
-            .operations
-            .iter()
-            .map(|operation| operation.previous.clone())
-            .collect();
         let destinations = plan
             .operations
             .iter()
@@ -88,7 +82,6 @@ impl InstallRecord {
             repository,
             plan,
             plan_digest,
-            reversals,
             destinations,
             status: InstallStatus::Applying,
             completed: 0,
@@ -265,17 +258,6 @@ impl InstallRecord {
         if self.plan_digest != self.plan.digest()? {
             return Err(InstallError::InvalidRecord(
                 "install record plan digest does not match its canonical plan".to_owned(),
-            ));
-        }
-        if !self
-            .plan
-            .operations
-            .iter()
-            .map(|operation| &operation.previous)
-            .eq(self.reversals.iter())
-        {
-            return Err(InstallError::InvalidRecord(
-                "install reversal images do not close over the plan".to_owned(),
             ));
         }
         if !self

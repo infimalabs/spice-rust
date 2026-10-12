@@ -146,13 +146,13 @@ impl ReceiptGeneration {
 
 pub(super) fn images_match(
     observed: Option<&ObservedFile>,
-    expected: Option<&ObservedFile>,
+    expected: Option<&GeneratedImage>,
 ) -> bool {
     // Durable drift belongs to the complete file image. A generation is only
     // an immediate compare-and-swap guard for the mutation that follows.
     match (observed, expected) {
         (None, None) => true,
-        (Some(observed), Some(expected)) => observed.image == expected.image,
+        (Some(observed), Some(expected)) => observed.generated() == *expected,
         _ => false,
     }
 }
@@ -183,10 +183,6 @@ impl FileImage {
     #[must_use]
     pub const fn digest(&self) -> &Digest {
         &self.digest
-    }
-
-    pub(super) fn validate(&self) -> bool {
-        self.mode <= 0o777 && self.digest == Digest::compute(Domain::InstallArtifact, &self.bytes)
     }
 
     pub(super) fn generated(&self) -> GeneratedImage {
@@ -239,8 +235,9 @@ pub struct Operation {
     pub(super) path: String,
     pub(super) destination: String,
     pub(super) parent: super::ParentObservation,
+    /// Fixed-size identity of the pre-install image restored by reversal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) previous: Option<ObservedFile>,
+    pub(super) previous: Option<GeneratedImage>,
     pub(super) generated: GeneratedImage,
     /// Installed image this operation replaces, when it refreshes a completed
     /// install rather than introducing one.
@@ -269,10 +266,12 @@ pub struct Retirement {
     pub(super) path: String,
     pub(super) destination: String,
     pub(super) parent: super::ParentObservation,
+    /// Fixed-size identity of the image restored by reversal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) previous: Option<ObservedFile>,
+    pub(super) previous: Option<GeneratedImage>,
+    /// Fixed-size identity the initial retirement may replace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) observed: Option<ObservedFile>,
+    pub(super) observed: Option<GeneratedImage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) superseded: Option<GeneratedImage>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -300,13 +299,10 @@ impl Retirement {
         &self.path
     }
 
-    /// Exact prior image restored by reversal, if one existed.
+    /// Exact prior image identity restored by reversal, if one existed.
     #[must_use]
-    pub const fn previous(&self) -> Option<&FileImage> {
-        match self.previous.as_ref() {
-            Some(previous) => Some(&previous.image),
-            None => None,
-        }
+    pub const fn previous(&self) -> Option<&GeneratedImage> {
+        self.previous.as_ref()
     }
 
     pub(super) fn destination(&self, repository: &Repository) -> PathBuf {
@@ -361,14 +357,10 @@ impl Operation {
     pub fn path(&self) -> &str {
         &self.path
     }
-
-    /// Prior regular-file image, or absence when this install introduces it.
+    /// Prior regular-file image identity, or absence when this install introduces it.
     #[must_use]
-    pub const fn previous(&self) -> Option<&FileImage> {
-        match self.previous.as_ref() {
-            Some(previous) => Some(&previous.image),
-            None => None,
-        }
+    pub const fn previous(&self) -> Option<&GeneratedImage> {
+        self.previous.as_ref()
     }
 
     /// Exact image this install places.

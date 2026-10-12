@@ -89,6 +89,10 @@ pub(super) fn apply_prepared_record(
         Some(generation) => write_record(repository, &record, generation)?,
         None => write_initial_record(repository, &record)?,
     };
+    // The applying receipt owns fixed-size reversal references before any
+    // destination changes. Persist every referenced payload once, then keep
+    // progress checkpoints independent of those payloads' byte lengths.
+    reversal::ensure_payloads(repository, &record.plan)?;
     record_generation =
         apply_file_operations(repository, &mut record, &generated, record_generation)?;
     record_generation = apply_retirements(repository, &mut record, record_generation)?;
@@ -416,12 +420,6 @@ fn validate_existing_generation(
 pub(super) fn unapply_record(repository: &Repository) -> Result<InstallReceipt, InstallError> {
     let loaded = read_record(repository)?.ok_or(InstallError::RecordMissing)?;
     let mut record = loaded.record;
-    if record.version != RECORD_VERSION || record.plan.version != PLAN_VERSION {
-        return Err(InstallError::InvalidRecord(format!(
-            "version-{} install from INSTALL-1kSWFBN0 must be refreshed to version {RECORD_VERSION} before unapply",
-            record.version,
-        )));
-    }
     let mut record_generation = loaded.generation;
     // Reversal is an executable direction, not historical inspection. Finish
     // it with the build that owns the live receipt; a newer build should derive
@@ -435,6 +433,7 @@ pub(super) fn unapply_record(repository: &Repository) -> Result<InstallReceipt, 
         }
         InstallStatus::Complete => {
             verify_progress(repository, &record)?;
+            reversal::ensure_payloads(repository, &record.plan)?;
             record.status = InstallStatus::Unapplying;
             record.completed = 0;
             record.restored.fill(None);
@@ -443,6 +442,7 @@ pub(super) fn unapply_record(repository: &Repository) -> Result<InstallReceipt, 
         }
         InstallStatus::Unapplying => {
             verify_progress(repository, &record)?;
+            reversal::ensure_payloads(repository, &record.plan)?;
         }
     }
 
@@ -487,19 +487,24 @@ fn reverse_retirement(
     let index = record.plan.retirements.len() - 1 - completed;
     let retirement = &record.plan.retirements[index];
     retirement.validate_binding(repository)?;
-    let previous = retirement.previous.as_ref().map(|previous| &previous.image);
     let (current, parent) = observe_bound(
         repository.common_dir(),
         &retirement.destination,
         &retirement.parent,
     )?;
-    let already_restored = image_matches(current.as_ref(), previous);
+    let already_restored = image_matches(current.as_ref(), retirement.previous.as_ref());
     let installed = current.is_none() && parent == record.retired_parents[index];
     if !already_restored && !installed {
         return Err(retirement_drift(retirement, current));
     }
     if !already_restored {
-        record.restored_retirements[index] = restore_retirement(repository, retirement, previous)?;
+        let previous = retirement
+            .previous
+            .as_ref()
+            .map(|reference| reversal::load_payload(repository, reference))
+            .transpose()?;
+        record.restored_retirements[index] =
+            restore_retirement(repository, retirement, previous.as_ref())?;
     } else {
         record.restored_retirements[index] = current.map(|observed| observed.generation);
     }
@@ -538,7 +543,6 @@ fn reverse_file_operation(
     let reverse = record.plan.operations.len() - 1 - file_completed;
     let operation = &record.plan.operations[reverse];
     operation.validate_binding(repository)?;
-    let previous = operation.previous.as_ref().map(|previous| &previous.image);
     let (current, parent) = observe_bound(
         operation.location.root(repository),
         &operation.destination,
@@ -548,7 +552,7 @@ fn reverse_file_operation(
         repository,
         record,
         operation,
-        previous,
+        operation.previous.as_ref(),
         reverse,
         current.as_ref(),
         parent,
@@ -565,7 +569,7 @@ fn restored_image(
     repository: &Repository,
     record: &InstallRecord,
     operation: &Operation,
-    previous: Option<&FileImage>,
+    previous: Option<&GeneratedImage>,
     reverse: usize,
     current: Option<&ObservedFile>,
     parent: Option<Generation>,
@@ -586,8 +590,11 @@ fn restored_image(
         let generation = current
             .expect("an installed image match is present")
             .generation;
+        let previous = previous
+            .map(|reference| reversal::load_payload(repository, reference))
+            .transpose()?;
         return Ok((
-            restore_operation(repository, operation, generation, previous)?,
+            restore_operation(repository, operation, generation, previous.as_ref())?,
             false,
         ));
     }
@@ -627,7 +634,7 @@ fn verify_retirement_progress(
         .saturating_sub(activation_offset)
         .min(record.plan.retirements.len());
     for (index, retirement) in record.plan.retirements.iter().enumerate() {
-        let previous = retirement.previous.as_ref().map(|previous| &previous.image);
+        let previous = retirement.previous.as_ref();
         let (observed, parent) = observe_bound(
             repository.common_dir(),
             &retirement.destination,
@@ -680,7 +687,7 @@ fn verify_file_progress(
         let valid = file_progress_valid(
             record,
             operation,
-            operation.previous.as_ref().map(|previous| &previous.image),
+            operation.previous.as_ref(),
             index,
             observed.as_ref(),
             parent,
@@ -696,7 +703,7 @@ fn verify_file_progress(
 fn file_progress_valid(
     record: &InstallRecord,
     operation: &Operation,
-    previous: Option<&FileImage>,
+    previous: Option<&GeneratedImage>,
     index: usize,
     observed: Option<&ObservedFile>,
     parent: Option<Generation>,
@@ -741,7 +748,7 @@ fn file_progress_valid(
 fn unapplying_file_valid(
     record: &InstallRecord,
     operation: &Operation,
-    previous: Option<&FileImage>,
+    previous: Option<&GeneratedImage>,
     index: usize,
     observed: Option<&ObservedFile>,
     parent: Option<Generation>,
@@ -858,31 +865,201 @@ fn installed_matches(
 
 fn restored_matches(
     observed: Option<&ObservedFile>,
-    previous: Option<&FileImage>,
+    previous: Option<&GeneratedImage>,
     generation: Option<Generation>,
 ) -> bool {
     match (previous, observed, generation) {
         (None, None, None) => true,
-        (Some(previous), Some(observed), Some(_)) => observed.image == *previous,
+        (Some(previous), Some(observed), Some(_)) => observed.generated() == *previous,
         _ => false,
     }
 }
 
 fn restoration_image_matches(
     observed: Option<&ObservedFile>,
-    previous: Option<&FileImage>,
+    previous: Option<&GeneratedImage>,
 ) -> bool {
     match (previous, observed) {
         (None, None) => true,
-        (Some(previous), Some(observed)) => observed.image == *previous,
+        (Some(previous), Some(observed)) => observed.generated() == *previous,
         _ => false,
     }
 }
 
-fn image_matches(observed: Option<&ObservedFile>, expected: Option<&FileImage>) -> bool {
+fn image_matches(observed: Option<&ObservedFile>, expected: Option<&GeneratedImage>) -> bool {
     match (observed, expected) {
         (None, None) => true,
-        (Some(observed), Some(expected)) => observed.image == *expected,
+        (Some(observed), Some(expected)) => observed.generated() == *expected,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::path::{Path, PathBuf};
+
+    use super::super::{RECORD_PATH, SKILL_PATH};
+    use super::*;
+
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn repository(label: &str) -> (Scratch, Repository) {
+        let root = std::env::temp_dir().join(format!(
+            "spice-install-progress-{label}-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&root).expect("scratch root creates");
+        crate::test_repository::initialize(&root);
+        let repository = Repository::discover(&root).expect("scratch repository discovers");
+        (Scratch(root), repository)
+    }
+
+    fn write_mode(path: &Path, bytes: &[u8], mode: u32) {
+        fs::create_dir_all(path.parent().expect("fixture file has a parent"))
+            .expect("fixture parent creates");
+        fs::write(path, bytes).expect("fixture bytes write");
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("fixture mode writes");
+    }
+
+    #[test]
+    fn preserved_payloads_stay_out_of_checkpoints_and_survive_both_resume_frontiers() {
+        let (_scratch, repository) = repository("reversal-payload");
+        let target = repository.common_dir().join(SKILL_PATH);
+        let prior = vec![0xA5; 2 * 1024 * 1024];
+        let prior_mode = 0o640;
+        write_mode(&target, &prior, prior_mode);
+
+        // Start a real apply and stop after the preserved target moved but
+        // before its completion reached the receipt: the one admitted
+        // ahead-of-record crash frontier.
+        let prepared = prepare(&repository, None).expect("install prepares");
+        let PreparedInstall {
+            mut record,
+            receipt,
+            fresh,
+        } = prepared;
+        assert!(fresh);
+        let generated =
+            materialize_operations(&record, None, None, None).expect("operations materialize");
+        record
+            .plan
+            .validate_pristine(&repository)
+            .expect("pristine plan validates");
+        require_receipt(&repository, &record.plan, receipt.as_ref())
+            .expect("receipt remains absent");
+        let mut generation =
+            write_initial_record(&repository, &record).expect("initial receipt publishes");
+        reversal::ensure_payloads(&repository, &record.plan).expect("reversal payloads publish");
+        let skill = record
+            .plan
+            .operations
+            .iter()
+            .position(|operation| operation.asset == Asset::Skill)
+            .expect("skill operation exists");
+        let mut durable_completed = record.completed;
+        while record.completed < skill {
+            let index = record.completed;
+            let (next, changed) = apply_operation(
+                &repository,
+                &mut record,
+                generated[index].as_ref(),
+                index,
+                generation,
+                durable_completed,
+            )
+            .expect("operation applies");
+            generation = next;
+            record.completed += 1;
+            if changed {
+                generation =
+                    write_record(&repository, &record, generation).expect("progress publishes");
+                durable_completed = record.completed;
+            }
+        }
+        let (_, changed) = apply_operation(
+            &repository,
+            &mut record,
+            generated[skill].as_ref(),
+            skill,
+            generation,
+            durable_completed,
+        )
+        .expect("frontier operation applies");
+        assert!(changed);
+        drop(record);
+
+        let resumed = prepare(&repository, None).expect("interrupted apply reloads");
+        apply_prepared_record(&repository, None, resumed).expect("interrupted apply completes");
+        let record_length = fs::metadata(repository.common_dir().join(RECORD_PATH))
+            .expect("receipt metadata reads")
+            .len();
+        assert!(
+            record_length < u64::try_from(prior.len()).unwrap(),
+            "the receipt embedded the preserved payload"
+        );
+
+        // Enter unapply and stop after one real file-reversal checkpoint. The
+        // next invocation must accept that durable prefix and finish from the
+        // external payload store.
+        let LoadedRecord {
+            mut record,
+            generation,
+        } = read_record(&repository)
+            .expect("receipt reads")
+            .expect("receipt exists");
+        verify_progress(&repository, &record).expect("completed install verifies");
+        reversal::ensure_payloads(&repository, &record.plan).expect("payload store verifies");
+        record.status = InstallStatus::Unapplying;
+        record.completed = 0;
+        record.restored.fill(None);
+        record.restored_retirements.fill(None);
+        let mut generation =
+            write_record(&repository, &record, generation).expect("unapply starts");
+        while let Some(next) = reverse_retirement(&repository, &mut record, generation.clone())
+            .expect("retirement reverses")
+        {
+            generation = next;
+        }
+        reverse_file_operation(&repository, &mut record, generation)
+            .expect("one file reversal publishes");
+        drop(record);
+
+        let receipt = unapply_record(&repository).expect("interrupted unapply completes");
+        assert_eq!(receipt.status(), InstallStatus::Uninstalled);
+        assert_eq!(fs::read(&target).expect("prior bytes read"), prior);
+        assert_eq!(
+            fs::metadata(&target)
+                .expect("prior metadata reads")
+                .permissions()
+                .mode()
+                & 0o777,
+            prior_mode
+        );
+    }
+
+    #[test]
+    fn schema_seventeen_receipts_name_the_release_that_still_owns_their_payloads() {
+        let (_scratch, repository) = repository("legacy-reversal-payload");
+        let path = repository.common_dir().join(RECORD_PATH);
+        write_mode(&path, br#"{"version":17}"#, super::super::RECORD_MODE);
+        let Err(error) = read_record(&repository) else {
+            panic!("schema 17 was not retired");
+        };
+        assert!(matches!(
+            error,
+            InstallError::LegacyRecord {
+                owner: "INSTALL-dVvBGPX6p",
+                ..
+            }
+        ));
     }
 }

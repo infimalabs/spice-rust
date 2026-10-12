@@ -26,6 +26,7 @@ mod path;
 mod progress;
 mod record;
 mod retention;
+mod reversal;
 mod symbol_sample;
 mod symbol_verification;
 mod symbols;
@@ -68,8 +69,8 @@ pub use symbol_verification::{
 };
 pub use symbols::SymbolProvenance;
 
-const PLAN_VERSION: u16 = 17;
-const RECORD_VERSION: u16 = 17;
+const PLAN_VERSION: u16 = 18;
+const RECORD_VERSION: u16 = 18;
 /// App generations a plan retains immediately before its current one.
 ///
 /// A page loaded from a generation keeps fetching that generation's lazily
@@ -86,7 +87,7 @@ enum ReceiptSupport {
     Retired(&'static str),
 }
 
-const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 17] = [
+const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 18] = [
     (1, ReceiptSupport::Retired("SURFACE-1kJQkpFs")),
     (2, ReceiptSupport::Retired("SURFACE-1kJRGpf2")),
     (3, ReceiptSupport::Retired("HOOKS-1kJQnmG8")),
@@ -103,6 +104,7 @@ const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 17] = [
     (14, ReceiptSupport::Retired("SYMBOLS-dSPkcQ47R")),
     (15, ReceiptSupport::Retired("BROWSER-dV0xw93ND")),
     (16, ReceiptSupport::Retired("INSTALL-dV1QSGJ71")),
+    (17, ReceiptSupport::Retired("INSTALL-dVvBGPX6p")),
     (RECORD_VERSION, ReceiptSupport::Current),
 ];
 
@@ -113,6 +115,7 @@ fn receipt_support(version: u16) -> Option<ReceiptSupport> {
 }
 const RECORD_NAME: &str = "install.json";
 const RECORD_PATH: &str = ".spice-rs/install.json";
+const REVERSAL_PATH: &str = ".spice-rs/install-reversals";
 const RECORD_MODE: u32 = 0o600;
 const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;
@@ -605,7 +608,7 @@ fn retirement(
             .find(|retirement| retirement.path == path)
     });
     let previous = installed.map_or_else(
-        || observed.clone(),
+        || observed.as_ref().map(ObservedFile::generated),
         |retirement| retirement.previous.clone(),
     );
     Ok(Retirement {
@@ -613,7 +616,7 @@ fn retirement(
         destination: bound.destination,
         parent: bound.parent,
         previous,
-        observed,
+        observed: observed.as_ref().map(ObservedFile::generated),
         superseded: None,
         discard: false,
     })
@@ -630,7 +633,7 @@ fn reversal_context(
     path: &str,
     observed: Option<ObservedFile>,
     reconciled: Option<&GeneratedImage>,
-) -> (Option<ObservedFile>, Option<GeneratedImage>) {
+) -> (Option<GeneratedImage>, Option<GeneratedImage>) {
     match installed.get(&operation_key(asset, path)) {
         Some(superseded) => (
             superseded.previous.clone(),
@@ -640,7 +643,7 @@ fn reversal_context(
                     .unwrap_or_else(|| superseded.generated.clone()),
             ),
         ),
-        None => (observed, None),
+        None => (observed.as_ref().map(ObservedFile::generated), None),
     }
 }
 
@@ -798,7 +801,7 @@ fn operation(
     asset: Asset,
     (location, path): (Location, String),
     bound: BoundDestination,
-    previous: Option<ObservedFile>,
+    previous: Option<GeneratedImage>,
     superseded: Option<GeneratedImage>,
     generated: GeneratedImage,
 ) -> Result<Operation, InstallError> {

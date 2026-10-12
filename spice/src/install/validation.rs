@@ -329,11 +329,11 @@ fn validate_retirement(retirement: &Retirement) -> Result<(), InstallError> {
         || retirement
             .previous
             .as_ref()
-            .is_some_and(|observed| !observed.image.validate())
+            .is_some_and(|previous| !previous.validate())
         || retirement
             .observed
             .as_ref()
-            .is_some_and(|observed| !observed.image.validate())
+            .is_some_and(|observed| !observed.validate())
         || retirement
             .superseded
             .as_ref()
@@ -389,7 +389,7 @@ fn validate_operation_contract(
         || operation
             .previous
             .as_ref()
-            .is_some_and(|observed| !observed.image.validate())
+            .is_some_and(|previous| !previous.validate())
         || operation
             .superseded
             .as_ref()
