@@ -66,6 +66,11 @@ reads fenced code or Markdown marks. A pending allocation-policy command admits
 no send and lights no recipients. Reduced motion removes slider travel, never a
 state distinction.
 
+SEND floats over a neutral transmitted-light layer using the sliders' opposing
+highlights, low shadow, frost and radial fade. That layer stays behind the
+button face and responds only in intensity to availability and contact; it
+never carries recipient color or replaces the rim.
+
 SEND's rim is lit in the actual recipients' accents: one continuous rim for one
 recipient, separated arcs for several. Its title names the recipient count.
 Recipients are the reachable members whose drafts hold text, quotes, or images
