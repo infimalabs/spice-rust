@@ -4,12 +4,12 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
-use wire::Digest;
+use wire::{DemoAnswer, Digest, Fault, Outcome, Refusal};
 
 static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
@@ -33,26 +33,28 @@ fn app_demo_at(root: &Path, open: bool, output: &mut impl Write) -> Result<(), A
     let executable = build_spice(root, output)?;
     let demo = DemoRoot::create()?;
 
-    seed_demo(&executable, root, demo.path())?;
-    let served = matching_generation(demo.path(), &expected)?;
-    writeln!(
-        output,
-        "[app-demo] worktree={} staged_generation={expected}",
-        root.display()
-    )
-    .map_err(|error| fail(format!("app-demo output failed: {error}")))?;
-    writeln!(
-        output,
-        "[app-demo] root={} served_generation={served}",
-        demo.path().display()
-    )
-    .map_err(|error| fail(format!("app-demo output failed: {error}")))?;
-    output
-        .flush()
+    let result = (|| {
+        seed_demo(&executable, root, demo.path())?;
+        let served = matching_generation(demo.path(), &expected)?;
+        writeln!(
+            output,
+            "[app-demo] worktree={} staged_generation={expected}",
+            root.display()
+        )
         .map_err(|error| fail(format!("app-demo output failed: {error}")))?;
+        writeln!(
+            output,
+            "[app-demo] root={} served_generation={served}",
+            demo.path().display()
+        )
+        .map_err(|error| fail(format!("app-demo output failed: {error}")))?;
+        output
+            .flush()
+            .map_err(|error| fail(format!("app-demo output failed: {error}")))?;
 
-    run_demo(&executable, demo.path(), open)?;
-    demo.remove()
+        run_demo(&executable, demo.path(), open, output)
+    })();
+    finish_demo(demo, result, output)
 }
 
 fn staged_generation(root: &Path) -> Result<Digest, AppDemoError> {
@@ -131,23 +133,15 @@ fn seed_demo(executable: &Path, source: &Path, root: &Path) -> Result<(), AppDem
         .args(["--seed-only", "--json"])
         .output()
         .map_err(|error| fail(format!("app-demo seed did not start: {error}")))?;
-    if seeded.status.success() {
-        return Ok(());
-    }
-    let detail = [seeded.stdout.as_slice(), seeded.stderr.as_slice()]
-        .into_iter()
-        .map(String::from_utf8_lossy)
-        .map(|text| text.trim().to_owned())
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-    Err(fail(format!(
-        "app-demo seed exited with {}: {detail}",
-        exit_description(seeded.status.code())
-    )))
+    child_answer("seed", seeded).map(|_| ())
 }
 
-fn run_demo(executable: &Path, root: &Path, open: bool) -> Result<(), AppDemoError> {
+fn run_demo(
+    executable: &Path,
+    root: &Path,
+    open: bool,
+    output: &mut impl Write,
+) -> Result<(), AppDemoError> {
     // The child owns graceful shutdown. Catch the same terminal signals in this
     // waiting parent so its disposable root is removed after the child exits.
     let _signals = Signals::new([SIGHUP, SIGINT, SIGTERM])
@@ -157,25 +151,126 @@ fn run_demo(executable: &Path, root: &Path, open: bool) -> Result<(), AppDemoErr
         .current_dir(root)
         .arg("demo")
         .arg("--reuse")
-        .arg(root);
+        .arg(root)
+        .arg("--json");
     if open {
         command.arg("--open");
     }
-    let status = command
-        .status()
+    let completed = command
+        .output()
         .map_err(|error| fail(format!("app-demo resident did not start: {error}")))?;
-    if status.success() {
-        Ok(())
+    report_demo_answer(child_answer("resident", completed)?, output)
+}
+
+fn report_demo_answer(answer: DemoAnswer, output: &mut impl Write) -> Result<(), AppDemoError> {
+    writeln!(
+        output,
+        "[app-demo] transcript={} mode={}",
+        answer.transcript, answer.mode
+    )
+    .map_err(|error| fail(format!("app-demo output failed: {error}")))?;
+    if let Some(endpoint) = answer.endpoint {
+        writeln!(output, "[app-demo] endpoint={endpoint}")
+            .map_err(|error| fail(format!("app-demo output failed: {error}")))?;
+    }
+    output
+        .flush()
+        .map_err(|error| fail(format!("app-demo output failed: {error}")))
+}
+
+fn child_answer(stage: &str, completed: Output) -> Result<DemoAnswer, AppDemoError> {
+    let primary = if completed.status.success() {
+        &completed.stdout
+    } else {
+        &completed.stderr
+    };
+    let fallback = if completed.status.success() {
+        &completed.stderr
+    } else {
+        &completed.stdout
+    };
+    let document = if primary.iter().all(u8::is_ascii_whitespace) {
+        fallback
+    } else {
+        primary
+    };
+    let outcome = wire::decode(document)
+        .map_err(|error| fail(format!("app-demo {stage} returned invalid JSON: {error}")))?;
+    let answer = outcome_answer(stage, outcome)?;
+    if completed.status.success() {
+        Ok(answer)
     } else {
         Err(fail(format!(
-            "app-demo resident exited with {}",
-            exit_description(status.code())
+            "app-demo {stage} exited with {}",
+            exit_description(completed.status.code())
         )))
     }
 }
 
+fn outcome_answer(stage: &str, outcome: Outcome<DemoAnswer>) -> Result<DemoAnswer, AppDemoError> {
+    match outcome {
+        Outcome::Reply(reply) => Ok(reply.body),
+        Outcome::Refusal(refusal) => Err(child_refusal(stage, &refusal)),
+        Outcome::Fault(fault) => Err(child_fault(stage, &fault)),
+    }
+}
+
+fn child_refusal(stage: &str, refusal: &Refusal) -> AppDemoError {
+    fail(format!("app-demo {stage} refused: {}", refusal.reason()))
+}
+
+fn child_fault(stage: &str, fault: &Fault) -> AppDemoError {
+    fail(format!("app-demo {stage} failed: {}", fault.reason))
+}
+
 fn exit_description(code: Option<i32>) -> String {
     code.map_or_else(|| "a signal".to_owned(), |code| code.to_string())
+}
+
+fn finish_demo(
+    demo: DemoRoot,
+    result: Result<(), AppDemoError>,
+    output: &mut impl Write,
+) -> Result<(), AppDemoError> {
+    let path = demo.path().to_path_buf();
+    match demo.remove() {
+        Ok(()) => {
+            let reported = writeln!(
+                output,
+                "[app-demo] disposable root removed: {}",
+                path.display()
+            )
+            .map_err(|error| fail(format!("app-demo final report failed: {error}")));
+            combine_results(result, reported)
+        }
+        Err(cleanup) => {
+            let reported = writeln!(
+                output,
+                "[app-demo] disposable root left at {}: {cleanup}",
+                path.display()
+            )
+            .map_err(|error| fail(format!("app-demo final report failed: {error}")));
+            let failure = match result {
+                Ok(()) => cleanup,
+                Err(child) => fail(format!("{cleanup}; child result: {child}")),
+            };
+            match reported {
+                Ok(()) => Err(failure),
+                Err(report) => Err(fail(format!("{failure}; {report}"))),
+            }
+        }
+    }
+}
+
+fn combine_results(
+    primary: Result<(), AppDemoError>,
+    report: Result<(), AppDemoError>,
+) -> Result<(), AppDemoError> {
+    match (primary, report) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(primary), Err(report)) => Err(fail(format!("{primary}; {report}"))),
+    }
 }
 
 struct DemoRoot(PathBuf);
@@ -201,10 +296,15 @@ impl DemoRoot {
     }
 
     fn remove(mut self) -> Result<(), AppDemoError> {
-        fs::remove_dir_all(&self.0)
-            .map_err(|error| fail(format!("app-demo cleanup {}: {error}", self.0.display())))?;
-        self.0.clear();
-        Ok(())
+        let path = std::mem::take(&mut self.0);
+        match fs::remove_dir_all(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(fail(format!(
+                "app-demo cleanup {}: {error}",
+                path.display()
+            ))),
+        }
     }
 }
 
@@ -283,5 +383,51 @@ mod tests {
 
         let error = matching_generation(seeded.path(), &expected).unwrap_err();
         assert!(error.to_string().contains(served));
+    }
+
+    #[test]
+    fn disposable_receipt_omits_commands_for_the_root_it_removes() {
+        let answer = DemoAnswer {
+            root: "/tmp/disposable-demo".to_owned(),
+            transcript: "/tmp/disposable-demo/transcript.jsonl".to_owned(),
+            mode: "app".to_owned(),
+            lifecycle: "interrupted-preserved".to_owned(),
+            endpoint: Some("http://127.0.0.1:43123".to_owned()),
+            launch_command: "spice demo --reuse /tmp/disposable-demo".to_owned(),
+            remove_command: "rm -rf -- /tmp/disposable-demo".to_owned(),
+        };
+        let mut output = Vec::new();
+
+        report_demo_answer(answer, &mut output).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("http://127.0.0.1:43123"));
+        assert!(!output.contains("preserved"));
+        for command_fragment in ["launch_command", "remove_command", "--reuse", "rm -rf"] {
+            assert!(!output.contains(command_fragment), "{output}");
+        }
+    }
+
+    #[test]
+    fn disposable_child_failure_reports_reason_without_preservation_recovery() {
+        let error = outcome_answer(
+            "resident",
+            Outcome::Fault(Fault {
+                class: wire::FaultClass::Environment,
+                reason: "demo::forced-child-failure".to_owned(),
+                detail: concat!(
+                    "demo root preserved at /tmp/disposable-demo; ",
+                    "retry with spice demo --reuse /tmp/disposable-demo; ",
+                    "remove with rm -rf -- /tmp/disposable-demo"
+                )
+                .to_owned(),
+            }),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("demo::forced-child-failure"));
+        assert!(!error.contains("--reuse"));
+        assert!(!error.contains("rm -rf"));
     }
 }

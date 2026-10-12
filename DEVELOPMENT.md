@@ -46,7 +46,7 @@ executable test arm.
 | Exact test | `spice dev cargo -- test --locked -p PACKAGE` with a target selector or test filter. |
 | Package | `spice dev xtask -- verify --package PACKAGE` runs package Clippy, all targets, and doctests as serial one-job Cargo children, and prints every repository-wide action it omits. Add downstream packages when a public seam changes. |
 | App WASM typecheck | `spice dev cargo -- app-wasm-typecheck` checks only `app` for `wasm32`. |
-| Browser | `spice dev xtask -- app`, then `spice dev xtask -- app-demo --open` serves the current worktree's native `spice` and staged generation in an isolated demo root ([`app/BROWSER.md`](app/BROWSER.md)). Plain `spice demo` exercises the installed appliance, not current source. Browser evidence is disposable. |
+| Browser | `spice dev xtask -- app`, then `spice dev xtask -- app-demo --open` serves the current worktree's native `spice` and staged generation in an isolated demo root, removes that root on every ending, and reports the cleanup ([`app/BROWSER.md`](app/BROWSER.md)). Plain `spice demo` exercises the installed appliance, not current source, and retains its recovery commands for preserved roots. Browser evidence is disposable. |
 | Commit | Stage the change, `spice gate prove`, then `spice gate prove ACTION` or `--missing`, then `git commit`. |
 | Study | `spice dev xtask -- gate ARM` with `suite-seam`, `mutation-coverage`, or `test-subsumption` studies suite architecture; it is expensive and never ordinary feedback. |
 
