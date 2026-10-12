@@ -171,7 +171,7 @@ const DECLARATIONS: [CoreArmDeclaration; 8] = [
         ),
     },
     CoreArmDeclaration {
-        id: GateId::PlanPhase,
+        id: GateId::PlanningPhase,
         tool: CoreToolContract::Compiled {
             provider: "board active-claim workflow head",
         },

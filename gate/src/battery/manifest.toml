@@ -11,9 +11,9 @@ declaration = "gate::core::merge-integrity::merge-tree-comparison-v1"
 [[arms]]
 predecessor = "plan-phase"
 disposition = "compiled"
-gate_id = "plan-phase"
+gate_id = "planning-phase"
 family = "core"
-declaration = "gate::core::plan-phase::active-claim-phase-v1"
+declaration = "gate::core::planning-phase::active-claim-phase-v1"
 
 [[arms]]
 predecessor = "repo-shape"

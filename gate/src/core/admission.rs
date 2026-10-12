@@ -22,7 +22,9 @@ pub(super) fn validate_observation(
         CoreObservation::Skipped { reason } if reason.trim().is_empty() => Err(
             CoreInputError::new(format!("{id} skip reason must be non-empty")),
         ),
-        CoreObservation::Skipped { .. } if !matches!(id, GateId::PlanPhase | GateId::RepoShape) => {
+        CoreObservation::Skipped { .. }
+            if !matches!(id, GateId::PlanningPhase | GateId::RepoShape) =>
+        {
             Err(CoreInputError::new(format!(
                 "{id} has no compiled applicability skip"
             )))
@@ -44,7 +46,7 @@ pub(super) fn validate_observation(
 fn validate_evidence(evidence: &CoreEvidence) -> Result<(), CoreInputError> {
     match evidence {
         CoreEvidence::MergeIntegrity(value) => validate_merge(value),
-        CoreEvidence::PlanPhase(_) => Ok(()),
+        CoreEvidence::PlanningPhase(_) => Ok(()),
         CoreEvidence::RepoShape(value) => validate_findings(value.findings()),
         CoreEvidence::Staging(value) => validate_paths(value.paths()),
         CoreEvidence::RepoDocs(value) => validate_docs(value.measurements()),

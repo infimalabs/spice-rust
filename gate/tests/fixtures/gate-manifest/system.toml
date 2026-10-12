@@ -1,6 +1,6 @@
 [policy.pre_commit_builtins]
 "merge-integrity" = true
-"plan-phase" = true
+"planning-phase" = true
 "repo-shape" = true
 staging = true
 "repo-docs" = true

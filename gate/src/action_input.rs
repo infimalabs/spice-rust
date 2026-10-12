@@ -30,7 +30,7 @@ pub enum ActionReuseClass {
 #[must_use]
 pub const fn gate_action_reuse_class(gate_id: GateId) -> Option<ActionReuseClass> {
     match gate_id {
-        GateId::PlanPhase | GateId::Staging => Some(ActionReuseClass::LiveOnly),
+        GateId::PlanningPhase | GateId::Staging => Some(ActionReuseClass::LiveOnly),
         GateId::MergeIntegrity
         | GateId::RepoDocs
         | GateId::FileShape

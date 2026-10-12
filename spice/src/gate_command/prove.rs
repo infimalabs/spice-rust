@@ -174,7 +174,7 @@ impl AdmissionLookup {
     pub(super) fn execute_live_checks(
         &self,
     ) -> Result<Vec<gate::AdmissionLiveCheck>, ProveFailure> {
-        [GateId::PlanPhase, GateId::Staging]
+        [GateId::PlanningPhase, GateId::Staging]
             .into_iter()
             .map(|gate_id| {
                 let arm = self

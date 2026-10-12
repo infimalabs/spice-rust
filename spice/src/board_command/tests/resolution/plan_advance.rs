@@ -50,11 +50,11 @@ fn plan_claim_allows_board_team_but_classifies_repository_work_as_forbidden() {
             phase: "plan".parse().expect("fixture plan phase"),
         },
     );
-    let Err(Outcome::Refusal(refusal)) = require_no_plan_implementation(&held, "task capture")
+    let Err(Outcome::Refusal(refusal)) = require_no_planning_implementation(&held, "task capture")
     else {
         panic!("plan claim must refuse repository capture");
     };
-    assert_eq!(refusal.reason(), "task::plan-implementation");
+    assert_eq!(refusal.reason(), "task::planning-implementation");
 
     assert_committed(issue(
         &bus,
@@ -134,6 +134,29 @@ fn plan_claim_allows_board_team_but_classifies_repository_work_as_forbidden() {
         at(&organized, &plan).statement.body.dependencies,
         vec![at(&organized, &child).statement.body.born.clone()],
     );
+    clean(&root, bus);
+}
+
+#[test]
+fn design_claim_refuses_repository_capture() {
+    let (root, bus, epoch, seats) = fixture("design-capture-contract", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let design = add_raw_task(
+        &bus,
+        epoch,
+        "DESIGN-1kRKw9Qk",
+        "Justify the selected assembly",
+        &["the assembly decision is supported"],
+        Some("design,review"),
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &design);
+
+    let held = board(&bus, epoch, lane);
+    let Err(Outcome::Refusal(refusal)) = require_no_planning_implementation(&held, "task capture")
+    else {
+        panic!("design claim must refuse repository capture");
+    };
+    assert_eq!(refusal.reason(), "task::planning-implementation");
     clean(&root, bus);
 }
 

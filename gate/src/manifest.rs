@@ -23,8 +23,8 @@ pub const PREDECESSOR_GATE_RELEASE: &str = "0.31.0";
 pub enum GateId {
     #[serde(rename = "merge-integrity")]
     MergeIntegrity,
-    #[serde(rename = "plan-phase")]
-    PlanPhase,
+    #[serde(rename = "planning-phase")]
+    PlanningPhase,
     #[serde(rename = "repo-shape")]
     RepoShape,
     #[serde(rename = "staging")]
@@ -87,7 +87,7 @@ impl GateId {
     /// Every identity executed by the synchronous canonical battery.
     pub const BATTERY: [Self; 27] = [
         Self::MergeIntegrity,
-        Self::PlanPhase,
+        Self::PlanningPhase,
         Self::RepoShape,
         Self::Staging,
         Self::RepoDocs,
@@ -125,7 +125,7 @@ impl GateId {
     /// Every registered instrument, in stable report order.
     pub const ALL: [Self; 30] = [
         Self::MergeIntegrity,
-        Self::PlanPhase,
+        Self::PlanningPhase,
         Self::RepoShape,
         Self::Staging,
         Self::RepoDocs,
@@ -161,7 +161,7 @@ impl GateId {
     pub const fn as_str(self) -> &'static str {
         const SPELLINGS: [&str; GateId::ALL.len()] = [
             "merge-integrity",
-            "plan-phase",
+            "planning-phase",
             "repo-shape",
             "staging",
             "repo-docs",
@@ -214,6 +214,7 @@ impl GateId {
     #[must_use]
     pub const fn predecessor_name(self) -> &'static str {
         match self {
+            Self::PlanningPhase => "plan-phase",
             Self::AppWebTypecheck => concat!("ser", "ve-web-typecheck"),
             _ => self.as_str(),
         }
@@ -257,7 +258,10 @@ const PREDECESSOR_STANDARD_ARMS: [(GateId, PredecessorStandardArm); 30] = [
         GateId::MergeIntegrity,
         PredecessorStandardArm::InternalBuiltin,
     ),
-    (GateId::PlanPhase, PredecessorStandardArm::InternalBuiltin),
+    (
+        GateId::PlanningPhase,
+        PredecessorStandardArm::InternalBuiltin,
+    ),
     (GateId::RepoShape, PredecessorStandardArm::InternalBuiltin),
     (GateId::Staging, PredecessorStandardArm::InternalBuiltin),
     (GateId::RepoDocs, PredecessorStandardArm::InternalBuiltin),

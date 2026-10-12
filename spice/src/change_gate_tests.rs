@@ -83,7 +83,7 @@ fn zero_config_selection_keeps_unclassified_sources_local_and_known_sources_spec
         generic.gate_ids(),
         [
             GateId::MergeIntegrity,
-            GateId::PlanPhase,
+            GateId::PlanningPhase,
             GateId::Staging,
             GateId::LocalPaths,
         ]

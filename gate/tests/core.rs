@@ -6,7 +6,7 @@ use gate::{
     CoreArmInput, CoreEvidence, CoreInputs, CoreObservation, CoreProvenance, CoreReport,
     CoreReportDecodeError, CoreSource, CoreStanding, CoreTimeoutContract, CoreToolContract,
     DocMeasurement, GateId, MergeIntegrityEvidence, MergeTreeCompletion, PREDECESSOR_GATE_RELEASE,
-    PlanPhaseEvidence, RepoDocLimit, RepoDocsEvidence, RepoShapeEvidence, Selector,
+    PlanningPhaseEvidence, RepoDocLimit, RepoDocsEvidence, RepoShapeEvidence, Selector,
     StagingEvidence, core_declarations, evaluate_core,
 };
 use serde_json::Value;
@@ -113,9 +113,9 @@ fn immutable_input_admission_refuses_order_tree_and_evidence_drift() {
     assert!(CoreInputs::new(arms).is_err());
 
     let mismatch = CoreArmInput::new(
-        GateId::PlanPhase,
+        GateId::PlanningPhase,
         tree,
-        provenance(GateId::PlanPhase),
+        provenance(GateId::PlanningPhase),
         measured(passing_evidence(GateId::RepoShape)),
     );
     assert!(mismatch.is_err());
@@ -313,7 +313,7 @@ fn declaration(id: GateId) -> gate::CoreArmDeclaration {
 fn passing_evidence(id: GateId) -> CoreEvidence {
     match id {
         GateId::MergeIntegrity => CoreEvidence::MergeIntegrity(MergeIntegrityEvidence::NoMerge),
-        GateId::PlanPhase => CoreEvidence::PlanPhase(PlanPhaseEvidence::NoActiveClaim),
+        GateId::PlanningPhase => CoreEvidence::PlanningPhase(PlanningPhaseEvidence::NoActiveClaim),
         GateId::RepoShape => CoreEvidence::RepoShape(RepoShapeEvidence::new(Vec::new())),
         GateId::Staging => CoreEvidence::Staging(
             StagingEvidence::new(Vec::<String>::new()).expect("empty staging evidence"),
@@ -379,7 +379,7 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
 
     for id in [
         GateId::MergeIntegrity,
-        GateId::PlanPhase,
+        GateId::PlanningPhase,
         GateId::Staging,
         GateId::ConfigKeyValidity,
     ] {
@@ -401,7 +401,7 @@ fn acquisition_measures_every_compiled_provider_the_core_fixtures_assert() {
 }
 
 #[test]
-fn a_captured_claim_reaches_the_plan_phase_arm_without_the_gate_reading_a_journal() {
+fn a_captured_claim_reaches_the_planning_phase_arm_without_the_gate_reading_a_journal() {
     let repository = contract_repository("core-acquire-claim");
     let task = TaskHandle::from_str("CORE-1kJWlbWK").expect("task handle");
     let phase = Phase::from_str("plan").expect("phase");
@@ -415,8 +415,8 @@ fn a_captured_claim_reaches_the_plan_phase_arm_without_the_gate_reading_a_journa
     );
 
     assert_eq!(
-        acquired_arm(&report, GateId::PlanPhase).observation(),
-        &measured(CoreEvidence::PlanPhase(PlanPhaseEvidence::Active {
+        acquired_arm(&report, GateId::PlanningPhase).observation(),
+        &measured(CoreEvidence::PlanningPhase(PlanningPhaseEvidence::Active {
             task,
             phase
         })),
@@ -426,7 +426,7 @@ fn a_captured_claim_reaches_the_plan_phase_arm_without_the_gate_reading_a_journa
 }
 
 #[test]
-fn a_repository_without_a_claim_store_skips_plan_phase_rather_than_measuring_it() {
+fn a_repository_without_a_claim_store_skips_planning_phase_rather_than_measuring_it() {
     let repository = contract_repository("core-acquire-no-store");
     let report = acquired(
         &repository,
@@ -435,11 +435,11 @@ fn a_repository_without_a_claim_store_skips_plan_phase_rather_than_measuring_it(
         },
         ActorCapture::Absent,
     );
-    let plan = acquired_arm(&report, GateId::PlanPhase);
+    let planning = acquired_arm(&report, GateId::PlanningPhase);
 
-    assert_eq!(plan.standing(), CoreStanding::Skipped);
+    assert_eq!(planning.standing(), CoreStanding::Skipped);
     assert!(
-        plan.evidence().is_none(),
+        planning.evidence().is_none(),
         "an absent store measured nothing"
     );
 
