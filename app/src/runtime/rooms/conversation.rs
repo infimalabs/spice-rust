@@ -39,8 +39,12 @@ pub struct Conversation {
 /// The receipt the operator owes one publication.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OperatorItem {
+    /// Immutable journal position that admitted this item.
+    pub admitted: Seq,
     /// Immutable publication, context, and source of the item.
     pub record: RoomReceiptRecord,
+    /// Question result the operator owes for an ASK, if this item delivered one.
+    pub result: Option<QuestionResultRef>,
     /// Current disposition.
     pub state: RoomReceiptState,
 }
@@ -52,6 +56,17 @@ pub struct QuestionResult {
     pub record: QuestionResultRecord,
     /// Current result.
     pub state: QuestionResultState,
+}
+
+/// One catalog entry while its operator receipt or answer duty remains open.
+#[derive(Clone, Copy, Debug)]
+pub struct OperatorInboxItem<'a> {
+    /// Stable operator-item identity.
+    pub key: &'a RoomReceiptRef,
+    /// Immutable record and current receipt state.
+    pub item: &'a RoomPositioned<OperatorItem>,
+    /// Substantive result owed by the operator, when this item is an ASK.
+    pub result: Option<&'a RoomPositioned<QuestionResult>>,
 }
 
 /// One lane delivery's native steering standing.
@@ -93,15 +108,31 @@ impl ConversationProjection {
         self.items.get(item)
     }
 
-    /// Operator items still owing a disposition, pending or lapsed, in
-    /// journal order of their latest move.
-    pub fn open_items(&self) -> Vec<(&RoomReceiptRef, &RoomPositioned<OperatorItem>)> {
+    /// Operator items whose receipt or substantive answer duty remains open,
+    /// in immutable admission order. Receipt/result head moves never reorder
+    /// this catalog.
+    pub fn inbox_items(&self) -> Vec<OperatorInboxItem<'_>> {
         let mut open = self
             .items
             .iter()
-            .filter(|(_, item)| !item.value.state.is_terminal())
+            .filter_map(|(key, item)| {
+                let result = item
+                    .value
+                    .result
+                    .as_ref()
+                    .and_then(|result| self.results.get(result));
+                (!item.value.state.is_terminal()
+                    || result.is_some_and(|result| !result.value.state.is_terminal()))
+                .then_some(OperatorInboxItem { key, item, result })
+            })
             .collect::<Vec<_>>();
-        open.sort_by_key(|(_, item)| item.position);
+        open.sort_by(|left, right| {
+            left.item
+                .value
+                .admitted
+                .cmp(&right.item.value.admitted)
+                .then_with(|| left.key.cmp(right.key))
+        });
         open
     }
 
@@ -261,6 +292,10 @@ impl ConversationProjection {
         context: Option<RoomAnchor>,
         expires: Instant,
     ) {
+        let result = match publication.kind() {
+            RoomPublicationKind::Ask { result, .. } => Some(result.clone()),
+            RoomPublicationKind::Msg {} | RoomPublicationKind::Ans { .. } => None,
+        };
         let record = RoomReceiptRecord::new(
             item.clone(),
             publication.publication().clone(),
@@ -272,7 +307,9 @@ impl ConversationProjection {
             RoomPositioned {
                 position,
                 value: OperatorItem {
+                    admitted: position,
                     record,
+                    result,
                     state: RoomReceiptState::Pending { expires },
                 },
             },

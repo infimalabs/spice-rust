@@ -7,10 +7,10 @@ use serde::Serialize;
 use wire::rooms::{
     CandidateRef, CoverageRef, DecisionRef, ExecutionAuthorization, ExecutionAuthorized,
     QuestionResultRef, QuestionResultState, RoomAuthorityStamp, RoomConversed,
-    RoomCoordinationStarted, RoomDelivery, RoomDestination, RoomMessaged, RoomPosted,
-    RoomPublicationKind, RoomPutAside, RoomReceiptLapsed, RoomReceiptRecovered, RoomReceiptRef,
-    RoomReceiptState, RoomRoute, RoomStopRequest, TextRange, WorkingGroup, WorkingGroupRemoved,
-    WorkingGroupStored,
+    RoomCoordinationStarted, RoomDelivery, RoomDestination, RoomDisposed, RoomMessaged, RoomPosted,
+    RoomPublicationKind, RoomPutAside, RoomReceiptDisposition, RoomReceiptLapsed,
+    RoomReceiptRecovered, RoomReceiptRef, RoomReceiptState, RoomRoute, RoomStopRequest, TextRange,
+    WorkingGroup, WorkingGroupRemoved, WorkingGroupStored,
 };
 
 const ROOM_EVENT: &str = "dVsYdDj7d";
@@ -874,9 +874,47 @@ fn delivery_receipts_and_question_results_move_separately() {
     );
 }
 
+fn answer_operator_question(runtime: &mut AppRuntime, session: &Session, expires: wire::Instant) {
+    live(
+        runtime,
+        session,
+        envelope(
+            6,
+            "steer::sent",
+            &serde_json::json!({
+                "directive": RETURNED,
+                "key": "dReturn1",
+                "lane": LANE,
+                "text": "Operator answer",
+                "room": room(),
+                "expires": "2030-04-13T18:44:09.271Z",
+            }),
+        ),
+    );
+    live(
+        runtime,
+        session,
+        envelope(
+            7,
+            "room::posted",
+            &RoomPosted {
+                publication: authority(ANS),
+                text: "Operator answer".to_owned(),
+                operation: RoomPublicationKind::Ans {
+                    result: QuestionResultRef::new(authority(RESULT)),
+                    context: None,
+                },
+                routes: Vec::new(),
+                directed: vec![uuid(RETURNED)],
+                expires,
+            },
+        ),
+    );
+}
+
 /// A lane's ASK of the operator opens an item the operator settles; its lapse
-/// and recovery keep the same key, and the operator's answer settles the result
-/// and records in the question's room.
+/// and recovery keep the same key, ACK keeps the separate answer duty visible,
+/// and the operator's answer settles the result and records in its room.
 #[test]
 fn operator_items_lapse_recover_and_retire_with_the_answer() {
     let session = session(OPERATOR, EPOCH);
@@ -906,7 +944,7 @@ fn operator_items_lapse_recover_and_retire_with_the_answer() {
             .state
             .clone()
     };
-    let open = |runtime: &AppRuntime| runtime.room_projection().conversation().open_items().len();
+    let open = |runtime: &AppRuntime| runtime.room_projection().conversation().inbox_items().len();
     assert!(matches!(state(&runtime), RoomReceiptState::Pending { .. }));
     assert_eq!(open(&runtime), 1);
 
@@ -938,43 +976,34 @@ fn operator_items_lapse_recover_and_retire_with_the_answer() {
     );
     assert_eq!(state(&runtime), RoomReceiptState::Pending { expires });
 
-    // The operator's answer returns to the lane requester under the operator
-    // direction its own write opens.
     live(
         &mut runtime,
         &session,
         envelope(
             5,
-            "steer::sent",
-            &serde_json::json!({
-                "directive": RETURNED,
-                "key": "dReturn1",
-                "lane": LANE,
-                "text": "Operator answer",
-                "room": room(),
-                "expires": "2030-04-13T18:44:09.271Z",
-            }),
-        ),
-    );
-    live(
-        &mut runtime,
-        &session,
-        envelope(
-            6,
-            "room::posted",
-            &RoomPosted {
-                publication: authority(ANS),
-                text: "Operator answer".to_owned(),
-                operation: RoomPublicationKind::Ans {
-                    result: QuestionResultRef::new(authority(RESULT)),
-                    context: None,
-                },
-                routes: Vec::new(),
-                directed: vec![uuid(RETURNED)],
-                expires,
+            "room::disposed",
+            &RoomDisposed {
+                disposition: RoomReceiptDisposition::Ack,
+                keys: vec![item.clone()],
+                clause: "I will answer".to_owned(),
             },
         ),
     );
+    assert!(matches!(state(&runtime), RoomReceiptState::Acked { .. }));
+    let inbox = runtime.room_projection().conversation().inbox_items();
+    assert_eq!(
+        inbox.len(),
+        1,
+        "ACK leaves the operator answer duty visible"
+    );
+    assert!(matches!(
+        inbox[0].result.map(|result| &result.value.state),
+        Some(QuestionResultState::Pending {})
+    ));
+
+    // The operator's answer returns to the lane requester under the operator
+    // direction its own write opens.
+    answer_operator_question(&mut runtime, &session, expires);
     assert_eq!(
         delivery(&runtime, RETURNED),
         (wire::Disposition::Live, false)
@@ -994,4 +1023,75 @@ fn operator_items_lapse_recover_and_retire_with_the_answer() {
         Some(&RoomEventKind::Posted),
         "the operator answer records in the question's room"
     );
+}
+
+fn operator_message(position: u64, publication: &str) -> serde_json::Value {
+    envelope(
+        position,
+        "room::posted",
+        &RoomPosted {
+            publication: authority(publication),
+            text: format!("Operator item {publication}"),
+            operation: RoomPublicationKind::Msg {},
+            routes: vec![RoomRoute {
+                destination: RoomDestination::Operator {},
+                context: Some(room()),
+            }],
+            directed: Vec::new(),
+            expires: instant("2030-04-13T18:44:09.271Z"),
+        },
+    )
+}
+
+#[test]
+fn operator_inbox_order_is_immutable_across_receipt_lapse_and_recovery() {
+    const FIRST: &str = "dVsYdDj7s";
+    const SECOND: &str = "dVsYdDj7t";
+    let session = session(OPERATOR, EPOCH);
+    let mut runtime = conversation_runtime(
+        &session,
+        &[operator_message(1, FIRST), operator_message(2, SECOND)],
+    );
+    let order = |runtime: &AppRuntime| {
+        runtime
+            .room_projection()
+            .conversation()
+            .inbox_items()
+            .into_iter()
+            .map(|entry| (entry.key.to_string(), entry.item.value.admitted))
+            .collect::<Vec<_>>()
+    };
+    let stable = vec![(FIRST.to_owned(), seq(1)), (SECOND.to_owned(), seq(2))];
+    assert_eq!(order(&runtime), stable);
+
+    let first = RoomReceiptRef::new(authority(FIRST));
+    live(
+        &mut runtime,
+        &session,
+        envelope(
+            3,
+            "room::lapsed",
+            &RoomReceiptLapsed {
+                receipt: first.clone(),
+            },
+        ),
+    );
+    assert_eq!(
+        order(&runtime),
+        stable,
+        "the latest head position does not become presentation order"
+    );
+    live(
+        &mut runtime,
+        &session,
+        envelope(
+            4,
+            "room::recovered",
+            &RoomReceiptRecovered {
+                receipt: first,
+                expires: instant("2030-04-14T18:44:09.271Z"),
+            },
+        ),
+    );
+    assert_eq!(order(&runtime), stable);
 }

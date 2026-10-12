@@ -107,10 +107,12 @@ answer is its own ANS card whose return carries a separate receipt. None of
 these is styled as review coverage or output authorization, which stay in the
 preparation section. Operator items carry explicit ACK/NAK with a clause,
 **Recover** once lapsed, and Answer/Decline/Cancel result controls. Closing a
-lane party's question is an explicit override. The catalog lists every open
-operator item. Receipt and result rows keep one geometry in every state.
-Acting moves keyboard focus to the acting card, and its outcome or refusal is
-reported in that room pane.
+lane party's question is an explicit override. The catalog keeps an
+operator-targeted ASK in immutable admission order while either its receipt or
+its answer duty remains open, so ACK cannot hide the still-pending result.
+Receipt and result rows keep one geometry in every state. Acting moves keyboard
+focus to the acting card, and its outcome or refusal is reported in that room
+pane.
 
 An open, pending Design room also exposes bounded OOPS grooming. Each record
 names the exact parked reports it considered, one of `duplicate`, `no-work`,
