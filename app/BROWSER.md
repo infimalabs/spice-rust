@@ -65,8 +65,9 @@ lifted agent near the sheet's edge scrolls it toward an off-screen target.
 
 ## Jobs in the global menu
 
-The Spice view ends with **Jobs**, every job every lane keeps, apart from the
-topology roster. Each job is one fixed-height row in its agent's accent: a
+After the operator panel the Spice view shows **Jobs**, every job every lane
+keeps, apart from the topology roster; **Provider quota** ends the view. Each
+job is one fixed-height row in its agent's accent: a
 glyph naming its kind (▶ command, ◆ service, ● watch) solid while running and
 hollow once it ended unheard, the agent, its age, and the command. The heading
 counts each kind, zero included, and the unheard. Rows run oldest first, so a
