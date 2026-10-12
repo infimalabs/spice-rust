@@ -725,11 +725,34 @@ fn proof_manifest_maps_to_the_current_observation_head() {
 }
 
 #[test]
-fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
+fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
     let expected = [
         (&["board"][..], CommandKind::BoardRead),
         (&["board", "graph"][..], CommandKind::BoardGraph),
         (&["board", "handout"][..], CommandKind::BoardHandout),
+        (&["room", "post"][..], CommandKind::RoomPost),
+        (&["room", "status"][..], CommandKind::RoomCoordinationRead),
+        (&["room", "start"][..], CommandKind::RoomCoordinate),
+        (&["room", "resume"][..], CommandKind::RoomCoordinate),
+        (&["room", "put-aside"][..], CommandKind::RoomPutAside),
+        (&["preparation", "retain"][..], CommandKind::CandidateRetain),
+        (
+            &["preparation", "critique"][..],
+            CommandKind::CandidateCritiqueRecord,
+        ),
+        (
+            &["preparation", "cover"][..],
+            CommandKind::CandidateCoverageRecord,
+        ),
+        (
+            &["preparation", "decide"][..],
+            CommandKind::PreparationDecide,
+        ),
+        (
+            &["preparation", "authorize"][..],
+            CommandKind::ExecutionAuthorize,
+        ),
+        (&["preparation", "adopt"][..], CommandKind::OutputAdopt),
         (&["lane", "list"][..], CommandKind::BoardRead),
         (&["task", "list"][..], CommandKind::BoardRead),
         (&["task", "next"][..], CommandKind::ClaimWin),
@@ -739,6 +762,8 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
         (&["task", "reclaim"][..], CommandKind::ClaimRenew),
         (&["task", "capture"][..], CommandKind::ClaimWin),
         (&["task", "add"][..], CommandKind::TaskAdd),
+        (&["task", "plan"][..], CommandKind::TaskAdd),
+        (&["task", "design"][..], CommandKind::TaskAdd),
         (&["task", "done"][..], CommandKind::TaskDone),
         (&["task", "review"][..], CommandKind::TaskReview),
         (&["task", "note"][..], CommandKind::TaskNote),
@@ -750,6 +775,9 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
         (&["task", "modify"][..], CommandKind::TaskEdit),
         (&["task", "require"][..], CommandKind::TaskEdit),
         (&["task", "delete"][..], CommandKind::TaskDelete),
+        (&["group", "list"][..], CommandKind::WorkingGroupRead),
+        (&["group", "put"][..], CommandKind::WorkingGroupPut),
+        (&["group", "remove"][..], CommandKind::WorkingGroupRemove),
         (&["doc"][..], CommandKind::DocApply),
         (&["doc", "ledger"][..], CommandKind::DocLedger),
         (&["taste", "add"][..], CommandKind::TaskAdd),
@@ -779,7 +807,7 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
         .filter(|contract| {
             matches!(
                 contract.path[0],
-                "lane" | "board" | "task" | "doc" | "taste"
+                "lane" | "board" | "room" | "group" | "preparation" | "task" | "doc" | "taste"
             )
         })
         .filter(|contract| kind_for(contract.path).is_some())
