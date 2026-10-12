@@ -781,10 +781,8 @@ fn oops_grooming_form(
         .tasks
         .iter()
         .filter(|task| {
-            matches!(
-                task.visibility,
-                wire::intent::ProjectVisibility::Hidden { .. }
-            ) && task.workflow.body.completion.is_none()
+            wire::is_oops_project(&task.statement.body.project)
+                && task.workflow.body.completion.is_none()
         })
         .map(|task| {
             (
