@@ -97,6 +97,56 @@ fn plan_review_cannot_replace_required_child_construction_with_own_acceptance() 
 }
 
 #[test]
+fn operator_closed_child_cannot_satisfy_plan_construction() {
+    let (root, bus, epoch, seats) = fixture("planning-closed-construction", 1);
+    let plan = add_planning(
+        &bus,
+        epoch,
+        "Construct retained contracts",
+        wire::TaskIntent::Plan,
+        Some("plan,review"),
+    );
+    let child = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "CONTRACT-negative",
+        "Investigate one possible contract",
+        "board.test",
+        Some("todo"),
+        &["The possible contract is justified"],
+    );
+    connect_child(&bus, epoch, &plan, &child);
+    let view = board(&bus, epoch, Actor::Operator);
+    let heads = at(&view, &child);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskClose,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ],
+        &TaskClose {
+            task: child,
+            validation: "Investigation rejected this contract".to_owned(),
+            force_claimed: false,
+        },
+    ));
+
+    let result = done(&bus, epoch, &seats[0], &plan);
+    let Outcome::Refusal(refusal) = result else {
+        panic!("operator-closed work must not construct a plan: {result:?}");
+    };
+    assert_eq!(refusal.reason(), "task::plan-incomplete");
+    let view = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&view, &plan).workflow.body.phase.as_str(), "plan");
+    clean(&root, bus);
+}
+
+#[test]
 fn ordinary_done_cannot_supply_a_required_review_verdict() {
     let (root, bus, epoch, seats) = fixture("planning-review-verdict", 1);
     let task = add_project_with_acceptance(
