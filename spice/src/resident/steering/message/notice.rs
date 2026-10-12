@@ -59,6 +59,7 @@ pub(super) fn report(
     match outcome {
         Ok(Published::Sent {
             lanes,
+            queued,
             unreached,
             rooms,
             conversed,
@@ -66,8 +67,8 @@ pub(super) fn report(
             for lane in lanes {
                 notify_inbox(paths, *lane);
             }
-            if !rooms.is_empty() || conversed.is_some() {
-                teller.published(rooms, conversed.as_ref(), lanes.len(), diagnostic);
+            if !rooms.is_empty() || conversed.is_some() || !queued.is_empty() {
+                teller.published(rooms, conversed.as_ref(), queued, lanes.len(), diagnostic);
             }
             if !unreached.is_empty() {
                 teller.tell(UNAVAILABLE, &unreached.join("; "), lanes.len(), diagnostic);
@@ -140,11 +141,13 @@ impl Teller<'_> {
         &self,
         rooms: &[TaskHandle],
         conversed: Option<&Conversed>,
+        queued: &[OccupantAddress],
         reached: usize,
         diagnostic: &mut dyn io::Write,
     ) {
         let (record, locus) = (self.record, self.locus);
         let rooms = rooms.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let queued = queued.iter().map(ToString::to_string).collect::<Vec<_>>();
         let operator = conversed.is_some_and(|conversed| conversed.operator);
         let (asked, answered) = match conversed {
             Some(Conversed {
@@ -168,6 +171,9 @@ impl Teller<'_> {
         }
         if let Some(result) = &answered {
             let _ = write!(outcome, " answering result {result}");
+        }
+        if !queued.is_empty() {
+            let _ = write!(outcome, " queued for [{}]", queued.join(", "));
         }
         let _ = writeln!(
             diagnostic,
@@ -195,6 +201,7 @@ impl Teller<'_> {
                     operator,
                     asked,
                     answered,
+                    queued,
                     reached,
                 },
             );
@@ -217,6 +224,9 @@ pub(in crate::resident) struct MessageRecordedNotice {
     pub(in crate::resident) column: u32,
     /// Each room the packet recorded in, as its header spelled the task.
     pub(in crate::resident) rooms: Vec<String>,
+    /// Historical addresses whose vacant logical lanes hold queued delivery.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::resident) queued: Vec<String>,
     /// Whether the packet opened one pending operator item.
     pub(in crate::resident) operator: bool,
     /// The question result an ASK opened.
@@ -240,6 +250,12 @@ impl MessageRecordedNotice {
         if let Some(result) = &self.answered {
             clauses.push(format!(
                 "answered question result `{result}`; the answer returns to its requester"
+            ));
+        }
+        if !self.queued.is_empty() {
+            clauses.push(format!(
+                "queued for {}; unheard until each lane's next occupant starts; nothing woke anyone",
+                self.queued.join(", ")
             ));
         }
         if self.operator {

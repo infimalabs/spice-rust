@@ -785,7 +785,13 @@ impl PresentationDirectives {
                         .created()
                         .fact
                         .read::<wire::body::SteerMessaged>()
-                        .map(|message| message.sender),
+                        .map(|message| message.sender)
+                        .or_else(|| {
+                            row.created()
+                                .fact
+                                .read::<wire::body::SteerQueued>()
+                                .map(|message| message.sender)
+                        }),
                     recipient: row.created().fact.read::<wire::body::SteerMessaged>().map(
                         |message| wire::MessageDestination {
                             lane: message.lane,

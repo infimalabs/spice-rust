@@ -340,6 +340,8 @@ vocabulary! {
     SteerReplied = "steer::replied" by AckScanner;
     /// An authored MSG packet opened one peer message to one exact recipient.
     SteerMessaged = "steer::messaged" by AckScanner;
+    /// An authored MSG or ASK queued one peer directive for a vacant logical lane.
+    SteerQueued = "steer::queued" by AckScanner;
     /// An authored MSG packet published to no one; rereads leave it unpublished.
     SteerWithheld = "steer::withheld" by AckScanner;
     /// An ACK named no live directive; nothing retired.
@@ -501,6 +503,7 @@ impl FactKind {
         Self::SteerMissed,
         Self::SteerReplied,
         Self::SteerMessaged,
+        Self::SteerQueued,
         Self::SteerLapsed,
         Self::SteerDeadLettered,
         Self::SteerCanceled,

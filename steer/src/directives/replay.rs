@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 
 use wire::body::{
     ClaimLeaseWarned, SteerAcked, SteerCanceled, SteerDeclined, SteerEscalated, SteerLapsed,
-    SteerMessaged, SteerMissed, SteerRecovered, SteerReplied, SteerSent, TasteDecision,
-    TasteJudged, TasteReminded,
+    SteerMessaged, SteerMissed, SteerQueued, SteerRecovered, SteerReplied, SteerSent,
+    TasteDecision, TasteJudged, TasteReminded,
 };
 use wire::steering::SteerDeadLettered;
 use wire::{CanonicalUuid, Instant};
@@ -168,7 +168,8 @@ impl Ledger {
         let sent = fact
             .read::<SteerSent>()
             .or_else(|| fact.read::<SteerReplied>().map(|body| body.as_sent()))
-            .or_else(|| fact.read::<SteerMessaged>().map(|body| body.as_sent()));
+            .or_else(|| fact.read::<SteerMessaged>().map(|body| body.as_sent()))
+            .or_else(|| fact.read::<SteerQueued>().map(|body| body.as_sent()));
         let (result, affected) = if let Some(body) = sent {
             let opened = Some(body.directive);
             (self.absorb_recorded(Steering::Sent(&body), at), opened)
@@ -395,6 +396,9 @@ fn transaction_key(envelope: &wire::Envelope<wire::AnyFact>) -> Option<Key> {
             .and_then(|body| body.key.parse().ok()),
         wire::FactKind::SteerMessaged => fact
             .read::<SteerMessaged>()
+            .and_then(|body| body.key.parse().ok()),
+        wire::FactKind::SteerQueued => fact
+            .read::<SteerQueued>()
             .and_then(|body| body.key.parse().ok()),
         wire::FactKind::TasteReminded => fact
             .read::<TasteReminded>()

@@ -309,21 +309,26 @@ impl QuoteStore for ResidentStore<'_> {
         if head.key != key {
             return Err(SourceError::Unknown);
         }
-        // An MSG names the exact occupant that wrote it, so a later occupant of
-        // the sending lane never inherits its authorship.
-        let author = presentation
+        // A peer message names the exact occupant that wrote it, so a later
+        // occupant of the sending lane never inherits its authorship.
+        let peer = presentation
             .created()
             .fact
             .read::<wire::body::SteerMessaged>()
-            .map_or_else(
-                || QuoteAuthor::Directive {
-                    actor: presentation.created().actor.clone(),
-                },
-                |message| QuoteAuthor::Agent {
-                    lane: message.from,
-                    occupant: message.sender,
-                },
-            );
+            .map(|message| (message.from, message.sender))
+            .or_else(|| {
+                presentation
+                    .created()
+                    .fact
+                    .read::<wire::body::SteerQueued>()
+                    .map(|message| (message.from, message.sender))
+            });
+        let author = peer.map_or_else(
+            || QuoteAuthor::Directive {
+                actor: presentation.created().actor.clone(),
+            },
+            |(lane, occupant)| QuoteAuthor::Agent { lane, occupant },
+        );
         Ok(SourceQuote {
             identity: None,
             text: head.text.clone(),

@@ -328,6 +328,9 @@ pub(crate) fn steering_fact_identity(
         wire::FactKind::SteerMessaged => fact
             .read::<wire::body::SteerMessaged>()
             .map(|body| (Some(body.directive), body.key)),
+        wire::FactKind::SteerQueued => fact
+            .read::<wire::body::SteerQueued>()
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::TasteReminded => fact
             .read::<wire::body::TasteReminded>()
             .map(|body| (Some(body.directive), body.key)),
@@ -842,6 +845,12 @@ pub(crate) fn steering_head_agrees(
         wire::FactKind::SteerMessaged => {
             let body = fact
                 .read::<wire::body::SteerMessaged>()
+                .expect("registered kind");
+            sent_head_agrees(&body.as_sent(), at, seq, head)
+        }
+        wire::FactKind::SteerQueued => {
+            let body = fact
+                .read::<wire::body::SteerQueued>()
                 .expect("registered kind");
             sent_head_agrees(&body.as_sent(), at, seq, head)
         }

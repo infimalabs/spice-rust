@@ -82,6 +82,7 @@ fn an_answer_returns_and_retires_its_question_once() {
         asking,
         Ok(Published::Sent {
             lanes: vec![test_uuid(FIRST)],
+            queued: Vec::new(),
             unreached: Vec::new(),
             rooms: vec![room.clone()],
             conversed: Some(Conversed {
@@ -118,6 +119,7 @@ fn an_answer_returns_and_retires_its_question_once() {
         answering,
         Ok(Published::Sent {
             lanes: vec![test_uuid(SENDER)],
+            queued: Vec::new(),
             unreached: Vec::new(),
             rooms: vec![room.clone()],
             conversed: Some(Conversed {
@@ -150,6 +152,49 @@ fn an_answer_returns_and_retires_its_question_once() {
     let (outcomes, _) = lanes.hear(SENDER, test_uuid(SENDER + 1));
     assert_eq!(outcomes, [Ok(Published::Already)]);
     assert_eq!(lanes.conversations().len(), 2);
+    lanes.finish();
+}
+
+/// ASK uses its public result handle as the one queued steering key when the
+/// named historical address proves a currently vacant logical lane.
+#[test]
+fn an_ask_to_a_vacant_lane_keeps_its_result_key_and_deadline_until_seated() {
+    let lanes = Lanes::new("conv-queued");
+    let room = lanes.room("dVrD244Jd");
+    let first = lanes.address(FIRST);
+    lanes.vacate(FIRST);
+
+    let asking = lanes.say(SENDER, &format!("ASK {first}#{room}: why?"));
+    let result = asked(&asking);
+    assert!(
+        matches!(
+            &asking,
+            Ok(Published::Sent {
+                lanes,
+                queued,
+                unreached,
+                conversed: Some(Conversed { verb: Verb::Ask, .. }),
+                ..
+            }) if lanes.is_empty() && queued == &[first] && unreached.is_empty()
+        ),
+        "{asking:?}"
+    );
+    let pending = lanes.pending(FIRST);
+    let [before] = pending.as_slice() else {
+        panic!("the vacant respondent lane owns one pending ASK")
+    };
+    assert_eq!(before.key.as_str(), result.as_str());
+    assert!(!before.wakes);
+    let before = before.clone();
+    let queued_messages = lanes.queued_messages();
+    let [(_, queued)] = queued_messages.as_slice() else {
+        panic!("the ASK opens exactly one queued native fact")
+    };
+    assert_eq!(queued.key.as_str(), result.as_str());
+    assert_eq!(queued.expires, before.expires);
+
+    lanes.renew(FIRST, test_uuid(40));
+    assert_eq!(lanes.pending(FIRST), [before]);
     lanes.finish();
 }
 
@@ -266,17 +311,17 @@ fn operator_routes_open_pending_items() {
     lanes.finish();
 }
 
-/// An ASK whose one lane audience is not seated publishes nothing and tells
-/// its author it was unheard.
+/// An ASK whose one address proves no occupant publishes nothing.
 #[test]
-fn an_ask_to_an_unseated_audience_publishes_nothing() {
-    let lanes = Lanes::new("conv-unseated");
-    let second = lanes.address(SECOND);
-    lanes.vacate(SECOND);
+fn an_ask_to_an_unproved_audience_publishes_nothing() {
+    let lanes = Lanes::new("conv-unproved");
+    let unproved =
+        wire::OccupantAddress::from(wire::Seq::new(9_999_999).expect("nonzero position"));
 
-    let asking = lanes.say(SENDER, &format!("ASK {second}: anyone?"));
+    let asking = lanes.say(SENDER, &format!("ASK {unproved}: anyone?"));
     assert_eq!(refused(&asking), "msg::recipient-unavailable");
     assert!(lanes.conversations().is_empty());
     assert!(lanes.messages().is_empty());
+    assert!(lanes.queued_messages().is_empty());
     lanes.finish();
 }

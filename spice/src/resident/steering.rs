@@ -708,6 +708,10 @@ fn peer_origin(
         return Ok((message.directive == head.directive)
             .then(|| peer_sender(authority, message.from, message.sender)));
     }
+    if let Some(message) = created.fact.read::<wire::body::SteerQueued>() {
+        return Ok((message.directive == head.directive)
+            .then(|| peer_sender(authority, message.from, message.sender)));
+    }
     if created.fact.read::<wire::body::SteerReplied>().is_none() {
         return Ok(None);
     }

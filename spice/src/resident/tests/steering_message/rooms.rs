@@ -120,9 +120,9 @@ impl Lanes {
 }
 
 /// `#R` records the packet's exact bytes in R and tells only the author;
-/// `A#R` also delivers to A with R frozen; a vacant directed route stays
-/// named as unreached, and a packet no route reaches still records in R;
-/// equal text at another locus records again; a reread writes nothing.
+/// `A#R` also opens a room-bound delivery for A, queued while A's proved lane
+/// is vacant; a packet with no seated route still records in R; equal text at
+/// another locus records again; a reread writes nothing.
 #[test]
 fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     let lanes = Lanes::new("msg-room");
@@ -138,9 +138,10 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     lanes.account(SENDER);
 
     let (outcomes, diagnostics) = lanes.hear(SENDER, test_uuid(SENDER + 1));
-    let recorded = |lanes: &[u8], unreached: &[String]| {
+    let recorded = |lanes: &[u8], queued: &[wire::OccupantAddress], unreached: &[String]| {
         Ok(steering::Published::Sent {
             lanes: lanes.iter().map(|lane| test_uuid(*lane)).collect(),
+            queued: queued.to_vec(),
             unreached: unreached.to_vec(),
             rooms: vec![room.clone()],
             conversed: None,
@@ -149,16 +150,10 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     assert_eq!(
         outcomes,
         [
-            recorded(&[], &[]),
-            recorded(
-                &[FIRST],
-                &[format!("{second} address::expired (its lane is vacant)")]
-            ),
-            recorded(&[], &[]),
-            recorded(
-                &[],
-                &[format!("{second} address::expired (its lane is vacant)")]
-            ),
+            recorded(&[], &[], &[]),
+            recorded(&[FIRST], &[second], &[]),
+            recorded(&[], &[], &[]),
+            recorded(&[], &[second], &[]),
         ],
         "{diagnostics}"
     );
@@ -168,6 +163,13 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     };
     assert_eq!(message.lane, test_uuid(FIRST));
     assert_eq!(message.room, Some(born.clone()));
+    let queued = lanes.queued_messages();
+    assert_eq!(queued.len(), 2);
+    assert!(
+        queued
+            .iter()
+            .all(|(_, message)| message.room == Some(born.clone()))
+    );
     let [pending] = lanes
         .pending(FIRST)
         .try_into()

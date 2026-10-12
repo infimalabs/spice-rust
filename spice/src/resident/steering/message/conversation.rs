@@ -6,17 +6,18 @@ use super::*;
 /// Publish one ASK, ANS, or operator-routed MSG with its conversation record
 /// in one write.
 ///
-/// Each reached lane route is one native peer message, as for a plain MSG; an
-/// ASK's directive carries the ASK's freshly minted result handle as its key.
-/// The conversation record names those directives, and the journal opens the
-/// operator item and the question result it owes. An ANS is checked against
+/// Each admitted lane route is one native peer directive, as for a plain MSG;
+/// it is delivered now when seated or queued when its proved lane is vacant.
+/// An ASK's directive carries the ASK's freshly minted result handle as its
+/// key. The conversation record names those directives, and the journal opens
+/// the operator item and the question result it owes. An ANS is checked against
 /// its stored question before anything is written: only its named respondent
 /// lane answers, while the result is pending and before its deadline, and an
 /// asserted context must equal the stored one. Its return reaches the
 /// requester lane's seated occupant, or opens an operator item, and the same
 /// write acknowledges the respondent's still-live ASK directive. An ASK or ANS
-/// whose one lane delivery cannot be made publishes nothing; an MSG still
-/// reaches its operator and every seated route.
+/// whose one lane route can neither deliver nor queue publishes nothing; an MSG
+/// still reaches its operator and every admitted lane route.
 pub(super) fn publish_conversation(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -105,7 +106,16 @@ pub(super) fn publish_conversation(
     admit_send_envelope(&proposal).map_err(unpublished)?;
     commit(bus, proposal).map_err(|outcome| unpublished(typed_outcome(outcome)))?;
     Ok(Published::Sent {
-        lanes: targets.iter().map(|target| target.lane).collect(),
+        lanes: targets
+            .iter()
+            .filter(|target| target.occupant.is_some())
+            .map(|target| target.lane)
+            .collect(),
+        queued: targets
+            .iter()
+            .filter(|target| target.occupant.is_none())
+            .map(|target| target.recipient)
+            .collect(),
         unreached,
         rooms: record.rooms.into_iter().map(|(handle, _)| handle).collect(),
         conversed: Some(Conversed {
@@ -228,9 +238,9 @@ pub(super) fn conversation_stamp(
     })
 }
 
-/// The routes a conversation record freezes: the operator, each reached lane
-/// with its own context, and each room-only route, in header order. A route
-/// whose occupant the view does not seat publishes nothing and is omitted.
+/// The routes a conversation record freezes: the operator, each admitted lane
+/// with its own context, and each room-only route, in header order. A lane
+/// route is admitted when it delivers to a seat or queues for a vacant lane.
 fn conversation_routes(
     packet: &Packet<'_>,
     targets: &[Target],
