@@ -49,10 +49,15 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
+    let coordination = if predecessor < crate::migrate::ROOM_COORDINATION_SCHEMA {
+        "DROP TABLE room_directions; DROP TABLE room_shelvings;"
+    } else {
+        ""
+    };
     journal
         .connection
         .execute_batch(&format!(
-            "{rooms} {cursors}
+            "{rooms} {cursors} {coordination}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",
         ))
@@ -61,7 +66,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
-    for predecessor in [33, 34, 35, 36, 37, 38, 39, 40, 41, 42] {
+    for predecessor in [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);
@@ -894,6 +899,26 @@ fn plant_room_packet(journal: &Journal) -> String {
     "3".to_owned()
 }
 
+fn plant_room_coordination(journal: &Journal) -> String {
+    let directed = wire::rooms::RoomCoordinationStarted {
+        room: "1kKRRsDP".parse().expect("fixture room"),
+        publication: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_000)
+            .expect("fixture publication"),
+        key: "dVsW5mRxg".to_owned(),
+        target: "6SNy".parse().expect("fixture address"),
+    };
+    insert_fact(
+        journal,
+        fact(
+            3,
+            Some(2),
+            FactKind::RoomCoordinationStarted,
+            serde_json::to_value(directed).expect("room coordination encodes"),
+        ),
+    );
+    "3".to_owned()
+}
+
 fn plant_millisecond_steering_head(journal: &Journal) -> String {
     journal
         .connection
@@ -975,7 +1000,7 @@ fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
 
 #[test]
 fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutation() {
-    let cases: [RetainedCase; 6] = [
+    let cases: [RetainedCase; 7] = [
         (
             "fact_envelopes",
             "3903331e5",
@@ -1018,6 +1043,7 @@ fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutatio
              '$.fact.author', '$.fact.directed') AS BLOB) WHERE seq = 3",
             plant_room_packet,
         ),
+        ("fact_envelopes", "09d471040", "", plant_room_coordination),
     ];
     assert_retained_refusals(&cases);
 }

@@ -104,6 +104,22 @@ fn generated_tree_and_contract_rows_are_bijective() {
     }
 }
 
+/// A resident contract maps only to a command kind that reads exactly when
+/// the contract reads, so its client mapping cannot refuse every invocation.
+#[test]
+fn resident_contracts_read_exactly_when_their_command_kind_reads() {
+    let mismatched = CONTRACTS
+        .iter()
+        .filter(|contract| contract.guards.contains(&Guard::Resident))
+        .filter_map(|contract| {
+            let kind = contract.battery.parse::<wire::CommandKind>().ok()?;
+            (kind.is_read() != matches!(contract.journal, JournalAccess::Read))
+                .then(|| contract.path.join(" "))
+        })
+        .collect::<Vec<_>>();
+    assert!(mismatched.is_empty(), "{mismatched:?}");
+}
+
 #[test]
 
 fn retired_fold_commands_have_no_parser_contract_or_landing() {

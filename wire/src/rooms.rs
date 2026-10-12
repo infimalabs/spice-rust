@@ -342,14 +342,15 @@ pub struct RoomStopRequest {
     pub key: String,
     /// Exact base-52 address of the holder at admission.
     pub target: crate::OccupantAddress,
-    /// Exact claim head the request applies to, rendered as native base-52.
+    /// Position of the native claim win the request applies to, rendered as
+    /// base-52; carry and generation changes keep it.
     pub claim: SequenceCode,
 }
 
 /// One operator Put-aside action recorded in an anchor's room timeline.
 ///
 /// The listed keys are ordinary steering dispositions. A stop request remains
-/// visible only while its exact native claim head remains active.
+/// visible only while the claim win it names remains active.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomPutAside {
@@ -362,6 +363,59 @@ pub struct RoomPutAside {
     /// Request to the current anchor holder, absent when the anchor was idle.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop: Option<RoomStopRequest>,
+}
+
+/// Steering control a room-coordination direction drives.
+///
+/// The journal binds room coordination records to directions by this exact
+/// spelling, so it has one canonical form in each direction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CoordinationControl {
+    /// A scoped request to contribute to the anchor's room.
+    Coordinate(RoomAnchor),
+    /// A request that the anchor's holder checkpoint and free its claim.
+    Stop {
+        /// Anchor task whose claim is asked to stop.
+        room: RoomAnchor,
+        /// Position of the claim win the request applies to.
+        claim: SequenceCode,
+    },
+}
+
+const COORDINATE_CONTROL: &str = "room-coordinate:";
+const STOP_CONTROL: &str = "room-stop:";
+
+/// Text that does not spell a room-coordination control.
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+#[error("not a room coordination control: {0:?}")]
+pub struct CoordinationControlError(String);
+
+impl fmt::Display for CoordinationControl {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Coordinate(room) => write!(formatter, "{COORDINATE_CONTROL}{room}"),
+            Self::Stop { room, claim } => write!(formatter, "{STOP_CONTROL}{room}:{claim}"),
+        }
+    }
+}
+
+impl FromStr for CoordinationControl {
+    type Err = CoordinationControlError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let invalid = || CoordinationControlError(text.to_owned());
+        if let Some(room) = text.strip_prefix(COORDINATE_CONTROL) {
+            return room.parse().map(Self::Coordinate).map_err(|_| invalid());
+        }
+        let (room, claim) = text
+            .strip_prefix(STOP_CONTROL)
+            .and_then(|rest| rest.split_once(':'))
+            .ok_or_else(invalid)?;
+        Ok(Self::Stop {
+            room: room.parse().map_err(|_| invalid())?,
+            claim: claim.parse().map_err(|_| invalid())?,
+        })
+    }
 }
 
 /// Native room-only publication command body.

@@ -512,7 +512,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     operator!(
         ["room", "put-aside"],
         "room put-aside HANDLE",
-        Command,
+        Command => SnapshotOrCommitted,
         [SteerCanceled, SteerSent, RoomPutAside],
         Reply,
         "room::put-aside"

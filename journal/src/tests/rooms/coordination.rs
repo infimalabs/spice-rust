@@ -1,0 +1,352 @@
+//! Room coordination records bound to the operator directions they name.
+
+use wire::body::{SteerCanceled, SteerSent, SteeringStage};
+use wire::rooms::{CoordinationControl, RoomCoordinationStarted, RoomPutAside, RoomStopRequest};
+use wire::{Disposition, SteeringHead};
+
+use super::*;
+
+/// Lane that holds the claim `add_claimed_task` wins.
+const HOLDER: &str = "018f82d4-6f59-7d06-92e3-bce9131163d1";
+const OTHER_LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163d9";
+const KEYS: [&str; 4] = ["1kJK6N3R", "1kJK6N3S", "1kJK6N3T", "1kJK6N3V"];
+
+fn target() -> wire::OccupantAddress {
+    "6SNy".parse().expect("occupant address")
+}
+
+/// Stage one operator direction `KEYS[index]` to `lane` and return its key.
+fn send(
+    write: &mut JournalWrite,
+    index: usize,
+    control: Option<CoordinationControl>,
+    lane: &str,
+) -> String {
+    let body = SteerSent {
+        from: None,
+        room: None,
+        directive: uuid(&format!("018f82d4-6f59-7d06-92e3-bce91311640{index}")),
+        fanout: None,
+        key: KEYS[index].to_owned(),
+        lane: uuid(lane),
+        text: "contribute to the room".to_owned(),
+        control: control.map(|control| control.to_string()),
+        attachments: Vec::new(),
+        expires: "2030-04-12T19:44:09.271Z".parse().expect("expiry"),
+    };
+    let pending = write
+        .fact(body.clone(), FactCause::Root)
+        .expect("direction builds");
+    let key = body.key.clone();
+    write.steering_head(pending, move |seq| SteeringHead {
+        from: None,
+        room: None,
+        directive: body.directive,
+        fanout: None,
+        key: body.key,
+        lane: body.lane,
+        text: body.text,
+        control: body.control,
+        attachments: Vec::new(),
+        published: instant(),
+        expires: body.expires,
+        stage: SteeringStage::Published,
+        escalations: Vec::new(),
+        disposition: Disposition::Live,
+        origin: "task:rooms".parse().expect("steering origin"),
+        created: seq,
+        minted_micros: None,
+    });
+    key
+}
+
+/// Stage the cancellation of one committed live direction.
+fn cancel(journal: &Journal, write: &mut JournalWrite, key: &str) {
+    let head = journal
+        .read(|read| read.steering_key(key))
+        .expect("steering reads")
+        .expect("direction exists");
+    let pending = write
+        .fact(
+            SteerCanceled {
+                key: key.to_owned(),
+                lane: head.body().lane,
+            },
+            FactCause::Existing(head.body().created),
+        )
+        .expect("cancellation builds");
+    let mut next = head.body().clone();
+    next.disposition = Disposition::Canceled;
+    write.steering_head(pending, move |_| next);
+}
+
+fn started(room: &TaskStamp, micros: i64, key: &str) -> RoomCoordinationStarted {
+    RoomCoordinationStarted {
+        room: room.clone(),
+        publication: authority(micros),
+        key: key.to_owned(),
+        target: target(),
+    }
+}
+
+/// One write staging `directions` in order and then a start naming `named`.
+fn start(
+    actor: Actor,
+    room: &TaskStamp,
+    micros: i64,
+    directions: &[(usize, Option<CoordinationControl>)],
+    named: &str,
+) -> JournalWrite {
+    let mut write = write_as(actor);
+    for (index, control) in directions {
+        send(&mut write, *index, control.clone(), HOLDER);
+    }
+    write
+        .fact(started(room, micros, named), FactCause::Root)
+        .expect("start builds");
+    write
+}
+
+/// One stop direction: its key index, the claim win it cites, and its lane.
+type Stop<'a> = (usize, u64, &'a str);
+
+/// One write canceling `cancels`, then sending `stop`, then putting aside the
+/// room with `listed` cancellations.
+fn put_aside(
+    journal: &Journal,
+    actor: Actor,
+    room: &TaskStamp,
+    cancels: &[&str],
+    listed: &[&str],
+    stop: Option<Stop<'_>>,
+) -> JournalWrite {
+    let mut write = write_as(actor);
+    for key in cancels {
+        cancel(journal, &mut write, key);
+    }
+    let stop = stop.map(|(index, claim, lane)| {
+        let claim = SequenceCode::new(claim);
+        let control = CoordinationControl::Stop {
+            room: room.clone(),
+            claim,
+        };
+        RoomStopRequest {
+            key: send(&mut write, index, Some(control), lane),
+            target: target(),
+            claim,
+        }
+    });
+    write
+        .fact(
+            RoomPutAside {
+                room: room.clone(),
+                publication: authority(9),
+                canceled: listed.iter().map(|key| (*key).to_owned()).collect(),
+                stop,
+            },
+            FactCause::Root,
+        )
+        .expect("put-aside builds");
+    write
+}
+
+/// A start is admitted only from the operator immediately after the same
+/// write's direction carrying that room's coordination control under the key
+/// it names; commit, and verification of planted history, refuse the rest.
+#[test]
+fn start_binds_to_its_writes_operator_coordination_direction() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let room = task(&mut journal, 1, None);
+    let other = task(&mut journal, 2, None);
+    let coordinate = |room: &TaskStamp| Some(CoordinationControl::Coordinate(room.clone()));
+    let refusals = [
+        start(
+            Actor::Lane(uuid(HOLDER)),
+            &room,
+            1,
+            &[(0, coordinate(&room))],
+            KEYS[0],
+        ),
+        start(Actor::Operator, &room, 1, &[], KEYS[0]),
+        start(Actor::Operator, &room, 1, &[(0, None)], KEYS[0]),
+        start(
+            Actor::Operator,
+            &room,
+            1,
+            &[(0, coordinate(&other))],
+            KEYS[0],
+        ),
+        start(
+            Actor::Operator,
+            &room,
+            1,
+            &[(
+                0,
+                Some(CoordinationControl::Stop {
+                    room: room.clone(),
+                    claim: SequenceCode::new(1),
+                }),
+            )],
+            KEYS[0],
+        ),
+        start(
+            Actor::Operator,
+            &room,
+            1,
+            &[(0, coordinate(&room)), (1, None)],
+            KEYS[0],
+        ),
+    ];
+    for write in refusals {
+        let result = journal.apply(write);
+        refused(&journal, result);
+    }
+
+    journal
+        .apply(start(
+            Actor::Operator,
+            &room,
+            1,
+            &[(0, coordinate(&room))],
+            KEYS[0],
+        ))
+        .expect("bound start commits");
+    let head = journal
+        .read(|read| read.room_direction(&room))
+        .expect("coordination reads")
+        .expect("start recorded");
+    assert_eq!(head.body().key, KEYS[0]);
+    assert_eq!(head.position(), cursor(&journal).expect("nonempty"));
+
+    // A direction from an earlier write directly precedes the start, yet the
+    // start's own write does not send it.
+    let mut earlier = write();
+    send(&mut earlier, 1, coordinate(&room), HOLDER);
+    journal.apply(earlier).expect("bare direction commits");
+    let result = commit(&mut journal, started(&room, 2, KEYS[1]));
+    refused(&journal, result);
+    journal.verify().expect("bound coordination verifies");
+
+    // History that bypassed the commit binding cannot verify.
+    let seq = cursor(&journal).expect("nonempty").get() + 1;
+    let mut planted = fact(
+        seq,
+        None,
+        FactKind::RoomCoordinationStarted,
+        serde_json::to_value(started(&room, 3, KEYS[0])).expect("start body"),
+    );
+    planted.actor = Actor::Operator;
+    insert_fact(&journal, planted);
+    let sql_seq = i64::try_from(seq).expect("seq");
+    journal
+        .connection
+        .execute_batch(&format!(
+            "INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES ({sql_seq}, 'task:1kKRRsDP', NULL, {sql_seq}, 0);
+             UPDATE cursor_head SET seq = {sql_seq} WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = {sql_seq} WHERE singleton = 1;",
+        ))
+        .expect("index the planted start");
+    let violations = refused_violations(&journal);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.subject == format!("room_authority:{seq}")),
+        "{violations:?}"
+    );
+}
+
+/// Putting a room aside lists exactly its write's cancellations of the room's
+/// coordination directions, and a stop is the write's direction to the lane
+/// holding the active claim win it cites.
+#[test]
+fn put_aside_lists_its_writes_cancellations_and_stops_the_active_holder() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let room =
+        super::super::claim_index::add_claimed_task(&mut journal, 1, Actor::Lane(uuid(HOLDER)));
+    let win = cursor(&journal).expect("claim won").get();
+    let coordinate = Some(CoordinationControl::Coordinate(room.clone()));
+    journal
+        .apply(start(
+            Actor::Operator,
+            &room,
+            1,
+            &[(0, coordinate)],
+            KEYS[0],
+        ))
+        .expect("start commits");
+    let mut plain = write();
+    send(&mut plain, 2, None, HOLDER);
+    journal.apply(plain).expect("plain direction commits");
+
+    let operator = Actor::Operator;
+    let holder = Actor::Lane(uuid(HOLDER));
+    let refusals = [
+        put_aside(&journal, operator.clone(), &room, &[], &[], None),
+        put_aside(&journal, operator.clone(), &room, &[], &[KEYS[0]], None),
+        put_aside(
+            &journal,
+            operator.clone(),
+            &room,
+            &[KEYS[0]],
+            &[],
+            Some((1, win, HOLDER)),
+        ),
+        put_aside(
+            &journal,
+            operator.clone(),
+            &room,
+            &[KEYS[2]],
+            &[KEYS[2]],
+            None,
+        ),
+        put_aside(
+            &journal,
+            operator.clone(),
+            &room,
+            &[KEYS[0]],
+            &[KEYS[0]],
+            Some((1, win + 1, HOLDER)),
+        ),
+        put_aside(
+            &journal,
+            operator.clone(),
+            &room,
+            &[KEYS[0]],
+            &[KEYS[0]],
+            Some((1, win, OTHER_LANE)),
+        ),
+        put_aside(
+            &journal,
+            holder,
+            &room,
+            &[KEYS[0]],
+            &[KEYS[0]],
+            Some((1, win, HOLDER)),
+        ),
+    ];
+    for write in refusals {
+        let result = journal.apply(write);
+        refused(&journal, result);
+    }
+
+    journal
+        .apply(put_aside(
+            &journal,
+            operator,
+            &room,
+            &[KEYS[0]],
+            &[KEYS[0]],
+            Some((1, win, HOLDER)),
+        ))
+        .expect("bound put-aside commits");
+    let head = journal
+        .read(|read| read.room_shelving(&room))
+        .expect("coordination reads")
+        .expect("put-aside recorded");
+    assert_eq!(head.body().canceled, vec![KEYS[0].to_owned()]);
+    assert_eq!(
+        head.body().stop.as_ref().map(|stop| stop.claim.get()),
+        Some(win)
+    );
+    journal.verify().expect("bound coordination verifies");
+}

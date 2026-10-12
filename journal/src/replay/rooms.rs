@@ -65,10 +65,24 @@ pub(super) fn verify(
         &stored.cursors,
         violations,
     );
+    compare(
+        "room_directions",
+        &expected.directed,
+        &stored.directed,
+        violations,
+    );
+    compare(
+        "room_shelvings",
+        &expected.shelved,
+        &stored.shelved,
+        violations,
+    );
     Ok(stored.groups.len()
         + stored.proposals.len()
         + stored.authorizations.len()
-        + stored.cursors.len())
+        + stored.cursors.len()
+        + stored.directed.len()
+        + stored.shelved.len())
 }
 
 fn compare<K: Ord + Debug, V: PartialEq>(
