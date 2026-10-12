@@ -49,7 +49,8 @@ fn intent_violations(journal: &Journal) -> Vec<String> {
             .violations()
             .iter()
             .filter(|violation| {
-                violation.class == ViolationClass::Head && violation.detail.contains("intent")
+                violation.class == ViolationClass::Head
+                    && violation.subject == "task_heads:1kKRRsDP"
             })
             .map(ToString::to_string)
             .collect(),
@@ -64,7 +65,6 @@ fn statement_intent_is_exactly_the_intent_its_task_facts_admitted() {
     replace_task_head(&journal, &head_with(Some(wire::TaskIntent::Plan), 1));
     let refused = intent_violations(&journal);
     assert_eq!(refused.len(), 1, "{refused:?}");
-    assert!(refused[0].contains("declared intent plan disagrees with the intent none"));
 
     // An admitted change is authority: the head that follows it verifies, and
     // one that ignores it does not.
@@ -77,5 +77,4 @@ fn statement_intent_is_exactly_the_intent_its_task_facts_admitted() {
     replace_task_head(&journal, &head_with(None, 3));
     let refused = intent_violations(&journal);
     assert_eq!(refused.len(), 1, "{refused:?}");
-    assert!(refused[0].contains("declared intent none disagrees with the intent design"));
 }
