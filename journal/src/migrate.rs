@@ -30,16 +30,17 @@ const PREPARED: &str = "prepared";
 /// crosses or refuses the remaining retired fact, receipt,
 /// and head shapes, refuses room packet records that omit their author and
 /// directed routes, room coordination records written before the journal
-/// bound them, and room conversation records without the current native
-/// steering delivery shape, projects frozen
-/// peer-message rooms from their creating facts into steering heads, and
-/// creates the room-authority projection, per-lane room catch-up cursors and
-/// horizons, room coordination heads, room conversation heads, operator items,
-/// required task evidence, and relevance shadow records a predecessor lacks,
-/// replacing its per-route room receipts before the schema identity advances.
+/// bound them, room conversation records without the current native steering
+/// delivery shape, and working groups holding more designs than a group
+/// admits, projects frozen peer-message rooms from their creating facts into
+/// steering heads, and creates the room-authority projection, per-lane room
+/// catch-up cursors and horizons, room coordination heads, room conversation
+/// heads, operator items, required task evidence, and relevance shadow records
+/// a predecessor lacks, replacing its per-route room receipts, before the
+/// schema identity advances.
 /// Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 16] = [
-    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+const PREDECESSOR_SCHEMAS: [u32; 17] = [
+    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -1192,8 +1193,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 49, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 50, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 49;
+PRAGMA user_version = 50;
 "#;

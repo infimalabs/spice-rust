@@ -147,11 +147,9 @@ pub(super) fn render_app(render: AppRender<'_>, work: Option<&WorkProjection<'_>
 }
 
 fn render_workspace(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
-    let surface = render.surface.read();
     html! {
         <div class="workspace mosaic-workspace">
             <main class="mosaic-content content">
-                {super::rooms::render_consoles(surface.as_ref(), render.room_controls, render.sender)}
                 {watchband::render_team(render, work)}
             </main>
         </div>

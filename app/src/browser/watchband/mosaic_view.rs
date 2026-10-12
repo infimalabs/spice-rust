@@ -7,15 +7,17 @@ use yew::functional::UseReducerDispatcher;
 const MIN_MEASURABLE_WIDTH_PX: i32 = 24;
 mod composer_collapse;
 mod history;
-pub(super) use history::HistorySender;
+pub(in crate::browser) use history::HistorySender;
 use history::use_history_paging;
 
 mod image_resolution;
 pub(crate) use image_resolution::use_markdown_image_resolution_events;
 use image_resolution::{use_element_width, use_image_resolution_events};
+mod room;
+use room::render_room_card;
 
 #[derive(Clone)]
-pub(super) enum ActivityCard {
+pub(in crate::browser) enum ActivityCard {
     Agent {
         accent: usize,
         member: crate::runtime::LaneMember,
@@ -29,6 +31,18 @@ pub(super) enum ActivityCard {
         accent: usize,
         member: crate::runtime::LaneMember,
         boundary: crate::runtime::LaneLifecycleBoundary,
+    },
+    /// One working-group room publication, accented by its design channel.
+    /// The group surface renders its body; the plane owns only placement.
+    Room {
+        accent: usize,
+        design: wire::TaskStamp,
+        publication: wire::rooms::RoomAuthorityStamp,
+        position: wire::Seq,
+        /// Everything that can change the card's measured geometry. Receipt
+        /// state is excluded: its slots keep one geometry in every state.
+        shape: Rc<str>,
+        body: Html,
     },
 }
 
@@ -81,6 +95,30 @@ impl PartialEq for ActivityCard {
                     && left_member == right_member
                     && left_boundary == right_boundary
             }
+            (
+                Self::Room {
+                    accent: left_accent,
+                    design: left_design,
+                    publication: left_publication,
+                    shape: left_shape,
+                    body: left_body,
+                    ..
+                },
+                Self::Room {
+                    accent: right_accent,
+                    design: right_design,
+                    publication: right_publication,
+                    shape: right_shape,
+                    body: right_body,
+                    ..
+                },
+            ) => {
+                left_accent == right_accent
+                    && left_design == right_design
+                    && left_publication == right_publication
+                    && left_shape == right_shape
+                    && left_body == right_body
+            }
             _ => false,
         }
     }
@@ -96,6 +134,7 @@ enum ActivityFingerprint {
         message: Rc<wire::AgentMessage>,
     },
     Lifecycle(crate::runtime::LaneLifecycleBoundary),
+    Room(Rc<str>),
 }
 
 impl PartialEq for ActivityFingerprint {
@@ -125,6 +164,7 @@ impl PartialEq for ActivityFingerprint {
                         || same_measured_agent_content(left_message, right_message))
             }
             (Self::Lifecycle(left), Self::Lifecycle(right)) => left == right,
+            (Self::Room(left), Self::Room(right)) => left == right,
             _ => false,
         }
     }
@@ -174,6 +214,9 @@ fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMes
 /// Route target prefix of every lane lifecycle boundary card.
 pub(in crate::browser) const LIFECYCLE_CARD_PREFIX: &str = "lane-lifecycle-";
 
+/// Route target prefix of every working-group room publication card.
+pub(in crate::browser) const ROOM_CARD_PREFIX: &str = "room-publication-";
+
 impl ActivityCard {
     fn key(&self) -> String {
         match self {
@@ -181,6 +224,7 @@ impl ActivityCard {
             Self::Lifecycle { boundary, .. } => {
                 format!("{LIFECYCLE_CARD_PREFIX}{}", boundary.seq())
             }
+            Self::Room { publication, .. } => format!("{ROOM_CARD_PREFIX}{publication}"),
         }
     }
 
@@ -191,19 +235,34 @@ impl ActivityCard {
     /// rendered identity. A greater source offset is therefore deterministically
     /// newer within one display millisecond. Older history merged after a live
     /// cursor remains behind that cursor and is never narrated as new activity.
-    pub(super) fn chronology_key(&self) -> (i64, u8, CanonicalUuid, u64, u64, u64, u32) {
+    pub(in crate::browser) fn chronology_key(
+        &self,
+    ) -> (i64, u8, Option<CanonicalUuid>, u64, u64, u64, u32) {
         match self {
             Self::Agent { message, .. } => {
                 let (millis, lane, member, offset, length, event) = message.chronology_key();
-                (millis, 0, lane, member, offset, length, event)
+                (millis, 0, Some(lane), member, offset, length, event)
             }
             Self::Lifecycle { boundary, .. } => (
                 boundary.observed().get().as_millisecond(),
                 1,
-                boundary.lane(),
+                Some(boundary.lane()),
                 0,
                 0,
                 boundary.seq().get(),
+                0,
+            ),
+            Self::Room {
+                publication,
+                position,
+                ..
+            } => (
+                publication.micros().div_euclid(1000),
+                2,
+                None,
+                0,
+                0,
+                position.get(),
                 0,
             ),
         }
@@ -226,6 +285,7 @@ impl ActivityCard {
                 message: Rc::clone(message),
             },
             Self::Lifecycle { boundary, .. } => ActivityFingerprint::Lifecycle(boundary.clone()),
+            Self::Room { shape, .. } => ActivityFingerprint::Room(Rc::clone(shape)),
         }
     }
 
@@ -234,7 +294,7 @@ impl ActivityCard {
             Self::Agent { message, .. } if message.activity.is_boundary() => {
                 crate::mosaic::TRACK_COUNT
             }
-            Self::Agent { .. } => geometry.base_span,
+            Self::Agent { .. } | Self::Room { .. } => geometry.base_span,
             Self::Lifecycle { .. } => crate::mosaic::TRACK_COUNT,
         }
     }
@@ -463,23 +523,33 @@ fn activity_measurement<'a>(
     index.get(&key, width, activity)
 }
 
+/// Whose activity one packed plane holds.
+#[derive(Clone, PartialEq)]
+pub(in crate::browser) enum PlaneOwner {
+    /// A team: its lane identity and live policy. Only a team narrates.
+    Team { lane: CanonicalUuid, life: TeamLife },
+    /// A working group, by its shared authority identity.
+    Group(wire::rooms::RoomAuthorityStamp),
+}
+
 #[derive(Properties, PartialEq)]
-pub(super) struct MosaicPlaneProps {
-    pub(super) lane: CanonicalUuid,
-    pub(super) life: TeamLife,
-    pub(super) members: usize,
-    pub(super) cards: Vec<ActivityCard>,
-    pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
-    pub(super) open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
-    pub(super) speak: Callback<SpeechRequest>,
-    pub(super) narrate: Callback<NarrationBatch>,
-    pub(super) speech: TeamSpeech,
-    pub(super) speech_owner: Option<SpeechOwner>,
-    pub(super) history_targets: BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
-    pub(super) history_revision: u64,
-    pub(super) history: HistorySender,
-    /// The team's composer host, carried in this plane's scroll content.
-    pub(super) composer_slot: web_sys::HtmlElement,
+pub(in crate::browser) struct MosaicPlaneProps {
+    pub(in crate::browser) owner: PlaneOwner,
+    /// Team members, or working-group designs.
+    pub(in crate::browser) members: usize,
+    pub(in crate::browser) cards: Vec<ActivityCard>,
+    pub(in crate::browser) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
+    pub(in crate::browser) open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
+    pub(in crate::browser) speak: Callback<SpeechRequest>,
+    pub(in crate::browser) narrate: Callback<NarrationBatch>,
+    pub(in crate::browser) speech: TeamSpeech,
+    pub(in crate::browser) speech_owner: Option<SpeechOwner>,
+    pub(in crate::browser) history_targets:
+        BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
+    pub(in crate::browser) history_revision: u64,
+    pub(in crate::browser) history: HistorySender,
+    /// The surface's composer host, carried in this plane's scroll content.
+    pub(in crate::browser) composer_slot: web_sys::HtmlElement,
 }
 
 struct MosaicPlaneView<'a> {
@@ -523,13 +593,36 @@ impl MosaicPlaneView<'_> {
         let committed_width = self
             .plane
             .map_or(0, crate::mosaic_plane::PersistentLanePlane::geometry);
+        let members = self.properties.members;
+        let (team_plane, group_plane, policy, label) = match &self.properties.owner {
+            PlaneOwner::Team { lane, life } => (
+                Some(lane.to_string()),
+                None,
+                Some(life.label()),
+                format!(
+                    "Packed team plane: {} policy, {members} {}",
+                    life.label(),
+                    if members == 1 { "member" } else { "members" },
+                ),
+            ),
+            PlaneOwner::Group(group) => (
+                None,
+                Some(group.to_string()),
+                None,
+                format!(
+                    "Packed working group plane: {members} {}",
+                    if members == 1 { "design" } else { "designs" },
+                ),
+            ),
+        };
         html! {
             <section
                 ref={host}
                 class="lane-mosaic-plane"
-                data-agent-plane={self.properties.lane.to_string()}
-                data-team-policy={self.properties.life.label()}
-                data-team-members={self.properties.members.to_string()}
+                data-agent-plane={team_plane}
+                data-group-plane={group_plane}
+                data-team-policy={policy}
+                data-team-members={members.to_string()}
                 data-lanes={self.geometry.lane_count.to_string()}
                 data-plane-rows={plane_rows.to_string()}
                 data-max-row={self.max_row.unwrap_or_default().to_string()}
@@ -547,12 +640,7 @@ impl MosaicPlaneView<'_> {
                 data-committed-width={committed_width.to_string()}
                 data-narration-cursor={self.narration_cursor}
                 tabindex="0"
-                aria-label={format!(
-                    "Packed team plane: {} policy, {} {}",
-                    self.properties.life.label(),
-                    self.properties.members,
-                    if self.properties.members == 1 { "member" } else { "members" },
-                )}
+                aria-label={label}
             >
                 {Html::VRef(self.properties.composer_slot.clone().into())}
                 <div ref={track_host} class="lane-mosaic-track">
@@ -593,7 +681,7 @@ fn committed_spans(
 /// candidate stream, engine call, and row floor for all of its worktree
 /// members. Sibling teams can never carry a skyline into one another.
 #[function_component(MosaicPlane)]
-pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
+pub(in crate::browser) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let host = use_node_ref();
     let track_host = use_node_ref();
     let width = use_element_width(track_host.clone());
@@ -652,7 +740,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         (*measurements).clone(),
     );
     use_narration(
-        properties.lane,
+        &properties.owner,
         properties.cards.clone(),
         properties.speech,
         properties.narrate.clone(),
@@ -792,7 +880,7 @@ fn scroll_anchor_offset(scroller: &web_sys::Element, key: &str) -> Option<f64> {
 
 #[hook]
 fn use_narration(
-    team: CanonicalUuid,
+    owner: &PlaneOwner,
     cards: Vec<ActivityCard>,
     speech: TeamSpeech,
     narrate: Callback<NarrationBatch>,
@@ -805,7 +893,7 @@ fn use_narration(
             ActivityCard::Agent {
                 member, message, ..
             } => Some((member, message)),
-            ActivityCard::Lifecycle { .. } => None,
+            ActivityCard::Lifecycle { .. } | ActivityCard::Room { .. } => None,
         })
         .filter_map(|(member, message)| {
             let narration = crate::narration::narration_utterance(message.activity, &message.text);
@@ -823,7 +911,14 @@ fn use_narration(
             })
         })
         .collect::<Vec<_>>();
+    let team = match owner {
+        PlaneOwner::Team { lane, .. } => Some(*lane),
+        PlaneOwner::Group(_) => None,
+    };
     use_effect_with((speech, messages), move |(speech, messages)| {
+        let Some(team) = team else {
+            return;
+        };
         let first = !*materialized.borrow();
         *materialized.borrow_mut() = true;
         narrate.emit(NarrationBatch {
@@ -1246,7 +1341,11 @@ fn render_activity_cards(
                     quote_tasks,
                     quote_lane,
                     message,
-                } => html! {
+                } => {
+                    let PlaneOwner::Team { lane, .. } = &properties.owner else {
+                        unreachable!("agent cards render only in team planes");
+                    };
+                    html! {
                     <AgentMessageCard
                         key={key}
                         accent={*accent}
@@ -1262,16 +1361,23 @@ fn render_activity_cards(
                         speech_owner={properties.speech_owner.as_ref()
                             .filter(|owner| owner.message_key() == key.as_str())
                             .cloned()}
-                        lane={properties.lane}
+                        lane={*lane}
                         order={quote_order}
                         {layout}
                     />
-                },
+                    }
+                }
                 ActivityCard::Lifecycle {
                     accent,
                     member,
                     boundary,
                 } => render_lifecycle_boundary(*accent, member, boundary, &key, &layout),
+                ActivityCard::Room {
+                    accent,
+                    design,
+                    body,
+                    ..
+                } => render_room_card(*accent, design, body, &key, &layout),
             }
         })
         .collect()

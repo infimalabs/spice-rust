@@ -303,6 +303,8 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .app-presence-pip--status:is(.bound, .unbound) { box-shadow: none; }
+/* A working group's lights are its design channels, each in its accent. */
+.app-presence-pip--status.group-design-pip { --app-presence-color: var(--accent-slot); }
 
 .app-presence-pip--work {
   width: var(--app-presence-pip-size);

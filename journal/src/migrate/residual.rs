@@ -55,6 +55,9 @@ const ROOM_CONVERSATION_KINDS: [&str; 9] = [
     "room::unavailable",
     "room::recovered",
 ];
+/// Last release whose build admitted working groups holding more than
+/// [`wire::rooms::WORKING_GROUP_DESIGN_LIMIT`] designs.
+const GROUP_DESIGN_LIMIT_RELEASE: &str = "577f4f602";
 
 /// Refuse every retained shape without a current spelling before mutation, and
 /// derive every retained vendor-failure hold's refused input from its history.
@@ -125,6 +128,19 @@ pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<vendor_holds::Deri
         (),
         SESSION_LAUNCH_RELEASE,
         "the resumable lane session omits its launch identity",
+    )?;
+    refuse_first(
+        transaction,
+        "fact_envelopes",
+        "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
+         AND json_array_length(CAST(envelope AS TEXT), '$.fact.group.anchors') > ?2 ORDER BY seq",
+        params![
+            wire::FactKind::WorkingGroupStored.as_str(),
+            u32::try_from(wire::rooms::WORKING_GROUP_DESIGN_LIMIT)
+                .expect("the design cap is small")
+        ],
+        GROUP_DESIGN_LIMIT_RELEASE,
+        "the working group holds more designs than a group admits",
     )?;
     refuse_unbound_provenance(transaction)?;
     vendor_holds::derive(transaction)

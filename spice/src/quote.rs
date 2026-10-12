@@ -260,6 +260,12 @@ trait QuoteStore {
     ) -> Result<SourceQuote, SourceError>;
 
     fn steering(&self, key: &str) -> Result<SourceQuote, SourceError>;
+
+    fn room(
+        &self,
+        room: &wire::TaskStamp,
+        publication: &wire::rooms::RoomAuthorityStamp,
+    ) -> Result<SourceQuote, SourceError>;
 }
 
 struct ResidentStore<'a> {
@@ -337,6 +343,57 @@ impl QuoteStore for ResidentStore<'_> {
             media: head.attachments.clone(),
         })
     }
+
+    /// An operator post quotes as its directive-authored text; a lane packet
+    /// quotes as the exact transcript hunk its occupant wrote. Coordination,
+    /// set-asides, and groomings carry no authored words and quote nothing.
+    fn room(
+        &self,
+        room: &wire::TaskStamp,
+        publication: &wire::rooms::RoomAuthorityStamp,
+    ) -> Result<SourceQuote, SourceError> {
+        let envelope = self
+            .bus
+            .room_publication(room.clone(), publication.clone())
+            .map_err(|_| SourceError::Unreadable)?
+            .ok_or(SourceError::Unknown)?;
+        let authored = |text| SourceQuote {
+            identity: None,
+            text,
+            author: QuoteAuthor::Directive {
+                actor: envelope.actor.clone(),
+            },
+            disposition: None,
+            media: Vec::new(),
+        };
+        if let Some(posted) = envelope.fact.read::<wire::rooms::RoomPosted>() {
+            return Ok(authored(posted.text));
+        }
+        if let Some(published) = envelope.fact.read::<wire::rooms::RoomPublished>()
+            && let wire::rooms::RoomPublicationContent::Authored { text } = published.content
+        {
+            return Ok(authored(text));
+        }
+        let messaged = envelope
+            .fact
+            .read::<wire::rooms::RoomMessaged>()
+            .ok_or(SourceError::Unknown)?;
+        let text =
+            room_hunk_text(self.tape, &messaged.hunk).map_err(|unavailable| match unavailable {
+                wire::rooms::RoomSourceUnavailable::Unreadable {} => SourceError::Unreadable,
+                _ => SourceError::Unknown,
+            })?;
+        Ok(SourceQuote {
+            identity: None,
+            text,
+            author: QuoteAuthor::Agent {
+                lane: messaged.hunk.head.lane,
+                occupant: messaged.author,
+            },
+            disposition: None,
+            media: Vec::new(),
+        })
+    }
 }
 
 fn resolve_with(store: &impl QuoteStore, target: &str, depth: u8) -> QuoteResolution {
@@ -375,6 +432,9 @@ fn resolve_source(
             }
             store.steering(key)
         }
+        QuoteTarget::Room {
+            room, publication, ..
+        } => store.room(room, publication),
     };
     let resolved = source.map_err(|error| match error {
         SourceError::Unknown => QuoteUnavailable::Unknown,
@@ -481,6 +541,49 @@ pub fn decode_record(
     listen::decode(dialect, &bytes, record_locus).map_err(|_| RecordError::Unreadable)
 }
 
+/// The exact assistant prose one room transcript hunk names, read from its
+/// lane's durable tape under `tape`.
+///
+/// # Errors
+///
+/// Returns why the tape no longer supplies those bytes.
+pub fn room_hunk_text(
+    tape: &Path,
+    hunk: &wire::rooms::TranscriptHunk,
+) -> Result<String, wire::rooms::RoomSourceUnavailable> {
+    use wire::rooms::RoomSourceUnavailable;
+
+    let dialect = crate::extension::registry()
+        .ok()
+        .and_then(|registry| registry.vendor(hunk.head.vendor.as_str()))
+        .map(|vendor| vendor.dialect())
+        .ok_or(RoomSourceUnavailable::Unreadable {})?;
+    let root = tape
+        .join(hunk.head.lane.to_string())
+        .join(hunk.head.vendor.as_str());
+    let decoded =
+        decode_record(&root, hunk.head.source, hunk.locus, dialect).map_err(
+            |error| match error {
+                RecordError::Missing => RoomSourceUnavailable::Missing {},
+                RecordError::Unreadable => RoomSourceUnavailable::Unreadable {},
+            },
+        )?;
+    let event = usize::try_from(hunk.locus.event)
+        .ok()
+        .and_then(|event| decoded.events().get(event));
+    let Some(listen::Event::StreamedProse(prose)) = event else {
+        return Err(RoomSourceUnavailable::Changed {});
+    };
+    let range = usize::try_from(hunk.text.start)
+        .ok()
+        .zip(usize::try_from(hunk.text.end).ok());
+    range
+        .filter(|_| prose.role == listen::ProseRole::Assistant)
+        .and_then(|(start, end)| prose.text.get(start..end))
+        .map(str::to_owned)
+        .ok_or(RoomSourceUnavailable::Changed {})
+}
+
 fn resolve_tape(
     root: &Path,
     source: CanonicalUuid,
@@ -526,6 +629,7 @@ mod tests {
     struct MemoryStore {
         tape: BTreeMap<String, SourceQuote>,
         steering: BTreeMap<String, SourceQuote>,
+        room: BTreeMap<String, SourceQuote>,
         unreadable: bool,
     }
 
@@ -553,6 +657,20 @@ mod tests {
                 return Err(SourceError::Unreadable);
             }
             self.steering.get(key).cloned().ok_or(SourceError::Unknown)
+        }
+
+        fn room(
+            &self,
+            room: &wire::TaskStamp,
+            publication: &wire::rooms::RoomAuthorityStamp,
+        ) -> Result<SourceQuote, SourceError> {
+            if self.unreadable {
+                return Err(SourceError::Unreadable);
+            }
+            self.room
+                .get(&format!("{room}/{publication}"))
+                .cloned()
+                .ok_or(SourceError::Unknown)
         }
     }
 
@@ -828,7 +946,7 @@ mod tests {
     }
 
     #[test]
-    fn both_authority_kinds_resolve_with_recorded_authorship() {
+    fn every_authority_kind_resolves_with_recorded_authorship() {
         let mut store = MemoryStore::default();
         let tape = tape_target("agent text");
         store.tape.insert(
@@ -878,6 +996,42 @@ mod tests {
                 },
                 disposition: Some(wire::Disposition::Acked),
             })
+        );
+
+        let room: wire::TaskStamp = "dVrD59Y8N".parse().expect("fixture room");
+        let publication: wire::rooms::RoomAuthorityStamp =
+            "dVsYdDj7d".parse().expect("fixture publication");
+        store.room.insert(
+            format!("{room}/{publication}"),
+            SourceQuote {
+                identity: None,
+                text: "room post".to_owned(),
+                author: QuoteAuthor::Directive {
+                    actor: wire::Actor::Operator,
+                },
+                disposition: None,
+                media: Vec::new(),
+            },
+        );
+        let target = |text| QuoteTarget::Room {
+            room: room.clone(),
+            publication: publication.clone(),
+            digest: QuoteTarget::text_digest(text),
+        };
+        assert_eq!(
+            resolve_with(&store, &target("room post").to_string(), 0),
+            QuoteResolution::Resolved(ResolvedQuote {
+                text: "room post".to_owned(),
+                author: QuoteAuthor::Directive {
+                    actor: wire::Actor::Operator,
+                },
+                disposition: None,
+            })
+        );
+        let changed = target("other words").to_string();
+        assert_eq!(
+            resolve_with(&store, &changed, 0),
+            unavailable(&changed, QuoteUnavailable::DigestMismatch)
         );
     }
 

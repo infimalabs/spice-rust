@@ -24,6 +24,22 @@ pub(super) fn append_terminal_tasks(
     bus: &Bus,
     count: usize,
 ) -> std::collections::BTreeSet<TaskStamp> {
+    append_terminal(bus, count, None)
+}
+
+/// Terminal tasks declaring Design intent, as working groups anchor.
+pub(super) fn append_terminal_designs(
+    bus: &Bus,
+    count: usize,
+) -> std::collections::BTreeSet<TaskStamp> {
+    append_terminal(bus, count, Some(wire::TaskIntent::Design))
+}
+
+fn append_terminal(
+    bus: &Bus,
+    count: usize,
+    intent: Option<wire::TaskIntent>,
+) -> std::collections::BTreeSet<TaskStamp> {
     let origin: wire::Origin = "fixture:paged-history"
         .parse()
         .expect("history fixture origin");
@@ -36,7 +52,7 @@ pub(super) fn append_terminal_tasks(
             let micros = 100_000_000_000_i64
                 .checked_add(i64::try_from(index).expect("fixture count fits task stamp"))
                 .expect("fixture task stamp stays bounded");
-            push_terminal_task(
+            push_task(
                 &mut write,
                 &origin,
                 &creation,
@@ -47,6 +63,8 @@ pub(super) fn append_terminal_tasks(
                     project: "board.test".to_owned(),
                     completion: at,
                 },
+                "completed",
+                intent,
             )
         })
         .collect();
@@ -71,7 +89,7 @@ pub(super) fn push_terminal_task(
     creation: &body::TaskCreationContext,
     fixture: TerminalTaskFixture,
 ) -> TaskStamp {
-    push_task(write, origin, creation, fixture, "completed")
+    push_task(write, origin, creation, fixture, "completed", None)
 }
 
 /// One task head whose workflow is `status`; only `pending` stays unsettled.
@@ -81,6 +99,7 @@ fn push_task(
     creation: &body::TaskCreationContext,
     fixture: TerminalTaskFixture,
     status: &str,
+    intent: Option<wire::TaskIntent>,
 ) -> TaskStamp {
     let pending = status == "pending";
     let task = TaskStamp::for_micros(fixture.micros).expect("fixture task stamp");
@@ -90,7 +109,7 @@ fn push_task(
         .fact(
             body::TaskAdded {
                 preparation: None,
-                intent: None,
+                intent,
                 task: task.clone(),
                 title: fixture.title.clone(),
                 description: fixture.description.clone(),
@@ -114,7 +133,7 @@ fn push_task(
         preparation: None,
         authorization: None,
         evidence: Vec::new(),
-        intent: None,
+        intent,
         born: statement_task,
         queue_origin: position,
         title: fixture.title,
@@ -319,7 +338,7 @@ fn open_reads_index_the_work_each_direction_caused_until_it_is_deleted() {
             project: "board.test".to_owned(),
             completion: at,
         };
-        push_task(&mut write, origin, &creation, fixture, status)
+        push_task(&mut write, origin, &creation, fixture, status, None)
     };
     let open = push(300_000_000_000, &ack, "pending");
     let completed = push(300_000_000_001, &ack, "completed");

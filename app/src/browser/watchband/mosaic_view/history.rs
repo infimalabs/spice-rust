@@ -5,10 +5,10 @@ use std::collections::{HashMap, HashSet};
 use super::*;
 
 #[derive(Clone)]
-pub(in crate::browser::watchband) struct HistorySender(SenderHandle);
+pub(in crate::browser) struct HistorySender(SenderHandle);
 
 impl HistorySender {
-    pub(in crate::browser::watchband) fn new(sender: SenderHandle) -> Self {
+    pub(in crate::browser) fn new(sender: SenderHandle) -> Self {
         Self(sender)
     }
 
@@ -59,7 +59,7 @@ fn history_targets(
                         && message.activity == wire::AgentActivityKind::Prose
                         && crate::watchband::has_authored_prose(&message.text)
                 }
-                ActivityCard::Lifecycle { .. } => false,
+                ActivityCard::Lifecycle { .. } | ActivityCard::Room { .. } => false,
             });
             let key = cursor
                 .before
@@ -70,7 +70,9 @@ fn history_targets(
                         {
                             Some(card.key())
                         }
-                        ActivityCard::Agent { .. } | ActivityCard::Lifecycle { .. } => None,
+                        ActivityCard::Agent { .. }
+                        | ActivityCard::Lifecycle { .. }
+                        | ActivityCard::Room { .. } => None,
                     })
                 })
                 // Cards are newest first; the lane's oldest card borders its history.
@@ -79,7 +81,9 @@ fn history_targets(
                         ActivityCard::Agent { message, .. } if message.lane == *lane => {
                             Some(card.key())
                         }
-                        ActivityCard::Agent { .. } | ActivityCard::Lifecycle { .. } => None,
+                        ActivityCard::Agent { .. }
+                        | ActivityCard::Lifecycle { .. }
+                        | ActivityCard::Room { .. } => None,
                     })
                 })
                 .unwrap_or_else(|| format!("history-bootstrap-{lane}"));

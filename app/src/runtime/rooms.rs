@@ -337,13 +337,7 @@ impl RoomProjection {
         if let Some(board) = board {
             for task in &board.tasks {
                 let statement = &task.statement.body;
-                let related = statement.born == *room
-                    || statement.preparation.as_ref().is_some_and(|preparation| {
-                        preparation.parent == *room
-                            || preparation.controller == *room
-                            || preparation.construction == *room
-                    });
-                if related
+                if associated(statement, room)
                     && let Some(claim) = task
                         .claim
                         .as_ref()
@@ -819,4 +813,17 @@ fn replace_plain<K: Ord, T: PartialEq>(values: &mut BTreeMap<K, T>, key: K, valu
         values.insert(key, value);
         true
     }
+}
+
+/// Whether one task is associated with a room's anchor task: the anchor
+/// itself, or work whose preparation names it as parent, controller, or
+/// construction.
+#[must_use]
+pub fn associated(statement: &wire::intent::BoardStatement, room: &TaskStamp) -> bool {
+    statement.born == *room
+        || statement.preparation.as_ref().is_some_and(|preparation| {
+            preparation.parent == *room
+                || preparation.controller == *room
+                || preparation.construction == *room
+        })
 }
