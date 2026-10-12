@@ -171,7 +171,21 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     };
     assert_eq!(message.lane, test_uuid(FIRST));
     assert_eq!(message.room, Some(born.clone()));
-    assert_eq!(lanes.pending(FIRST).len(), 1);
+    let [pending] = lanes
+        .pending(FIRST)
+        .try_into()
+        .expect("one message is pending");
+    assert_eq!(pending.room.as_ref(), Some(&room));
+    let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
+    let rendered = steer::inbox::render_pending(&seal, &[pending], |_, _| None);
+    assert!(
+        rendered.contains(&format!(
+            "[PEER sender {} lane {} room {room}]",
+            lanes.address(SENDER),
+            test_uuid(SENDER)
+        )),
+        "the delivery header names the frozen room: {rendered}"
+    );
     let records = lanes.rooms();
     assert_eq!(records.len(), 4, "each packet records once: {records:?}");
     assert!(records.iter().all(|record| record.room == born));

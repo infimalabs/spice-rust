@@ -45,6 +45,7 @@ pub struct Directive {
     lane: CanonicalUuid,
     text: String,
     from: Option<CanonicalUuid>,
+    room: Option<wire::rooms::RoomAnchor>,
     control: Option<String>,
     attachments: Vec<DirectiveAttachment>,
     expires: Instant,
@@ -90,6 +91,12 @@ impl Directive {
     #[must_use]
     pub const fn from(&self) -> Option<CanonicalUuid> {
         self.from
+    }
+
+    /// Anchor task whose room context a peer route froze at publication.
+    #[must_use]
+    pub fn room(&self) -> Option<&wire::rooms::RoomAnchor> {
+        self.room.as_ref()
     }
 
     /// The control word the operator attached, if any.
@@ -155,6 +162,7 @@ impl Directive {
             lane: head.lane,
             text: head.text.clone(),
             from: head.from,
+            room: head.room.clone(),
             control: head.control.clone(),
             attachments: head.attachments.clone(),
             expires: head.expires,
@@ -433,6 +441,7 @@ impl Ledger {
             lane: body.lane,
             text: body.text.clone(),
             from: body.from,
+            room: body.room.clone(),
             control: body.control.clone(),
             attachments: body.attachments.clone(),
             expires: body.expires,
@@ -463,6 +472,7 @@ impl Ledger {
             lane: body.lane,
             text: body.text.clone(),
             from: None,
+            room: None,
             control: None,
             attachments: Vec::new(),
             expires: body.expires,
@@ -486,6 +496,7 @@ impl Ledger {
             lane: body.lane,
             text: body.text.clone(),
             from: None,
+            room: None,
             control: None,
             attachments: Vec::new(),
             expires: body.expiry,
@@ -514,6 +525,7 @@ impl Ledger {
             lane: body.lane,
             text: text.clone(),
             from: None,
+            room: None,
             control: None,
             attachments: Vec::new(),
             expires: *expires,

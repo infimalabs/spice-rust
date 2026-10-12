@@ -26,6 +26,7 @@ fn send_directive(
             Actor::Lane(teller) => Some(teller),
             Actor::Operator | Actor::Spice => None,
         },
+        room: None,
         directive,
         fanout: None,
         key: key.to_owned(),
@@ -48,6 +49,7 @@ fn send_directive(
         .expect("steering fact builds");
     write.steering_head(pending, move |created| wire::SteeringHead {
         from: sent.from,
+        room: sent.room.clone(),
         directive: sent.directive,
         fanout: sent.fanout,
         key: sent.key,

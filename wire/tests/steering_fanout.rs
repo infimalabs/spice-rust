@@ -44,6 +44,7 @@ fn current_send_intent_requires_fanout_identity() {
 fn sent(fanout: Option<CanonicalUuid>) -> SteerSent {
     SteerSent {
         from: None,
+        room: None,
         directive: uuid(DIRECTIVE),
         fanout,
         key: "1kFanout".to_owned(),

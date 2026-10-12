@@ -220,6 +220,7 @@ fn contradictory_startup_replay_refuses_without_fold_mutation() {
 fn send_write(directive: &str, key: &str) -> JournalWrite {
     let body = SteerSent {
         from: None,
+        room: None,
         directive: uuid(directive),
         fanout: None,
         key: key.to_owned(),
@@ -235,6 +236,7 @@ fn send_write(directive: &str, key: &str) -> JournalWrite {
         .expect("sent fact builds");
     write.steering_head(pending, move |seq| SteeringHead {
         from: None,
+        room: body.room.clone(),
         directive: body.directive,
         fanout: body.fanout,
         key: body.key,

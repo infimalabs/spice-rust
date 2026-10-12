@@ -1245,6 +1245,7 @@ fn append_send(
         JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     let body = wire::body::SteerSent {
         from: None,
+        room: None,
         directive,
         fanout: None,
         key: key.to_owned(),

@@ -154,6 +154,7 @@ fn send_steering(bus: &Bus, fixture: &LaunchFixture) {
     let mut sent = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     let body = wire::body::SteerSent {
         from: None,
+        room: None,
         directive: "018f82d4-6f59-7d06-92e3-00000000002b"
             .parse()
             .expect("fixture directive"),

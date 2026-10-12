@@ -601,6 +601,7 @@ fn second_operator_direction_write() -> JournalWrite {
         .expect("fixture resident origin");
     let direction = body::SteerSent {
         from: None,
+        room: None,
         directive: uuid(21),
         fanout: Some(uuid(22)),
         key: "1kKRRsDT".to_owned(),

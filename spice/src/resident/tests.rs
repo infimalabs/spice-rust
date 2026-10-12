@@ -387,6 +387,7 @@ fn failed_pending_inbox_start_parks_key_and_reports_exact_requeue() {
     let mut sent = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     let body = wire::body::SteerSent {
         from: None,
+        room: None,
         directive,
         fanout: None,
         key: "1kJK6N3R".to_owned(),

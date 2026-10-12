@@ -27,10 +27,11 @@ const PREPARED: &str = "prepared";
 /// guidance from task completions and their receipts, refuses vendor holds
 /// without exact input, incomplete launch identity, and source-less session or
 /// steering authority, crosses or refuses the remaining retired fact, receipt,
-/// and head shapes in [`residual`], and creates the room-authority projection
-/// before the schema identity advances. Current readers therefore need no
-/// execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 6] = [33, 34, 35, 36, 37, 38];
+/// and head shapes, projects frozen peer-message rooms from their creating
+/// facts into steering heads, and creates the room-authority projection before
+/// the schema identity advances. Current readers therefore need no execution
+/// arm.
+const PREDECESSOR_SCHEMAS: [u32; 7] = [33, 34, 35, 36, 37, 38, 39];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 /// Release that added the residency subscription table without a schema step.
@@ -251,6 +252,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     cross_retired_gate_filed(&transaction)?;
     cross_retired_task_guidance(&transaction)?;
     residual::cross(&transaction)?;
+    residual::cross_steering_rooms(&transaction)?;
     if version < ROOM_AUTHORITY_SCHEMA {
         transaction
             .execute_batch(crate::rooms::SCHEMA_SQL)
@@ -1134,8 +1136,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 39, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 40, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 39;
+PRAGMA user_version = 40;
 "#;

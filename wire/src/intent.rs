@@ -645,6 +645,16 @@ pub struct PendingDirective {
         deserialize_with = "crate::optional::present"
     )]
     pub sender: Option<PeerSender>,
+    /// Current rendered handle of the room anchor frozen by a peer route.
+    ///
+    /// Absent on non-message direction and direct peer routes. The durable
+    /// steering authority stores only the anchor task's birth stamp.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub room: Option<TaskHandle>,
     /// Whether this directive can wake its lane.
     ///
     /// Only operator direction wakes a lane. Peer messages, peer replies, and

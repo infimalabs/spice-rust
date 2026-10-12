@@ -24,6 +24,7 @@ fn directive(ordinal: u128, stage: SteeringStage, text: &str) -> PendingDirectiv
         text: text.to_owned(),
         from: None,
         sender: None,
+        room: None,
         wakes: true,
         preview: None,
         control: None,

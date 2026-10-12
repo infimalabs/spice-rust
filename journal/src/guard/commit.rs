@@ -899,6 +899,7 @@ fn sent_head_agrees(
     (head.created == seq
         && head.published == at
         && head.text == body.text
+        && head.room == body.room
         && head.control == body.control
         && head.attachments == body.attachments
         && head.expires == body.expires
