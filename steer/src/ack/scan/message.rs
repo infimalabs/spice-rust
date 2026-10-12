@@ -141,9 +141,9 @@ pub(super) struct Header {
 /// A selector is an ASCII-alphanumeric audience run, optionally followed by
 /// `#` and an ASCII-alphanumeric-or-hyphen context run; selectors are separated
 /// by header space or a comma. A colon-closed list is an attempt when any
-/// selector's audience spells an address or its context spells a task handle;
-/// an unclosed list is one only when its first selector does. Anything else is
-/// prose that happens to use the word.
+/// selector spells a valid route or carries the hyphen required by a task
+/// handle, so a malformed room-only selector is refused rather than ignored.
+/// An unclosed list is one only when its first selector is already valid.
 pub(super) fn header_after(prose: &str, marker_end: usize) -> Option<Header> {
     let marker_boundary = skip_emphasis(prose, marker_end);
     let mut cursor = skip_header_space(prose, marker_boundary);
@@ -182,8 +182,12 @@ pub(super) fn header_after(prose: &str, marker_end: usize) -> Option<Header> {
         prose[audience].parse::<OccupantAddress>().is_ok()
             || context.is_some_and(|context| prose[context].parse::<TaskHandle>().is_ok())
     };
+    let room_like = |&(start, end): &(usize, usize)| {
+        let (_, context) = split(prose, start, end);
+        context.is_some_and(|context| prose.as_bytes()[context].contains(&b'-'))
+    };
     let attempt = if terminated {
-        tokens.iter().any(spells)
+        tokens.iter().any(|token| spells(token) || room_like(token))
     } else {
         spells(&first)
     };
