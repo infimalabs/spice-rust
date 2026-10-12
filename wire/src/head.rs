@@ -894,12 +894,7 @@ pub struct ResidencyHead {
     pub topology_revision: u64,
     /// Current lanes, occupants, lineage, capabilities, and dispositions.
     pub lanes: Vec<LaneResidency>,
-    /// One durable task-allocation lifetime per app team.
-    ///
-    /// Absence is admitted only for journal heads written before this field
-    /// existed; resident reads derive that legacy team's initial policy
-    /// until its next seating or configuration transaction persists it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// One durable task-allocation lifetime per app team, in team order.
     pub subscriptions: Vec<TeamSubscription>,
     /// Current agent-renewal handoffs, sorted by team and member identity.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -20,14 +20,19 @@ const PREPARED: &str = "prepared";
 ///
 /// Task fields already have their current semantics. The crossing first proves,
 /// before any mutation, that no retained task fact or head omits the creation
-/// context schema 35 was the last to default. It then replaces retired fact
-/// kinds with inert current-schema evidence and creates the room-authority
+/// context schema 35 was the last to default. It then writes the explicit
+/// subscription table a residency head may still omit, replaces retired fact
+/// kinds with inert current-schema evidence, and creates the room-authority
 /// projection, which no predecessor could have populated, empty before the
 /// schema identity advances, so no current reader needs a retired DTO or
 /// decode arm.
-const PREDECESSOR_SCHEMAS: [u32; 3] = [33, 34, 35];
+const PREDECESSOR_SCHEMAS: [u32; 4] = [33, 34, 35, 36];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
+/// Release that added the residency subscription table without a schema step.
+const RESIDENCY_SUBSCRIPTIONS_RELEASE: &str = "4047a2a4f";
+/// First schema whose baseline carries the room-authority projection.
+pub(crate) const ROOM_AUTHORITY_SCHEMA: u32 = 36;
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
 
@@ -229,10 +234,13 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         return Ok(None);
     }
     refuse_creation_omission(&transaction)?;
+    cross_residency_subscriptions(&transaction)?;
     cross_retired_gate_filed(&transaction)?;
-    transaction
-        .execute_batch(crate::rooms::SCHEMA_SQL)
-        .map_err(OpenError::Sqlite)?;
+    if version < ROOM_AUTHORITY_SCHEMA {
+        transaction
+            .execute_batch(crate::rooms::SCHEMA_SQL)
+            .map_err(OpenError::Sqlite)?;
+    }
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -273,6 +281,109 @@ fn refuse_creation_omission(connection: &Connection) -> Result<(), OpenError> {
         Some((table, row)) => Err(MigrationError::CreationContextOmitted { table, row }.into()),
         None => Ok(()),
     }
+}
+
+/// Write the explicit subscription table a retained residency head omits.
+///
+/// Heads written before release 4047a2a4f carry no table, so each team's
+/// task-allocation lifetime comes from the one life all of its lanes share,
+/// with fast mode off. A head that already carries the table must decode as
+/// current authority and stays byte-for-byte; anything else refuses before
+/// the crossing commits.
+fn cross_residency_subscriptions(connection: &Connection) -> Result<(), OpenError> {
+    let Some((head_seq, body)) = connection
+        .query_row(
+            "SELECT head_seq, body FROM residency_head WHERE singleton = 1",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )
+        .optional()
+        .map_err(OpenError::Sqlite)?
+    else {
+        return Ok(());
+    };
+    let mut head = match serde_json::from_slice::<serde_json::Value>(&body) {
+        Ok(serde_json::Value::Object(head)) => head,
+        Ok(_) => return Err(residency_error("the stored head is not a JSON object")),
+        Err(error) => {
+            return Err(residency_error(format!(
+                "the stored head is not JSON: {error}"
+            )));
+        }
+    };
+    if head.contains_key("subscriptions") {
+        return wire::decode::<wire::ResidencyHead>(&body)
+            .map(drop)
+            .map_err(|error| {
+                residency_error(format!("the current head does not decode: {error}"))
+            });
+    }
+    let lanes = head.get("lanes").cloned().unwrap_or_default();
+    let lanes: Vec<wire::LaneResidency> = serde_json::from_value(lanes)
+        .map_err(|error| residency_error(format!("the lane table does not decode: {error}")))?;
+    let subscriptions = derived_subscriptions(&lanes)?;
+    head.insert(
+        "subscriptions".to_owned(),
+        serde_json::to_value(subscriptions).map_err(|error| {
+            residency_error(format!("the derived table cannot encode: {error}"))
+        })?,
+    );
+    let current: wire::ResidencyHead = serde_json::from_value(serde_json::Value::Object(head))
+        .map_err(|error| residency_error(format!("the crossed head does not decode: {error}")))?;
+    let bytes = wire::encode(&current)
+        .map_err(|error| residency_error(format!("the crossed head cannot encode: {error}")))?;
+    let changed = connection
+        .execute(
+            "UPDATE residency_head SET body = ?1 WHERE singleton = 1 AND head_seq = ?2",
+            params![bytes, head_seq],
+        )
+        .map_err(OpenError::Sqlite)?;
+    if changed != 1 {
+        return Err(residency_error(
+            "the head changed while its exclusive migration held the authority",
+        ));
+    }
+    Ok(())
+}
+
+/// One subscription per team, in team order, from the life its lanes share.
+fn derived_subscriptions(
+    lanes: &[wire::LaneResidency],
+) -> Result<Vec<wire::TeamSubscription>, OpenError> {
+    let mut lives = std::collections::BTreeMap::new();
+    for row in lanes {
+        if *lives.entry(row.team).or_insert(row.life.as_str()) != row.life {
+            return Err(residency_error(format!(
+                "team {} has mixed lane lives and no authoritative task-allocation lifetime",
+                row.team
+            )));
+        }
+    }
+    lives
+        .into_iter()
+        .map(|(team, life)| {
+            let policy = wire::intent::TeamLife::from_wire(life).ok_or_else(|| {
+                residency_error(format!(
+                    "team {team} lane life {life:?} is no closed task-allocation lifetime"
+                ))
+            })?;
+            Ok(wire::TeamSubscription {
+                team,
+                policy,
+                fast_mode: false,
+            })
+        })
+        .collect()
+}
+
+fn residency_error(detail: impl Into<String>) -> OpenError {
+    MigrationError::RetainedHead {
+        table: "residency_head",
+        row: "1".to_owned(),
+        release: RESIDENCY_SUBSCRIPTIONS_RELEASE,
+        detail: detail.into(),
+    }
+    .into()
 }
 
 fn cross_retired_gate_filed(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
@@ -616,6 +727,13 @@ pub enum MigrationError {
         release: &'static str,
         detail: String,
     },
+    /// Retained head authority that cannot cross without its last owning release.
+    RetainedHead {
+        table: &'static str,
+        row: String,
+        release: &'static str,
+        detail: String,
+    },
     VersionDisagreement {
         row: u32,
         pragma: u32,
@@ -687,6 +805,16 @@ impl fmt::Display for MigrationError {
             } => write!(
                 formatter,
                 "journal fact {seq} kind {kind} was last owned by release {release} and cannot \
+                 cross to schema {SCHEMA_VERSION}: {detail}"
+            ),
+            Self::RetainedHead {
+                table,
+                row,
+                release,
+                detail,
+            } => write!(
+                formatter,
+                "journal {table} row {row} was last shaped by release {release} and cannot \
                  cross to schema {SCHEMA_VERSION}: {detail}"
             ),
             Self::VersionDisagreement { row, pragma } => write!(
@@ -896,8 +1024,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 36, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 37, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 36;
+PRAGMA user_version = 37;
 "#;

@@ -68,7 +68,8 @@ const PRE_EXTENSION_RESIDENCY: &[u8] = concat!(
     r#""worktree":"/worktrees/predecessor","vendor":"omp","#,
     r#""epoch":"018f82d4-6f59-7d06-92e3-000000000001","stream":"stdout","#,
     r#""identity":"pre-extension-session","#,
-    r#""locus":{"member":7,"offset":31,"length":93}},"disposition":"occupied"}]}"#,
+    r#""locus":{"member":7,"offset":31,"length":93}},"disposition":"occupied"}],"#,
+    r#""subscriptions":[{"team":"018f82d4-6f59-7d06-92e3-000000000003","policy":"drive"}]}"#,
 )
 .as_bytes();
 

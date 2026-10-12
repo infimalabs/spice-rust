@@ -38,11 +38,16 @@ fn current_schema_is_the_only_executable_journal_shape() {
 
 /// Return a current fixture to a predecessor's shape and identity.
 fn restore_predecessor(journal: &Journal, predecessor: u32) {
+    let rooms = if predecessor < crate::migrate::ROOM_AUTHORITY_SCHEMA {
+        "DROP TABLE room_publications; DROP TABLE group_anchors; DROP TABLE group_heads;
+         DROP TABLE proposal_heads; DROP TABLE authorization_heads;"
+    } else {
+        ""
+    };
     journal
         .connection
         .execute_batch(&format!(
-            "DROP TABLE room_publications; DROP TABLE group_anchors; DROP TABLE group_heads;
-             DROP TABLE proposal_heads; DROP TABLE authorization_heads;
+            "{rooms}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",
         ))
@@ -51,12 +56,12 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
-    for predecessor in [33, 34, 35] {
+    for predecessor in [33, 34, 35, 36] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
         let journal = authority_file_fixture(&path);
         restore_predecessor(&journal, predecessor);
-        let rows = |journal: &Journal| -> (Vec<u8>, Vec<u8>) {
+        let rows = |journal: &Journal| -> (Vec<u8>, Vec<u8>, Vec<u8>) {
             let fact = journal
                 .connection
                 .query_row(
@@ -69,7 +74,11 @@ fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_row
                 .connection
                 .query_row("SELECT body FROM task_heads", [], |row| row.get(0))
                 .expect("read retained task head");
-            (fact, head)
+            let residency = journal
+                .connection
+                .query_row("SELECT body FROM residency_head", [], |row| row.get(0))
+                .expect("read current residency head");
+            (fact, head, residency)
         };
         let before = rows(&journal);
         drop(journal);
@@ -141,6 +150,145 @@ fn a_predecessor_omitting_task_creation_context_refuses_before_crossing() {
         assert_eq!(named, table);
         assert!(error.to_string().contains("6ad57c713"), "{error}");
         assert_eq!(authority(), before, "{table}: the refusal changes nothing");
+    }
+}
+
+fn residency_lane(lane: &str, team: &str, life: &str) -> LaneResidency {
+    LaneResidency {
+        lane: uuid(lane),
+        team: uuid(team),
+        life: life.to_owned(),
+        ..residency_head().lanes.remove(0)
+    }
+}
+
+/// Plant an immediate-predecessor residency head written before its table.
+fn plant_omitted_subscriptions(journal: &Journal, lanes: Vec<LaneResidency>) {
+    let mut head = serde_json::to_value(ResidencyHead {
+        lanes,
+        ..residency_head()
+    })
+    .expect("residency head encodes");
+    head.as_object_mut()
+        .expect("residency head is an object")
+        .remove("subscriptions");
+    journal
+        .connection
+        .execute(
+            "UPDATE residency_head SET body = ?1 WHERE singleton = 1",
+            params![serde_json::to_vec(&head).expect("omitting head encodes")],
+        )
+        .expect("plant an omitted subscription table");
+    restore_predecessor(journal, SCHEMA_VERSION - 1);
+}
+
+#[test]
+fn an_omitted_residency_subscription_table_crosses_once_to_its_explicit_form() {
+    const EARLY: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
+    const LATE: &str = "018f82d4-6f59-7d06-92e3-bce913116309";
+    let subscription = |team, policy, fast_mode| wire::TeamSubscription {
+        team: uuid(team),
+        policy,
+        fast_mode,
+    };
+    let cases = [
+        (
+            vec![
+                residency_lane("018f82d4-6f59-7d06-92e3-bce913116311", LATE, "steer"),
+                residency_lane("018f82d4-6f59-7d06-92e3-bce913116312", EARLY, "drive"),
+                residency_lane("018f82d4-6f59-7d06-92e3-bce913116313", EARLY, "drive"),
+            ],
+            vec![
+                subscription(EARLY, wire::intent::TeamLife::Drive, false),
+                subscription(LATE, wire::intent::TeamLife::Steer, false),
+            ],
+        ),
+        (Vec::new(), Vec::new()),
+    ];
+    for (lanes, subscriptions) in cases {
+        let scratch = Scratch::new();
+        let path = scratch.path().join("authority.sqlite3");
+        let journal = authority_file_fixture(&path);
+        plant_omitted_subscriptions(&journal, lanes.clone());
+        let head_seq = |journal: &Journal| -> i64 {
+            journal
+                .connection
+                .query_row("SELECT head_seq FROM residency_head", [], |row| row.get(0))
+                .expect("residency position reads")
+        };
+        let position = head_seq(&journal);
+        drop(journal);
+
+        let journal = Journal::open(&path).expect("an omitted table crosses forward");
+        assert_eq!(
+            journal.migration().map(|migration| migration.from()),
+            Some(SCHEMA_VERSION - 1)
+        );
+        let expected = ResidencyHead {
+            lanes,
+            subscriptions,
+            ..residency_head()
+        };
+        let stored: Vec<u8> = journal
+            .connection
+            .query_row("SELECT body FROM residency_head", [], |row| row.get(0))
+            .expect("crossed residency reads");
+        assert_eq!(
+            stored,
+            wire::encode(&expected).expect("expected head encodes"),
+            "the crossed head is the canonical explicit table"
+        );
+        assert_eq!(head_seq(&journal), position, "the head keeps its position");
+        journal.verify().expect("crossed authority verifies");
+        drop(journal);
+
+        let reopened = Journal::open(&path).expect("crossed authority reopens");
+        assert_eq!(reopened.migration(), None, "the crossing runs exactly once");
+        let again: Vec<u8> = reopened
+            .connection
+            .query_row("SELECT body FROM residency_head", [], |row| row.get(0))
+            .expect("reopened residency reads");
+        assert_eq!(again, stored, "reopening leaves the explicit table put");
+    }
+}
+
+#[test]
+fn an_omitted_residency_table_without_one_closed_team_life_refuses_atomically() {
+    const TEAM: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
+    for lanes in [
+        vec![
+            residency_lane("018f82d4-6f59-7d06-92e3-bce913116311", TEAM, "drive"),
+            residency_lane("018f82d4-6f59-7d06-92e3-bce913116312", TEAM, "steer"),
+        ],
+        vec![residency_lane(
+            "018f82d4-6f59-7d06-92e3-bce913116311",
+            TEAM,
+            "wander",
+        )],
+    ] {
+        let scratch = Scratch::new();
+        let path = scratch.path().join("authority.sqlite3");
+        let journal = authority_file_fixture(&path);
+        plant_omitted_subscriptions(&journal, lanes);
+        drop(journal);
+        let authority = || fs::read(&path).expect("authority bytes read");
+        let before = authority();
+
+        let error = Journal::open(&path).expect_err("an underivable table refuses");
+        let OpenError::Migration(MigrationError::RetainedHead {
+            table,
+            row,
+            release,
+            ..
+        }) = &error
+        else {
+            panic!("expected a residency refusal, got {error}");
+        };
+        assert_eq!(
+            (*table, row.as_str(), *release),
+            ("residency_head", "1", "4047a2a4f")
+        );
+        assert_eq!(authority(), before, "the refusal changes nothing");
     }
 }
 

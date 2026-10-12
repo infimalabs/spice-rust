@@ -252,19 +252,22 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
 }
 
 #[test]
-fn a_legacy_residency_head_admits_an_absent_subscription_table() {
-    let mut legacy: serde_json::Value =
+fn a_residency_head_requires_its_explicit_subscription_table() {
+    let mut omitted: serde_json::Value =
         serde_json::from_str(RESIDENCY).expect("residency fixture is JSON");
-    legacy
+    let head = omitted
         .as_object_mut()
-        .expect("residency fixture is an object")
-        .remove("subscriptions");
+        .expect("residency fixture is an object");
+    head.remove("subscriptions");
+    let error = wire::decode::<ResidencyHead>(&serde_json::to_vec(&omitted).expect("encodes"))
+        .expect_err("an omitted subscription table refuses");
+    assert!(error.to_string().contains("subscriptions"), "{error}");
 
-    let decoded: ResidencyHead =
-        serde_json::from_value(legacy).expect("legacy residency still decodes");
-    assert!(decoded.subscriptions.is_empty());
-    let encoded = serde_json::to_value(decoded).expect("legacy residency re-encodes");
-    assert!(encoded.get("subscriptions").is_none());
+    let mut empty: ResidencyHead = wire::decode(RESIDENCY.as_bytes()).expect("residency decodes");
+    empty.lanes.clear();
+    empty.subscriptions.clear();
+    let encoded = serde_json::to_value(&empty).expect("empty residency encodes");
+    assert_eq!(encoded["subscriptions"], serde_json::json!([]));
 }
 
 #[test]
