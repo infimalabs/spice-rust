@@ -427,7 +427,8 @@ pub struct SteeringHead {
     pub directive: CanonicalUuid,
     /// Operator submit action shared by target-specific fanout directives.
     ///
-    /// Absent only on authority created before fanout provenance was durable.
+    /// Absent on directives no operator submit fanned out: resident control
+    /// directives, taste reminders and confirmations, and claim-lease warnings.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

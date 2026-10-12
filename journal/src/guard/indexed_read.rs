@@ -871,18 +871,10 @@ impl JournalRead<'_> {
     /// The accounted transcript boundary a lane's phase interval opens or closes at.
     ///
     /// This is the only way a lifecycle fact obtains a boundary, so every such
-    /// fact names the same authority. It answers [`SourceBoundary::Proven`] or
-    /// it fails: a lane with nothing accounted yet is proven at zero heads, and
-    /// a journal that cannot be read is a violated assumption rather than an
-    /// unprovable boundary. Degrading a read failure into
-    /// [`SourceBoundary::Incomplete`] would record *unknown* where the truth is
-    /// *broken*.
-    ///
-    /// No live producer writes `Incomplete`: every one of them admits a claim
-    /// before it writes, and a claim carries a lane, so a producer that has
-    /// nothing to ask about here does not exist. The variant is reached only by
-    /// the forward migration of facts stored before boundaries were recorded,
-    /// whose boundary genuinely cannot be proven because nothing recorded it.
+    /// fact names the same authority. It answers a proven boundary or it fails:
+    /// a lane with nothing accounted yet is proven at zero heads, and a journal
+    /// that cannot be read is a violated assumption rather than an unprovable
+    /// boundary.
     pub fn source_boundary(
         &self,
         lane: &wire::CanonicalUuid,

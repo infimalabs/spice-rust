@@ -230,14 +230,13 @@ pub(super) fn selected_task_contexts(
             && let Some(won) = envelope.fact.read::<body::ClaimWon>()
         {
             let mut sessions = std::collections::BTreeMap::new();
-            if let body::SourceBoundary::Proven { heads } = &won.source {
-                for boundary in heads {
-                    if let Some(identity) = facts.lane_session_identity(won.lane, won.occupant) {
-                        sessions.insert(
-                            (won.lane, won.occupant, boundary.vendor.clone(), won.epoch),
-                            identity.to_owned(),
-                        );
-                    }
+            let body::SourceBoundary::Proven { heads } = &won.source;
+            for boundary in heads {
+                if let Some(identity) = facts.lane_session_identity(won.lane, won.occupant) {
+                    sessions.insert(
+                        (won.lane, won.occupant, boundary.vendor.clone(), won.epoch),
+                        identity.to_owned(),
+                    );
                 }
             }
             claims.insert(

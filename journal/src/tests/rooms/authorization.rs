@@ -374,7 +374,7 @@ fn a_controller_concluded_without_authorization_never_authorizes() {
                 validation: "ordinary completion".to_owned(),
                 terminal: None,
                 git: None,
-                source: wire::body::SourceBoundary::unrecorded(),
+                source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
             },
             FactCause::Root,
         )

@@ -903,16 +903,10 @@ fn claim_context_lines(task: &BoardTask) -> Vec<String> {
                 ));
             }
         }
-        body::SourceBoundary::Incomplete { reason } => {
-            lines.push(format!("claim_source unavailable {reason}"));
-        }
     }
     match &context.recovery {
         wire::intent::TaskTranscriptRecovery::Transcript { session } => {
-            let body::SourceBoundary::Proven { heads } = &context.source else {
-                lines.push("claim_context unavailable recovery-source-incomplete".to_owned());
-                return lines;
-            };
+            let body::SourceBoundary::Proven { heads } = &context.source;
             let mut registered = heads
                 .iter()
                 .filter(|head| head.stream == body::TASK_CREATION_CONTEXT_STREAM);

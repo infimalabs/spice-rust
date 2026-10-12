@@ -84,6 +84,7 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
                 "kind": "task::done",
                 "task": "1kKRRsDP",
                 "validation": "the suite is green",
+                "source": {"proven": {"heads": []}},
             }),
             [true, false, false],
         ),
@@ -96,6 +97,8 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
                 "occupant": REQUEST,
                 "epoch": EPOCH,
                 "until": EXPIRES,
+                "cell": {"project": "app", "phase": "todo"},
+                "source": {"proven": {"heads": []}},
             }),
             [true, true, false],
         ),
@@ -235,6 +238,8 @@ fn only_the_tail_of_a_backlog_invalidates_current_reads() {
         "occupant": REQUEST,
         "epoch": EPOCH,
         "until": "2030-04-12T19:44:09.271Z",
+        "cell": {"project": "app", "phase": "todo"},
+        "source": {"proven": {"heads": []}},
     });
     let lane = format!("lane:{LANE}");
     let ascending = [

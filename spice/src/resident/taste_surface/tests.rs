@@ -282,7 +282,7 @@ impl Fixture {
                     occupant: self.occupant,
                     ancestor: self.occupant,
                     epoch,
-                    source: wire::body::SourceBoundary::unrecorded(),
+                    source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
                 },
                 FactCause::Existing(seated),
             )

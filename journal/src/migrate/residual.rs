@@ -27,6 +27,9 @@ const SESSION_SOURCE_RELEASE: &str = "a4abe071f";
 const SESSION_LAUNCH_RELEASE: &str = "9f2487d5a";
 /// Release from which steering transcript evidence names its tape generation.
 const STEERING_SOURCE_RELEASE: &str = "cb609bd56";
+/// Release from which every claim, carry, completion, and review names its proven
+/// source boundary.
+const LIFECYCLE_SOURCE_RELEASE: &str = "b18f556c3";
 /// Release from which peer-message steering heads retain their frozen room.
 const STEERING_ROOM_HEAD_RELEASE: &str = "400b421de";
 
@@ -125,6 +128,22 @@ pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<(), OpenError> {
             [kind.as_str()],
             STEERING_SOURCE_RELEASE,
             "the steering transcript locus omits its tape generation",
+        )?;
+    }
+    for kind in [
+        wire::FactKind::ClaimWon,
+        wire::FactKind::ClaimCarried,
+        wire::FactKind::TaskDone,
+        wire::FactKind::TaskReviewed,
+    ] {
+        refuse_first(
+            transaction,
+            "fact_envelopes",
+            "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
+             AND json_type(CAST(envelope AS TEXT), '$.fact.source.proven') IS NULL ORDER BY seq",
+            [kind.as_str()],
+            LIFECYCLE_SOURCE_RELEASE,
+            "the lifecycle fact has no proven source boundary",
         )?;
     }
     Ok(())
