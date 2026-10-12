@@ -1,0 +1,363 @@
+//! Closed command spellings and serialization.
+
+use std::{fmt, str::FromStr};
+
+use serde::de::{Deserializer, Error as _};
+use serde::ser::Serializer;
+use serde::{Deserialize, Serialize};
+
+use super::{CommandKind, CommandKindError};
+
+impl CommandKind {
+    /// Every command in the closed registry, in declaration order.
+    pub const ALL: &'static [Self] = &[
+        Self::BoardRead,
+        Self::ReportRead,
+        Self::TaskDetail,
+        Self::TaskRelations,
+        Self::TaskTimeline,
+        Self::BoardGraph,
+        Self::BoardHandout,
+        Self::DocLedger,
+        Self::RoomPost,
+        Self::RoomCoordinationRead,
+        Self::RoomCoordinate,
+        Self::RoomPutAside,
+        Self::WorkingGroupRead,
+        Self::WorkingGroupPut,
+        Self::WorkingGroupRemove,
+        Self::CandidateRetain,
+        Self::CandidateCritiqueRecord,
+        Self::CandidateCoverageRecord,
+        Self::PreparationDecide,
+        Self::ExecutionAuthorize,
+        Self::OutputAdopt,
+        Self::GlobalSettingsRead,
+        Self::GlobalSettingsSet,
+        Self::VendorCatalog,
+        Self::TaskAdd,
+        Self::TaskOopsAdd,
+        Self::TasteProposalAdd,
+        Self::TaskEdit,
+        Self::TaskDelete,
+        Self::TaskClose,
+        Self::TaskNote,
+        Self::TaskDefer,
+        Self::TaskWake,
+        Self::TaskDepends,
+        Self::TaskPhase,
+        Self::TaskDone,
+        Self::TaskReview,
+        Self::TaskAssign,
+        Self::ClaimWin,
+        Self::ClaimCarry,
+        Self::ClaimRenew,
+        Self::ClaimFree,
+        Self::ClaimLapse,
+        Self::DocApply,
+        Self::SteerSend,
+        Self::SteerInbox,
+        Self::SteerHistory,
+        Self::SteerResend,
+        Self::SteerRecover,
+        Self::SteerDispose,
+        Self::SteerCancel,
+        Self::QuoteRead,
+        Self::ConsentRead,
+        Self::ConsentPolicy,
+        Self::ConsentDecide,
+        Self::TrustPend,
+        Self::TrustGrant,
+        Self::TrustRevoke,
+        Self::LaneRead,
+        Self::LaneJobsRead,
+        Self::LaneJobRead,
+        Self::LaneJobStop,
+        Self::LaneSeat,
+        Self::LaneArrange,
+        Self::LaneState,
+        Self::LaneRenewal,
+        Self::LaneRetune,
+        Self::LaneEffortRetune,
+        Self::LaneFastRetune,
+        Self::TeamConfigure,
+        Self::TeamArrange,
+        Self::LaneRecall,
+        Self::TasteRecord,
+        Self::CanaryRecognize,
+        Self::VendorRecognize,
+        Self::CommitRecognize,
+        Self::ProofRecognize,
+        Self::ReleasePublish,
+        Self::UpChange,
+    ];
+
+    /// The wire spelling of this command.
+    ///
+    /// The outer partition is exhaustive, so a new variant must state which
+    /// closed registry section owns its spelling. The section matches remain
+    /// short enough to review as bounded tables.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BoardRead
+            | Self::ReportRead
+            | Self::TaskDetail
+            | Self::TaskRelations
+            | Self::TaskTimeline
+            | Self::BoardGraph
+            | Self::BoardHandout
+            | Self::DocLedger
+            | Self::RoomPost
+            | Self::RoomCoordinationRead
+            | Self::RoomCoordinate
+            | Self::RoomPutAside
+            | Self::WorkingGroupRead
+            | Self::WorkingGroupPut
+            | Self::WorkingGroupRemove
+            | Self::CandidateRetain
+            | Self::CandidateCritiqueRecord
+            | Self::CandidateCoverageRecord
+            | Self::PreparationDecide
+            | Self::ExecutionAuthorize
+            | Self::OutputAdopt
+            | Self::TaskAdd
+            | Self::TaskOopsAdd
+            | Self::TasteProposalAdd
+            | Self::TaskEdit
+            | Self::TaskDelete
+            | Self::TaskClose
+            | Self::TaskNote
+            | Self::TaskDefer
+            | Self::TaskWake
+            | Self::TaskDepends
+            | Self::TaskPhase
+            | Self::TaskDone
+            | Self::TaskReview
+            | Self::TaskAssign => self.board_spelling(),
+            Self::ClaimWin
+            | Self::ClaimCarry
+            | Self::ClaimRenew
+            | Self::ClaimFree
+            | Self::ClaimLapse
+            | Self::DocApply
+            | Self::SteerSend
+            | Self::SteerInbox
+            | Self::SteerHistory
+            | Self::SteerResend
+            | Self::SteerRecover
+            | Self::SteerDispose
+            | Self::SteerCancel
+            | Self::QuoteRead
+            | Self::ConsentRead
+            | Self::ConsentPolicy
+            | Self::ConsentDecide => self.coordination_spelling(),
+            Self::TrustPend
+            | Self::TrustGrant
+            | Self::TrustRevoke
+            | Self::LaneRead
+            | Self::LaneJobsRead
+            | Self::LaneJobRead
+            | Self::LaneJobStop
+            | Self::LaneSeat
+            | Self::LaneArrange
+            | Self::LaneState
+            | Self::LaneRenewal
+            | Self::LaneRetune
+            | Self::LaneEffortRetune
+            | Self::LaneFastRetune
+            | Self::TeamConfigure
+            | Self::TeamArrange
+            | Self::LaneRecall
+            | Self::GlobalSettingsRead
+            | Self::GlobalSettingsSet
+            | Self::VendorCatalog
+            | Self::TasteRecord
+            | Self::CanaryRecognize
+            | Self::VendorRecognize
+            | Self::CommitRecognize
+            | Self::ProofRecognize
+            | Self::ReleasePublish
+            | Self::UpChange => self.runtime_spelling(),
+        }
+    }
+
+    const fn board_spelling(self) -> &'static str {
+        match self {
+            Self::BoardRead => "board::read",
+            Self::ReportRead => "report::read",
+            Self::TaskDetail => "task::detail",
+            Self::TaskRelations => "task::relations",
+            Self::TaskTimeline => "task::timeline",
+            Self::BoardGraph => "board::graph",
+            Self::BoardHandout => "board::handout",
+            Self::DocLedger => "doc::ledger",
+            Self::RoomPost
+            | Self::RoomCoordinationRead
+            | Self::RoomCoordinate
+            | Self::RoomPutAside
+            | Self::WorkingGroupRead
+            | Self::WorkingGroupPut
+            | Self::WorkingGroupRemove => self.room_spelling(),
+            Self::CandidateRetain
+            | Self::CandidateCritiqueRecord
+            | Self::CandidateCoverageRecord
+            | Self::PreparationDecide
+            | Self::ExecutionAuthorize
+            | Self::OutputAdopt => self.preparation_spelling(),
+            Self::TaskAdd => "task::add",
+            Self::TaskOopsAdd => "task::oops-add",
+            Self::TasteProposalAdd => "taste::proposal-add",
+            Self::TaskEdit => "task::edit",
+            Self::TaskDelete => "task::delete",
+            Self::TaskClose => "task::close",
+            Self::TaskNote => "task::note",
+            Self::TaskDefer => "task::defer",
+            Self::TaskWake => "task::wake",
+            Self::TaskDepends => "task::depends",
+            Self::TaskPhase => "task::phase",
+            Self::TaskDone => "task::done",
+            Self::TaskReview => "task::review",
+            Self::TaskAssign => "task::assign",
+            _ => panic!("command spelling partition is closed"),
+        }
+    }
+    const fn room_spelling(self) -> &'static str {
+        match self {
+            Self::RoomPost => "room::post",
+            Self::RoomCoordinationRead => "room::coordination-read",
+            Self::RoomCoordinate => "room::coordinate",
+            Self::RoomPutAside => "room::put-aside",
+            Self::WorkingGroupRead => "group::read",
+            Self::WorkingGroupPut => "group::put",
+            Self::WorkingGroupRemove => "group::remove",
+            _ => panic!("room command spelling partition is closed"),
+        }
+    }
+    const fn preparation_spelling(self) -> &'static str {
+        match self {
+            Self::CandidateRetain => "preparation::retain",
+            Self::CandidateCritiqueRecord => "preparation::critique",
+            Self::CandidateCoverageRecord => "preparation::cover",
+            Self::PreparationDecide => "preparation::decide",
+            Self::ExecutionAuthorize => "preparation::authorize",
+            Self::OutputAdopt => "preparation::adopt",
+            _ => panic!("preparation command spelling partition is closed"),
+        }
+    }
+
+    const fn coordination_spelling(self) -> &'static str {
+        match self {
+            Self::ClaimWin => "claim::win",
+            Self::ClaimCarry => "claim::carry",
+            Self::ClaimRenew => "claim::renew",
+            Self::ClaimFree => "claim::free",
+            Self::ClaimLapse => "claim::lapse",
+            Self::DocApply => "doc::apply",
+            Self::SteerSend => "steer::send",
+            Self::SteerInbox => "steer::inbox",
+            Self::SteerHistory => "steer::history",
+            Self::SteerResend => "steer::resend",
+            Self::SteerRecover => "steer::recover",
+            Self::SteerDispose => "steer::dispose",
+            Self::SteerCancel => "steer::cancel",
+            Self::QuoteRead => "quote::read",
+            Self::ConsentRead => "consent::read",
+            Self::ConsentPolicy => "consent::policy",
+            Self::ConsentDecide => "consent::decide",
+            _ => panic!("command spelling partition is closed"),
+        }
+    }
+
+    const fn runtime_spelling(self) -> &'static str {
+        match self {
+            Self::TrustPend => "trust::pend",
+            Self::TrustGrant => "trust::grant",
+            Self::TrustRevoke => "trust::revoke",
+            Self::LaneRead => "lane::read",
+            Self::LaneJobsRead => "lane::jobs-read",
+            Self::LaneJobRead => "lane::job-read",
+            Self::LaneJobStop => "lane::job-stop",
+            Self::LaneSeat => "lane::seat",
+            Self::LaneArrange => "lane::arrange",
+            Self::LaneState => "lane::state",
+            Self::LaneRenewal => "lane::renewal",
+            Self::LaneRetune => "lane::retune",
+            Self::LaneEffortRetune => "lane::effort-retune",
+            Self::LaneFastRetune => "lane::fast-retune",
+            Self::TeamConfigure => "team::configure",
+            Self::TeamArrange => "team::arrange",
+            Self::LaneRecall => "lane::recall",
+            Self::GlobalSettingsRead => "settings::read",
+            Self::GlobalSettingsSet => "settings::set",
+            Self::VendorCatalog => "vendor::catalog",
+            Self::TasteRecord => "taste::record",
+            Self::CanaryRecognize => "canary::recognize",
+            Self::VendorRecognize => "vendor::recognize",
+            Self::CommitRecognize => "commit::recognize",
+            Self::ProofRecognize => "proof::recognize",
+            Self::ReleasePublish => "release::publish",
+            Self::UpChange => "up::change",
+            _ => panic!("command spelling partition is closed"),
+        }
+    }
+
+    /// Whether this request reads one snapshot and commits no authority fact.
+    #[must_use]
+    pub const fn is_read(self) -> bool {
+        matches!(
+            self,
+            Self::BoardRead
+                | Self::ReportRead
+                | Self::TaskDetail
+                | Self::TaskRelations
+                | Self::TaskTimeline
+                | Self::BoardGraph
+                | Self::BoardHandout
+                | Self::DocLedger
+                | Self::GlobalSettingsRead
+                | Self::VendorCatalog
+                | Self::SteerInbox
+                | Self::QuoteRead
+                | Self::SteerHistory
+                | Self::ConsentRead
+                | Self::ConsentPolicy
+                | Self::LaneRead
+                | Self::LaneJobsRead
+                | Self::LaneJobRead
+                | Self::WorkingGroupRead
+                | Self::LaneRecall
+        )
+    }
+}
+
+impl FromStr for CommandKind {
+    type Err = CommandKindError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .iter()
+            .find(|kind| kind.as_str() == text)
+            .copied()
+            .ok_or_else(|| CommandKindError(text.to_owned()))
+    }
+}
+
+impl fmt::Display for CommandKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl Serialize for CommandKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for CommandKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        text.parse().map_err(D::Error::custom)
+    }
+}

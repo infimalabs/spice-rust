@@ -1,10 +1,94 @@
-//! Bounded working-group commands and their current projections.
+//! Bounded room-coordination and working-group command DTOs.
 
 use serde::{Deserialize, Serialize};
 
 use crate::rooms::RoomAuthorityStamp;
 pub use crate::rooms::{WorkingGroupPut, WorkingGroupRemove};
-use crate::{Seq, TaskHandle, TaskStamp};
+use crate::{OccupantAddress, Seq, SequenceCode, TaskHandle, TaskStamp};
+
+/// Maximum number of live coordination requests one room projection returns.
+pub const ROOM_COORDINATION_LIMIT: usize = 32;
+
+/// Start or resume one bounded preparation contribution in an anchor room.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomCoordinate {
+    /// Current rendered handle of the anchor task.
+    pub room: TaskHandle,
+    /// Current base-52 address of the occupant asked to contribute.
+    pub target: OccupantAddress,
+    /// Whether the operator is starting or resuming this coordination.
+    pub action: RoomCoordinateAction,
+    /// One unresolved criterion the contribution must address.
+    pub criterion: String,
+    /// Finite useful contribution or check requested from the lane.
+    pub contribution: String,
+    /// Explicit condition at which the lane must stop and disposition work.
+    pub stop: String,
+}
+
+/// Operator vocabulary for a scoped room-coordination request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RoomCoordinateAction {
+    /// Begin coordination from quiescence.
+    Start,
+    /// Continue with new scope or evidence.
+    Resume,
+}
+
+/// Put one room aside without force-releasing native work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomPutAside {
+    /// Current rendered handle of the anchor task.
+    pub room: TaskHandle,
+}
+
+/// Read one room's current coordination projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomCoordinationRead {
+    /// Current rendered handle of the anchor task.
+    pub room: TaskHandle,
+}
+
+/// One live scoped request projected from ordinary steering authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomCoordinationRequest {
+    /// Human-sized steering key.
+    pub key: String,
+    /// Exact addressed occupant at admission.
+    pub target: OccupantAddress,
+}
+
+/// A stop request that remains visible while its exact native claim is active.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomCoordinationStop {
+    /// Human-sized steering key.
+    pub key: String,
+    /// Exact addressed holder at admission.
+    pub target: OccupantAddress,
+    /// Exact claim position, rendered as native base-52.
+    pub claim: SequenceCode,
+}
+
+/// Current coordination state of one anchor room.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomCoordinationView {
+    /// Current rendered anchor handle.
+    pub room: TaskHandle,
+    /// Live unanswered coordination requests, in admission order.
+    pub requests: Vec<RoomCoordinationRequest>,
+    /// Current holder's still-applicable stop request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<RoomCoordinationStop>,
+    /// Presentation instruction local consumers apply without persisting geometry.
+    pub hide: bool,
+}
 
 /// Largest working-group page one command may request.
 pub const WORKING_GROUP_PAGE_LIMIT_MAX: u16 = 100;

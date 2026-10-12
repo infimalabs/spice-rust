@@ -315,6 +315,55 @@ pub struct RoomDelivered {
     pub hunk: TranscriptHunk,
 }
 
+/// One scoped operator request to coordinate an anchor through native steering.
+///
+/// The steering fact owns the request text. This fact only links that existing
+/// authority into the room timeline, so it never copies conversation bytes or
+/// creates another obligation lifecycle.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomCoordinationStarted {
+    /// Anchor task; this is the room identity.
+    pub room: RoomAnchor,
+    /// Native moment identity of this room-timeline event.
+    pub publication: RoomAuthorityStamp,
+    /// Human-sized key of the ordinary steering request.
+    pub key: String,
+    /// Exact base-52 occupant address asked to make the bounded contribution.
+    pub target: crate::OccupantAddress,
+}
+
+/// A live anchor holder asked to checkpoint and release through native task
+/// disposition.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomStopRequest {
+    /// Human-sized key of the ordinary steering request.
+    pub key: String,
+    /// Exact base-52 address of the holder at admission.
+    pub target: crate::OccupantAddress,
+    /// Exact claim head the request applies to, rendered as native base-52.
+    pub claim: SequenceCode,
+}
+
+/// One operator Put-aside action recorded in an anchor's room timeline.
+///
+/// The listed keys are ordinary steering dispositions. A stop request remains
+/// visible only while its exact native claim head remains active.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomPutAside {
+    /// Anchor task; this is the room identity.
+    pub room: RoomAnchor,
+    /// Native moment identity of this room-timeline event.
+    pub publication: RoomAuthorityStamp,
+    /// Unanswered room-coordination requests canceled by this action.
+    pub canceled: Vec<String>,
+    /// Request to the current anchor holder, absent when the anchor was idle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<RoomStopRequest>,
+}
+
 /// Native room-only publication command body.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

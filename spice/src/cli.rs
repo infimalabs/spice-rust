@@ -188,6 +188,9 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::GlobalSettingsSet
         | CommandKind::VendorCatalog
         | CommandKind::RoomPost
+        | CommandKind::RoomCoordinationRead
+        | CommandKind::RoomCoordinate
+        | CommandKind::RoomPutAside
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TasteProposalAdd

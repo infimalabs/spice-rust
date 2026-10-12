@@ -92,6 +92,12 @@ macro_rules! registered_body {
     (RoomMessaged) => {
         crate::rooms::RoomMessaged
     };
+    (RoomCoordinationStarted) => {
+        crate::rooms::RoomCoordinationStarted
+    };
+    (RoomPutAside) => {
+        crate::rooms::RoomPutAside
+    };
     (RoomDelivered) => {
         crate::rooms::RoomDelivered
     };
@@ -250,6 +256,10 @@ vocabulary! {
     RoomPublished = "room::published" by CommandDoor;
     /// An authored MSG packet recorded its transcript-owned body in a room.
     RoomMessaged = "room::messaged" by AckScanner;
+    /// A scoped operator request linked ordinary steering into one room.
+    RoomCoordinationStarted = "room::directed" by CommandDoor;
+    /// Unanswered coordination was withdrawn and any holder was asked to stop.
+    RoomPutAside = "room::shelved" by CommandDoor;
     /// A lane's room catch-up landed in its transcript and advanced its cursor.
     RoomDelivered = "room::delivered" by ResidentRecognition;
     /// A working group's complete ordered anchor state was saved.

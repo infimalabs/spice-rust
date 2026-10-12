@@ -8,7 +8,7 @@ use lane::occupant::Seats;
 use spice::placeholder::PlaceholderReason;
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, Intent};
-use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal, Reply};
+use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal, Reply, ReplyPosition};
 
 use super::{
     CommandDispatch, CommandEffects, RuntimePaths, SurfaceConfig, consent_surface,
@@ -294,8 +294,70 @@ impl<'a> Surface<'a> {
     }
 
     fn dispatch_controls(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
-        self.dispatch_steering(command)
+        self.dispatch_room_coordination(command)
+            .or_else(|| self.dispatch_steering(command))
             .or_else(|| self.dispatch_policy(command).map(CommandDispatch::ordinary))
+    }
+
+    fn dispatch_room_coordination(
+        &self,
+        command: &wire::AdmittedCommand,
+    ) -> Option<CommandDispatch> {
+        let (outcome, notify) = match (command.kind(), command.body()) {
+            (CommandKind::RoomCoordinationRead, Intent::RoomCoordinationRead(request)) => (
+                crate::board_command::room_coordination_read(
+                    self.bus,
+                    request,
+                    &self.config.projects,
+                    &self.config.allocation,
+                ),
+                None,
+            ),
+            (CommandKind::RoomCoordinate, Intent::RoomCoordinate(request)) => (
+                crate::board_command::room_coordinate(
+                    self.bus,
+                    command,
+                    request,
+                    &self.config.steering,
+                    &self.config.projects,
+                    &self.config.allocation,
+                ),
+                crate::board_command::coordination_lane(self.bus, request.target),
+            ),
+            (CommandKind::RoomPutAside, Intent::RoomPutAside(request)) => {
+                let outcome = crate::board_command::room_put_aside(
+                    self.bus,
+                    command,
+                    request,
+                    &self.config.steering,
+                    &self.config.projects,
+                    &self.config.allocation,
+                );
+                let notify = match &outcome {
+                    Outcome::Reply(Reply {
+                        body: CommandAnswer::RoomCoordination(view),
+                        ..
+                    }) => view.stop.as_ref().and_then(|stop| {
+                        crate::board_command::coordination_lane(self.bus, stop.target)
+                    }),
+                    _ => None,
+                };
+                (outcome, notify)
+            }
+            _ => return None,
+        };
+        let mut effects = CommandEffects::default();
+        if matches!(
+            &outcome,
+            Outcome::Reply(Reply {
+                position: ReplyPosition::Committed(_),
+                ..
+            })
+        ) && let Some(lane) = notify
+        {
+            effects.notify_inbox(lane);
+        }
+        Some(CommandDispatch::with_effects(outcome, effects))
     }
 
     fn dispatch_steering(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {

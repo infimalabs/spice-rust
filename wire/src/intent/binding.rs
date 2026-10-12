@@ -17,7 +17,8 @@ use super::{
     LaneAnswer, LaneArrange, LaneChangeAnswer, LaneEffortRetune, LaneFastRetune, LaneJobAnswer,
     LaneJobRef, LaneJobsAnswer, LaneJobsRead, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer,
     LaneRetune, LaneSeat, LaneState, QuoteRead, RecallAnswer, RecognitionAnswer, Recognize,
-    ReleasePublish, ReportAnswer, ReportRead, StateAnswer, SteerDispose, SteerHistory, SteerInbox,
+    ReleasePublish, ReportAnswer, ReportRead, RoomCoordinate, RoomCoordinationRead,
+    RoomCoordinationView, RoomPutAside, StateAnswer, SteerDispose, SteerHistory, SteerInbox,
     SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskDefer, TaskDelete, TaskDepends,
     TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef,
     TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake,
@@ -47,6 +48,12 @@ pub enum BodyShape {
     DocLedger,
     /// [`RoomPost`]
     RoomPost,
+    /// [`RoomCoordinationRead`]
+    RoomCoordinationRead,
+    /// [`RoomCoordinate`]
+    RoomCoordinate,
+    /// [`RoomPutAside`]
+    RoomPutAside,
     /// [`WorkingGroupRead`]
     WorkingGroupRead,
     /// [`WorkingGroupPut`]
@@ -186,6 +193,8 @@ pub enum AnswerShape {
     Text,
     /// [`RoomPostAnswer`]
     RoomPost,
+    /// [`RoomCoordinationView`]
+    RoomCoordination,
     /// [`TaskAnswer`]
     Task,
     /// [`ClaimAnswer`]
@@ -254,6 +263,8 @@ pub enum CommandAnswer {
     Text(TextAnswer),
     /// [`AnswerShape::RoomPost`]
     RoomPost(RoomPostAnswer),
+    /// [`AnswerShape::RoomCoordination`]
+    RoomCoordination(RoomCoordinationView),
     /// [`AnswerShape::Task`]
     Task(TaskAnswer),
     /// [`AnswerShape::Claim`]
@@ -305,15 +316,15 @@ impl CommandAnswer {
     #[must_use]
     pub const fn shape(&self) -> AnswerShape {
         match self {
+            Self::WorkingGroupPage(_) | Self::WorkingGroupChange(_) => self.working_group_shape(),
             Self::Board(_)
             | Self::Report(_)
             | Self::TaskDetail(_)
             | Self::TaskRelations(_)
             | Self::TaskTimeline(_)
-            | Self::WorkingGroupPage(_)
-            | Self::WorkingGroupChange(_)
             | Self::Text(_)
             | Self::RoomPost(_)
+            | Self::RoomCoordination(_)
             | Self::Task(_)
             | Self::Claim(_)
             | Self::Doc(_) => self.board_answer_shape(),
@@ -345,9 +356,9 @@ impl CommandAnswer {
             Self::TaskDetail(_) => AnswerShape::TaskDetail,
             Self::TaskRelations(_) => AnswerShape::TaskRelations,
             Self::TaskTimeline(_) => AnswerShape::TaskTimeline,
-            Self::WorkingGroupPage(_) | Self::WorkingGroupChange(_) => self.working_group_shape(),
             Self::Text(_) => AnswerShape::Text,
             Self::RoomPost(_) => AnswerShape::RoomPost,
+            Self::RoomCoordination(_) => AnswerShape::RoomCoordination,
             Self::Task(_) => AnswerShape::Task,
             Self::Claim(_) => AnswerShape::Claim,
             Self::Doc(_) => AnswerShape::Doc,
@@ -406,13 +417,13 @@ impl AnswerShape {
             Self::LaneJobs => Ok(CommandAnswer::LaneJobs(Box::new(source.read()?))),
             Self::LaneJob => Ok(CommandAnswer::LaneJob(Box::new(source.read()?))),
             Self::WorkingGroupPage | Self::WorkingGroupChange => self.decode_working_group(source),
+            Self::RoomPost | Self::RoomCoordination => self.decode_room(source),
             Self::Board
             | Self::Report
             | Self::TaskDetail
             | Self::TaskRelations
             | Self::TaskTimeline
             | Self::Text
-            | Self::RoomPost
             | Self::Task
             | Self::Claim
             | Self::Doc
@@ -444,7 +455,6 @@ impl AnswerShape {
             Self::TaskRelations => CommandAnswer::TaskRelations(Box::new(body.read()?)),
             Self::TaskTimeline => CommandAnswer::TaskTimeline(Box::new(body.read()?)),
             Self::Text => CommandAnswer::Text(body.read()?),
-            Self::RoomPost => CommandAnswer::RoomPost(body.read()?),
             Self::Task => CommandAnswer::Task(body.read()?),
             Self::Claim => CommandAnswer::Claim(Box::new(body.read()?)),
             Self::Doc => CommandAnswer::Doc(body.read()?),
@@ -453,6 +463,14 @@ impl AnswerShape {
             Self::Consent => CommandAnswer::Consent(body.read()?),
             Self::ConsentQueue => CommandAnswer::ConsentQueue(body.read()?),
             _ => unreachable!("answer-shape decode partition is closed"),
+        })
+    }
+
+    fn decode_room(self, body: impl AnswerSource) -> Result<CommandAnswer, serde_json::Error> {
+        Ok(match self {
+            Self::RoomPost => CommandAnswer::RoomPost(body.read()?),
+            Self::RoomCoordination => CommandAnswer::RoomCoordination(body.read()?),
+            _ => unreachable!("room answer decode partition is closed"),
         })
     }
 
@@ -538,6 +556,10 @@ impl CommandKind {
             Self::WorkingGroupRead | Self::WorkingGroupPut | Self::WorkingGroupRemove => {
                 self.working_group_binding()
             }
+            Self::RoomPost
+            | Self::RoomCoordinationRead
+            | Self::RoomCoordinate
+            | Self::RoomPutAside => self.room_binding(),
             Self::CandidateRetain
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
@@ -552,7 +574,6 @@ impl CommandKind {
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
-            | Self::RoomPost
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TasteProposalAdd
@@ -624,7 +645,6 @@ impl CommandKind {
             Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
-            Self::RoomPost => Binding::of(B::RoomPost, A::RoomPost),
             Self::CandidateRetain
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
@@ -654,6 +674,19 @@ impl CommandKind {
             _ => panic!("command binding partition is closed"),
         }
     }
+    const fn room_binding(self) -> Binding {
+        use AnswerShape as A;
+        use BodyShape as B;
+
+        match self {
+            Self::RoomPost => Binding::of(B::RoomPost, A::RoomPost),
+            Self::RoomCoordinationRead => Binding::of(B::RoomCoordinationRead, A::RoomCoordination),
+            Self::RoomCoordinate => Binding::of(B::RoomCoordinate, A::RoomCoordination),
+            Self::RoomPutAside => Binding::of(B::RoomPutAside, A::RoomCoordination),
+            _ => panic!("room command binding partition is closed"),
+        }
+    }
+
     const fn preparation_binding(self) -> Binding {
         use AnswerShape as A;
         use BodyShape as B;
@@ -770,6 +803,12 @@ pub enum Intent {
     DocLedger(DocLedger),
     /// [`BodyShape::RoomPost`]
     RoomPost(RoomPost),
+    /// [`BodyShape::RoomCoordinationRead`]
+    RoomCoordinationRead(RoomCoordinationRead),
+    /// [`BodyShape::RoomCoordinate`]
+    RoomCoordinate(RoomCoordinate),
+    /// [`BodyShape::RoomPutAside`]
+    RoomPutAside(RoomPutAside),
     /// [`BodyShape::WorkingGroupRead`]
     WorkingGroupRead(WorkingGroupRead),
     /// [`BodyShape::WorkingGroupPut`]
@@ -898,6 +937,10 @@ impl Intent {
             Self::WorkingGroupRead(_) | Self::WorkingGroupPut(_) | Self::WorkingGroupRemove(_) => {
                 self.working_group_shape()
             }
+            Self::RoomPost(_)
+            | Self::RoomCoordinationRead(_)
+            | Self::RoomCoordinate(_)
+            | Self::RoomPutAside(_) => self.room_shape(),
             Self::CandidateRetain(_)
             | Self::CandidateCritiqueRecord(_)
             | Self::CandidateCoverageRecord(_)
@@ -912,7 +955,6 @@ impl Intent {
             | Self::BoardGraph(_)
             | Self::BoardHandout(_)
             | Self::DocLedger(_)
-            | Self::RoomPost(_)
             | Self::TaskAdd(_)
             | Self::TaskOopsAdd(_)
             | Self::TasteProposalAdd(_)
@@ -973,7 +1015,6 @@ impl Intent {
             Self::BoardGraph(_) => BodyShape::BoardGraph,
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
-            Self::RoomPost(_) => BodyShape::RoomPost,
             Self::CandidateRetain(_)
             | Self::CandidateCritiqueRecord(_)
             | Self::CandidateCoverageRecord(_)
@@ -1000,6 +1041,16 @@ impl Intent {
             _ => panic!("intent shape partition is closed"),
         }
     }
+    const fn room_shape(&self) -> BodyShape {
+        match self {
+            Self::RoomPost(_) => BodyShape::RoomPost,
+            Self::RoomCoordinationRead(_) => BodyShape::RoomCoordinationRead,
+            Self::RoomCoordinate(_) => BodyShape::RoomCoordinate,
+            Self::RoomPutAside(_) => BodyShape::RoomPutAside,
+            _ => panic!("room intent shape partition is closed"),
+        }
+    }
+
     const fn preparation_shape(&self) -> BodyShape {
         match self {
             Self::CandidateRetain(_) => BodyShape::CandidateRetain,
@@ -1093,6 +1144,9 @@ impl BodyShape {
                 | Self::BoardHandout
                 | Self::DocLedger
                 | Self::RoomPost
+                | Self::RoomCoordinationRead
+                | Self::RoomCoordinate
+                | Self::RoomPutAside
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
                 | Self::WorkingGroupRemove
@@ -1136,6 +1190,9 @@ impl BodyShape {
                 | Self::BoardHandout
                 | Self::DocLedger
                 | Self::RoomPost
+                | Self::RoomCoordinationRead
+                | Self::RoomCoordinate
+                | Self::RoomPutAside
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
                 | Self::WorkingGroupRemove
@@ -1170,6 +1227,9 @@ impl BodyShape {
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
             Self::RoomPost => Intent::RoomPost(crate::decode(bytes)?),
+            Self::RoomCoordinationRead => Intent::RoomCoordinationRead(crate::decode(bytes)?),
+            Self::RoomCoordinate => Intent::RoomCoordinate(crate::decode(bytes)?),
+            Self::RoomPutAside => Intent::RoomPutAside(crate::decode(bytes)?),
             Self::WorkingGroupRead => Intent::WorkingGroupRead(crate::decode(bytes)?),
             Self::CandidateRetain
             | Self::CandidateCritiqueRecord

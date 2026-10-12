@@ -2,6 +2,86 @@
 
 use super::*;
 
+/// One ordinary operator directive staged as part of a larger guarded command.
+pub(crate) struct OperatorDirective<'a> {
+    pub(crate) directive: CanonicalUuid,
+    pub(crate) fanout: Option<CanonicalUuid>,
+    pub(crate) lane: CanonicalUuid,
+    pub(crate) text: &'a str,
+    pub(crate) control: &'a str,
+}
+
+/// Append ordinary steering authority without committing it separately.
+///
+/// Compound native commands use this to keep their room marker and steering
+/// request in one journal write. The caller owns the residency guard and final
+/// envelope-size admission.
+pub(crate) fn append_operator_directive(
+    bus: &Bus,
+    origin: wire::Origin,
+    config: &steer::Config,
+    proposal: &mut JournalWrite,
+    publication: OperatorDirective<'_>,
+    at: Instant,
+    cause: FactCause,
+) -> Result<(String, PendingFact), Outcome<CommandAnswer>> {
+    let (existing, minted_micros) = keyspace(bus, publication.directive)?;
+    if existing.is_some() {
+        return Err(refusal(
+            "steer::identity-taken",
+            Some("unused directive identity".to_owned()),
+            Some(publication.directive.to_string()),
+            "submit a new command identity",
+        ));
+    }
+    let key = mint_key(minted_micros)?;
+    let expires = expiry(at, config.expiry().get())?;
+    let sent = wire::body::SteerSent {
+        directive: publication.directive,
+        fanout: publication.fanout,
+        key: key.to_string(),
+        lane: publication.lane,
+        text: publication.text.to_owned(),
+        from: None,
+        room: None,
+        control: Some(publication.control.to_owned()),
+        attachments: Vec::new(),
+        expires,
+    };
+    let pending = proposal
+        .fact(sent.clone(), cause)
+        .map_err(|error| typed_store_fault("steer::fact-invalid", &error.to_string()))?;
+    proposal.steering_head(pending, move |seq| {
+        steer::Ledger::sent_head(&sent, origin, at, seq)
+            .expect("the admitted compound send body builds its authority head")
+    });
+    Ok((key.to_string(), pending))
+}
+
+/// Retire one exact live directive inside a larger guarded command.
+pub(crate) fn append_cancellation(
+    proposal: &mut JournalWrite,
+    directive: &journal::JournalHead<wire::SteeringHead>,
+    at: Instant,
+) -> Result<String, Outcome<CommandAnswer>> {
+    proposal.guard(live_guard(directive.body().directive, directive.position()));
+    let canceled = wire::body::SteerCanceled {
+        key: directive.body().key.clone(),
+        lane: directive.body().lane,
+    };
+    let pending = proposal
+        .fact(
+            canceled.clone(),
+            FactCause::Existing(directive.body().created),
+        )
+        .map_err(|error| typed_store_fault("steer::fact-invalid", &error.to_string()))?;
+    let next =
+        steer::Ledger::transition_head(directive.body(), steer::Steering::Canceled(&canceled), at)
+            .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))?;
+    proposal.steering_head(pending, move |_| next);
+    Ok(directive.body().key.clone())
+}
+
 pub(in crate::resident) fn send(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -192,7 +272,7 @@ fn admit_send_content(send: &wire::intent::SteerSend) -> Result<(), Outcome<Comm
     Ok(())
 }
 
-pub(super) fn admit_send_envelope(proposal: &JournalWrite) -> Result<(), Outcome<CommandAnswer>> {
+pub(crate) fn admit_send_envelope(proposal: &JournalWrite) -> Result<(), Outcome<CommandAnswer>> {
     let bytes = proposal
         .envelope_byte_bound()
         .map_err(|error| typed_store_fault("steer::fact-invalid", &error.to_string()))?;
