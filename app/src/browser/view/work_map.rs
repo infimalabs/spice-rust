@@ -397,6 +397,7 @@ fn task_tone(
         WorkAvailability::Review => "Review",
         WorkAvailability::Stale => "Stale",
         WorkAvailability::Blocked => "Blocked",
+        WorkAvailability::Selection => "Awaiting selection",
         WorkAvailability::Held => "Held",
         WorkAvailability::Deferred => "Deferred",
         WorkAvailability::Parked => "Parked",

@@ -111,6 +111,7 @@ pub(super) fn read_next_work(
         tasks: Vec::new(),
         offer: Vec::new(),
         blocked: Vec::new(),
+        awaiting_selection: Vec::new(),
         origins: Default::default(),
         history: None,
         notes: Default::default(),
@@ -186,6 +187,7 @@ pub(in crate::board_command) fn project_frontier<'a>(
         {
             satisfied.know(preparation.parent.clone(), parent.statement().body().intent);
         }
+        satisfied.observe(statement, heads.workflow().body());
         let explicit_release = heads.claim().is_some_and(|claim| {
             observed
                 .facts()
@@ -254,6 +256,7 @@ fn dry_counts(
         stale: 0,
         blocked: 0,
         waiting: 0,
+        selection: 0,
         oops: entries
             .iter()
             .filter(|entry| {
@@ -276,6 +279,9 @@ fn dry_counts(
         }
         if entry.workflow().deferral.is_some() {
             counts.waiting += 1;
+        }
+        if board::awaits_selection(entry, satisfied) {
+            counts.selection += 1;
         }
     }
     counts

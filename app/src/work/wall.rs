@@ -3,8 +3,8 @@
 //! A dependency on work an agent can claim or is already working resolves
 //! organically, so it is an ordinary wait. A chain is a wall only when every
 //! path forward needs the operator: a deferral, a parked hidden row, a cycle,
-//! a prerequisite that can never complete, or an environment requirement only
-//! the operator can satisfy.
+//! a prerequisite that can never complete, an environment requirement only
+//! the operator can satisfy, or a Design awaiting the operator's selection.
 
 use wire::TaskStamp;
 
@@ -23,6 +23,8 @@ pub enum DependencyWall<'a> {
     Unreachable(&'a TaskStamp),
     /// The task needs an environment requirement only the operator can satisfy.
     Environment(&'a TaskStamp),
+    /// The task is a Design awaiting the operator's selection of its outputs.
+    Selection(&'a TaskStamp),
 }
 
 /// Memoized wall search over one projection.
@@ -85,6 +87,7 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
             | WorkAvailability::Review
             | WorkAvailability::Stale => None,
             WorkAvailability::Held => Some(DependencyWall::Environment(born)),
+            WorkAvailability::Selection => Some(DependencyWall::Selection(born)),
             WorkAvailability::Deferred => Some(DependencyWall::Deferred(born)),
             WorkAvailability::Parked => Some(DependencyWall::Parked(born)),
             WorkAvailability::Terminal => Some(DependencyWall::Unreachable(born)),

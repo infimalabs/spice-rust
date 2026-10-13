@@ -91,6 +91,7 @@ fn next_read_classifies_peer_only_parked_work_without_board_rows() {
             stale: 1,
             blocked: 1,
             waiting: 1,
+            selection: 0,
             oops: 1,
         }
     );
@@ -358,6 +359,7 @@ fn next_read_returns_each_authoritative_team_policy() {
                 stale: 0,
                 blocked: 0,
                 waiting: 0,
+                selection: 0,
                 oops: 0,
             }
         );

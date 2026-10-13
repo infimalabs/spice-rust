@@ -76,6 +76,9 @@ pub struct BoardView {
     /// Rows the allocator holds back for an unsettled prerequisite or an
     /// unconcluded or unauthorizing controller, judged by the resident.
     pub blocked: BTreeSet<wire::TaskStamp>,
+    /// Designs the allocator holds for the operator's selection of an output
+    /// they constructed, judged by the resident.
+    pub awaiting_selection: BTreeSet<wire::TaskStamp>,
     /// Resident steering-key origin index: the Work each quoted direction caused.
     pub(crate) quote_tasks: Rc<QuoteTasks>,
     /// Complete environment observed at the same board snapshot barrier.
@@ -98,6 +101,7 @@ impl From<&BoardAnswer> for BoardView {
             room_anchors,
             offer,
             blocked: answer.blocked.iter().cloned().collect(),
+            awaiting_selection: answer.awaiting_selection.iter().cloned().collect(),
             quote_tasks: Rc::new(answer.origins.clone()),
             environment,
             resident: answer.residency.body.state,

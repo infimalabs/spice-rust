@@ -317,6 +317,7 @@ fn board_response_with_requirements(
         next: None,
         offer: Vec::new(),
         blocked: Vec::new(),
+        awaiting_selection: Vec::new(),
         origins: Default::default(),
         notes: Default::default(),
         acknowledgments: Default::default(),

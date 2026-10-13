@@ -64,6 +64,9 @@ pub(crate) enum Standing {
     Ready,
     /// Unclaimed review-phase work.
     Review,
+    /// A Design whose remaining conclusion waits on the operator's selection
+    /// of an output it constructed.
+    Selection,
     /// A claim whose lease lapsed.
     Stale,
     /// Waiting on a dependency that has not completed.
@@ -83,6 +86,7 @@ impl Standing {
             Self::Active => "active",
             Self::Ready => "ready",
             Self::Review => "review",
+            Self::Selection => "selection",
             Self::Stale => "stale",
             Self::Blocked => "blocked",
             Self::Waiting => "waiting",
@@ -131,6 +135,7 @@ pub(crate) struct PostureCounts {
     pub(crate) stale: usize,
     pub(crate) blocked: usize,
     pub(crate) waiting: usize,
+    pub(crate) selection: usize,
     pub(crate) pending: usize,
     /// Parked `.oops` rows across the visible board.
     pub(crate) oops: usize,
@@ -420,6 +425,8 @@ fn standing(
         Standing::Waiting
     } else if !board::dependencies_satisfied(entry, satisfied) {
         Standing::Blocked
+    } else if board::awaits_selection(entry, satisfied) {
+        Standing::Selection
     } else if workflow.phase.as_str() == "review" {
         Standing::Review
     } else if board::eligible_entry(satisfied, entry, principal, environment) {
@@ -512,11 +519,12 @@ fn posture(
             Standing::Stale => counts.stale += 1,
             Standing::Blocked => counts.blocked += 1,
             Standing::Waiting => counts.waiting += 1,
+            Standing::Selection => counts.selection += 1,
             Standing::Pending | Standing::Closed => counts.pending += 1,
         }
         if matches!(
             standing,
-            Standing::Ready | Standing::Review | Standing::Blocked
+            Standing::Ready | Standing::Review | Standing::Selection | Standing::Blocked
         ) {
             work.push(*entry);
         }
@@ -525,7 +533,8 @@ fn posture(
     let work = admit(board, standings, &work, request)?;
     let mut text = format!(
         "board for {} at cursor {}: {} visible, {} open on this route\n\
-         active {} ready {} review {} blocked {} waiting {} stale {} pending {} oops {}\n\
+         active {} ready {} review {} selection {} blocked {} waiting {} stale {} pending {} \
+         oops {}\n\
          claim ",
         board.principal,
         board.cursor,
@@ -534,6 +543,7 @@ fn posture(
         counts.active,
         counts.ready,
         counts.review,
+        counts.selection,
         counts.blocked,
         counts.waiting,
         counts.stale,

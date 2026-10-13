@@ -305,6 +305,15 @@ fn render_dependency(dependency: &TaskStamp, wall: DependencyWall<'_>) -> Html {
             ),
             "Operator required",
         ),
+        DependencyWall::Selection(task) => (
+            "selection",
+            "Prerequisite awaits selection",
+            format!(
+                "{} is a Design that concludes only once the operator authorizes the exact selection of its outputs or closes each unselected one.",
+                via(task)
+            ),
+            "Operator required",
+        ),
     };
     html! {
         <section class="work-blocker-card" data-blocker-kind={kind}>

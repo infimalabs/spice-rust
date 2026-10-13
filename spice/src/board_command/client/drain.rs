@@ -25,6 +25,7 @@ pub(crate) struct ParkedCounts {
     pub(crate) stale: usize,
     pub(crate) blocked: usize,
     pub(crate) waiting: usize,
+    pub(crate) selection: usize,
     pub(crate) oops: usize,
 }
 
@@ -61,6 +62,10 @@ impl ParkedCounts {
                 .iter()
                 .filter(|entry| entry.workflow().deferral.is_some())
                 .count(),
+            selection: rows
+                .iter()
+                .filter(|entry| board::awaits_selection(entry, satisfied))
+                .count(),
             oops: Self::oops(entries),
         }
     }
@@ -92,6 +97,11 @@ impl ParkedCounts {
                 self.waiting,
                 "waiting",
                 "deferred until their scheduled time",
+            ),
+            (
+                self.selection,
+                "selection",
+                "Designs awaiting the operator's selection of their outputs",
             ),
             (self.oops, "oops", "parked on the deferred triage board"),
         ]
@@ -192,6 +202,7 @@ impl DrainReadout {
                 stale: board.stale,
                 blocked: board.blocked,
                 waiting: board.waiting,
+                selection: board.selection,
                 oops: board.oops,
             },
             team,

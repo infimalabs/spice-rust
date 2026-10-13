@@ -33,6 +33,9 @@ pub enum TaskAttention {
     Blocked,
     /// It waits in review and no claim is working on the verdict.
     Review,
+    /// A Design that concludes only once the operator selects or settles the
+    /// outputs it constructed, so no lane is woken for it.
+    Selection,
 }
 
 impl TaskAttention {
@@ -43,6 +46,7 @@ impl TaskAttention {
             Self::Iced => "iced",
             Self::Blocked => "blocked",
             Self::Review => "review",
+            Self::Selection => "selection",
         }
     }
 
@@ -53,6 +57,7 @@ impl TaskAttention {
             Self::Iced => "Iced",
             Self::Blocked => "Blocked",
             Self::Review => "Review",
+            Self::Selection => "Awaiting selection",
         }
     }
 }
@@ -244,6 +249,7 @@ fn held_attention(
 ) -> Option<(CanonicalUuid, TaskAttention)> {
     let row = task.row();
     let reason = match task.availability() {
+        _ if task.awaiting_selection() => TaskAttention::Selection,
         WorkAvailability::InFlight if task.environment_blocked() => TaskAttention::Iced,
         WorkAvailability::Held => TaskAttention::Blocked,
         WorkAvailability::Blocked if task.environment_blocked() => TaskAttention::Blocked,

@@ -450,7 +450,11 @@ owns each rule summarized here.
   a Design engaged by a working-group move authorizes its ordinary task
   outputs, and `spice preparation authorize` admits an exact accepted
   selection. A selected Plan then runs, and its own review releases its tasks.
-  Operator close concludes negatively and authorizes nothing.
+  Operator close concludes negatively and authorizes nothing. A Design whose
+  only remaining step is its conclusion, while an output it constructed is
+  still unselected,
+  [waits on the operator](invariants/identity.md#work-a-design-awaiting-selection-waits-on-the-operator-without-a-new-state):
+  no lane is offered or woken for it, and status counts it under `selection`.
 - **Organization and foreground.** The
   [working-group partition](invariants/identity.md#identity-working-groups-are-one-guarded-partition-of-designs)
   is shared repository organization read by `spice group list` and changed only
@@ -487,7 +491,7 @@ joins, acknowledges, delivers, settles, and wakes nothing.
 | Late answer | the immutable deadline | `room::deadline-passed`: close with `spice room cancel RESULT --clause TEXT --override` |
 | Answer or close by a non-party | stored parties only | `room::not-respondent` or `room::override-required`, naming the `--override` command |
 | Required evidence | each result answered | `task::evidence-unsatisfied`: ask again, or the operator replaces or waives it |
-| Positive Design conclusion with gated outputs | none unauthorized | `preparation::controlled-outputs-pending`: authorize the exact selection, engage the Design, or close each unselected output |
+| Positive Design conclusion with gated outputs | none unauthorized | `preparation::controlled-outputs-pending`: authorize the exact selection, engage the Design, or close each unselected output; until then the allocator holds the final-phase Design for the operator and starts no lane for it |
 | Candidate or authorization controller | a Design | `preparation::controller-not-design`: a Plan's outputs follow its positive review |
 | Authorizing Design dependencies | none pending, including review corrections | `preparation::controller-blocked`: settle the dependency first, so a finding keeps the Design pending |
 

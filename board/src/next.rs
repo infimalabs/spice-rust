@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use wire::{Actor, ClaimCell, ClaimDisposition, Instant, TaskIntent, TaskStamp, TeamSubscription};
 
@@ -12,11 +12,14 @@ use crate::urgency::{Urgency, declared_priority};
 /// their immediate preparation and their controller. An output whose immediate
 /// preparation is a Design further requires that Design's exact selection; an
 /// output of a Plan needs no selection, so each known preparation parent records
-/// whether it is a Design.
+/// whether it is a Design. Each preparation parent that still has a live output
+/// awaiting that selection is recorded too, so a Design that can conclude only
+/// through the operator's selection waits on the operator rather than a lane.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResolvedTasks {
     settled: BTreeMap<TaskStamp, bool>,
     designs: BTreeMap<TaskStamp, bool>,
+    unselected: BTreeSet<TaskStamp>,
 }
 
 impl ResolvedTasks {
@@ -36,6 +39,14 @@ impl ResolvedTasks {
             .insert(task, intent == Some(TaskIntent::Design));
     }
 
+    /// Record one live task; an output still lacking its selection marks the
+    /// preparation that constructed it.
+    pub fn observe(&mut self, statement: &wire::TaskHead, workflow: &wire::WorkflowHead) {
+        if let Some(parent) = unselected_output_of(statement, workflow) {
+            self.unselected.insert(parent.clone());
+        }
+    }
+
     fn settled(&self, task: &TaskStamp) -> bool {
         self.settled.contains_key(task)
     }
@@ -48,6 +59,41 @@ impl ResolvedTasks {
     fn design(&self, task: &TaskStamp) -> Option<bool> {
         self.designs.get(task).copied()
     }
+}
+
+/// The preparation whose selection one live output still lacks: an output its
+/// preparation constructed directly that is pending without an execution
+/// authorization or a working-group engagement.
+///
+/// A Design cannot conclude positively while it owns such an output; only the
+/// operator's selection, or closing or deleting the output, discharges it.
+#[must_use]
+pub fn unselected_output_of<'a>(
+    statement: &'a wire::TaskHead,
+    workflow: &wire::WorkflowHead,
+) -> Option<&'a TaskStamp> {
+    let preparation = statement.preparation.as_ref()?;
+    (workflow.status == "pending"
+        && workflow.completion.is_none()
+        && statement.authorization.is_none()
+        && statement.engagement.is_none()
+        && preparation.construction == statement.born)
+        .then_some(&preparation.parent)
+}
+
+/// Whether a Design waits on the operator's selection: it is pending in its
+/// final phase, so its next lane step is the positive conclusion, and an
+/// output it constructed still lacks selection. No lane can discharge that, so
+/// the Design is ineligible until the operator selects or settles its outputs.
+/// A Plan never waits here: its outputs follow its own positive review.
+#[must_use]
+pub fn awaits_selection(entry: &Entry, satisfied: &ResolvedTasks) -> bool {
+    let workflow = entry.workflow();
+    entry.statement().intent == Some(TaskIntent::Design)
+        && workflow.status == "pending"
+        && workflow.completion.is_none()
+        && workflow.flow.last() == Some(&workflow.phase)
+        && satisfied.unselected.contains(entry.born())
 }
 
 /// Deterministic answer from the board's sole allocation query.
@@ -605,6 +651,7 @@ fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool 
             .as_ref()
             .is_none_or(|assignment| assignment == actor || assignment_lapsed(entry, assignment))
         && dependencies_satisfied(entry, completed)
+        && !awaits_selection(entry, completed)
 }
 
 /// Whether a review assignment died with the claim that carried it.
@@ -628,6 +675,7 @@ fn operational_without_assignment(entry: &Entry, completed: &ResolvedTasks) -> b
         && workflow.completion.is_none()
         && workflow.deferral.is_none()
         && dependencies_satisfied(entry, completed)
+        && !awaits_selection(entry, completed)
 }
 
 /// Ordinary prerequisites may resolve negatively; planning boundaries may not.
@@ -789,8 +837,8 @@ pub fn stealable_entry(
         && environment_satisfied(entry, environment)
 }
 
-/// Each settled task with whether its conclusion is positive, and whether each
-/// entry is a Design.
+/// Each settled task with whether its conclusion is positive, whether each
+/// entry is a Design, and which preparations still own an unselected output.
 ///
 /// Closing or deleting a task resolves ordinary prerequisites. Neither approves
 /// execution controlled by that task. All readiness surfaces use these facts.
@@ -806,6 +854,7 @@ pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
             );
         }
         resolved.know(candidate.born().clone(), candidate.statement().intent);
+        resolved.observe(candidate.statement(), candidate.workflow());
     }
     resolved
 }

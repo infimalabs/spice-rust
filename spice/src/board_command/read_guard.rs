@@ -129,6 +129,7 @@ fn validated_snapshot_from_with_occupant(
             tasks,
             offer: Vec::new(),
             blocked: Vec::new(),
+            awaiting_selection: Vec::new(),
             origins: Default::default(),
             notes: Default::default(),
             acknowledgments: Default::default(),
@@ -764,6 +765,7 @@ pub(super) fn read_board(
     if matches!(read, BoardRead::Open) {
         snapshot.answer.offer = board_offer(&snapshot.entries, &snapshot.answer);
         snapshot.answer.blocked = board_blocked(&snapshot.entries);
+        snapshot.answer.awaiting_selection = board_awaiting_selection(&snapshot.entries);
         snapshot.answer.origins = steering_origins(&observed);
         snapshot
             .answer
@@ -847,6 +849,17 @@ fn board_blocked(entries: &[Entry]) -> Vec<wire::TaskStamp> {
                 && entry.workflow().completion.is_none()
                 && !board::dependencies_satisfied(entry, &resolved)
         })
+        .map(|entry| entry.born().clone())
+        .collect()
+}
+
+/// Open Designs the allocator holds for the operator's selection, judged by
+/// the allocator's own [`board::awaits_selection`].
+fn board_awaiting_selection(entries: &[Entry]) -> Vec<wire::TaskStamp> {
+    let resolved = board::resolved_tasks(entries);
+    entries
+        .iter()
+        .filter(|entry| board::awaits_selection(entry, &resolved))
         .map(|entry| entry.born().clone())
         .collect()
 }

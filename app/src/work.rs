@@ -50,6 +50,9 @@ pub enum WorkAvailability {
     /// Open and unclaimed, held back by the allocator's prerequisite and
     /// controller gate.
     Blocked,
+    /// Open and unclaimed, past the gate, a Design whose remaining conclusion
+    /// waits on the operator's selection of an output it constructed.
+    Selection,
     /// Open and unclaimed, past the gate but needing an environment
     /// requirement only the operator can satisfy.
     Held,
@@ -72,6 +75,7 @@ impl WorkAvailability {
             Self::Review => "review",
             Self::Stale => "stale",
             Self::Blocked => "blocked",
+            Self::Selection => "selection",
             Self::Held => "held",
             Self::Deferred => "deferred",
             Self::Parked => "parked",
@@ -230,6 +234,7 @@ pub struct WorkCounts {
     review: usize,
     stale: usize,
     blocked: usize,
+    selection: usize,
     held: usize,
     deferred: usize,
     parked: usize,
@@ -244,6 +249,7 @@ impl WorkCounts {
             WorkAvailability::Review => self.review += 1,
             WorkAvailability::Stale => self.stale += 1,
             WorkAvailability::Blocked => self.blocked += 1,
+            WorkAvailability::Selection => self.selection += 1,
             WorkAvailability::Held => self.held += 1,
             WorkAvailability::Deferred => self.deferred += 1,
             WorkAvailability::Parked => self.parked += 1,
@@ -286,10 +292,11 @@ impl WorkCounts {
     }
 
     /// Open work no agent is offered until the operator acts: environment
-    /// held, deferred, or parked in a hidden project.
+    /// held, awaiting a Design selection, deferred, or parked in a hidden
+    /// project.
     #[must_use]
     pub const fn waiting(self) -> usize {
-        self.held + self.deferred + self.parked
+        self.held + self.selection + self.deferred + self.parked
     }
     #[must_use]
     pub const fn open(self) -> usize {
@@ -364,6 +371,9 @@ pub struct WorkTask<'a> {
     project: usize,
     /// An unsatisfied environment is one explicit blocker.
     environment_blocked: bool,
+    /// A Design held for the operator's selection of an output it constructed,
+    /// whether or not a lane still holds its claim.
+    awaiting_selection: bool,
     /// Position in the resident's offer order, when the allocator offers it.
     offer_rank: Option<usize>,
     dependencies: Vec<WorkDependency<'a>>,
@@ -393,6 +403,11 @@ impl<'a> WorkTask<'a> {
     #[must_use]
     pub const fn environment_blocked(&self) -> bool {
         self.environment_blocked
+    }
+
+    #[must_use]
+    pub const fn awaiting_selection(&self) -> bool {
+        self.awaiting_selection
     }
 
     /// This task's position in the resident's offer order: `Some(0)` is the
@@ -612,11 +627,13 @@ impl<'a> WorkProjection<'a> {
     /// changing the tasks' relative order.
     #[must_use]
     pub fn team_task_groups<'p>(&'p self, team: wire::CanonicalUuid) -> Vec<TeamTaskGroup<'p, 'a>> {
-        use WorkAvailability::{Blocked, Deferred, Held, InFlight, Parked, Ready, Review, Stale};
+        use WorkAvailability::{
+            Blocked, Deferred, Held, InFlight, Parked, Ready, Review, Selection, Stale,
+        };
 
         let mut groups = Vec::<TeamTaskGroup<'p, 'a>>::new();
         for availability in [
-            InFlight, Ready, Review, Stale, Blocked, Held, Deferred, Parked,
+            InFlight, Ready, Review, Stale, Blocked, Selection, Held, Deferred, Parked,
         ] {
             for task in self.offered.iter().map(|&index| &self.tasks[index]) {
                 if task.availability != availability || !task.belongs_to_team(team) {
@@ -774,6 +791,7 @@ impl<'a> WorkProjection<'a> {
                     availability: availability[index],
                     project: project_by_task[index],
                     environment_blocked: environment_blocked[index],
+                    awaiting_selection: board.awaiting_selection.contains(&row.statement.body.born),
                     offer_rank: offer_ranks[index],
                     dependencies,
                     dependents,
@@ -949,8 +967,9 @@ fn stem_key(task: &BoardTask) -> StemKey<'_> {
 }
 
 /// Task status's standing precedence: possession, then deferral, then the
-/// allocator's prerequisite and controller gate, then the review phase, then
-/// the environment. The resident judges the gate over terminal evidence the
+/// allocator's prerequisite and controller gate, then a Design's wait for the
+/// operator's selection, then the review phase, then the environment. The
+/// resident judges the gate and the selection wait over terminal evidence the
 /// open board does not carry, and the allocator never offers a hidden row.
 fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> WorkAvailability {
     let workflow = &task.workflow.body;
@@ -969,6 +988,8 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
         WorkAvailability::Deferred
     } else if board.blocked.contains(&task.statement.body.born) {
         WorkAvailability::Blocked
+    } else if board.awaiting_selection.contains(&task.statement.body.born) {
+        WorkAvailability::Selection
     } else if workflow.phase.as_str() == "review" {
         WorkAvailability::Review
     } else if environment_blocked {
