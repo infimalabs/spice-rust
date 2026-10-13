@@ -203,6 +203,7 @@ mod capture;
 mod command_surface;
 mod consent_surface;
 mod daemon;
+mod design_awareness;
 mod lane_recovery;
 mod lane_surface;
 mod launch_runtime;

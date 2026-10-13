@@ -20,6 +20,9 @@ mod conversation;
 #[path = "steering_message/room_control.rs"]
 mod room_control;
 
+#[path = "steering_message/design_awareness.rs"]
+mod design_awareness;
+
 #[path = "steering_message/deadline.rs"]
 mod deadline;
 

@@ -601,6 +601,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "room::relevance"
     ),
     row!(
+        ["room", "awareness"],
+        "room awareness HANDLE [--limit N] [--max-bytes N] [--after POSITION]",
+        OperatorOrLane,
+        Read,
+        [],
+        [Daemonless],
+        Reply,
+        "room::awareness"
+    ),
+    row!(
         ["room", "decline"],
         "room decline RESULT [--clause TEXT] [--override]",
         OperatorOrLane,

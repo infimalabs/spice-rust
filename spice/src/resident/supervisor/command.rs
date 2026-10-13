@@ -35,7 +35,7 @@ use crate::resident::steering::{MessageRecordedNotice, MessageRefusalNotice};
 use steering::{InboxDelivery, ReasoningReminder};
 
 /// Bytes one kick datagram may carry, including private occupant-scoped notices.
-const KICK_BYTES: usize = 1024;
+pub(in crate::resident) const KICK_BYTES: usize = 1024;
 const ROOM_CATCH_UP_PURPOSE: &str = "room-catch-up";
 const RETUNE_REPLY_BYTES: usize = 4096;
 const RETUNE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
@@ -194,6 +194,8 @@ pub(in crate::resident) enum Kick {
     TaskGeneration(TaskGenerationNotice),
     /// A task the resident proactively assigned to this exact occupant.
     TaskAssignment(TaskAssignmentNotice),
+    /// An open Design matching this exact occupant's claimed task.
+    DesignNotice(crate::resident::design_awareness::DesignNotice),
     /// A claim this lane held lapsed; addressed to the lane's current occupant.
     ClaimLapse(ClaimLapseNotice),
     /// An MSG packet this exact occupant authored missed some or every address.
@@ -1177,6 +1179,15 @@ pub(in crate::resident) fn task_assignment(
     send(paths, lane, &Kick::TaskAssignment(notice));
 }
 
+/// Privately tell the exact claimant occupant about one matching open Design.
+pub(in crate::resident) fn design_notice(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    notice: crate::resident::design_awareness::DesignNotice,
+) {
+    send(paths, lane, &Kick::DesignNotice(notice));
+}
+
 /// Privately tell the lane that held a lapsed claim, at its current occupant.
 pub(in crate::resident) fn claim_lapse(
     paths: &RuntimePaths,
@@ -1364,6 +1375,10 @@ pub(in crate::resident) fn listen_for_kicks(
                             driver.deliver_task_assignment(&notice);
                         }
                         Ok(Kick::TaskAssignment(_)) => {}
+                        Ok(Kick::DesignNotice(notice)) if notice.occupant == occupant => {
+                            let _ = driver.background(&notice.purpose(), &notice.text());
+                        }
+                        Ok(Kick::DesignNotice(_)) => {}
                         Ok(Kick::ClaimLapse(notice)) if notice.occupant == occupant => {
                             driver.deliver_claim_lapse(&notice);
                         }

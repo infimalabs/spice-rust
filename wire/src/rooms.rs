@@ -448,6 +448,31 @@ pub struct RoomHorizon {
     pub lane: CanonicalUuid,
 }
 
+/// Most matched terms one Design awareness record carries.
+pub const DESIGN_NOTICE_TERMS: usize = 12;
+
+/// The resident told one lane, once for one claim, that an open Design's terms
+/// match the task that claim holds.
+///
+/// The record is background awareness only: it is no room publication, so it
+/// adds no room attention, participation, steering, or wake.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignNoticed {
+    /// The open Design the lane was told about.
+    pub design: TaskStamp,
+    /// Logical lane told.
+    pub lane: CanonicalUuid,
+    /// Occupant whose claim the notice served.
+    pub occupant: CanonicalUuid,
+    /// Task the lane's claim holds.
+    pub task: TaskStamp,
+    /// Fact that won that claim; each Design notices a lane once per claim.
+    pub claim: SequenceCode,
+    /// Matched terms in ascending order, at most [`DESIGN_NOTICE_TERMS`].
+    pub terms: Vec<String>,
+}
+
 /// Native room-only publication command body.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

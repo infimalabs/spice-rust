@@ -37,11 +37,13 @@ struct Presented {
     publication: crate::room_command::Publication,
 }
 
-struct Planning {
-    residency: wire::ResidencyHead,
-    entries: Vec<board::Entry>,
+/// One read of the task board, residency, and clock that room projections
+/// share.
+pub(in crate::resident) struct Planning {
+    pub(in crate::resident) residency: wire::ResidencyHead,
+    pub(in crate::resident) entries: Vec<board::Entry>,
     rooms: BTreeMap<TaskStamp, usize>,
-    at: Instant,
+    pub(in crate::resident) at: Instant,
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -126,10 +128,9 @@ pub(in crate::resident) fn reconcile_commit(
     paths: &RuntimePaths,
     config: &SurfaceConfig,
     seats: &Seats,
-    commit: bus::JournalCommit,
+    changes: &Changes,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    let changes = changes(bus, commit)?;
     if !changes.authority && changes.lanes.is_empty() && changes.rooms.is_empty() {
         return Ok(());
     }
@@ -223,7 +224,7 @@ fn reconcile_selected(
 }
 
 impl Planning {
-    fn load(bus: &Bus, config: &SurfaceConfig) -> CommandResult<Self> {
+    pub(in crate::resident) fn load(bus: &Bus, config: &SurfaceConfig) -> CommandResult<Self> {
         let snapshot = bus.task_snapshot().map_err(|error| {
             store_fault("room::catch-up-snapshot-unreadable", &error.to_string())
         })?;
@@ -633,7 +634,9 @@ fn remove_landed(path: &Path) -> CommandResult<()> {
     }
 }
 
-fn unit_outcome(outcome: Outcome<wire::intent::CommandAnswer>) -> Outcome<()> {
+pub(in crate::resident) fn unit_outcome(
+    outcome: Outcome<wire::intent::CommandAnswer>,
+) -> Outcome<()> {
     match outcome {
         Outcome::Reply(_) => unreachable!("a room authority helper never replies on failure"),
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),

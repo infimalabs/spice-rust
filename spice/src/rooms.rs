@@ -13,6 +13,7 @@ use std::fmt;
 use wire::rooms::{RoomAuthorityStamp, RoomLeft, RoomMessaged, RoomPublished};
 use wire::{Actor, CanonicalUuid, Instant, TaskStamp};
 
+pub mod awareness;
 mod catch_up;
 
 pub use catch_up::{
