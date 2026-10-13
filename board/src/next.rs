@@ -76,6 +76,35 @@ impl ResolvedTasks {
     }
 }
 
+/// Reusable task-graph evidence for repeated allocation decisions over one
+/// exact entry generation.
+///
+/// Build this once when task heads change. Actor, subscription, environment,
+/// and time remain inputs to each selection, while dependency resolution,
+/// effective priority, and downstream reachability are shared.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectionIndex {
+    resolved: ResolvedTasks,
+    scores: RankingScores,
+}
+
+impl SelectionIndex {
+    /// Derive the allocation evidence owned by `entries`.
+    #[must_use]
+    pub fn new(entries: &[Entry]) -> Self {
+        Self {
+            resolved: resolved_tasks(entries),
+            scores: RankingScores::new(entries),
+        }
+    }
+
+    /// Current dependency, preparation, and settlement evidence.
+    #[must_use]
+    pub const fn resolved(&self) -> &ResolvedTasks {
+        &self.resolved
+    }
+}
+
 /// The preparation whose selection one live output still lacks: an output its
 /// preparation constructed directly that is pending without an execution
 /// authorization.
@@ -259,6 +288,32 @@ pub fn select_with_satisfied_at<'a>(
     choose(&candidates, band).map(|index| candidates[index])
 }
 
+/// [`select_with_satisfied_at`] using graph evidence already derived for this
+/// exact entry generation.
+#[must_use]
+pub fn select_with_index_at<'a>(
+    entries: &'a [Entry],
+    actor: &Actor,
+    subscription: &TeamSubscription,
+    band: u64,
+    recent_cell: Option<&ClaimCell>,
+    environment: &wire::Environment,
+    index: &SelectionIndex,
+    now: Instant,
+) -> Option<Selection<'a>> {
+    let candidates = indexed_candidates(
+        entries,
+        actor,
+        subscription,
+        recent_cell,
+        environment,
+        index.resolved(),
+        &index.scores,
+        Some(now),
+    );
+    choose(&candidates, band).map(|candidate| candidates[candidate])
+}
+
 /// Every task [`select`] would hand `actor`, in the order it would hand them out.
 ///
 /// Each step is exactly `select`'s choice among the tasks not yet offered, so
@@ -343,27 +398,46 @@ fn candidates<'a>(
     completed: &ResolvedTasks,
     now: Option<Instant>,
 ) -> Vec<Selection<'a>> {
-    let graph = RankingGraph::new(entries);
-    let priorities = effective_priorities(entries, &graph);
-    let downstream = downstream_weights(&graph);
+    let scores = RankingScores::new(entries);
+    indexed_candidates(
+        entries,
+        actor,
+        subscription,
+        recent_cell,
+        environment,
+        completed,
+        &scores,
+        now,
+    )
+}
+
+fn indexed_candidates<'a>(
+    entries: &'a [Entry],
+    actor: &Actor,
+    subscription: &TeamSubscription,
+    recent_cell: Option<&ClaimCell>,
+    environment: &wire::Environment,
+    completed: &ResolvedTasks,
+    scores: &RankingScores,
+    now: Option<Instant>,
+) -> Vec<Selection<'a>> {
+    debug_assert_eq!(entries.len(), scores.effective_priorities.len());
+    debug_assert_eq!(entries.len(), scores.downstream_weights.len());
     entries
         .iter()
         .enumerate()
         .filter(|(_, entry)| selectable(entry, actor, subscription, completed, now))
         .filter(|(_, entry)| environment_satisfied(entry, environment))
-        .map(|(entry_index, entry)| {
-            let node = graph.entry_nodes[entry_index];
-            Selection {
-                entry,
-                entry_index,
-                urgency: Urgency::from_heads(entry),
-                effective_priority: priorities[node],
-                downstream_weight: downstream[node],
-                preferred: is_preferred_continuation(entry, actor),
-                last_resort: is_independent_handoff(entry, actor) || is_released_by(entry, actor),
-                peer_occupied: peer_occupies(entries, entry, actor),
-                movement: recent_cell.map_or(0, |recent| movement_cost(recent, entry)),
-            }
+        .map(|(entry_index, entry)| Selection {
+            entry,
+            entry_index,
+            urgency: Urgency::from_heads(entry),
+            effective_priority: scores.effective_priorities[entry_index],
+            downstream_weight: scores.downstream_weights[entry_index],
+            preferred: is_preferred_continuation(entry, actor),
+            last_resort: is_independent_handoff(entry, actor) || is_released_by(entry, actor),
+            peer_occupied: peer_occupies(entries, entry, actor),
+            movement: recent_cell.map_or(0, |recent| movement_cost(recent, entry)),
         })
         .collect()
 }
@@ -519,6 +593,32 @@ impl RankingGraph {
             entry_nodes,
             priority_edges,
             dependents,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RankingScores {
+    effective_priorities: Vec<i64>,
+    downstream_weights: Vec<usize>,
+}
+
+impl RankingScores {
+    fn new(entries: &[Entry]) -> Self {
+        let graph = RankingGraph::new(entries);
+        let priorities = effective_priorities(entries, &graph);
+        let downstream = downstream_weights(&graph);
+        Self {
+            effective_priorities: graph
+                .entry_nodes
+                .iter()
+                .map(|node| priorities[*node])
+                .collect(),
+            downstream_weights: graph
+                .entry_nodes
+                .iter()
+                .map(|node| downstream[*node])
+                .collect(),
         }
     }
 }

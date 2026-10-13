@@ -19,7 +19,8 @@ pub(super) fn project_targets(
         return Ok(Vec::new());
     }
     let entries = projection.entries();
-    let satisfied = board::resolved_tasks(entries);
+    let selection = projection.selection();
+    let satisfied = selection.resolved();
     let appliance = spice::version::running().map_err(Outcome::Fault)?;
     let environment = snapshot
         .environment()
@@ -48,11 +49,13 @@ pub(super) fn project_targets(
             work_availability(
                 snapshot,
                 entries,
+                selection,
                 ready_at,
                 row,
                 subscription.as_ref(),
                 allocation,
                 first_drain_member,
+                &environment,
                 now,
             )?
         };
@@ -176,11 +179,13 @@ fn subscription(
 fn work_availability(
     snapshot: &bus::TaskSnapshot,
     entries: &[Entry],
+    selection: &board::SelectionIndex,
     ready_at: &BTreeMap<TaskStamp, Instant>,
     row: &wire::LaneResidency,
     subscription: Option<&wire::TeamSubscription>,
     allocation: &board::NextConfig,
     first_drain_member: bool,
+    environment: &wire::Environment,
     now: Instant,
 ) -> CommandResult<(Available, Available, bool)> {
     let Some(subscription) = subscription.filter(|subscription| {
@@ -194,10 +199,12 @@ fn work_availability(
     let selected = selected_ready(
         snapshot,
         entries,
+        selection,
         ready_at,
         &Actor::Lane(row.lane),
         subscription,
         allocation,
+        environment,
         now,
     )?;
     let last_resort = selected.is_some_and(|selected| selected.last_resort);
