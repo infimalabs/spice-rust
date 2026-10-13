@@ -26,6 +26,7 @@ use wire::{
     Actor, AnyFact, CanonicalUuid, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead,
 };
 
+mod awareness;
 mod conversation;
 mod coordination;
 mod engagement;
@@ -700,6 +701,9 @@ fn fold_traffic(
     fact: &AnyFact,
 ) -> Option<Result<(), Refusal>> {
     if let Some(result) = relevance::fold(authority, seq, actor, fact) {
+        return Some(result);
+    }
+    if let Some(result) = awareness::fold(authority, actor, fact) {
         return Some(result);
     }
     if let Some(result) = coordination::fold(authority, seq, actor, fact) {

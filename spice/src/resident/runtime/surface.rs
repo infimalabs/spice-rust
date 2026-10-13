@@ -1262,13 +1262,16 @@ fn accept_commit_turn(
         quota.request();
     }
     settle_spoken_acknowledgements(bus, message_publisher, message_state, diagnostic)?;
-    match commit {
-        Some(commit) => room_catch_up::reconcile_commit(
+    let changes = commit
+        .map(|commit| room_catch_up::changes(bus, commit))
+        .transpose()?;
+    match &changes {
+        Some(changes) => room_catch_up::reconcile_commit(
             bus,
             command_surface.paths,
             command_surface.config,
             seats,
-            commit,
+            changes,
             diagnostic,
         )?,
         None => room_catch_up::reconcile(
@@ -1278,6 +1281,15 @@ fn accept_commit_turn(
             seats,
             diagnostic,
         )?,
+    }
+    if changes.as_ref().is_none_or(|changes| changes.authority) {
+        design_awareness::reconcile(
+            bus,
+            command_surface.paths,
+            command_surface.config,
+            seats,
+            diagnostic,
+        )?;
     }
     room_relevance::reconcile(bus, command_surface.epoch(), diagnostic)?;
     room_automation::reconcile(

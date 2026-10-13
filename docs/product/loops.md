@@ -446,6 +446,12 @@ owns each rule summarized here.
   still holds the lane. Relevance is
   [shadow evidence](invariants/identity.md#identity-room-relevance-is-shadow-evidence-before-automation)
   the operator assesses with `spice room assess`.
+- **Design awareness.** A lane whose current task matches an open Design's
+  terms hears one private
+  [background notice](invariants/identity.md#identity-a-design-notice-is-background-awareness-once-per-claim)
+  naming the Design's handle, title, and one-line pitch and how to read its
+  room or contribute. Being told is not listening, and `spice room awareness
+  HANDLE` shows the operator who was told and on which terms.
 - **Preparation.** `task plan` and `task design` declare intent with
   `plan,review` and `design,review` flows, and active plan and design claims
   refuse implementation commits. A Plan is an ordinary reviewed task

@@ -91,7 +91,7 @@ impl Lanes {
     }
 
     /// `spice room WORDS...` read in process, as its JSON reply body.
-    fn room_read(&self, words: &[&str]) -> Value {
+    pub(super) fn room_read(&self, words: &[&str]) -> Value {
         let matches = crate::cli::command()
             .try_get_matches_from(["spice", "room"].iter().chain(words))
             .expect("room read parses");
@@ -115,17 +115,29 @@ impl Lanes {
                     other => panic!("room result answered {other:?}"),
                 }
             }
-            ["room", "relevance"] => {
+            ["room", path @ ("relevance" | "awareness")] => {
                 let projects = board::ProjectPolicy::new(["steer".to_owned()], Vec::new(), 2, 3)
                     .expect("fixture project policy");
-                match crate::room_command::relevance::answer(
-                    &journal,
-                    &projects,
-                    leaf,
-                    contract.path,
-                ) {
-                    Outcome::Reply(reply) => serde_json::to_value(&reply.body),
-                    other => panic!("room relevance answered {other:?}"),
+                if *path == "relevance" {
+                    match crate::room_command::relevance::answer(
+                        &journal,
+                        &projects,
+                        leaf,
+                        contract.path,
+                    ) {
+                        Outcome::Reply(reply) => serde_json::to_value(&reply.body),
+                        other => panic!("room relevance answered {other:?}"),
+                    }
+                } else {
+                    match crate::room_command::awareness::answer(
+                        &journal,
+                        &projects,
+                        leaf,
+                        contract.path,
+                    ) {
+                        Outcome::Reply(reply) => serde_json::to_value(&reply.body),
+                        other => panic!("room awareness answered {other:?}"),
+                    }
                 }
             }
             other => panic!("not a room read: {other:?}"),

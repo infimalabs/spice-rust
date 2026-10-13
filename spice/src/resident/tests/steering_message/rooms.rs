@@ -6,15 +6,23 @@ use super::*;
 impl Lanes {
     /// Seed one task an MSG context can name as its room.
     pub(super) fn room(&self, stamp: &str) -> wire::TaskHandle {
-        self.seed_room(stamp, None)
+        self.seed_task(stamp, "Room", None, None, None)
     }
 
     /// Seed one room task `holder`'s lane holds an active claim on.
     fn held_room(&self, stamp: &str, holder: u8) -> wire::TaskHandle {
-        self.seed_room(stamp, Some(test_uuid(holder)))
+        self.seed_task(stamp, "Room", None, None, Some(test_uuid(holder)))
     }
 
-    fn seed_room(&self, stamp: &str, holder: Option<CanonicalUuid>) -> wire::TaskHandle {
+    /// Seed one pending task with this statement, held by `holder` when named.
+    pub(super) fn seed_task(
+        &self,
+        stamp: &str,
+        title: &str,
+        description: Option<&str>,
+        intent: Option<wire::TaskIntent>,
+        holder: Option<CanonicalUuid>,
+    ) -> wire::TaskHandle {
         let task: wire::TaskStamp = stamp.parse().expect("fixture stamp");
         let phase: wire::Phase = "todo".parse().expect("fixture phase");
         let creation = wire::body::TaskCreationContext::unavailable(
@@ -26,14 +34,14 @@ impl Lanes {
             .fact(
                 wire::body::TaskAdded {
                     task: task.clone(),
-                    title: "Room".to_owned(),
-                    description: None,
+                    title: title.to_owned(),
+                    description: description.map(str::to_owned),
                     acceptance: Vec::new(),
                     requirements: wire::EnvironmentRequirements::default(),
                     project: "serve.rooms".to_owned(),
                     tags: Vec::new(),
                     depends: Vec::new(),
-                    intent: None,
+                    intent,
                     preparation: None,
                     flow: vec![phase.clone()],
                     phase: phase.clone(),
@@ -44,16 +52,18 @@ impl Lanes {
             )
             .expect("task fact is valid");
         let born = task.clone();
+        let title = title.to_owned();
+        let description = description.map(str::to_owned);
         seed.task_head(added, move |position| wire::TaskHead {
             preparation: None,
-            intent: None,
+            intent,
             authorization: None,
             engagement: None,
             evidence: Vec::new(),
             born,
             queue_origin: position,
-            title: "Room".to_owned(),
-            description: None,
+            title,
+            description,
             acceptance: Vec::new(),
             requirements: wire::EnvironmentRequirements::default(),
             project: "serve.rooms".to_owned(),
@@ -478,7 +488,7 @@ fn resident_catch_up_reconciles_only_commit_changed_authority() {
         &lanes.paths,
         &startup.config,
         &seats,
-        noted,
+        &room_catch_up::changes(&lanes.bus, noted).expect("note changes classify"),
         &mut diagnostics,
     )
     .expect("irrelevant commit is ignored");
@@ -500,7 +510,7 @@ fn resident_catch_up_reconciles_only_commit_changed_authority() {
         &lanes.paths,
         &startup.config,
         &seats,
-        published,
+        &room_catch_up::changes(&lanes.bus, published).expect("publication changes classify"),
         &mut diagnostics,
     )
     .expect("changed room reconciles");
@@ -727,7 +737,7 @@ fn recognize_delivery(
         &lanes.paths,
         config,
         seats,
-        delivered,
+        &room_catch_up::changes(&lanes.bus, delivered).expect("delivery changes classify"),
         diagnostics,
     )
     .expect("recognized cursor reconciles");

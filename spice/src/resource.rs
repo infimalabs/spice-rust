@@ -51,6 +51,7 @@ spice://task/HANDLE/artifact  task artifact list HANDLE [?limit=N&max-bytes=N&af
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
 spice://task/HANDLE/room  room history HANDLE [?limit=N&max-bytes=N&after=PUBLICATION]; reading joins and acknowledges nothing
 spice://task/HANDLE/room/relevance  room relevance HANDLE [?limit=N&max-bytes=N&after=OBSERVATION]; shadow observations, assessments, and whole-room metrics; reading changes nothing
+spice://task/HANDLE/room/awareness  room awareness HANDLE [?limit=N&max-bytes=N&after=POSITION]; lanes told about this Design, with matched terms; reading changes nothing
 spice://task/HANDLE/preparation  preparation show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
 spice://room/inbox  room inbox [?limit=N&max-bytes=N&after=ITEM]; open operator items, each with its receipt and result; reading settles nothing
 spice://room/result/RESULT  room result RESULT; one question's result, its parties, closure attribution, and answer return receipt
@@ -127,6 +128,7 @@ enum Shape {
     Artifact { handle: TaskHandle, id: String },
     Room { handle: TaskHandle },
     RoomRelevance { handle: TaskHandle },
+    RoomAwareness { handle: TaskHandle },
     Preparation { handle: TaskHandle },
     Inbox,
     RoomInbox,
@@ -297,6 +299,7 @@ const SERVED: &[&[&str]] = &[
     &["room", "inbox"],
     &["room", "result"],
     &["room", "relevance"],
+    &["room", "awareness"],
     &["preparation", "show"],
     &["board", "graph"],
     &["doc", "ledger"],
@@ -324,6 +327,7 @@ impl Shape {
             Self::Artifacts { .. }
             | Self::Room { .. }
             | Self::RoomRelevance { .. }
+            | Self::RoomAwareness { .. }
             | Self::Preparation { .. }
             | Self::Lanes
             | Self::RoomInbox => ROWS,
@@ -375,6 +379,7 @@ impl Shape {
             }
             Self::Room { handle } => format!("task/{handle}/room"),
             Self::RoomRelevance { handle } => format!("task/{handle}/room/relevance"),
+            Self::RoomAwareness { handle } => format!("task/{handle}/room/awareness"),
             Self::Preparation { handle } => format!("task/{handle}/preparation"),
             Self::Inbox => "inbox".to_owned(),
             Self::RoomInbox => "room/inbox".to_owned(),
@@ -408,6 +413,7 @@ impl Shape {
             }
             Self::Room { handle } => words(&["room", "history", handle.as_str()]),
             Self::RoomRelevance { handle } => words(&["room", "relevance", handle.as_str()]),
+            Self::RoomAwareness { handle } => words(&["room", "awareness", handle.as_str()]),
             Self::Preparation { handle } => words(&["preparation", "show", handle.as_str()]),
             Self::Inbox => words(&["inbox"]),
             Self::RoomInbox => words(&["room", "inbox"]),
@@ -546,6 +552,12 @@ impl Shape {
             ),
             ["room", "relevance", task, rest @ ..] => (
                 Self::RoomRelevance {
+                    handle: handle(task)?,
+                },
+                rest,
+            ),
+            ["room", "awareness", task, rest @ ..] => (
+                Self::RoomAwareness {
                     handle: handle(task)?,
                 },
                 rest,
@@ -720,6 +732,7 @@ fn task_shape(task: &str, rest: &[&str], url: &str) -> Result<Shape, String> {
         }
         ["room"] => Shape::Room { handle },
         ["room", "relevance"] => Shape::RoomRelevance { handle },
+        ["room", "awareness"] => Shape::RoomAwareness { handle },
         ["preparation"] => Shape::Preparation { handle },
         [verb] => {
             refuse_unserved(&["task", verb], url)?;
@@ -1149,6 +1162,10 @@ fn room_document(
         }
         ["room", "relevance"] => {
             let outcome = crate::room_command::relevance::run_at(repository, leaf, contract);
+            rendered(&outcome, render::render_display(&outcome, Form::Text))
+        }
+        ["room", "awareness"] => {
+            let outcome = crate::room_command::awareness::run_at(repository, leaf, contract);
             rendered(&outcome, render::render_display(&outcome, Form::Text))
         }
         _ => {

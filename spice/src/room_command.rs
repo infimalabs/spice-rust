@@ -13,6 +13,7 @@
 //! that withholds any continues at the first withheld publication. Reading
 //! writes nothing.
 
+pub(crate) mod awareness;
 mod conversation;
 pub(crate) mod inbox;
 pub(crate) mod relevance;

@@ -403,6 +403,9 @@ impl NativeInvocation<'_> {
             ["room", "relevance"] => {
                 deliver_display(&room_command::relevance::run(leaf, contract), form)
             }
+            ["room", "awareness"] => {
+                deliver_display(&room_command::awareness::run(leaf, contract), form)
+            }
             ["preparation", "show"] => {
                 deliver_display(&preparation_command::run(leaf, contract), form)
             }
@@ -458,6 +461,7 @@ impl NativeInvocation<'_> {
             | ["room", "inbox"]
             | ["room", "result"]
             | ["room", "relevance"]
+            | ["room", "awareness"]
             | ["preparation", "show"] => {
                 self.dispatch_retained_read(contract);
             }
