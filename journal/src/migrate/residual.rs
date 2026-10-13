@@ -4,7 +4,7 @@
 //! Shapes with an exact current spelling cross in place; shapes without one
 //! refuse the crossing, which leaves the predecessor file untouched.
 
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Map, Value};
 
 use super::{MigrationError, OpenError};
@@ -67,6 +67,22 @@ const GROUP_PARTITION_RELEASE: &str = "45eb87f84";
 /// Retired per-group fact spellings.
 const GROUP_STORED_KIND: &str = "group::stored";
 const GROUP_REMOVED_KIND: &str = "group::removed";
+/// Last release whose runtime treated a working-group marker as execution
+/// authorization.
+pub(super) const GROUP_MARKER_RELEASE: &str = "4b805a018";
+
+/// Refuse retained group markers before any executable journal opens.
+pub(super) fn refuse_group_markers(connection: &Connection) -> Result<(), OpenError> {
+    refuse_first(
+        connection,
+        "task_heads",
+        "SELECT stamp FROM task_heads \
+         WHERE json_type(CAST(body AS TEXT), '$.engagement') IS NOT NULL ORDER BY stamp",
+        [],
+        GROUP_MARKER_RELEASE,
+        "the task statement retains a working-group authorization marker",
+    )
+}
 
 /// Refuse every retained shape without a current spelling before mutation, and
 /// derive every retained vendor-failure hold's refused input from its history.
@@ -415,14 +431,14 @@ pub(super) fn cross_steering_rooms(transaction: &Transaction<'_>) -> Result<(), 
 
 /// Refuse naming the first row `sql` selects, if any.
 fn refuse_first(
-    transaction: &Transaction<'_>,
+    connection: &Connection,
     table: &'static str,
     sql: &str,
     parameters: impl rusqlite::Params,
     release: &'static str,
     detail: &str,
 ) -> Result<(), OpenError> {
-    match transaction
+    match connection
         .query_row(sql, parameters, |row| row.get::<_, String>(0))
         .optional()
         .map_err(OpenError::Sqlite)?

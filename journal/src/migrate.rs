@@ -146,6 +146,7 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
         let version = admit_readable_state(connection, stored_state(connection)?)?;
         if !PREDECESSOR_SCHEMAS.contains(&version) {
             admit_version(version)?;
+            residual::refuse_group_markers(connection)?;
             return Ok(None);
         }
         return cross_predecessor(connection);
@@ -292,9 +293,11 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     let version = admit_readable_state(&transaction, stored_state(&transaction)?)?;
     if !PREDECESSOR_SCHEMAS.contains(&version) {
         admit_version(version)?;
+        residual::refuse_group_markers(&transaction)?;
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
+    residual::refuse_group_markers(&transaction)?;
     refuse_creation_omission(&transaction)?;
     let vendor_holds = residual::refuse(&transaction)?;
     cross_residency_subscriptions(&transaction)?;
