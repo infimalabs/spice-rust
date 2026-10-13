@@ -1288,8 +1288,8 @@ impl Stale {
     /// registry from drifting when task facts are added.
     pub fn widen(&mut self, kind: FactKind) {
         // Execution authorization completes its controller and authorizes its
-        // selected outputs; a working-group move engages the outputs of a
-        // Design entering a group. Both change allocator eligibility.
+        // selected outputs, changing allocator eligibility; a working-group
+        // move changes which settled Designs the board carries as room anchors.
         if matches!(
             kind,
             FactKind::ExecutionAuthorized | FactKind::WorkingGroupMoved
