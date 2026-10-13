@@ -898,11 +898,11 @@ async fn dispatch_action(
         } => refresh::send_job(principal, writer, actions, target, *stop, respond)
             .await
             .map(Some),
-        ClientAction::WorkingGroupMove {
-            request,
+        ClientAction::WorkingGroupChange {
+            change,
             revision,
             respond,
-        } => rooms::send_group_move(principal, writer, actions, request, *revision, respond)
+        } => rooms::send_group_change(principal, writer, actions, change, *revision, respond)
             .await
             .map(Some),
         ClientAction::RoomPost(post) => rooms::send_room_post(principal, writer, actions, post)

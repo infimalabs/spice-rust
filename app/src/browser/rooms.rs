@@ -7,17 +7,20 @@ use std::rc::Rc;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::HtmlElement;
 use wire::intent::WorkingGroupChangeStatus;
-use wire::rooms::{RoomAuthorityStamp, RoomPostOutcome, WorkingGroup, WorkingGroupMove};
+use wire::rooms::{
+    RoomAuthorityStamp, RoomPostOutcome, WorkingGroup, WorkingGroupArrange, WorkingGroupMove,
+};
 use wire::{CommandKind, TaskStamp};
 use yew::prelude::*;
 
 mod conversation;
-mod designs;
 
+use super::roster::{self, RosterView, Wording};
 use super::sender::{SenderHandle, admit_action};
 use crate::AppRuntime;
-use crate::client_action::{ClientAction, RoomPostAction};
+use crate::client_action::{ClientAction, GroupChange, RoomPostAction};
 use crate::room_views::{GroupView, RoomViewAction, RoomViews};
+use crate::roster::{Change, Destination};
 use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 
 mod console;
@@ -154,6 +157,16 @@ fn mint_group() -> Option<RoomAuthorityStamp> {
     })
 }
 
+const GROUP_WORDING: Wording = Wording {
+    kind: "group",
+    new_title: "New working group",
+    new_hint: "drop design to create",
+    new_target: "Drop design here",
+    ungrouped_title: "Designs",
+    ungrouped_hint: "drop to ungroup",
+    full: "Working groups are limited to six designs",
+};
+
 pub(super) fn render_catalog(
     runtime: Option<&AppRuntime>,
     controls: &Controls,
@@ -166,8 +179,6 @@ pub(super) fn render_catalog(
         );
     };
     let projection = runtime.room_projection();
-    let can_move = runtime.offers(CommandKind::WorkingGroupMove);
-    let board = runtime.board();
     let body = match projection.status() {
         RoomProjectionStatus::Loading => {
             html! { <p class="empty" aria-busy="true">{"Loading groups…"}</p> }
@@ -175,29 +186,15 @@ pub(super) fn render_catalog(
         RoomProjectionStatus::RequiresSnapshot => {
             html! { <p class="empty">{"Group authority unavailable until reconnect."}</p> }
         }
-        RoomProjectionStatus::Available => {
-            let drops = designs::Drops::new(
-                sender.clone(),
-                controls.clone(),
-                projection.partition().clone(),
-                can_move,
-            );
-            html! {
-                <>
-                    if let Some(notice) = (*controls.notice).clone() {
-                        <p class="room-notice" role="status">{notice}</p>
-                    }
-                    {conversation::render_inbox(runtime, &controls.reporter(), sender)}
-                    <div class="room-group-catalog">
-                        {for projection.partition().groups.iter().map(|group| {
-                            render_catalog_group(runtime, group, &drops, controls)
-                        })}
-                    </div>
-                    {render_new_group(&drops)}
-                    {designs::render_designs(board, &drops)}
-                </>
-            }
-        }
+        RoomProjectionStatus::Available => html! {
+            <>
+                if let Some(notice) = (*controls.notice).clone() {
+                    <p class="room-notice" role="status">{notice}</p>
+                }
+                {conversation::render_inbox(runtime, &controls.reporter(), sender)}
+                {render_roster(runtime, controls, sender)}
+            </>
+        },
     };
     section("Working groups", body)
 }
@@ -211,27 +208,91 @@ fn section(title: &'static str, body: Html) -> Html {
     }
 }
 
-/// The one way a working group begins: a design dropped here, as an agent
-/// dropped on New Team begins a team.
-fn render_new_group(drops: &designs::Drops) -> Html {
-    let designs::DropHandlers { ondragover, ondrop } = designs::new_group_target(drops);
-    html! {
-        <section
-            class="app-sheet-section room-group-create"
-            data-design-drop={designs::new_group_value()}
-            data-drop-enabled={drops.enabled().to_string()}
-            {ondragover}
-            {ondrop}
-        >
-            <header><h3>{"New working group"}</h3><span>{"drop design to create"}</span></header>
-            <div class="app-drop-target">{"Drop design here"}</div>
-        </section>
+/// The working-group roster: each group a card named for its lead design with
+/// the console it opens, then New working group and the ungrouped Designs.
+fn render_roster(runtime: &AppRuntime, controls: &Controls, sender: &SenderHandle) -> Html {
+    let partition = runtime.room_projection().partition();
+    let tasks = runtime
+        .board()
+        .map_or(&[][..], |board| board.tasks.as_slice());
+    let head = |group: &RoomAuthorityStamp, designs: &[TaskStamp]| {
+        let open_group = {
+            let group = group.clone();
+            let controls = controls.clone();
+            Callback::from(move |_| controls.open(group.clone(), None))
+        };
+        let size = match designs.len() {
+            1 => "1 design".to_owned(),
+            count => format!("{count} designs"),
+        };
+        html! {
+            <>
+                <div>
+                    <strong>{lead_label(runtime, group, designs.first())}</strong>
+                    <span>{size}</span>
+                </div>
+                <button type="button" onclick={open_group}>{"Open"}</button>
+            </>
+        }
+    };
+    let member = |design: &TaskStamp, _grouped: bool| render_design(runtime, tasks, design);
+    let revision = partition.revision;
+    let submit = {
+        let (sender, controls) = (sender.clone(), controls.clone());
+        Rc::new(move |change| submit_change(&sender, &controls, change, revision))
+    };
+    roster::render(RosterView {
+        wording: &GROUP_WORDING,
+        roster: Rc::new(crate::roster::working_groups(partition, tasks)),
+        revision,
+        enabled: runtime.offers(CommandKind::WorkingGroupMove)
+            && runtime.offers(CommandKind::WorkingGroupArrange),
+        empty: "No ungrouped designs",
+        submit,
+        head: &head,
+        member: &member,
+    })
+}
+
+/// One design's tile content: its handle, standing and title while the board
+/// carries its task, else its anchor label.
+fn render_design(
+    runtime: &AppRuntime,
+    tasks: &[wire::intent::BoardTask],
+    design: &TaskStamp,
+) -> Html {
+    match crate::roster::designs(tasks).find(|task| task.statement.body.born == *design) {
+        Some(task) => {
+            let statement = &task.statement.body;
+            let workflow = &task.workflow.body;
+            html! {
+                <div class="room-design">
+                    <header>
+                        <strong data-roster-handle="">{statement.handle.to_string()}</strong>
+                        <span>{format!("{} · {}", workflow.phase, workflow.status)}</span>
+                    </header>
+                    <span class="room-design-title">{task.presentation_title.clone()}</span>
+                </div>
+            }
+        }
+        None => html! {
+            <div class="room-design">
+                <header><strong data-roster-handle="">{anchor_label(runtime, design)}</strong></header>
+            </div>
+        },
     }
 }
 
 /// A group's label, drawn from its lead design as a team's is from its host.
 pub(super) fn group_label(runtime: &AppRuntime, group: &WorkingGroup) -> String {
-    let lead = group.anchors.first();
+    lead_label(runtime, &group.group, group.anchors.first())
+}
+
+fn lead_label(
+    runtime: &AppRuntime,
+    group: &RoomAuthorityStamp,
+    lead: Option<&TaskStamp>,
+) -> String {
     let title = lead.and_then(|lead| {
         runtime
             .board()?
@@ -241,87 +302,64 @@ pub(super) fn group_label(runtime: &AppRuntime, group: &WorkingGroup) -> String 
             .map(|task| task.presentation_title.clone())
     });
     let host = title.unwrap_or_else(|| {
-        lead.map_or_else(
-            || group.group.to_string(),
-            |lead| anchor_label(runtime, lead),
-        )
+        lead.map_or_else(|| group.to_string(), |lead| anchor_label(runtime, lead))
     });
     format!("{host} group")
 }
 
-/// A group's card, read as a team's: its label and size, the console it opens,
-/// and its designs as tiles that drag out to wherever they land.
-fn render_catalog_group(
-    runtime: &AppRuntime,
-    group: &WorkingGroup,
-    drops: &designs::Drops,
-    controls: &Controls,
-) -> Html {
-    let can_put = drops.enabled();
-    let open_group = {
-        let group = group.group.clone();
-        let controls = controls.clone();
-        Callback::from(move |_| controls.open(group.clone(), None))
-    };
-    let size = match group.anchors.len() {
-        1 => "1 design".to_owned(),
-        count => format!("{count} designs"),
-    };
-    let designs::DropHandlers { ondragover, ondrop } = designs::group_target(drops, &group.group);
-    html! {
-        <article
-            class="room-group-row"
-            key={group.group.to_string()}
-            data-group={group.group.to_string()}
-            data-design-drop={group.group.to_string()}
-            data-drop-enabled={can_put.to_string()}
-            {ondragover}
-            {ondrop}
-        >
-            <header>
-                <strong>{group_label(runtime, group)}</strong>
-                <span>{size}</span>
-                <button type="button" onclick={open_group}>{"Open"}</button>
-            </header>
-            <ol>
-                {for group.anchors.iter().map(|room| html! {
-                    <li key={room.to_string()} data-room={room.to_string()}>
-                        {designs::render_member(runtime, room, anchor_label(runtime, room), drops)}
-                    </li>
-                })}
-            </ol>
-        </article>
-    }
-}
-
-/// Send one design move at the observed partition revision and report its
-/// outcome in the catalog notice.
-fn submit_move(
+/// Send one working-group roster change at the observed partition revision
+/// and report its outcome in the catalog notice. A new group takes a freshly
+/// minted identity.
+fn submit_change(
     sender: &SenderHandle,
     controls: &Controls,
-    request: WorkingGroupMove,
+    change: Change<RoomAuthorityStamp, TaskStamp>,
     revision: u64,
 ) {
-    let controls = controls.clone();
-    let respond = Rc::new(
-        move |result: Result<wire::intent::WorkingGroupChange, String>| {
-            let message = match result {
-                Ok(change) => match change.status {
-                    WorkingGroupChangeStatus::Moved => "Design moved.".to_owned(),
-                    WorkingGroupChangeStatus::Ended => {
-                        "Design moved; its group ended with its last design.".to_owned()
-                    }
-                    WorkingGroupChangeStatus::Arranged => "Working groups arranged.".to_owned(),
-                },
-                Err(error) => error,
+    let change = match change {
+        Change::Move { member, to } => {
+            let to = match to {
+                Destination::New => {
+                    let Some(group) = mint_group() else {
+                        controls.report("A working-group identity could not be created.".into());
+                        return;
+                    };
+                    Some(group)
+                }
+                Destination::Group(group) => Some(group),
+                Destination::Ungrouped => None,
             };
-            controls.report(message);
-        },
-    );
+            GroupChange::Move(WorkingGroupMove { design: member, to })
+        }
+        Change::Arrange(groups) => GroupChange::Arrange(WorkingGroupArrange {
+            groups: groups
+                .into_iter()
+                .map(|(group, anchors)| WorkingGroup { group, anchors })
+                .collect(),
+        }),
+    };
+    let respond = {
+        let controls = controls.clone();
+        Rc::new(
+            move |result: Result<wire::intent::WorkingGroupChange, String>| {
+                let message = match result {
+                    Ok(change) => match change.status {
+                        WorkingGroupChangeStatus::Moved => "Design moved.".to_owned(),
+                        WorkingGroupChangeStatus::Ended => {
+                            "Design moved; its group ended with its last design.".to_owned()
+                        }
+                        WorkingGroupChangeStatus::Arranged => "Working groups arranged.".to_owned(),
+                    },
+                    Err(error) => error,
+                };
+                controls.report(message);
+            },
+        )
+    };
     let _ = admit_action(
         sender,
-        ClientAction::WorkingGroupMove {
-            request,
+        ClientAction::WorkingGroupChange {
+            change,
             revision,
             respond,
         },

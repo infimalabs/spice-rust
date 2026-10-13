@@ -26,6 +26,8 @@ mod message_history;
 mod renewal;
 #[path = "runtime/rooms.rs"]
 mod rooms;
+#[path = "runtime/roster.rs"]
+mod roster;
 #[path = "runtime/stream_terminal.rs"]
 mod stream_terminal;
 mod support;

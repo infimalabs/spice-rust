@@ -2,11 +2,11 @@ use app::Session;
 use app::runtime::{AppRuntime, LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop, UNKNOWN_AGENT_LABEL,
-    accent, arrangement, badge, can_leave_all_teams, elapsed_label, elapsed_label_deadline_millis,
+    accent, arrangement, badge, elapsed_label, elapsed_label_deadline_millis,
     first_nonquoted_prose, history_frontier_request_due, jobs_kept, latest_lane_prose, leaf,
     member_presence, one_line, remaining_label, remaining_label_deadline_millis, reported_tasks,
-    short, split_member, standing_title, standings, task_mentions, team_jobs, teams, ticker_chunks,
-    ticker_line, topology, truncate,
+    short, standing_title, standings, task_mentions, team_jobs, teams, ticker_chunks, ticker_line,
+    topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::head::TEAM_MEMBER_LIMIT;
@@ -1245,52 +1245,6 @@ fn a_join_admits_six_members_and_rejects_a_seventh() {
         None,
         "an interactive join that would create a seventh member sends nothing",
     );
-}
-
-#[test]
-fn one_member_can_leave_a_team_without_moving_its_siblings() {
-    let lanes = [
-        seated(TEAM_ONE, &[(LANE_A, "main-a"), (LANE_B, "main-b")]),
-        seated(TEAM_TWO, &[(LANE_C, "main-c")]),
-    ];
-    let topology = topology(&lanes);
-
-    assert_eq!(
-        split_member(&topology, uuid(TEAM_ONE), uuid(LANE_B), uuid(TEAM_THREE),),
-        Some(vec![
-            (uuid(TEAM_ONE), vec![uuid(LANE_A)]),
-            (uuid(TEAM_THREE), vec![uuid(LANE_B)]),
-            (uuid(TEAM_TWO), vec![uuid(LANE_C)]),
-        ]),
-        "only the selected member moves and its fresh team follows the source",
-    );
-    assert_eq!(
-        split_member(&topology, uuid(TEAM_TWO), uuid(LANE_C), uuid(TEAM_THREE),),
-        None,
-        "a sole member has no team to leave",
-    );
-    assert_eq!(
-        split_member(&topology, uuid(TEAM_ONE), uuid(LANE_C), uuid(TEAM_THREE),),
-        None,
-        "the selected member must belong to the source team",
-    );
-}
-
-#[test]
-fn leaving_all_teams_is_unavailable_only_when_the_member_is_already_solo() {
-    let grouped = vec![
-        (uuid(LANE_A), vec![uuid(LANE_A), uuid(LANE_B)]),
-        (uuid(TEAM_TWO), vec![uuid(LANE_C)]),
-    ];
-
-    assert!(can_leave_all_teams(&grouped, uuid(LANE_A), uuid(LANE_A),));
-    assert!(can_leave_all_teams(&grouped, uuid(TEAM_TWO), uuid(LANE_C),));
-    assert!(!can_leave_all_teams(
-        &[(uuid(LANE_C), vec![uuid(LANE_C)])],
-        uuid(LANE_C),
-        uuid(LANE_C),
-    ));
-    assert!(!can_leave_all_teams(&grouped, uuid(TEAM_TWO), uuid(LANE_B),));
 }
 
 #[test]

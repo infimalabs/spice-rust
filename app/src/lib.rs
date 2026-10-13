@@ -63,6 +63,7 @@ mod quota;
 mod reconnect;
 #[cfg(any(target_arch = "wasm32", test))]
 mod room_views;
+pub mod roster;
 pub mod runtime;
 pub mod socket;
 pub mod speech_owner;

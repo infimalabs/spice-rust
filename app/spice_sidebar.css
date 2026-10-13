@@ -176,8 +176,11 @@
   outline: var(--app-focus-ring-width) solid var(--focus);
   outline-offset: 2px;
 }
-.app-open-teams { display: grid; gap: 10px; }
-.app-team {
+/* The roster: teams of agents and working groups of designs draw alike. */
+.app-roster { display: grid; gap: 10px; }
+.app-roster-groups { display: grid; gap: 10px; }
+.app-roster-groups:empty { display: none; }
+.app-roster-group {
   display: grid;
   gap: var(--app-team-gap);
   padding: var(--app-team-pad);
@@ -185,13 +188,13 @@
   border-radius: var(--app-radius-frame);
   background: var(--control-surface-soft);
 }
-.app-team[data-drop-enabled="true"]:hover {
+.app-roster-group[data-drop-enabled="true"]:hover {
   border-color: color-mix(in srgb, var(--accent) 28%, var(--control-line-soft));
   background: color-mix(in srgb, var(--control-surface-soft) 94%, var(--accent) 6%);
 }
-.app-team > header {
+.app-roster-group > header {
   display: flex;
-  align-items: start;
+  align-items: center;
   justify-content: space-between;
   min-width: 0;
   min-block-size: 0;
@@ -199,17 +202,33 @@
   color: var(--muted);
   font: var(--app-type-caption)/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.app-team > header > div {
+.app-roster-group > header > div {
   display: grid;
   flex: 1 1 auto;
   min-width: 0;
   gap: 2px;
 }
-.app-team > header strong { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
-.app-team > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-team-members { display: grid; gap: 6px; }
-.app-team-drop > header,
-.app-unassigned > header {
+.app-roster-group > header strong { overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
+.app-roster-group > header span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-roster-members { display: grid; gap: 6px; }
+.app-roster-member { min-width: 0; }
+.app-roster-group[draggable="true"],
+.app-roster-member[draggable="true"] { cursor: grab; }
+.app-roster-group[draggable="true"]:active,
+.app-roster-member[draggable="true"]:active { cursor: grabbing; }
+/* A finger or pen lifts a card by its header and a tile by its name; the rest
+   still scrolls the sheet and activates the tile. */
+.app-roster-group[draggable="true"] > header,
+.app-roster-member[draggable="true"] [data-roster-handle] {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.app-roster-group[data-topology-drag-source],
+.app-roster-member[data-topology-drag-source] { opacity: .38; }
+.app-roster-new > header,
+.app-roster-ungrouped > header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -219,29 +238,24 @@
   color: var(--muted);
   font: var(--app-type-caption)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.app-spice-topology .app-team-drop h2,
-.app-spice-topology .app-unassigned h2 {
+.app-roster-new h3,
+.app-roster-ungrouped h3 {
   margin: 0;
   font: 700 var(--app-type-caption)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: .04em;
   text-transform: uppercase;
 }
-.app-team-drop,
-.app-unassigned {
+.app-roster-new,
+.app-roster-ungrouped {
   padding: 10px;
   border: var(--app-control-edge-width) dashed var(--control-line-soft);
   border-radius: var(--app-radius-frame);
   background: var(--control-surface-soft);
 }
-.app-team-drop[data-drop-enabled="true"]:hover,
-.app-unassigned[data-drop-enabled="true"]:hover {
+.app-roster-new[data-drop-enabled="true"]:hover,
+.app-roster-ungrouped[data-drop-enabled="true"]:hover {
   border-color: color-mix(in srgb, var(--accent) 36%, var(--control-line-soft));
   background: color-mix(in srgb, var(--control-surface-soft) 94%, var(--accent) 6%);
-}
-.app-team-drop[data-drop-enabled="false"],
-.app-unassigned[data-drop-enabled="false"] {
-  border-color: var(--control-line-soft);
-  background: var(--control-surface-soft);
 }
 .app-drop-target {
   display: grid;
@@ -256,7 +270,7 @@
   letter-spacing: .04em;
   text-transform: uppercase;
 }
-.app-team-drop[data-drop-enabled="false"] .app-drop-target {
+.app-roster-new[data-drop-enabled="false"] .app-drop-target {
   border-color: var(--line-soft);
   color: var(--muted);
 }

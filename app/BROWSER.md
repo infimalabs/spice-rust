@@ -73,39 +73,34 @@ remain browser preferences. Those preferences cannot grant task, room, group,
 team, or lane authority, and a group edit never mounts, reorders, or closes a
 browser view.
 
-The Spice sidebar is the working-group catalog, the design-side twin of the
-team roster. It reads one shared partition: every group in partition order,
-each holding its designs in order, guarded by one revision. A group exists
-only while designs belong to it: it is never created empty, never named, and
-never removed as an object. Each group card reads as a team card: labelled from
-its lead design, member zero, as a team is from its host, with its size and its
-designs as draggable tiles. A group's **Open** mounts its console, as a team's
-watchband shows it, and is the only foreground action. In that console a
-design's menu carries **Create new group** and **Leave group**, the twins of an
-agent's **Create new team** and **Leave all teams**; they and every drop send
-one `group::move` witnessing the partition revision the browser last folded,
-and a change that partition revision no longer matches is refused rather than
-merged. A group whose last design leaves ends, and any already-open local
-console becomes an unavailable placeholder once a completed room snapshot
+The Spice sidebar's working-group catalog is the design-side twin of the team
+roster and is drawn by the same roster (see
+[Resident topology in the global menu](#resident-topology-in-the-global-menu)).
+It reads one shared partition: every group in partition order, each holding its
+designs in order, guarded by one revision. A group exists only while designs
+belong to it: it is never created empty, never named, and never removed as an
+object. Its card is labelled from its lead design, member zero, as a team is
+from its host. A group's **Open** mounts its console, as a team's watchband
+shows it, and is the only foreground action. In that console a design's menu
+carries **New working group** and **Leave group**, the twins of an agent's
+**Create new team** and **Leave all teams**: the first moves the design alone
+into a fresh group and is offered only while its group holds another design;
+the second takes it out of its group. They and every drop send one
+`group::move` or `group::arrange` witnessing the partition revision the browser
+last folded, and a change that partition revision no longer matches is refused
+rather than merged. A group whose last design leaves ends, and any already-open
+local console becomes an unavailable placeholder once a completed room snapshot
 lacks the group; while room authority loads or reconnects, the console keeps
 its last label and geometry.
 
 **Designs** lists the open Design tasks no group holds, as Unassigned Agents
-lists lanes in no team, and a design moves between groups exactly as an agent
-moves between teams: a mouse drags the whole row, a finger or pen drags its
-handle, and holding a lifted design near the sheet's edge scrolls it. Dropping
-it on **New working group** begins a group holding only that design, standing
-where the design stood in the partition order or, for an ungrouped design,
-last; dropping it on a saved group appends it there; dropping a grouped design
-on **Designs** takes it out of its group. A
-design belongs to at most one group, so joining or beginning a group takes it
-out of the one that held it, and a drop where the design already is changes
-nothing. A full group still accepts the drop, so the authority's
-`group::design-limit` refusal reports it in the catalog notice, as does
-`group::design-only` for a task without Design intent and
-`group::partition-moved` for a partition that changed since the browser read
-it; each leaves every group unchanged. A drop changes only shared organization
-and never mounts, reorders, closes, or focuses a console.
+lists lanes in no team. Dropping a design on **New working group** begins a
+group holding only that design, standing where the design stood in the
+partition order or, for an ungrouped design, last. The catalog notice reports
+every outcome; the authority's typed refusals, `group::design-limit` from a
+stale view of a full group, `group::design-only` for a task without Design
+intent and `group::partition-moved` for a partition that changed since the
+browser read it, each leave every group unchanged.
 
 Each opened group is a console in the team fleet, after the teams, read exactly
 as a team console with tasks and agents swapped. A team's composers target its
@@ -188,19 +183,31 @@ tab into the served generation once per generation, unless a composer draft or
 unsettled submission would be lost, in which case the tab stays and reconnects
 behind the reload control.
 
-Resident topology is one interactive roster. Each team lists its agents with
-presence, name, worktree, model, pending steering, liveness, held task, kept
-jobs, and provider emblem. A teamed agent opens its composer in Chat. When team
-configuration is admitted, agents drag onto another team, onto **New Team**, or
-onto **Unassigned Agents**; every drop carries the topology revision shown, and
-unavailable configuration disables dragging without disabling Chat links. Teams
-stop at six agents: a full team disables its mouse and touch drop target, while
-its members can still leave for another team or Unassigned Agents. The resident
-also refuses membership commands that would exceed six; stale clients cannot
-bypass the limit. A mouse drags the whole slot; a finger or pen drags the agent's
-name, so the rest
-of the slot still scrolls the sheet and a tap still opens Chat, and holding a
-lifted agent near the sheet's edge scrolls it toward an off-screen target.
+Resident topology is one interactive roster, and the working-group catalog is
+the same roster over designs. Each team lists its agents with presence, name,
+worktree, model, pending steering, liveness, held task, kept jobs, and provider
+emblem; a teamed agent opens its composer in Chat.
+
+One roster component draws both kinds. Formed groups stand in their shared
+order, each a card named for member zero holding its members' tiles; **New
+Team** or **New working group** follows, then **Unassigned Agents** or
+**Designs**, which lists only members no group holds. While the kind's
+configuration and arrangement are admitted, every tile and card drags; a mouse
+drags the whole tile or card, a finger or pen drags a tile by its name or a
+card by its header, so the rest still scrolls the sheet and a tap still opens
+Chat, and holding a lift near the sheet's edge scrolls it toward an off-screen
+target. A member released on the New target begins a group holding only it; on
+a card, or a tile in another group, joins that group; on a tile in its own
+group takes that place; on the ungrouped list leaves its group, and a group
+whose last member leaves ends. A card released on another card or its tiles
+takes that place among the groups. Reordering restates the whole arrangement
+(`team::arrange` or `group::arrange`); every other release moves one member.
+A release where nothing would change, a group's only member on New, or a card
+on New or the ungrouped list sends nothing. Groups stop at six members: a full
+group's card and tiles disable their mouse and touch drop target, while its
+members can still reorder or leave, and the authority refuses a stale client's
+seventh member. Every change carries the revision the roster was drawn from.
+No roster gesture mounts, reorders, closes, or focuses a view.
 
 ## Jobs in the global menu
 

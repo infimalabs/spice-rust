@@ -80,14 +80,17 @@ pub(super) fn follow(handle: &web_sys::Element, client_x: i32, client_y: i32) {
     let _ = ghost.style().set_property("top", &format!("{top}px"));
 }
 
-/// The first element carrying `attribute` under the contact, when it accepts
-/// drops; a disabled target under the contact accepts nothing.
+/// The innermost element carrying `attribute` under the contact, when it
+/// accepts drops; a disabled target under the contact accepts nothing.
 pub(super) fn target_at(attribute: &str, client_x: i32, client_y: i32) -> Option<web_sys::Element> {
     let (x, y) = (f64::from(client_x), f64::from(client_y));
     let targets = document()?
         .query_selector_all(&format!("[{attribute}]"))
         .ok()?;
+    // Document order lists an ancestor before its descendants, so the first
+    // hit from the end is the innermost.
     let target = (0..targets.length())
+        .rev()
         .filter_map(|index| targets.item(index)?.dyn_into::<web_sys::Element>().ok())
         .find(|element| {
             let rect = element.get_bounding_client_rect();

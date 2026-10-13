@@ -96,7 +96,6 @@ pub(super) struct AgentMenu<'a> {
     pub(super) standing: &'a Standing,
     pub(super) select: &'a Callback<wire::TaskStamp>,
     pub(super) command: &'a Callback<(CanonicalUuid, MemberCommand)>,
-    pub(super) can_arrange: bool,
     pub(super) can_configure: bool,
     pub(super) topology_revision: u64,
     pub(super) topology: &'a [(CanonicalUuid, Vec<CanonicalUuid>)],
@@ -377,23 +376,15 @@ pub(super) fn render(menu: AgentMenu<'_>) -> Html {
         standing,
         select,
         command,
-        can_arrange,
         can_configure,
         topology_revision,
         topology,
         sender,
         attention,
     } = menu;
-    let (team, lane) = (standing.team, member.lane);
-    let split = agent_split_control(team, lane, can_arrange, topology_revision, topology, sender);
-    let leave = agent_leave_control(
-        team,
-        lane,
-        can_configure,
-        topology_revision,
-        topology,
-        sender,
-    );
+    let menu = crate::roster::teams(topology).menu(&member.lane);
+    let split = agent_team_control(menu.new_group, can_configure, topology_revision, sender);
+    let leave = agent_team_control(menu.leave, can_configure, topology_revision, sender);
     let renewal = watchband::agent_renewal_control(
         &standing.label,
         runtime

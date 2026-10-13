@@ -50,6 +50,7 @@ mod mermaid;
 mod navigation;
 mod overlay;
 mod rooms;
+mod roster;
 mod sender;
 mod sidebar;
 mod speech_runtime;
