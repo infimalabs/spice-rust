@@ -158,6 +158,53 @@ impl Lanes {
         }
     }
 
+    /// Send `lane` one operator direction under command `id`, returning its key.
+    fn direct(&self, lane: u8, id: u8, message: &str) -> String {
+        let sent = steering::send(
+            &self.bus,
+            self.epoch,
+            &steer::Config::default(),
+            &Command {
+                v: wire::WireVersion::CURRENT,
+                id: test_uuid(id),
+                epoch: self.epoch,
+                kind: CommandKind::SteerSend,
+                expected: vec![Witness::Residency {
+                    lane: test_uuid(lane),
+                    occupant: Some(test_uuid(lane + 1)),
+                    epoch: self.epoch,
+                }],
+                body: serde_json::json!({
+                    "fanout": test_uuid(id + 1),
+                    "lane": test_uuid(lane),
+                    "message": message,
+                    "attachments": [],
+                }),
+            }
+            .admit(&wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor: Actor::Operator,
+                epoch: self.epoch,
+            })
+            .expect("operator send admits"),
+            &wire::intent::SteerSend {
+                fanout: test_uuid(id + 1),
+                lane: test_uuid(lane),
+                message: message.to_owned(),
+                attachments: Vec::new(),
+            },
+            &mut CommandEffects::default(),
+        );
+        let Outcome::Reply(Reply {
+            body: CommandAnswer::Directive(direction),
+            ..
+        }) = sent
+        else {
+            panic!("operator direction is durable: {sent:?}");
+        };
+        direction.key
+    }
+
     /// Read every record on a lane's tape, as a sweep would.
     fn records(&self, lane: u8) -> (CanonicalUuid, Vec<listen::Record>) {
         let root = self
@@ -890,49 +937,8 @@ fn an_expired_address_names_what_its_lane_seats_now() {
 fn a_packet_is_attributed_to_its_author_and_retires_nothing() {
     let lanes = Lanes::new("msg-author");
     let first = lanes.address(FIRST);
-    let direction = steering::send(
-        &lanes.bus,
-        lanes.epoch,
-        &steer::Config::default(),
-        &Command {
-            v: wire::WireVersion::CURRENT,
-            id: test_uuid(40),
-            epoch: lanes.epoch,
-            kind: CommandKind::SteerSend,
-            expected: vec![Witness::Residency {
-                lane: test_uuid(SENDER),
-                occupant: Some(test_uuid(SENDER + 1)),
-                epoch: lanes.epoch,
-            }],
-            body: serde_json::json!({
-                "fanout": test_uuid(41),
-                "lane": test_uuid(SENDER),
-                "message": "keep going",
-                "attachments": [],
-            }),
-        }
-        .admit(&wire::Accepted {
-            wire: wire::WireVersion::CURRENT,
-            actor: Actor::Operator,
-            epoch: lanes.epoch,
-        })
-        .expect("operator send admits"),
-        &wire::intent::SteerSend {
-            fanout: test_uuid(41),
-            lane: test_uuid(SENDER),
-            message: "keep going".to_owned(),
-            attachments: Vec::new(),
-        },
-        &mut CommandEffects::default(),
-    );
-    let Outcome::Reply(Reply {
-        body: CommandAnswer::Directive(direction),
-        ..
-    }) = direction
-    else {
-        panic!("operator direction is durable: {direction:?}");
-    };
-    lanes.author(SENDER, &format!("MSG {first}: about {}", direction.key));
+    let direction = lanes.direct(SENDER, 40, "keep going");
+    lanes.author(SENDER, &format!("MSG {first}: about {direction}"));
 
     let (outcomes, diagnostics) = lanes.hear(SENDER, test_uuid(SENDER + 1));
     assert_eq!(outcomes, [Ok(sent(&[FIRST], &[]))], "{diagnostics}");
@@ -941,7 +947,7 @@ fn a_packet_is_attributed_to_its_author_and_retires_nothing() {
         .into_iter()
         .map(|pending| pending.key)
         .collect::<BTreeSet<_>>();
-    assert_eq!(keys, BTreeSet::from([direction.key.clone()]));
+    assert_eq!(keys, BTreeSet::from([direction]));
 
     // A record heard under an occupant with no birth on the lane is no one's.
     lanes.author(SENDER, &format!("MSG {first}: impostor"));
@@ -1054,6 +1060,7 @@ fn direct(addresses: &[wire::OccupantAddress]) -> Vec<steer::ack::scan::Route> {
         .map(|address| steer::ack::scan::Route {
             audience: Some(steer::ack::scan::Audience::Occupant(*address)),
             context: None,
+            direction: None,
             span: 0..0,
         })
         .collect()

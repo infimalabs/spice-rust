@@ -70,6 +70,7 @@ fn ask(bus: &Bus, room: &TaskHandle, lane: CanonicalUuid) -> QuestionResultRef {
                 routes: vec![RoomRoute {
                     destination: RoomDestination::Lane { lane },
                     context: Some(room),
+                    direction: None,
                 }],
                 directed: vec![directive],
                 expires: fixture_instant_after(at, 1_200),

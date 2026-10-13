@@ -95,6 +95,9 @@ fn direct(
     actor: &Actor,
     sent: &SteerSent,
 ) -> Result<(), Refusal> {
+    if *actor == Actor::Operator && sent.fanout.is_some() {
+        authority.set_operator_direction(&sent.key, sent.lane);
+    }
     let Some(control) = sent.control.as_deref().and_then(|text| text.parse().ok()) else {
         return Ok(());
     };

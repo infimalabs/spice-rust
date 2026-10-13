@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use rusqlite::{Connection, OptionalExtension, params};
-use wire::{AnyFact, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
+use wire::{AnyFact, CanonicalUuid, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
 
 use super::{
     Authority, AuthorizationRow, Change, CoordinationRecord, Direction, Projection, ProposalRow,
@@ -11,13 +11,14 @@ use super::{
 };
 
 /// Stored authority as one commit transaction sees it, overlaid with the
-/// tasks, transcript generations, and coordination directions earlier facts
-/// of the same write introduce.
+/// tasks, transcript generations, and directions earlier facts of the same
+/// write introduce.
 pub(crate) struct Stored<'a> {
     connection: &'a Connection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
     directions: BTreeMap<String, Direction>,
+    operator_directions: BTreeMap<String, CanonicalUuid>,
 }
 
 impl<'a> Stored<'a> {
@@ -27,6 +28,7 @@ impl<'a> Stored<'a> {
             tasks: BTreeMap::new(),
             transcripts: BTreeMap::new(),
             directions: BTreeMap::new(),
+            operator_directions: BTreeMap::new(),
         }
     }
 
@@ -206,6 +208,34 @@ impl Authority for Stored<'_> {
 
     fn set_direction(&mut self, key: &str, direction: Direction) {
         self.directions.insert(key.to_owned(), direction);
+    }
+
+    fn operator_direction(&self, key: &str) -> Result<Option<CanonicalUuid>, Refusal> {
+        if let Some(lane) = self.operator_directions.get(key) {
+            return Ok(Some(*lane));
+        }
+        let row = self
+            .connection
+            .query_row(
+                "SELECT steering.body, fact.actor FROM steering_heads AS steering \
+                 JOIN fact_envelopes AS fact ON fact.seq = steering.created_seq \
+                 WHERE steering.steer_key = ?1",
+                [key],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        let Some((body, creator)) = row else {
+            return Ok(None);
+        };
+        let head = wire::decode::<wire::SteeringHead>(&body)?;
+        Ok(
+            (creator == wire::Actor::Operator.to_string() && head.fanout.is_some())
+                .then_some(head.lane),
+        )
+    }
+
+    fn set_operator_direction(&mut self, key: &str, lane: CanonicalUuid) {
+        self.operator_directions.insert(key.to_owned(), lane);
     }
 
     fn coordination(

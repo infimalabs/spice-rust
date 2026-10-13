@@ -785,6 +785,7 @@ fn ask_of_second_lane(position: u64) -> [serde_json::Value; 2] {
                 lane: uuid(SECOND_LANE),
             },
             context: Some(room()),
+            direction: None,
         }],
         &[ASKED],
     )
@@ -964,6 +965,7 @@ fn operator_items_lapse_recover_and_retire_with_the_answer() {
         vec![RoomRoute {
             destination: RoomDestination::Operator {},
             context: Some(room()),
+            direction: None,
         }],
         &[],
     );
@@ -1070,6 +1072,7 @@ fn operator_message(position: u64, publication: &str) -> serde_json::Value {
             routes: vec![RoomRoute {
                 destination: RoomDestination::Operator {},
                 context: Some(room()),
+                direction: None,
             }],
             directed: Vec::new(),
             expires: instant("2030-04-13T18:44:09.271Z"),
@@ -1134,6 +1137,7 @@ fn conversation_text_reply(
     session: &Session,
     publication: &str,
     content: wire::intent::RoomConversationContent,
+    direction: Option<wire::intent::RoomConcernedDirection>,
 ) -> app::Admitted<Response<wire::intent::RoomConversationTextAnswer>> {
     let bytes = support::response(
         WireVersion::CURRENT,
@@ -1144,6 +1148,7 @@ fn conversation_text_reply(
             body: wire::intent::RoomConversationTextAnswer {
                 publication: authority(publication),
                 content,
+                direction,
             },
         }),
     );
@@ -1162,12 +1167,6 @@ fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
     const MSG: &str = "dVsYdDj7w";
     const OPERATOR_MSG: &str = "dVsYdDj7x";
     let session = session(OPERATOR, EPOCH);
-    let operator_route = || {
-        vec![RoomRoute {
-            destination: RoomDestination::Operator {},
-            context: Some(room()),
-        }]
-    };
     let [ask_packet, asked] = conversed(
         1,
         (ASK_PACKET, ASK),
@@ -1176,7 +1175,7 @@ fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
             result: QuestionResultRef::new(authority(RESULT)),
             deadline: instant("2030-04-12T19:44:09.271Z"),
         },
-        operator_route(),
+        operator_route(Some(room()), None),
         &[],
     );
     let [msg_packet, messaged] = conversed(
@@ -1184,7 +1183,7 @@ fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
         (MSG_PACKET, MSG),
         LANE,
         RoomPublicationKind::Msg {},
-        operator_route(),
+        operator_route(Some(room()), None),
         &[],
     );
     let snapshot = [
@@ -1236,15 +1235,17 @@ fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
             wire::intent::RoomConversationContent::Text {
                 text: asked_text.to_owned(),
             },
+            None,
         ),
     );
     assert_eq!(
         runtime.conversation_text(&authority(ASK)),
-        Some(&app::ConversationText::Read(
-            wire::intent::RoomConversationContent::Text {
+        Some(&app::ConversationText::Read {
+            content: wire::intent::RoomConversationContent::Text {
                 text: asked_text.to_owned()
-            }
-        ))
+            },
+            direction: None,
+        })
     );
 
     // A drop loses the MSG read in flight; the next subscription asks again
@@ -1263,10 +1264,104 @@ fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
             wire::intent::RoomConversationContent::Text {
                 text: asked_text.to_owned(),
             },
+            None,
         ),
     );
     assert!(matches!(
         runtime.conversation_text(&authority(MSG)),
         Some(app::ConversationText::Failed(_))
     ));
+}
+
+fn operator_route(
+    context: Option<wire::rooms::RoomAnchor>,
+    direction: Option<&str>,
+) -> Vec<RoomRoute> {
+    vec![RoomRoute {
+        destination: RoomDestination::Operator {},
+        context,
+        direction: direction.map(str::to_owned),
+    }]
+}
+
+/// Each operator item concerns, most contextual first, the operator direction
+/// its lane's `#KEY` named, with that direction's text once the resident reads
+/// it, else the task `operator#TASK` named, else nothing.
+#[test]
+fn operator_items_concern_their_direction_else_their_task() {
+    const MSG_PACKET: &str = "dVsYdDj7v";
+    const MSG: &str = "dVsYdDj7w";
+    const BARE_PACKET: &str = "dVsYdDj7x";
+    const BARE: &str = "dVsYdDj7y";
+    const DIRECTION: &str = "dVwg6Zqlf";
+    let session = session(OPERATOR, EPOCH);
+    let [ask_packet, asked] = conversed(
+        1,
+        (ASK_PACKET, ASK),
+        LANE,
+        RoomPublicationKind::Ask {
+            result: QuestionResultRef::new(authority(RESULT)),
+            deadline: instant("2030-04-12T19:44:09.271Z"),
+        },
+        operator_route(Some(room()), None),
+        &[],
+    );
+    let [msg_packet, messaged] = conversed(
+        3,
+        (MSG_PACKET, MSG),
+        LANE,
+        RoomPublicationKind::Msg {},
+        operator_route(None, Some(DIRECTION)),
+        &[],
+    );
+    let [bare_packet, bare] = conversed(
+        5,
+        (BARE_PACKET, BARE),
+        LANE,
+        RoomPublicationKind::Msg {},
+        operator_route(None, None),
+        &[],
+    );
+    let snapshot = [ask_packet, asked, msg_packet, messaged, bare_packet, bare];
+    let mut runtime = conversation_runtime(&session, &snapshot);
+    let concern = |runtime: &app::AppRuntime, publication: &str| {
+        let inbox = runtime.room_projection().conversation().inbox_items();
+        let entry = inbox
+            .iter()
+            .find(|entry| *entry.item.value.record.publication() == authority(publication))
+            .expect("open operator item");
+        runtime.item_concern(&entry.item.value.record)
+    };
+    assert_eq!(concern(&runtime, ASK), app::ItemConcern::Task(room()));
+    assert_eq!(concern(&runtime, BARE), app::ItemConcern::Unnamed);
+    assert_eq!(
+        concern(&runtime, MSG),
+        app::ItemConcern::Direction {
+            key: DIRECTION.to_owned(),
+            text: None
+        },
+        "the direction is named before its text is read"
+    );
+
+    runtime.apply_conversation_text(
+        &authority(MSG),
+        &conversation_text_reply(
+            &session,
+            MSG,
+            wire::intent::RoomConversationContent::Text {
+                text: "Started A.".to_owned(),
+            },
+            Some(wire::intent::RoomConcernedDirection {
+                key: DIRECTION.to_owned(),
+                text: "Which first?".to_owned(),
+            }),
+        ),
+    );
+    assert_eq!(
+        concern(&runtime, MSG),
+        app::ItemConcern::Direction {
+            key: DIRECTION.to_owned(),
+            text: Some("Which first?".to_owned())
+        }
+    );
 }

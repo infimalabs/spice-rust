@@ -50,7 +50,7 @@ mod conversation;
 mod notice;
 
 use conversation::{conversation_stamp, publish_conversation};
-pub(in crate::resident) use notice::{MessageRecordedNotice, MessageRefusalNotice};
+pub(in crate::resident) use notice::{BareOperator, MessageRecordedNotice, MessageRefusalNotice};
 use notice::{refusal_detail, report};
 
 /// Residency views one packet may resolve against before it gives up on a
@@ -138,6 +138,8 @@ pub(in crate::resident) struct Conversed {
     pub(in crate::resident) operator: bool,
     /// The question result an ASK opened or an ANS answered.
     pub(in crate::resident) result: Option<QuestionResultRef>,
+    /// A bare `operator` route and what it could have named instead.
+    pub(in crate::resident) bare_operator: Option<BareOperator>,
 }
 
 /// Why one packet published nothing.

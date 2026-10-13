@@ -58,6 +58,13 @@ pub struct RoomRoute {
     /// This selector's task context, never borrowed from another route.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<RoomAnchor>,
+    /// Key of the operator direction a lane's operator route concerns.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub direction: Option<String>,
 }
 
 /// Public handle of one substantive ASK result.
@@ -193,6 +200,12 @@ impl TryFrom<RoomPublicationWire> for RoomPublication {
             if matches!(route.destination, RoomDestination::Task { .. }) && route.context.is_some()
             {
                 return Err("task destinations already name their context");
+            }
+            if route.direction.is_some()
+                && (route.destination != RoomDestination::Operator {}
+                    || !matches!(value.author, RoomDestination::Lane { .. }))
+            {
+                return Err("only a lane's operator route names the direction it concerns");
             }
         }
         if value

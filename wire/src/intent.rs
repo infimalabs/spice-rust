@@ -64,12 +64,12 @@ mod simple_answers;
 pub use simple_answers::{RecognitionAnswer, TasteAnswer};
 mod rooms;
 pub use rooms::{
-    RoomClose, RoomControl, RoomControlAnswer, RoomConversationContent, RoomConversationText,
-    RoomConversationTextAnswer, RoomCoordinate, RoomCoordinateAction, RoomCoordinationRead,
-    RoomCoordinationRequest, RoomCoordinationStop, RoomCoordinationView, RoomItemMove,
-    RoomPutAside, RoomResultMove, RoomResumeBudget, WorkingGroupAnchor, WorkingGroupArrange,
-    WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupMove, WorkingGroupPage,
-    WorkingGroupRead, WorkingGroupView,
+    RoomClose, RoomConcernedDirection, RoomControl, RoomControlAnswer, RoomConversationContent,
+    RoomConversationText, RoomConversationTextAnswer, RoomCoordinate, RoomCoordinateAction,
+    RoomCoordinationRead, RoomCoordinationRequest, RoomCoordinationStop, RoomCoordinationView,
+    RoomItemMove, RoomPutAside, RoomResultMove, RoomResumeBudget, WorkingGroupAnchor,
+    WorkingGroupArrange, WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupMove,
+    WorkingGroupPage, WorkingGroupRead, WorkingGroupView,
 };
 
 mod task;

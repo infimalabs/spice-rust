@@ -22,7 +22,7 @@ use crate::AppRuntime;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, RoomControlRequest};
 use crate::runtime::{
-    Conversation, ConversationText, Delivery, OperatorItem, QuestionResult, RoomEvent,
+    Conversation, ConversationText, Delivery, ItemConcern, OperatorItem, QuestionResult, RoomEvent,
     RoomEventKind,
 };
 
@@ -91,9 +91,10 @@ pub(super) fn render_card(
             .or_else(|| {
                 conversation.and_then(|conversation| {
                     match runtime.conversation_text(conversation.publication.publication()) {
-                        Some(ConversationText::Read(RoomConversationContent::Text { text })) => {
-                            Some(text.clone())
-                        }
+                        Some(ConversationText::Read {
+                            content: RoomConversationContent::Text { text },
+                            ..
+                        }) => Some(text.clone()),
                         _ => None,
                     }
                 })
@@ -192,12 +193,15 @@ pub(super) fn render_inbox(
                 let asked = entry.result.map(|result| {
                     party(runtime, result.value.record.requester())
                 });
-                let room = entry
-                    .item
-                    .value
-                    .record
-                    .context()
-                    .map_or_else(|| "no room".to_owned(), |room| super::anchor_label(runtime, room));
+                let (concern, direction) = match runtime.item_concern(&entry.item.value.record) {
+                    ItemConcern::Direction { key, text } => {
+                        (format!("About your direction {key}"), text)
+                    }
+                    ItemConcern::Task(task) => {
+                        (format!("About {}", super::anchor_label(runtime, &task)), None)
+                    }
+                    ItemConcern::Unnamed => ("No direction or task named".to_owned(), None),
+                };
                 let result = entry.result.map_or_else(Html::default, |result| {
                     question_result(
                         act,
@@ -223,9 +227,12 @@ pub(super) fn render_inbox(
                     >
                         <header>
                             <strong class="room-flow-route">{summary}</strong>
-                            <span>{room}</span>
+                            <span>{concern}</span>
                             <code>{publication.to_string()}</code>
                         </header>
+                        if let Some(direction) = direction {
+                            <blockquote class="room-flow-concern">{direction}</blockquote>
+                        }
                         <p class="room-flow-text">{words}</p>
                         {result}
                         <ul class="room-flow-statuses" aria-label="Receipt">
@@ -247,13 +254,18 @@ fn inbox_words(runtime: &AppRuntime, conversation: &Conversation) -> String {
         return text.clone();
     }
     match runtime.conversation_text(conversation.publication.publication()) {
-        Some(ConversationText::Read(RoomConversationContent::Text { text })) => text.clone(),
-        Some(ConversationText::Read(RoomConversationContent::Linked { source })) => {
-            format!("Linked source: {source:?}")
-        }
-        Some(ConversationText::Read(RoomConversationContent::Unavailable { unavailable })) => {
-            format!("Text unavailable: {}", unavailable_reason(unavailable))
-        }
+        Some(ConversationText::Read {
+            content: RoomConversationContent::Text { text },
+            ..
+        }) => text.clone(),
+        Some(ConversationText::Read {
+            content: RoomConversationContent::Linked { source },
+            ..
+        }) => format!("Linked source: {source:?}"),
+        Some(ConversationText::Read {
+            content: RoomConversationContent::Unavailable { unavailable },
+            ..
+        }) => format!("Text unavailable: {}", unavailable_reason(unavailable)),
         Some(ConversationText::Failed(reason)) => format!("Text could not be read: {reason}"),
         Some(ConversationText::Loading) | None => match conversation.publication.source() {
             RoomSource::Transcript(hunk) => echo(runtime, hunk),

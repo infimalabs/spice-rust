@@ -171,11 +171,12 @@ mod speech;
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
     AppRuntime, AppSurface, BlockerActionState, BoardView, Conversation, ConversationProjection,
-    ConversationText, Delivery, LaneActivity, LaneMember, LaneRow, LaneStatus, LaneView,
-    OperatorItem, ParticipantReason, PreparationProjection, QuestionResult, RoomAnchorAuthority,
-    RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomParticipant, RoomPositioned,
-    RoomProjection, RoomProjectionStatus, RoomState, Stale, StreamApplication, StreamDirective,
-    StreamTerminal, TaskDetailState, TaskRelationsKey, TaskRelationsState, stale_reads,
+    ConversationText, Delivery, ItemConcern, LaneActivity, LaneMember, LaneRow, LaneStatus,
+    LaneView, OperatorItem, ParticipantReason, PreparationProjection, QuestionResult,
+    RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomParticipant,
+    RoomPositioned, RoomProjection, RoomProjectionStatus, RoomState, Stale, StreamApplication,
+    StreamDirective, StreamTerminal, TaskDetailState, TaskRelationsKey, TaskRelationsState,
+    stale_reads,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};

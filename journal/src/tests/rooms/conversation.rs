@@ -52,6 +52,7 @@ fn route(destination: RoomDestination, context: Option<&TaskStamp>) -> RoomRoute
     RoomRoute {
         destination,
         context: context.cloned(),
+        direction: None,
     }
 }
 
@@ -174,13 +175,13 @@ impl Write {
 
     /// Operator direction to `to` under `key`.
     fn direct(
-        mut self,
+        self,
         directive: CanonicalUuid,
         key: String,
         to: CanonicalUuid,
         room: Option<&TaskStamp>,
     ) -> Self {
-        let sent = SteerSent {
+        self.send(SteerSent {
             directive,
             fanout: None,
             key,
@@ -191,7 +192,10 @@ impl Write {
             control: None,
             attachments: Vec::new(),
             expires: minute(25),
-        };
+        })
+    }
+
+    fn send(mut self, sent: SteerSent) -> Self {
         let created = self
             .write
             .fact(sent.clone(), FactCause::Root)
@@ -200,7 +204,7 @@ impl Write {
         self.write
             .steering_head(created, move |created| SteeringHead {
                 directive: sent.directive,
-                fanout: None,
+                fanout: sent.fanout,
                 key: sent.key,
                 lane: sent.lane,
                 text: sent.text,
@@ -696,6 +700,83 @@ fn lane_routes_bind_exactly_the_native_directives_their_write_opened() {
         .expect("an operator MSG binds its lane route to operator direction");
     assert_eq!(room.items(), 1);
     room.journal.verify().expect("admitted bindings verify");
+}
+
+/// An operator route concerns only an operator direction its author lane
+/// received: a peer message key, another lane's direction, or an unknown key
+/// refuses at commit, and history rewritten to name one fails verification.
+#[test]
+fn an_operator_route_concerns_only_its_authors_operator_direction() {
+    let mut room = Conversation::new();
+    let (asked, other) = (room.asked.clone(), room.other.clone());
+    Write::lane(&other, minute(1))
+        .tell(room.tell_asked(1))
+        .record(conversed(
+            1,
+            &other,
+            RoomPublicationKind::Msg {},
+            room.both_routes(),
+            vec![directive(1)],
+        ))
+        .apply(&mut room.journal)
+        .expect("a peer message reaches the asked lane");
+    let operator = |micros: i64, to: CanonicalUuid| SteerSent {
+        directive: directive(micros),
+        fanout: Some(directive(500 + micros)),
+        key: message_key(micros),
+        lane: to,
+        text: "which first".to_owned(),
+        from: None,
+        room: None,
+        control: None,
+        attachments: Vec::new(),
+        expires: minute(25),
+    };
+    Write::operator(minute(1))
+        .send(operator(2, asked.lane))
+        .send(operator(3, other.lane))
+        .apply(&mut room.journal)
+        .expect("the operator directs both lanes");
+    let about = |micros: i64, key: i64| {
+        conversed(
+            micros,
+            &asked,
+            RoomPublicationKind::Msg {},
+            vec![RoomRoute {
+                direction: Some(message_key(key)),
+                ..route(RoomDestination::Operator {}, None)
+            }],
+            Vec::new(),
+        )
+    };
+    for (micros, key) in [(10, 1), (11, 3), (12, 99)] {
+        let result = Write::lane(&asked, minute(2))
+            .record(about(micros, key))
+            .apply(&mut room.journal);
+        room.refused(result);
+    }
+    Write::lane(&asked, minute(2))
+        .record(about(13, 2))
+        .apply(&mut room.journal)
+        .expect("a lane's operator route concerns its own operator direction");
+    room.journal.verify().expect("direction routes verify");
+
+    let seq = cursor(&room.journal).expect("nonempty");
+    room.journal
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT), \
+             '$.fact.routes[0].direction', ?1) AS BLOB) WHERE seq = ?2",
+            rusqlite::params![message_key(3), i64::try_from(seq.get()).expect("seq")],
+        )
+        .expect("name another lane's direction beneath the commit");
+    let violations = refused_violations(&room.journal);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.subject == format!("room_authority:{}", seq.get())),
+        "{violations:?}"
+    );
 }
 
 /// A lane route without exactly its directive refuses: a missing, unopened,

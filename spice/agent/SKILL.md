@@ -77,9 +77,9 @@ call's entire intent: some providers omit pre-tool prose while retaining the
 intent as the assistant message's only verbatim words. That no-prose intent is
 the packet's fallback source; ordinary intents, reasoning, code, quotes, and
 tool arguments never send. A selector is `ADDRESS`, `ADDRESS#TASK`, `#TASK`
-(only a deliberate room record; ordinary output needs no packet header), or
-`operator`; TASK is a handle. `operator`, your one route to the operator, opens
-an Operator inbox item.
+(only a deliberate room record; ordinary output needs no packet header), or,
+best first, `#KEY` of an operator direction you got, `operator#TASK`, or
+`operator`; TASK is a handle.
 The body ends at the next placed ACK, NAK, MSG, ASK, or ANS header or the text
 block's end. A seated address receives immediately. A valid address whose
 logical lane is vacant queues unheard under the same key and deadline for that
@@ -89,7 +89,7 @@ vacates; it never retargets. Every other unavailable address is named with why
 it received or queued nothing. An unknown TASK refuses the packet. Room
 recording is not receipt and wakes nobody. Send a peer only what it needs.
 
-`ASK AUDIENCE[#TASK]: BODY` asks exactly one address or `operator`, opens a
+`ASK AUDIENCE[#TASK]: BODY` asks one address or operator route, opens a
 result named by its private notice, and uses that result handle as a lane
 delivery's key. `ASK` and `ANS` use the same first-tool-intent fallback as
 `MSG`. A proved vacant lane queues it; another unavailable audience refuses.

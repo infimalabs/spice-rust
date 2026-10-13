@@ -669,6 +669,7 @@ fn a_packet_naming_the_authors_held_task_earns_the_no_header_guidance() {
         rooms: vec![held.to_string()],
         queued: Vec::new(),
         operator: false,
+        bare_operator: None,
         asked: None,
         answered: None,
         reached: 0,
