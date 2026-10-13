@@ -500,6 +500,42 @@ Every read — `spice room history|inbox|result|relevance|status`,
 `spice preparation show`, `spice group list`, and their `spice://` resources —
 joins, acknowledges, delivers, settles, and wakes nothing.
 
+### Preparation command bodies
+
+`preparation retain`, `critique`, `cover`, `decide`, and `authorize` each take
+one canonical JSON object. Unknown fields refuse, nothing is lenient, and a
+malformed body refuses with `preparation::argument-invalid`, giving the parse
+detail and a complete body that command accepts. `preparation adopt` takes two
+task handles instead.
+
+- **Values.** A task is its bare nine-character birth stamp, without the
+  project prefix (`dVzdhh8Nx` for `REPOSIT-dVzdhh8Nx`). A candidate is
+  `{"controller": STAMP, "candidate": STAMP}`: the controlling Design's stamp
+  and a new nine-character native stamp naming the candidate under that
+  controller. Critique, coverage, and decision identities are native base-52
+  sequences (`"1"`, `"2"`, …), new within their candidate or, for a decision,
+  within its controller. A source is
+  `{"kind": "journal", "fact": POSITION}` (a position `preparation show`
+  prints), `{"kind": "artifact", "digest": HEX}`, or a transcript hunk.
+- **`retain CANDIDATE_JSON`.** `candidate`, `governed_inputs` (tasks the
+  candidate assumes), `outputs` (at least one gated output), `references`
+  (at least one `{"relation": NAME, "source": SOURCE}`), and optional
+  `evidence` (question results that coverage must later assess). Inputs and
+  outputs are unique and disjoint.
+- **`critique CRITIQUE_JSON`.** `critique` (`{"candidate": …, "critique":
+  SEQUENCE}`), `category`, `source`, and `standing` (`clean` or
+  `material-finding`).
+- **`cover COVERAGE_JSON`.** `coverage` (`{"candidate": …, "coverage":
+  SEQUENCE}`), nonempty unique `scopes`, and `source`. The command attributes
+  the reviewer authority itself.
+- **`decide DECISION_JSON`.** `decision` (`{"controller": STAMP, "decision":
+  SEQUENCE}`), `source`, and `outcome`: `{"kind": "accepted"|"returned",
+  "candidate": …}` under the same controller, or `{"kind": "negative",
+  "conclusion": "rejected"|"no-work"}`.
+- **`authorize AUTHORIZATION_JSON`.** `decision`, `candidate` under the same
+  controller, `governed_inputs`, nonempty `selected_outputs`, and nonempty
+  `coverage` naming coverage of that candidate, all as unique sets.
+
 ### Limits and their repairs
 
 | Bound | Value | Refusal and repair |

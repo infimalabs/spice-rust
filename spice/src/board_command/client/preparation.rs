@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use wire::intent::{BoardAnswer, BoardRead, BoardTask};
@@ -8,6 +10,66 @@ use wire::rooms::{
 };
 
 use super::*;
+
+#[cfg(test)]
+mod tests;
+
+/// One canonical-JSON command operand: its argument name and a complete body
+/// the command accepts. A malformed body refuses with that body beside the
+/// parse detail, so the shape is learnable from the refusal alone.
+struct JsonOperand<T> {
+    name: &'static str,
+    example: &'static str,
+    body: PhantomData<fn() -> T>,
+}
+
+impl<T: DeserializeOwned> JsonOperand<T> {
+    const fn new(name: &'static str, example: &'static str) -> Self {
+        Self {
+            name,
+            example,
+            body: PhantomData,
+        }
+    }
+
+    fn decode(&self, text: &str) -> Result<T, Outcome<CommandAnswer>> {
+        wire::decode(text.as_bytes()).map_err(|error| {
+            refusal(
+                "preparation::argument-invalid",
+                Some(self.name.to_owned()),
+                &format!(
+                    "{error}; a complete {} this command accepts: {}",
+                    self.name, self.example
+                ),
+            )
+        })
+    }
+
+    fn argument(&self, matches: &ArgMatches) -> Result<T, Outcome<CommandAnswer>> {
+        self.decode(&required(matches, self.name))
+    }
+}
+
+const CANDIDATE_JSON: JsonOperand<RetainedCandidate> = JsonOperand::new(
+    "CANDIDATE_JSON",
+    r#"{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"governed_inputs":[],"outputs":["dVzfwWPSh","dVzfwgs7d"],"references":[{"relation":"contract","source":{"kind":"journal","fact":"6dth"}}]}"#,
+);
+const CRITIQUE_JSON: JsonOperand<CandidateCritique> = JsonOperand::new(
+    "CRITIQUE_JSON",
+    r#"{"critique":{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"critique":"1"},"category":"composition","source":{"kind":"journal","fact":"6dth"},"standing":"clean"}"#,
+);
+const COVERAGE_JSON: JsonOperand<CoverageInput> = JsonOperand::new(
+    "COVERAGE_JSON",
+    r#"{"coverage":{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"coverage":"1"},"scopes":["contracts","composition"],"source":{"kind":"journal","fact":"6dth"}}"#,
+);
+const DECISION_JSON: JsonOperand<PreparationDecision> = JsonOperand::new(
+    "DECISION_JSON",
+    r#"{"decision":{"controller":"dVzdhh8Nx","decision":"1"},"source":{"kind":"journal","fact":"6dth"},"outcome":{"kind":"accepted","candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"}}}"#,
+);
+const AUTHORIZATION_JSON: JsonOperand<ExecutionAuthorization> = JsonOperand::new(
+    "AUTHORIZATION_JSON",
+    r#"{"decision":{"controller":"dVzdhh8Nx","decision":"1"},"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"governed_inputs":[],"selected_outputs":["dVzfwWPSh"],"coverage":[{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"coverage":"1"}]}"#,
+);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -38,7 +100,7 @@ pub(super) fn client_candidate_retain(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let candidate: RetainedCandidate = match json_argument(matches, "CANDIDATE_JSON") {
+    let candidate = match CANDIDATE_JSON.argument(matches) {
         Ok(candidate) => candidate,
         Err(outcome) => return outcome,
     };
@@ -68,7 +130,7 @@ pub(super) fn client_candidate_critique(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let critique: CandidateCritique = match json_argument(matches, "CRITIQUE_JSON") {
+    let critique = match CRITIQUE_JSON.argument(matches) {
         Ok(critique) => critique,
         Err(outcome) => return outcome,
     };
@@ -95,7 +157,7 @@ pub(super) fn client_candidate_cover(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let input: CoverageInput = match json_argument(matches, "COVERAGE_JSON") {
+    let input = match COVERAGE_JSON.argument(matches) {
         Ok(input) => input,
         Err(outcome) => return outcome,
     };
@@ -129,7 +191,7 @@ pub(super) fn client_preparation_decide(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let decision: PreparationDecision = match json_argument(matches, "DECISION_JSON") {
+    let decision = match DECISION_JSON.argument(matches) {
         Ok(decision) => decision,
         Err(outcome) => return outcome,
     };
@@ -156,7 +218,7 @@ pub(super) fn client_execution_authorize(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let authorization: ExecutionAuthorization = match json_argument(matches, "AUTHORIZATION_JSON") {
+    let authorization = match AUTHORIZATION_JSON.argument(matches) {
         Ok(authorization) => authorization,
         Err(outcome) => return outcome,
     };
@@ -193,10 +255,10 @@ pub(super) fn client_output_adopt(
 ) -> Outcome<CommandAnswer> {
     let output = required(matches, "OUTPUT")
         .parse::<TaskHandle>()
-        .map_err(|error| invalid_json("OUTPUT", &error.to_string()));
+        .map_err(|error| invalid_handle("OUTPUT", &error.to_string()));
     let preparation = required(matches, "PREPARATION")
         .parse::<TaskHandle>()
-        .map_err(|error| invalid_json("PREPARATION", &error.to_string()));
+        .map_err(|error| invalid_handle("PREPARATION", &error.to_string()));
     let (output, preparation) = match (output, preparation) {
         (Ok(output), Ok(preparation)) => (output, preparation),
         (Err(outcome), _) | (_, Err(outcome)) => return outcome,
@@ -204,7 +266,7 @@ pub(super) fn client_output_adopt(
     let stamps = match (output.born(), preparation.born()) {
         (Ok(output), Ok(preparation)) => vec![output, preparation],
         (Err(error), _) | (_, Err(error)) => {
-            return invalid_json("task handle", &error.to_string());
+            return invalid_handle("task handle", &error.to_string());
         }
     };
     submit_with_tasks(repository, contract, stamps, true, |board| {
@@ -221,6 +283,14 @@ pub(super) fn client_output_adopt(
             },
         ))
     })
+}
+
+fn invalid_handle(name: &str, detail: &str) -> Outcome<CommandAnswer> {
+    refusal(
+        "preparation::argument-invalid",
+        Some(name.to_owned()),
+        &format!("name a current task handle as `spice task show` prints it: {detail}"),
+    )
 }
 
 fn submit_with_tasks<B, F>(
@@ -286,20 +356,4 @@ fn transition_witnesses(task: &BoardTask) -> Vec<Witness> {
         workflow_witness(task),
         claim_witness(task),
     ]
-}
-
-fn json_argument<T: DeserializeOwned>(
-    matches: &ArgMatches,
-    name: &str,
-) -> Result<T, Outcome<CommandAnswer>> {
-    wire::decode(required(matches, name).as_bytes())
-        .map_err(|error| invalid_json(name, &error.to_string()))
-}
-
-fn invalid_json(name: &str, detail: &str) -> Outcome<CommandAnswer> {
-    refusal(
-        "preparation::argument-invalid",
-        Some(name.to_owned()),
-        &format!("supply the documented canonical value: {detail}"),
-    )
 }
