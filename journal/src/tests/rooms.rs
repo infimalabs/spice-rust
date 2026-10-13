@@ -44,6 +44,23 @@ fn commit_as<F: wire::Body>(journal: &mut Journal, actor: Actor, body: F) -> Com
     journal.apply(write)
 }
 
+fn commit_group<F: wire::Body>(
+    journal: &mut Journal,
+    group: &RoomAuthorityStamp,
+    body: F,
+) -> Commit {
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        wire::rooms::working_group_origin(group),
+        instant(),
+        Producer::CommandDoor,
+    );
+    write
+        .fact(body, FactCause::Root)
+        .expect("working-group fact builds");
+    journal.apply(write)
+}
+
 /// How an authorization write moves its controller's workflow.
 #[derive(Clone, Copy)]
 enum Conclusion {

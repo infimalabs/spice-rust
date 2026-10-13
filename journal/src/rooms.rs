@@ -20,10 +20,11 @@ use wire::rooms::{
     DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
     RetainedCandidate, RoomAnchor, RoomAuthorityStamp, RoomDelivered, RoomHorizon, RoomMessaged,
     RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk, WorkingGroupRemoved,
-    WorkingGroupStored,
+    WorkingGroupStored, working_group_origin,
 };
 use wire::{
-    Actor, AnyFact, CanonicalUuid, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead,
+    Actor, AnyFact, CanonicalUuid, Instant, Origin, Seq, TaskPreparation, TaskStamp,
+    TranscriptSourceHead,
 };
 
 mod conversation;
@@ -397,7 +398,7 @@ impl History {
                 refusals.push((seq, refusal));
                 continue;
             }
-            if let Err(refusal) = fold(&mut history, seq, at, actor, fact) {
+            if let Err(refusal) = fold(&mut history, seq, at, actor, None, fact) {
                 refusals.push((seq, refusal));
             }
         }
@@ -563,13 +564,32 @@ pub(crate) fn subject(proposal: &ProposalRef) -> Result<String, Refusal> {
         .map_err(|_| Refusal::Unsound("proposal subject is not text".to_owned()))
 }
 
+fn require_working_group_origin(
+    origin: Option<&Origin>,
+    group: &RoomAuthorityStamp,
+) -> Result<(), Refusal> {
+    let Some(origin) = origin else {
+        return Ok(());
+    };
+    let expected = working_group_origin(group);
+    if origin != &expected {
+        return unsound(format!(
+            "working group {group} authority must be written under {expected}, not {origin}"
+        ));
+    }
+    Ok(())
+}
+
 /// Admit one fact `actor` wrote at commit instant `at` against `authority` and
-/// apply its projection consequence.
+/// apply its projection consequence. A live commit supplies `origin`; history
+/// replay omits it so journals written before the group-origin invariant remain
+/// readable and can be replaced by reseeding their disposable demo root.
 pub(crate) fn fold(
     authority: &mut impl Authority,
     seq: Seq,
     at: Instant,
     actor: &Actor,
+    origin: Option<&Origin>,
     fact: &AnyFact,
 ) -> Result<(), Refusal> {
     if let Some(body) = fact.read::<wire::rooms::OutputControlled>() {
@@ -621,9 +641,11 @@ pub(crate) fn fold(
         return result;
     }
     if let Some(WorkingGroupStored { group }) = fact.read() {
+        require_working_group_origin(origin, &group.group)?;
         return store_group(authority, seq, &group);
     }
     if let Some(WorkingGroupRemoved { group }) = fact.read() {
+        require_working_group_origin(origin, &group)?;
         let key = group.to_string();
         if !authority.grouped(&key)? {
             return unsound(format!("working group {key} does not exist"));

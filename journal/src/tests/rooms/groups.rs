@@ -3,6 +3,23 @@
 use super::*;
 
 #[test]
+fn group_facts_commit_only_under_their_own_origin() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let anchor = task(&mut journal, 1, None);
+    let id = authority(7);
+    let stored = group(7, vec![anchor]);
+
+    let misplaced = commit(&mut journal, stored.clone());
+    refused(&journal, misplaced);
+    commit_group(&mut journal, &id, stored).expect("group stores under its own origin");
+
+    let removed = WorkingGroupRemoved { group: id.clone() };
+    let misplaced = commit(&mut journal, removed.clone());
+    refused(&journal, misplaced);
+    commit_group(&mut journal, &id, removed).expect("group removes under its own origin");
+}
+
+#[test]
 fn group_order_is_the_stored_order_and_removal_leaves_rooms_intact() {
     let mut journal = Journal::in_memory().expect("journal");
     let first = task(&mut journal, 1, None);
@@ -21,8 +38,9 @@ fn group_order_is_the_stored_order_and_removal_leaves_rooms_intact() {
             .expect("group reads")
     };
 
-    commit(
+    commit_group(
         &mut journal,
+        &id,
         group(7, vec![third.clone(), first.clone(), second.clone()]),
     )
     .expect("group stored");
@@ -34,19 +52,25 @@ fn group_order_is_the_stored_order_and_removal_leaves_rooms_intact() {
             1
         )
     );
-    commit(&mut journal, group(7, vec![first.clone(), third.clone()])).expect("group reordered");
+    commit_group(
+        &mut journal,
+        &id,
+        group(7, vec![first.clone(), third.clone()]),
+    )
+    .expect("group reordered");
     assert_eq!(
         read_group(&journal),
         (Some(vec![first.clone(), third.clone()]), Vec::new(), 1)
     );
     let absent = TaskStamp::for_micros(99_999).expect("absent stamp");
-    let result = commit(&mut journal, group(7, vec![first.clone(), absent]));
+    let result = commit_group(&mut journal, &id, group(7, vec![first.clone(), absent]));
     refused(&journal, result);
     journal.verify().expect("ordered groups verify");
 
-    commit(&mut journal, WorkingGroupRemoved { group: id.clone() }).expect("group removed");
+    commit_group(&mut journal, &id, WorkingGroupRemoved { group: id.clone() })
+        .expect("group removed");
     assert_eq!(read_group(&journal), (None, Vec::new(), 0));
-    let result = commit(&mut journal, WorkingGroupRemoved { group: id.clone() });
+    let result = commit_group(&mut journal, &id, WorkingGroupRemoved { group: id.clone() });
     refused(&journal, result);
     assert!(
         journal
@@ -54,7 +78,8 @@ fn group_order_is_the_stored_order_and_removal_leaves_rooms_intact() {
             .expect("room reads")
             .is_some()
     );
-    commit(&mut journal, group(7, vec![second.clone()])).expect("removed group recreates");
+    commit_group(&mut journal, &id, group(7, vec![second.clone()]))
+        .expect("removed group recreates");
     journal.verify().expect("group history verifies");
 }
 
@@ -63,8 +88,9 @@ fn group_indexes_page_by_bytes_and_fanout_without_gaps() {
     let mut journal = Journal::in_memory().expect("journal");
     let anchor = task(&mut journal, 1, None);
     let groups = [1, 2, 3].map(authority);
-    for micros in [1, 2, 3] {
-        commit(&mut journal, group(micros, vec![anchor.clone()])).expect("group commits");
+    for (micros, group_id) in [1, 2, 3].into_iter().zip(&groups) {
+        commit_group(&mut journal, group_id, group(micros, vec![anchor.clone()]))
+            .expect("group commits");
     }
 
     let row_limited = journal

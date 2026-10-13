@@ -5,7 +5,9 @@ use wire::intent::{
     WORKING_GROUP_PAGE_LIMIT_MAX, WorkingGroupAnchor, WorkingGroupChange, WorkingGroupChangeStatus,
     WorkingGroupPage, WorkingGroupPut, WorkingGroupRead, WorkingGroupRemove, WorkingGroupView,
 };
-use wire::rooms::{WORKING_GROUP_DESIGN_LIMIT, WorkingGroupRemoved, WorkingGroupStored};
+use wire::rooms::{
+    WORKING_GROUP_DESIGN_LIMIT, WorkingGroupRemoved, WorkingGroupStored, working_group_origin,
+};
 
 pub(super) fn read_working_groups(bus: &Bus, request: &WorkingGroupRead) -> Outcome<CommandAnswer> {
     if request.limit == 0 || request.limit > WORKING_GROUP_PAGE_LIMIT_MAX {
@@ -223,9 +225,7 @@ where
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = format!("group:{group}")
-        .parse()
-        .expect("a non-empty group stamp forms a structural origin");
+    let origin = working_group_origin(&group);
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     let mut expected = command.expected().to_vec();
     expected.extend(designs);

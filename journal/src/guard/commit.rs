@@ -61,6 +61,7 @@ impl Journal {
         fold_rooms(
             &transaction,
             &write.actor,
+            &write.origin,
             write.at,
             &write.facts,
             &assigned,
@@ -589,6 +590,7 @@ fn insert_facts(
 fn fold_rooms(
     transaction: &Transaction<'_>,
     actor: &wire::Actor,
+    origin: &wire::Origin,
     at: wire::Instant,
     facts: &[ProposedFact],
     assigned: &[wire::Seq],
@@ -597,7 +599,8 @@ fn fold_rooms(
     for (seq, proposed) in assigned.iter().zip(facts) {
         crate::rooms::fold_evidence(&mut stored, *seq, actor, &proposed.fact)
             .map_err(room_refusal)?;
-        crate::rooms::fold(&mut stored, *seq, at, actor, &proposed.fact).map_err(room_refusal)?;
+        crate::rooms::fold(&mut stored, *seq, at, actor, Some(origin), &proposed.fact)
+            .map_err(room_refusal)?;
     }
     Ok(())
 }

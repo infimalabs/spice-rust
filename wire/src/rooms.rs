@@ -19,7 +19,7 @@ pub use conversation::*;
 pub use relevance::*;
 
 use crate::{
-    CanonicalUuid, Digest, MessageLocus, Name, SequenceCode, TaskHandle, TaskPreparation,
+    CanonicalUuid, Digest, MessageLocus, Name, Origin, SequenceCode, TaskHandle, TaskPreparation,
     TaskStamp, TranscriptSourceHead,
 };
 
@@ -79,6 +79,14 @@ impl RoomAuthorityStamp {
     pub fn micros(&self) -> i64 {
         self.0.micros()
     }
+}
+
+/// Durable attribution chain for every fact governing `group`.
+#[must_use]
+pub fn working_group_origin(group: &RoomAuthorityStamp) -> Origin {
+    format!("group:{group}")
+        .parse()
+        .expect("a room-authority stamp forms a structural working-group origin")
 }
 
 impl FromStr for RoomAuthorityStamp {
