@@ -6,7 +6,7 @@
 //! a directed route, or does not currently listen to its room, is passed over:
 //! once a delivery lands, the cursor moves past it with the delivered items.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use wire::rooms::RoomAuthorityStamp;
 use wire::{CanonicalUuid, Seq, TaskStamp};
@@ -59,6 +59,8 @@ pub struct CatchUpSource {
     pub room: TaskStamp,
     /// Native identity of the publication.
     pub publication: RoomAuthorityStamp,
+    /// Journal-authored instant, paired with `publication` for total ordering.
+    pub at: wire::Instant,
     /// Lane that authored it; operator posts have none.
     pub author: Option<CanonicalUuid>,
     /// Lanes its packet already reached as directed routes.
@@ -101,18 +103,20 @@ pub fn select_catch_up(
     }
     let listened = rooms
         .iter()
-        .filter(|room| {
+        .filter_map(|room| {
             room.lanes
                 .iter()
-                .any(|attention| attention.lane == lane && attention.listens())
+                .find(|attention| attention.lane == lane)
+                .map(|attention| (&room.room, attention))
         })
-        .map(|room| &room.room)
-        .collect::<BTreeSet<_>>();
+        .collect::<BTreeMap<_, _>>();
     let mut selected = CatchUp::default();
     let mut bytes = 0usize;
     let mut passed = None;
     for source in sources.into_iter().filter(|source| source.seq > after) {
-        let owed = listened.contains(&source.room)
+        let owed = listened
+            .get(&source.room)
+            .is_some_and(|attention| attention.listens_to(source.at, &source.publication))
             && source.author != Some(lane)
             && !source.recipients.contains(&lane);
         if !owed {
@@ -170,6 +174,7 @@ mod tests {
                     participation: Vec::new(),
                     attention: vec![AttentionReason::Work { task: room.clone() }],
                     left: None,
+                    leave_intervals: Vec::new(),
                 })
                 .collect(),
         }
@@ -183,6 +188,9 @@ mod tests {
                 1_760_000_000_000_000 + i64::try_from(position).expect("small position"),
             )
             .expect("fixture publication"),
+            at: "2026-10-12T07:40:00.000Z"
+                .parse()
+                .expect("fixture publication instant"),
             author: None,
             recipients: BTreeSet::new(),
             bytes,
