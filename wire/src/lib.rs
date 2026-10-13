@@ -95,9 +95,9 @@ pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState,
     LaneRenewalRecord, LaneRenewalState, LaneResidency, LaneSession, LeaseHead, RenewalIdentity,
-    ResidencyHead, ResidentState, SteeringHead, TapeLocus, TaskEvidenceEdit, TaskHead, TaskIntent,
-    TaskIntentEdit, TaskPreparation, TeamSubscription, TranscriptSourceHead, TranscriptStreamKey,
-    TrustHead, TrustState, WitnessClass, WitnessHead, WorkflowHead,
+    ResidencyHead, ResidentState, SeatRefusal, SteeringHead, TapeLocus, TaskEvidenceEdit, TaskHead,
+    TaskIntent, TaskIntentEdit, TaskPreparation, TeamSubscription, TranscriptSourceHead,
+    TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead, WorkflowHead,
 };
 pub use hello::{
     Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,

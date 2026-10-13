@@ -56,6 +56,11 @@ per lane currently claiming an open task associated with any of its designs.
 That lane list is derived from board claims on every read; the group stores
 and grants none of it.
 
+A design composer's cue states that posts are recorded in the room for its
+listeners and ask no lane for anything: a post never wakes, obligates, or
+directs a lane. Asking a lane goes through the design menu's coordination
+controls.
+
 ## Preparation authority
 
 A room for a controlling task shows its retained candidate, critique, review
@@ -80,9 +85,26 @@ room command adds no other eligibility or possession rule.
 Put aside cancels only unanswered coordination for that room. If the anchor has
 a native holder, it sends that holder a checkpoint/free direction and shows a
 stop request until that exact claim is completed, freed, or lapsed; it never
-force-frees work or releases child claims and unrelated direction. The
-initiating browser hides the room locally. Room history, drafts, groups,
-selected outputs, other browsers, and repository authority remain unchanged.
+force-frees work or releases child claims and unrelated direction. The answer
+asks its initiating consumer to hide the room locally; the team console keeps
+the design's composer, since the group partition decides what it shows. Room
+history, drafts, groups, selected outputs, other browsers, and repository
+authority remain unchanged.
+
+The design menu's **Coordinate** form, beneath the room's standing, offers
+these commands while the anchor is unresolved. A lane address field suggests
+each occupied seat's address with its lane name; Criterion, Contribution, Stop
+when, and an optional Auto-resume limit from 1 through 8 complete Start and
+Resume, and Put aside needs only the room. Each button stays disabled while the
+resident does not offer its command. Before submitting, the browser resolves
+the address against the board's residency and addresses with the resident's
+own rule: an unknown, vacant, or simulated seat refuses in place with the
+resident's reason and explanation, and nothing is written. The submission
+witnesses the anchor's statement, workflow, and claim heads and the target
+seat's residency, so a moved anchor or seat refuses with the resident's
+reason. The composer's report names the request key and target, any remaining
+auto-resume budget, or after Put aside the stop request's key, target, and
+claim, which stays held until its holder settles it.
 
 The native command surface is `spice room status HANDLE`,
 `spice room start|resume HANDLE ADDRESS --criterion TEXT --contribution TEXT

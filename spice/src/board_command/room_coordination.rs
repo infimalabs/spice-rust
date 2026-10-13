@@ -722,23 +722,30 @@ fn admit_request(
     }))
 }
 
+/// Resolve `target` to the lane and occupant of the occupied seat it names.
+pub(super) fn coordinate_target(
+    board: &BoardAnswer,
+    target: OccupantAddress,
+) -> Result<(CanonicalUuid, CanonicalUuid), Outcome<CommandAnswer>> {
+    board
+        .residency
+        .body
+        .occupied_seat(&board.addresses, target)
+        .map_err(|seat| {
+            refusal(
+                seat.reason(),
+                Some(seat.observed(target)),
+                &seat.explanation(target),
+            )
+        })
+}
+
 fn admit_target(
     snapshot: &ValidatedSnapshot,
     anchor: &wire::intent::BoardTask,
     target: OccupantAddress,
 ) -> Result<CanonicalUuid, Outcome<CommandAnswer>> {
-    let lane = snapshot
-        .answer
-        .addresses
-        .iter()
-        .find_map(|(lane, address)| (address.address() == Some(target)).then_some(*lane))
-        .ok_or_else(|| {
-            refusal(
-                "room::address-unavailable",
-                Some(target.to_string()),
-                "choose the current base-52 address of a seated occupant",
-            )
-        })?;
+    let (lane, _) = coordinate_target(&snapshot.answer, target)?;
     if let Some(claim) = anchor.claim.as_ref()
         && claim.body.disposition == ClaimDisposition::Active
     {

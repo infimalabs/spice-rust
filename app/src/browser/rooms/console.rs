@@ -444,6 +444,9 @@ fn room_card(
     }
 }
 
+/// What a design composer's post does: it records and asks no lane.
+const POST_CUE: &str = "Posts are recorded in this room for its listeners; they ask no lane for anything. To ask a lane, use Coordinate in this design's menu.";
+
 /// One design's composer: its heading and menu, the textarea posting to
 /// exactly that design's room, and the quote shards drafted beneath it. A
 /// settled design's room takes no new posts, so its composer names that
@@ -544,6 +547,7 @@ fn render_design_composer(
                             onclick={Callback::from(move |_| post.emit(()))}
                         >{"Post"}</button>
                     </header>
+                    <p class="composer-shard-cue" data-room-post-cue="">{POST_CUE}</p>
                     <ComposerTextarea
                         key={drawn.clone()}
                         id={textarea_id.clone()}
@@ -598,8 +602,9 @@ fn render_settled_design(
 }
 
 /// A design's menu carries what its room holds besides conversation: its
-/// standing, its preparation authority and, for an OOPS batch, the grooming
-/// form. Its group rail mirrors an agent's team rail.
+/// standing, the coordination that asks a lane for a contribution, its
+/// preparation authority and, for an OOPS batch, the grooming form. Its group
+/// rail mirrors an agent's team rail.
 fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
     let label = format!("Menu for {}", channel.label);
     html! {
@@ -624,6 +629,7 @@ fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
                 </header>
                 {render_group_actions(render, channel)}
                 {super::standing::render_standing(render.runtime, &channel.stamp)}
+                {super::coordination::coordination_form(render.runtime, &toast(render), render.sender, &channel.stamp)}
                 {render_preparation(render.runtime, &channel.stamp)}
                 {oops_grooming_form(render.runtime, &toast(render), render.sender, &channel.stamp)}
             </div>

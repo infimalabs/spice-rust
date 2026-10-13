@@ -730,8 +730,11 @@ mod tests {
             offer: Vec::new(),
             blocked,
             quote_tasks: std::rc::Rc::default(),
-            resident: wire::ResidentState::Seated,
             environment: Environment::journal_schema(1).expect("fixture schema"),
+            seats: crate::runtime::Seats::new(
+                crate::work::tests::residency(),
+                std::collections::BTreeMap::new(),
+            ),
         }
     }
 

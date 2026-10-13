@@ -9,6 +9,8 @@ pub(crate) type GroupResponse =
 pub(crate) type RoomPostResponse = std::rc::Rc<dyn Fn(Result<wire::rooms::RoomPostAnswer, String>)>;
 pub(crate) type RoomControlResponse =
     std::rc::Rc<dyn Fn(Result<wire::intent::RoomControlAnswer, String>)>;
+pub(crate) type RoomCoordinationResponse =
+    std::rc::Rc<dyn Fn(Result<wire::intent::RoomCoordinationView, String>)>;
 
 /// One complete room publication request retained by the bounded action mailbox.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
@@ -27,6 +29,22 @@ pub(crate) struct RoomPostAction {
 pub(crate) enum RoomControlRequest {
     Control(wire::intent::RoomControl),
     Close(wire::intent::RoomClose),
+}
+
+/// One room's coordination: a Start or Resume asking one occupied seat for a
+/// bounded contribution, or putting the room aside.
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+pub(crate) enum RoomCoordinationRequest {
+    /// The request, and the anchor and target heads it was drawn from.
+    Coordinate {
+        request: wire::intent::RoomCoordinate,
+        expected: Vec<wire::Witness>,
+    },
+    /// Put the room aside at the anchor heads it was drawn from.
+    PutAside {
+        request: wire::intent::RoomPutAside,
+        expected: Vec<wire::Witness>,
+    },
 }
 
 /// What one working-group change asks the authority for.
@@ -62,6 +80,11 @@ pub(crate) enum ClientAction {
     RoomControl {
         request: RoomControlRequest,
         respond: RoomControlResponse,
+    },
+    /// Start, resume, or put aside one room's coordination.
+    RoomCoordination {
+        request: RoomCoordinationRequest,
+        respond: RoomCoordinationResponse,
     },
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,

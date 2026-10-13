@@ -241,6 +241,7 @@ impl PendingKind {
             | Self::WorkingGroup { .. }
             | Self::RoomPost { .. }
             | Self::RoomControl { .. }
+            | Self::RoomCoordination { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
             | Self::TrustGrant { .. }
@@ -483,6 +484,20 @@ impl ClientAction {
                     .as_str()
                     .len()
                     .saturating_add(close.clause.len()),
+            },
+            Self::RoomCoordination { request, .. } => match request {
+                crate::client_action::RoomCoordinationRequest::Coordinate { request, .. } => {
+                    request
+                        .room
+                        .as_str()
+                        .len()
+                        .saturating_add(request.criterion.len())
+                        .saturating_add(request.contribution.len())
+                        .saturating_add(request.stop.len())
+                }
+                crate::client_action::RoomCoordinationRequest::PutAside { request, .. } => {
+                    request.room.as_str().len()
+                }
             },
             Self::ArrangeTeams { teams, .. } => teams.iter().fold(
                 teams.len() * std::mem::size_of::<wire::intent::TeamArrangement>(),

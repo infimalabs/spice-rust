@@ -103,6 +103,9 @@ pub(crate) enum PendingKind {
     RoomControl {
         respond: client_action::RoomControlResponse,
     },
+    RoomCoordination {
+        respond: client_action::RoomCoordinationResponse,
+    },
     Board,
     Lanes {
         wakes: Vec<wire::CanonicalUuid>,

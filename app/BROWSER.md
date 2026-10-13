@@ -125,11 +125,14 @@ A design's composer posts the guarded native room-post command to exactly that
 design's room on **Post** or Control/Command+Enter. Quoting an operator-authored
 card drafts a `spice://quote/v1/room/ROOM/PUBLICATION/DIGEST` shard above that
 design's composer, the same shard a team composer drafts, and steering delivery
-expands it from the room's journal record. Room posts carry no images. An
-admitted reply clears the composer only while it still holds exactly the
-posted text and shards; a refusal keeps everything and shows in the composer
-toast. The design's menu carries its preparation authority and, for an open
-OOPS batch, the grooming form below.
+expands it from the room's journal record. Room posts carry no images. A post
+is recorded in the room and asks no lane for anything, which the composer's cue
+states. An admitted reply clears the composer only while it still holds
+exactly the posted text and shards; a refusal keeps everything and shows in
+the composer toast. The design's menu carries its standing, the
+[coordination controls](CONSOLE.md#room-coordination) that ask a seated lane
+for a contribution or put the room aside, its preparation authority and, for
+an open OOPS batch, the grooming form below.
 
 Operator posts and lane MSG, ASK, and ANS publications share one card family:
 sender → destinations, verb, and text. A lane's own bytes come from its

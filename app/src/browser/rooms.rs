@@ -25,6 +25,7 @@ use crate::roster::{Change, Destination};
 use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 
 mod console;
+mod coordination;
 mod standing;
 pub(super) use console::{GroupRender, render_group_surfaces};
 
