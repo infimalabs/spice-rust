@@ -90,26 +90,41 @@ fn design_controller(
     ))
 }
 
-/// Admit an authorization's controller: a witnessed, pending, unclaimed
-/// Design with no unsettled dependency, so a review finding's corrections
-/// settle before the authorization concludes it.
+/// Admit an authorization's controller: a witnessed, pending Design with no
+/// unsettled dependency. An active claim is admitted only once that Design is
+/// parked awaiting this selection; authorization then concludes the Design and
+/// releases the parked claim atomically.
 fn require_open_design(
     command: &wire::AdmittedCommand,
     snapshot: &bus::TaskSnapshot,
     heads: &journal::TaskHeads,
     controller: &TaskStamp,
-) -> Result<(), Outcome<CommandAnswer>> {
+) -> Result<Option<ClaimHead>, Outcome<CommandAnswer>> {
     require_transition_witnesses(command, heads)?;
     design_controller(heads, controller)?;
-    if heads.workflow().body().status != "pending"
-        || heads.workflow().body().completion.is_some()
-        || active_claim(heads)
-    {
+    if heads.workflow().body().status != "pending" || heads.workflow().body().completion.is_some() {
         return Err(refusal(
             "preparation::controller-not-open",
             Some(controller.to_string()),
-            "free any active claim and authorize while the preparation controller is pending",
+            "authorize while the preparation controller is pending",
         ));
+    }
+    let claim = heads
+        .claim()
+        .filter(|claim| claim.body().disposition == ClaimDisposition::Active)
+        .map(|claim| claim.body().clone());
+    if claim.is_some() {
+        let mut resolved = board::ResolvedTasks::new();
+        for task in snapshot.tasks() {
+            resolved.observe(task.statement().body(), task.workflow().body());
+        }
+        if !resolved.awaits_selection(heads.statement().body(), heads.workflow().body()) {
+            return Err(refusal(
+                "preparation::controller-not-open",
+                Some(controller.to_string()),
+                "free an active Design before authorizing unless it is parked awaiting selection",
+            ));
+        }
     }
     for dependency in &heads.statement().body().dependencies {
         if task_heads(snapshot, dependency)?.workflow().body().status == "pending" {
@@ -121,7 +136,7 @@ fn require_open_design(
             ));
         }
     }
-    Ok(())
+    Ok(claim)
 }
 
 pub(super) fn retain_candidate(
@@ -338,14 +353,15 @@ pub(super) fn authorize_execution(
         Ok(heads) => heads,
         Err(outcome) => return outcome,
     };
-    if let Err(outcome) = require_open_design(
+    let controller_claim = match require_open_design(
         command,
         &snapshot,
         controller,
         &authorization.candidate.controller,
     ) {
-        return outcome;
-    }
+        Ok(claim) => claim,
+        Err(outcome) => return outcome,
+    };
     let mut outputs = Vec::with_capacity(authorization.selected_outputs.len());
     for output in &authorization.selected_outputs {
         let heads = match task_heads(&snapshot, output) {
@@ -407,12 +423,13 @@ pub(super) fn authorize_execution(
     let workflow = controller.workflow().body().clone();
     let controller_stamp = authorization.candidate.controller.clone();
     let completion = at;
-    write.workflow_head(controller_stamp, fact, move |_| WorkflowHead {
+    write.workflow_head(controller_stamp.clone(), fact, move |_| WorkflowHead {
         status: "completed".to_owned(),
         completion: Some(completion),
         assignment: None,
         ..workflow
     });
+    release_parked_claim(&mut write, controller_stamp, fact, controller_claim);
     for output in outputs {
         let decision = authorization.decision.clone();
         write.task_head(fact, move |revision| TaskHead {
@@ -677,6 +694,19 @@ fn task_heads<'a>(
                 "read the current board and name an existing task",
             )
         })
+}
+
+fn release_parked_claim(
+    write: &mut JournalWrite,
+    controller: TaskStamp,
+    fact: PendingFact,
+    claim: Option<ClaimHead>,
+) {
+    let Some(mut claim) = claim else {
+        return;
+    };
+    claim.disposition = ClaimDisposition::Freed;
+    write.claim_head(controller, fact, move |fact| ClaimHead { fact, ..claim });
 }
 
 fn active_claim(heads: &journal::TaskHeads) -> bool {
