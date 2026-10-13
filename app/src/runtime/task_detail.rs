@@ -186,13 +186,19 @@ impl AppRuntime {
     }
 
     /// Apply one correlated detail response without crossing capability scope.
-    /// A response whose surface closed while it was in flight is discarded.
+    /// A response whose surface closed while it was in flight forgets that
+    /// task's detail, so showing it again reads current detail instead of
+    /// keeping a refresh nothing will answer.
     pub fn apply_task_detail(
         &mut self,
         task: &TaskStamp,
         admitted: &Admitted<Response<TaskDetailAnswer>>,
     ) {
-        if admitted.scope() != self.accepted.scope() || !self.task_details.shown.contains(task) {
+        if admitted.scope() != self.accepted.scope() {
+            return;
+        }
+        if !self.task_details.shown.contains(task) {
+            self.task_details.states.remove(task);
             return;
         }
         let state = match &admitted.get().outcome {

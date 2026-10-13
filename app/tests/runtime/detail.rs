@@ -266,6 +266,44 @@ fn a_command_settling_after_deselection_creates_no_hidden_detail_demand() {
     );
 }
 
+#[test]
+fn a_refresh_settling_after_deselection_is_read_again_when_shown_again() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    let task = fixture_stamp("detail-refresh-hidden");
+    let answer = |text| detail_response(&session, detail_answer("detail-refresh-hidden", text));
+    runtime.show_task_details([task.clone()]);
+    runtime.take_task_detail_reads(usize::MAX, |_| false);
+    runtime.apply_task_detail(&task, &answer("old"));
+    assert!(runtime.invalidate_task_detail(&task));
+    assert_eq!(
+        runtime.take_task_detail_reads(usize::MAX, |_| false),
+        vec![task.clone()]
+    );
+
+    runtime.show_task_details([]);
+    runtime.apply_task_detail(&task, &answer("in flight"));
+    assert_eq!(
+        runtime.task_detail(&task),
+        None,
+        "a refresh answered after deselection forgets the hidden detail"
+    );
+
+    assert!(runtime.show_task_details([task.clone()]));
+    assert_eq!(runtime.task_detail(&task), Some(&TaskDetailState::Loading));
+    assert_eq!(
+        runtime.take_task_detail_reads(usize::MAX, |_| false),
+        vec![task.clone()],
+        "showing it again owes exactly one read"
+    );
+    runtime.apply_task_detail(&task, &answer("current"));
+    assert!(matches!(
+        runtime.task_detail(&task),
+        Some(TaskDetailState::Available(answer)) if answer.notes[0].text == "current"
+    ));
+}
+
 /// Drives the connection's pump against a mailbox that holds `limit` reads
 /// and refuses the next `refusals` sends, answering the oldest in-flight read
 /// between passes. A refusal leaves the rest of that pass owed, as the pump

@@ -67,8 +67,8 @@ external task follows that lead in the same overview. A selection of any size
 hydrates every section: the app keeps a bounded number of detail reads in
 flight beside its other reads and actions, asks for the rest as those answer,
 and reads a task again after a change or reconnect only while it is selected.
-A command that settles after selection moved creates no hidden read; opening
-that task again reads its current detail.
+A command or detail read that settles after selection moved creates no hidden
+read; opening that task again reads its current detail.
 
 **Running jobs** closes the sheet, after every task's details, in a fixed
 footprint that scrolls beyond it.
