@@ -281,6 +281,27 @@ impl AttentionReason {
     }
 }
 
+/// One interval during which a leave ended derived room listening.
+///
+/// Native duties are not subject to these intervals. Bounds use the admitted
+/// publication order so catch-up can judge old sources after listening is
+/// restored without moving the lane-global cursor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoomLeaveInterval {
+    after: RoomAttentionPoint,
+    until: Option<RoomAttentionPoint>,
+}
+
+impl RoomLeaveInterval {
+    fn contains(&self, at: Instant, publication: &RoomAuthorityStamp) -> bool {
+        let point = RoomAttentionPoint {
+            at,
+            publication: Some(publication.clone()),
+        };
+        point > self.after && self.until.as_ref().is_none_or(|until| point < *until)
+    }
+}
+
 /// Current availability of a lane named by the projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LaneAvailability {
@@ -304,6 +325,9 @@ pub struct RoomLaneAttention {
     /// The lane's leave in force: no contribution followed it. Only native
     /// duties and later invitations remain in `attention`.
     pub left: Option<RoomAuthorityStamp>,
+    /// Derived-listening intervals ended by a leave. Retained after a return so
+    /// publications skipped while left never become owed retroactively.
+    pub leave_intervals: Vec<RoomLeaveInterval>,
 }
 
 impl RoomLaneAttention {
@@ -318,6 +342,17 @@ impl RoomLaneAttention {
     pub fn listens(&self) -> bool {
         !self.attention.is_empty()
     }
+
+    /// Whether current authority admits this historical publication.
+    #[must_use]
+    fn listens_to(&self, at: Instant, publication: &RoomAuthorityStamp) -> bool {
+        self.listens()
+            && (self.attention.iter().any(AttentionReason::is_native)
+                || !self
+                    .leave_intervals
+                    .iter()
+                    .any(|interval| interval.contains(at, publication)))
+    }
 }
 
 /// Deterministic participation and listener view for one anchor task.
@@ -328,12 +363,27 @@ pub struct RoomAttention {
     pub lanes: Vec<RoomLaneAttention>,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct RoomAttentionPoint {
+    at: Instant,
+    /// Invitations have no room publication identity and are admitted only
+    /// when their instant is strictly later than the leave they restore.
+    publication: Option<RoomAuthorityStamp>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum DerivedListeningEvent {
+    Restore,
+    Leave,
+}
+
 #[derive(Default)]
 struct LaneFold {
     participation: BTreeSet<ParticipationReason>,
     attention: BTreeSet<AttentionReason>,
     latest_activity: Option<(Instant, RoomAuthorityStamp)>,
     latest_leave: Option<(Instant, RoomAuthorityStamp)>,
+    derived_listening: Vec<(RoomAttentionPoint, DerivedListeningEvent)>,
 }
 
 impl LaneFold {
@@ -344,6 +394,34 @@ impl LaneFold {
                 .as_ref()
                 .is_none_or(|known| *leave > known)
         })
+    }
+
+    fn take_leave_intervals(&mut self) -> Vec<RoomLeaveInterval> {
+        let mut events = std::mem::take(&mut self.derived_listening);
+        events.sort_unstable();
+        let mut intervals = Vec::new();
+        let mut left = None;
+        for (point, event) in events {
+            match event {
+                DerivedListeningEvent::Leave => {
+                    left.get_or_insert(point);
+                }
+                DerivedListeningEvent::Restore => {
+                    if let Some(after) = left.take()
+                        && point > after
+                    {
+                        intervals.push(RoomLeaveInterval {
+                            after,
+                            until: Some(point),
+                        });
+                    }
+                }
+            }
+        }
+        if let Some(after) = left {
+            intervals.push(RoomLeaveInterval { after, until: None });
+        }
+        intervals
     }
 }
 
@@ -496,12 +574,24 @@ fn fold_publications(
         seen.insert(publication.clone(), (lane, envelope.at));
         let folded = lane_fold(lanes, lane, maximum)?;
         let observed = (envelope.at, publication.clone());
+        let event = RoomAttentionPoint {
+            at: envelope.at,
+            publication: Some(publication.clone()),
+        };
         let latest = if left.is_some() {
+            folded
+                .derived_listening
+                .push((event, DerivedListeningEvent::Leave));
             &mut folded.latest_leave
         } else {
             folded
                 .participation
-                .insert(ParticipationReason::Contribution { publication });
+                .insert(ParticipationReason::Contribution {
+                    publication: publication.clone(),
+                });
+            folded
+                .derived_listening
+                .push((event, DerivedListeningEvent::Restore));
             &mut folded.latest_activity
         };
         if latest.as_ref().is_none_or(|known| observed > *known) {
@@ -535,6 +625,13 @@ fn fold_attention(
                 if folded.leave().is_some_and(|(left, _)| at <= left) {
                     continue;
                 }
+                folded.derived_listening.push((
+                    RoomAttentionPoint {
+                        at: *at,
+                        publication: None,
+                    },
+                    DerivedListeningEvent::Restore,
+                ));
                 AttentionReason::Invitation { key: key.clone() }
             }
             RoomDutyKind::Delivery { key } => AttentionReason::Delivery { key: key.clone() },
@@ -569,6 +666,7 @@ fn finish_lanes(
         .into_iter()
         .map(|(lane, mut folded)| {
             let left = folded.leave().map(|(_, publication)| publication.clone());
+            let leave_intervals = folded.take_leave_intervals();
             if left.is_none()
                 && let Some((at, publication)) = folded.latest_activity
                 && at >= activity_since
@@ -586,6 +684,7 @@ fn finish_lanes(
                 participation: folded.participation.into_iter().collect(),
                 attention: folded.attention.into_iter().collect(),
                 left,
+                leave_intervals,
             }
         })
         .collect()
@@ -761,9 +860,13 @@ mod tests {
     fn a_leave_ends_derived_listening_until_the_lane_returns() {
         let room = task("1kKRRsDR0");
         let lane_id = uuid("01");
+        let peer = uuid("06");
         let topology = residency(vec![lane(lane_id, Some(uuid("02")))]);
         let contributed = publication(&room, "1kKRRsDR1", lane_id, at(40), 1);
         let left = leave(&room, "1kKRRsDR2", lane_id, at(41), 2);
+        let missed = publication(&room, "1kKRRsDR3", peer, at(42), 3);
+        let returned_contribution = publication(&room, "1kKRRsDR4", lane_id, at(43), 4);
+        let after_return = publication(&room, "1kKRRsDR5", peer, at(44), 5);
         let earlier = invitation(&room, lane_id, "1kKRRsDS0", at(40));
 
         let row = project_one(
@@ -791,13 +894,18 @@ mod tests {
                 key: "1kKRRsDS1".to_owned()
             }]
         );
+        let candidate = "1kKRRsDR3".parse().expect("candidate publication identity");
+        assert!(!invited.listens_to(at(41), &candidate));
+        assert!(invited.listens_to(at(42), &candidate));
 
         let returned = project_one(
             &room,
             &[
                 contributed,
                 left,
-                publication(&room, "1kKRRsDR3", lane_id, at(43), 3),
+                missed,
+                returned_contribution,
+                after_return,
             ],
             &[],
             &[],
@@ -808,6 +916,36 @@ mod tests {
             returned.attention.as_slice(),
             [AttentionReason::Activity { .. }]
         ));
+
+        let source = |seq: u64, publication: &str, minute| CatchUpSource {
+            seq: Seq::new(seq).expect("positive source position"),
+            room: room.clone(),
+            publication: publication.parse().expect("publication identity"),
+            at: at(minute),
+            author: Some(peer),
+            recipients: BTreeSet::new(),
+            bytes: 10,
+        };
+        let catch_up = select_catch_up(
+            lane_id,
+            Seq::new(2).expect("positive cursor"),
+            &[RoomAttention {
+                room: room.clone(),
+                lanes: vec![returned],
+            }],
+            vec![source(3, "1kKRRsDR3", 42), source(5, "1kKRRsDR5", 44)],
+            CatchUpBudget::STANDARD,
+        )
+        .expect("catch-up selects");
+        assert_eq!(
+            catch_up
+                .items
+                .iter()
+                .map(|item| item.seq.get())
+                .collect::<Vec<_>>(),
+            [5],
+            "the publication skipped while left never replays after return"
+        );
     }
 
     #[test]
