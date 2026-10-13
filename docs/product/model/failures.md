@@ -60,7 +60,7 @@ Recovery messages follow the [refusal grammar](decisions.md#refusal-grammar-repa
 | **preparation** | a task's recorded parent, controller, and construction owner | a prerequisite; an associated preparation stays schedulable |
 | **controller** | the Plan or Design whose positive conclusion and authorization govern an output | every ancestor, origin, or dependency |
 | **gated output** | pending controlled work that lacks execution authorization | a held claim, a deferral, or another task status |
-| **execution authorization** | operator-attributed permission for one exact output, by working-group engagement or by decision | a claim release, wake, receipt, review, or closure |
+| **execution authorization** | operator-attributed permission for one exact Design output selected from an accepted candidate | a working-group move, claim release, wake, receipt, review, or closure |
 | **question result** | an ASK's substantive outcome under an immutable deadline | the ASK's delivery receipt |
 | **footprint** | the task-owned path boundary defined by [landing](boundaries.md#landing-refusals) | the integrated diff |
 | **baseline** | shared line a lane integrates with | an agent-facing upstream |

@@ -28,8 +28,7 @@ pub(super) fn dispatch_preparation(
 }
 
 /// Refuse a positive controller conclusion while any live controlled output
-/// still lacks an authorization: that controller's exact execution
-/// authorization or the operator's engagement of it in a working group.
+/// still lacks its exact operator execution authorization.
 ///
 /// Operator close and delete are separate, explicit negative dispositions.
 /// They intentionally leave controlled outputs gated and do not call this
@@ -60,12 +59,9 @@ pub(super) fn require_no_pending_controlled_outputs(
     Err(refusal(
         "preparation::controlled-outputs-pending",
         Some(outputs.join(", ")),
-        &format!(
-            "place {} in a working group to authorize its outputs, authorize the exact accepted \
-             selection with `spice preparation authorize AUTHORIZATION_JSON`, or close or delete \
-             each unselected output before concluding it",
-            controller.handle()
-        ),
+        "authorize the exact accepted selection with `spice preparation authorize \
+         AUTHORIZATION_JSON`, or close or delete each unselected output before concluding the \
+         controller",
     ))
 }
 
@@ -474,13 +470,10 @@ pub(super) fn adopt_output(
         Ok(fact) => fact,
         Err(error) => return store_fault("preparation::adoption-invalid", &error.to_string()),
     };
-    let mut head = TaskHead {
+    let head = TaskHead {
         preparation: Some(preparation),
         ..output_heads.statement().body().clone()
     };
-    if let Err(outcome) = super::engagement::engage(bus, &mut head) {
-        return outcome;
-    }
     write.task_head(fact, move |revision| TaskHead { revision, ..head });
     let answer = TextAnswer {
         text: format!(

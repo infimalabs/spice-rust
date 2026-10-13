@@ -603,9 +603,9 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
 }
 
 /// A controlled output waits for its preparation and controller to conclude
-/// positively and for its own authorization: selection by that controller's
-/// execution authorization or the operator's engagement of the controller in a
-/// working group. Nothing else, including operator closure, releases it.
+/// positively and for its own exact execution authorization. A retained
+/// pre-cutover group marker remains eligible as immutable history. Nothing
+/// else, including current group membership or operator closure, releases it.
 fn control_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
     let statement = entry.statement();
     let Some(preparation) = &statement.preparation else {

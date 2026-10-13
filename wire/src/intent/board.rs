@@ -734,7 +734,7 @@ pub struct BoardStatement {
         deserialize_with = "crate::optional::present"
     )]
     pub authorization: Option<crate::rooms::DecisionRef>,
-    /// Operator working-group fact that authorized this output by engagement.
+    /// Retained pre-cutover working-group position; current writes never add it.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

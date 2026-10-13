@@ -604,6 +604,17 @@ fn assert_controlled_output_refusal(outcome: Outcome<CommandAnswer>, outputs: &[
             "refusal omitted pending output {output}: {observed}"
         );
     }
+    let detail = refusal
+        .diagnostic()
+        .and_then(wire::RefusalDiagnostic::detail)
+        .expect("refusal names the authorization or settlement repair");
+    assert!(
+        detail.contains("spice preparation authorize")
+            && detail.contains("close or delete")
+            && !detail.contains("working group")
+            && !detail.contains("engag"),
+        "controlled-output repair must not offer group engagement: {detail}"
+    );
 }
 
 #[test]
@@ -820,81 +831,90 @@ fn review_clean(
     )
 }
 
-/// Claim every task in `outputs`, one per seat, in whichever order the
-/// allocator selects them; panics when any output is not eligible.
-fn claim_all(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat], mut outputs: Vec<TaskHandle>) {
-    for seat in seats {
-        let lane = Actor::Lane(seat.lane);
-        let available = board(bus, epoch, lane.clone());
-        let won = outputs.iter().position(|task| {
-            matches!(
-                issue(
-                    bus,
-                    epoch,
-                    lane.clone(),
-                    CommandKind::ClaimWin,
-                    claim_expected(&available, task, seat),
-                    &ClaimWin {
-                        rule: "next".parse().expect("allocator rule"),
-                        recovery: None,
-                    },
-                ),
-                Outcome::Reply(_)
-            )
-        });
-        outputs.remove(won.expect("an authorized output is eligible"));
-    }
-    assert!(outputs.is_empty(), "outputs stayed ineligible: {outputs:?}");
+fn complete(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    task: &TaskHandle,
+) -> Outcome<CommandAnswer> {
+    let actor = Actor::Lane(seat.lane);
+    let held = board(bus, epoch, actor.clone());
+    issue(
+        bus,
+        epoch,
+        actor,
+        CommandKind::TaskDone,
+        progress_witnesses(&held, at(&held, task), seat.lane, seat.occupant, false)
+            .expect("completion witnesses"),
+        &TaskDone {
+            task: task.clone(),
+            validation: "the Design is complete".to_owned(),
+            operation: Some(completion_operation()),
+        },
+    )
 }
 
 #[test]
-fn working_group_engagement_authorizes_a_design_outputs_once_and_disengagement_stops_later_grants()
-{
-    let (root, bus, epoch, seats) = fixture("preparation-engagement", 4);
+fn working_group_moves_organize_designs_without_authorizing_outputs() {
+    let (root, bus, epoch, seats) = fixture("preparation-group-organization", 2);
     let design = add_controller(
         &bus,
         epoch,
-        "Engaged design",
+        "Grouped design",
         wire::TaskIntent::Design,
         Some("review"),
     );
     let current = add_output(&bus, epoch, &design, "Current output");
-    assert_eq!(engagement(&bus, epoch, &current), None);
 
-    // Dropping the Design into a working group authorizes its current output
-    // and every output it gains while anchored, through the one operator fact.
     let group = RoomAuthorityStamp::for_micros(1_760_000_000_000_000).expect("fixture group");
-    move_design(&bus, epoch, stamp("Engaged design"), Some(&group));
-    let granted = engagement(&bus, epoch, &current).expect("activation authorizes");
+    move_design(&bus, epoch, stamp("Grouped design"), Some(&group));
     let later = add_output(&bus, epoch, &design, "Later output");
-    assert_eq!(engagement(&bus, epoch, &later), Some(granted));
-    assert_eq!(
-        open_blocked(&bus, epoch),
-        [&current, &later]
-            .map(|task| task.born().expect("output stamp"))
-            .into(),
-        "engagement waits for its Design to conclude"
-    );
+    for output in [&current, &later] {
+        assert_eq!(
+            engagement(&bus, epoch, output),
+            None,
+            "group organization granted output authority"
+        );
+    }
 
-    // Leaving every group stops later grants and revokes none.
-    move_design(&bus, epoch, stamp("Engaged design"), None);
-    let stray = add_output(&bus, epoch, &design, "Stray output");
-    assert_eq!(engagement(&bus, epoch, &stray), None);
-    assert_eq!(engagement(&bus, epoch, &current), Some(granted));
-    assert_eq!(engagement(&bus, epoch, &later), Some(granted));
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
-    assert_controlled_output_refusal(review_clean(&bus, epoch, &seats[0], &design), &[&stray]);
-
-    // Engaging again authorizes the stray output without moving earlier grants,
-    // and a clean review then concludes the Design with every output eligible.
+    move_design(&bus, epoch, stamp("Grouped design"), None);
     let regroup = RoomAuthorityStamp::for_micros(1_760_000_000_000_001).expect("fixture group");
-    move_design(&bus, epoch, stamp("Engaged design"), Some(&regroup));
-    let regranted = engagement(&bus, epoch, &stray).expect("re-engagement authorizes");
-    assert_ne!(regranted, granted);
-    assert_eq!(engagement(&bus, epoch, &current), Some(granted));
-    assert_committed(review_clean(&bus, epoch, &seats[0], &design));
-    assert!(open_blocked(&bus, epoch).is_empty());
-    claim_all(&bus, epoch, &seats[1..], vec![current, later, stray]);
+    move_design(&bus, epoch, stamp("Grouped design"), Some(&regroup));
+    for output in [&current, &later] {
+        assert_eq!(
+            engagement(&bus, epoch, output),
+            None,
+            "regrouping granted output authority"
+        );
+    }
+
+    let done_design = add_controller(
+        &bus,
+        epoch,
+        "Grouped done design",
+        wire::TaskIntent::Design,
+        Some("design"),
+    );
+    let done_output = add_output(&bus, epoch, &done_design, "Done output");
+    let done_group = RoomAuthorityStamp::for_micros(1_760_000_000_000_002).expect("fixture group");
+    move_design(&bus, epoch, stamp("Grouped done design"), Some(&done_group));
+    assert_eq!(engagement(&bus, epoch, &done_output), None);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    claim_task(
+        &bus,
+        epoch,
+        &seats[1],
+        &Actor::Lane(seats[1].lane),
+        &done_design,
+    );
+    assert_controlled_output_refusal(
+        complete(&bus, epoch, &seats[1], &done_design),
+        &[&done_output],
+    );
+    assert_controlled_output_refusal(
+        review_clean(&bus, epoch, &seats[0], &design),
+        &[&current, &later],
+    );
     clean(&root, bus);
 }
 

@@ -1092,6 +1092,18 @@ fn a_controlled_output_is_eligible_only_under_its_controllers_authorization() {
     };
     let positive = |name: &str| settled(name, "completed", "clean");
     let authorized = || Some(decided_by(&controller));
+    let retained_group_marker = || {
+        let head = TaskHead {
+            preparation: Some(wire::TaskPreparation {
+                parent: parent.clone(),
+                controller: controller.clone(),
+                construction: stamp("BOARD-output"),
+            }),
+            engagement: Some(wire::Seq::new(1).expect("fixture marker")),
+            ..statement("BOARD-output")
+        };
+        admitted(head, workflow("todo"), None, None).expect("legacy output heads")
+    };
 
     for (reason, output, parent, controller) in [
         (
@@ -1143,6 +1155,14 @@ fn a_controlled_output_is_eligible_only_under_its_controllers_authorization() {
             positive("BOARD-controller"),
         ),
         "an authorized output of a positively concluded preparation is eligible"
+    );
+    assert!(
+        eligible(
+            retained_group_marker(),
+            positive("BOARD-parent"),
+            positive("BOARD-controller"),
+        ),
+        "a retained pre-cutover marker remains eligible"
     );
 }
 

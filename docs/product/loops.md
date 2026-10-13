@@ -443,11 +443,12 @@ owns each rule summarized here.
 - **Preparation.** `task plan` and `task design` declare intent with
   `plan,review` and `design,review` flows; an associated preparation runs
   while its controller is open, and active plan and design claims refuse
-  implementation commits. A controlled output waits, gated, until
-  [execution authorization](invariants/identity.md#work-execution-authorization-is-the-controllers-positive-completion):
-  a Design engaged by a working-group move authorizes its outputs, and
-  `spice preparation authorize` admits an exact accepted selection. Operator
-  close concludes negatively and authorizes nothing.
+  implementation commits. A Plan's tasks wait for its positive review. A
+  Design's controlled output stays gated until `spice preparation authorize`
+  admits it in an exact accepted selection; working-group membership changes
+  organization only. Operator close concludes negatively and authorizes
+  nothing. Outputs already carrying a pre-cutover group marker retain it as
+  immutable history.
 - **Organization and foreground.** The
   [working-group partition](invariants/identity.md#identity-working-groups-are-one-guarded-partition-of-designs)
   is shared repository organization read by `spice group list` and changed only
@@ -484,7 +485,7 @@ joins, acknowledges, delivers, settles, and wakes nothing.
 | Late answer | the immutable deadline | `room::deadline-passed`: close with `spice room cancel RESULT --clause TEXT --override` |
 | Answer or close by a non-party | stored parties only | `room::not-respondent` or `room::override-required`, naming the `--override` command |
 | Required evidence | each result answered | `task::evidence-unsatisfied`: ask again, or the operator replaces or waives it |
-| Positive conclusion with gated outputs | none unauthorized | `preparation::controlled-outputs-pending`: engage the Design, authorize the exact selection, or close each unselected output |
+| Positive Design conclusion with gated outputs | none unauthorized | `preparation::controlled-outputs-pending`: authorize the exact selection, or close or delete each unselected output |
 
 ### Rollout boundary
 
