@@ -59,6 +59,7 @@ pub(super) fn seed_timer_task(
     write.task_head(added, move |position| TaskHead {
         preparation: None,
         authorization: None,
+        engagement: None,
         evidence: Vec::new(),
         intent: None,
         born: statement_stamp,

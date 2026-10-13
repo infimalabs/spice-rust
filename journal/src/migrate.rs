@@ -40,8 +40,8 @@ const PREPARED: &str = "prepared";
 /// relevance shadow records a predecessor lacks, replacing its per-route room
 /// receipts, before the schema identity advances.
 /// Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 18] = [
-    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+const PREDECESSOR_SCHEMAS: [u32; 19] = [
+    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -1194,8 +1194,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 51, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 52, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 51;
+PRAGMA user_version = 52;
 "#;

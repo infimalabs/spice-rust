@@ -268,6 +268,9 @@ fn create_task<B: serde::Serialize>(
     {
         return outcome;
     }
+    if let Err(outcome) = engagement::engage(bus, &mut prepared.statement) {
+        return outcome;
+    }
     let post = prepared_entry(&mut prepared, &tags, projects);
     let added_claim = if add.claim {
         match prepare_capture_claim(bus, command, repository, &snapshot, &post) {
@@ -513,6 +516,7 @@ fn prepare_task(
     let statement = TaskHead {
         preparation: None,
         authorization: None,
+        engagement: None,
         evidence: Vec::new(),
         intent: add.intent,
         born: born.clone(),

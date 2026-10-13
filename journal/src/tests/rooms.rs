@@ -17,6 +17,7 @@ type Commit = Result<Applied, CommitError>;
 mod authorization;
 mod conversation;
 mod coordination;
+mod engagement;
 mod groups;
 mod hunks;
 mod relevance;
@@ -157,6 +158,7 @@ fn task(journal: &mut Journal, offset: i64, preparation: Option<TaskPreparation>
     write.task_head(fact, move |revision| TaskHead {
         preparation,
         authorization: None,
+        engagement: None,
         evidence: Vec::new(),
         intent: None,
         born,

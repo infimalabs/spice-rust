@@ -480,6 +480,8 @@ fn grooming_summary(runtime: &AppRuntime, grooming: &wire::rooms::OopsGrooming) 
                 "parked input"
             } else if task.statement.body.authorization.is_some() {
                 "selected authorization"
+            } else if task.statement.body.engagement.is_some() {
+                "engaged authorization"
             } else if task.statement.body.preparation.is_some() {
                 "controlled · authorization pending"
             } else {

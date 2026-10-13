@@ -862,6 +862,7 @@ fn task_head() -> TaskHead {
     TaskHead {
         preparation: None,
         authorization: None,
+        engagement: None,
         evidence: Vec::new(),
         intent: None,
         born: "1kKRRsDP".parse().expect("task stamp"),
