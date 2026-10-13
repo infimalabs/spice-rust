@@ -25,6 +25,10 @@ pub struct RoomCoordinate {
     pub contribution: String,
     /// Explicit condition at which the lane must stop and disposition work.
     pub stop: String,
+    /// Automated resumes the resident may issue on new input, from 1 through
+    /// [`crate::rooms::ROOM_RESUME_LIMIT`]; absent ends any earlier rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_resume: Option<u8>,
 }
 
 /// Operator vocabulary for a scoped room-coordination request.
@@ -172,8 +176,21 @@ pub struct RoomCoordinationView {
     /// Current holder's still-applicable stop request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop: Option<RoomCoordinationStop>,
+    /// The live automated-resume rule's budget, when the latest record carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<RoomResumeBudget>,
     /// Presentation instruction local consumers apply without persisting geometry.
     pub hide: bool,
+}
+
+/// How much of one automated-resume rule the resident has spent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomResumeBudget {
+    /// Automated resumes the operator authorized.
+    pub limit: u8,
+    /// Automated resumes already issued under it.
+    pub spent: u8,
 }
 
 /// Read the current working-group partition.

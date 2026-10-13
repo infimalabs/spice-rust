@@ -223,6 +223,12 @@ pub(crate) trait Authority {
     fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal>;
     /// Record a room-coordination direction's current state.
     fn set_direction(&mut self, key: &str, direction: Direction);
+    /// One room's latest coordination record of a kind: position and body.
+    fn coordination(
+        &self,
+        record: CoordinationRecord,
+        room: &str,
+    ) -> Result<Option<(u64, Vec<u8>)>, Refusal>;
     /// The canonical body of one admitted conversation publication.
     fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal>;
     /// One operator item head by its key.
@@ -479,6 +485,18 @@ impl Authority for History {
 
     fn set_direction(&mut self, key: &str, direction: Direction) {
         self.directions.insert(key.to_owned(), direction);
+    }
+
+    fn coordination(
+        &self,
+        record: CoordinationRecord,
+        room: &str,
+    ) -> Result<Option<(u64, Vec<u8>)>, Refusal> {
+        let heads = match record {
+            CoordinationRecord::Directed => &self.projection.directed,
+            CoordinationRecord::Shelved => &self.projection.shelved,
+        };
+        Ok(heads.get(room).cloned())
     }
 
     fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal> {

@@ -1,7 +1,10 @@
 //! Room coordination records bound to the operator directions they name.
 
 use wire::body::{SteerCanceled, SteerSent, SteeringStage};
-use wire::rooms::{CoordinationControl, RoomCoordinationStarted, RoomPutAside, RoomStopRequest};
+use wire::rooms::{
+    CoordinationControl, RoomAutomatedResume, RoomCoordinationStarted, RoomPutAside,
+    RoomResumeRule, RoomStopRequest,
+};
 use wire::{Disposition, SteeringHead};
 
 use super::*;
@@ -86,6 +89,8 @@ fn started(room: &TaskStamp, micros: i64, key: &str) -> RoomCoordinationStarted 
         publication: authority(micros),
         key: key.to_owned(),
         target: target(),
+        rule: None,
+        automated: None,
     }
 }
 
@@ -97,13 +102,20 @@ fn start(
     directions: &[(usize, Option<CoordinationControl>)],
     named: &str,
 ) -> JournalWrite {
+    record(actor, directions, started(room, micros, named))
+}
+
+/// One write staging `directions` in order and then `body`.
+fn record(
+    actor: Actor,
+    directions: &[(usize, Option<CoordinationControl>)],
+    body: RoomCoordinationStarted,
+) -> JournalWrite {
     let mut write = write_as(actor);
     for (index, control) in directions {
         send(&mut write, *index, control.clone(), HOLDER);
     }
-    write
-        .fact(started(room, micros, named), FactCause::Root)
-        .expect("start builds");
+    write.fact(body, FactCause::Root).expect("start builds");
     write
 }
 
@@ -421,4 +433,107 @@ fn room_authority_pages_current_heads_through_their_horizon() {
         ],
         "the current steering head and group head replace their predecessors"
     );
+}
+
+/// An operator record may authorize 1 through 8 automated resumes; each
+/// automated record spends the room's latest rule one step at a time, to the
+/// same target, citing a room publication, and none follows a put-aside.
+#[test]
+fn an_automated_record_spends_its_rooms_live_rule_one_step_at_a_time() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let room = task(&mut journal, 1, None);
+    let coordinate = || Some(CoordinationControl::Coordinate(room.clone()));
+    let rule = |limit| RoomResumeRule {
+        limit,
+        criterion: "criterion".to_owned(),
+        contribution: "contribution".to_owned(),
+        stop: "stop".to_owned(),
+    };
+    let resumed = |rule: i64, step, evidence: i64| RoomAutomatedResume {
+        rule: authority(rule),
+        step,
+        evidence: authority(evidence),
+    };
+    let ruled = |micros, index: usize, rule, automated| {
+        let mut body = started(&room, micros, KEYS[index]);
+        body.rule = rule;
+        body.automated = automated;
+        record(Actor::Operator, &[(index, coordinate())], body)
+    };
+
+    for refusal in [
+        ruled(1, 0, Some(rule(0)), None),
+        ruled(1, 0, Some(rule(9)), None),
+        ruled(1, 0, Some(rule(3)), Some(resumed(1, 1, 1))),
+    ] {
+        let result = journal.apply(refusal);
+        refused(&journal, result);
+    }
+    journal
+        .apply(ruled(1, 0, Some(rule(3)), None))
+        .expect("operator rule commits");
+
+    for refusal in [
+        ruled(2, 1, Some(rule(3)), Some(resumed(1, 2, 1))),
+        ruled(2, 1, Some(rule(3)), Some(resumed(7, 1, 1))),
+        ruled(2, 1, Some(rule(4)), Some(resumed(1, 1, 1))),
+        ruled(2, 1, None, Some(resumed(1, 1, 1))),
+        ruled(2, 1, Some(rule(3)), Some(resumed(1, 1, 77))),
+    ] {
+        let result = journal.apply(refusal);
+        refused(&journal, result);
+    }
+    journal
+        .apply(ruled(2, 1, Some(rule(3)), Some(resumed(1, 1, 1))))
+        .expect("first automated step commits");
+    journal
+        .apply(ruled(3, 2, Some(rule(3)), Some(resumed(1, 2, 1))))
+        .expect("second automated step commits");
+
+    journal
+        .apply(put_aside(
+            &journal,
+            Actor::Operator,
+            &room,
+            &[KEYS[2]],
+            &[KEYS[2]],
+            None,
+        ))
+        .expect("room put aside");
+    let result = journal.apply(ruled(4, 3, Some(rule(3)), Some(resumed(1, 3, 1))));
+    refused(&journal, result);
+    journal.verify().expect("ruled coordination verifies");
+}
+
+/// No automated record spends more steps than its rule authorizes.
+#[test]
+fn an_automated_record_beyond_its_rules_limit_is_refused() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let room = task(&mut journal, 1, None);
+    let rule = RoomResumeRule {
+        limit: 1,
+        criterion: "criterion".to_owned(),
+        contribution: "contribution".to_owned(),
+        stop: "stop".to_owned(),
+    };
+    let ruled = |micros, index: usize, step| {
+        let mut body = started(&room, micros, KEYS[index]);
+        body.rule = Some(rule.clone());
+        body.automated = (step > 0).then(|| RoomAutomatedResume {
+            rule: authority(1),
+            step,
+            evidence: authority(1),
+        });
+        record(
+            Actor::Operator,
+            &[(index, Some(CoordinationControl::Coordinate(room.clone())))],
+            body,
+        )
+    };
+    journal
+        .apply(ruled(1, 0, 0))
+        .expect("operator rule commits");
+    journal.apply(ruled(2, 1, 1)).expect("the one step commits");
+    let result = journal.apply(ruled(3, 2, 2));
+    refused(&journal, result);
 }

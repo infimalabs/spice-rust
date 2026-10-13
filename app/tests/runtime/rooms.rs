@@ -159,6 +159,8 @@ fn coordination(position: u64) -> serde_json::Value {
         publication: authority(COORDINATION_EVENT),
         key: COORDINATION_KEY.to_owned(),
         target: wire::OccupantAddress::new(seq(1)),
+        rule: None,
+        automated: None,
     };
     envelope(position, "room::directed", &body)
 }
