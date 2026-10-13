@@ -521,6 +521,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "room::put-aside"
     ),
     row!(
+        ["room", "leave"],
+        "room leave HANDLE [--clause TEXT]",
+        Lane,
+        Command => SnapshotOrCommitted,
+        [RoomLeft],
+        [Resident, LaneCapability],
+        Reply,
+        "room::leave"
+    ),
+    row!(
         ["room", "inbox"],
         "room inbox [--limit N] [--max-bytes N] [--after ITEM]",
         OperatorOrLane,

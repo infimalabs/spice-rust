@@ -437,7 +437,13 @@ owns each rule summarized here.
 - **Attention.** Participation is derived from contribution, recent activity,
   invitation by a lane-addressed packet, native work, a live request, an owed
   receipt or result, and a stop request. Aging removes only activity and
-  invitation. Relevance is
+  invitation. Each room catch-up names the lane's reasons and the leave
+  command. `spice room leave HANDLE --clause TEXT` is an attributed lane act
+  recorded once in room history and standing. It ends listening from
+  contribution, activity, and earlier invitation until the lane contributes
+  again or a later packet addresses it. It never frees a claim, settles a
+  delivery, or answers a question, and its reply names each native duty that
+  still holds the lane. Relevance is
   [shadow evidence](invariants/identity.md#identity-room-relevance-is-shadow-evidence-before-automation)
   the operator assesses with `spice room assess`.
 - **Preparation.** `task plan` and `task design` declare intent with

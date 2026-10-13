@@ -399,6 +399,25 @@ pub struct RoomMessaged {
     pub directed: Vec<CanonicalUuid>,
 }
 
+/// A lane stopped listening to one anchor task's room.
+///
+/// The leave ends listening derived from the lane's contributions, activity,
+/// and invitations until it contributes again or a later route invites it.
+/// It never frees a claim, settles a delivery, or answers a question; native
+/// duties keep the lane listening regardless.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomLeft {
+    /// Anchor task; this is the room identity.
+    pub room: RoomAnchor,
+    /// Native moment identity of this publication.
+    pub publication: RoomAuthorityStamp,
+    /// Logical lane that left; always the authenticated actor.
+    pub lane: CanonicalUuid,
+    /// The lane's reason for leaving.
+    pub clause: String,
+}
+
 /// A lane's room catch-up landed in its own transcript, advancing that logical
 /// lane's delivery cursor.
 ///

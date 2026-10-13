@@ -41,6 +41,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::RoomConversationText
         | CommandKind::RoomCoordinate
         | CommandKind::RoomPutAside
+        | CommandKind::RoomLeave
         | CommandKind::RoomControl
         | CommandKind::RoomClose
         | CommandKind::WorkingGroupRead

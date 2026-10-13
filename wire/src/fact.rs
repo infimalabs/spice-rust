@@ -98,6 +98,9 @@ macro_rules! registered_body {
     (RoomPutAside) => {
         crate::rooms::RoomPutAside
     };
+    (RoomLeft) => {
+        crate::rooms::RoomLeft
+    };
     (RoomDelivered) => {
         crate::rooms::RoomDelivered
     };
@@ -290,6 +293,8 @@ vocabulary! {
     RoomCoordinationStarted = "room::directed" by CommandDoor;
     /// Unanswered coordination was withdrawn and any holder was asked to stop.
     RoomPutAside = "room::shelved" by CommandDoor;
+    /// A lane stopped listening to one room's derived background.
+    RoomLeft = "room::left" by CommandDoor;
     /// A lane's room catch-up landed in its transcript and advanced its cursor.
     RoomDelivered = "room::delivered" by ResidentRecognition;
     /// A lane with no delivery cursor began owing room catch-up here.

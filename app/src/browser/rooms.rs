@@ -572,6 +572,13 @@ fn render_event(
                 format!("{} request(s) canceled", canceled.len())
             },
         ),
+        RoomEventKind::Left { lane, clause } => (
+            "Left",
+            format!(
+                "{} left: {clause}",
+                conversation::lane_label(runtime, *lane)
+            ),
+        ),
     };
     html! {
         <article class="room-card" key={publication.to_string()} data-publication={publication.to_string()} tabindex="0">

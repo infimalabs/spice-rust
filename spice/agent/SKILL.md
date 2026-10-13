@@ -73,10 +73,9 @@ name or UUID. Briefing Peers and `spice lane list` show addresses;
 
 Write `MSG SELECTOR [SELECTOR ...]: BODY` in visible assistant text. When that
 message also calls a tool, repeat the complete packet verbatim as the first
-call's entire intent: some providers omit pre-tool prose while retaining the
-intent as the assistant message's only verbatim words. That no-prose intent is
-the packet's fallback source; ordinary intents, reasoning, code, quotes, and
-tool arguments never send. A selector is `ADDRESS`, `ADDRESS#TASK`, `#TASK`
+call's entire intent, the packet's fallback source; ordinary intents, reasoning,
+code, quotes, and tool arguments never send. A selector is `ADDRESS`,
+`ADDRESS#TASK`, `#TASK`
 (only a deliberate room record; ordinary output needs no packet header), or,
 best first, `#KEY` of an operator direction you got, `operator#TASK`, or
 `operator`; TASK is a handle.
@@ -104,6 +103,10 @@ authority. ACK/NAK normally; its clause returns automatically, so never repeat
 it as MSG. `[PEER REPLY sender ADDRESS lane ID]` is that answer at your lane's
 next seat; ACK it and nothing more is sent. `sender unproved` means no address
 is proved. Peer messages and replies never wake a lane.
+
+Each `# Room catch-up` room names why you listen. Once a room is low value or
+your part is done, `spice room leave HANDLE --clause TEXT`; contributing or a
+new invitation undoes it, and native duties still hold you.
 
 If continuity is clipped, recover only the detail needed with
 `spice session sweep` (newest compaction windows first, each naming its bounded
@@ -157,8 +160,7 @@ command for more.
   manually claim your own review. When `spice task next` assigns your own
   review, that assignment explicitly authorizes and requires you to inspect it
   and run `spice task review` with a clean or finding verdict; do not free or
-  defer it merely because you authored the implementation. Use the ordinary
-  blocker path only for a real blocker.
+  defer it merely because you authored the implementation.
 - Rehydrate assignment context that names another session before editing. A
   live session cannot replay its own context: use the conversation, briefing,
   and task state, and do not bypass `session::context-live-session-self` by
@@ -192,7 +194,7 @@ command for more.
   `spice gate prove ACTION`, or every miss with `spice gate prove --missing`;
   ad hoc output is not proof. Run proof directly with exit status and full
   output intact (redirect to a file if needed, keeping the status); never pipe
-  it through filters, which can interrupt it or hide its failure.
+  it through filters.
 - The pre-commit gate is the default constitution: invoke it through
   `git commit` or `spice gate pre-commit` and fix what it reports unless
   current operator steering authorizes another path. `git commit --no-verify`

@@ -140,6 +140,13 @@ impl Law {
         optional: &[WitnessKind::Directive, WitnessKind::Residency],
         authority: Authority::Operator,
     };
+    /// A lane leaves one room. Any connection may submit; the resident admits
+    /// only a lane principal and guards nothing a caller could propose.
+    pub const ROOM_LEAVE: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Connected,
+    };
     /// Intended birth stamp is absent and every dependency exists at its
     /// named workflow head. Atomic create-and-claim additionally carries the
     /// caller's eligibility and occupied residency predicates.
@@ -742,6 +749,7 @@ impl CommandKind {
             Self::RoomCoordinationRead | Self::RoomConversationText => Law::OPERATOR_READ,
             Self::RoomCoordinate => Law::ROOM_COORDINATE,
             Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
+            Self::RoomLeave => Law::ROOM_LEAVE,
             Self::RoomControl => Law::ROOM_CONTROL,
             Self::RoomClose => Law::ROOM_CLOSE,
             Self::DocApply => Law::APPLY,

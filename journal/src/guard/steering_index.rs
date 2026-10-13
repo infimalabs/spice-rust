@@ -93,6 +93,66 @@ impl JournalRead<'_> {
         Ok(head)
     }
 
+    /// Live steering bound to `room`, in creation order: routes told into it,
+    /// and its coordination and stop requests. At most `limit` rows return;
+    /// a caller that receives `limit` rows cannot know the set is complete.
+    pub fn live_room_steering(
+        &self,
+        room: &wire::TaskStamp,
+        limit: usize,
+    ) -> Result<Vec<JournalHead<wire::SteeringHead>>, GuardError> {
+        self.require_current_steering_index()?;
+        let coordinate = wire::rooms::CoordinationControl::Coordinate(room.clone()).to_string();
+        let stop = format!("room-stop:{room}:%");
+        let limit = i64::try_from(limit)
+            .map_err(|_| GuardError::Invalid("room steering limit exceeds SQLite".to_owned()))?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
+                 head_seq, body FROM steering_heads \
+                 WHERE disposition = 'live' AND (json_extract(CAST(body AS TEXT), '$.room') = ?1 \
+                 OR json_extract(CAST(body AS TEXT), '$.control') = ?2 \
+                 OR json_extract(CAST(body AS TEXT), '$.control') LIKE ?3) \
+                 ORDER BY created_seq LIMIT ?4",
+            )
+            .map_err(GuardError::Store)?;
+        read_metrics::observe_query();
+        let rows = statement
+            .query_map(
+                params![room.to_string(), coordinate, stop, limit],
+                read_steering_columns,
+            )
+            .map_err(GuardError::Store)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(GuardError::Store)?;
+        rows.into_iter()
+            .map(|row| {
+                read_metrics::observe_row();
+                let head = self.decode_steering_row(row)?;
+                let bound = head.body.room.as_ref() == Some(room)
+                    || head
+                        .body
+                        .control
+                        .as_deref()
+                        .and_then(|control| control.parse().ok())
+                        .is_some_and(|control| match control {
+                            wire::rooms::CoordinationControl::Coordinate(anchor)
+                            | wire::rooms::CoordinationControl::Stop { room: anchor, .. } => {
+                                anchor == *room
+                            }
+                        });
+                if !bound {
+                    return Err(GuardError::Invalid(format!(
+                        "steering {} indexed into room {room} is not bound to it",
+                        head.body.key
+                    )));
+                }
+                Ok(head)
+            })
+            .collect()
+    }
+
     /// The newest direction the operator sent one lane, in any disposition.
     pub fn latest_operator_direction(
         &self,

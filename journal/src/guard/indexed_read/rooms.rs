@@ -5,8 +5,8 @@ use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued, CandidateRetained,
     ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
     ProposalRef, QuestionResultHead, QuestionResultRecord, QuestionResultRef, RetainedCandidate,
-    RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomHorizon, RoomMessaged,
-    RoomPublication, RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord,
+    RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomHorizon, RoomLeft,
+    RoomMessaged, RoomPublication, RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord,
     RoomReceiptRef, WorkingGroupPartition,
 };
 
@@ -351,8 +351,9 @@ impl JournalRead<'_> {
     }
 
     /// Latest room publication authored by one exact actor through the current
-    /// horizon. Catch-up uses this bounded row to retain the lane's current
-    /// activity without replaying the room's retained publication history.
+    /// horizon: a lane's latest contribution or leave. Catch-up uses this
+    /// bounded row to retain the lane's current activity, or the leave that
+    /// ended it, without replaying the room's retained publication history.
     pub fn latest_room_publication(
         &self,
         room: &wire::TaskStamp,
@@ -399,7 +400,8 @@ impl JournalRead<'_> {
                     .fact
                     .read::<RoomMessaged>()
                     .map(|body| body.room)
-            });
+            })
+            .or_else(|| publication.fact.read::<RoomLeft>().map(|body| body.room));
         if named.as_ref() != Some(room) {
             return Err(GuardError::Invalid(format!(
                 "room publication index for {room} names {named:?}"
@@ -886,6 +888,7 @@ impl JournalRead<'_> {
                     | wire::FactKind::RoomPosted
                     | wire::FactKind::RoomCoordinationStarted
                     | wire::FactKind::RoomPutAside
+                    | wire::FactKind::RoomLeft
             ) {
                 return Err(GuardError::Invalid(format!(
                     "room publication index names {} fact {seq}",
@@ -936,7 +939,7 @@ impl JournalRead<'_> {
 
     /// The first room publication strictly after `after`, through the current
     /// horizon, that another party published and `actor` has not published
-    /// after. Coordination records are not input.
+    /// after. Coordination records and leaves are neither input nor reply.
     pub fn room_unanswered_input(
         &self,
         room: &wire::TaskStamp,
@@ -955,11 +958,11 @@ impl JournalRead<'_> {
                 "SELECT published.seq, published.publication FROM room_publications AS published \
                  JOIN fact_envelopes AS facts ON facts.seq = published.seq \
                  WHERE published.room = ?1 AND published.seq > ?2 AND published.seq <= ?3 \
-                 AND facts.actor != ?4 AND facts.kind NOT IN (?5, ?6) \
+                 AND facts.actor != ?4 AND facts.kind NOT IN (?5, ?6, ?7) \
                  AND NOT EXISTS (SELECT 1 FROM room_publications AS later \
                      JOIN fact_envelopes AS reply ON reply.seq = later.seq \
                      WHERE later.room = ?1 AND later.seq > published.seq \
-                     AND later.seq <= ?3 AND reply.actor = ?4) \
+                     AND later.seq <= ?3 AND reply.actor = ?4 AND reply.kind != ?7) \
                  ORDER BY published.seq LIMIT 1",
                 params![
                     room.as_str(),
@@ -968,6 +971,7 @@ impl JournalRead<'_> {
                     actor.to_string(),
                     wire::FactKind::RoomCoordinationStarted.as_str(),
                     wire::FactKind::RoomPutAside.as_str(),
+                    wire::FactKind::RoomLeft.as_str(),
                 ],
                 |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
             )

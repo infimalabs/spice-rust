@@ -762,7 +762,7 @@ fn party(runtime: &AppRuntime, destination: &RoomDestination) -> String {
     }
 }
 
-fn lane_label(runtime: &AppRuntime, lane: CanonicalUuid) -> String {
+pub(super) fn lane_label(runtime: &AppRuntime, lane: CanonicalUuid) -> String {
     runtime
         .lanes()
         .and_then(|lanes| lanes.member(lane))

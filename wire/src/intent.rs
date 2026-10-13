@@ -67,9 +67,10 @@ pub use rooms::{
     RoomClose, RoomConcernedDirection, RoomControl, RoomControlAnswer, RoomConversationContent,
     RoomConversationText, RoomConversationTextAnswer, RoomCoordinate, RoomCoordinateAction,
     RoomCoordinationRead, RoomCoordinationRequest, RoomCoordinationStop, RoomCoordinationView,
-    RoomItemMove, RoomPutAside, RoomResultMove, RoomResumeBudget, WorkingGroupAnchor,
-    WorkingGroupArrange, WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupMove,
-    WorkingGroupPage, WorkingGroupRead, WorkingGroupView,
+    RoomItemMove, RoomLeave, RoomLeaveAnswer, RoomListeningDuty, RoomPutAside, RoomResultMove,
+    RoomResumeBudget, WorkingGroupAnchor, WorkingGroupArrange, WorkingGroupChange,
+    WorkingGroupChangeStatus, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
+    WorkingGroupView,
 };
 
 mod task;

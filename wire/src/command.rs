@@ -52,6 +52,8 @@ pub enum CommandKind {
     RoomCoordinate,
     /// Withdraw unanswered coordination and request native holder disposition.
     RoomPutAside,
+    /// A lane stops listening to one anchor task's room.
+    RoomLeave,
     /// Operator ACK, NAK, answer, or recovery of its own room authority.
     RoomControl,
     /// Decline or cancel one pending question by its party or operator override.
