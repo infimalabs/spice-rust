@@ -1,15 +1,54 @@
 use std::collections::BTreeMap;
 
-use wire::{Actor, ClaimCell, ClaimDisposition, Instant, TaskStamp, TeamSubscription};
+use wire::{Actor, ClaimCell, ClaimDisposition, Instant, TaskIntent, TaskStamp, TeamSubscription};
 
 use crate::task::Entry;
 use crate::urgency::{Urgency, declared_priority};
 
-/// Settled prerequisites; each value records a positive rather than negative ending.
-/// Ordinary dependencies require resolution. Controlled outputs require positive
-/// completion of their immediate preparation and their controller, and their
-/// controller's execution authorization selecting them.
-pub type ResolvedTasks = BTreeMap<TaskStamp, bool>;
+/// Readiness facts every allocation surface shares.
+///
+/// Ordinary dependencies require settlement: each settled task records whether
+/// it ended positively. Controlled outputs also require positive completion of
+/// their immediate preparation and their controller. An output whose immediate
+/// preparation is a Design further requires that Design's exact selection; an
+/// output of a Plan needs no selection, so each known preparation parent records
+/// whether it is a Design.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ResolvedTasks {
+    settled: BTreeMap<TaskStamp, bool>,
+    designs: BTreeMap<TaskStamp, bool>,
+}
+
+impl ResolvedTasks {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record that `task` settled, positively or not.
+    pub fn settle(&mut self, task: TaskStamp, positive: bool) {
+        self.settled.insert(task, positive);
+    }
+
+    /// Record whether the known task `task` is a Design.
+    pub fn know(&mut self, task: TaskStamp, intent: Option<TaskIntent>) {
+        self.designs
+            .insert(task, intent == Some(TaskIntent::Design));
+    }
+
+    fn settled(&self, task: &TaskStamp) -> bool {
+        self.settled.contains_key(task)
+    }
+
+    fn positive(&self, task: &TaskStamp) -> bool {
+        self.settled.get(task) == Some(&true)
+    }
+
+    /// Whether `task` is a Design; `None` when its intent is unknown here.
+    fn design(&self, task: &TaskStamp) -> Option<bool> {
+        self.designs.get(task).copied()
+    }
+}
 
 /// Deterministic answer from the board's sole allocation query.
 #[derive(Clone, Copy, Debug)]
@@ -598,29 +637,38 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
         .statement()
         .dependencies
         .iter()
-        .all(|dependency| completed.contains_key(dependency))
+        .all(|dependency| completed.settled(dependency))
         && control_satisfied(entry, completed)
 }
 
-/// A controlled output waits for its preparation and controller to conclude
-/// positively and for its own authorization: selection by that controller's
-/// execution authorization or the operator's engagement of the controller in a
-/// working group. Nothing else, including operator closure, releases it.
+/// A constructed output waits for its preparation and controller to conclude
+/// positively; nothing else, including operator closure, releases it. When
+/// that preparation is a Design, the output, Plan or task, also waits for its
+/// own selection: the Design's exact execution authorization or the operator's
+/// engagement of the Design in a working group. A preparation a Plan constructs
+/// runs alongside it. An unknown preparation leaves the output gated.
 fn control_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
     let statement = entry.statement();
     let Some(preparation) = &statement.preparation else {
         return true;
     };
-    if statement.intent.is_some() || preparation.construction != *entry.born() {
+    if preparation.construction != *entry.born() {
         return true;
     }
-    completed.get(&preparation.parent) == Some(&true)
-        && completed.get(&preparation.controller) == Some(&true)
-        && (statement.engagement.is_some()
-            || statement
-                .authorization
-                .as_ref()
-                .is_some_and(|decision| decision.controller == preparation.controller))
+    let concluded =
+        || completed.positive(&preparation.parent) && completed.positive(&preparation.controller);
+    match completed.design(&preparation.parent) {
+        None => false,
+        Some(true) => {
+            concluded()
+                && (statement.engagement.is_some()
+                    || statement
+                        .authorization
+                        .as_ref()
+                        .is_some_and(|decision| decision.controller == preparation.controller))
+        }
+        Some(false) => statement.intent.is_some() || concluded(),
+    }
 }
 
 /// Whether no claim currently possesses the entry.
@@ -741,23 +789,23 @@ pub fn stealable_entry(
         && environment_satisfied(entry, environment)
 }
 
-/// Each settled task and whether its conclusion is positive.
+/// Each settled task with whether its conclusion is positive, and whether each
+/// entry is a Design.
 ///
 /// Closing or deleting a task resolves ordinary prerequisites. Neither approves
-/// execution controlled by that task. All readiness surfaces use this same map.
+/// execution controlled by that task. All readiness surfaces use these facts.
 #[must_use]
 pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
-    entries
-        .iter()
-        .filter(|candidate| {
-            let status = candidate.workflow().status.as_str();
-            status == "completed" || status == "deleted"
-        })
-        .map(|candidate| {
-            (
+    let mut resolved = ResolvedTasks::new();
+    for candidate in entries {
+        let status = candidate.workflow().status.as_str();
+        if status == "completed" || status == "deleted" {
+            resolved.settle(
                 candidate.born().clone(),
                 candidate.workflow().concluded_positively(),
-            )
-        })
-        .collect()
+            );
+        }
+        resolved.know(candidate.born().clone(), candidate.statement().intent);
+    }
+    resolved
 }

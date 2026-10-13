@@ -45,13 +45,14 @@ and a plan. These views are emitted as diagram source, not merely queried as
 rows; [graph reads](../interfaces.md#bounded-reads) describe their export boundary.
 
 Preparation is a third relation beside origin and dependency: it records the
-[controller](failures.md#ontology) that governs an output's execution
-authorization. Every task's mandatory origin stays provenance only. Preparation
-binds explicitly with `--preparation`, or automatically when ordinary creation
-without another origin runs under an ambient planning controller. That
-association is control authority, not scheduling: an associated preparation
-stays schedulable while its controller is unfinished, while a controlled output
-waits on authorization rather than on another task status. The
+immediate planning parent and the [controller](failures.md#ontology) of an
+output. Every task's mandatory origin stays provenance only. Preparation binds
+explicitly with `--preparation`, or automatically when ordinary creation
+without another origin runs under an ambient planning controller. A Plan is an
+ordinary reviewed task constructor: its tasks wait for its positive review, and
+a Plan it constructs stays schedulable while it is unfinished. A Design selects
+among its outputs, normally Plans, which wait on its execution authorization
+rather than on another task status. The
 [preparation register](../invariants/identity.md#work-preparation-is-explicit-and-provenance-is-not-a-gate)
 owns the rule.
 

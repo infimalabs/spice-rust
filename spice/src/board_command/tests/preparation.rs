@@ -79,8 +79,15 @@ fn journal_source(answer: &BoardAnswer, task: &TaskHandle) -> RoomSource {
 #[test]
 fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_selection() {
     let (root, bus, epoch, seats) = fixture("preparation-command-loop", 2);
-    let controller = add_plan(&bus, epoch, "Preparation controller");
-    let (output, spare) = adopted_outputs(&bus, epoch, &controller);
+    let controller = add_controller(
+        &bus,
+        epoch,
+        "Preparation controller",
+        wire::TaskIntent::Design,
+        None,
+    );
+    let output = add_output(&bus, epoch, &controller, "Selected output");
+    let spare = add_output(&bus, epoch, &controller, "Unselected output");
     let (candidate, source) =
         retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
     record_test_critique(&bus, epoch, &seats, &controller, &candidate, &source);
@@ -607,55 +614,6 @@ fn assert_controlled_output_refusal(outcome: Outcome<CommandAnswer>, outputs: &[
 }
 
 #[test]
-fn clean_review_refuses_to_strand_controlled_outputs() {
-    let (root, bus, epoch, seats) = fixture("preparation-review-controller", 1);
-    let controller = add_controller(
-        &bus,
-        epoch,
-        "Review controller",
-        wire::TaskIntent::Plan,
-        Some("review"),
-    );
-    let (output, spare) = adopted_outputs(&bus, epoch, &controller);
-    let reviewer = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &reviewer, &controller);
-    connect_child(&bus, epoch, &controller, &output);
-    let assigned = board(&bus, epoch, reviewer.clone());
-    assert_controlled_output_refusal(
-        issue(
-            &bus,
-            epoch,
-            reviewer,
-            CommandKind::TaskReview,
-            progress_witnesses(
-                &assigned,
-                at(&assigned, &controller),
-                seats[0].lane,
-                seats[0].occupant,
-                true,
-            )
-            .expect("review completion witnesses"),
-            &TaskReview {
-                task: controller.clone(),
-                finding: "clean".to_owned(),
-                note: Some("selected contracts are coherent".to_owned()),
-                then: Vec::new(),
-                followup: Vec::new(),
-            },
-        ),
-        &[&output, &spare],
-    );
-    assert_eq!(
-        at(&board(&bus, epoch, Actor::Operator), &controller)
-            .workflow
-            .body
-            .status,
-        "pending"
-    );
-    clean(&root, bus);
-}
-
-#[test]
 fn operator_negative_settlements_leave_controlled_outputs_pending_and_unauthorized() {
     for (fixture_name, deleted) in [
         ("preparation-close-controller", false),
@@ -722,6 +680,26 @@ fn operator_negative_settlements_leave_controlled_outputs_pending_and_unauthoriz
 
 /// Add an output under `controller` through explicit preparation.
 fn add_output(bus: &Bus, epoch: CanonicalUuid, controller: &TaskHandle, name: &str) -> TaskHandle {
+    add_prepared(bus, epoch, controller, name, None)
+}
+
+/// Add a reviewed Plan under `controller` through explicit preparation.
+fn add_plan_output(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    controller: &TaskHandle,
+    name: &str,
+) -> TaskHandle {
+    add_prepared(bus, epoch, controller, name, Some(wire::TaskIntent::Plan))
+}
+
+fn add_prepared(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    controller: &TaskHandle,
+    name: &str,
+    intent: Option<wire::TaskIntent>,
+) -> TaskHandle {
     let born = stamp(name);
     let current = board(bus, epoch, Actor::Operator);
     let parent = at(&current, controller);
@@ -737,14 +715,14 @@ fn add_output(bus: &Bus, epoch: CanonicalUuid, controller: &TaskHandle, name: &s
         ],
         &TaskAdd {
             preparation: Some(controller.clone()),
-            intent: None,
+            intent,
             title: name.to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
             acceptance: vec!["The output is delivered".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
             origin: Some("fixture:preparation".parse().expect("fixture origin")),
-            flow: None,
+            flow: intent.map(|_| "review".to_owned()),
             depends: Vec::new(),
             claim: false,
         },
@@ -932,5 +910,188 @@ fn a_passive_design_cannot_conclude_and_its_outputs_stay_ineligible() {
         },
     );
     assert!(matches!(claim, Outcome::Refusal(_)), "{claim:?}");
+    clean(&root, bus);
+}
+
+#[test]
+fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
+    let (root, bus, epoch, seats) = fixture("preparation-standalone-plan", 2);
+    let plan = add_controller(
+        &bus,
+        epoch,
+        "Standalone plan",
+        wire::TaskIntent::Plan,
+        Some("review"),
+    );
+    let task = add_output(&bus, epoch, &plan, "Constructed task");
+    let task_stamp = task.born().expect("task stamp");
+    assert_eq!(open_blocked(&bus, epoch), [task_stamp.clone()].into());
+
+    let current = board(&bus, epoch, Actor::Lane(seats[0].lane));
+    let candidate = CandidateRef {
+        controller: plan.born().expect("plan stamp"),
+        candidate: RoomAuthorityStamp::for_micros(1_760_000_000_000_001)
+            .expect("candidate identity"),
+    };
+    let retained = issue(
+        &bus,
+        epoch,
+        Actor::Lane(seats[0].lane),
+        CommandKind::CandidateRetain,
+        vec![
+            Witness::Proposal {
+                proposal: ProposalRef::Candidate {
+                    candidate: candidate.clone(),
+                },
+                head: None,
+            },
+            statement_witness(at(&current, &plan)),
+            statement_witness(at(&current, &task)),
+        ],
+        &CandidateRetain {
+            candidate: RetainedCandidate {
+                candidate,
+                governed_inputs: Vec::new(),
+                outputs: vec![task_stamp],
+                evidence: Vec::new(),
+                references: vec![CandidateReference {
+                    relation: "contract".parse().expect("relation"),
+                    source: journal_source(&current, &plan),
+                }],
+            },
+        },
+    );
+    assert!(
+        matches!(&retained, Outcome::Refusal(refusal)
+            if refusal.reason() == "preparation::controller-not-design"),
+        "{retained:?}"
+    );
+
+    let reviewer = Actor::Lane(seats[0].lane);
+    claim_task(&bus, epoch, &seats[0], &reviewer, &plan);
+    assert_committed(review_clean(&bus, epoch, &seats[0], &plan));
+    let concluded = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&concluded, &plan).workflow.body.status, "completed");
+    assert_eq!(at(&concluded, &task).statement.body.authorization, None);
+    assert!(open_blocked(&bus, epoch).is_empty());
+    claim_all(&bus, epoch, &seats[1..], vec![task]);
+    clean(&root, bus);
+}
+
+#[test]
+fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
+    let (root, bus, epoch, seats) = fixture("preparation-design-plans", 2);
+    let design = add_controller(&bus, epoch, "Plan design", wire::TaskIntent::Design, None);
+    let selected = add_plan_output(&bus, epoch, &design, "Selected plan");
+    let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
+    let stamps = |tasks: &[&TaskHandle]| {
+        tasks
+            .iter()
+            .map(|task| task.born().expect("task stamp"))
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(
+        open_blocked(&bus, epoch),
+        stamps(&[&selected, &sibling]),
+        "a Design's Plans wait for its selection"
+    );
+
+    let (candidate, source) =
+        retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
+    let coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    record_test_decisions(&bus, epoch, &design, &selected, &candidate, &source);
+    authorize_test_output(
+        &bus, epoch, &design, &selected, &sibling, candidate, &coverage,
+    );
+    assert_eq!(
+        open_blocked(&bus, epoch),
+        stamps(&[&sibling]),
+        "the unselected sibling Plan stays gated"
+    );
+
+    let planner = Actor::Lane(seats[0].lane);
+    claim_task(&bus, epoch, &seats[0], &planner, &selected);
+    let task = add_output(&bus, epoch, &selected, "Selected plan task");
+    assert_eq!(
+        open_blocked(&bus, epoch),
+        stamps(&[&sibling, &task]),
+        "the selected Plan holds its task until its own review"
+    );
+    assert_committed(review_clean(&bus, epoch, &seats[0], &selected));
+    assert_eq!(
+        at(&board(&bus, epoch, Actor::Operator), &task)
+            .statement
+            .body
+            .authorization,
+        None
+    );
+    assert_eq!(
+        open_blocked(&bus, epoch),
+        stamps(&[&sibling]),
+        "the selected Plan's clean review releases its task without another selection"
+    );
+    claim_all(&bus, epoch, &seats[1..], vec![task]);
+    clean(&root, bus);
+}
+
+#[test]
+fn a_design_refuses_authorization_until_its_pending_dependencies_settle() {
+    let (root, bus, epoch, seats) = fixture("preparation-design-blocked", 2);
+    let design = add_controller(
+        &bus,
+        epoch,
+        "Blocked design",
+        wire::TaskIntent::Design,
+        None,
+    );
+    let selected = add_plan_output(&bus, epoch, &design, "Selected plan");
+    let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
+    let (candidate, source) =
+        retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
+    let coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    record_test_decisions(&bus, epoch, &design, &selected, &candidate, &source);
+    let correction = todo_task(&bus, epoch, "PREP-correct01", "Open review correction");
+    connect_child(&bus, epoch, &design, &correction);
+
+    let current = board(&bus, epoch, Actor::Operator);
+    let mut expected = transition_witnesses(at(&current, &design));
+    expected.extend(transition_witnesses(at(&current, &selected)));
+    expected.push(Witness::Authorization {
+        output: selected.born().expect("output stamp"),
+        head: None,
+    });
+    let refused = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::ExecutionAuthorize,
+        expected,
+        &ExecutionAuthorize {
+            authorization: ExecutionAuthorization {
+                decision: DecisionRef {
+                    controller: design.born().expect("design stamp"),
+                    decision: wire::SequenceCode::new(3),
+                },
+                candidate: candidate.clone(),
+                governed_inputs: Vec::new(),
+                selected_outputs: vec![selected.born().expect("output stamp")],
+                coverage: vec![coverage[1].clone()],
+            },
+        },
+    );
+    assert!(
+        matches!(&refused, Outcome::Refusal(refusal)
+            if refusal.reason() == "preparation::controller-blocked"),
+        "{refused:?}"
+    );
+    let unchanged = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&unchanged, &design).workflow.body.status, "pending");
+    assert_eq!(at(&unchanged, &selected).statement.body.authorization, None);
+
+    let fixer = Actor::Lane(seats[1].lane);
+    claim_and_complete_task(&bus, epoch, &seats[1], &fixer, &correction);
+    authorize_test_output(
+        &bus, epoch, &design, &selected, &sibling, candidate, &coverage,
+    );
     clean(&root, bus);
 }

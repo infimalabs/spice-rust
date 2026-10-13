@@ -304,7 +304,7 @@ fn accepted_child() -> TaskAdd {
 }
 
 #[test]
-fn implicit_plan_controller_refuses_completion_that_would_strand_its_output() {
+fn an_ambient_plan_releases_its_output_on_positive_completion_without_selection() {
     let (root, bus, epoch, seats) = fixture("ambient-plan-child", 2);
     let seat = &seats[0];
     let lane = Actor::Lane(seat.lane);
@@ -338,13 +338,13 @@ fn implicit_plan_controller_refuses_completion_that_would_strand_its_output() {
         [plan.born().expect("fixture plan birth")]
     );
     let worker = Actor::Lane(seats[1].lane);
-    let offered = |reason: &str| {
+    let offered = |eligible: bool, reason: &str| {
         let available = board(&bus, epoch, worker.clone());
         let entries = actor_entries(&available).expect("board entries");
         let subscription = allocation_subscription(&available.residency.body, &worker)
             .expect("worker subscription");
         let environment = available.environment();
-        assert!(
+        assert_eq!(
             board::select(
                 &entries,
                 &worker,
@@ -353,7 +353,8 @@ fn implicit_plan_controller_refuses_completion_that_would_strand_its_output() {
                 available.recent_cell.as_ref(),
                 &environment,
             )
-            .is_none(),
+            .map(|selection| selection.entry().born().clone()),
+            eligible.then(|| child_born.clone()),
             "{reason}"
         );
         let satisfied = board::resolved_tasks(&entries);
@@ -361,39 +362,16 @@ fn implicit_plan_controller_refuses_completion_that_would_strand_its_output() {
             .iter()
             .find(|entry| entry.born() == &child_born)
             .expect("the output is on the board");
-        assert!(
-            !board::capturable_entry(&satisfied, output, &worker, &environment)
-                && !board::stealable_entry(&satisfied, output, &worker, &environment),
+        assert_eq!(
+            (
+                board::capturable_entry(&satisfied, output, &worker, &environment),
+                board::stealable_entry(&satisfied, output, &worker, &environment),
+            ),
+            (eligible, eligible),
             "{reason}: capture and steal share the gate"
         );
     };
-    offered("the held plan must keep its child out of allocation");
-
-    let expected = progress_witnesses(&linked, at(&linked, &plan), seat.lane, seat.occupant, false)
-        .expect("the linked accepted child witnesses the attempted conclusion");
-    let refused = issue(
-        &bus,
-        epoch,
-        lane.clone(),
-        CommandKind::TaskDone,
-        expected,
-        &TaskDone {
-            task: plan.clone(),
-            validation: "accepted implementation child is connected".to_owned(),
-            operation: Some(completion_operation()),
-        },
-    );
-    assert!(matches!(
-        refused,
-        Outcome::Refusal(refusal)
-            if refusal.reason() == "preparation::controlled-outputs-pending"
-                && refusal.diagnostic().and_then(wire::RefusalDiagnostic::observed)
-                    .is_some_and(|observed| observed.contains(&child.to_string()))
-    ));
-    offered("refused completion leaves the controlled output gated");
-    let unsettled = board(&bus, epoch, worker.clone());
-    assert_eq!(at(&unsettled, &plan).workflow.body.status, "pending");
-    assert_eq!(at(&unsettled, &child).workflow.body.status, "pending");
+    offered(false, "the held plan must keep its child out of allocation");
 
     let declare = TaskEdit {
         task: child.clone(),
@@ -412,7 +390,29 @@ fn implicit_plan_controller_refuses_completion_that_would_strand_its_output() {
         correct(&bus, epoch, Actor::Operator, &declare),
         Outcome::Refusal(refusal) if refusal.reason() == "task::preparation-intent-fixed"
     ));
-    offered("a controlled output cannot declare its way past authorization");
+    offered(false, "an output cannot declare its way past its Plan");
+
+    let expected = progress_witnesses(&linked, at(&linked, &plan), seat.lane, seat.occupant, false)
+        .expect("the linked accepted child witnesses the attempted conclusion");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDone,
+        expected,
+        &TaskDone {
+            task: plan.clone(),
+            validation: "accepted implementation child is connected".to_owned(),
+            operation: Some(completion_operation()),
+        },
+    ));
+    let concluded = board(&bus, epoch, worker.clone());
+    assert_eq!(at(&concluded, &plan).workflow.body.status, "completed");
+    assert_eq!(at(&concluded, &child).statement.body.authorization, None);
+    offered(
+        true,
+        "the concluded plan releases its output without selection",
+    );
     clean(&root, bus);
 }
 

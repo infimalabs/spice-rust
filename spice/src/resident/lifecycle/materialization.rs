@@ -155,7 +155,7 @@ impl Projection {
         cursor: Seq,
         delta: &[&wire::Envelope<wire::AnyFact>],
     ) -> CommandResult<AdvancePlan> {
-        let changed = self.changed_tasks(snapshot, delta)?;
+        let changed = self.changed_tasks(snapshot, delta);
         let creator_teams = creator_team_events(delta)?;
         let claim_releases = delta
             .iter()
@@ -202,37 +202,30 @@ impl Projection {
         })
     }
 
+    /// Every task a fact addresses, including each output an execution
+    /// authorization selects, so its entry and READY origin are refreshed.
     fn changed_tasks(
         &self,
         snapshot: &bus::TaskSnapshot,
         delta: &[&wire::Envelope<wire::AnyFact>],
-    ) -> CommandResult<BTreeSet<TaskStamp>> {
-        let changed = if self.cursor.is_none() {
-            snapshot
+    ) -> BTreeSet<TaskStamp> {
+        if self.cursor.is_none() {
+            return snapshot
                 .tasks()
                 .iter()
                 .map(|heads| heads.statement().body().born.clone())
-                .collect::<BTreeSet<_>>()
-        } else {
-            delta
-                .iter()
-                .filter_map(|fact| {
-                    changed_task(fact).map(|task| {
-                        task.map_err(|error| {
-                            store_fault(
-                                "lifecycle::task-fact-invalid",
-                                &format!(
-                                    "task-bearing fact {} at {} has an invalid task: {error}",
-                                    fact.fact.kind(),
-                                    fact.seq
-                                ),
-                            )
-                        })
-                    })
-                })
-                .collect::<CommandResult<BTreeSet<_>>>()?
-        };
-        Ok(changed)
+                .collect();
+        }
+        delta
+            .iter()
+            .flat_map(|fact| {
+                fact.fact
+                    .task_subject()
+                    .into_iter()
+                    .chain(fact.fact.mutated_tasks())
+            })
+            .cloned()
+            .collect()
     }
 
     fn entry_updates(
@@ -445,42 +438,6 @@ fn entry(heads: &TaskHeads, projects: &board::ProjectPolicy) -> CommandResult<En
             ),
         )
     })
-}
-
-fn changed_task(
-    envelope: &wire::Envelope<wire::AnyFact>,
-) -> Option<Result<TaskStamp, wire::TaskStampError>> {
-    if !matches!(
-        envelope.fact.kind(),
-        wire::FactKind::TaskAdded
-            | wire::FactKind::TaskPhased
-            | wire::FactKind::TaskDone
-            | wire::FactKind::TaskReviewed
-            | wire::FactKind::TaskAssigned
-            | wire::FactKind::TaskNoted
-            | wire::FactKind::TaskDeferred
-            | wire::FactKind::TaskWoken
-            | wire::FactKind::TaskEdited
-            | wire::FactKind::TaskDeleted
-            | wire::FactKind::TaskClosed
-            | wire::FactKind::ClaimWon
-            | wire::FactKind::ClaimCarried
-            | wire::FactKind::ClaimRebound
-            | wire::FactKind::ClaimFreed
-            | wire::FactKind::ClaimLapsed
-            | wire::FactKind::ClaimRenewed
-    ) {
-        return None;
-    }
-    Some(
-        envelope
-            .fact
-            .body()
-            .get("task")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .parse(),
-    )
 }
 
 fn creator_team_events(

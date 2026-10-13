@@ -1201,10 +1201,12 @@ pub(super) fn progress_witnesses(
         heads.statement.body.preparation.as_ref(),
     );
     let construction = task_heads_by_stamp(board, owner)?;
-    if planning::requires_construction(
-        construction.statement.body.intent,
-        &construction.workflow.body.flow,
-    ) || heads.workflow.body.phase.as_str() == "plan"
+    if (construction.workflow.body.status == "pending"
+        && planning::requires_construction(
+            construction.statement.body.intent,
+            &construction.workflow.body.flow,
+        ))
+        || heads.workflow.body.phase.as_str() == "plan"
     {
         if owner != &heads.statement.body.born {
             expected.push(statement_witness(construction));

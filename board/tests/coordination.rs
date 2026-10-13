@@ -998,7 +998,9 @@ fn live_frontier_selection_distinguishes_settled_open_and_missing_dependencies()
     let reference = select(&full, &Actor::Spice, &all_projects(), 2)
         .expect("both terminal forms satisfy dependency edges");
 
-    let settled = board::ResolvedTasks::from([(completed_stamp, true), (deleted_stamp, false)]);
+    let mut settled = board::ResolvedTasks::new();
+    settled.settle(completed_stamp, true);
+    settled.settle(deleted_stamp, false);
     let frontier = [ready.clone()];
     let indexed = board::select_with_satisfied(
         &frontier,
@@ -1053,96 +1055,188 @@ fn live_frontier_selection_distinguishes_settled_open_and_missing_dependencies()
     );
 }
 
-#[test]
-fn a_controlled_output_is_eligible_only_under_its_controllers_authorization() {
-    let actor = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e408"));
-    let parent = stamp("BOARD-parent");
-    let controller = stamp("BOARD-controller");
-    let blocker = stamp("BOARD-blocker");
-    let settled = |name: &str, status: &str, review: &str| {
-        let workflow = WorkflowHead {
-            status: status.to_owned(),
-            review: review.to_owned(),
-            completion: Some(instant("2026-08-01T06:00:00.000Z")),
-            ..workflow("review")
-        };
-        admitted(statement(name), workflow, None, None).expect("settled heads")
-    };
-    let decided_by = |owner: &TaskStamp| wire::rooms::DecisionRef {
-        controller: owner.clone(),
-        decision: wire::SequenceCode::new(1),
-    };
-    let output = |authorization: Option<wire::rooms::DecisionRef>, dependencies: Vec<TaskStamp>| {
-        let head = TaskHead {
-            preparation: Some(wire::TaskPreparation {
-                parent: parent.clone(),
-                controller: controller.clone(),
-                construction: stamp("BOARD-output"),
-            }),
-            authorization,
-            dependencies,
-            ..statement("BOARD-output")
-        };
-        admitted(head, workflow("todo"), None, None).expect("output heads")
-    };
-    let eligible = |output: Entry, parent: Entry, controller: Entry| {
-        let entries = vec![output, parent, controller, entry("BOARD-blocker")];
-        let satisfied = board::resolved_tasks(&entries);
-        board::eligible_entry(&satisfied, &entries[0], &actor, &environment())
-    };
-    let positive = |name: &str| settled(name, "completed", "clean");
-    let authorized = || Some(decided_by(&controller));
+#[derive(Clone, Copy, Debug)]
+enum Standing {
+    Open,
+    Positive,
+    Closed,
+    Deleted,
+}
 
-    for (reason, output, parent, controller) in [
-        (
-            "positive completion alone",
-            output(None, Vec::new()),
-            positive("BOARD-parent"),
-            positive("BOARD-controller"),
-        ),
-        (
-            "another controller's authorization",
-            output(Some(decided_by(&parent)), Vec::new()),
-            positive("BOARD-parent"),
-            positive("BOARD-controller"),
-        ),
-        (
-            "an operator-closed controller",
-            output(authorized(), Vec::new()),
-            positive("BOARD-parent"),
-            settled("BOARD-controller", "completed", "closed"),
-        ),
-        (
-            "a deleted controller",
-            output(authorized(), Vec::new()),
-            positive("BOARD-parent"),
-            settled("BOARD-controller", "deleted", "unassigned"),
-        ),
-        (
-            "an open parent",
-            output(authorized(), Vec::new()),
-            entry("BOARD-parent"),
-            positive("BOARD-controller"),
-        ),
-        (
-            "an open ordinary dependency",
-            output(authorized(), vec![blocker.clone()]),
-            positive("BOARD-parent"),
-            positive("BOARD-controller"),
-        ),
+fn planning(name: &str, intent: wire::TaskIntent, standing: Standing) -> Entry {
+    let settled = |status: &str, review: &str| WorkflowHead {
+        status: status.to_owned(),
+        review: review.to_owned(),
+        completion: Some(instant("2026-08-01T06:00:00.000Z")),
+        ..workflow("review")
+    };
+    let workflow = match standing {
+        Standing::Open => workflow("todo"),
+        Standing::Positive => settled("completed", "clean"),
+        Standing::Closed => settled("completed", "closed"),
+        Standing::Deleted => settled("deleted", "unassigned"),
+    };
+    let head = TaskHead {
+        intent: Some(intent),
+        ..statement(name)
+    };
+    admitted(head, workflow, None, None).expect("planning heads")
+}
+
+fn constructed(
+    parent: &str,
+    controller: &str,
+    intent: Option<wire::TaskIntent>,
+    selected_by: Option<&str>,
+    dependencies: Vec<TaskStamp>,
+) -> Entry {
+    let head = TaskHead {
+        preparation: Some(wire::TaskPreparation {
+            parent: stamp(parent),
+            controller: stamp(controller),
+            construction: stamp("BOARD-output"),
+        }),
+        authorization: selected_by.map(|owner| wire::rooms::DecisionRef {
+            controller: stamp(owner),
+            decision: wire::SequenceCode::new(1),
+        }),
+        intent,
+        dependencies,
+        ..statement("BOARD-output")
+    };
+    admitted(head, workflow("todo"), None, None).expect("output heads")
+}
+
+/// Whether the first entry is eligible against the readiness of all of them.
+fn first_eligible(entries: &[Entry]) -> bool {
+    let actor = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e408"));
+    board::eligible_entry(
+        &board::resolved_tasks(entries),
+        &entries[0],
+        &actor,
+        &environment(),
+    )
+}
+
+#[test]
+fn a_design_output_is_eligible_only_under_that_designs_selection() {
+    let design = |standing| planning("BOARD-design", wire::TaskIntent::Design, standing);
+    for intent in [None, Some(wire::TaskIntent::Plan)] {
+        let output = |selected_by, dependencies| {
+            constructed(
+                "BOARD-design",
+                "BOARD-design",
+                intent,
+                selected_by,
+                dependencies,
+            )
+        };
+        let selected = Some("BOARD-design");
+        for (reason, output, design) in [
+            (
+                "positive completion alone",
+                output(None, Vec::new()),
+                design(Standing::Positive),
+            ),
+            (
+                "another controller's authorization",
+                output(Some("BOARD-other"), Vec::new()),
+                design(Standing::Positive),
+            ),
+            (
+                "an operator-closed Design",
+                output(selected, Vec::new()),
+                design(Standing::Closed),
+            ),
+            (
+                "a deleted Design",
+                output(selected, Vec::new()),
+                design(Standing::Deleted),
+            ),
+            (
+                "an open Design",
+                output(selected, Vec::new()),
+                design(Standing::Open),
+            ),
+            (
+                "an open ordinary dependency",
+                output(selected, vec![stamp("BOARD-blocker")]),
+                design(Standing::Positive),
+            ),
+        ] {
+            assert!(
+                !first_eligible(&[output, design, entry("BOARD-blocker")]),
+                "{reason} must leave a {intent:?} Design output gated"
+            );
+        }
+        assert!(
+            first_eligible(&[output(selected, Vec::new()), design(Standing::Positive)]),
+            "a selected {intent:?} output of a concluded Design is eligible"
+        );
+    }
+}
+
+#[test]
+fn a_plan_output_waits_only_for_its_plans_positive_conclusion() {
+    let plan = |standing| planning("BOARD-plan", wire::TaskIntent::Plan, standing);
+    let task = |dependencies| constructed("BOARD-plan", "BOARD-plan", None, None, dependencies);
+    for (reason, plan) in [
+        ("an open Plan", plan(Standing::Open)),
+        ("an operator-closed Plan", plan(Standing::Closed)),
+        ("a deleted Plan", plan(Standing::Deleted)),
     ] {
         assert!(
-            !eligible(output, parent, controller),
-            "{reason} must leave the output gated"
+            !first_eligible(&[task(Vec::new()), plan]),
+            "{reason} must leave its task gated"
         );
     }
     assert!(
-        eligible(
-            output(authorized(), Vec::new()),
-            positive("BOARD-parent"),
-            positive("BOARD-controller"),
-        ),
-        "an authorized output of a positively concluded preparation is eligible"
+        !first_eligible(&[
+            task(vec![stamp("BOARD-blocker")]),
+            plan(Standing::Positive),
+            entry("BOARD-blocker"),
+        ]),
+        "an open ordinary dependency still gates a Plan output"
+    );
+    assert!(
+        !first_eligible(&[task(Vec::new())]),
+        "an unknown preparation leaves its output gated"
+    );
+    assert!(
+        first_eligible(&[task(Vec::new()), plan(Standing::Positive)]),
+        "a positively reviewed Plan releases its task without any selection"
+    );
+
+    let design = |standing| planning("BOARD-design", wire::TaskIntent::Design, standing);
+    let selected_plan_task = constructed("BOARD-plan", "BOARD-design", None, None, Vec::new());
+    assert!(
+        !first_eligible(&[
+            selected_plan_task.clone(),
+            plan(Standing::Positive),
+            design(Standing::Open),
+        ]),
+        "a task under a Design's Plan waits for that Design too"
+    );
+    assert!(
+        first_eligible(&[
+            selected_plan_task,
+            plan(Standing::Positive),
+            design(Standing::Positive),
+        ]),
+        "a task under a selected Plan needs no selection of its own"
+    );
+    assert!(
+        first_eligible(&[
+            constructed(
+                "BOARD-plan",
+                "BOARD-plan",
+                Some(wire::TaskIntent::Plan),
+                None,
+                Vec::new(),
+            ),
+            plan(Standing::Open),
+        ]),
+        "a preparation a Plan constructs runs alongside it"
     );
 }
 
