@@ -57,6 +57,42 @@ impl JournalRead<'_> {
         self.steering_row("steer_key", key)
     }
 
+    /// The newest steering one lane was told through a route into `room`, in
+    /// any disposition: the latest `MSG`/`ASK` that addressed the lane there.
+    pub fn latest_room_route(
+        &self,
+        lane: wire::CanonicalUuid,
+        room: &wire::TaskStamp,
+    ) -> Result<Option<JournalHead<wire::SteeringHead>>, GuardError> {
+        self.require_current_steering_index()?;
+        let row = self
+            .connection
+            .query_row(
+                "SELECT directive, steer_key, lane, disposition, created_seq, minted_micros, \
+                 head_seq, body FROM steering_heads \
+                 WHERE lane = ?1 AND json_extract(CAST(body AS TEXT), '$.room') = ?2 \
+                 ORDER BY created_seq DESC LIMIT 1",
+                [lane.to_string(), room.to_string()],
+                read_steering_columns,
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        read_metrics::observe_query();
+        if row.is_some() {
+            read_metrics::observe_row();
+        }
+        let head = row.map(|row| self.decode_steering_row(row)).transpose()?;
+        if let Some(head) = &head
+            && head.body.room.as_ref() != Some(room)
+        {
+            return Err(GuardError::Invalid(format!(
+                "steering {} indexed into room {room} names {:?}",
+                head.body.key, head.body.room
+            )));
+        }
+        Ok(head)
+    }
+
     /// One fixed page of live steering for one lane or every lane.
     ///
     /// Heads remain in publication order and overflow names the first omitted

@@ -1,8 +1,8 @@
 use super::*;
 
 use spice::rooms::{
-    Declared, LaneAvailability, RoomProjectionBudget, RoomProjectionError, RoomProjectionSources,
-    RoomWork, derive_room_attention,
+    Declared, LaneAvailability, RoomDuty, RoomDutyKind, RoomDutyStanding, RoomProjectionBudget,
+    RoomProjectionError, RoomProjectionSources, RoomWork, derive_room_attention,
 };
 use wire::rooms::{OOPS_GROOMING_REPORT_LIMIT, RoomAuthorityStamp};
 
@@ -54,6 +54,7 @@ pub(super) fn room_post(
         Err(error) => return environment_fault("room::clock-invalid", &error.to_string()),
     };
     let attention = match project_attention(
+        bus,
         &snapshot.entries,
         &snapshot.answer.residency.body,
         &room,
@@ -258,7 +259,12 @@ fn bounded_room_publications(
     Ok(rows)
 }
 
+/// One room's listeners: lanes with native work in it, lanes that posted in it
+/// within the activity window, and lanes a `MSG ADDRESS#ROOM` route addressed
+/// within that window. An addressed lane hears the room without becoming a
+/// participant until it posts.
 pub(crate) fn project_attention(
+    bus: &Bus,
     entries: &[Entry],
     residency: &wire::ResidencyHead,
     room: &wire::TaskStamp,
@@ -275,19 +281,57 @@ pub(crate) fn project_attention(
         .map_err(|error| environment_fault("room::activity-window-invalid", &error.to_string()))?;
     let since = Instant::new(since)
         .map_err(|error| environment_fault("room::activity-window-invalid", &error.to_string()))?;
+    let invitations = room_invitations(bus, room, residency, since)?;
     derive_room_attention(
         room,
         since,
         &RoomProjectionSources {
             publications: Declared::Available(publications),
             work: Declared::Available(&work),
-            duties: Declared::Available(&[]),
+            duties: Declared::Available(&invitations),
             responsibilities: Declared::Available(&[]),
             residency: Declared::Available(residency),
         },
         RoomProjectionBudget::STANDARD,
     )
     .map_err(projection_refusal)
+}
+
+/// Each lane whose newest `MSG`/`ASK` route into `room` was told at or after
+/// `since`; the bounded read touches no room publication history.
+fn room_invitations(
+    bus: &Bus,
+    room: &wire::TaskStamp,
+    residency: &wire::ResidencyHead,
+    since: Instant,
+) -> Result<Vec<RoomDuty>, Outcome<CommandAnswer>> {
+    let lanes = residency
+        .lanes
+        .iter()
+        .map(|row| row.lane)
+        .collect::<Vec<_>>();
+    let probe = room.clone();
+    let heads = bus
+        .read(move |read| {
+            lanes
+                .into_iter()
+                .map(|lane| read.latest_room_route(lane, &probe))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|error| store_fault("room::invitation-unreadable", &error.to_string()))?;
+    Ok(heads
+        .into_iter()
+        .flatten()
+        .filter(|head| head.body().published >= since)
+        .map(|head| RoomDuty {
+            room: room.clone(),
+            lane: head.body().lane,
+            kind: RoomDutyKind::Invitation {
+                key: head.body().key.clone(),
+            },
+            standing: RoomDutyStanding::Owed,
+        })
+        .collect())
 }
 
 fn projection_refusal(error: RoomProjectionError) -> Outcome<CommandAnswer> {

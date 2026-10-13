@@ -395,6 +395,66 @@ fn resident_catch_up_pages_two_listeners_from_their_horizons_without_waking_them
     lanes.finish();
 }
 
+/// `MSG ADDRESS#ROOM` invites the addressed lane: it hears later room posts
+/// through ordinary catch-up without posting or holding the room's work, while
+/// a seated lane nobody addressed still hears nothing.
+#[test]
+fn a_lane_addressed_into_a_room_hears_its_later_publications() {
+    let lanes = Lanes::new("room-invitation");
+    let room = lanes.room("dVrD245Kc");
+    let (first_lane, second_lane) = (test_uuid(FIRST), test_uuid(SECOND));
+    let first = lanes.address(FIRST);
+    lanes.author(SENDER, &format!("MSG {first}#{room}: join us here"));
+    lanes.account(SENDER);
+    let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
+
+    let repository = Repository::discover(&lanes.root).expect("fixture repository resolves");
+    let startup = load_startup_surface(&repository).expect("fixture surface loads");
+    let mut seats = Seats::new();
+    for lane in [FIRST, SECOND] {
+        seats
+            .seat_detached(
+                test_uuid(lane),
+                test_uuid(lane + 1),
+                Box::new(DetachedFixture {
+                    dropped: Arc::new(AtomicU64::new(0)),
+                }),
+            )
+            .expect("listener seats");
+    }
+    let mut diagnostics = Vec::new();
+    let mut reconcile = || {
+        room_catch_up::reconcile(
+            &lanes.bus,
+            &lanes.paths,
+            &startup.config,
+            &seats,
+            &mut diagnostics,
+        )
+        .expect("catch-up reconciles");
+    };
+    reconcile();
+    lanes.author(SENDER, &format!("MSG #{room}: after the invitation"));
+    lanes.account(SENDER);
+    let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
+    reconcile();
+
+    let notice = |lane| room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, lane));
+    let invited = notice(first_lane).unwrap_or_else(|| {
+        panic!(
+            "the addressed lane hears the room: {}",
+            String::from_utf8_lossy(&diagnostics)
+        )
+    });
+    assert!(invited.text.contains("after the invitation"));
+    assert!(
+        notice(second_lane).is_none(),
+        "an unaddressed lane is not invited"
+    );
+    seats.release_all();
+    lanes.finish();
+}
+
 fn land_delivery(
     lanes: &Lanes,
     room: &wire::TaskHandle,
