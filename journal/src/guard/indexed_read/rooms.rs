@@ -1143,6 +1143,8 @@ macro_rules! room_authority {
              UNION SELECT head_seq FROM authorization_heads \
              UNION SELECT head_seq FROM room_items \
              UNION SELECT head_seq FROM room_results \
+             UNION SELECT head_seq FROM room_relevance_observations \
+             UNION SELECT head_seq FROM room_relevance_assessments \
              UNION SELECT seq - 1 FROM directed \
              UNION SELECT h.head_seq FROM directed d \
              JOIN steering_heads h ON h.created_seq = d.seq - 1 \

@@ -136,6 +136,11 @@ impl ConversationProjection {
         open
     }
 
+    /// Every question result in identity order.
+    pub fn results(&self) -> impl Iterator<Item = &RoomPositioned<QuestionResult>> {
+        self.results.values()
+    }
+
     /// One question result.
     pub fn result(&self, result: &QuestionResultRef) -> Option<&RoomPositioned<QuestionResult>> {
         self.results.get(result)

@@ -807,6 +807,44 @@
   font: inherit;
 }
 
+/* Room standing: each reason kind keeps its own rail so invitation, activity,
+   work, requests, owed duties and responsibility never read alike. */
+.room-standing {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 6px;
+  padding: 8px;
+  border-block-end: var(--app-edge-soft);
+  font-size: var(--app-type-meta);
+}
+
+.room-standing :is(p, dl, ul) { margin: 0; }
+.room-standing > header, .room-standing-note, .room-standing small { color: var(--muted); }
+.room-standing-next { font-weight: 600; }
+.room-standing-scope { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 8px; }
+.room-standing-scope dt { color: var(--muted); }
+.room-standing-scope dd { margin: 0; overflow-wrap: anywhere; }
+.room-standing ul { display: grid; gap: 4px; padding: 0; list-style: none; }
+.room-standing-lanes li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.room-standing-lane { font-weight: 600; }
+.room-standing-availability { color: var(--muted); }
+.room-standing-availability[data-availability="seated"] { color: var(--accent); }
+.room-standing-observation p { overflow-wrap: anywhere; }
+
+.room-reason {
+  padding: 0 5px;
+  border: var(--app-edge-soft);
+  border-inline-start: 3px solid var(--accent-neutral);
+  border-radius: var(--app-radius-control);
+}
+
+.room-reason[data-reason="activity"] { border-inline-start-color: var(--muted); }
+.room-reason[data-reason="invitation"] { border-style: dashed; border-inline-start-color: var(--focus); }
+.room-reason[data-reason="work"] { border-inline-start-color: var(--accent); }
+.room-reason[data-reason="requested"] { border-inline-start-color: var(--focus); }
+.room-reason[data-reason="receipt"], .room-reason[data-reason="result"] { border-inline-start-color: var(--warning); }
+.room-reason[data-reason="responsibility"] { border-inline-start-color: var(--danger); }
+
 .room-flow-card > header { gap: 6px; }
 .room-flow-route { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 

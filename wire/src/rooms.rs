@@ -34,6 +34,9 @@ pub const WORKING_GROUP_ANCHOR_LIMIT: usize = 100;
 pub const WORKING_GROUP_DESIGN_LIMIT: usize = crate::head::TEAM_MEMBER_LIMIT;
 /// Most parked reports one OOPS grooming record may cluster.
 pub const OOPS_GROOMING_REPORT_LIMIT: usize = 100;
+/// How long a room contribution or lane-addressed room packet keeps an
+/// activity-only attention reason; native duties do not age.
+pub const ROOM_ACTIVITY_SECONDS: i64 = 24 * 60 * 60;
 
 /// A current nine-digit native moment stamp for non-task room authority.
 ///

@@ -36,10 +36,10 @@ pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 pub use publication::AppSurface;
 pub use rooms::{
-    Conversation, ConversationProjection, Delivery, OperatorItem, ParticipantReason,
-    PreparationProjection, QuestionResult, RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent,
-    RoomEventKind, RoomParticipant, RoomPositioned, RoomProjection, RoomProjectionStatus,
-    RoomState, associated,
+    Conversation, ConversationProjection, CoordinationStanding, Delivery, OperatorItem,
+    ParticipantReason, PreparationProjection, QuestionResult, Relevance, ResumeAutomation,
+    RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomParticipant,
+    RoomPositioned, RoomProjection, RoomProjectionStatus, RoomState, associated,
 };
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};

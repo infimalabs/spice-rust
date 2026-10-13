@@ -557,8 +557,8 @@ fn render_design_composer(
 }
 
 /// A design's menu carries what its room holds besides conversation: its
-/// preparation authority and, for an OOPS batch, the grooming form. Its group
-/// rail mirrors an agent's team rail.
+/// standing, its preparation authority and, for an OOPS batch, the grooming
+/// form. Its group rail mirrors an agent's team rail.
 fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
     let label = format!("Menu for {}", channel.label);
     html! {
@@ -582,6 +582,7 @@ fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
                     <strong>{channel.label.clone()}</strong>
                 </header>
                 {render_group_actions(render, channel)}
+                {super::standing::render_standing(render.runtime, &channel.stamp)}
                 {render_preparation(render.runtime, &channel.stamp)}
                 {oops_grooming_form(render.runtime, &toast(render), render.sender, &channel.stamp)}
             </div>

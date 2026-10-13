@@ -286,10 +286,22 @@ fn room_board(
         .expect("room board response is admitted")
 }
 
-fn participants(runtime: &AppRuntime) -> Vec<app::RoomParticipant> {
+fn participants(runtime: &AppRuntime, now_micros: i64) -> Vec<app::RoomParticipant> {
     runtime
         .room_projection()
-        .participants(&room(), runtime.board())
+        .participants(&room(), runtime.board(), now_micros)
+}
+
+const MICROS_PER_SECOND: i64 = 1_000_000;
+
+/// The moment `seconds` after the fixture room message was published.
+fn after_message(seconds: i64) -> i64 {
+    authority(ROOM_EVENT).micros() + seconds * MICROS_PER_SECOND
+}
+
+/// A moment past the activity window of every fixture publication.
+fn aged() -> i64 {
+    after_message(2 * wire::rooms::ROOM_ACTIVITY_SECONDS)
 }
 
 /// The frames an operator subscription opens with: its live-start fact page,
@@ -367,7 +379,7 @@ fn operator_subscription_rebuilds_room_authority_from_its_paged_room_snapshot() 
             .into()
     );
     assert_eq!(
-        participants(&runtime),
+        participants(&runtime, aged()),
         vec![
             app::RoomParticipant {
                 lane: uuid(LANE),
@@ -408,7 +420,7 @@ fn snapshot_stops_follow_the_board_and_later_live_facts_retire_authority() {
         Some(&stop())
     );
     assert_eq!(
-        participants(&runtime)[0].reasons,
+        participants(&runtime, aged())[0].reasons,
         vec![
             app::ParticipantReason::Contribution(authority(ROOM_EVENT)),
             app::ParticipantReason::Work(room()),
@@ -427,7 +439,7 @@ fn snapshot_stops_follow_the_board_and_later_live_facts_retire_authority() {
     runtime.apply_stream(&admitted_stream(&session, &live_fact(canceled)));
     runtime.apply_stream(&admitted_stream(&session, &live_fact(authorized(10, 2))));
     assert_eq!(
-        participants(&runtime)
+        participants(&runtime, aged())
             .iter()
             .map(|participant| participant.lane)
             .collect::<Vec<_>>(),
@@ -455,6 +467,133 @@ fn snapshot_stops_follow_the_board_and_later_live_facts_retire_authority() {
             .events()[&authority(STOP_EVENT)]
             .position,
         seq(7)
+    );
+}
+
+#[test]
+fn activity_ages_out_while_contribution_history_and_native_duties_stay() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    for frame in opening(&session) {
+        runtime.apply_stream(&frame);
+    }
+    let window = wire::rooms::ROOM_ACTIVITY_SECONDS;
+    assert_eq!(
+        participants(&runtime, after_message(window))[0].reasons,
+        vec![
+            app::ParticipantReason::Contribution(authority(ROOM_EVENT)),
+            app::ParticipantReason::Activity(authority(ROOM_EVENT)),
+        ],
+        "a contribution at the window's edge is still current activity"
+    );
+    let aged = participants(&runtime, after_message(window + 1));
+    assert_eq!(
+        aged[0].reasons,
+        vec![app::ParticipantReason::Contribution(authority(ROOM_EVENT))],
+        "aging removes only the activity reason, never the contribution"
+    );
+    assert_eq!(
+        aged[1].reasons,
+        vec![app::ParticipantReason::Coordination(
+            COORDINATION_KEY.to_owned()
+        )],
+        "a live coordination duty does not age"
+    );
+}
+
+/// A coordination record at `position` under `key`, carrying a rule of
+/// `limit` resumes and, for an automated resume, its `step`.
+fn ruled(
+    position: u64,
+    publication: &str,
+    key: &str,
+    limit: u8,
+    step: Option<u8>,
+) -> serde_json::Value {
+    let body = RoomCoordinationStarted {
+        room: room(),
+        publication: authority(publication),
+        key: key.to_owned(),
+        target: wire::OccupantAddress::new(seq(1)),
+        rule: Some(wire::rooms::RoomResumeRule {
+            limit,
+            criterion: "Which candidate survives review".to_owned(),
+            contribution: "Assess the open candidate".to_owned(),
+            stop: "Stop once the candidate is assessed".to_owned(),
+        }),
+        automated: step.map(|step| wire::rooms::RoomAutomatedResume {
+            rule: authority(COORDINATION_EVENT),
+            step,
+            evidence: authority(ROOM_EVENT),
+        }),
+    };
+    envelope(position, "room::directed", &body)
+}
+
+#[test]
+fn automation_standing_follows_the_latest_record_its_request_and_put_aside() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    for frame in opening(&session) {
+        runtime.apply_stream(&frame);
+    }
+    let automation = |runtime: &AppRuntime| {
+        runtime
+            .room_projection()
+            .coordination_standing(&room())
+            .map(|standing| standing.automation)
+    };
+    assert_eq!(
+        automation(&runtime),
+        Some(app::ResumeAutomation::Off),
+        "a record without a rule leaves automation off"
+    );
+    let live = |runtime: &mut AppRuntime, fact| {
+        runtime.apply_stream(&admitted_stream(&session, &live_fact(fact)));
+    };
+    live(&mut runtime, direction(9, "dRuleKey1", SECOND_LANE));
+    live(&mut runtime, ruled(10, "dVsYdDj7m", "dRuleKey1", 2, None));
+    assert_eq!(
+        automation(&runtime),
+        Some(app::ResumeAutomation::Armed { limit: 2, spent: 0 })
+    );
+    live(&mut runtime, direction(11, "dRuleKey2", SECOND_LANE));
+    live(
+        &mut runtime,
+        ruled(12, "dVsYdDj7n", "dRuleKey2", 2, Some(1)),
+    );
+    let canceled = wire::body::SteerCanceled {
+        key: "dRuleKey2".to_owned(),
+        lane: uuid(SECOND_LANE),
+    };
+    live(&mut runtime, envelope(13, "steer::canceled", &canceled));
+    assert_eq!(
+        automation(&runtime),
+        Some(app::ResumeAutomation::Ended {
+            limit: 2,
+            spent: 1,
+            disposition: wire::Disposition::Canceled,
+        }),
+        "a request retired without acknowledgment ends the rule"
+    );
+    live(&mut runtime, direction(14, "dRuleKey3", SECOND_LANE));
+    live(
+        &mut runtime,
+        ruled(15, "dVsYdDj7p", "dRuleKey3", 2, Some(2)),
+    );
+    assert_eq!(
+        automation(&runtime),
+        Some(app::ResumeAutomation::Spent { limit: 2 })
+    );
+    live(&mut runtime, direction(16, "dRuleKey4", SECOND_LANE));
+    live(&mut runtime, ruled(17, "dVsYdDj7q", "dRuleKey4", 3, None));
+    live(&mut runtime, put_aside(18));
+    assert_eq!(
+        automation(&runtime),
+        Some(app::ResumeAutomation::PutAside { limit: 3, spent: 0 }),
+        "a put-aside after a ruled record ends it with budget left"
     );
 }
 
