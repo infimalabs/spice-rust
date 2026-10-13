@@ -220,6 +220,119 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_parent_state() {
     assert_eq!(reopened.launch_command, environment.launch_command);
 }
 
+fn admitted_demo_group_command(
+    id: &str,
+    kind: CommandKind,
+    expected: Vec<wire::Witness>,
+    body: &impl serde::Serialize,
+) -> wire::AdmittedCommand {
+    let epoch = DEMO_EPOCH.parse().expect("demo epoch is canonical");
+    Command {
+        v: WireVersion::CURRENT,
+        id: id.parse().expect("fixture command identity is canonical"),
+        epoch,
+        kind,
+        expected,
+        body: serde_json::to_value(body).expect("fixture command body encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    })
+    .expect("fixture command admits")
+}
+
+#[test]
+fn seeded_oops_group_changes_through_shared_group_authority() {
+    let scratch = Scratch::new("oops-group");
+    let root = scratch.child("demo");
+    let environment =
+        seed_test_environment(Some(&root), Path::new("/opt/spice")).expect("demo seed succeeds");
+    let journal = journal::Journal::open(environment.state.journal()).expect("seed journal opens");
+    let bus = bus::Bus::start(journal).expect("seed journal bus starts");
+    let group = wire::rooms::RoomAuthorityStamp::for_micros(DEMO_OOPS_GROUP_MICROS)
+        .expect("demo OOPS group stamp is valid");
+    let head = bus
+        .read({
+            let group = group.clone();
+            move |read| read.group_head(&group)
+        })
+        .expect("seed group reads")
+        .expect("seed group exists");
+    let anchor = head.body().anchors[0].clone();
+    let put = wire::rooms::WorkingGroupPut {
+        group: wire::rooms::WorkingGroup {
+            group: group.clone(),
+            anchors: vec![anchor.clone()],
+        },
+    };
+    let command = admitted_demo_group_command(
+        "018f82d4-6f59-7d06-92e3-bce913116421",
+        CommandKind::WorkingGroupPut,
+        vec![
+            wire::Witness::Group {
+                group: group.clone(),
+                head: Some(head.position()),
+            },
+            wire::Witness::Existence { task: anchor },
+        ],
+        &put,
+    );
+    let put = crate::board_command::dispatch(&bus, &command)
+        .expect("working-group put dispatches through the command door");
+    assert!(
+        matches!(
+            put,
+            Outcome::Reply(Reply {
+                position: ReplyPosition::Committed(_),
+                body: CommandAnswer::WorkingGroupChange(_),
+            })
+        ),
+        "seeded group put must commit: {put:?}"
+    );
+
+    let stored = bus
+        .read({
+            let group = group.clone();
+            move |read| read.group_head(&group)
+        })
+        .expect("changed group reads")
+        .expect("changed group exists");
+    let end = wire::rooms::WorkingGroupPut {
+        group: wire::rooms::WorkingGroup {
+            group: group.clone(),
+            anchors: Vec::new(),
+        },
+    };
+    let command = admitted_demo_group_command(
+        "018f82d4-6f59-7d06-92e3-bce913116422",
+        CommandKind::WorkingGroupPut,
+        vec![wire::Witness::Group {
+            group: group.clone(),
+            head: Some(stored.position()),
+        }],
+        &end,
+    );
+    let end = crate::board_command::dispatch(&bus, &command)
+        .expect("empty working-group put dispatches through the command door");
+    assert!(
+        matches!(
+            end,
+            Outcome::Reply(Reply {
+                position: ReplyPosition::Committed(_),
+                body: CommandAnswer::WorkingGroupChange(_),
+            })
+        ),
+        "seeded group end must commit: {end:?}"
+    );
+    assert!(
+        bus.read(move |read| read.group_head(&group))
+            .expect("removed group reads")
+            .is_none()
+    );
+}
+
 #[test]
 fn seeded_roots_are_born_on_one_commit_wherever_they_are_created() {
     let scratch = Scratch::new("born");

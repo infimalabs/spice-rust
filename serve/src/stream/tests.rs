@@ -345,9 +345,10 @@ fn operator_reconnect_begins_live_instead_of_draining_missed_history() {
 
 /// Commit one design task and a working group holding it, as one write.
 fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
+    let group = group.parse().expect("group stamp");
     let mut write = JournalWrite::new(
         Actor::Operator,
-        "thread:operator".parse().expect("origin"),
+        wire::rooms::working_group_origin(&group),
         "2030-04-12T18:44:09.271Z".parse().expect("instant"),
         Producer::CommandDoor,
     );
@@ -413,7 +414,7 @@ fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
         .fact(
             wire::rooms::WorkingGroupStored {
                 group: wire::rooms::WorkingGroup {
-                    group: group.parse().expect("group stamp"),
+                    group,
                     anchors: vec![task],
                 },
             },

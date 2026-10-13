@@ -31,6 +31,7 @@ const DEMO_PROJECT: &str = "rim.spice.demo";
 const DEMO_LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116411";
 const DEMO_OOPS_BATCH_STAMP: &str = "1kKRRsDQ";
 const DEMO_OOPS_REPORT_STAMP: &str = "1kKRRsDR";
+const DEMO_OOPS_GROUP_MICROS: i64 = 1_783_748_760_000_000;
 const DEMO_OOPS_BATCH_TITLE: &str = "Groom retained OOPS reports";
 const DEMO_OOPS_REPORT_TITLE: &str = "Observed command friction";
 const DEMO_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce913116412";
@@ -758,9 +759,9 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
         &["plan"],
         "2026-07-11T05:05:00.000000Z",
     )?;
-    let origin: wire::Origin = format!("task:{batch}")
-        .parse()
-        .expect("demo OOPS group origin is valid");
+    let group = wire::rooms::RoomAuthorityStamp::for_micros(DEMO_OOPS_GROUP_MICROS)
+        .expect("demo OOPS group stamp is valid");
+    let origin = wire::rooms::working_group_origin(&group);
     let mut write = JournalWrite::new(
         Actor::Operator,
         origin,
@@ -771,8 +772,7 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
         .fact(
             wire::rooms::WorkingGroupStored {
                 group: wire::rooms::WorkingGroup {
-                    group: wire::rooms::RoomAuthorityStamp::for_micros(1_783_748_760_000_000)
-                        .expect("demo OOPS group stamp is valid"),
+                    group,
                     anchors: vec![batch],
                 },
             },
