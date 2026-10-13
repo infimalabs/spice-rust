@@ -407,10 +407,12 @@
   pointer-events: none;
 }
 .team-composer .team-composer-controls > * { z-index: 1; }
-/* SEND uses two optical layers. This lower disc is a dull, even emitter;
-   the separate button face in mosaic.css is the glass that transmits it.
-   A fine inset catch and the outer bloom collect light at the perimeter
-   without painting a hotspot through the middle of the control. */
+/* SEND is one optical system of two layers. This lower disc is the emitter: an
+   even diffuse field behind the whole glass disc that softens into the panel
+   just beyond its edge, with no drawn ring and no center hotspot. The glass
+   face in mosaic.css transmits it and collects light in irregular catches
+   along its curved perimeter. States modulate only this field's intensity;
+   typed rims stay separate layers above both. */
 .team-composer .team-composer-controls::after {
   position: absolute;
   z-index: 0;
@@ -419,14 +421,18 @@
   inline-size: calc(var(--team-control-send-size) + 8px);
   block-size: calc(var(--team-control-send-size) + 8px);
   border-radius: var(--app-radius-circle);
-  background: color-mix(in srgb, var(--app-highlight-source) 5%, transparent);
-  box-shadow:
-    0 0 9px color-mix(in srgb, var(--app-highlight-source) 7%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, var(--app-highlight-source) 10%, transparent);
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--app-highlight-source) 26%, transparent) 0 72%,
+    color-mix(in srgb, var(--app-highlight-source) 18%, transparent) 86%,
+    transparent 100%
+  );
+  filter: blur(3px);
   opacity: .58;
   translate: -50% 0;
   content: "";
   pointer-events: none;
+  transition: opacity var(--app-motion-settle) var(--app-ease-standard);
 }
 .team-composer .team-composer-controls:has(.team-send:not(:disabled):is(:hover, :focus-visible))::after { opacity: .72; }
 .team-composer .team-composer-controls:has(.team-send:not(:disabled):is(:active, [data-touch-contact]))::after { opacity: .46; }
@@ -442,6 +448,7 @@
 @keyframes team-send-waking { from { opacity: .3; } to { opacity: .85; } }
 @media (prefers-reduced-motion: reduce) {
   .team-composer .team-send[data-waking="true"][data-lit="false"]::after { animation: none; opacity: .6; }
+  .team-composer .team-composer-controls::after { transition: none; }
 }
 /* Each surface clips its controls' outer right shadow. Mirror that same
    elevation inside the next composer, where it paints as the preceding
