@@ -260,6 +260,8 @@ fn plant_room_coordination(journal: &Journal) -> String {
             .expect("fixture publication"),
         key: "dVsW5mRxg".to_owned(),
         target: "6SNy".parse().expect("fixture address"),
+        rule: None,
+        automated: None,
     };
     insert_fact(
         journal,

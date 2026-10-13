@@ -1268,7 +1268,14 @@ fn accept_commit_turn(
         seats,
         diagnostic,
     )?;
-    room_relevance::reconcile(bus, command_surface.epoch(), diagnostic)
+    room_relevance::reconcile(bus, command_surface.epoch(), diagnostic)?;
+    room_automation::reconcile(
+        bus,
+        command_surface.paths,
+        command_surface.config,
+        diagnostic,
+    );
+    Ok(())
 }
 
 #[allow(

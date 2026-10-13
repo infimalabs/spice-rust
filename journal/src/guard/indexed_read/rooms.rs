@@ -417,6 +417,44 @@ impl JournalRead<'_> {
         require_room(head, room, |body| &body.room)
     }
 
+    /// Every room's latest `room::directed` record that carries a resume
+    /// rule, in journal order.
+    pub fn ruled_room_directions(
+        &self,
+    ) -> Result<Vec<JournalHead<RoomCoordinationStarted>>, GuardError> {
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT head_seq, body FROM room_directions \
+                 WHERE json_extract(CAST(body AS TEXT), '$.rule') IS NOT NULL \
+                 ORDER BY head_seq",
+            )
+            .map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(GuardError::Store)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(GuardError::Store)?;
+        rows.into_iter()
+            .map(|(position, bytes)| {
+                read_metrics::observe_row();
+                read_metrics::observe_decode(bytes.len());
+                let head = super::decode_head::<RoomCoordinationStarted>(position, &bytes)?;
+                if self.cursor.is_none_or(|cursor| head.position > cursor) {
+                    return Err(GuardError::Invalid(format!(
+                        "room_directions head position {} is beyond cursor {:?}",
+                        head.position,
+                        self.cursor.map(wire::Seq::get)
+                    )));
+                }
+                Ok(head)
+            })
+            .collect()
+    }
+
     /// A room's latest `room::shelved` record, absent before its first one.
     pub fn room_shelving(
         &self,
@@ -892,6 +930,59 @@ impl JournalRead<'_> {
                 .ok_or_else(|| {
                     GuardError::Invalid(format!("room publication seq {seq} is invalid"))
                 })
+        })
+        .transpose()
+    }
+
+    /// The first room publication strictly after `after`, through the current
+    /// horizon, that another party published and `actor` has not published
+    /// after. Coordination records are not input.
+    pub fn room_unanswered_input(
+        &self,
+        room: &wire::TaskStamp,
+        after: wire::Seq,
+        actor: &wire::Actor,
+    ) -> Result<Option<(wire::Seq, RoomAuthorityStamp)>, GuardError> {
+        let Some(horizon) = self.room_horizon()? else {
+            return Ok(None);
+        };
+        let after = i64::try_from(after.get())
+            .map_err(|_| GuardError::Invalid("room input cursor exceeds SQLite".to_owned()))?;
+        read_metrics::observe_query();
+        let row = self
+            .connection
+            .query_row(
+                "SELECT published.seq, published.publication FROM room_publications AS published \
+                 JOIN fact_envelopes AS facts ON facts.seq = published.seq \
+                 WHERE published.room = ?1 AND published.seq > ?2 AND published.seq <= ?3 \
+                 AND facts.actor != ?4 AND facts.kind NOT IN (?5, ?6) \
+                 AND NOT EXISTS (SELECT 1 FROM room_publications AS later \
+                     JOIN fact_envelopes AS reply ON reply.seq = later.seq \
+                     WHERE later.room = ?1 AND later.seq > published.seq \
+                     AND later.seq <= ?3 AND reply.actor = ?4) \
+                 ORDER BY published.seq LIMIT 1",
+                params![
+                    room.as_str(),
+                    after,
+                    horizon,
+                    actor.to_string(),
+                    wire::FactKind::RoomCoordinationStarted.as_str(),
+                    wire::FactKind::RoomPutAside.as_str(),
+                ],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        row.map(|(seq, publication)| {
+            read_metrics::observe_row();
+            let seq = u64::try_from(seq)
+                .ok()
+                .and_then(wire::Seq::new)
+                .ok_or_else(|| GuardError::Invalid(format!("room input seq {seq} is invalid")))?;
+            let publication = publication.parse().map_err(|_| {
+                GuardError::Invalid(format!("room input publication {publication:?} is invalid"))
+            })?;
+            Ok((seq, publication))
         })
         .transpose()
     }

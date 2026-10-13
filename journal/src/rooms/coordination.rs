@@ -9,7 +9,7 @@
 
 use rusqlite::{Connection, OptionalExtension};
 use wire::body::{SteerCanceled, SteerSent};
-use wire::rooms::{CoordinationControl, RoomCoordinationStarted, RoomPutAside};
+use wire::rooms::{CoordinationControl, ROOM_RESUME_LIMIT, RoomCoordinationStarted, RoomPutAside};
 use wire::{Actor, AnyFact, Seq};
 
 use super::{Authority, Change, Refusal, publish, require_operator, unsound};
@@ -139,6 +139,7 @@ fn directed(
             body.room, body.key
         ));
     }
+    admit_rule(authority, body)?;
     publish(authority, seq, &body.room, &body.publication)?;
     authority.change(Change::Coordination {
         record: Record::Directed,
@@ -146,6 +147,54 @@ fn directed(
         seq: seq.get(),
         body: wire::encode(body)?,
     })
+}
+
+/// An operator record may carry a bounded resume rule. An automated record
+/// spends, one step at a time, the rule the room's latest record carries, to
+/// the same target, citing input published in the room, with nothing put
+/// aside since that record.
+fn admit_rule(authority: &impl Authority, body: &RoomCoordinationStarted) -> Result<(), Refusal> {
+    if body
+        .rule
+        .as_ref()
+        .is_some_and(|rule| !(1..=ROOM_RESUME_LIMIT).contains(&rule.limit))
+    {
+        return unsound(format!(
+            "room coordination in {} authorizes outside 1..={ROOM_RESUME_LIMIT} resumes",
+            body.room
+        ));
+    }
+    let Some(automated) = &body.automated else {
+        return Ok(());
+    };
+    let room = body.room.to_string();
+    let previous = authority.coordination(Record::Directed, &room)?;
+    let shelved = authority.coordination(Record::Shelved, &room)?;
+    let spends = match (&previous, &body.rule) {
+        (Some((head, previous)), Some(rule)) => {
+            let previous = wire::decode::<RoomCoordinationStarted>(previous)?;
+            let step = match &previous.automated {
+                None => (previous.publication == automated.rule).then_some(1),
+                Some(prior) => (prior.rule == automated.rule)
+                    .then(|| prior.step.checked_add(1))
+                    .flatten(),
+            };
+            previous.rule.as_ref() == Some(rule)
+                && previous.target == body.target
+                && step == Some(automated.step)
+                && automated.step <= rule.limit
+                && shelved.as_ref().is_none_or(|(shelf, _)| shelf < head)
+                && authority.published(&room, automated.evidence.as_str())?
+        }
+        _ => false,
+    };
+    if !spends {
+        return unsound(format!(
+            "automated room coordination in {} does not spend its room's live resume rule",
+            body.room
+        ));
+    }
+    Ok(())
 }
 
 fn shelved(

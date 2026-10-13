@@ -161,6 +161,7 @@ mod room_coordination;
 pub(crate) use room_coordination::room_coordinate_with;
 pub(crate) use room_coordination::{
     coordination_lane, room_coordinate, room_coordination_read, room_put_aside,
+    room_resumes_by_rule,
 };
 mod steering_origin;
 use steering_origin::*;

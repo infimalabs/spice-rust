@@ -10,6 +10,8 @@ use wire::rooms::{
     RoomPost, RoomPostOutcome, RoomPublicationContent, RoomPublished, TranscriptHunk,
 };
 
+mod automation;
+
 fn room_projects() -> ProjectPolicy {
     ProjectPolicy::new(
         ["board".to_owned(), "rim".to_owned()],
@@ -53,6 +55,17 @@ fn coordinate_command(
     seat: &Seat,
     action: RoomCoordinateAction,
 ) -> wire::AdmittedCommand {
+    ruled_coordinate_command(bus, epoch, room, seat, action, None)
+}
+
+fn ruled_coordinate_command(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    room: &TaskHandle,
+    seat: &Seat,
+    action: RoomCoordinateAction,
+    auto_resume: Option<u8>,
+) -> wire::AdmittedCommand {
     let current = board(bus, epoch, Actor::Operator);
     let heads = at(&current, room);
     let target = current
@@ -77,6 +90,7 @@ fn coordinate_command(
             criterion: "Choose the exact retained candidate.".to_owned(),
             contribution: "Inspect and capture only this anchor.".to_owned(),
             stop: "Stop after recording the native disposition.".to_owned(),
+            auto_resume,
         },
     )
 }

@@ -86,7 +86,9 @@ selected outputs, other browsers, and repository authority remain unchanged.
 
 The native command surface is `spice room status HANDLE`,
 `spice room start|resume HANDLE ADDRESS --criterion TEXT --contribution TEXT
---stop TEXT`, and `spice room put-aside HANDLE`.
+--stop TEXT [--auto-resume N]`, and `spice room put-aside HANDLE`. An
+`--auto-resume` rule lets the resident repeat that Resume up to N times as
+[new room input arrives](../docs/product/invariants/identity.md#identity-an-operator-rule-bounds-automated-room-resumes).
 
 ## Toolbar
 
