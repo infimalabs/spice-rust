@@ -514,6 +514,7 @@ fn activity_cards(
                 },
                 quote_lane: crate::composer_drafts::quote_lane(&team.members, message),
                 message: Rc::clone(message),
+                companions: Rc::from([]),
             })
         })
         .collect::<Vec<_>>();

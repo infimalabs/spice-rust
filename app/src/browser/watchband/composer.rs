@@ -364,6 +364,8 @@ pub(super) struct AgentMessageCardProps {
     pub(super) lane: CanonicalUuid,
     pub(super) order: u64,
     pub(super) layout: CardLayout,
+    /// Later close images crystallized into this card, oldest first.
+    pub(super) companions: Rc<[Rc<wire::AgentMessage>]>,
 }
 
 impl PartialEq for AgentMessageCardProps {
@@ -384,6 +386,7 @@ impl PartialEq for AgentMessageCardProps {
             && self.lane == other.lane
             && self.order == other.order
             && self.layout == other.layout
+            && self.companions == other.companions
     }
 }
 
@@ -409,12 +412,15 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
         }
     });
     let correspondent = agent_message_correspondent(props, card_key, &speak);
-    render_agent_message_card(props, &correspondent)
+    let crystal = use_node_ref();
+    super::mosaic_view::use_crystal_arrangement(crystal.clone(), props.companions.clone());
+    render_agent_message_card(props, &correspondent, &crystal)
 }
 
 fn render_agent_message_card(
     props: &AgentMessageCardProps,
     correspondent: &view::chrome::Correspondent,
+    crystal: &NodeRef,
 ) -> Html {
     let member = &props.member;
     let quote_lane = props.quote_lane;
@@ -434,6 +440,15 @@ fn render_agent_message_card(
         card_label,
         classifications,
     } = agent_message_presentation(props, correspondent);
+    let crystallized = lone_tool_image && !props.companions.is_empty();
+    let card_label = if crystallized {
+        format!(
+            "{} tool images from {attribution}",
+            1 + props.companions.len()
+        )
+    } else {
+        card_label
+    };
     let speaking = props.speech_owner.is_some();
     let task_click = message_task_click(props.open_task.clone());
     let task_keydown = message_task_keydown(props.open_task.clone());
@@ -446,6 +461,7 @@ fn render_agent_message_card(
                 is_boundary.then_some("mosaic-compaction-card"),
                 (!is_boundary && image_only).then_some("mosaic-message-card--image-only"),
                 single_image_cover.then_some("mosaic-message-card--image-cover"),
+                crystallized.then_some("mosaic-message-card--crystal"),
                 message.final_answer.then_some("final"),
                 speaking.then_some("now-playing"),
                 layout.lifecycle.as_str(),
@@ -498,6 +514,7 @@ fn render_agent_message_card(
                         unlinked_media,
                         media_description: media_description.as_deref(),
                         lone_tool_image,
+                        crystal: crystallized.then_some((&props.companions[..], crystal)),
                         footer_label: &footer_label,
                         attribution: &attribution,
                     })}
@@ -558,6 +575,8 @@ struct NormalFace<'a> {
     unlinked_media: Vec<&'a wire::Media>,
     media_description: Option<&'a str>,
     lone_tool_image: bool,
+    /// The companions and cell host of a crystallized run.
+    crystal: Option<(&'a [Rc<wire::AgentMessage>], &'a NodeRef)>,
     footer_label: &'a str,
     attribution: &'a str,
 }
@@ -566,7 +585,10 @@ struct NormalFace<'a> {
 /// image's top-left corner the way prose leads its words; opening the image is
 /// a click on the image itself.
 fn render_normal_face(message: &wire::AgentMessage, face: NormalFace<'_>) -> Html {
-    let media = render_agent_message_media(face.unlinked_media, face.media_description);
+    let media = match face.crystal {
+        Some((companions, crystal)) => render_crystal_media(message, companions, crystal),
+        None => render_agent_message_media(face.unlinked_media, face.media_description),
+    };
     // A lone tool image carries no badges or card actions, so it has no
     // controls to draw.
     if face.lone_tool_image {
@@ -881,35 +903,64 @@ fn render_agent_message_media(
     }
     html! {
         <div class="message-attachments">
-            {for unlinked_media.into_iter().map(|media| {
-                let description = description.unwrap_or(&media.name).to_owned();
-                let action = format!("Open {description} full size");
+            {for unlinked_media.into_iter().map(|media| render_media_button(media, description, None))}
+        </div>
+    }
+}
+
+/// A crystallized run: the first card's image, then each companion's, every
+/// one in its own cell and openable full size on its own.
+fn render_crystal_media(
+    message: &wire::AgentMessage,
+    companions: &[Rc<wire::AgentMessage>],
+    crystal: &NodeRef,
+) -> Html {
+    let count = 1 + companions.len();
+    html! {
+        <div ref={crystal.clone()} class="message-attachments mosaic-crystal" data-crystal-count={count.to_string()}>
+            {for std::iter::once(message).chain(companions.iter().map(Rc::as_ref)).map(|message| {
+                let description = (!message.text.trim().is_empty())
+                    .then(|| watchband::tool_media_description(&message.text));
                 html! {
-                    <button
-                        type="button"
-                        class="message-image message-image--openable"
-                        title={action.clone()}
-                        aria-label={action}
-                        data-image-preview=""
-                        data-image-name={media.name.clone()}
-                    >
-                        <img
-                            src={media.data_url.clone()}
-                            alt={description}
-                            data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
-                            data-mosaic-image-state="pending"
-                        />
-                        <span
-                            class="message-image-status"
-                            role="status"
-                            data-mosaic-image-status="pending"
-                        >
-                            {"Loading image"}
-                        </span>
-                    </button>
+                    <>{for message.media.iter().map(|media| {
+                        render_media_button(media, description.as_deref(), Some("mosaic-crystal-cell"))
+                    })}</>
                 }
             })}
         </div>
+    }
+}
+
+fn render_media_button(
+    media: &wire::Media,
+    description: Option<&str>,
+    cell: Option<&'static str>,
+) -> Html {
+    let description = description.unwrap_or(&media.name).to_owned();
+    let action = format!("Open {description} full size");
+    html! {
+        <button
+            type="button"
+            class={classes!("message-image", "message-image--openable", cell)}
+            title={action.clone()}
+            aria-label={action}
+            data-image-preview=""
+            data-image-name={media.name.clone()}
+        >
+            <img
+                src={media.data_url.clone()}
+                alt={description}
+                data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
+                data-mosaic-image-state="pending"
+            />
+            <span
+                class="message-image-status"
+                role="status"
+                data-mosaic-image-status="pending"
+            >
+                {"Loading image"}
+            </span>
+        </button>
     }
 }
 

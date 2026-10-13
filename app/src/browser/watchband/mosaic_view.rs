@@ -6,6 +6,9 @@ use yew::functional::UseReducerDispatcher;
 
 const MIN_MEASURABLE_WIDTH_PX: i32 = 24;
 mod composer_collapse;
+mod crystal;
+use crystal::arrange_crystal;
+pub(super) use crystal::use_crystal_arrangement;
 mod history;
 pub(in crate::browser) use history::HistorySender;
 use history::use_history_paging;
@@ -26,6 +29,9 @@ pub(in crate::browser) enum ActivityCard {
         quote_tasks: Rc<crate::runtime::QuoteTasks>,
         quote_lane: CanonicalUuid,
         message: Rc<wire::AgentMessage>,
+        /// Later images crystallized into this card, oldest first; empty for
+        /// every card the mosaic shows on its own.
+        companions: Rc<[Rc<wire::AgentMessage>]>,
     },
     Lifecycle {
         accent: usize,
@@ -58,6 +64,7 @@ impl PartialEq for ActivityCard {
                     quote_tasks: left_quote_tasks,
                     quote_lane: left_quote_lane,
                     message: left_message,
+                    companions: left_companions,
                 },
                 Self::Agent {
                     accent: right_accent,
@@ -67,6 +74,7 @@ impl PartialEq for ActivityCard {
                     quote_tasks: right_quote_tasks,
                     quote_lane: right_quote_lane,
                     message: right_message,
+                    companions: right_companions,
                 },
             ) => {
                 left_accent == right_accent
@@ -78,6 +86,7 @@ impl PartialEq for ActivityCard {
                     && left_quote_tasks == right_quote_tasks
                     && left_quote_lane == right_quote_lane
                     && (Rc::ptr_eq(left_message, right_message) || left_message == right_message)
+                    && left_companions == right_companions
             }
             (
                 Self::Lifecycle {
@@ -554,6 +563,8 @@ pub(in crate::browser) struct MosaicPlaneProps {
 
 struct MosaicPlaneView<'a> {
     properties: &'a MosaicPlaneProps,
+    /// The cards the plane places, with each close image run crystallized.
+    cards: &'a [ActivityCard],
     measurement_width: i32,
     measurements: &'a [ActivityMeasurement],
     plane: Option<&'a crate::mosaic_plane::PersistentLanePlane<String>>,
@@ -566,6 +577,7 @@ impl MosaicPlaneView<'_> {
     fn render(self, host: NodeRef, track_host: NodeRef) -> Html {
         let rendered_cards = render_activity_cards(
             self.properties,
+            self.cards,
             self.measurements,
             &self.geometry,
             self.plane,
@@ -574,14 +586,13 @@ impl MosaicPlaneView<'_> {
         let plane_rows = self.plane.map_or(1, |plane| plane.rows());
         // Key each activity once against the placed set so a render stays
         // linear in retained cards.
-        let pending = self.plane.map_or(self.properties.cards.len(), |plane| {
+        let pending = self.plane.map_or(self.cards.len(), |plane| {
             let placed = plane
                 .cards()
                 .iter()
                 .map(|entry| entry.key.as_str())
                 .collect::<std::collections::HashSet<_>>();
-            self.properties
-                .cards
+            self.cards
                 .iter()
                 .filter(|activity| !placed.contains(activity.key().as_str()))
                 .count()
@@ -688,12 +699,17 @@ pub(in crate::browser) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let measurement_width = width.round() as i32;
     let committed = use_state_eq(|| None::<crate::mosaic_plane::PersistentLanePlane<String>>);
     let rendered_plane = (*committed).clone();
+    // Close image runs crystallize only here, where cards are placed; narration
+    // and every other surface keep one card per image.
+    let cards = use_memo(properties.cards.clone(), |cards| {
+        crystal::crystallize(cards)
+    });
     // Edges exist only in a settled layout: a plane measuring its first lattice
     // shows a placeholder extent that reads as a trailing edge, so it offers no
     // paging targets until the lattice commits and the edge means something.
     // An empty plane's extent is only its composer's, never a trailing edge.
     let unsettled = BTreeMap::new();
-    let paging_targets = if properties.cards.is_empty()
+    let paging_targets = if cards.is_empty()
         || measurement_phase(rendered_plane.is_some(), measurement_width) == "measuring"
     {
         &unsettled
@@ -702,7 +718,7 @@ pub(in crate::browser) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     };
     use_history_paging(
         host.clone(),
-        &properties.cards,
+        &cards,
         paging_targets,
         properties.history_revision,
         rendered_plane
@@ -710,11 +726,7 @@ pub(in crate::browser) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
             .map_or(0, crate::mosaic_plane::PersistentLanePlane::commits),
         properties.history.clone(),
     );
-    let card_keys = properties
-        .cards
-        .iter()
-        .map(ActivityCard::key)
-        .collect::<Vec<_>>();
+    let card_keys = cards.iter().map(ActivityCard::key).collect::<Vec<_>>();
     use_layout_properties(
         host.clone(),
         measurement_width,
@@ -725,18 +737,18 @@ pub(in crate::browser) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let measurements = use_state_eq(Vec::<ActivityMeasurement>::new);
     let narration_cursor = use_state_eq(|| None::<String>);
     // Composer images in the slot are the composer's own; only cards resolve here.
-    use_image_resolution_events(track_host.clone(), properties.cards.clone());
+    use_image_resolution_events(track_host.clone(), (*cards).clone());
     use_activity_measurements(
         host.clone(),
         measurement_width,
-        properties.cards.clone(),
+        (*cards).clone(),
         committed_spans,
         measurements.clone(),
     );
     use_persistent_plane(
         committed.clone(),
         measurement_width,
-        properties.cards.clone(),
+        (*cards).clone(),
         (*measurements).clone(),
     );
     use_narration(
@@ -758,6 +770,7 @@ pub(in crate::browser) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     use_plane_scroll(host.clone(), rendered_plane.clone(), composer);
     MosaicPlaneView {
         properties,
+        cards: &cards,
         measurement_width,
         measurements: &measurements,
         plane: committed_plane,
@@ -1299,6 +1312,7 @@ fn use_persistent_plane(
 
 fn render_activity_cards(
     properties: &MosaicPlaneProps,
+    cards: &[ActivityCard],
     measurements: &[ActivityMeasurement],
     geometry: &crate::mosaic::Geometry,
     plane: Option<&crate::mosaic_plane::PersistentLanePlane<String>>,
@@ -1309,8 +1323,7 @@ fn render_activity_cards(
         .map(|entry| (entry.key.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
     let measurement_index = MeasurementIndex::new(measurements);
-    properties
-        .cards
+    cards
         .iter()
         .enumerate()
         .map(|(order, activity)| {
@@ -1341,6 +1354,7 @@ fn render_activity_cards(
                     quote_tasks,
                     quote_lane,
                     message,
+                    companions,
                 } => {
                     let PlaneOwner::Team { lane, .. } = &properties.owner else {
                         unreachable!("agent cards render only in team planes");
@@ -1364,6 +1378,7 @@ fn render_activity_cards(
                         lane={*lane}
                         order={quote_order}
                         {layout}
+                        companions={companions.clone()}
                     />
                     }
                 }

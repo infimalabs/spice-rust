@@ -53,6 +53,8 @@ mod mermaid_geometry;
 #[cfg(any(target_arch = "wasm32", test))]
 mod mermaid_label;
 pub mod mosaic;
+#[cfg(any(target_arch = "wasm32", test))]
+mod mosaic_crystal;
 pub mod mosaic_plane;
 pub mod narration;
 #[cfg(any(target_arch = "wasm32", test))]
