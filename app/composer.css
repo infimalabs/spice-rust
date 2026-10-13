@@ -1053,3 +1053,11 @@
   width: 3px;
   background: var(--warning);
 }
+
+/* A settled design's room takes no new posts; its composer body says so. */
+.composer-shard-settled {
+  margin: 0;
+  padding: 10px 8px;
+  color: var(--muted);
+  font-size: var(--app-type-status);
+}

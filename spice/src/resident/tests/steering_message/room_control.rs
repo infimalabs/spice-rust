@@ -432,6 +432,49 @@ fn operator_items_page_and_settle_exactly() {
     lanes.finish();
 }
 
+/// Settling a room's anchor closes it to new posts only: a receipt or
+/// question already open in it still acknowledges, answers, and declines.
+#[test]
+fn open_room_duties_still_settle_after_the_anchor_settles() {
+    let lanes = Lanes::new("control-settled-anchor");
+    let room = lanes.room("dVrD244Jd");
+    lanes
+        .say(SENDER, &format!("MSG operator#{room}: shipped"))
+        .expect("the MSG publishes");
+    let answered = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: ship it?")));
+    let declined = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: and then?")));
+    let items = lanes.inbox_items(&[]);
+    let told = RoomReceiptRef::new(items[0].0.parse().expect("item key"));
+    lanes.close_room(&room);
+    let born = room.born().expect("fixture handle carries its stamp");
+    let anchor = lanes
+        .bus
+        .read(move |read| read.workflow_head(&born))
+        .expect("anchor workflow reads")
+        .expect("anchor exists");
+    assert!(
+        anchor.body().completion.is_some() && anchor.body().review == "closed",
+        "the anchor is settled before its open duties settle"
+    );
+
+    committed(&lanes.respond(60, &answered, "ship"));
+    assert!(matches!(
+        lanes.question(&answered).1.state(),
+        QuestionResultState::Answered { .. }
+    ));
+    committed(&lanes.dispose(61, RoomReceiptDisposition::Nak, &[item_of(&declined)], "no"));
+    assert!(matches!(
+        lanes.question(&declined).1.state(),
+        QuestionResultState::Declined { .. }
+    ));
+    committed(&lanes.dispose(62, RoomReceiptDisposition::Ack, &[told.clone()], "seen"));
+    assert!(matches!(
+        lanes.item_state(&told),
+        RoomReceiptState::Acked { .. }
+    ));
+    lanes.finish();
+}
+
 /// A lapsed operator item stays open but refuses settlement until the
 /// operator recovers it to pending with a fresh expiry; a timed-out result is
 /// terminal for every later answer or closure.
