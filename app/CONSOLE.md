@@ -64,6 +64,43 @@ listeners and ask no lane for anything: a post never wakes, obligates, or
 directs a lane. Asking a lane goes through the design menu's coordination
 controls.
 
+Beside the design drafts, the group console keeps the team control panel's
+frame and geometry, mapping each team control to its group analog or to
+none:
+
+- **SEND** becomes **POST**. One press posts every design composer holding
+  text or a drafted quote, each to its own room. Its rim shows those designs in
+  their accents, it becomes the `FULL POST` lockup exactly when every open design
+  in a multi-design group is drafted, and it stays disabled while no room takes a
+  post. A settled design takes no post and has no place on it. Command or
+  Control and Enter posts one composer alone, as it sends one member's draft.
+- **Idle** follows the team rule. With no composer holding text, no quote
+  drafted, and no post in flight, the panel rests dark with POST as flush glass.
+- **Team arrangement menu** becomes the group arrangement menu, in the same
+  place and with the same menu, focus, and Escape behavior. It moves this
+  browser's console left or right or closes it. Swap and join have no analog:
+  membership moves one design at a time through its own menu or the Working
+  groups roster, never by merging groups.
+- **Team TURBO** has none: fast mode configures the lanes a team runs, and a
+  group runs no lane.
+- **The speech slider** has none: it voices a team's live agent prose, and
+  room publications are records.
+- **The allocation slider** has none: Steer, Drive, and Drain set how a team's
+  lanes take allocator work, and a working group allocates and authorizes
+  nothing.
+- **Keyboard broadcast and waking** have none: a post reaches only its own
+  room and wakes no lane.
+
+Each design heading resolves, as a member heading does, from the room's newest
+publication whose authored words this browser holds. It shows that line, aged
+and linked to its card. Until one is held it shows the Design's title, or, for a
+design the board does not carry, its handle with that availability.
+
+A post that lands clears its composer only while the composer still holds what
+was posted. A refused post leaves only that composer's draft in place. Each
+report names its design, and a composer whose post awaits its answer is not
+posted again.
+
 ## Reading a Design
 
 Any Design, open, completed, or closed, opens for reading in its task

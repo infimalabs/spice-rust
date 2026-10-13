@@ -38,8 +38,9 @@ pub(super) use composer::{
     primary_textarea_id, use_primary_composer_drag_state,
 };
 use controls::ArrangementOpener;
-use controls::{SendSlot, TeamLife, render_team_controls};
+pub(in crate::browser) use controls::{ControlsFrame, SendSlot, holds_text};
 pub(super) use controls::{TeamControlAction, TeamControls, TeamRequest, TeamSpeech};
+use controls::{TeamLife, render_team_controls};
 pub(in crate::browser) use fleet::use_team_arrangement_focus;
 use fleet::{FleetRender, render_empty_fleet, render_populated_fleet};
 use mosaic_view::CardLayout;
@@ -1081,7 +1082,7 @@ fn send_slots(
             let lane = member.lane.to_string();
             SendSlot {
                 attached: drafts.holds_quotes_or_images(&lane),
-                lane,
+                section: format!("[data-agent-lane=\"{lane}\"]"),
                 accent: standing.accent,
                 reachable: authority
                     .target(member.occupant, member.wakeable, epoch)

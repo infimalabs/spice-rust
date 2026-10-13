@@ -2,7 +2,7 @@
 //! read view, and the operator's personal inbox.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use wasm_bindgen::{JsCast, JsValue};
@@ -62,6 +62,10 @@ pub(super) struct Controls {
     /// text belongs to the textarea; redrawing it per keystroke would remount
     /// the composer under the caret.
     drawn: Rc<RefCell<BTreeMap<(RoomAuthorityStamp, TaskStamp), String>>>,
+    /// Design composers whose post awaits the resident's answer.
+    posting: Rc<RefCell<BTreeSet<(RoomAuthorityStamp, TaskStamp)>>>,
+    /// The group whose arrangement menu is open, if any.
+    arranging: UseStateHandle<Option<RoomAuthorityStamp>>,
     slots: super::watchband::ComposerSlots<RoomAuthorityStamp>,
 }
 
@@ -71,8 +75,11 @@ pub(super) fn use_controls() -> Controls {
     let names = use_mut_ref(BTreeMap::new);
     let requested = use_mut_ref(|| None);
     let drawn = use_mut_ref(BTreeMap::new);
+    let posting = use_mut_ref(BTreeSet::new);
+    let arranging = use_state_eq(|| None);
     let slots = super::watchband::ComposerSlots(use_mut_ref(std::collections::HashMap::new));
     use_effect_with((*views).clone(), store);
+    console::use_arrangement_focus(&arranging);
     Controls {
         views,
         notice: use_state(|| None),
@@ -80,6 +87,8 @@ pub(super) fn use_controls() -> Controls {
         names,
         requested,
         drawn,
+        posting,
+        arranging,
         slots,
     }
 }

@@ -41,16 +41,21 @@ pub(super) struct CardControls<'a> {
     pub(super) sender: &'a SenderHandle,
 }
 
-/// One room publication card, or `None` for an event outside this family.
-/// Its controls' outcomes and refusals go to their `report`; without
-/// controls the card only reads.
-pub(super) fn render_card(
-    runtime: &AppRuntime,
-    controls: Option<CardControls<'_>>,
+/// What one conversation-family publication says and to whom it went.
+struct Words<'a> {
+    author: String,
+    text: Option<String>,
+    conversation: Option<&'a Conversation>,
+    packet: Option<&'a [CanonicalUuid]>,
+}
+
+/// Resolve a conversation-family publication's author and words, or `None`
+/// for an event outside this family.
+fn words<'a>(
+    runtime: &'a AppRuntime,
     publication: &RoomAuthorityStamp,
-    event: &RoomEvent,
-) -> Option<Html> {
-    let act = Act { runtime, controls };
+    event: &'a RoomEvent,
+) -> Option<Words<'a>> {
     let projection = runtime.room_projection().conversation();
     let (author, echoed, conversation, packet) = match &event.kind {
         RoomEventKind::Messaged {
@@ -103,6 +108,39 @@ pub(super) fn render_card(
                 })
             })
     });
+    Some(Words {
+        author,
+        text,
+        conversation,
+        packet,
+    })
+}
+
+/// The words a publication carries once this browser holds them.
+pub(super) fn publication_text(
+    runtime: &AppRuntime,
+    publication: &RoomAuthorityStamp,
+    event: &RoomEvent,
+) -> Option<String> {
+    words(runtime, publication, event)?.text
+}
+
+/// One room publication card, or `None` for an event outside this family.
+/// Its controls' outcomes and refusals go to their `report`; without
+/// controls the card only reads.
+pub(super) fn render_card(
+    runtime: &AppRuntime,
+    controls: Option<CardControls<'_>>,
+    publication: &RoomAuthorityStamp,
+    event: &RoomEvent,
+) -> Option<Html> {
+    let act = Act { runtime, controls };
+    let Words {
+        author,
+        text,
+        conversation,
+        packet,
+    } = words(runtime, publication, event)?;
     let (verb, routes, result) = match conversation {
         Some(conversation) => (
             Some(verb(conversation)),
