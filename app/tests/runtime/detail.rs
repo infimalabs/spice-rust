@@ -1,6 +1,6 @@
 use super::*;
 use app::TaskDetailState;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use wire::Actor;
 use wire::intent::{TaskDetailAnswer, TaskDetailNote};
 
@@ -96,7 +96,7 @@ fn repeated_detail_answers_replace_instead_of_duplicating_notes() {
     let task = fixture_stamp("detail-replay");
     let response = detail_response(&session, detail_answer("detail-replay", "one note"));
 
-    runtime.begin_task_detail(task.clone());
+    assert!(runtime.show_task_details([task.clone()]));
     assert_eq!(runtime.task_detail(&task), Some(&TaskDetailState::Loading));
     runtime.apply_task_detail(&task, &response);
     runtime.apply_task_detail(&task, &response);
@@ -115,7 +115,7 @@ fn detail_refusal_replaces_loading_with_explicit_unavailable_state() {
     let mut runtime = AppRuntime::new(&accepted);
     let task = fixture_stamp("detail-missing");
 
-    runtime.begin_task_detail(task.clone());
+    runtime.show_task_details([task.clone()]);
     runtime.apply_task_detail(&task, &detail_refusal(&session, "task::detail-unknown"));
 
     assert!(matches!(
@@ -127,13 +127,16 @@ fn detail_refusal_replaces_loading_with_explicit_unavailable_state() {
 }
 
 #[test]
-fn task_fact_invalidates_only_the_affected_open_detail() {
+fn task_fact_rereads_only_the_affected_shown_detail() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = AppRuntime::new(&accepted);
     let affected = fixture_stamp("detail-affected");
     let untouched = fixture_stamp("detail-untouched");
 
+    runtime.show_task_details([affected.clone(), untouched.clone()]);
+    let sent = runtime.take_task_detail_reads(usize::MAX, |_| false);
+    assert_eq!(sent.len(), 2);
     runtime.apply_task_detail(
         &affected,
         &detail_response(&session, detail_answer("detail-affected", "affected note")),
@@ -162,6 +165,10 @@ fn task_fact_invalidates_only_the_affected_open_detail() {
         runtime.task_detail(&untouched),
         Some(TaskDetailState::Available(answer)) if answer.notes[0].text == "untouched note"
     ));
+    assert_eq!(
+        runtime.take_task_detail_reads(usize::MAX, |_| false),
+        vec![affected.clone()]
+    );
 
     runtime.apply_task_detail(
         &affected,
@@ -182,17 +189,179 @@ fn task_fact_invalidates_only_the_affected_open_detail() {
 }
 
 #[test]
-fn reconnect_rereads_every_retained_task_detail() {
+fn a_fact_forgets_a_detail_no_surface_shows_instead_of_reading_it() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    let task = fixture_stamp("detail-hidden");
+    runtime.show_task_details([task.clone()]);
+    runtime.take_task_detail_reads(usize::MAX, |_| false);
+    runtime.apply_task_detail(
+        &task,
+        &detail_response(&session, detail_answer("detail-hidden", "kept note")),
+    );
+    assert!(!runtime.show_task_details([]));
+
+    assert!(!runtime.invalidate_task_detail(&task));
+    assert_eq!(runtime.task_detail(&task), None);
+    assert!(
+        runtime
+            .take_task_detail_reads(usize::MAX, |_| false)
+            .is_empty()
+    );
+
+    assert!(runtime.show_task_details([task.clone()]));
+    assert_eq!(runtime.task_detail(&task), Some(&TaskDetailState::Loading));
+    assert_eq!(
+        runtime.take_task_detail_reads(usize::MAX, |_| false),
+        vec![task]
+    );
+}
+
+/// Drives the connection's pump against a mailbox that holds `limit` reads
+/// and refuses the next `refusals` sends, answering the oldest in-flight read
+/// between passes. A refusal leaves the rest of that pass owed, as the pump
+/// does. Returns how many reads each task drew.
+fn hydrate(
+    runtime: &mut AppRuntime,
+    session: &Session,
+    labels: &[String],
+    limit: usize,
+    mut refusals: usize,
+) -> BTreeMap<wire::TaskStamp, usize> {
+    let mut in_flight = Vec::<wire::TaskStamp>::new();
+    let mut reads = BTreeMap::new();
+    for _ in 0..labels.len() * 4 {
+        let mut taken = runtime
+            .take_task_detail_reads(limit - in_flight.len(), |task| in_flight.contains(task))
+            .into_iter();
+        while let Some(task) = taken.next() {
+            if refusals > 0 {
+                refusals -= 1;
+                std::iter::once(task)
+                    .chain(taken.by_ref())
+                    .for_each(|task| runtime.restore_task_detail_read(task));
+                break;
+            }
+            *reads.entry(task.clone()).or_insert(0) += 1;
+            in_flight.push(task);
+        }
+        if in_flight.is_empty() {
+            continue;
+        }
+        let task = in_flight.remove(0);
+        let label = labels
+            .iter()
+            .find(|label| fixture_stamp(label) == task)
+            .expect("answered task was shown");
+        runtime.apply_task_detail(
+            &task,
+            &detail_response(session, detail_answer(label, "note")),
+        );
+    }
+    reads
+}
+
+#[test]
+fn a_selection_larger_than_the_read_budget_hydrates_every_task_once_per_connection() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    let labels = (0..80).map(|n| format!("bulk-{n}")).collect::<Vec<_>>();
+    let tasks = labels
+        .iter()
+        .map(|label| fixture_stamp(label))
+        .collect::<Vec<_>>();
+    let assert_hydrated = |runtime: &AppRuntime, reads: &BTreeMap<wire::TaskStamp, usize>| {
+        for task in &tasks {
+            assert!(
+                matches!(
+                    runtime.task_detail(task),
+                    Some(TaskDetailState::Available(_))
+                ),
+                "{task} stayed unanswered"
+            );
+            assert_eq!(
+                reads.get(task),
+                Some(&1),
+                "{task} was not read exactly once"
+            );
+        }
+    };
+
+    assert!(runtime.show_task_details(tasks.iter().cloned()));
+    let first_pass = runtime.take_task_detail_reads(16, |_| false);
+    assert_eq!(
+        first_pass.len(),
+        16,
+        "one pass sends no more than its budget"
+    );
+    first_pass
+        .into_iter()
+        .for_each(|task| runtime.restore_task_detail_read(task));
+    let reads = hydrate(&mut runtime, &session, &labels, 16, 5);
+    assert_hydrated(&runtime, &reads);
+
+    assert!(!runtime.reconnect(&acceptance(&session, "operator", EPOCH)));
+    let reads = hydrate(&mut runtime, &session, &labels, 16, 0);
+    assert_hydrated(&runtime, &reads);
+}
+
+#[test]
+fn changing_the_selection_stops_reads_for_tasks_no_longer_shown() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    let first = (0..20)
+        .map(|n| fixture_stamp(&format!("first-{n}")))
+        .collect::<Vec<_>>();
+    let second = (0..3)
+        .map(|n| fixture_stamp(&format!("second-{n}")))
+        .collect::<Vec<_>>();
+
+    runtime.show_task_details(first.iter().cloned());
+    let sent = runtime.take_task_detail_reads(4, |_| false);
+    runtime.show_task_details(second.iter().cloned().chain([sent[0].clone()]));
+
+    for task in first.iter().filter(|task| **task != sent[0]) {
+        assert_eq!(runtime.task_detail(task), None, "{task} kept a placeholder");
+    }
+    assert_eq!(
+        runtime.task_detail(&sent[0]),
+        Some(&TaskDetailState::Loading)
+    );
+    let owed = runtime.take_task_detail_reads(usize::MAX, |task| sent.contains(task));
+    assert_eq!(owed, {
+        let mut owed = second.clone();
+        owed.sort();
+        owed
+    });
+
+    runtime.apply_task_detail(&sent[1], &detail_refusal(&session, "task::detail-unknown"));
+    assert!(
+        runtime
+            .take_task_detail_reads(usize::MAX, |_| false)
+            .is_empty()
+    );
+}
+
+#[test]
+fn reconnect_rereads_every_shown_detail_and_forgets_the_rest() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = AppRuntime::new(&accepted);
     let shown = fixture_stamp("detail-shown");
     let pending = fixture_stamp("detail-pending");
-    runtime.apply_task_detail(
-        &shown,
-        &detail_response(&session, detail_answer("detail-shown", "before the drop")),
-    );
-    runtime.begin_task_detail(pending.clone());
+    let hidden = fixture_stamp("detail-hidden");
+    runtime.show_task_details([shown.clone(), pending.clone(), hidden.clone()]);
+    runtime.take_task_detail_reads(usize::MAX, |_| false);
+    for (task, label) in [(&shown, "detail-shown"), (&hidden, "detail-hidden")] {
+        runtime.apply_task_detail(
+            task,
+            &detail_response(&session, detail_answer(label, "before the drop")),
+        );
+    }
+    runtime.show_task_details([shown.clone(), pending.clone()]);
 
     assert!(!runtime.reconnect(&acceptance(&session, "operator", EPOCH)));
 
@@ -201,9 +370,14 @@ fn reconnect_rereads_every_retained_task_detail() {
         Some(TaskDetailState::Refreshing(answer)) if answer.notes[0].text == "before the drop"
     ));
     assert_eq!(
+        runtime.task_detail(&pending),
+        Some(&TaskDetailState::Loading)
+    );
+    assert_eq!(runtime.task_detail(&hidden), None);
+    assert_eq!(
         runtime
-            .task_detail_reads()
-            .cloned()
+            .take_task_detail_reads(usize::MAX, |_| false)
+            .into_iter()
             .collect::<BTreeSet<_>>(),
         BTreeSet::from([shown, pending]),
     );

@@ -203,7 +203,7 @@ async fn pump_session(
     } = established;
     send_subscription(&principal, data, &mut writer).await?;
     send_refresh(&principal, &mut writer, actions, &handles.submissions).await?;
-    refresh::send_task_details(&principal, &mut writer, actions, data).await?;
+    refresh::send_task_detail_reads(&principal, &mut writer, actions, data).await?;
     drain_submissions(&principal, &mut writer, actions, &handles.submissions).await?;
     actions.rearm().map_err(|error| error.to_string())?;
     let mut silence = TimeoutFuture::new(LIVENESS_PROBE_MILLIS).fuse();
@@ -331,6 +331,7 @@ async fn apply_incoming_frame(
         application.stale,
     )
     .await?;
+    refresh::send_task_detail_reads(principal, writer, actions, data).await?;
     refresh::send_operator_item_texts(principal, writer, actions, data).await?;
     drain_submissions(principal, writer, actions, &handles.submissions).await?;
     actions.rearm().map_err(|error| error.to_string())?;
@@ -387,6 +388,9 @@ async fn dispatch_client_action(
     } else if matches!(lease.action(), ClientAction::DrainSubmissions) {
         drop(lease.commit());
         drain_submissions(principal, writer, actions, &handles.submissions).await
+    } else if matches!(lease.action(), ClientAction::TaskDetails) {
+        drop(lease.commit());
+        refresh::send_task_detail_reads(principal, writer, actions, data).await
     } else {
         if matches!(
             lease.action(),
@@ -919,11 +923,9 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
-        ClientAction::TaskDetail { task } => {
-            refresh::send_task_detail(principal, writer, actions, task)
-                .await
-                .map(|_| None)
-        }
+        // Owed reads live in the runtime, which `dispatch_client_action`
+        // holds; it pumps them before reaching this send.
+        ClientAction::TaskDetails => Ok(None),
         ClientAction::TaskRelations { key } => {
             refresh::send_task_relations(principal, writer, actions, key)
                 .await
