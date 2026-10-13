@@ -163,10 +163,7 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
             class="work-map-content work-overview-map"
             aria-labelledby="work-map-diagram-title"
             data-work-map-roots={render.selection.tasks().len().to_string()}
-            data-work-map-context={render.selection.context().label(|team| {
-                let lanes = render.runtime.and_then(AppRuntime::lanes);
-                crate::watchband::team_label_in(lanes.map_or(&[][..], |view| &view.lanes), team)
-            })}
+            data-work-map-context={super::work_detail::context_label(render.selection, render.runtime)}
             data-work-map-lens={render.state.lens.key()}
         >
             <div class="work-map-heading">

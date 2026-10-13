@@ -41,16 +41,22 @@ pub(super) struct CardControls<'a> {
     pub(super) sender: &'a SenderHandle,
 }
 
-/// One room publication card, or `None` for an event outside this family.
-/// Its controls' outcomes and refusals go to their `report`; without
-/// controls the card only reads.
-pub(super) fn render_card(
-    runtime: &AppRuntime,
-    controls: Option<CardControls<'_>>,
+/// Who spoke one conversation-family event, the words it carried when this
+/// browser holds them, and the authority its card's routes read.
+pub(super) struct Spoken<'a> {
+    pub(super) author: String,
+    pub(super) text: Option<String>,
+    conversation: Option<&'a Conversation>,
+    packet: Option<&'a [CanonicalUuid]>,
+}
+
+/// The speaker and words of one MSG, ASK, ANS, or plain post, or `None` for
+/// an event outside this family.
+pub(super) fn spoken<'a>(
+    runtime: &'a AppRuntime,
     publication: &RoomAuthorityStamp,
-    event: &RoomEvent,
-) -> Option<Html> {
-    let act = Act { runtime, controls };
+    event: &'a RoomEvent,
+) -> Option<Spoken<'a>> {
     let projection = runtime.room_projection().conversation();
     let (author, echoed, conversation, packet) = match &event.kind {
         RoomEventKind::Messaged {
@@ -103,6 +109,30 @@ pub(super) fn render_card(
                 })
             })
     });
+    Some(Spoken {
+        author,
+        text,
+        conversation,
+        packet,
+    })
+}
+
+/// One room publication card, or `None` for an event outside this family.
+/// Its controls' outcomes and refusals go to their `report`; without
+/// controls the card only reads.
+pub(super) fn render_card(
+    runtime: &AppRuntime,
+    controls: Option<CardControls<'_>>,
+    publication: &RoomAuthorityStamp,
+    event: &RoomEvent,
+) -> Option<Html> {
+    let act = Act { runtime, controls };
+    let Spoken {
+        author,
+        text,
+        conversation,
+        packet,
+    } = spoken(runtime, publication, event)?;
     let (verb, routes, result) = match conversation {
         Some(conversation) => (
             Some(verb(conversation)),

@@ -24,9 +24,14 @@ pub enum TaskOverviewContext {
 }
 
 impl TaskOverviewContext {
-    /// The heading for this context; `team` names a team scope.
+    /// The heading for this context; `team` names a team scope and `group`
+    /// names a working group from its identity and Designs.
     #[must_use]
-    pub fn label(&self, team: impl Fn(wire::CanonicalUuid) -> String) -> String {
+    pub fn label(
+        &self,
+        team: impl Fn(wire::CanonicalUuid) -> String,
+        group: impl Fn(&wire::rooms::RoomAuthorityStamp, &[TaskStamp]) -> String,
+    ) -> String {
         match self {
             Self::Task => "Selected task".to_owned(),
             Self::Scope(WorkScope::AllOpen) => "All open work".to_owned(),
@@ -41,6 +46,16 @@ impl TaskOverviewContext {
                 team: id,
                 stem: Some(stem),
             }) => format!("Team {} · {stem}", team(*id)),
+            Self::Scope(WorkScope::Group {
+                group: id,
+                designs,
+                stem: None,
+            }) => group(id, designs),
+            Self::Scope(WorkScope::Group {
+                group: id,
+                designs,
+                stem: Some(stem),
+            }) => format!("{} · {stem}", group(id, designs)),
             Self::Project(project) => format!("Project {project}"),
             Self::Relationships(task) => format!("Related to {task}"),
         }

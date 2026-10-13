@@ -370,7 +370,8 @@ pub(super) fn group_label(runtime: &AppRuntime, group: &WorkingGroup) -> String 
     lead_label(runtime, &group.group, group.anchors.first())
 }
 
-fn lead_label(
+/// A working group's label from its lead Design, or its identity alone.
+pub(in crate::browser) fn lead_label(
     runtime: &AppRuntime,
     group: &RoomAuthorityStamp,
     lead: Option<&TaskStamp>,
@@ -542,7 +543,38 @@ fn render_event(
     if let Some(card) = conversation::render_card(runtime, controls, publication, event) {
         return card;
     }
-    let (kind, body) = match &event.kind {
+    let (kind, body) = event_summary(runtime, event);
+    html! {
+        <article class="room-card" key={publication.to_string()} data-publication={publication.to_string()} tabindex="0">
+            <header><strong>{kind}</strong><code>{publication.to_string()}</code></header>
+            <p>{body}</p>
+        </article>
+    }
+}
+
+/// One event's speaker or kind and the words it carried, as a ticker line
+/// names it; a lane packet whose words this browser lacks names only its
+/// speaker.
+pub(in crate::browser) fn event_headline(
+    runtime: &AppRuntime,
+    publication: &RoomAuthorityStamp,
+    event: &crate::runtime::RoomEvent,
+) -> (String, String) {
+    match conversation::spoken(runtime, publication, event) {
+        Some(spoken) => (spoken.author, spoken.text.unwrap_or_default()),
+        None => {
+            let (kind, body) = event_summary(runtime, event);
+            (kind.to_owned(), body)
+        }
+    }
+}
+
+/// The kind and summary of one event outside the conversation card family.
+fn event_summary(
+    runtime: &AppRuntime,
+    event: &crate::runtime::RoomEvent,
+) -> (&'static str, String) {
+    match &event.kind {
         RoomEventKind::Published(wire::rooms::RoomPublicationContent::Linked { link }) => {
             ("Source", format!("Linked source: {link:?}"))
         }
@@ -579,12 +611,6 @@ fn render_event(
                 conversation::lane_label(runtime, *lane)
             ),
         ),
-    };
-    html! {
-        <article class="room-card" key={publication.to_string()} data-publication={publication.to_string()} tabindex="0">
-            <header><strong>{kind}</strong><code>{publication.to_string()}</code></header>
-            <p>{body}</p>
-        </article>
     }
 }
 

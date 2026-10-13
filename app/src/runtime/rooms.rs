@@ -9,6 +9,8 @@ use wire::{CanonicalUuid, FactKind, Packed, Seq, StreamFact, TaskHandle, TaskSta
 use super::BoardView;
 
 mod conversation;
+#[cfg(test)]
+mod design_standing_tests;
 mod standing;
 
 pub use conversation::{
@@ -72,6 +74,51 @@ impl RoomAnchorSettlement {
             Self::Completed => "completed",
             Self::Closed => "closed",
             Self::Deleted => "deleted",
+        }
+    }
+}
+
+/// One Design's standing as its working group's light shows it, derived from
+/// the board and room authority on every read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DesignStanding {
+    /// No board snapshot, or the board no longer carries the anchor.
+    Unavailable,
+    /// Pending with no lane on it.
+    Open,
+    /// A lane actively claims it.
+    Claimed,
+    /// In its review phase.
+    Review,
+    /// It constructed a pending output that neither a selection nor the
+    /// group's engagement authorizes, so the operator owes a decision.
+    Unselected,
+    /// Completed, closed, or deleted.
+    Settled,
+}
+
+impl DesignStanding {
+    /// Stable browser key.
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::Open => "open",
+            Self::Claimed => "claimed",
+            Self::Review => "review",
+            Self::Unselected => "unselected",
+            Self::Settled => "settled",
+        }
+    }
+
+    /// Words naming the standing beside the Design's label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::Open => "open",
+            Self::Claimed => "claimed",
+            Self::Review => "in review",
+            Self::Unselected => "holding unauthorized outputs",
+            Self::Settled => "settled",
         }
     }
 }
@@ -326,6 +373,53 @@ impl RoomProjection {
                     None => RoomAnchorAuthority::Available(handle),
                 }
             })
+    }
+
+    /// One Design's standing. Settlement wins; then an output still owing the
+    /// operator's selection, since no lane can discharge it; then review; then
+    /// an active claim.
+    pub fn design_standing(&self, room: &TaskStamp, board: Option<&BoardView>) -> DesignStanding {
+        match self.anchor_authority(room, board) {
+            RoomAnchorAuthority::Unavailable | RoomAnchorAuthority::Missing => {
+                return DesignStanding::Unavailable;
+            }
+            RoomAnchorAuthority::Settled { .. } => return DesignStanding::Settled,
+            RoomAnchorAuthority::Available(_) => {}
+        }
+        let Some(board) = board else {
+            return DesignStanding::Unavailable;
+        };
+        let unselected = board.tasks.iter().any(|task| {
+            let (statement, workflow) = (&task.statement.body, &task.workflow.body);
+            statement.preparation.as_ref().is_some_and(|preparation| {
+                preparation.parent == *room && preparation.construction == statement.born
+            }) && workflow.status == "pending"
+                && workflow.completion.is_none()
+                && statement.authorization.is_none()
+                && statement.engagement.is_none()
+        });
+        if unselected {
+            return DesignStanding::Unselected;
+        }
+        let Some(design) = board
+            .tasks
+            .iter()
+            .chain(board.room_anchors.iter())
+            .find(|task| task.statement.body.born == *room)
+        else {
+            return DesignStanding::Unavailable;
+        };
+        if design.workflow.body.phase.as_str() == "review" {
+            DesignStanding::Review
+        } else if design
+            .claim
+            .as_ref()
+            .is_some_and(|claim| claim.body.disposition == wire::ClaimDisposition::Active)
+        {
+            DesignStanding::Claimed
+        } else {
+            DesignStanding::Open
+        }
     }
 
     /// A stop remains current only while the board shows the exact claim win

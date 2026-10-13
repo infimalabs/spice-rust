@@ -18,7 +18,7 @@ use crate::browser::clock::Age;
 use crate::watchband;
 use crate::work::{WorkCounts, WorkProjection, WorkScope};
 /// Characters the ticker's `aria-live` label announces.
-const TICKER_SPOKEN_BUDGET: usize = 160;
+pub(in crate::browser) const TICKER_SPOKEN_BUDGET: usize = 160;
 
 /// The fixed command bar and its browser-local sidebar launcher.
 pub(super) struct CommandBarRender<'a> {
