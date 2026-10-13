@@ -431,6 +431,9 @@ fn apply_mutating_response(
         PendingKind::RoomCoordination { respond } => {
             apply_callback_reply(session, bytes, "Room coordination failed", &respond)?
         }
+        PendingKind::Preparation { respond } => {
+            apply_callback_reply(session, bytes, "Preparation failed", &respond)?
+        }
         _ => unreachable!("read and mutation response partitions are closed"),
     })
 }

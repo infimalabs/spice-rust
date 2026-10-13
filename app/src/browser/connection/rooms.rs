@@ -177,3 +177,43 @@ pub(super) async fn send_room_coordination(
         }
     }
 }
+
+/// Record one decision or one execution authorization under the heads the
+/// approval control was drawn from.
+pub(super) async fn send_preparation(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    request: &crate::client_action::PreparationRequest,
+    respond: &crate::client_action::PreparationResponse,
+) -> Result<CanonicalUuid, String> {
+    let pending = PendingKind::Preparation {
+        respond: respond.clone(),
+    };
+    match request {
+        crate::client_action::PreparationRequest::Decide { request, expected } => {
+            send_typed(
+                principal,
+                writer,
+                actions,
+                pending,
+                CommandKind::PreparationDecide,
+                expected.clone(),
+                request.clone(),
+            )
+            .await
+        }
+        crate::client_action::PreparationRequest::Authorize { request, expected } => {
+            send_typed(
+                principal,
+                writer,
+                actions,
+                pending,
+                CommandKind::ExecutionAuthorize,
+                expected.clone(),
+                request.clone(),
+            )
+            .await
+        }
+    }
+}

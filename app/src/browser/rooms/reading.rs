@@ -1,15 +1,22 @@
-//! A Design's room read in place: its standing, preparation authority, and
-//! room history, for open and settled Designs alike. The view holds no
-//! control that writes, and showing it joins, groups, or wakes nothing.
+//! A Design's room read in place: its standing, approval control, preparation
+//! authority, and room history, for open and settled Designs alike. The only
+//! control that writes is the operator's approval of a retained candidate;
+//! showing the view joins, groups, or wakes nothing.
 
 use wire::TaskStamp;
 use yew::prelude::*;
 
-use super::{RoomProjectionStatus, render_event, render_preparation};
+use super::{Controls, RoomProjectionStatus, render_event, render_preparation};
 use crate::AppRuntime;
+use crate::browser::sender::SenderHandle;
 
 /// The read view of one Design's room, addressed by its birth stamp.
-pub(in crate::browser) fn render_design_room(runtime: &AppRuntime, design: &TaskStamp) -> Html {
+pub(in crate::browser) fn render_design_room(
+    runtime: &AppRuntime,
+    controls: &Controls,
+    sender: &SenderHandle,
+    design: &TaskStamp,
+) -> Html {
     let projection = runtime.room_projection();
     let body = match projection.status() {
         RoomProjectionStatus::Loading => {
@@ -23,6 +30,7 @@ pub(in crate::browser) fn render_design_room(runtime: &AppRuntime, design: &Task
             html! {
                 <>
                     {super::standing::render_standing(runtime, design)}
+                    {super::approval::render_approval(runtime, controls, sender, design)}
                     {render_preparation(runtime, design)}
                     <section class="room-history" aria-label="Room history">
                         <header>

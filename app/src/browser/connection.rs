@@ -923,6 +923,11 @@ async fn dispatch_action(
                 .await
                 .map(Some)
         }
+        ClientAction::Preparation { request, respond } => {
+            rooms::send_preparation(principal, writer, actions, request, respond)
+                .await
+                .map(Some)
+        }
         ClientAction::DrainSubmissions => {
             drain_submissions(principal, writer, actions, submissions)
                 .await

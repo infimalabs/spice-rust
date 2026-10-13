@@ -15,6 +15,8 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub selection: &'a TaskOverviewSelection,
     pub map: &'a UseStateHandle<work_map::WorkMapState>,
     pub runtime: Option<&'a AppRuntime>,
+    pub room_controls: &'a super::super::rooms::Controls,
+    pub sender: &'a SenderHandle,
     pub can_note: bool,
     pub can_close: bool,
     pub blocker_review: &'a UseStateHandle<bool>,
@@ -214,7 +216,12 @@ fn render_available(
         .runtime
         .filter(|_| statement.intent == Some(wire::TaskIntent::Design))
         .map_or_else(Html::default, |runtime| {
-            super::super::rooms::render_design_room(runtime, &statement.born)
+            super::super::rooms::render_design_room(
+                runtime,
+                render.room_controls,
+                render.sender,
+                &statement.born,
+            )
         });
     html! {
         <div class="app-sheet-body">

@@ -70,13 +70,35 @@ Any Design, open, completed, or closed, opens for reading in its task
 overview: the **Read** action on each design tile in the Spice menu's Working
 groups catalog, a Design-intent task's detail, and a Design permalink all open
 the same view. Below the task's state, its **Design room** section shows the
-room's standing, its preparation authority records, and its full room history
-newest first, resolved through the Design's birth stamp under its current
-handle, with the permalink beside the heading. The view holds no composer,
-receipt, answer, or coordination control. Opening or reading it moves no group,
-joins, acknowledges, authorizes, and wakes nothing, and commits no journal
-fact; acting on a room stays with the group console and the `spice room`
-commands.
+room's standing, the [approval control](#approving-a-designs-outputs), its
+preparation authority records, and its full room history newest first, resolved
+through the Design's birth stamp under its current handle, with the permalink
+beside the heading. The view holds no composer, receipt, answer, or
+coordination control. Opening or reading it moves no group, joins,
+acknowledges, authorizes, and wakes nothing, and commits no journal fact;
+acting on a room stays with the group console and the `spice room` commands.
+
+## Approving a Design's outputs
+
+The read view's **Approval** section lists each candidate retained under the
+Design with its standing (undecided, returned, accepted by a decision, or
+authorized), every review coverage recorded over it, its governed inputs, and
+each output's title, handle, status, and acceptance. While the Design is an
+open board task, **Accept** and **Return** record the operator's next decision
+on that candidate, citing the candidate's retaining fact as its basis. A
+returned candidate authorizes nothing.
+
+Once a decision accepts the candidate, each of its outputs on the board gets an
+unchecked box. **Authorize selected** records one execution authorization of
+exactly the checked outputs under that decision, the candidate's governed
+inputs, and every coverage recorded over it; it completes the Design, and only
+those outputs become eligible. Unchecked outputs stay pending and ineligible.
+With nothing checked the control submits nothing. Each command witnesses the
+Design, input, and output heads the view was drawn from, and the resident
+alone judges admissibility: its answer, or a refusal such as missing coverage,
+a moved board, an output outside the candidate, or a controller that is not an
+open Design, appears under the candidate and records nothing. This is the same
+contract as `spice preparation decide` and `spice preparation authorize`.
 
 ## Preparation authority
 

@@ -242,6 +242,7 @@ impl PendingKind {
             | Self::RoomPost { .. }
             | Self::RoomControl { .. }
             | Self::RoomCoordination { .. }
+            | Self::Preparation { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
             | Self::TrustGrant { .. }
@@ -432,73 +433,11 @@ impl ClientAction {
         match self {
             Self::Job { target, .. } => target.id.len(),
             Self::Jobs { .. } => 0,
-            Self::WorkingGroupChange { change, .. } => match change {
-                crate::client_action::GroupChange::Move(request) => request.design.as_str().len(),
-                crate::client_action::GroupChange::Arrange(request) => request
-                    .groups
-                    .iter()
-                    .map(|group| {
-                        group.group.as_str().len()
-                            + group
-                                .anchors
-                                .iter()
-                                .map(|design| design.as_str().len())
-                                .sum::<usize>()
-                    })
-                    .sum(),
-            },
-            Self::RoomPost(post) => post
-                .room
-                .as_str()
-                .len()
-                .saturating_add(post.text.len())
-                .saturating_add(post.grooming.as_ref().map_or(0, |grooming| {
-                    grooming.reports.iter().fold(
-                        grooming
-                            .cause
-                            .len()
-                            .saturating_add(grooming.exceptions.len())
-                            .saturating_add(grooming.uncertainty.len()),
-                        |bytes, report| bytes.saturating_add(report.as_str().len()),
-                    )
-                })),
-            Self::RoomControl { request, .. } => match request {
-                crate::client_action::RoomControlRequest::Control(control) => match control {
-                    wire::intent::RoomControl::Dispose { keys, clause, .. } => {
-                        keys.iter().fold(clause.len(), |bytes, key| {
-                            bytes.saturating_add(key.to_string().len())
-                        })
-                    }
-                    wire::intent::RoomControl::Answer { result, text, .. } => {
-                        result.as_str().len().saturating_add(text.len())
-                    }
-                    wire::intent::RoomControl::Recover { .. } => 0,
-                    wire::intent::RoomControl::Assess {
-                        observation,
-                        explanation,
-                        ..
-                    } => observation.as_str().len().saturating_add(explanation.len()),
-                },
-                crate::client_action::RoomControlRequest::Close(close) => close
-                    .result
-                    .as_str()
-                    .len()
-                    .saturating_add(close.clause.len()),
-            },
-            Self::RoomCoordination { request, .. } => match request {
-                crate::client_action::RoomCoordinationRequest::Coordinate { request, .. } => {
-                    request
-                        .room
-                        .as_str()
-                        .len()
-                        .saturating_add(request.criterion.len())
-                        .saturating_add(request.contribution.len())
-                        .saturating_add(request.stop.len())
-                }
-                crate::client_action::RoomCoordinationRequest::PutAside { request, .. } => {
-                    request.room.as_str().len()
-                }
-            },
+            Self::WorkingGroupChange { change, .. } => group_change_bytes(change),
+            Self::RoomPost(post) => room_post_bytes(post),
+            Self::RoomControl { request, .. } => room_control_bytes(request),
+            Self::RoomCoordination { request, .. } => room_coordination_bytes(request),
+            Self::Preparation { request, .. } => preparation_bytes(request),
             Self::ArrangeTeams { teams, .. } => teams.iter().fold(
                 teams.len() * std::mem::size_of::<wire::intent::TeamArrangement>(),
                 |bytes, team| {
@@ -608,6 +547,101 @@ impl ClientAction {
                 topology_revision, ..
             } => *topology_revision = revision,
             _ => unreachable!("only topology mutations are prepared by the scheduler"),
+        }
+    }
+}
+
+fn group_change_bytes(change: &crate::client_action::GroupChange) -> usize {
+    match change {
+        crate::client_action::GroupChange::Move(request) => request.design.as_str().len(),
+        crate::client_action::GroupChange::Arrange(request) => request
+            .groups
+            .iter()
+            .map(|group| {
+                group.group.as_str().len()
+                    + group
+                        .anchors
+                        .iter()
+                        .map(|design| design.as_str().len())
+                        .sum::<usize>()
+            })
+            .sum(),
+    }
+}
+
+fn room_post_bytes(post: &crate::client_action::RoomPostAction) -> usize {
+    post.room
+        .as_str()
+        .len()
+        .saturating_add(post.text.len())
+        .saturating_add(post.grooming.as_ref().map_or(0, |grooming| {
+            grooming.reports.iter().fold(
+                grooming
+                    .cause
+                    .len()
+                    .saturating_add(grooming.exceptions.len())
+                    .saturating_add(grooming.uncertainty.len()),
+                |bytes, report| bytes.saturating_add(report.as_str().len()),
+            )
+        }))
+}
+
+fn room_control_bytes(request: &crate::client_action::RoomControlRequest) -> usize {
+    match request {
+        crate::client_action::RoomControlRequest::Control(control) => match control {
+            wire::intent::RoomControl::Dispose { keys, clause, .. } => {
+                keys.iter().fold(clause.len(), |bytes, key| {
+                    bytes.saturating_add(key.to_string().len())
+                })
+            }
+            wire::intent::RoomControl::Answer { result, text, .. } => {
+                result.as_str().len().saturating_add(text.len())
+            }
+            wire::intent::RoomControl::Recover { .. } => 0,
+            wire::intent::RoomControl::Assess {
+                observation,
+                explanation,
+                ..
+            } => observation.as_str().len().saturating_add(explanation.len()),
+        },
+        crate::client_action::RoomControlRequest::Close(close) => close
+            .result
+            .as_str()
+            .len()
+            .saturating_add(close.clause.len()),
+    }
+}
+
+fn room_coordination_bytes(request: &crate::client_action::RoomCoordinationRequest) -> usize {
+    match request {
+        crate::client_action::RoomCoordinationRequest::Coordinate { request, .. } => request
+            .room
+            .as_str()
+            .len()
+            .saturating_add(request.criterion.len())
+            .saturating_add(request.contribution.len())
+            .saturating_add(request.stop.len()),
+        crate::client_action::RoomCoordinationRequest::PutAside { request, .. } => {
+            request.room.as_str().len()
+        }
+    }
+}
+
+fn preparation_bytes(request: &crate::client_action::PreparationRequest) -> usize {
+    match request {
+        crate::client_action::PreparationRequest::Decide { request, .. } => {
+            request.decision.decision.controller.as_str().len()
+        }
+        crate::client_action::PreparationRequest::Authorize { request, .. } => {
+            let authorization = &request.authorization;
+            authorization
+                .governed_inputs
+                .iter()
+                .chain(&authorization.selected_outputs)
+                .fold(
+                    authorization.candidate.controller.as_str().len(),
+                    |bytes, task| bytes.saturating_add(task.as_str().len()),
+                )
         }
     }
 }
