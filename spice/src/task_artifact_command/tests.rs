@@ -375,3 +375,41 @@ fn a_payload_that_no_longer_matches_its_digest_is_neither_shown_nor_extracted() 
     );
     assert!(!output.exists(), "a mismatched payload is never extracted");
 }
+
+/// An operator reading text output learns which operand the store refused and
+/// what it would admit, not only the refusal's reason code.
+#[test]
+fn a_store_refusal_prints_the_refused_operand_and_its_admitted_values() {
+    let fixture = Fixture::new();
+    let error = fixture
+        .store
+        .add_bytes(AddBytesRequest {
+            task: &fixture.born,
+            bytes: b"notes\n",
+            name: "notes.md",
+            media_type: Some("design"),
+            retention: Retention::Permanent,
+            created_at: "2030-01-01T00:00:00.000Z".parse().expect("fixture instant"),
+        })
+        .expect_err("an unsupported media type refuses");
+    let outcome = artifact_failure(error).outcome();
+    let rendering =
+        crate::render::render(&outcome, crate::render::Form::Text).expect("refusal renders");
+    let text = String::from_utf8(rendering.document().to_vec()).expect("text output");
+
+    assert!(
+        text.starts_with("spice: artifact::operation-refused; "),
+        "{text}"
+    );
+    assert!(
+        text.contains("media type"),
+        "the operand is unnamed: {text}"
+    );
+    assert!(
+        text.contains("\"design\""),
+        "the refused value is unnamed: {text}"
+    );
+    for admitted in artifact::MediaType::ALL {
+        assert!(text.contains(admitted), "{admitted} is missing: {text}");
+    }
+}
