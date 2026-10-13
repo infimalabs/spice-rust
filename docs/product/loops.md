@@ -302,6 +302,12 @@ flowchart LR
   member moves, complete arrangements, and new seats. A full team can still
   shed members or change policy. Pre-existing larger teams can be restated,
   reordered, or reduced, never enlarged.
+- Team membership is one instance of the shared grouping partition
+  (`wire::grouping`): one group per member, no empty group, member-zero
+  labels, the six-member limit, faithful whole arrangements, and one
+  revision guard. Teams supply only their admission (a seated lane), their
+  ungrouped encoding (a singleton team under the lane's own identity), and
+  the identity a host's remaining members take when it leaves.
 
 ---
 

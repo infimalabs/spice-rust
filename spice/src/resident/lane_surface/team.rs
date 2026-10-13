@@ -21,6 +21,11 @@ use super::*;
 #[cfg(test)]
 mod tests;
 
+use wire::grouping::{Arranged, Destination, Group, GroupingError, Partition, Placement};
+
+type Teams = Partition<CanonicalUuid, CanonicalUuid>;
+type TeamError = GroupingError<CanonicalUuid, CanonicalUuid>;
+
 struct MembershipChange {
     member: CanonicalUuid,
     from_team: CanonicalUuid,
@@ -235,53 +240,137 @@ fn previous_subscription(
     }
 }
 
+/// The app teams one residency head states: its lanes, in durable order.
+pub(super) fn partition(head: &wire::ResidencyHead) -> Result<Teams, Outcome<CommandAnswer>> {
+    Partition::new(head.lanes.iter().map(|row| Placement {
+        member: row.lane,
+        group: row.team,
+    }))
+    .map_err(|_| {
+        typed_store_fault(
+            "team::partition-invalid",
+            "the residency head seats one lane twice",
+        )
+    })
+}
+
+/// The lane table one partition states: each row in its placement's order
+/// and team, with every other field unchanged.
+pub(super) fn placed(
+    head: &wire::ResidencyHead,
+    teams: &Teams,
+) -> Result<Vec<wire::LaneResidency>, Outcome<CommandAnswer>> {
+    teams
+        .placements()
+        .iter()
+        .map(|placement| {
+            let mut row = head
+                .lanes
+                .iter()
+                .find(|row| row.lane == placement.member)
+                .cloned()
+                .ok_or_else(|| {
+                    typed_store_fault(
+                        "team::placement-lost",
+                        "a team placement names a lane the residency head no longer holds",
+                    )
+                })?;
+            row.team = placement.group;
+            Ok(row)
+        })
+        .collect()
+}
+
+/// The refusal for a grouping change no team command words for itself.
+pub(super) fn grouping_refusal(error: TeamError) -> Outcome<CommandAnswer> {
+    match error {
+        GroupingError::MemberLimit { members } => lane_refusal(
+            "team::member-limit",
+            Some(format!("at most {} agents", wire::head::TEAM_MEMBER_LIMIT)),
+            Some(members.to_string()),
+            "move an agent out of the target team or choose another team",
+        ),
+        other => typed_store_fault("team::grouping-invalid", &format!("{other:?}")),
+    }
+}
+
+/// Teams as a grouping kind: members are seated lanes, and a lane in no
+/// formation stands alone in the team carrying its own identity.
+struct TeamKind<'a>(&'a wire::ResidencyHead);
+
+impl wire::grouping::Kind for TeamKind<'_> {
+    type Group = CanonicalUuid;
+    type Member = CanonicalUuid;
+
+    fn admits(&self, member: CanonicalUuid) -> bool {
+        self.0.lanes.iter().any(|row| row.lane == member)
+    }
+
+    fn ungrouped(&self, member: CanonicalUuid) -> Option<CanonicalUuid> {
+        Some(member)
+    }
+
+    /// The first remaining member whose identity names no other team, else a
+    /// derived identity free across lanes, teams, and subscriptions.
+    fn rekey(&self, teams: &Teams, group: CanonicalUuid, leaving: CanonicalUuid) -> CanonicalUuid {
+        teams
+            .members(group)
+            .filter(|candidate| *candidate != leaving)
+            .find(|candidate| *candidate == group || !teams.holds(*candidate))
+            .unwrap_or_else(|| first_free_derived_team(self.0, group))
+    }
+}
+
+fn member_missing(member: CanonicalUuid) -> Outcome<CommandAnswer> {
+    lane_refusal(
+        "team::member-missing",
+        Some("one current team member".to_owned()),
+        Some(member.to_string()),
+        "read lane state and retry with a current member identity",
+    )
+}
+
 fn move_member(
     head: &mut wire::ResidencyHead,
     member: CanonicalUuid,
     target: CanonicalUuid,
 ) -> Result<MembershipChange, Outcome<CommandAnswer>> {
-    let Some(member_index) = head.lanes.iter().position(|row| row.lane == member) else {
-        return Err(lane_refusal(
-            "team::member-missing",
-            Some("one current team member".to_owned()),
-            Some(member.to_string()),
-            "read lane state and retry with a current member identity",
-        ));
-    };
-    let source = head.lanes[member_index].team;
-    let source_members = head
-        .lanes
-        .iter()
-        .filter(|row| row.team == source)
-        .map(|row| row.lane)
-        .collect::<Vec<_>>();
-    if source == target {
-        if member != target || source_members.len() == 1 {
-            return Err(lane_refusal(
+    let teams = partition(head)?;
+    let target_exists = teams.holds(target);
+    let (next, moved) = teams
+        .apply_move(&TeamKind(head), member, Destination::Group(target))
+        .map_err(|error| match error {
+            GroupingError::NotAdmitted(_) => member_missing(member),
+            GroupingError::Unchanged => lane_refusal(
                 "team::member-unchanged",
                 Some("a different target team".to_owned()),
                 Some(target.to_string()),
                 "drop the member on another team or on Agents Without Team",
-            ));
-        }
-        return split_host_member(head, member, source, &source_members);
-    }
-    let current_members = head.team_members(target).count();
-    admit_team_size(current_members, current_members + 1)?;
+            ),
+            other => grouping_refusal(other),
+        })?;
+    let Some(source) = moved.from else {
+        return Err(member_missing(member));
+    };
     let source_subscription = match subscription_row(head, source) {
         Ok(Some(subscription)) => subscription.clone(),
         Ok(None) => {
             return Err(typed_store_fault(
                 "team::subscription-missing",
-                "the moved member source has no task-allocation lifetime",
+                if moved.rekeyed.is_some() {
+                    "the split source has no task-allocation lifetime"
+                } else {
+                    "the moved member source has no task-allocation lifetime"
+                },
             ));
         }
         Err(outcome) => return Err(typed_outcome(outcome)),
     };
-    let target_exists = head.lanes.iter().any(|row| row.team == target);
-    if target_exists {
+    let added = if let Some(rekeyed) = moved.rekeyed {
+        Some((source_subscription, rekeyed))
+    } else if target_exists {
         match subscription_row(head, target) {
-            Ok(Some(_)) => {}
+            Ok(Some(_)) => None,
             Ok(None) => {
                 return Err(typed_store_fault(
                     "team::subscription-missing",
@@ -291,24 +380,14 @@ fn move_member(
             Err(outcome) => return Err(typed_outcome(outcome)),
         }
     } else {
-        let mut subscription = source_subscription;
-        subscription.team = target;
+        Some((source_subscription, target))
+    };
+    head.lanes = placed(head, &next)?;
+    if let Some((mut subscription, team)) = added {
+        subscription.team = team;
         head.subscriptions.push(subscription);
     }
-    head.lanes[member_index].team = target;
-    if target_exists {
-        // A joining member lands at the tail of its new team. Member order,
-        // and the accents it drives, belong to the team, so a member created
-        // earlier elsewhere must not jump ahead of the team's current members.
-        let row = head.lanes.remove(member_index);
-        let tail = head
-            .lanes
-            .iter()
-            .rposition(|row| row.team == target)
-            .map_or(head.lanes.len(), |last| last + 1);
-        head.lanes.insert(tail, row);
-    }
-    if !head.lanes.iter().any(|row| row.team == source) {
+    if !next.holds(source) {
         head.subscriptions
             .retain(|subscription| subscription.team != source);
     }
@@ -317,51 +396,7 @@ fn move_member(
     Ok(MembershipChange {
         member,
         from_team: source,
-        source_rekeyed_to: None,
-    })
-}
-
-fn split_host_member(
-    head: &mut wire::ResidencyHead,
-    member: CanonicalUuid,
-    source: CanonicalUuid,
-    source_members: &[CanonicalUuid],
-) -> Result<MembershipChange, Outcome<CommandAnswer>> {
-    let rekeyed = source_members
-        .iter()
-        .copied()
-        .filter(|candidate| *candidate != member)
-        .find(|candidate| {
-            !head
-                .lanes
-                .iter()
-                .any(|row| row.team == *candidate && row.team != source)
-        })
-        .unwrap_or_else(|| first_free_derived_team(head, source));
-    let source_subscription = match subscription_row(head, source) {
-        Ok(Some(subscription)) => subscription.clone(),
-        Ok(None) => {
-            return Err(typed_store_fault(
-                "team::subscription-missing",
-                "the split source has no task-allocation lifetime",
-            ));
-        }
-        Err(outcome) => return Err(typed_outcome(outcome)),
-    };
-    for row in &mut head.lanes {
-        if row.team == source && row.lane != member {
-            row.team = rekeyed;
-        }
-    }
-    let mut remainder = source_subscription;
-    remainder.team = rekeyed;
-    head.subscriptions.push(remainder);
-    head.subscriptions
-        .sort_by_key(|subscription| subscription.team);
-    Ok(MembershipChange {
-        member,
-        from_team: source,
-        source_rekeyed_to: Some(rekeyed),
+        source_rekeyed_to: moved.rekeyed,
     })
 }
 
@@ -394,12 +429,6 @@ fn first_free_derived_team(head: &wire::ResidencyHead, source: CanonicalUuid) ->
     }
 }
 
-/// Group the head's lanes into team standings in first-appearance order.
-///
-/// First appearance is not an arbitrary choice: it is exactly how the app
-/// groups the lane answer into team surfaces, so the head's lane order *is* the
-/// durable team order. Rewriting that order below is what makes a drag durable
-/// without teaching the app a second ordering to disagree with.
 /// Lanes this arrangement moved between teams, in arranged order.
 ///
 /// Reordering lanes inside one team moves no lane between teams and so
@@ -428,74 +457,24 @@ fn moved_lanes(
     moved
 }
 
-fn standings(lanes: &[wire::LaneResidency]) -> Vec<wire::body::TeamStanding> {
-    let mut standings = Vec::<wire::body::TeamStanding>::new();
-    for row in lanes {
-        if let Some(standing) = standings
-            .iter_mut()
-            .find(|standing| standing.team == row.team)
-        {
-            standing.lanes.push(row.lane);
-        } else {
-            standings.push(wire::body::TeamStanding {
-                team: row.team,
-                lanes: vec![row.lane],
-            });
-        }
-    }
-    standings
+/// Group one partition into team standings in first-appearance order.
+///
+/// First appearance is not an arbitrary choice: it is exactly how the app
+/// groups the lane answer into team surfaces, so the head's lane order *is* the
+/// durable team order. Rewriting that order below is what makes a drag durable
+/// without teaching the app a second ordering to disagree with.
+fn standings(teams: &Teams) -> Vec<wire::body::TeamStanding> {
+    teams
+        .groups()
+        .into_iter()
+        .map(|group| wire::body::TeamStanding {
+            team: group.group,
+            lanes: group.members,
+        })
+        .collect()
 }
 
-/// The multi-agent source from which one newly named singleton team splits.
-fn split_source_team(
-    head: &wire::ResidencyHead,
-    team: &wire::intent::TeamArrangement,
-) -> Option<CanonicalUuid> {
-    let [lane] = team.lanes.as_slice() else {
-        return None;
-    };
-    let source = head.lanes.iter().find(|row| row.lane == *lane)?.team;
-    head.lanes
-        .iter()
-        .filter(|row| row.team == source)
-        .nth(1)
-        .map(|_| source)
-}
-
-fn inherited_split_subscriptions(
-    head: &wire::ResidencyHead,
-    request: &TeamArrange,
-) -> Result<Vec<wire::TeamSubscription>, Outcome<CommandAnswer>> {
-    let mut inherited = Vec::new();
-    for team in &request.teams {
-        if head.lanes.iter().any(|row| row.team == team.team) {
-            continue;
-        }
-        let Some(source) = split_source_team(head, team) else {
-            return Err(typed_store_fault(
-                "team::arrangement-split-lost",
-                "an admitted fresh team no longer resolves to its source team",
-            ));
-        };
-        let Some(subscription) = head
-            .subscriptions
-            .iter()
-            .find(|subscription| subscription.team == source)
-        else {
-            return Err(typed_store_fault(
-                "team::subscription-missing",
-                "a split source team has no task-allocation lifetime",
-            ));
-        };
-        inherited.push(wire::TeamSubscription {
-            team: team.team,
-            ..subscription.clone()
-        });
-    }
-    Ok(inherited)
-}
-
-/// Refuse an arrangement that is not a faithful restatement of the lane table.
+/// Admit an arrangement only as a faithful restatement of the lane table.
 ///
 /// Every rule here is stated over the arrangement as a whole. A partial
 /// arrangement is never repaired by inference: a lane the operator forgot would
@@ -504,116 +483,101 @@ fn inherited_split_subscriptions(
 fn admit_arrangement(
     head: &wire::ResidencyHead,
     request: &TeamArrange,
-) -> Result<(), Outcome<CommandAnswer>> {
-    let current = standings(&head.lanes);
-    if request.teams.is_empty() {
-        return Err(lane_refusal(
-            "team::arrangement-empty",
-            Some("at least one team".to_owned()),
-            Some("0".to_owned()),
-            "state every surviving team; an arrangement never removes a lane",
-        ));
-    }
-    let mut seen_teams = Vec::<CanonicalUuid>::new();
-    let mut seen_lanes = Vec::<CanonicalUuid>::new();
-    for team in &request.teams {
-        if !current.iter().any(|standing| standing.team == team.team)
-            && split_source_team(head, team).is_none()
-        {
-            return Err(lane_refusal(
-                "team::arrangement-unknown-team",
-                Some("one current team or a fresh singleton split".to_owned()),
-                Some(team.team.to_string()),
-                "a fresh team must hold one lane from a current multi-agent team",
-            ));
-        }
-        if seen_teams.contains(&team.team) {
-            return Err(lane_refusal(
-                "team::arrangement-duplicate-team",
-                Some("each team stated once".to_owned()),
-                Some(team.team.to_string()),
-                "state one arrangement per team",
-            ));
-        }
-        seen_teams.push(team.team);
-        if team.lanes.is_empty() {
-            return Err(lane_refusal(
-                "team::arrangement-vacant-team",
-                Some("at least one lane".to_owned()),
-                Some(team.team.to_string()),
-                "omit an emptied team entirely rather than arranging it with no lanes",
-            ));
-        }
-        admit_team_size(head.team_members(team.team).count(), team.lanes.len())?;
-        for lane in &team.lanes {
-            if !head.lanes.iter().any(|row| row.lane == *lane) {
-                return Err(lane_refusal(
-                    "team::arrangement-unknown-lane",
-                    Some("one current lane".to_owned()),
-                    Some(lane.to_string()),
-                    "read lane state and retry with the current lane table",
-                ));
-            }
-            if seen_lanes.contains(lane) {
-                return Err(lane_refusal(
-                    "team::arrangement-duplicate-lane",
-                    Some("each lane held once".to_owned()),
-                    Some(lane.to_string()),
-                    "hold every lane in exactly one team",
-                ));
-            }
-            seen_lanes.push(*lane);
-        }
-    }
-    if let Some(missing) = head
-        .lanes
+) -> Result<Arranged<CanonicalUuid, CanonicalUuid>, Outcome<CommandAnswer>> {
+    let proposed = request
+        .teams
         .iter()
-        .find(|row| !seen_lanes.contains(&row.lane))
-    {
-        return Err(lane_refusal(
+        .map(|team| Group {
+            group: team.team,
+            members: team.lanes.clone(),
+        })
+        .collect::<Vec<_>>();
+    partition(head)?
+        .arrange(&proposed)
+        .map_err(arrangement_refusal)
+}
+
+fn arrangement_refusal(error: TeamError) -> Outcome<CommandAnswer> {
+    let (reason, expected, observed, detail) = match error {
+        GroupingError::ArrangeEmpty => (
+            "team::arrangement-empty",
+            "at least one team".to_owned(),
+            "0".to_owned(),
+            "state every surviving team; an arrangement never removes a lane",
+        ),
+        GroupingError::UnknownGroup(team) => (
+            "team::arrangement-unknown-team",
+            "one current team or a fresh singleton split".to_owned(),
+            team.to_string(),
+            "a fresh team must hold one lane from a current multi-agent team",
+        ),
+        GroupingError::DuplicateGroup(team) => (
+            "team::arrangement-duplicate-team",
+            "each team stated once".to_owned(),
+            team.to_string(),
+            "state one arrangement per team",
+        ),
+        GroupingError::VacantGroup(team) => (
+            "team::arrangement-vacant-team",
+            "at least one lane".to_owned(),
+            team.to_string(),
+            "omit an emptied team entirely rather than arranging it with no lanes",
+        ),
+        GroupingError::UnknownMember(lane) => (
+            "team::arrangement-unknown-lane",
+            "one current lane".to_owned(),
+            lane.to_string(),
+            "read lane state and retry with the current lane table",
+        ),
+        GroupingError::DuplicateMember(lane) => (
+            "team::arrangement-duplicate-lane",
+            "each lane held once".to_owned(),
+            lane.to_string(),
+            "hold every lane in exactly one team",
+        ),
+        GroupingError::Incomplete { expected, missing } => (
             "team::arrangement-incomplete",
-            Some(format!("{} arranged lanes", head.lanes.len())),
-            Some(missing.lane.to_string()),
+            format!("{expected} arranged lanes"),
+            missing.to_string(),
             "state every current lane; an arrangement moves lanes, it never drops them",
-        ));
-    }
-    Ok(())
+        ),
+        other => return grouping_refusal(other),
+    };
+    lane_refusal(reason, Some(expected), Some(observed), detail)
 }
 
 /// The residency head one admitted arrangement produces.
 fn arranged_head(
     observed: &wire::ResidencyHead,
-    request: &TeamArrange,
+    arranged: &Arranged<CanonicalUuid, CanonicalUuid>,
     topology_revision: u64,
-    inherited_subscriptions: Vec<wire::TeamSubscription>,
 ) -> Result<wire::ResidencyHead, Outcome<CommandAnswer>> {
+    let mut inherited = Vec::with_capacity(arranged.splits.len());
+    for (team, source) in &arranged.splits {
+        let Some(subscription) = observed
+            .subscriptions
+            .iter()
+            .find(|subscription| subscription.team == *source)
+        else {
+            return Err(typed_store_fault(
+                "team::subscription-missing",
+                "a split source team has no task-allocation lifetime",
+            ));
+        };
+        inherited.push(wire::TeamSubscription {
+            team: *team,
+            ..subscription.clone()
+        });
+    }
     let mut next = observed.clone();
     next.topology_revision = topology_revision;
-    let mut arranged = Vec::with_capacity(next.lanes.len());
-    for team in &request.teams {
-        for lane in &team.lanes {
-            let Some(row) = next.lanes.iter().find(|row| row.lane == *lane) else {
-                return Err(typed_store_fault(
-                    "team::arrangement-lane-lost",
-                    "an admitted arrangement named a lane the residency head no longer holds",
-                ));
-            };
-            let mut row = row.clone();
-            row.team = team.team;
-            arranged.push(row);
-        }
-    }
-    next.lanes = arranged;
+    next.lanes = placed(observed, &arranged.partition)?;
     // A team the arrangement emptied keeps no durable subscription: leaving
     // one behind would silently re-apply that policy to a later lineage seated
     // under the same identity.
-    next.subscriptions.retain(|subscription| {
-        request
-            .teams
-            .iter()
-            .any(|team| team.team == subscription.team)
-    });
-    next.subscriptions.extend(inherited_subscriptions);
+    next.subscriptions
+        .retain(|subscription| arranged.partition.holds(subscription.team));
+    next.subscriptions.extend(inherited);
     next.subscriptions
         .sort_by_key(|subscription| subscription.team);
     Ok(next)
@@ -643,20 +607,15 @@ pub(in crate::resident) fn arrange(
         Ok(revision) => revision,
         Err(outcome) => return outcome,
     };
-    if let Err(outcome) = admit_arrangement(observed.body(), request) {
-        return outcome;
-    }
-    let from = standings(&observed.body().lanes);
-    let inherited_subscriptions = match inherited_split_subscriptions(observed.body(), request) {
-        Ok(subscriptions) => subscriptions,
+    let arranged = match admit_arrangement(observed.body(), request) {
+        Ok(arranged) => arranged,
         Err(outcome) => return outcome,
     };
-    let next = match arranged_head(
-        observed.body(),
-        request,
-        topology_revision,
-        inherited_subscriptions,
-    ) {
+    let from = match partition(observed.body()) {
+        Ok(current) => standings(&current),
+        Err(outcome) => return outcome,
+    };
+    let next = match arranged_head(observed.body(), &arranged, topology_revision) {
         Ok(next) => next,
         Err(outcome) => return outcome,
     };
@@ -665,7 +624,7 @@ pub(in crate::resident) fn arrange(
         Err(outcome) => return typed_outcome(outcome),
     };
     let flips = super::retune::fast_flips(observed.body(), &next, global_fast);
-    let teams = standings(&next.lanes);
+    let teams = standings(&arranged.partition);
     let lane_answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),

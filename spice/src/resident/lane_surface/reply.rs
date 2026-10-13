@@ -154,25 +154,25 @@ pub(super) fn next_topology_revision(
     head: &wire::ResidencyHead,
     observed: u64,
 ) -> Result<u64, Outcome<CommandAnswer>> {
-    if observed != head.topology_revision {
-        return Err(Outcome::Refusal(Refusal::bare(
-            wire::RefusalDiagnostic::new(
-                "lane::topology-moved",
-                Some("topology_revision".to_owned()),
-                Some(observed.to_string()),
-                Some(head.topology_revision.to_string()),
-            )
-            .with_detail(
-                "read the authoritative lane table and retry against its topology revision",
+    wire::grouping::advance_revision(head.topology_revision, observed).map_err(
+        |error| match error {
+            wire::grouping::RevisionError::Moved { current } => Outcome::Refusal(Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    "lane::topology-moved",
+                    Some("topology_revision".to_owned()),
+                    Some(observed.to_string()),
+                    Some(current.to_string()),
+                )
+                .with_detail(
+                    "read the authoritative lane table and retry against its topology revision",
+                ),
+            )),
+            wire::grouping::RevisionError::Exhausted => typed_store_fault(
+                "lane::topology-revision-exhausted",
+                "the durable topology revision cannot advance",
             ),
-        )));
-    }
-    head.topology_revision.checked_add(1).ok_or_else(|| {
-        typed_store_fault(
-            "lane::topology-revision-exhausted",
-            "the durable topology revision cannot advance",
-        )
-    })
+        },
+    )
 }
 
 fn liveness(

@@ -490,15 +490,7 @@ struct Arrangement {
 
 /// Admit growth only within the team capacity; legacy larger teams can shrink.
 fn admit_team_size(current_members: usize, members: usize) -> Result<(), Outcome<CommandAnswer>> {
-    if members > wire::head::TEAM_MEMBER_LIMIT && members > current_members {
-        return Err(lane_refusal(
-            "team::member-limit",
-            Some(format!("at most {} agents", wire::head::TEAM_MEMBER_LIMIT)),
-            Some(members.to_string()),
-            "move an agent out of the target team or choose another team",
-        ));
-    }
-    Ok(())
+    wire::grouping::admit_size(current_members, members).map_err(team::grouping_refusal)
 }
 
 /// Resolve one arrangement against the observed order, or refuse it.
@@ -509,51 +501,39 @@ fn rearrange(
     observed: &wire::ResidencyHead,
     request: &LaneArrange,
 ) -> Result<Arrangement, Outcome<CommandAnswer>> {
-    if request.lane == request.before {
-        return Err(lane_refusal(
-            "lane::arrange-self",
-            Some("a different target lane".to_owned()),
-            Some(request.lane.to_string()),
-            "drop the primary composer on another seated member",
-        ));
-    }
-    let Some(source_index) = observed
-        .lanes
-        .iter()
-        .position(|row| row.lane == request.lane)
-    else {
-        return Err(lane_refusal(
-            "lane::arrange-source-missing",
-            Some("one current seated member".to_owned()),
-            Some(request.lane.to_string()),
-            "read lane state and retry with a current source member",
-        ));
-    };
-    let Some(target) = observed.lanes.iter().find(|row| row.lane == request.before) else {
-        return Err(lane_refusal(
-            "lane::arrange-target-missing",
-            Some("one current seated member".to_owned()),
-            Some(request.before.to_string()),
-            "read lane state and retry with a current target member",
-        ));
-    };
-    let team = target.team;
-    let from_team = observed.lanes[source_index].team;
-    if from_team != team {
-        let current_members = observed.team_members(team).count();
-        admit_team_size(current_members, current_members + 1)?;
-    }
-    let mut next = observed.clone();
-    let mut source = next.lanes.remove(source_index);
-    let Some(target_index) = next.lanes.iter().position(|row| row.lane == request.before) else {
+    let teams = team::partition(observed)?;
+    let (placed, moved) = teams
+        .place_before(request.lane, request.before)
+        .map_err(|error| match error {
+            wire::grouping::GroupingError::PlaceSelf(_) => lane_refusal(
+                "lane::arrange-self",
+                Some("a different target lane".to_owned()),
+                Some(request.lane.to_string()),
+                "drop the primary composer on another seated member",
+            ),
+            wire::grouping::GroupingError::Absent(_) => lane_refusal(
+                "lane::arrange-source-missing",
+                Some("one current seated member".to_owned()),
+                Some(request.lane.to_string()),
+                "read lane state and retry with a current source member",
+            ),
+            wire::grouping::GroupingError::TargetAbsent(_) => lane_refusal(
+                "lane::arrange-target-missing",
+                Some("one current seated member".to_owned()),
+                Some(request.before.to_string()),
+                "read lane state and retry with a current target member",
+            ),
+            other => team::grouping_refusal(other),
+        })?;
+    let (Some(from_team), Some(team)) = (moved.from, moved.to) else {
         return Err(typed_store_fault(
             "lane::arrange-target-lost",
-            "the target member disappeared while arranging one residency snapshot",
+            "an arranged member stands in no team",
         ));
     };
-    source.team = team;
-    next.lanes.insert(target_index, source);
-    if from_team != team && !next.lanes.iter().any(|row| row.team == from_team) {
+    let mut next = observed.clone();
+    next.lanes = team::placed(observed, &placed)?;
+    if !placed.holds(from_team) {
         next.subscriptions
             .retain(|subscription| subscription.team != from_team);
     }

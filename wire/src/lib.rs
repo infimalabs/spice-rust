@@ -45,6 +45,7 @@ pub mod doctor;
 pub mod envelope;
 pub mod environment;
 pub mod fact;
+pub mod grouping;
 pub mod head;
 pub mod hello;
 pub mod ident;
