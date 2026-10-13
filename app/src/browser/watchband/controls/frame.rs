@@ -1,10 +1,11 @@
-//! The team controls frame, which alone follows typed drafts.
+//! The composer controls frame, which alone follows typed drafts.
 //!
 //! Typed text lives in its composer element until sent, so drafting is heard
 //! where it happens: every composer change raises an `input` event that
-//! bubbles to the team form, including values the app writes itself. The
-//! frame keeps which members a press would send to and re-renders only itself,
-//! and only when that answer changes, so a keystroke never renders the app.
+//! bubbles to the composer form, including values the app writes itself. The
+//! frame keeps which composers a press would deliver and re-renders only
+//! itself, and only when that answer changes, so a keystroke never renders
+//! the app. A team's members and a working group's designs share it.
 
 use std::fmt::Write as _;
 
@@ -12,13 +13,13 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use yew::prelude::*;
 
-/// One member as the send button sees it, in member order.
+/// One composer as the send button sees it, in composer order.
 #[derive(Clone, PartialEq)]
-pub(in crate::browser::watchband) struct SendSlot {
-    /// The member's lane, which names its composer section.
-    pub lane: String,
+pub(in crate::browser) struct SendSlot {
+    /// The attribute selector naming this composer's `.team-agent` section.
+    pub section: String,
     pub accent: usize,
-    /// A press can deliver to this member, waking it if it must.
+    /// A press can deliver this composer, waking its lane if it must.
     pub reachable: bool,
     /// A quote or image is drafted, which sends without any text.
     pub attached: bool,
@@ -30,16 +31,20 @@ pub(in crate::browser::watchband) struct SendSlot {
 }
 
 #[derive(Properties, PartialEq)]
-pub(in crate::browser::watchband) struct FrameProps {
-    /// No agent runs and no quote or image is drafted.
+pub(in crate::browser) struct FrameProps {
+    /// Nothing runs and no quote or image is drafted.
     pub dormant: bool,
     /// Send is admissible apart from whether anything is drafted.
     pub ready: bool,
-    /// A topology change may add or remove this team's composers.
+    /// A topology change may add or remove composers.
     pub topology_revision: u64,
     pub slots: Vec<SendSlot>,
-    pub speech: &'static str,
-    pub lifetime: &'static str,
+    /// The press's word, beneath FULL when every composer receives.
+    pub verb: &'static str,
+    /// What one slot is, as the press's title counts it.
+    pub noun: &'static str,
+    pub speech: Option<&'static str>,
+    pub lifetime: Option<&'static str>,
     pub lifetime_pending: bool,
     /// The paired round controls in the first row.
     pub turbo: Html,
@@ -56,7 +61,7 @@ struct Drafting {
 }
 
 #[function_component(ControlsFrame)]
-pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html {
+pub(in crate::browser) fn controls_frame(props: &FrameProps) -> Html {
     let root = use_node_ref();
     let send = use_node_ref();
     let drafting = use_state_eq(Drafting::default);
@@ -163,25 +168,48 @@ pub(in crate::browser::watchband) fn controls_frame(props: &FrameProps) -> Html 
             {props.turbo.clone()}
             {props.menu.clone()}
             {props.children.clone()}
-            {send_button(send, stepped_back || !props.ready, lit.len(), broadcast_count, props.slots.len(), waking.len())}
+            {send_button(SendButton {
+                send,
+                disabled: stepped_back || !props.ready,
+                recipients: lit.len(),
+                broadcast_recipients: broadcast_count,
+                members: props.slots.len(),
+                waking: waking.len(),
+                verb: props.verb,
+                noun: props.noun,
+            })}
         </aside>
     }
 }
 
-fn send_button(
+struct SendButton {
     send: NodeRef,
     disabled: bool,
     recipients: usize,
     broadcast_recipients: usize,
     members: usize,
     waking: usize,
-) -> Html {
+    verb: &'static str,
+    noun: &'static str,
+}
+
+fn send_button(button: SendButton) -> Html {
+    let SendButton {
+        send,
+        disabled,
+        recipients,
+        broadcast_recipients,
+        members,
+        waking,
+        verb,
+        noun,
+    } = button;
     let title = match (recipients, waking) {
-        (0, 0) => "Send".to_owned(),
+        (0, 0) => verb.to_owned(),
         (0, 1) => "Waking 1 agent".to_owned(),
         (0, count) => format!("Waking {count} agents"),
-        (1, _) => "Send to 1 agent".to_owned(),
-        (count, _) => format!("Send to {count} agents"),
+        (1, _) => format!("{verb} to 1 {noun}"),
+        (count, _) => format!("{verb} to {count} {noun}s"),
     };
     let full_send = members > 1 && recipients == members;
     let full_broadcast = members > 1 && broadcast_recipients == members;
@@ -233,7 +261,7 @@ fn send_button(
                 if members > 1 {
                     <span class="team-send-full" aria-hidden="true">{"Full"}</span>
                 }
-                <span class="team-send-word">{"Send"}</span>
+                <span class="team-send-word">{verb}</span>
             </span>
         </button>
     }
@@ -275,13 +303,13 @@ fn form_of(root: &NodeRef) -> Option<web_sys::Element> {
         .flatten()
 }
 
-/// What a press would send: a reachable member is lit when its composer holds
-/// text or a drafted quote or image, the same content a submit prepares.
+/// What a press would send: a reachable composer is lit when it holds text or
+/// a drafted quote or image, the same content a submit prepares.
 fn read_drafting(form: &web_sys::Element, slots: &[SendSlot]) -> Drafting {
     let mut drafting = Drafting::default();
     for slot in slots {
         let typed = form
-            .query_selector(&format!(".team-agent[data-agent-lane=\"{}\"]", slot.lane))
+            .query_selector(&format!(".team-agent{}", slot.section))
             .ok()
             .flatten()
             .is_some_and(|section| holds_text(&section));
@@ -293,7 +321,8 @@ fn read_drafting(form: &web_sys::Element, slots: &[SendSlot]) -> Drafting {
     drafting
 }
 
-fn holds_text(section: &web_sys::Element) -> bool {
+/// Whether any textarea in this composer section holds non-blank text.
+pub(in crate::browser) fn holds_text(section: &web_sys::Element) -> bool {
     let Ok(textareas) = section.query_selector_all("textarea") else {
         return false;
     };

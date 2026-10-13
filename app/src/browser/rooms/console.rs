@@ -5,7 +5,10 @@
 //! console's own: the packed plane, its composer slot, the quote shards, and
 //! the composer issue toast.
 
+mod panel;
 mod toolbar;
+
+pub(super) use panel::use_arrangement_focus;
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
@@ -95,11 +98,36 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
     let slot = render.controls.slots.slot(view.group.clone());
     let cards = plane_cards(render, &view.group, &channels);
     let empty = cards.is_empty();
+    // A settled design takes no post, so it has no place on the post control;
+    // every other design's composer posts through its own entry there.
+    let mut postables = Vec::new();
+    let mut composers = Vec::with_capacity(channels.len());
+    for channel in &channels {
+        composers.push(
+            match projection.anchor_authority(&channel.stamp, render.runtime.board()) {
+                RoomAnchorAuthority::Settled { standing, .. } => {
+                    render_settled_design(render, channel, standing)
+                }
+                _ => {
+                    let postable = design_post(render, &view.group, channel);
+                    let composer =
+                        render_design_composer(render, view, channel, postable.post.clone());
+                    postables.push(postable);
+                    composer
+                }
+            },
+        );
+    }
+    let posting = render
+        .controls
+        .posting
+        .borrow()
+        .iter()
+        .any(|(group, _)| *group == view.group);
     let composer = html! {
-        <form class="team-composer" onsubmit={Callback::from(|event: SubmitEvent| event.prevent_default())}>
-            <div class="team-agents">
-                {for channels.iter().map(|channel| render_design_composer(render, view, channel))}
-            </div>
+        <form class="team-composer" onsubmit={panel::submit(&postables)}>
+            <div class="team-agents">{for composers}</div>
+            {panel::render(render.controls, &view.group, projection.partition().revision, &postables, posting)}
         </form>
     };
     html! {
@@ -108,8 +136,10 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
             class="team-surface group-surface"
             data-group={view.group.to_string()}
             data-team-weight={watchband::team_visual_weight(channels.len()).to_string()}
+            onclick={panel::dismissal(render.controls, &view.group)}
         >
-            {toolbar::render(render, view, index, &name, &channels, loaded)}
+            {toolbar::render(render, view, &name, &channels, loaded)}
+            {panel::render_arrangement(render.controls, view, index, &name)}
             if absent {
                 <p class="room-unavailable">{"Shared group authority is unavailable. This local view remains in place."}</p>
             }
@@ -298,37 +328,27 @@ fn room_card(
 /// What a design composer's post does: it records and asks no lane.
 const POST_CUE: &str = "Posts are recorded in this room for its listeners; they ask no lane for anything. To ask a lane, use Coordinate in this design's menu.";
 
-/// One design's composer: its heading and menu, the textarea posting to
-/// exactly that design's room, and the quote shards drafted beneath it. A
-/// settled design's room takes no new posts, so its composer names that
-/// standing in place of the draft; the room's history stays in the plane.
+/// One open design's composer: its heading and menu, the textarea posting to
+/// exactly that design's room, and the quote shards drafted beneath it.
+/// Command or Control and Enter posts this composer alone, as it sends one
+/// member's draft in a team.
 fn render_design_composer(
     render: &GroupRender<'_, '_>,
     view: &GroupView,
     channel: &Channel,
+    post: Callback<()>,
 ) -> Html {
-    if let RoomAnchorAuthority::Settled { standing, .. } = render
-        .runtime
-        .room_projection()
-        .anchor_authority(&channel.stamp, render.runtime.board())
-    {
-        return render_settled_design(render, channel, standing);
-    }
     let key = design_key(&view.group, &channel.stamp);
     let draft = render.drafts.get(&key).cloned().unwrap_or_default();
     let drawn = render.controls.drawn(view, &channel.stamp);
-    let post = post_callback(render, &view.group, channel, &key);
-    let onkeydown = {
-        let post = post.clone();
-        Callback::from(move |event: KeyboardEvent| {
-            if event.key() == "Enter" && (event.meta_key() || event.ctrl_key()) {
-                event.prevent_default();
-                if !event.repeat() {
-                    post.emit(());
-                }
+    let onkeydown = Callback::from(move |event: KeyboardEvent| {
+        if event.key() == "Enter" && (event.meta_key() || event.ctrl_key()) {
+            event.prevent_default();
+            if !event.repeat() {
+                post.emit(());
             }
-        })
-    };
+        }
+    });
     let oninput = {
         let controls = render.controls.clone();
         let group = view.group.clone();
@@ -388,16 +408,7 @@ fn render_design_composer(
                     data-shard-target-id={key.clone()}
                     data-draft-unsafe={draft_unsafe.to_string()}
                 >
-                    <header class="app-glass-control-surface composer-shard-heading">
-                        <strong class="composer-shard-prose" title={channel.label.clone()}>{channel.label.clone()}</strong>
-                        {render_design_menu(render, channel)}
-                        <button
-                            type="button"
-                            class="composer-shard-post"
-                            aria-label={format!("Post to {}", channel.label)}
-                            onclick={Callback::from(move |_| post.emit(()))}
-                        >{"Post"}</button>
-                    </header>
+                    {render_design_heading(render, channel)}
                     <p class="composer-shard-cue" data-room-post-cue="">{POST_CUE}</p>
                     <ComposerTextarea
                         key={drawn.clone()}
@@ -422,6 +433,8 @@ fn render_design_composer(
     }
 }
 
+/// A settled design's room takes no new posts, so its composer names that
+/// standing in place of the draft; the room's history stays in the plane.
 fn render_settled_design(
     render: &GroupRender<'_, '_>,
     channel: &Channel,
@@ -439,10 +452,7 @@ fn render_settled_design(
         >
             <div class="agent-composer-stack" data-has-quote-shards="false">
                 <div class="mosaic-composer composer-shard composer-shard--primary" data-shard-kind="primary">
-                    <header class="app-glass-control-surface composer-shard-heading">
-                        <strong class="composer-shard-prose" title={channel.label.clone()}>{channel.label.clone()}</strong>
-                        {render_design_menu(render, channel)}
-                    </header>
+                    {render_design_heading(render, channel)}
                     <p class="composer-shard-settled" role="status">
                         {format!("This design is {standing}; its room stays readable and takes no new posts.")}
                     </p>
@@ -450,6 +460,72 @@ fn render_settled_design(
             </div>
         </section>
     }
+}
+
+/// A design's heading, as a team member's resolves from its newest prose:
+/// the room's newest publication whose words this browser holds, aged and
+/// linked to its card, or the design's title until any is held.
+fn render_design_heading(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
+    let newest = newest_words(render.runtime, &channel.stamp);
+    let age = match &newest {
+        Some((publication, _)) => {
+            let source_id = format!("{ROOM_CARD_PREFIX}{publication}");
+            html! {
+                <a
+                    class="composer-shard-link composer-shard-age"
+                    href={crate::view::card_href(&source_id)}
+                    aria-label={format!("Jump to latest {} publication", channel.label)}
+                >
+                    <Age authored={publication.micros() / 1_000} class="composer-shard-age-label" />
+                </a>
+            }
+        }
+        None => html! {
+            <span
+                class="composer-shard-link composer-shard-age composer-shard-age-label"
+                data-age-slot={watchband::AGE_SLOT_WIDTH.to_string()}
+            >{"—"}</span>
+        },
+    };
+    let prose = newest.map_or_else(
+        || design_title(render.runtime, &channel.stamp).unwrap_or_else(|| channel.label.clone()),
+        |(_, prose)| prose,
+    );
+    html! {
+        <header class="app-glass-control-surface composer-shard-heading">
+            {age}
+            <strong class="composer-shard-prose" title={prose.clone()}>{prose}</strong>
+            {render_design_menu(render, channel)}
+        </header>
+    }
+}
+
+/// A design's title as plain text, wherever the board still carries its row.
+fn design_title(runtime: &AppRuntime, design: &TaskStamp) -> Option<String> {
+    let board = runtime.board()?;
+    board
+        .tasks
+        .iter()
+        .chain(&board.room_anchors)
+        .find(|task| task.statement.body.born == *design)
+        .map(|task| crate::composer_markdown::inline::plain_text(&task.presentation_title))
+}
+
+/// The newest room event, in journal order, whose words this browser holds,
+/// as its publication and first authored line.
+fn newest_words(runtime: &AppRuntime, design: &TaskStamp) -> Option<(RoomAuthorityStamp, String)> {
+    let mut events = runtime
+        .room_projection()
+        .room(design)?
+        .events()
+        .iter()
+        .collect::<Vec<_>>();
+    events.sort_by_key(|(_, event)| Reverse(event.position));
+    events.into_iter().find_map(|(publication, event)| {
+        let text = super::conversation::spoken(runtime, publication, event)?.text?;
+        let line = watchband::first_nonquoted_prose(&text)?;
+        Some((publication.clone(), line))
+    })
 }
 
 /// A design's menu carries what its room holds besides conversation: its
@@ -551,14 +627,17 @@ fn close_menu(event: &MouseEvent) {
 }
 
 /// Post one design composer's message to exactly that design's room. A post
-/// that lands clears the composer only while it still holds what was posted.
-fn post_callback(
+/// that lands clears the composer only while it still holds what was posted;
+/// one that is refused leaves that composer's draft in place. Each report
+/// names its design, since one press may post to several rooms, and a
+/// composer whose post awaits its answer is not posted again.
+fn design_post(
     render: &GroupRender<'_, '_>,
     group: &RoomAuthorityStamp,
     channel: &Channel,
-    key: &str,
-) -> Callback<()> {
+) -> panel::Postable {
     let runtime = render.runtime;
+    let key = design_key(group, &channel.stamp);
     let available = matches!(
         runtime
             .room_projection()
@@ -575,21 +654,31 @@ fn post_callback(
         })
         .map(|task| (task.statement.body.handle.clone(), task.statement.position))
         .filter(|_| available);
+    let attached = !render
+        .drafts
+        .get(&key)
+        .is_none_or(|draft| draft.quotes.is_empty());
     let controls = render.controls.clone();
     let sender = render.sender.clone();
     let drafts = render.drafts.clone();
     let group = group.clone();
     let design = channel.stamp.clone();
-    let key = key.to_owned();
-    Callback::from(move |()| {
+    let label = channel.label.clone();
+    let reachable = task.is_some();
+    let post = Callback::from(move |()| {
         let report = {
             let drafts = drafts.clone();
+            let label = label.clone();
             move |issue: &str| {
                 drafts.dispatch(ComposerAction::Report {
-                    issue: issue.to_owned(),
+                    issue: format!("{label}: {issue}"),
                 });
             }
         };
+        let flight = (group.clone(), design.clone());
+        if controls.posting.borrow().contains(&flight) {
+            return;
+        }
         let Some((room, head)) = task.clone() else {
             report("This design's room is unavailable.");
             return;
@@ -607,29 +696,32 @@ fn post_callback(
             let report = report.clone();
             let controls = controls.clone();
             let drafts = drafts.clone();
-            let group = group.clone();
-            let design = design.clone();
+            let flight = flight.clone();
             let key = key.clone();
-            move |result: Result<wire::rooms::RoomPostAnswer, String>| match result {
-                Ok(answer) => {
-                    if composer_holds(&key, &snapshot) {
-                        clear_composer(&key, &drafts);
-                        controls
-                            .drawn
-                            .borrow_mut()
-                            .insert((group.clone(), design.clone()), String::new());
-                        controls.update(RoomViewAction::Posted {
-                            group: group.clone(),
-                            design: design.clone(),
-                            text: snapshot.body.trim().to_owned(),
-                        });
+            move |result: Result<wire::rooms::RoomPostAnswer, String>| {
+                controls.posting.borrow_mut().remove(&flight);
+                match result {
+                    Ok(answer) => {
+                        if composer_holds(&key, &snapshot) {
+                            clear_composer(&key, &drafts);
+                            controls
+                                .drawn
+                                .borrow_mut()
+                                .insert(flight.clone(), String::new());
+                            controls.update(RoomViewAction::Posted {
+                                group: flight.0.clone(),
+                                design: flight.1.clone(),
+                                text: snapshot.body.trim().to_owned(),
+                            });
+                        }
+                        report(&room_post_notice(&answer.outcome));
                     }
-                    report(&room_post_notice(&answer.outcome));
+                    Err(issue) => report(&issue),
                 }
-                Err(issue) => report(&issue),
             }
         };
-        let _ = admit_action(
+        controls.posting.borrow_mut().insert(flight.clone());
+        if !admit_action(
             &sender,
             ClientAction::RoomPost(RoomPostAction {
                 room,
@@ -639,8 +731,17 @@ fn post_callback(
                 report_heads: Vec::new(),
                 respond: Rc::new(landed),
             }),
-        );
-    })
+        ) {
+            controls.posting.borrow_mut().remove(&flight);
+        }
+    });
+    panel::Postable {
+        design: channel.stamp.clone(),
+        accent: channel.accent,
+        available: reachable,
+        attached,
+        post,
+    }
 }
 
 /// Whether a composer's live elements still hold exactly the posted draft:

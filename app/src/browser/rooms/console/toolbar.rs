@@ -1,9 +1,10 @@
 //! A working group's toolbar, the team toolbar's twin read from Designs: an
 //! open-task total and stem tabs over the tasks associated with the group's
 //! Designs, one standing light per Design, and a ticker of the newest room
-//! event across them. Only the name and this browser's placement controls are
-//! the group's own. Everything renders from the board, the room projection,
-//! and lane topology on each read.
+//! event across them. Only the name is the group's own; this browser's
+//! placement of the console lives in the panel's arrangement menu, where a
+//! team's arrangement stands. Everything renders from the board, the room
+//! projection, and lane topology on each read.
 
 use wire::rooms::RoomAuthorityStamp;
 use yew::prelude::*;
@@ -19,7 +20,6 @@ use crate::work::{StemTaskGroup, WorkCounts, WorkScope, WorkTask};
 pub(super) fn render(
     render: &GroupRender<'_, '_>,
     view: &GroupView,
-    index: usize,
     name: &str,
     channels: &[Channel],
     loaded: bool,
@@ -46,7 +46,7 @@ pub(super) fn render(
                     {for channels.iter().zip(&standings).map(|(channel, standing)| render_light(channel, *standing))}
                 </span>
                 {render_ticker(render, channels, &standings)}
-                {render_placement(render, view, index, name, loaded)}
+                <strong class="group-surface-name" aria-busy={(!loaded).to_string()}>{name.to_owned()}</strong>
             </div>
         </header>
     }
@@ -309,36 +309,5 @@ fn ticker(
                 <span class="ticker-detail">{detail}</span>
             }
         </div>
-    }
-}
-
-/// The group's name and this browser's own placement of its console.
-fn render_placement(
-    render: &GroupRender<'_, '_>,
-    view: &GroupView,
-    index: usize,
-    name: &str,
-    loaded: bool,
-) -> Html {
-    let controls = render.controls;
-    let close = {
-        let controls = controls.clone();
-        let group = view.group.clone();
-        Callback::from(move |_| controls.close_group(group.clone()))
-    };
-    let move_group = |delta| {
-        let controls = controls.clone();
-        let group = view.group.clone();
-        Callback::from(move |_| controls.move_group(group.clone(), delta))
-    };
-    html! {
-        <>
-            <strong class="group-surface-name" aria-busy={(!loaded).to_string()}>{name.to_owned()}</strong>
-            <span class="room-inline-actions">
-                <button type="button" disabled={index == 0} onclick={move_group(-1)} aria-label="Move group left">{"←"}</button>
-                <button type="button" disabled={index + 1 == controls.views.groups().len()} onclick={move_group(1)} aria-label="Move group right">{"→"}</button>
-                <button type="button" onclick={close} aria-label="Close group">{"×"}</button>
-            </span>
-        </>
     }
 }
