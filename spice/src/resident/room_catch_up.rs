@@ -133,12 +133,12 @@ fn plan(
         if publications.is_empty() {
             continue;
         }
-        let latest_activity = latest_lane_activity(bus, &room, lane)?;
         let room_attention = crate::board_command::project_attention(
+            bus,
             &entries,
             &residency,
             &room,
-            latest_activity.as_slice(),
+            latest_lane_activity(bus, &room, lane)?.as_slice(),
             at,
         )
         .map_err(unit_outcome)?;
