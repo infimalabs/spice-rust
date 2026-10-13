@@ -787,6 +787,10 @@ fn parked_report_promotion_atomically_becomes_controlled_and_unauthorized() {
     assert_eq!(preparation.construction, output.statement.body.born);
     assert_eq!(output.statement.body.authorization, None);
     assert_eq!(output.claim, None);
+    assert_eq!(
+        open_blocked(&bus, epoch),
+        [output.statement.body.born.clone()].into()
+    );
 
     let facts = bus.fact_snapshot().expect("fixture facts read");
     let control = facts

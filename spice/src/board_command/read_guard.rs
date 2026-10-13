@@ -128,6 +128,7 @@ fn validated_snapshot_from_with_occupant(
             next: None,
             tasks,
             offer: Vec::new(),
+            blocked: Vec::new(),
             origins: Default::default(),
             notes: Default::default(),
             acknowledgments: Default::default(),
@@ -762,6 +763,7 @@ pub(super) fn read_board(
     };
     if matches!(read, BoardRead::Open) {
         snapshot.answer.offer = board_offer(&snapshot.entries, &snapshot.answer);
+        snapshot.answer.blocked = board_blocked(&snapshot.entries);
         snapshot.answer.origins = steering_origins(&observed);
         snapshot
             .answer
@@ -832,6 +834,21 @@ pub(super) fn board_offer(entries: &[Entry], answer: &BoardAnswer) -> Vec<wire::
     .into_iter()
     .map(|selection| selection.entry().born().clone())
     .collect()
+}
+
+/// Open rows whose prerequisites or controller gate hold them back, judged by
+/// the allocator's own [`board::dependencies_satisfied`].
+fn board_blocked(entries: &[Entry]) -> Vec<wire::TaskStamp> {
+    let resolved = board::resolved_tasks(entries);
+    entries
+        .iter()
+        .filter(|entry| {
+            entry.workflow().status == "pending"
+                && entry.workflow().completion.is_none()
+                && !board::dependencies_satisfied(entry, &resolved)
+        })
+        .map(|entry| entry.born().clone())
+        .collect()
 }
 
 pub(super) fn read_graph(

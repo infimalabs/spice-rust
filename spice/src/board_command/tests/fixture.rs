@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeSet;
 
 pub(super) static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
 pub(super) static NEXT_COMMAND: AtomicU64 = AtomicU64::new(100);
@@ -264,6 +265,46 @@ pub(super) fn board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> BoardAnswe
     };
     assert_eq!(position, answer.cursor);
     *answer
+}
+
+/// The rows an Open read reports blocked, after proving they are exactly the
+/// open rows the allocator's own gate holds back on the complete board.
+pub(super) fn open_blocked(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStamp> {
+    let outcome = issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Open,
+    );
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Board(open),
+        ..
+    }) = outcome
+    else {
+        panic!("open board read did not answer: {outcome:?}");
+    };
+    let full = board(bus, epoch, Actor::Operator);
+    let entries = actor_entries(&full).expect("full board entries validate");
+    let resolved = board::resolved_tasks(&entries);
+    let gated = entries
+        .iter()
+        .filter(|entry| {
+            open.tasks
+                .iter()
+                .any(|task| task.statement.body.born == *entry.born())
+                && entry.workflow().status == "pending"
+                && !board::dependencies_satisfied(entry, &resolved)
+        })
+        .map(|entry| entry.born().clone())
+        .collect::<BTreeSet<_>>();
+    let blocked = open.blocked.iter().cloned().collect::<BTreeSet<_>>();
+    assert_eq!(
+        blocked, gated,
+        "open read blocked rows equal the allocator gate"
+    );
+    blocked
 }
 
 pub(super) fn board_with_allocation(

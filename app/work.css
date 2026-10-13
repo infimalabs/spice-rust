@@ -13,6 +13,7 @@
 .work-map-node-button[data-work-availability="ready"] { --work-card-tone: var(--work-ready); }
 .work-map-node-button[data-work-availability="blocked"] { --work-card-tone: var(--work-blocked); }
 .work-map-node-button[data-work-availability="deferred"] { --work-card-tone: var(--work-deferred); }
+.work-map-node-button[data-work-availability="parked"] { --work-card-tone: var(--work-deferred); }
 .work-map-node-button[data-work-availability="terminal"] { --work-card-tone: var(--work-terminal); }
 .work-map-node-button[data-work-disposition="completed"] { --work-card-tone: var(--work-completed); }
 .work-map-node-button[data-work-disposition="deleted"] { --work-card-tone: var(--work-deleted); }

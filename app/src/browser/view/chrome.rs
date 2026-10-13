@@ -229,7 +229,7 @@ pub(in crate::browser) fn render_task_count(counts: WorkCounts) -> Html {
 fn render_aggregate_pill(counts: WorkCounts, navigate: &Callback<navigation::Intent>) -> Html {
     let open = counts.open();
     let title = format!(
-        "All open work: {open} {}; {} ready, {} active or in flight, {} blocked or deferred",
+        "All open work: {open} {}; {} ready, {} active or in flight, {} blocked, deferred, or parked",
         if open == 1 { "task" } else { "tasks" },
         counts.ready(),
         counts.in_flight(),
@@ -260,7 +260,7 @@ fn render_stem_pill(stem: &crate::work::WorkStem, navigate: &Callback<navigation
     let scope = WorkScope::Stem(identity.clone());
     let focus_key = format!("global-work:{identity}");
     let title = format!(
-        "{identity}: {} ready, {} active or in flight, {} blocked or deferred",
+        "{identity}: {} ready, {} active or in flight, {} blocked, deferred, or parked",
         counts.ready(),
         counts.in_flight(),
         counts.unavailable(),

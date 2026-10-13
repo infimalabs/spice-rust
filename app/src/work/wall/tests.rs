@@ -31,7 +31,7 @@ fn only_chains_agents_cannot_move_are_walls() {
     let mut closed_or_settled = task(12, "wall.chain");
     closed_or_settled.statement.body.dependencies = vec![stamp(7), stamp(99)];
 
-    let board = board(vec![
+    let mut board = board(vec![
         active,
         ready,
         waiting,
@@ -45,6 +45,8 @@ fn only_chains_agents_cannot_move_are_walls() {
         cycle_b,
         closed_or_settled,
     ]);
+    // The resident's gate holds back every row waiting on an unsettled prerequisite.
+    board.blocked.extend([3, 4, 8, 9, 10, 11, 12].map(stamp));
     let work = WorkProjection::from_board(&board);
     let mut walls = DependencyWalls::new(&work);
     let mut walls_of = |index: usize| {

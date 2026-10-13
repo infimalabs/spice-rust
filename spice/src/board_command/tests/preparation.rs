@@ -95,6 +95,11 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
         candidate,
         &coverage_refs,
     );
+    assert_eq!(
+        open_blocked(&bus, epoch),
+        [spare.born().expect("spare output stamp")].into(),
+        "the authorized controller releases only its selected output"
+    );
     let first = preparation_page(&root, &[controller.as_str(), "--limit", "2"]);
     assert_eq!(first["controller"], controller.as_str());
     assert_eq!(first["page"]["rows"].as_array().map(Vec::len), Some(2));
@@ -704,6 +709,13 @@ fn operator_negative_settlements_leave_controlled_outputs_pending_and_unauthoriz
             assert_eq!(heads.workflow.body.status, "pending");
             assert_eq!(heads.statement.body.authorization, None);
         }
+        assert_eq!(
+            open_blocked(&bus, epoch),
+            [&output, &spare]
+                .map(|task| task.born().expect("output stamp"))
+                .into(),
+            "a negative settlement releases no controlled output"
+        );
         clean(&root, bus);
     }
 }
@@ -856,6 +868,13 @@ fn working_group_engagement_authorizes_a_design_outputs_once_and_disengagement_s
     let granted = engagement(&bus, epoch, &current).expect("activation authorizes");
     let later = add_output(&bus, epoch, &design, "Later output");
     assert_eq!(engagement(&bus, epoch, &later), Some(granted));
+    assert_eq!(
+        open_blocked(&bus, epoch),
+        [&current, &later]
+            .map(|task| task.born().expect("output stamp"))
+            .into(),
+        "engagement waits for its Design to conclude"
+    );
 
     // Leaving every group stops later grants and revokes none.
     move_design(&bus, epoch, stamp("Engaged design"), None);
@@ -874,6 +893,7 @@ fn working_group_engagement_authorizes_a_design_outputs_once_and_disengagement_s
     assert_ne!(regranted, granted);
     assert_eq!(engagement(&bus, epoch, &current), Some(granted));
     assert_committed(review_clean(&bus, epoch, &seats[0], &design));
+    assert!(open_blocked(&bus, epoch).is_empty());
     claim_all(&bus, epoch, &seats[1..], vec![current, later, stray]);
     clean(&root, bus);
 }

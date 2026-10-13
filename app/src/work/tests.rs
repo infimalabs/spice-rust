@@ -108,6 +108,7 @@ pub(crate) fn board(tasks: Vec<BoardTask>) -> BoardView {
         tasks,
         room_anchors: Vec::new(),
         offer: Vec::new(),
+        blocked: std::collections::BTreeSet::new(),
         quote_tasks: std::rc::Rc::default(),
         resident: wire::ResidentState::Seated,
         environment: Environment::journal_schema(1).expect("fixture schema"),
@@ -212,7 +213,14 @@ fn visibility_qualified_stems_share_counts_without_collapsing_projects() {
             ..WorkCounts::default()
         }
     );
-    assert_eq!(projection.stems[1].counts.ready, 1);
+    assert_eq!(
+        projection.stems[1].counts,
+        WorkCounts {
+            parked: 1,
+            ..WorkCounts::default()
+        },
+        "the allocator never offers a hidden row"
+    );
     assert_eq!(
         projection.stems[0]
             .projects
@@ -273,7 +281,10 @@ fn relationships_claim_dispositions_and_ranking_are_deterministic() {
     let mut freed = task(4, "graph.core");
     freed.claim = Some(claim(&freed, ClaimDisposition::Freed));
 
-    let board = board(vec![complete, prerequisite, blocked, freed]);
+    let mut board = board(vec![complete, prerequisite, blocked, freed]);
+    board
+        .blocked
+        .insert(board.tasks[2].statement.body.born.clone());
     let projection = WorkProjection::from_board(&board);
     assert_eq!(projection.tasks[1].availability, WorkAvailability::Ready);
     assert_eq!(projection.tasks[2].availability, WorkAvailability::Blocked);

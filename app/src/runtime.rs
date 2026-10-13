@@ -73,6 +73,9 @@ pub struct BoardView {
     pub(crate) room_anchors: Vec<BoardTask>,
     /// Resident allocation order: the task offered next comes first.
     pub offer: Vec<wire::TaskStamp>,
+    /// Rows the allocator holds back for an unsettled prerequisite or an
+    /// unconcluded or unauthorizing controller, judged by the resident.
+    pub blocked: BTreeSet<wire::TaskStamp>,
     /// Resident steering-key origin index: the Work each quoted direction caused.
     pub(crate) quote_tasks: Rc<QuoteTasks>,
     /// Complete environment observed at the same board snapshot barrier.
@@ -94,6 +97,7 @@ impl From<&BoardAnswer> for BoardView {
             tasks,
             room_anchors,
             offer,
+            blocked: answer.blocked.iter().cloned().collect(),
             quote_tasks: Rc::new(answer.origins.clone()),
             environment,
             resident: answer.residency.body.state,

@@ -396,6 +396,7 @@ fn task_tone(
         WorkAvailability::Ready => "Ready",
         WorkAvailability::Blocked => "Blocked",
         WorkAvailability::Deferred => "Deferred",
+        WorkAvailability::Parked => "Parked",
         WorkAvailability::Terminal => {
             return Some(settled_tone(task.row().workflow.body.status == "deleted"));
         }
