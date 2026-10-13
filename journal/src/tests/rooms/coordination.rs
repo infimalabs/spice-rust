@@ -386,7 +386,7 @@ fn room_authority_pages_current_heads_through_their_horizon() {
         .expect("coordination put aside");
     let shelved = cursor(&journal).expect("shelved");
     let canceled = Seq::new(shelved.get() - 1).expect("cancellation position");
-    commit(&mut journal, group(1, Vec::new())).expect("group restored");
+    commit(&mut journal, group(1, vec![room.clone()])).expect("group restored");
     let restored = cursor(&journal).expect("restored");
 
     let pages = |horizon: Seq| {

@@ -550,7 +550,6 @@ impl NativeInvocation<'_> {
             | ["task", "delete"]
             | ["group", "list"]
             | ["group", "put"]
-            | ["group", "remove"]
             | ["preparation", "retain"]
             | ["preparation", "critique"]
             | ["preparation", "cover"]

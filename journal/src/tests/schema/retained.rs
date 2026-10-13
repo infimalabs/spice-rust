@@ -385,10 +385,29 @@ fn plant_overfull_group(journal: &Journal) -> String {
         group: wire::rooms::WorkingGroup {
             group: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_000)
                 .expect("fixture group"),
-            name: "Overfull".to_owned(),
             anchors: (0..=wire::rooms::WORKING_GROUP_DESIGN_LIMIT)
                 .map(|micros| wire::TaskStamp::for_micros(micros as i64).expect("fixture anchor"))
                 .collect(),
+        },
+    };
+    insert_fact(
+        journal,
+        fact(
+            3,
+            Some(2),
+            FactKind::WorkingGroupStored,
+            serde_json::to_value(stored).expect("group encodes"),
+        ),
+    );
+    "3".to_owned()
+}
+
+fn plant_group(journal: &Journal) -> String {
+    let stored = wire::rooms::WorkingGroupStored {
+        group: wire::rooms::WorkingGroup {
+            group: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_000)
+                .expect("fixture group"),
+            anchors: vec![wire::TaskStamp::for_micros(1).expect("fixture anchor")],
         },
     };
     insert_fact(
@@ -450,7 +469,7 @@ fn assert_retained_refusals(cases: &[RetainedCase]) {
 
 #[test]
 fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
-    let cases: [RetainedCase; 4] = [
+    let cases: [RetainedCase; 5] = [
         (
             "fact_envelopes",
             "ea3fe662a",
@@ -473,6 +492,12 @@ fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
             retained_receipt,
         ),
         (
+            "command_receipts",
+            "370793eca",
+            "UPDATE command_receipts SET command_kind = 'group::remove'",
+            retained_receipt,
+        ),
+        (
             "steering_heads",
             "d811711a3",
             "",
@@ -484,7 +509,7 @@ fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
 
 #[test]
 fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutation() {
-    let cases: [RetainedCase; 8] = [
+    let cases: [RetainedCase; 9] = [
         (
             "fact_envelopes",
             "a4abe071f",
@@ -529,6 +554,13 @@ fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutatio
             plant_room_conversation,
         ),
         ("fact_envelopes", "577f4f602", "", plant_overfull_group),
+        (
+            "fact_envelopes",
+            "370793eca",
+            "UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT), \
+             '$.fact.group.name', 'Named') AS BLOB) WHERE seq = 3",
+            plant_group,
+        ),
     ];
     assert_retained_refusals(&cases);
 }

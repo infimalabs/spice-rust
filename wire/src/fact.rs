@@ -316,7 +316,7 @@ vocabulary! {
     RoomReceiptRecovered = "room::recovered" by CommandDoor;
     /// A working group's complete ordered anchor state was saved.
     WorkingGroupStored = "group::stored" by CommandDoor;
-    /// A working group was removed without touching its anchor rooms.
+    /// A working group ended when its last design left, without touching rooms.
     WorkingGroupRemoved = "group::removed" by CommandDoor;
 
     /// One exact candidate was retained under its controlling task.

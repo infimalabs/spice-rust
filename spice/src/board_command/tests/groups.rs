@@ -1,10 +1,10 @@
 use super::*;
 
-use wire::intent::{WorkingGroupAnchor, WorkingGroupPage, WorkingGroupRead, WorkingGroupView};
-use wire::rooms::{
-    RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupPut,
-    WorkingGroupRemove,
+use wire::intent::{
+    WorkingGroupAnchor, WorkingGroupChangeStatus, WorkingGroupPage, WorkingGroupRead,
+    WorkingGroupView,
 };
+use wire::rooms::{RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupPut};
 
 fn group_stamp(offset: i64) -> RoomAuthorityStamp {
     RoomAuthorityStamp::for_micros(1_760_000_000_000_000 + offset).expect("fixture group stamp")
@@ -47,12 +47,26 @@ fn read_group(bus: &Bus, epoch: CanonicalUuid, group: &RoomAuthorityStamp) -> Wo
         .expect("fixture group exists")
 }
 
+fn group_absent(bus: &Bus, epoch: CanonicalUuid, group: &RoomAuthorityStamp) -> bool {
+    let page = read_groups(bus, epoch, Some(group.clone()), None, 1);
+    page.groups.is_empty() && page.unavailable.as_ref() == Some(group)
+}
+
+fn borns(view: &WorkingGroupView) -> Vec<TaskStamp> {
+    view.anchors
+        .iter()
+        .map(|anchor| match anchor {
+            WorkingGroupAnchor::Available { born, .. }
+            | WorkingGroupAnchor::Unavailable { born } => born.clone(),
+        })
+        .collect()
+}
+
 fn put_group(
     bus: &Bus,
     epoch: CanonicalUuid,
     group: RoomAuthorityStamp,
     head: Option<Seq>,
-    name: &str,
     anchors: Vec<TaskStamp>,
 ) -> Outcome<CommandAnswer> {
     let mut expected = vec![Witness::Group {
@@ -72,13 +86,19 @@ fn put_group(
         CommandKind::WorkingGroupPut,
         expected,
         &WorkingGroupPut {
-            group: WorkingGroup {
-                group,
-                name: name.to_owned(),
-                anchors,
-            },
+            group: WorkingGroup { group, anchors },
         },
     )
+}
+
+fn change_status(outcome: Outcome<CommandAnswer>) -> WorkingGroupChangeStatus {
+    match outcome {
+        Outcome::Reply(Reply {
+            body: CommandAnswer::WorkingGroupChange(change),
+            ..
+        }) => change.status,
+        other => panic!("working-group put did not commit: {other:?}"),
+    }
 }
 
 fn delete_task(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) {
@@ -102,16 +122,31 @@ fn delete_task(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) {
     ));
 }
 
-fn assert_anchor_resolution_and_group_removal(
+fn room_heads(bus: &Bus, rooms: &[TaskStamp]) -> Vec<(Option<Seq>, Option<Seq>)> {
+    let rooms = rooms.to_vec();
+    bus.read(move |read| {
+        rooms
+            .iter()
+            .map(|room| {
+                Ok((
+                    read.task_head(room)?.map(|head| head.position()),
+                    read.workflow_head(room)?.map(|head| head.position()),
+                ))
+            })
+            .collect()
+    })
+    .expect("room heads read")
+}
+
+fn assert_anchor_resolution_and_group_end(
     bus: &Bus,
     epoch: CanonicalUuid,
     first: &TaskHandle,
     second: &TaskHandle,
-    first_born: &TaskStamp,
-    second_born: &TaskStamp,
-    primary: &RoomAuthorityStamp,
-    secondary: &RoomAuthorityStamp,
+    group: &RoomAuthorityStamp,
 ) {
+    let first_born = first.born().expect("first room identity");
+    let second_born = second.born().expect("second room identity");
     assert_committed(correct(
         bus,
         epoch,
@@ -128,71 +163,40 @@ fn assert_anchor_resolution_and_group_removal(
             project: Some("board.renamed".to_owned()),
         },
     ));
-    let renamed = TaskHandle::for_project("board.renamed", first_born);
-    for group in [primary, secondary] {
-        let view = read_group(bus, epoch, group);
-        assert!(view.anchors.iter().any(|anchor| {
-            matches!(
-                anchor,
-                WorkingGroupAnchor::Available { born, handle }
-                    if born == first_born && handle == &renamed
-            )
-        }));
-    }
+    let renamed = TaskHandle::for_project("board.renamed", &first_born);
+    assert!(read_group(bus, epoch, group).anchors.iter().any(|anchor| {
+        matches!(
+            anchor,
+            WorkingGroupAnchor::Available { born, handle }
+                if *born == first_born && *handle == renamed
+        )
+    }));
 
     delete_task(bus, epoch, second);
-    let unavailable = read_group(bus, epoch, primary);
+    let unavailable = read_group(bus, epoch, group);
     assert!(matches!(
         &unavailable.anchors[0],
-        WorkingGroupAnchor::Unavailable { born } if born == second_born
+        WorkingGroupAnchor::Unavailable { born } if *born == second_born
     ));
 
-    let before = bus
-        .read({
-            let first_born = first_born.clone();
-            let second_born = second_born.clone();
-            move |read| {
-                Ok((
-                    read.task_head(&first_born)?.map(|head| head.position()),
-                    read.workflow_head(&first_born)?.map(|head| head.position()),
-                    read.task_head(&second_born)?.map(|head| head.position()),
-                    read.workflow_head(&second_born)?
-                        .map(|head| head.position()),
-                ))
-            }
-        })
-        .expect("room heads read before group removal");
-    assert_committed(issue(
-        bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::WorkingGroupRemove,
-        vec![Witness::Group {
-            group: primary.clone(),
-            head: Some(unavailable.head),
-        }],
-        &WorkingGroupRemove {
-            group: primary.clone(),
-        },
-    ));
-    let removed = read_groups(bus, epoch, Some(primary.clone()), None, 1);
-    assert!(removed.groups.is_empty());
-    assert_eq!(removed.unavailable, Some(primary.clone()));
-    assert_eq!(read_group(bus, epoch, secondary).group, *secondary);
-    let first_born = first_born.clone();
-    let second_born = second_born.clone();
-    let after = bus
-        .read(move |read| {
-            Ok((
-                read.task_head(&first_born)?.map(|head| head.position()),
-                read.workflow_head(&first_born)?.map(|head| head.position()),
-                read.task_head(&second_born)?.map(|head| head.position()),
-                read.workflow_head(&second_born)?
-                    .map(|head| head.position()),
-            ))
-        })
-        .expect("room heads read after group removal");
-    assert_eq!(after, before, "group removal changes no task or room head");
+    let rooms = [first_born, second_born];
+    let before = room_heads(bus, &rooms);
+    assert_eq!(
+        change_status(put_group(
+            bus,
+            epoch,
+            group.clone(),
+            Some(unavailable.head),
+            Vec::new(),
+        )),
+        WorkingGroupChangeStatus::Removed
+    );
+    assert!(group_absent(bus, epoch, group));
+    assert_eq!(
+        room_heads(bus, &rooms),
+        before,
+        "a group's end changes no task or room head"
+    );
 }
 
 #[test]
@@ -230,7 +234,6 @@ fn open_board_retains_only_terminal_tasks_anchored_by_current_groups() {
         epoch,
         group.clone(),
         None,
-        "Settled rooms",
         vec![terminal[0].clone()],
     ));
     assert_eq!(open_stamps(&bus), [terminal[0].clone()].into());
@@ -241,7 +244,6 @@ fn open_board_retains_only_terminal_tasks_anchored_by_current_groups() {
         epoch,
         group,
         Some(head),
-        "Settled rooms",
         vec![terminal[1].clone()],
     ));
     assert_eq!(open_stamps(&bus), [terminal[1].clone()].into());
@@ -249,7 +251,7 @@ fn open_board_retains_only_terminal_tasks_anchored_by_current_groups() {
 }
 
 #[test]
-fn working_groups_are_guarded_saved_organization_over_current_task_identity() {
+fn a_design_belongs_to_one_group_and_a_group_lives_only_while_it_holds_one() {
     let (root, bus, epoch, _) = fixture("working-groups", 0);
     let first = add_design_room(&bus, epoch, stamp("group-first"), "First room");
     let second = add_design_room(&bus, epoch, stamp("group-second"), "Second room");
@@ -258,22 +260,35 @@ fn working_groups_are_guarded_saved_organization_over_current_task_identity() {
     let primary = group_stamp(111);
     let secondary = group_stamp(222);
 
+    assert!(refused_as(
+        put_group(&bus, epoch, primary.clone(), None, Vec::new()),
+        "group::design-required",
+    ));
+    assert!(group_absent(&bus, epoch, &primary));
+
     assert_committed(put_group(
         &bus,
         epoch,
         primary.clone(),
         None,
-        "Planning",
         vec![first_born.clone(), second_born.clone()],
     ));
+    let original = read_group(&bus, epoch, &primary);
     assert_committed(put_group(
         &bus,
         epoch,
         secondary.clone(),
         None,
-        "Shared room",
         vec![first_born.clone()],
     ));
+    assert_eq!(
+        borns(&read_group(&bus, epoch, &primary)),
+        vec![second_born.clone()]
+    );
+    assert_eq!(
+        borns(&read_group(&bus, epoch, &secondary)),
+        vec![first_born.clone()]
+    );
 
     let first_page = read_groups(&bus, epoch, None, None, 1);
     assert_eq!(first_page.groups.len(), 1);
@@ -282,52 +297,38 @@ fn working_groups_are_guarded_saved_organization_over_current_task_identity() {
     assert_eq!(second_page.groups[0].group, secondary);
     assert_eq!(second_page.continuation, None);
 
-    let original = read_group(&bus, epoch, &primary);
-    assert_committed(put_group(
-        &bus,
-        epoch,
-        primary.clone(),
-        Some(original.head),
-        "Execution order",
-        vec![second_born.clone(), first_born.clone()],
+    assert!(refused_as(
+        put_group(
+            &bus,
+            epoch,
+            primary.clone(),
+            Some(original.head),
+            vec![first_born.clone(), second_born.clone()],
+        ),
+        "board::witness-moved",
     ));
-    let reordered = read_group(&bus, epoch, &primary);
-    assert_eq!(reordered.name, "Execution order");
+
+    let current = read_group(&bus, epoch, &primary);
     assert_eq!(
-        reordered
-            .anchors
-            .iter()
-            .map(|anchor| match anchor {
-                WorkingGroupAnchor::Available { born, .. }
-                | WorkingGroupAnchor::Unavailable { born } => born.clone(),
-            })
-            .collect::<Vec<_>>(),
+        change_status(put_group(
+            &bus,
+            epoch,
+            primary.clone(),
+            Some(current.head),
+            vec![second_born.clone(), first_born.clone()],
+        )),
+        WorkingGroupChangeStatus::Stored
+    );
+    assert_eq!(
+        borns(&read_group(&bus, epoch, &primary)),
         vec![second_born.clone(), first_born.clone()]
     );
-
-    let stale = put_group(
-        &bus,
-        epoch,
-        primary.clone(),
-        Some(original.head),
-        "Stale replacement",
-        vec![first_born.clone()],
+    assert!(
+        group_absent(&bus, epoch, &secondary),
+        "a group whose last design moved away ends"
     );
-    assert!(matches!(
-        stale,
-        Outcome::Refusal(refusal) if refusal.reason() == "board::witness-moved"
-    ));
 
-    assert_anchor_resolution_and_group_removal(
-        &bus,
-        epoch,
-        &first,
-        &second,
-        &first_born,
-        &second_born,
-        &primary,
-        &secondary,
-    );
+    assert_anchor_resolution_and_group_end(&bus, epoch, &first, &second, &primary);
     clean(&root, bus);
 }
 
@@ -376,54 +377,27 @@ fn working_groups_admit_at_most_six_designs_and_nothing_but_designs() {
     let six = &designs[..WORKING_GROUP_DESIGN_LIMIT];
 
     let group = group_stamp(333);
-    assert_committed(put_group(
-        &bus,
-        epoch,
-        group.clone(),
-        None,
-        "Six",
-        six.to_vec(),
-    ));
+    assert_committed(put_group(&bus, epoch, group.clone(), None, six.to_vec()));
     let full = read_group(&bus, epoch, &group);
     assert!(refused_as(
-        put_group(
-            &bus,
-            epoch,
-            group.clone(),
-            Some(full.head),
-            "Seven",
-            designs.clone()
-        ),
+        put_group(&bus, epoch, group.clone(), Some(full.head), designs.clone()),
         "group::design-limit",
     ));
     let mut swapped = designs[..WORKING_GROUP_DESIGN_LIMIT - 1].to_vec();
     swapped.push(plain.clone());
     assert!(refused_as(
-        put_group(
-            &bus,
-            epoch,
-            group.clone(),
-            Some(full.head),
-            "Swapped",
-            swapped
-        ),
+        put_group(&bus, epoch, group.clone(), Some(full.head), swapped),
         "group::design-only",
     ));
     assert_eq!(read_group(&bus, epoch, &group), full);
     assert!(refused_as(
-        put_group(
-            &bus,
-            epoch,
-            group_stamp(444),
-            None,
-            "Seven at birth",
-            designs.clone()
-        ),
+        put_group(&bus, epoch, group_stamp(444), None, designs.clone()),
         "group::design-limit",
     ));
     assert!(refused_as(
-        put_group(&bus, epoch, group_stamp(555), None, "Plain", vec![plain]),
+        put_group(&bus, epoch, group_stamp(555), None, vec![plain]),
         "group::design-only",
     ));
+    assert_eq!(read_group(&bus, epoch, &group), full);
     clean(&root, bus);
 }

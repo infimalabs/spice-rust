@@ -128,6 +128,18 @@ impl Authority for Stored<'_> {
         )
     }
 
+    fn anchor_owner(&self, anchor: &str) -> Result<Option<String>, Refusal> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT working_group FROM group_anchors WHERE anchor = ?1 \
+                 ORDER BY working_group LIMIT 1",
+                [anchor],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     fn proposal(&self, subject: &str) -> Result<Option<Vec<u8>>, Refusal> {
         Ok(self
             .connection

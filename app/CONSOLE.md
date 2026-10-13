@@ -13,21 +13,27 @@ header, composer, and stream without a nested vertical scroller.
 
 ## Working groups and teams
 
-A team is resident lane topology and policy. A working group is only a
-repository-shared identity, name, and ordered list of at most six Design-task
-birth stamps, matching the six lanes a team admits. It owns no lanes, roster,
-claims, wake behavior, read permission, task lifecycle, open view, draft,
-focus, order, or geometry. The same Design may appear in several groups.
+A team is resident lane topology and policy. A working group is its design-side
+twin: a repository-shared identity and ordered list of one to six Design-task
+birth stamps, matching the six lanes a team admits. Like a team it exists only
+while designs belong to it, carries no operator-given name (its label derives
+from its lead design, as a team's does from its host), and is never created
+empty, renamed, or removed as an object. A design belongs to at most one group.
+It owns no lanes, roster, claims, wake behavior, read permission, task
+lifecycle, open view, draft, focus, order, or geometry.
 
-`spice group list` pages saved groups; `spice group put NAME [ANCHOR...]`
-creates one, while `--group GROUP` completely replaces that group's name and
-anchor order; `spice group remove GROUP` removes only the saved organization.
-A put naming a task without Design intent refuses as `group::design-only`, and
-one naming a seventh design refuses as `group::design-limit`; the journal folds
-no group past six designs, and a predecessor journal holding one refuses to
-cross, naming the last release that admitted it. Anchors resolve by immutable
-task birth stamp and display the task's current handle. An anchor whose task
-is deleted or no longer declares Design intent remains explicit as
+`spice group list` pages saved groups. `spice group put [ANCHOR...]` begins a
+group holding those designs, while `--group GROUP` completely replaces that
+group's design order. Each named design leaves any other group in the same
+guarded write, and a group left without a design ends there; an empty order
+therefore ends the named group, and an empty put naming no current group
+refuses as `group::design-required`. A put naming a task without Design intent
+refuses as `group::design-only`, and one naming a seventh design refuses as
+`group::design-limit`; the journal folds no group past six designs, and a
+predecessor journal holding one, a named group, or a removal-by-name receipt
+refuses to cross, naming the last release that admitted it. Anchors resolve by
+immutable task birth stamp and display the task's current handle. An anchor
+whose task is deleted or no longer declares Design intent remains explicit as
 unavailable. Saved edits are visible to other repository clients, but never
 mount, reorder, or close a browser's foreground views. **New Team** therefore
 remains lane creation; **New working group** is repository organization.

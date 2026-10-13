@@ -24,7 +24,7 @@ use super::{
     TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline,
     TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
     TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
-    WorkingGroupChange, WorkingGroupPage, WorkingGroupPut, WorkingGroupRead, WorkingGroupRemove,
+    WorkingGroupChange, WorkingGroupPage, WorkingGroupPut, WorkingGroupRead,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -62,8 +62,6 @@ pub enum BodyShape {
     WorkingGroupRead,
     /// [`WorkingGroupPut`]
     WorkingGroupPut,
-    /// [`WorkingGroupRemove`]
-    WorkingGroupRemove,
     /// [`CandidateRetain`]
     CandidateRetain,
     /// [`CandidateCritiqueRecord`]
@@ -564,9 +562,7 @@ impl CommandKind {
             Self::LaneJobRead | Self::LaneJobStop => {
                 Binding::of(BodyShape::LaneJob, AnswerShape::LaneJob)
             }
-            Self::WorkingGroupRead | Self::WorkingGroupPut | Self::WorkingGroupRemove => {
-                self.working_group_binding()
-            }
+            Self::WorkingGroupRead | Self::WorkingGroupPut => self.working_group_binding(),
             Self::RoomPost
             | Self::RoomCoordinationRead
             | Self::RoomCoordinate
@@ -737,7 +733,6 @@ impl CommandKind {
         match self {
             Self::WorkingGroupRead => Binding::of(B::WorkingGroupRead, A::WorkingGroupPage),
             Self::WorkingGroupPut => Binding::of(B::WorkingGroupPut, A::WorkingGroupChange),
-            Self::WorkingGroupRemove => Binding::of(B::WorkingGroupRemove, A::WorkingGroupChange),
             _ => panic!("working-group command binding partition is closed"),
         }
     }
@@ -832,8 +827,6 @@ pub enum Intent {
     WorkingGroupRead(WorkingGroupRead),
     /// [`BodyShape::WorkingGroupPut`]
     WorkingGroupPut(WorkingGroupPut),
-    /// [`BodyShape::WorkingGroupRemove`]
-    WorkingGroupRemove(WorkingGroupRemove),
     /// [`BodyShape::CandidateRetain`]
     CandidateRetain(CandidateRetain),
     /// [`BodyShape::CandidateCritiqueRecord`]
@@ -953,9 +946,7 @@ impl Intent {
         match self {
             Self::LaneJobs(_) => BodyShape::LaneJobs,
             Self::LaneJob(_) => BodyShape::LaneJob,
-            Self::WorkingGroupRead(_) | Self::WorkingGroupPut(_) | Self::WorkingGroupRemove(_) => {
-                self.working_group_shape()
-            }
+            Self::WorkingGroupRead(_) | Self::WorkingGroupPut(_) => self.working_group_shape(),
             Self::RoomPost(_)
             | Self::RoomCoordinationRead(_)
             | Self::RoomCoordinate(_)
@@ -1099,7 +1090,6 @@ impl Intent {
         match self {
             Self::WorkingGroupRead(_) => BodyShape::WorkingGroupRead,
             Self::WorkingGroupPut(_) => BodyShape::WorkingGroupPut,
-            Self::WorkingGroupRemove(_) => BodyShape::WorkingGroupRemove,
             _ => panic!("working-group intent shape partition is closed"),
         }
     }
@@ -1174,7 +1164,6 @@ impl BodyShape {
                 | Self::RoomClose
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
-                | Self::WorkingGroupRemove
                 | Self::CandidateRetain
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
@@ -1222,7 +1211,6 @@ impl BodyShape {
                 | Self::RoomClose
                 | Self::WorkingGroupRead
                 | Self::WorkingGroupPut
-                | Self::WorkingGroupRemove
                 | Self::CandidateRetain
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
@@ -1304,7 +1292,6 @@ impl BodyShape {
             Self::TaskClose => Intent::TaskClose(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),
             Self::WorkingGroupPut => Intent::WorkingGroupPut(crate::decode(bytes)?),
-            Self::WorkingGroupRemove => Intent::WorkingGroupRemove(crate::decode(bytes)?),
             _ => unreachable!("board body partition is closed"),
         })
     }

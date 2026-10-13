@@ -530,7 +530,7 @@ impl CommandKind {
             | Self::VendorCatalog
             | Self::BoardHandout
             | Self::RoomCoordinationRead => Law::OPERATOR_READ,
-            Self::WorkingGroupPut | Self::WorkingGroupRemove => Law::GROUP,
+            Self::WorkingGroupPut => Law::GROUP,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::RoomPost => Law::ROOM_POST,
             Self::RoomCoordinate => Law::ROOM_COORDINATE,
@@ -669,7 +669,6 @@ impl CommandKind {
         }
         let group = match (self, body) {
             (Self::WorkingGroupPut, Intent::WorkingGroupPut(put)) => Some(&put.group.group),
-            (Self::WorkingGroupRemove, Intent::WorkingGroupRemove(remove)) => Some(&remove.group),
             _ => None,
         };
         if let Some(group) = group {

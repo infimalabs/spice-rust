@@ -72,31 +72,32 @@ remain browser preferences. Those preferences cannot grant task, room, group,
 team, or lane authority, and a group edit never mounts, reorders, or closes a
 browser view.
 
-The Spice sidebar is the working-group catalog. **Create** stores an empty or
-Design-associated group without mounting it; **Create & open**, **Open**,
-**Open in group**, and a design's own button are the explicit foreground
-actions, the last two also focusing that design's composer. Its pickers offer
-only Design tasks, and **Add to group** disables once a group holds six
-designs; a
-`group::design-only` or `group::design-limit` refusal shows in the catalog
-notice. **Add to group**, association order controls, and **Remove group**
-replace shared organization through the guarded group commands. Removing
-shared organization leaves any already-open local console as an unavailable
-placeholder once a completed room snapshot lacks the group; while room
-authority loads or reconnects, the console keeps its last name and geometry.
+The Spice sidebar is the working-group catalog, the design-side twin of the
+team roster. A group exists only while designs belong to it: it is never
+created empty, never named, and never removed as an object. Each group card
+reads as a team card: labelled from its lead design, as a team is from its
+host, with its size and its designs as draggable tiles. A group's **Open**
+mounts its console, as a team's watchband shows it, and is the only foreground
+action. In that console a design's menu carries **Create new group** and
+**Leave group**, the twins of an agent's **Create new team** and **Leave all
+teams**; they and every drop replace shared organization through the guarded
+group put. A group whose last design leaves ends, and any already-open local
+console becomes an unavailable placeholder once a completed room snapshot
+lacks the group; while room authority loads or reconnects, the console keeps
+its last label and geometry.
 
-The catalog lists every open Design task under **Designs**, as the roster lists
-agents, and a design drags into groups exactly as an agent drags into teams: a
-mouse drags the whole row, a finger or pen drags its handle, and holding a
-lifted design near the sheet's edge scrolls it. Dropping it on a saved group
-appends it there; dropping it on **New working group** creates a group holding
-only that design, named by the typed group name or else the design's title.
-Because a design may sit in several groups, a drop adds it and never removes
-it from another group, and dropping it on a group already holding it changes
-nothing. A full group still accepts the drop, so the authority's
-`group::design-limit` refusal reports it in the catalog notice, as does
-`group::design-only` for a task without Design intent; either leaves the group
-unchanged. A drop changes only shared organization and never mounts,
+**Designs** lists the open Design tasks no group holds, as Unassigned Agents
+lists lanes in no team, and a design moves between groups exactly as an agent
+moves between teams: a mouse drags the whole row, a finger or pen drags its
+handle, and holding a lifted design near the sheet's edge scrolls it. Dropping
+it on **New working group** begins a group holding only that design; dropping
+it on a saved group appends it there; dropping a grouped design on **Designs**
+takes it out of its group. A design belongs to at most one group, so joining or
+beginning a group takes it out of the one that held it, and a drop where the
+design already is changes nothing. A full group still accepts the drop, so the
+authority's `group::design-limit` refusal reports it in the catalog notice, as
+does `group::design-only` for a task without Design intent; either leaves every
+group unchanged. A drop changes only shared organization and never mounts,
 reorders, closes, or focuses a console.
 
 Each opened group is a console in the team fleet, after the teams, read exactly

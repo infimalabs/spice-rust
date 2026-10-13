@@ -2,11 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::rooms::WorkingGroupPut;
 use crate::rooms::{
     QuestionClosure, QuestionResultRef, RoomAuthorityStamp, RoomReceiptDisposition, RoomReceiptRef,
     RoomRelevanceVerdict,
 };
-pub use crate::rooms::{WorkingGroupPut, WorkingGroupRemove};
 use crate::{OccupantAddress, Seq, SequenceCode, TaskHandle, TaskStamp};
 
 /// Start or resume one bounded preparation contribution in an anchor room.
@@ -217,11 +217,9 @@ pub enum WorkingGroupAnchor {
 pub struct WorkingGroupView {
     /// Stable repository-shared identity.
     pub group: RoomAuthorityStamp,
-    /// Operator-visible name.
-    pub name: String,
     /// Room anchors in saved order, resolved through current task authority.
     pub anchors: Vec<WorkingGroupAnchor>,
-    /// Current journal head guarding complete replacement or removal.
+    /// Current journal head guarding complete replacement.
     pub head: Seq,
 }
 
@@ -239,7 +237,7 @@ pub struct WorkingGroupPage {
     pub continuation: Option<RoomAuthorityStamp>,
 }
 
-/// Result of one working-group replacement or removal.
+/// Result of one working-group replacement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkingGroupChange {
@@ -255,6 +253,7 @@ pub struct WorkingGroupChange {
 pub enum WorkingGroupChangeStatus {
     /// The complete intended group state was stored.
     Stored,
-    /// The saved group was removed without changing any task or room.
+    /// The group's last design left, so the group ended without changing any
+    /// task or room.
     Removed,
 }

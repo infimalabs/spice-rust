@@ -451,7 +451,6 @@ fn group(micros: i64, anchors: Vec<TaskStamp>) -> WorkingGroupStored {
     WorkingGroupStored {
         group: WorkingGroup {
             group: authority(micros),
-            name: "Rooms".to_owned(),
             anchors,
         },
     }

@@ -343,20 +343,78 @@ fn operator_reconnect_begins_live_instead_of_draining_missed_history() {
     bus.shutdown().expect("bus shuts down");
 }
 
-fn commit_group(bus: &Bus, group: &str) -> JournalCommit {
+/// Commit one design task and a working group holding it, as one write.
+fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
     let mut write = JournalWrite::new(
         Actor::Operator,
         "thread:operator".parse().expect("origin"),
         "2030-04-12T18:44:09.271Z".parse().expect("instant"),
         Producer::CommandDoor,
     );
+    let task: wire::TaskStamp = design.parse().expect("design stamp");
+    let flow = vec![
+        "design".parse().expect("design phase"),
+        "review".parse().expect("review phase"),
+    ];
+    let creation =
+        body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::OperatorActor);
+    let added = write
+        .fact(
+            body::TaskAdded {
+                preparation: None,
+                intent: Some(wire::TaskIntent::Design),
+                task: task.clone(),
+                title: "Room design".to_owned(),
+                description: None,
+                acceptance: Vec::new(),
+                requirements: wire::EnvironmentRequirements::default(),
+                project: "rooms".to_owned(),
+                tags: Vec::new(),
+                depends: Vec::new(),
+                flow: flow.clone(),
+                phase: flow[0].clone(),
+                creation: creation.clone(),
+                revision: 1,
+            },
+            FactCause::Root,
+        )
+        .expect("design fact builds");
+    let born = task.clone();
+    write.task_head(added, move |revision| wire::TaskHead {
+        preparation: None,
+        authorization: None,
+        evidence: Vec::new(),
+        intent: Some(wire::TaskIntent::Design),
+        born,
+        queue_origin: revision,
+        title: "Room design".to_owned(),
+        description: None,
+        acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
+        project: "rooms".to_owned(),
+        tags: Vec::new(),
+        dependencies: Vec::new(),
+        provenance: "task:rooms".parse().expect("provenance"),
+        creation,
+        revision,
+    });
+    let phase = flow[0].clone();
+    write.workflow_head(task.clone(), added, move |_| wire::WorkflowHead {
+        flow,
+        phase,
+        status: "pending".to_owned(),
+        review: "none".to_owned(),
+        assignment: None,
+        deferral: None,
+        completion: None,
+        generation: 0,
+    });
     write
         .fact(
             wire::rooms::WorkingGroupStored {
                 group: wire::rooms::WorkingGroup {
                     group: group.parse().expect("group stamp"),
-                    name: "Rooms".to_owned(),
-                    anchors: Vec::new(),
+                    anchors: vec![task],
                 },
             },
             FactCause::Root,
@@ -373,8 +431,8 @@ fn commit_group(bus: &Bus, group: &str) -> JournalCommit {
 #[test]
 fn operator_room_snapshot_meets_live_facts_at_one_horizon() {
     let bus = fixture(2);
-    commit_group(&bus, "dVsYdDj7d");
-    commit_group(&bus, "dVsYdDj7f");
+    let first = commit_group(&bus, "dVsYdDj7d", "dVsYdDj70");
+    let second = commit_group(&bus, "dVsYdDj7f", "dVsYdDj71");
     let source = Source::new(bus.reader(), epoch(), 1, presenter());
     let (mut subscription, frames) = source
         .begin(
@@ -383,14 +441,14 @@ fn operator_room_snapshot_meets_live_facts_at_one_horizon() {
         )
         .expect("operator subscription begins");
     assert!(facts(&frames[0]).rows.is_empty());
-    assert_eq!(facts(&frames[0]).horizon, seq(5));
+    assert_eq!(facts(&frames[0]).horizon, seq(second.last()));
     let StreamFrame::Rooms { packed, .. } = &frames[1] else {
         panic!("expected a room snapshot: {frames:?}");
     };
-    assert_eq!(packed.horizon, seq(5));
+    assert_eq!(packed.horizon, seq(second.last()));
     assert_eq!(
         packed.rows.iter().map(StreamFact::seq).collect::<Vec<_>>(),
-        [seq(4)]
+        [seq(first.last())]
     );
     let continuation = packed
         .overflow
@@ -416,21 +474,22 @@ fn operator_room_snapshot_meets_live_facts_at_one_horizon() {
     };
     assert_eq!(
         packed.rows.iter().map(StreamFact::seq).collect::<Vec<_>>(),
-        [seq(5)]
+        [seq(second.last())]
     );
     assert!(packed.overflow.is_none());
     assert!(subscription.is_live());
-    assert_eq!(subscription.cursor(), Some(seq(5)));
+    assert_eq!(subscription.cursor(), Some(seq(second.last())));
 
-    let committed = commit_group(&bus, "dVsYdDj7g");
+    let committed = commit_group(&bus, "dVsYdDj7g", "dVsYdDj72");
+    let written = seq(committed.first());
     let delivery = subscription
         .advance(&source, committed)
         .expect("commit advances stream")
         .expect("new authority creates a delivery");
     let [StreamFrame::Fact { fact, .. }] = delivery.frames() else {
-        panic!("expected one live fact: {delivery:?}");
+        panic!("expected one live fact under the one-row page: {delivery:?}");
     };
-    assert_eq!(fact.seq(), seq(6));
+    assert_eq!(fact.seq(), written);
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }

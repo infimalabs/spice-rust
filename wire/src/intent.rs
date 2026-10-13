@@ -68,7 +68,7 @@ pub use rooms::{
     RoomCoordinationRead, RoomCoordinationRequest, RoomCoordinationStop, RoomCoordinationView,
     RoomItemMove, RoomPutAside, RoomResultMove, WORKING_GROUP_PAGE_LIMIT_MAX, WorkingGroupAnchor,
     WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupPage, WorkingGroupPut,
-    WorkingGroupRead, WorkingGroupRemove, WorkingGroupView,
+    WorkingGroupRead, WorkingGroupView,
 };
 
 mod task;

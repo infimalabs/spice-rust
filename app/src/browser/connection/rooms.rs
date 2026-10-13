@@ -37,33 +37,6 @@ pub(super) async fn send_group_put(
     .await
 }
 
-pub(super) async fn send_group_remove(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    actions: &ActionQueue,
-    group: &wire::rooms::RoomAuthorityStamp,
-    head: wire::Seq,
-    respond: &crate::client_action::GroupResponse,
-) -> Result<CanonicalUuid, String> {
-    send_typed(
-        principal,
-        writer,
-        actions,
-        PendingKind::WorkingGroup {
-            respond: respond.clone(),
-        },
-        CommandKind::WorkingGroupRemove,
-        vec![Witness::Group {
-            group: group.clone(),
-            head: Some(head),
-        }],
-        wire::rooms::WorkingGroupRemove {
-            group: group.clone(),
-        },
-    )
-    .await
-}
-
 pub(super) async fn send_room_post(
     principal: &Principal,
     writer: &mut SocketWriter,

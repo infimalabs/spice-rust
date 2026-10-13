@@ -415,12 +415,10 @@ impl ClientAction {
         match self {
             Self::Job { target, .. } => target.id.len(),
             Self::Jobs { .. } => 0,
-            Self::WorkingGroupPut { group, .. } => {
-                group.anchors.iter().fold(group.name.len(), |bytes, room| {
-                    bytes.saturating_add(room.as_str().len())
-                })
-            }
-            Self::WorkingGroupRemove { .. } => 0,
+            Self::WorkingGroupPut { group, .. } => group
+                .anchors
+                .iter()
+                .fold(0, |bytes, room| bytes.saturating_add(room.as_str().len())),
             Self::RoomPost(post) => post
                 .room
                 .as_str()
