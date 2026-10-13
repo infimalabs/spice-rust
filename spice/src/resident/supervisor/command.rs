@@ -703,7 +703,9 @@ impl<W: Write + Send + 'static> Driver<W> {
         let _ = self.background(&format!("msg-recorded:{}", notice.packet), &notice.text());
     }
 
-    /// Replace one queued notice without interrupting model or tool work.
+    /// Replace one queued notice without interrupting model or tool work. A
+    /// notice queued while the first turn is still unwritten is held and
+    /// written right after that turn's prompt.
     fn background(&self, purpose: &str, message: &str) -> io::Result<()> {
         self.update_background(purpose, |_| message.to_owned())
     }
@@ -722,8 +724,10 @@ impl<W: Write + Send + 'static> Driver<W> {
         if previous == message {
             return Ok(());
         }
-        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-        self.write(&vendor::omp::aside_request(sequence, purpose, &message))?;
+        if !self.registration.holds_first_turn() {
+            let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+            self.write(&vendor::omp::aside_request(sequence, purpose, &message))?;
+        }
         if message.is_empty() {
             queued.remove(purpose);
         } else {

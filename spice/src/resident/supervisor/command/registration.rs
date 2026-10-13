@@ -1,8 +1,12 @@
 //! The first turn, held until omp answers the `spice` scheme registration:
 //! only a seat that serves the scheme is told about it and handed URLs to
 //! read. A resumed seat's notice is read from current authority only then.
+//! Background notices wait behind that turn: omp runs whatever reaches an
+//! idle session first as a turn of its own, so a notice written ahead of the
+//! first prompt would leave the prompt's authority stale by its delivery.
 
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use listen::Decoded;
@@ -28,6 +32,17 @@ pub(super) struct Registration {
     /// Settled by omp's answer; until then nothing has named a read.
     serves: OnceLock<bool>,
     first_turn: Mutex<Option<FirstTurn>>,
+    /// Whether a first turn is still unwritten. Read and cleared only under
+    /// the driver's background lock, so a notice is either held for the
+    /// first prompt's flush or written after it, never neither.
+    holding: AtomicBool,
+}
+
+impl Registration {
+    /// Whether background notices must wait for the first prompt.
+    pub(super) fn holds_first_turn(&self) -> bool {
+        self.holding.load(Ordering::Acquire)
+    }
 }
 
 impl<W: Write + Send + 'static> Driver<W> {
@@ -44,18 +59,28 @@ impl<W: Write + Send + 'static> Driver<W> {
         opening: &[u8],
         first_turn: Option<FirstTurn>,
     ) -> io::Result<()> {
-        *self
-            .registration
-            .first_turn
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = first_turn;
+        {
+            let _background = self
+                .background
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            self.registration
+                .holding
+                .store(first_turn.is_some(), Ordering::Release);
+            *self
+                .registration
+                .first_turn
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = first_turn;
+        }
         self.write(opening)
     }
 
     /// Settle whether this seat serves `spice://` from omp's answer to the
     /// registration, then start the first turn as that answer decides. The
     /// first answer alone takes the turn, so a resumed seat's authority is
-    /// read once, at this delivery.
+    /// read once, at this delivery. Background notices held meanwhile follow
+    /// the prompt, so omp starts the prompt's turn before any of theirs.
     pub(super) fn observe_uri_registration(&self, decoded: &Decoded) {
         let Some(response) = decoded
             .context()
@@ -85,8 +110,21 @@ impl<W: Write + Send + 'static> Driver<W> {
                 prompt
             }
         };
-        if let Err(error) = self.write(&vendor::omp::first_prompt_request(&self.for_seat(prompt))) {
+        let prompt = vendor::omp::first_prompt_request(&self.for_seat(prompt));
+        let queued = self
+            .background
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Err(error) = self.write(&prompt) {
             eprintln!("spice supervisor: first turn unwritten: {error}");
+        }
+        self.registration.holding.store(false, Ordering::Release);
+        for (purpose, message) in queued.iter() {
+            let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Err(error) = self.write(&vendor::omp::aside_request(sequence, purpose, message))
+            {
+                eprintln!("spice supervisor: held notice {purpose} unwritten: {error}");
+            }
         }
     }
 
