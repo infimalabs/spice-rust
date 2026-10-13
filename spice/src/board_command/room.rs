@@ -4,9 +4,8 @@ use spice::rooms::{
     Declared, LaneAvailability, RoomDuty, RoomDutyKind, RoomDutyStanding, RoomProjectionBudget,
     RoomProjectionError, RoomProjectionSources, RoomWork, derive_room_attention,
 };
-use wire::rooms::{OOPS_GROOMING_REPORT_LIMIT, RoomAuthorityStamp};
+use wire::rooms::{OOPS_GROOMING_REPORT_LIMIT, ROOM_ACTIVITY_SECONDS, RoomAuthorityStamp};
 
-const ROOM_ACTIVITY_SECONDS: i64 = 24 * 60 * 60;
 const ROOM_PUBLICATION_PAGES: usize =
     spice::rooms::MAX_ROOM_ATTENTION_SIGNALS.div_ceil(journal::MAX_RETAINED_FACT_PAGE_ROWS);
 

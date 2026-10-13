@@ -90,6 +90,36 @@ The native command surface is `spice room status HANDLE`,
 `--auto-resume` rule lets the resident repeat that Resume up to N times as
 [new room input arrives](../docs/product/invariants/identity.md#identity-an-operator-rule-bounds-automated-room-resumes).
 
+## Room standing
+
+Each design's menu opens with the room's standing, derived from the room
+snapshot, its live facts, the board, and lane topology on every render:
+
+- **Next action**: the one next useful action that authority supports.
+- **Latest coordination**: its request and that request's disposition. For a
+  ruled record, its subject, scope, and stop text. For an automated record,
+  the publication that triggered it. Then whether automation is off, armed
+  with steps spent of its limit, or stopped by a spent budget, a put-aside, or
+  a request retired without acknowledgment.
+- **Lanes**: each involved lane with whether it is seated, vacant, or unknown,
+  plus one chip per reason, each naming its source:
+  - contribution history;
+  - activity inside the day-long window;
+  - an invitation by a lane-addressed room packet inside that window;
+  - native work;
+  - a live coordination request;
+  - an owed receipt or ASK result;
+  - a claim-bound stop request.
+  Aging removes only activity and invitation; history and native duties stay.
+- **Relevance**: the resident's shadow relevance observations, each with its
+  classification, progress standing, explanation, exceptions, uncertainty,
+  source coverage, and operator verdict.
+
+Agreement, silence, message count, elapsed time, ACK, and ANS never read as
+progress or approval. The section only renders inside the explicitly opened
+menu: a status, relevance, or automation update changes its text in place and
+never mounts a room, moves a console, or wakes a lane.
+
 ## Toolbar
 
 The toolbar has two rows: the team's task strip, then one status band holding

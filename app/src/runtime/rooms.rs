@@ -9,10 +9,12 @@ use wire::{CanonicalUuid, FactKind, Packed, Seq, StreamFact, TaskHandle, TaskSta
 use super::BoardView;
 
 mod conversation;
+mod standing;
 
 pub use conversation::{
     Conversation, ConversationProjection, Delivery, OperatorItem, QuestionResult,
 };
+pub use standing::{CoordinationStanding, Relevance, ResumeAutomation};
 
 /// Whether the room snapshot can be rendered as current authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,15 +132,28 @@ impl RoomState {
     }
 }
 
-/// Why a logical lane currently appears in a room.
+/// Why a logical lane currently appears in a room. Each reason names the
+/// admitted source it traces to; only `Activity` and `Invitation` age out of
+/// the activity window, and native duties end only through their own
+/// dispositions.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ParticipantReason {
-    /// The lane authored a transcript-backed publication.
+    /// The lane authored a transcript-backed publication; history that never
+    /// ages.
     Contribution(RoomAuthorityStamp),
+    /// The lane's latest contribution falls inside the activity window.
+    Activity(RoomAuthorityStamp),
+    /// A room MSG or ASK addressed the lane inside the activity window; it
+    /// requests involvement and is not a contribution.
+    Invitation(String),
     /// The lane currently holds the anchor or explicitly related work.
     Work(TaskStamp),
     /// A live room coordination request addresses the lane.
     Coordination(String),
+    /// The lane owes the receipt of a room delivery with this steering key.
+    Receipt(String),
+    /// The lane owes the substantive result of a room ASK.
+    Result(authority::QuestionResultRef),
     /// A live stop request addresses the lane's exact claim.
     Stop(String),
 }
@@ -174,7 +189,7 @@ pub struct PreparationProjection {
 struct CoordinationState {
     room: TaskStamp,
     lane: CanonicalUuid,
-    live: bool,
+    disposition: wire::Disposition,
 }
 
 /// The direction a room coordination record follows, one position earlier.
@@ -207,6 +222,11 @@ pub struct RoomProjection {
     messaged: Vec<(Seq, TaskStamp, RoomAuthorityStamp)>,
     coordination: BTreeMap<String, CoordinationState>,
     stops: BTreeMap<TaskStamp, RoomPositioned<authority::RoomStopRequest>>,
+    /// Each room's latest coordination record.
+    directed: BTreeMap<TaskStamp, RoomPositioned<authority::RoomCoordinationStarted>>,
+    /// Each room's latest put-aside position.
+    shelved: BTreeMap<TaskStamp, Seq>,
+    relevance: BTreeMap<RoomAuthorityStamp, RoomPositioned<Relevance>>,
 }
 
 impl Default for RoomProjection {
@@ -225,6 +245,9 @@ impl Default for RoomProjection {
             messaged: Vec::new(),
             coordination: BTreeMap::new(),
             stops: BTreeMap::new(),
+            directed: BTreeMap::new(),
+            shelved: BTreeMap::new(),
+            relevance: BTreeMap::new(),
         }
     }
 }
@@ -317,63 +340,6 @@ impl RoomProjection {
                     && claim.body.claimed.get() == stop.value.claim.get()
             })?;
         Some((stop, claim.body.lane))
-    }
-
-    /// Current logical-lane participants and the exact reasons for their presence.
-    pub fn participants(
-        &self,
-        room: &TaskStamp,
-        board: Option<&BoardView>,
-    ) -> Vec<RoomParticipant> {
-        let mut reasons = BTreeMap::<CanonicalUuid, Vec<ParticipantReason>>::new();
-        if let Some(state) = self.rooms.get(room) {
-            for (publication, event) in &state.events {
-                if let RoomEventKind::Messaged { source, .. } = &event.kind {
-                    reasons
-                        .entry(source.head.lane)
-                        .or_default()
-                        .push(ParticipantReason::Contribution(publication.clone()));
-                }
-            }
-        }
-        if let Some(board) = board {
-            for task in &board.tasks {
-                let statement = &task.statement.body;
-                if associated(statement, room)
-                    && let Some(claim) = task
-                        .claim
-                        .as_ref()
-                        .filter(|claim| claim.body.disposition == wire::ClaimDisposition::Active)
-                {
-                    reasons
-                        .entry(claim.body.lane)
-                        .or_default()
-                        .push(ParticipantReason::Work(statement.born.clone()));
-                }
-            }
-        }
-        for (key, request) in &self.coordination {
-            if request.live && request.room == *room {
-                reasons
-                    .entry(request.lane)
-                    .or_default()
-                    .push(ParticipantReason::Coordination(key.clone()));
-            }
-        }
-        if let Some((stop, lane)) = self.stop_holder(room, board) {
-            reasons
-                .entry(lane)
-                .or_default()
-                .push(ParticipantReason::Stop(stop.value.key.clone()));
-        }
-        reasons
-            .into_iter()
-            .map(|(lane, mut reasons)| {
-                reasons.sort();
-                reasons.dedup();
-                RoomParticipant { lane, reasons }
-            })
-            .collect()
     }
 
     pub(super) fn requires_snapshot(&self) -> bool {
@@ -511,6 +477,14 @@ impl RoomProjection {
                 fact.read::<authority::RoomPutAside>()
                     .is_some_and(|body| self.apply_put_aside(fact.seq(), body)),
             ),
+            FactKind::RoomRelevanceObserved => Some(
+                fact.read::<authority::RoomRelevanceObserved>()
+                    .is_some_and(|body| self.apply_observed(fact.seq(), body.observation)),
+            ),
+            FactKind::RoomRelevanceAssessed => Some(
+                fact.read::<authority::RoomRelevanceAssessed>()
+                    .is_some_and(|body| self.apply_assessed(&body.assessment)),
+            ),
             _ => None,
         }
     }
@@ -624,17 +598,24 @@ impl RoomProjection {
         position: Seq,
         body: authority::RoomCoordinationStarted,
     ) -> bool {
-        let changed = self.insert_event(
+        let record = replace(
+            &mut self.directed,
             body.room.clone(),
-            body.publication,
-            RoomEvent {
-                position,
-                kind: RoomEventKind::Coordination {
-                    key: body.key.clone(),
-                    target: body.target,
-                },
-            },
+            position,
+            body.clone(),
         );
+        let changed = record
+            | self.insert_event(
+                body.room.clone(),
+                body.publication,
+                RoomEvent {
+                    position,
+                    kind: RoomEventKind::Coordination {
+                        key: body.key.clone(),
+                        target: body.target,
+                    },
+                },
+            );
         let Some(direction) = self.direction.take().filter(|direction| {
             direction.position.get().checked_add(1) == Some(position.get())
                 && direction.key == body.key
@@ -644,7 +625,7 @@ impl RoomProjection {
         let current = CoordinationState {
             room: body.room,
             lane: direction.lane,
-            live: true,
+            disposition: wire::Disposition::Live,
         };
         changed | replace_plain(&mut self.coordination, body.key, current)
     }
@@ -661,9 +642,10 @@ impl RoomProjection {
                 },
             },
         );
-        let mut authority_changed = false;
+        let mut authority_changed =
+            self.shelved.insert(body.room.clone(), position) != Some(position);
         for key in body.canceled {
-            authority_changed |= self.retire_coordination(&key);
+            authority_changed |= self.retire_coordination(&key, wire::Disposition::Canceled);
         }
         authority_changed |= match body.stop {
             Some(stop) => replace(&mut self.stops, body.room, position, stop),
@@ -743,29 +725,33 @@ impl RoomProjection {
                 });
                 Some(false)
             }
-            FactKind::SteerAcked => Some(
-                fact.read::<wire::body::SteerAcked>()
-                    .is_some_and(|body| self.retire_coordination(&body.key)),
-            ),
-            FactKind::SteerDeclined => Some(
-                fact.read::<wire::body::SteerDeclined>()
-                    .is_some_and(|body| self.retire_coordination(&body.key)),
-            ),
-            FactKind::SteerLapsed => Some(
-                fact.read::<wire::body::SteerLapsed>()
-                    .is_some_and(|body| self.retire_coordination(&body.key)),
-            ),
+            FactKind::SteerAcked => {
+                Some(fact.read::<wire::body::SteerAcked>().is_some_and(|body| {
+                    self.retire_coordination(&body.key, wire::Disposition::Acked)
+                }))
+            }
+            FactKind::SteerDeclined => Some(fact.read::<wire::body::SteerDeclined>().is_some_and(
+                |body| self.retire_coordination(&body.key, wire::Disposition::Declined),
+            )),
+            FactKind::SteerLapsed => {
+                Some(fact.read::<wire::body::SteerLapsed>().is_some_and(|body| {
+                    self.retire_coordination(&body.key, wire::Disposition::Lapsed)
+                }))
+            }
             FactKind::SteerDeadLettered => Some(
                 fact.read::<wire::steering::SteerDeadLettered>()
-                    .is_some_and(|body| self.retire_coordination(&body.key)),
+                    .is_some_and(|body| {
+                        self.retire_coordination(&body.key, wire::Disposition::DeadLettered)
+                    }),
             ),
-            FactKind::SteerCanceled => Some(
-                fact.read::<wire::body::SteerCanceled>()
-                    .is_some_and(|body| self.retire_coordination(&body.key)),
-            ),
+            FactKind::SteerCanceled => Some(fact.read::<wire::body::SteerCanceled>().is_some_and(
+                |body| self.retire_coordination(&body.key, wire::Disposition::Canceled),
+            )),
             FactKind::SteerRecovered => Some(
                 fact.read::<wire::body::SteerRecovered>()
-                    .is_some_and(|body| self.recover_coordination(&body.key)),
+                    .is_some_and(|body| {
+                        self.retire_coordination(&body.key, wire::Disposition::Live)
+                    }),
             ),
             _ => None,
         }
@@ -775,18 +761,11 @@ impl RoomProjection {
         replace_plain(&mut self.rooms.entry(room).or_default().events, id, event)
     }
 
-    fn retire_coordination(&mut self, key: &str) -> bool {
+    /// Move a coordination request to `disposition`; `Live` is a recovery.
+    fn retire_coordination(&mut self, key: &str, disposition: wire::Disposition) -> bool {
         self.coordination.get_mut(key).is_some_and(|state| {
-            let changed = state.live;
-            state.live = false;
-            changed
-        })
-    }
-
-    fn recover_coordination(&mut self, key: &str) -> bool {
-        self.coordination.get_mut(key).is_some_and(|state| {
-            let changed = !state.live;
-            state.live = true;
+            let changed = state.disposition != disposition;
+            state.disposition = disposition;
             changed
         })
     }

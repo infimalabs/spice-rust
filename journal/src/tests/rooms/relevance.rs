@@ -186,6 +186,53 @@ fn observations_replay_exactly_without_moving_room_or_task_authority() {
 }
 
 #[test]
+fn room_snapshot_carries_relevance_observations_and_assessments() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let room = task(&mut journal, 3, None);
+    let through = SequenceCode::new(
+        cursor(&journal)
+            .expect("task fact is a source horizon")
+            .get(),
+    );
+    let body = observation(
+        &room,
+        0,
+        through,
+        RoomRelevanceClass::Declined,
+        available(through),
+    );
+    let identity = body.observation.clone();
+    observe(&mut journal, body).expect("bounded shadow observation commits");
+    assess(&mut journal, identity, RoomRelevanceVerdict::Confirmed)
+        .expect("confirmed observation is measurable");
+    let horizon = cursor(&journal).expect("relevance facts are the horizon");
+    let snapshot = journal
+        .read(|read| {
+            read.room_authority_page(
+                crate::FactPageStart::After(None),
+                horizon,
+                FactReadBudget::RETAINED,
+            )
+        })
+        .expect("room authority reads");
+    let carried = |kind: FactKind| {
+        snapshot
+            .rows
+            .iter()
+            .filter(|fact| fact.fact.kind() == kind)
+            .count()
+    };
+    assert_eq!(
+        (
+            carried(FactKind::RoomRelevanceObserved),
+            carried(FactKind::RoomRelevanceAssessed)
+        ),
+        (1, 1),
+        "the browser's room snapshot carries every observation and assessment"
+    );
+}
+
+#[test]
 fn non_evidence_signals_cannot_declare_progress() {
     let mut journal = Journal::in_memory().expect("journal");
     let room = task(&mut journal, 2, None);

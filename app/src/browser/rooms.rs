@@ -24,6 +24,7 @@ use crate::roster::{Change, Destination};
 use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 
 mod console;
+mod standing;
 pub(super) use console::{GroupRender, render_group_surfaces};
 
 const STORAGE: &str = "spice:room-views:v2";
