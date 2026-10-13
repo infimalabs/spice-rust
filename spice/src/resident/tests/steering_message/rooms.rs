@@ -82,6 +82,38 @@ impl Lanes {
         format!("ROOMS-{task}").parse().expect("fixture handle")
     }
 
+    /// Close `room`'s anchor on the operator's word, settling it as
+    /// `spice task close` does.
+    pub(super) fn close_room(&self, room: &wire::TaskHandle) {
+        let task = room.born().expect("fixture handle carries its stamp");
+        let phase: wire::Phase = "todo".parse().expect("fixture phase");
+        let mut close =
+            write(Actor::Operator, self.epoch, Producer::CommandDoor).expect("close write starts");
+        let closed = close
+            .fact(
+                wire::body::TaskClosed {
+                    task: task.clone(),
+                    validation: "settled on the operator's word".to_owned(),
+                    phase: phase.clone(),
+                    claimed: None,
+                },
+                FactCause::Root,
+            )
+            .expect("closure fact is valid");
+        let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
+        close.workflow_head(task, closed, move |_| wire::WorkflowHead {
+            flow: vec![phase.clone()],
+            phase,
+            status: "completed".to_owned(),
+            review: "closed".to_owned(),
+            assignment: None,
+            deferral: None,
+            completion: Some(at),
+            generation: 0,
+        });
+        commit(&self.bus, close).expect("closure commits");
+    }
+
     /// Stage `lane`'s active claim, with its lease, on the task `added` adds.
     fn claim(
         &self,

@@ -351,7 +351,7 @@ fn stage(
     ),
     Outcome<CommandAnswer>,
 > {
-    if heads.workflow.body.status != "pending" || heads.workflow.body.completion.is_some() {
+    if super::room::anchor_settlement(&heads.workflow.body).is_some() {
         return Err(refusal(
             "room::anchor-settled",
             Some(anchor.handle().to_string()),

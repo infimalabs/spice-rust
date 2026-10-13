@@ -37,6 +37,13 @@ pub(super) fn room_post(
             "read the board and name one current task handle",
         );
     };
+    if let Some(standing) = anchor_settlement(anchor.workflow()) {
+        return refusal(
+            "room::anchor-settled",
+            Some(format!("{} {standing}", anchor.handle())),
+            "a settled room stays readable and its open questions and receipts still settle; post only to an unresolved anchor",
+        );
+    }
     if let Some(grooming) = &post.grooming
         && let Err(outcome) = validate_oops_grooming(anchor, &snapshot.entries, command, grooming)
     {
@@ -98,6 +105,22 @@ pub(super) fn room_post(
     committed(bus, write, CommandAnswer::RoomPost(answer))
 }
 
+/// The terminal standing that settled a room's anchor, or `None` while the
+/// anchor is unresolved. Only an unresolved anchor's room takes new operator
+/// posts and coordination; a settled room stays readable, and duties already
+/// open in it still settle.
+pub(super) fn anchor_settlement(workflow: &wire::WorkflowHead) -> Option<&'static str> {
+    if workflow.status == "deleted" {
+        Some("deleted")
+    } else if workflow.completion.is_some() && workflow.review == "closed" {
+        Some("closed")
+    } else if workflow.status != "pending" || workflow.completion.is_some() {
+        Some("completed")
+    } else {
+        None
+    }
+}
+
 fn room_post_content(post: &RoomPost) -> Result<RoomPublicationContent, Outcome<CommandAnswer>> {
     match (post.text.trim(), &post.grooming) {
         ("", None) => Err(refusal(
@@ -125,14 +148,11 @@ fn validate_oops_grooming(
     command: &wire::AdmittedCommand,
     grooming: &OopsGrooming,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    if anchor.statement().intent != Some(wire::TaskIntent::Design)
-        || anchor.workflow().status != "pending"
-        || anchor.workflow().completion.is_some()
-    {
+    if anchor.statement().intent != Some(wire::TaskIntent::Design) {
         return Err(refusal(
             "room::oops-batch-not-open",
             Some(anchor.handle().to_string()),
-            "record grooming under a pending Design room; concluded batches remain closed",
+            "record grooming under a Design room",
         ));
     }
     if grooming.reports.is_empty() {

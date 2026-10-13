@@ -29,7 +29,9 @@ use crate::browser::watchband::{
 };
 use crate::client_action::{ClientAction, RoomPostAction};
 use crate::room_views::{GroupView, RoomViewAction};
-use crate::runtime::{RoomAnchorAuthority, RoomEvent, RoomEventKind, RoomProjectionStatus};
+use crate::runtime::{
+    RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomProjectionStatus,
+};
 use crate::watchband;
 use crate::work::{GroupLane, WorkProjection};
 
@@ -443,12 +445,21 @@ fn room_card(
 }
 
 /// One design's composer: its heading and menu, the textarea posting to
-/// exactly that design's room, and the quote shards drafted beneath it.
+/// exactly that design's room, and the quote shards drafted beneath it. A
+/// settled design's room takes no new posts, so its composer names that
+/// standing in place of the draft; the room's history stays in the plane.
 fn render_design_composer(
     render: &GroupRender<'_, '_>,
     view: &GroupView,
     channel: &Channel,
 ) -> Html {
+    if let RoomAnchorAuthority::Settled { standing, .. } = render
+        .runtime
+        .room_projection()
+        .anchor_authority(&channel.stamp, render.runtime.board())
+    {
+        return render_settled_design(render, channel, standing);
+    }
     let key = design_key(&view.group, &channel.stamp);
     let draft = render.drafts.get(&key).cloned().unwrap_or_default();
     let drawn = render.controls.drawn(view, &channel.stamp);
@@ -551,6 +562,36 @@ fn render_design_composer(
                     <ComposerFocus id={textarea_id} active={focused} {requested} {settle} />
                 </div>
                 {render_quote_shards(&key, &draft, None, None, render.drafts, onkeydown, &placeholder)}
+            </div>
+        </section>
+    }
+}
+
+fn render_settled_design(
+    render: &GroupRender<'_, '_>,
+    channel: &Channel,
+    standing: RoomAnchorSettlement,
+) -> Html {
+    let standing = standing.as_str();
+    html! {
+        <section
+            key={channel.stamp.to_string()}
+            class="team-agent team-design"
+            data-design={channel.stamp.to_string()}
+            data-accent={channel.accent.to_string()}
+            data-room-settled={standing}
+            title={channel.label.clone()}
+        >
+            <div class="agent-composer-stack" data-has-quote-shards="false">
+                <div class="mosaic-composer composer-shard composer-shard--primary" data-shard-kind="primary">
+                    <header class="app-glass-control-surface composer-shard-heading">
+                        <strong class="composer-shard-prose" title={channel.label.clone()}>{channel.label.clone()}</strong>
+                        {render_design_menu(render, channel)}
+                    </header>
+                    <p class="composer-shard-settled" role="status">
+                        {format!("This design is {standing}; its room stays readable and takes no new posts.")}
+                    </p>
+                </div>
             </div>
         </section>
     }

@@ -626,6 +626,140 @@ fn room_post_refuses_unknown_anchor_without_recording() {
     assert!(publication_page(&bus, &unknown).rows.is_empty());
 }
 
+/// Every way an anchor settles closes its room to new posts: the refusal
+/// names the standing, records nothing, and the room's history keeps what it
+/// held before settlement.
+#[test]
+fn room_post_refuses_every_settled_anchor_without_recording() {
+    let (_root, bus, epoch, seats) = fixture("room-post-settled", 1);
+    let closed = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "room-post-closed",
+        "Closed",
+        None,
+    );
+    let deleted = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "room-post-deleted",
+        "Deleted",
+        None,
+    );
+    let completed = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "room-post-completed",
+        "Completed",
+        Some("todo"),
+    );
+    for room in [&closed, &deleted, &completed] {
+        assert_committed(
+            dispatch(&bus, &post_command(&bus, epoch, room, "While open."))
+                .expect("room command dispatches"),
+        );
+    }
+
+    let heads = board(&bus, epoch, Actor::Operator);
+    let witnesses = |task: &TaskHandle| {
+        let heads = at(&heads, task);
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ]
+    };
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskClose,
+        witnesses(&closed),
+        &TaskClose {
+            task: closed.clone(),
+            validation: "settled on the operator's word".to_owned(),
+            force_claimed: false,
+        },
+    ));
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDelete,
+        witnesses(&deleted),
+        &TaskDelete {
+            task: deleted.clone(),
+            reason: "withdrawn".to_owned(),
+            force_claimed: false,
+        },
+    ));
+    complete_through_claim(&bus, epoch, &seats[0], &completed);
+
+    for (room, standing) in [
+        (&closed, "closed"),
+        (&deleted, "deleted"),
+        (&completed, "completed"),
+    ] {
+        let outcome = dispatch(&bus, &post_command(&bus, epoch, room, "After settlement."))
+            .expect("room command dispatches");
+        let Outcome::Refusal(refusal) = outcome else {
+            panic!("a post to a {standing} anchor recorded: {outcome:?}");
+        };
+        assert_eq!(refusal.reason(), "room::anchor-settled");
+        assert_eq!(
+            refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed),
+            Some(format!("{room} {standing}").as_str())
+        );
+        let page = publication_page(&bus, room);
+        assert_eq!(page.rows.len(), 1, "{standing} room history changed");
+        assert_eq!(
+            page.rows[0]
+                .fact
+                .read::<RoomPublished>()
+                .map(|row| row.content),
+            Some(RoomPublicationContent::Authored {
+                text: "While open.".to_owned()
+            })
+        );
+    }
+}
+
+/// Claim `task` from the allocator under `seat`'s lane and complete it.
+fn complete_through_claim(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHandle) {
+    let lane = Actor::Lane(seat.lane);
+    let available = board(bus, epoch, lane.clone());
+    assert_committed(issue(
+        bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimWin,
+        claim_expected(&available, task, seat),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+            recovery: None,
+        },
+    ));
+    let held = board(bus, epoch, lane.clone());
+    assert_committed(issue(
+        bus,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        progress_witnesses(&held, at(&held, task), seat.lane, seat.occupant, false)
+            .expect("held task has completion witnesses"),
+        &TaskDone {
+            task: task.clone(),
+            validation: "done".to_owned(),
+            operation: Some(completion_operation()),
+        },
+    ));
+}
+
 #[test]
 fn room_history_pages_posts_packets_and_coordination_in_one_order() {
     let (root, bus, epoch, seats) = fixture("room-history-coordination", 1);
