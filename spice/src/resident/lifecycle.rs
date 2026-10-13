@@ -357,7 +357,12 @@ impl Runtime {
         let cursor = self.projection.cursor();
         self.synchronize_holds(&snapshot, cursor)?;
         if cursor.is_none() || snapshot.facts().after(cursor).next().is_some() {
-            super::supervisor::terminal::reconcile_services(paths, &snapshot, diagnostic);
+            super::supervisor::terminal::reconcile_services(
+                paths,
+                &snapshot,
+                cursor.is_none(),
+                diagnostic,
+            );
         }
         if generation_notices::reconcile(
             bus,

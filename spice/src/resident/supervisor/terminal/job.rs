@@ -36,11 +36,15 @@ use super::super::{
 };
 
 mod events;
+mod index;
 mod keeper;
 mod launch;
 mod service;
+#[cfg(test)]
+mod tests;
 
 pub(in crate::resident) use events::Event;
+use index::ServiceIndex;
 pub(in crate::resident::supervisor) use keeper::keep;
 pub(in crate::resident) use keeper::{Control, Handle, Observed};
 use keeper::{Signal, watch};
@@ -158,12 +162,13 @@ pub(in crate::resident) struct Tail {
     pub(in crate::resident) truncated: bool,
 }
 
-/// Where one lane's jobs live, and the lane to wake for an ending nobody
-/// hears.
+/// Where one lane's jobs live, the lane to wake for an ending nobody hears,
+/// and the index its services enter while they may run.
 #[derive(Clone, Debug)]
 pub(in crate::resident) struct Jobs {
     root: PathBuf,
-    lane: Option<CanonicalUuid>,
+    lane: CanonicalUuid,
+    services: ServiceIndex,
 }
 
 /// One kept command, by the directory that records it.
@@ -190,7 +195,8 @@ impl Jobs {
     pub(in crate::resident) fn beneath(supervisors: &Path, lane: CanonicalUuid) -> Self {
         Self {
             root: supervisors.join(lane.to_string()).join("jobs"),
-            lane: Some(lane),
+            lane,
+            services: ServiceIndex::beneath(supervisors),
         }
     }
 
@@ -258,10 +264,15 @@ impl Jobs {
                     .map_err(io::Error::other)?,
                 notices: job.notices.to_vec(),
                 service_claim: service_claim.clone(),
-                lane: self.lane,
+                lane: Some(self.lane),
                 events: job.events,
             },
         )?;
+        if job.timeout.is_none()
+            && let Err(error) = self.services.insert(self.lane, &id)
+        {
+            return Err(failed_start_error(&directory, error, cleanup));
+        }
         if let Some(service) = service {
             let validation = service.validate().and_then(|()| {
                 (!directory.join(STOP).exists())
@@ -456,14 +467,57 @@ impl Jobs {
 
 /// Stop every running service whose exact task possession is no longer active.
 ///
-/// Finite jobs are lane-owned and never enter this reconciliation. A malformed
-/// undelivered record is stopped fail-closed because it cannot prove a bound.
+/// Reconciliation reads the live-service index, so its cost follows the
+/// services that may still run rather than retained job history. `rebuild`
+/// first indexes every undelivered service record of every lane, which
+/// covers services an earlier resident started; the resident asks for it on
+/// its first reconciliation. Finite jobs are lane-owned and never enter this
+/// reconciliation. A malformed indexed record is stopped fail-closed because
+/// it cannot prove a bound.
 pub(in crate::resident) fn reconcile_services(
     paths: &RuntimePaths,
     snapshot: &bus::TaskSnapshot,
+    rebuild: bool,
     diagnostic: &mut dyn io::Write,
 ) {
-    let lanes = match fs::read_dir(&paths.supervisors) {
+    reconcile_services_beneath(
+        &paths.supervisors,
+        rebuild,
+        |claim| snapshot.tasks().iter().any(|heads| claim.matches(heads)),
+        diagnostic,
+    );
+}
+
+fn reconcile_services_beneath(
+    supervisors: &Path,
+    rebuild: bool,
+    owned: impl Fn(&ServiceClaim) -> bool,
+    diagnostic: &mut dyn io::Write,
+) {
+    let index = ServiceIndex::beneath(supervisors);
+    if rebuild {
+        index_undelivered_services(supervisors, &index, diagnostic);
+    }
+    let entries = match index.entries() {
+        Ok(entries) => entries,
+        Err(error) => {
+            let _ = writeln!(diagnostic, "service index unavailable: {error}");
+            return;
+        }
+    };
+    for (lane, id) in entries {
+        Jobs::beneath(supervisors, lane).reconcile_service(&id, &owned, diagnostic);
+    }
+}
+
+/// Index every undelivered record that is or may be a service. A record that
+/// cannot be read is indexed too, so reconciliation stops it fail-closed.
+fn index_undelivered_services(
+    supervisors: &Path,
+    index: &ServiceIndex,
+    diagnostic: &mut dyn io::Write,
+) {
+    let lanes = match fs::read_dir(supervisors) {
         Ok(lanes) => lanes,
         Err(error) if error.kind() == ErrorKind::NotFound => return,
         Err(error) => {
@@ -475,62 +529,75 @@ pub(in crate::resident) fn reconcile_services(
         let Ok(lane) = lane else {
             continue;
         };
-        let Some(name) = lane.file_name().to_str().map(str::to_owned) else {
+        let Some(Ok(lane)) = lane.file_name().to_str().map(str::parse::<CanonicalUuid>) else {
             continue;
         };
-        let Ok(lane) = name.parse::<CanonicalUuid>() else {
-            continue;
+        let jobs = Jobs::beneath(supervisors, lane);
+        let ids = match jobs.ids(|directory| !directory.join(DELIVERED).exists()) {
+            Ok(ids) => ids,
+            Err(error) => {
+                let _ = writeln!(diagnostic, "service records unavailable: {error}");
+                continue;
+            }
         };
-        Jobs::for_lane(paths, lane).reconcile_services(snapshot, diagnostic);
+        for id in ids {
+            let service = jobs.open(&id).map_or(true, |job| job.timeout.is_none());
+            if service && let Err(error) = index.insert(lane, &id) {
+                let _ = writeln!(diagnostic, "service index unavailable: {error}");
+            }
+        }
     }
 }
 
 impl Jobs {
-    fn reconcile_services(&self, snapshot: &bus::TaskSnapshot, diagnostic: &mut dyn io::Write) {
-        let ids = match self.ids(|directory| !directory.join(DELIVERED).exists()) {
-            Ok(ids) => ids,
+    fn reconcile_service(
+        &self,
+        id: &str,
+        owned: &impl Fn(&ServiceClaim) -> bool,
+        diagnostic: &mut dyn io::Write,
+    ) {
+        let directory = self.root.join(id);
+        let ended = |state: io::Result<Option<State>>| {
+            state
+                .ok()
+                .flatten()
+                .is_some_and(|state| state.ending.is_some())
+        };
+        let job = match self.open(id) {
+            Ok(job) => job,
+            Err(_) if !directory.try_exists().unwrap_or(true) || ended(read_state(&directory)) => {
+                self.retire_service(id, diagnostic);
+                return;
+            }
             Err(error) => {
-                let _ = writeln!(diagnostic, "service records unavailable: {error}");
+                let _ = File::create(directory.join(STOP));
+                let _ = writeln!(
+                    diagnostic,
+                    "stopping unbound job {id}: its durable request is invalid: {error}"
+                );
                 return;
             }
         };
-        for id in ids {
-            let directory = self.root.join(&id);
-            let job = match self.open(&id) {
-                Ok(job) => job,
-                Err(error) => {
-                    let _ = File::create(directory.join(STOP));
-                    let _ = writeln!(
-                        diagnostic,
-                        "stopping unbound job {id}: its durable request is invalid: {error}"
-                    );
-                    continue;
-                }
-            };
-            if job.timeout.is_some()
-                || job
-                    .state()
-                    .ok()
-                    .flatten()
-                    .is_some_and(|state| state.ending.is_some())
-            {
-                continue;
-            }
-            let owned = job
-                .service_claim
-                .as_ref()
-                .is_some_and(|claim| snapshot.tasks().iter().any(|heads| claim.matches(heads)));
-            if !owned {
-                let stopped = job.stop();
-                let _ = writeln!(
-                    diagnostic,
-                    "stopping service {} after its task claim ended{}",
-                    job.id,
-                    stopped
-                        .err()
-                        .map_or_else(String::new, |error| format!(": {error}"))
-                );
-            }
+        if job.timeout.is_some() || ended(job.state()) {
+            self.retire_service(id, diagnostic);
+            return;
+        }
+        if !job.service_claim.as_ref().is_some_and(owned) {
+            let stopped = job.stop();
+            let _ = writeln!(
+                diagnostic,
+                "stopping service {} after its task claim ended{}",
+                job.id,
+                stopped
+                    .err()
+                    .map_or_else(String::new, |error| format!(": {error}"))
+            );
+        }
+    }
+
+    fn retire_service(&self, id: &str, diagnostic: &mut dyn io::Write) {
+        if let Err(error) = self.services.remove(self.lane, id) {
+            let _ = writeln!(diagnostic, "service index entry {id} not retired: {error}");
         }
     }
 }
@@ -879,11 +946,16 @@ impl Jobs {
                 timeout_millis,
                 notices: Vec::new(),
                 service_claim: None,
-                lane: self.lane,
+                lane: Some(self.lane),
                 events,
             },
         )
         .expect("job request");
+        if timeout_millis.is_none() {
+            self.services
+                .insert(self.lane, &id)
+                .expect("service index entry");
+        }
         publish_json(
             &directory.join(STATE),
             &State {
