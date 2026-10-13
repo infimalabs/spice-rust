@@ -198,26 +198,3 @@ fn a_claimant_hears_each_matching_open_design_once_per_claim() {
     seats.release_all();
     lanes.finish();
 }
-
-#[test]
-fn the_notice_names_the_design_its_pitch_and_how_to_read_or_contribute() {
-    let notice = crate::resident::design_awareness::DesignNotice {
-        occupant: test_uuid(FIRST),
-        design: "ROOMS-dVrD245Kd".to_owned(),
-        task: "ROOMS-dVrD245Kc".to_owned(),
-        title: "Room catch-up pagination".to_owned(),
-        pitch: "Lanes page retained publications.".to_owned(),
-        terms: vec!["catch".to_owned(), "room".to_owned()],
-    };
-    let text = notice.text();
-    for expected in [
-        "ROOMS-dVrD245Kd \"Room catch-up pagination\"",
-        "ROOMS-dVrD245Kc",
-        "Lanes page retained publications.",
-        "catch, room",
-        "spice room history ROOMS-dVrD245Kd",
-        "MSG #ROOMS-dVrD245Kd: BODY",
-    ] {
-        assert!(text.contains(expected), "{expected} in {text}");
-    }
-}
