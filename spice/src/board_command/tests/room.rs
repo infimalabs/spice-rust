@@ -826,6 +826,36 @@ fn room_coordination_waits_for_native_capture_and_stop_clears_on_native_free() {
 }
 
 #[test]
+fn room_coordination_resolves_only_an_occupied_seat_address() {
+    let (root, bus, epoch, seats) = fixture("room-coordinate-seat-state", 1);
+    prove_seat_addresses(&bus, epoch, &seats);
+    let mut current = board(&bus, epoch, Actor::Operator);
+    let target = current
+        .addresses
+        .get(&seats[0].lane)
+        .and_then(wire::SeatAddress::address)
+        .expect("fixture seat has a proved address");
+    assert_eq!(
+        coordinate_target(&current, target).expect("occupied seat resolves"),
+        (seats[0].lane, seats[0].occupant)
+    );
+
+    current.residency.body.lanes[0].disposition = crate::resident::SIMULATED_DISPOSITION.to_owned();
+    let Err(Outcome::Refusal(refusal)) = coordinate_target(&current, target) else {
+        panic!("a simulated seat address must refuse before command submission");
+    };
+    assert_eq!(refusal.reason(), "room::address-unoccupied");
+    assert!(
+        refusal.explanation().contains(&target.to_string())
+            && refusal
+                .explanation()
+                .contains(crate::resident::SIMULATED_DISPOSITION),
+        "the refusal names both the submitted address and seat disposition: {refusal:?}"
+    );
+    clean(&root, bus);
+}
+
+#[test]
 fn room_coordination_vacancy_race_records_nothing() {
     let (root, bus, epoch, seats) = fixture("room-coordinate-vacancy", 1);
     prove_seat_addresses(&bus, epoch, &seats);
