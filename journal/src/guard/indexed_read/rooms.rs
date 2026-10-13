@@ -827,6 +827,52 @@ impl JournalRead<'_> {
         Ok((record, head))
     }
 
+    /// Rooms whose publication index gained a row in one committed range.
+    ///
+    /// The result is bounded by the transaction's fact count and names each
+    /// affected room once, in task-stamp order.
+    pub fn changed_room_publications(
+        &self,
+        first: wire::Seq,
+        last: wire::Seq,
+    ) -> Result<Vec<wire::TaskStamp>, GuardError> {
+        let Some(cursor) = self.cursor else {
+            return Err(GuardError::Invalid(
+                "changed room publications require a durable cursor".to_owned(),
+            ));
+        };
+        if first > last || last > cursor {
+            return Err(GuardError::Invalid(format!(
+                "changed room publication range {first}..={last} is outside cursor {cursor}"
+            )));
+        }
+        let first = i64::try_from(first.get())
+            .map_err(|_| GuardError::Invalid("room publication range exceeds SQLite".to_owned()))?;
+        let last = i64::try_from(last.get())
+            .map_err(|_| GuardError::Invalid("room publication range exceeds SQLite".to_owned()))?;
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT DISTINCT room FROM room_publications \
+                 WHERE seq >= ?1 AND seq <= ?2 ORDER BY room",
+            )
+            .map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map(params![first, last], |row| row.get::<_, String>(0))
+            .map_err(GuardError::Store)?;
+        let mut rooms = Vec::new();
+        for row in rows {
+            let indexed = row.map_err(GuardError::Store)?;
+            rooms.push(indexed.parse::<wire::TaskStamp>().map_err(|error| {
+                GuardError::Invalid(format!(
+                    "room publication key {indexed:?} is invalid: {error}"
+                ))
+            })?);
+        }
+        Ok(rooms)
+    }
+
     /// One bounded page of a room's publications strictly after `after`, in
     /// journal order, through the current horizon.
     pub fn room_publications(

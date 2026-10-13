@@ -1243,7 +1243,7 @@ fn accept_commit_turn(
     launches: &mut super::launch_runtime::Runtime,
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
 ) -> CommandResult<()> {
-    match accept_commit(
+    let commit = accept_commit(
         bus,
         command_surface,
         seats,
@@ -1253,7 +1253,8 @@ fn accept_commit_turn(
         launches,
         door,
         committed,
-    )? {
+    )?;
+    match commit {
         Some(commit) => reconciliation.settle_commit(commit),
         None => reconciliation.settle(),
     }
@@ -1261,13 +1262,23 @@ fn accept_commit_turn(
         quota.request();
     }
     settle_spoken_acknowledgements(bus, message_publisher, message_state, diagnostic)?;
-    room_catch_up::reconcile(
-        bus,
-        command_surface.paths,
-        command_surface.config,
-        seats,
-        diagnostic,
-    )?;
+    match commit {
+        Some(commit) => room_catch_up::reconcile_commit(
+            bus,
+            command_surface.paths,
+            command_surface.config,
+            seats,
+            commit,
+            diagnostic,
+        )?,
+        None => room_catch_up::reconcile(
+            bus,
+            command_surface.paths,
+            command_surface.config,
+            seats,
+            diagnostic,
+        )?,
+    }
     room_relevance::reconcile(bus, command_surface.epoch(), diagnostic)?;
     room_automation::reconcile(
         bus,

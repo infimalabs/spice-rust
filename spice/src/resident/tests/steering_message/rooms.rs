@@ -427,6 +427,95 @@ fn resident_catch_up_pages_two_listeners_from_their_horizons_without_waking_them
     lanes.finish();
 }
 
+/// Commit-driven catch-up ignores authority-neutral task records and scopes a
+/// publication transaction to the room indexed by that transaction.
+#[test]
+fn resident_catch_up_reconciles_only_commit_changed_authority() {
+    let lanes = Lanes::new("room-catch-up-commit-scope");
+    let room = lanes.held_room("dVrD245Kc", FIRST);
+    let first_lane = test_uuid(FIRST);
+    let repository = Repository::discover(&lanes.root).expect("fixture repository resolves");
+    let startup = load_startup_surface(&repository).expect("fixture surface loads");
+    let mut seats = Seats::new();
+    seats
+        .seat_detached(
+            first_lane,
+            test_uuid(FIRST + 1),
+            Box::new(DetachedFixture {
+                dropped: Arc::new(AtomicU64::new(0)),
+            }),
+        )
+        .expect("listener seats");
+    let mut diagnostics = Vec::new();
+    room_catch_up::reconcile(
+        &lanes.bus,
+        &lanes.paths,
+        &startup.config,
+        &seats,
+        &mut diagnostics,
+    )
+    .expect("startup catch-up establishes the horizon");
+
+    let task = room.born().expect("fixture room has a birth");
+    let mut note =
+        write(Actor::Operator, lanes.epoch, Producer::CommandDoor).expect("note write starts");
+    note.fact(
+        wire::body::TaskNoted {
+            task: task.clone(),
+            note: "authority-neutral note".to_owned(),
+        },
+        FactCause::Root,
+    )
+    .expect("note fact is valid");
+    let noted = commit(&lanes.bus, note).expect("note commits");
+    assert_eq!(
+        room_catch_up::changes(&lanes.bus, noted).expect("note changes classify"),
+        room_catch_up::Changes::default(),
+        "a task note schedules no room projection"
+    );
+    room_catch_up::reconcile_commit(
+        &lanes.bus,
+        &lanes.paths,
+        &startup.config,
+        &seats,
+        noted,
+        &mut diagnostics,
+    )
+    .expect("irrelevant commit is ignored");
+
+    let published = append_room_publication(&lanes, &room);
+    let mut expected_rooms = BTreeSet::new();
+    expected_rooms.insert(task);
+    assert_eq!(
+        room_catch_up::changes(&lanes.bus, published).expect("publication changes classify"),
+        room_catch_up::Changes {
+            authority: false,
+            lanes: BTreeSet::new(),
+            rooms: expected_rooms,
+        },
+        "a publication schedules only its indexed room"
+    );
+    room_catch_up::reconcile_commit(
+        &lanes.bus,
+        &lanes.paths,
+        &startup.config,
+        &seats,
+        published,
+        &mut diagnostics,
+    )
+    .expect("changed room reconciles");
+    let notice = room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane))
+        .expect("current listener receives the changed room");
+    assert!(notice.text.contains("appended before accounting"));
+    assert!(
+        diagnostics.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&diagnostics)
+    );
+    seats.release_all();
+    lanes.finish();
+}
+
 /// `MSG ADDRESS#ROOM` invites the addressed lane: it hears later room posts
 /// through ordinary catch-up without posting or holding the room's work, while
 /// a seated lane nobody addressed still hears nothing.
@@ -576,16 +665,15 @@ fn land_delivery(
         &mut diagnostics,
     )
     .expect("safe-boundary sweep accounts the delivery");
-    room_catch_up::recognize(&lanes.bus, &lanes.paths, &landed, source_id)
-        .expect("accounted delivery is recognized");
-    let cursor = lanes
-        .bus
-        .read(move |read| read.room_cursor(first_lane))
-        .expect("cursor rereads")
-        .expect("exact delivery advances the cursor");
-    assert_eq!(cursor.body().through.get(), notice.through.get());
-    room_catch_up::reconcile(&lanes.bus, &lanes.paths, config, seats, &mut diagnostics)
-        .expect("recognized cursor reconciles");
+    recognize_delivery(
+        lanes,
+        config,
+        seats,
+        &landed,
+        source_id,
+        notice,
+        &mut diagnostics,
+    );
     let continuation =
         room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane))
             .expect("the bounded continuation becomes current");
@@ -604,7 +692,48 @@ fn land_delivery(
     generation.commit().expect("message generation commits");
 }
 
-fn append_room_publication(lanes: &Lanes, room: &wire::TaskHandle) {
+fn recognize_delivery(
+    lanes: &Lanes,
+    config: &SurfaceConfig,
+    seats: &mut Seats,
+    landed: &lane::capture::CaptureRecord,
+    source: CanonicalUuid,
+    notice: &room_catch_up::Notice,
+    diagnostics: &mut Vec<u8>,
+) {
+    let first_lane = test_uuid(FIRST);
+    let delivered = room_catch_up::recognize(&lanes.bus, &lanes.paths, landed, source)
+        .expect("accounted delivery is recognized")
+        .expect("exact delivery commits its cursor");
+    let mut expected_lanes = BTreeSet::new();
+    expected_lanes.insert(first_lane);
+    assert_eq!(
+        room_catch_up::changes(&lanes.bus, delivered).expect("delivery changes classify"),
+        room_catch_up::Changes {
+            authority: false,
+            lanes: expected_lanes,
+            rooms: BTreeSet::new(),
+        },
+        "cursor progress schedules only its lane"
+    );
+    let cursor = lanes
+        .bus
+        .read(move |read| read.room_cursor(first_lane))
+        .expect("cursor rereads")
+        .expect("exact delivery advances the cursor");
+    assert_eq!(cursor.body().through.get(), notice.through.get());
+    room_catch_up::reconcile_commit(
+        &lanes.bus,
+        &lanes.paths,
+        config,
+        seats,
+        delivered,
+        diagnostics,
+    )
+    .expect("recognized cursor reconciles");
+}
+
+fn append_room_publication(lanes: &Lanes, room: &wire::TaskHandle) -> bus::JournalCommit {
     let publication = wire::rooms::RoomAuthorityStamp::for_micros(1_790_000_000_000_000)
         .expect("fixture publication stamp");
     let mut append =
@@ -621,7 +750,7 @@ fn append_room_publication(lanes: &Lanes, room: &wire::TaskHandle) {
             FactCause::Root,
         )
         .expect("intervening publication is valid");
-    commit(&lanes.bus, append).expect("intervening publication commits");
+    commit(&lanes.bus, append).expect("intervening publication commits")
 }
 
 /// A context naming no task refuses the whole packet: no route delivers and
