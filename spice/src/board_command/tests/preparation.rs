@@ -171,6 +171,54 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
 
     clean(&root, bus);
 }
+
+#[test]
+fn operator_selection_concludes_and_releases_a_parked_design_claim() {
+    let (root, bus, epoch, seats) = fixture("preparation-held-selection", 2);
+    let controller = add_controller(
+        &bus,
+        epoch,
+        "Held preparation controller",
+        wire::TaskIntent::Design,
+        Some("review"),
+    );
+    claim_task(
+        &bus,
+        epoch,
+        &seats[0],
+        &Actor::Lane(seats[0].lane),
+        &controller,
+    );
+    let output = add_output(&bus, epoch, &controller, "Selected held output");
+    let spare = add_output(&bus, epoch, &controller, "Unselected held output");
+    let (candidate, source) =
+        retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
+    record_test_critique(&bus, epoch, &seats, &controller, &candidate, &source);
+    let coverage_refs = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
+    record_test_decisions(&bus, epoch, &controller, &output, &candidate, &source);
+    assert_eq!(
+        open_awaiting_selection(&bus, epoch),
+        [controller.born().expect("controller stamp")].into()
+    );
+
+    authorize_test_output(
+        &bus,
+        epoch,
+        &controller,
+        &output,
+        &spare,
+        candidate,
+        &coverage_refs,
+    );
+
+    let current = board(&bus, epoch, Actor::Operator);
+    assert!(matches!(
+        at(&current, &controller).claim.as_ref(),
+        Some(claim) if claim.body.disposition == ClaimDisposition::Freed
+    ));
+    assert!(open_awaiting_selection(&bus, epoch).is_empty());
+    clean(&root, bus);
+}
 fn adopted_outputs(
     bus: &Bus,
     epoch: CanonicalUuid,

@@ -47,6 +47,21 @@ impl ResolvedTasks {
         }
     }
 
+    /// Whether this task state is a Design waiting for one of the observed
+    /// outputs to receive the operator's selection.
+    #[must_use]
+    pub fn awaits_selection(
+        &self,
+        statement: &wire::TaskHead,
+        workflow: &wire::WorkflowHead,
+    ) -> bool {
+        statement.intent == Some(TaskIntent::Design)
+            && workflow.status == "pending"
+            && workflow.completion.is_none()
+            && workflow.flow.last() == Some(&workflow.phase)
+            && self.unselected.contains(&statement.born)
+    }
+
     fn settled(&self, task: &TaskStamp) -> bool {
         self.settled.contains_key(task)
     }
@@ -88,12 +103,7 @@ pub fn unselected_output_of<'a>(
 /// A Plan never waits here: its outputs follow its own positive review.
 #[must_use]
 pub fn awaits_selection(entry: &Entry, satisfied: &ResolvedTasks) -> bool {
-    let workflow = entry.workflow();
-    entry.statement().intent == Some(TaskIntent::Design)
-        && workflow.status == "pending"
-        && workflow.completion.is_none()
-        && workflow.flow.last() == Some(&workflow.phase)
-        && satisfied.unselected.contains(entry.born())
+    satisfied.awaits_selection(entry.statement(), entry.workflow())
 }
 
 /// Deterministic answer from the board's sole allocation query.
