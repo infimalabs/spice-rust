@@ -516,6 +516,35 @@ fn resident_catch_up_reconciles_only_commit_changed_authority() {
     lanes.finish();
 }
 
+/// A room-bound delivery's terminal steering fact publishes no room row, but
+/// commit classification still names the exact room whose attention changed.
+#[test]
+fn room_bound_steering_disposition_names_its_room_change() {
+    let lanes = Lanes::new("room-catch-up-steering-disposition");
+    let room = lanes.room("dVrD245Kc");
+    let first = lanes.address(FIRST);
+    lanes.author(SENDER, &format!("MSG {first}#{room}: settle this delivery"));
+    lanes.account(SENDER);
+    let (_, published) = lanes.hear_newest(SENDER);
+    assert!(matches!(published.as_slice(), [Ok(_)]));
+    let key = lanes.messages().pop().expect("room message records").1.key;
+
+    let commits = lanes.bus.subscribe().expect("commit subscription opens");
+    lanes.answer(FIRST, &[&key], &format!("ACK {key}: received"));
+    let acknowledged = commits.recv().expect("acknowledgment commit publishes");
+    let mut rooms = BTreeSet::new();
+    rooms.insert(room.born().expect("room stamp"));
+    assert_eq!(
+        room_catch_up::changes(&lanes.bus, acknowledged).expect("acknowledgment changes classify"),
+        room_catch_up::Changes {
+            authority: false,
+            lanes: BTreeSet::new(),
+            rooms,
+        }
+    );
+    lanes.finish();
+}
+
 /// `MSG ADDRESS#ROOM` invites the addressed lane: it hears later room posts
 /// through ordinary catch-up without posting or holding the room's work, while
 /// a seated lane nobody addressed still hears nothing.

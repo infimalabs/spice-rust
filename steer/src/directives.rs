@@ -34,7 +34,7 @@ mod replay;
 
 pub use refusal::{MediaResolutionError, Refusal, ReplayError};
 #[cfg(not(target_arch = "wasm32"))]
-pub use replay::AuthorityIndex;
+pub use replay::{AuthorityIndex, affected_key};
 
 /// One stable directive, as the facts left it.
 #[derive(Debug, Clone, PartialEq, Eq)]

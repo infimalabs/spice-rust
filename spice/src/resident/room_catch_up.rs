@@ -7,8 +7,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use spice::rooms::{CatchUpBudget, CatchUpSource, select_catch_up};
-use wire::rooms::{RoomDelivered, RoomHorizon, TextRange, TranscriptHunk};
-use wire::{Actor, CanonicalUuid, Producer, Seq, SequenceCode, TaskHandle, TaskStamp};
+use wire::rooms::{
+    CoordinationControl, QuestionResultRef, RoomDelivered, RoomHorizon, RoomQuestionClosed,
+    RoomQuestionTimedOut, TextRange, TranscriptHunk,
+};
+use wire::{
+    Actor, AnyFact, CanonicalUuid, Producer, Seq, SequenceCode, SteeringHead, TaskHandle, TaskStamp,
+};
 
 use super::*;
 
@@ -45,48 +50,6 @@ pub(in crate::resident) struct Changes {
     pub(in crate::resident) lanes: BTreeSet<CanonicalUuid>,
     pub(in crate::resident) rooms: BTreeSet<TaskStamp>,
 }
-
-const RECONCILE_FACTS: &[wire::FactKind] = &[
-    wire::FactKind::TaskAdded,
-    wire::FactKind::TaskPhased,
-    wire::FactKind::TaskDone,
-    wire::FactKind::TaskReviewed,
-    wire::FactKind::TaskAssigned,
-    wire::FactKind::TaskEdited,
-    wire::FactKind::TaskDeleted,
-    wire::FactKind::TaskClosed,
-    wire::FactKind::OutputControlled,
-    wire::FactKind::ClaimWon,
-    wire::FactKind::ClaimCarried,
-    wire::FactKind::ClaimRebound,
-    wire::FactKind::ClaimFreed,
-    wire::FactKind::ClaimLapsed,
-    wire::FactKind::RoomDelivered,
-    wire::FactKind::LaneSeated,
-    wire::FactKind::LaneArranged,
-    wire::FactKind::LaneRetuned,
-    wire::FactKind::LaneEffortRetuned,
-    wire::FactKind::LaneFastRetuned,
-    wire::FactKind::LaneRuntimeRetuned,
-    wire::FactKind::TeamConfigured,
-    wire::FactKind::TeamArranged,
-    wire::FactKind::LaneSessionDeclared,
-    wire::FactKind::LaneStarted,
-    wire::FactKind::LaneImported,
-    wire::FactKind::LaneRemoved,
-    wire::FactKind::LaneExited,
-    wire::FactKind::LaneTimedOut,
-    wire::FactKind::LaneCancelled,
-    wire::FactKind::LaneSignalled,
-    wire::FactKind::LaneCompacted,
-    wire::FactKind::LaneRenewed,
-    wire::FactKind::LaneRenewalChanged,
-    wire::FactKind::LaneDrained,
-    wire::FactKind::LaneKilled,
-    wire::FactKind::LaneDegraded,
-    wire::FactKind::LaneHeld,
-    wire::FactKind::LaneResumed,
-];
 
 /// Why `lane` listens to one room and how it leaves, as one notice block.
 fn listening(
@@ -313,35 +276,87 @@ pub(in crate::resident) fn changes(
     let last = Seq::new(commit.last()).expect("a committed position is positive");
     bus.read(move |read| {
         let mut changes = Changes {
+            authority: read
+                .residency_head()?
+                .is_some_and(|head| head.position() >= first && head.position() <= last),
             rooms: read
                 .changed_room_publications(first, last)?
                 .into_iter()
                 .collect(),
             ..Changes::default()
         };
-        let mut after = first.get().checked_sub(1).and_then(Seq::new);
+        let mut start = journal::FactPageStart::At(first);
         loop {
-            let page = read.selected_fact_page(
-                RECONCILE_FACTS,
-                after,
-                Some(last),
-                journal::FactReadBudget::RETAINED,
-            )?;
-            for envelope in page.rows {
-                if let Some(delivered) = envelope.fact.read::<RoomDelivered>() {
+            let page = read.fact_page(start, last, journal::FactReadBudget::RETAINED)?;
+            for envelope in &page.rows {
+                let fact = &envelope.fact;
+                changes.authority |= changes_task_attention(fact);
+                if let Some(delivered) = fact.read::<RoomDelivered>() {
                     changes.lanes.insert(delivered.hunk.head.lane);
-                } else {
-                    changes.authority = true;
+                }
+                if let Some(key) = steer::directives::affected_key(envelope)
+                    && let Some(head) = read.steering_key(key.as_str())?
+                {
+                    extend_steering_rooms(&mut changes.rooms, head.body());
+                }
+                if let Some(result) = changed_question_result(fact)
+                    && let Some((record, _)) = read.question_result(&result)?
+                    && let Some(room) = record.context()
+                {
+                    changes.rooms.insert(room.clone());
                 }
             }
-            let Some(continuation) = page.continuation else {
+            let Some(overflow) = page.overflow else {
                 break;
             };
-            after = Some(continuation);
+            start = journal::FactPageStart::At(overflow.continuation);
         }
         Ok(changes)
     })
     .map_err(|error| store_fault("room::catch-up-changes-unreadable", &error.to_string()))
+}
+
+fn changes_task_attention(fact: &AnyFact) -> bool {
+    fact.task_subject().is_some()
+        && !matches!(
+            fact.kind(),
+            wire::FactKind::TaskNoted
+                | wire::FactKind::ClaimRenewed
+                | wire::FactKind::ClaimLeaseWarned
+        )
+}
+
+fn extend_steering_rooms(rooms: &mut BTreeSet<TaskStamp>, head: &SteeringHead) {
+    rooms.extend(head.room.iter().cloned());
+    let Some(control) = head
+        .control
+        .as_deref()
+        .and_then(|control| control.parse::<CoordinationControl>().ok())
+    else {
+        return;
+    };
+    rooms.insert(match control {
+        CoordinationControl::Coordinate(room) | CoordinationControl::Stop { room, .. } => room,
+    });
+}
+
+fn changed_question_result(fact: &AnyFact) -> Option<QuestionResultRef> {
+    fact.read::<RoomQuestionClosed>()
+        .map(|closed| closed.result)
+        .or_else(|| {
+            fact.read::<RoomQuestionTimedOut>()
+                .map(|timed_out| timed_out.result)
+        })
+        .or_else(|| {
+            fact.read::<wire::body::SteerDeclined>()
+                .and_then(|declined| {
+                    declined
+                        .key
+                        .parse::<wire::rooms::RoomAuthorityStamp>()
+                        .ok()
+                        .map(QuestionResultRef::new)
+                })
+        })
 }
 
 fn plan(

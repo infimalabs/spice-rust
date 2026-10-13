@@ -110,7 +110,7 @@ impl Ledger {
         let order_len = self.order.len();
         let mut originals = BTreeMap::<Key, Option<Directive>>::new();
         for envelope in facts {
-            if let Some(key) = transaction_key(envelope) {
+            if let Some(key) = affected_key(envelope) {
                 originals
                     .entry(key.clone())
                     .or_insert_with(|| self.directives.get(&key).cloned());
@@ -385,7 +385,12 @@ fn unhandled_authority_fact(envelope: &wire::Envelope<wire::AnyFact>) -> ReplayE
     }
 }
 
-fn transaction_key(envelope: &wire::Envelope<wire::AnyFact>) -> Option<Key> {
+/// Stable key whose steering head this fact can change.
+///
+/// This is the reducer's exhaustive authority classification; consumers use it
+/// instead of maintaining a second fact-kind inventory.
+#[must_use]
+pub fn affected_key(envelope: &wire::Envelope<wire::AnyFact>) -> Option<Key> {
     let fact = &envelope.fact;
     match fact.kind() {
         wire::FactKind::SteerSent => fact
