@@ -596,7 +596,6 @@
   gap: 10px;
 }
 .room-group-section > header,
-.room-group-row > header,
 .room-console-header,
 .room-pane-header,
 .room-card > header {
@@ -614,57 +613,10 @@
 
 .room-group-section > header span,
 .room-console-kicker,
-.room-group-row code,
 .room-card code {
   color: var(--muted);
   font-size: var(--app-type-meta);
 }
-
-.room-group-create,
-.room-group-row {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-  border: var(--app-edge-soft);
-  border-radius: var(--app-radius-inset);
-  background: var(--control-surface-soft);
-}
-
-.room-group-catalog {
-  display: grid;
-  gap: 8px;
-}
-
-/* Designs move between groups exactly as agents move between teams: a mouse
-   drags the whole row, a finger or pen drags its handle. */
-.room-group-create[data-drop-enabled="true"]:hover,
-.room-group-row[data-drop-enabled="true"]:hover,
-.room-designs[data-drop-enabled="true"]:hover {
-  border-color: color-mix(in srgb, var(--accent) 28%, var(--control-line-soft));
-  background: color-mix(in srgb, var(--control-surface-soft) 94%, var(--accent) 6%);
-}
-
-.room-designs { display: grid; gap: 8px; }
-
-.room-group-create > header,
-.room-designs > header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px 12px;
-  color: var(--muted);
-  font: var(--app-type-caption)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.room-group-create > header h3,
-.room-designs > header h3 {
-  margin: 0;
-  font: 700 var(--app-type-caption)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-}
-
-.room-design-list { display: grid; gap: 6px; }
 
 .room-design {
   display: grid;
@@ -703,40 +655,13 @@
   font-size: var(--app-type-meta);
 }
 
-.room-design[draggable="true"] { cursor: grab; }
-.room-design[draggable="true"]:active { cursor: grabbing; }
-
-.room-design[draggable="true"] > header > strong {
-  touch-action: none;
-  -webkit-touch-callout: none;
-  user-select: none;
-  padding-block: 8px;
-  margin-block: -8px;
-}
-
-.room-design[data-topology-drag-source] { opacity: .38; }
-
-.room-group-row ol {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.room-group-row li,
 .room-inline-actions {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.room-group-row li > :first-child {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.room-group-row button,
+.room-group-section .app-roster-group > header button,
 .room-inline-actions button,
 .room-grooming button,
 .room-composer button {
@@ -746,7 +671,7 @@
   cursor: pointer;
 }
 
-.room-group-row button:disabled,
+.room-group-section .app-roster-group > header button:disabled,
 .room-inline-actions button:disabled,
 .room-grooming button:disabled,
 .room-composer button:disabled {

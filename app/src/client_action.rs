@@ -29,6 +29,16 @@ pub(crate) enum RoomControlRequest {
     Close(wire::intent::RoomClose),
 }
 
+/// What one working-group change asks the authority for.
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+pub(crate) enum GroupChange {
+    /// Move one design into a group, founding it under a fresh identity, or
+    /// out of every group.
+    Move(wire::rooms::WorkingGroupMove),
+    /// Restate every group and its designs in order.
+    Arrange(wire::rooms::WorkingGroupArrange),
+}
+
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum ClientAction {
     Jobs {
@@ -39,10 +49,10 @@ pub(crate) enum ClientAction {
         stop: bool,
         respond: JobResponse,
     },
-    /// Move one design into a working group, founding it under a fresh
-    /// identity, or out of every group, at the observed partition revision.
-    WorkingGroupMove {
-        request: wire::rooms::WorkingGroupMove,
+    /// One working-group move or arrangement at the observed partition
+    /// revision.
+    WorkingGroupChange {
+        change: GroupChange,
         revision: u64,
         respond: GroupResponse,
     },

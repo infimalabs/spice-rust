@@ -415,7 +415,21 @@ impl ClientAction {
         match self {
             Self::Job { target, .. } => target.id.len(),
             Self::Jobs { .. } => 0,
-            Self::WorkingGroupMove { request, .. } => request.design.as_str().len(),
+            Self::WorkingGroupChange { change, .. } => match change {
+                crate::client_action::GroupChange::Move(request) => request.design.as_str().len(),
+                crate::client_action::GroupChange::Arrange(request) => request
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        group.group.as_str().len()
+                            + group
+                                .anchors
+                                .iter()
+                                .map(|design| design.as_str().len())
+                                .sum::<usize>()
+                    })
+                    .sum(),
+            },
             Self::RoomPost(post) => post
                 .room
                 .as_str()

@@ -525,7 +525,7 @@ fn render_design_composer(
                 >
                     <header class="app-glass-control-surface composer-shard-heading">
                         <strong class="composer-shard-prose" title={channel.label.clone()}>{channel.label.clone()}</strong>
-                        {render_design_menu(render, view, channel)}
+                        {render_design_menu(render, channel)}
                         <button
                             type="button"
                             class="composer-shard-post"
@@ -559,7 +559,7 @@ fn render_design_composer(
 /// A design's menu carries what its room holds besides conversation: its
 /// preparation authority and, for an OOPS batch, the grooming form. Its group
 /// rail mirrors an agent's team rail.
-fn render_design_menu(render: &GroupRender<'_, '_>, view: &GroupView, channel: &Channel) -> Html {
+fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
     let label = format!("Menu for {}", channel.label);
     html! {
         <details
@@ -581,7 +581,7 @@ fn render_design_menu(render: &GroupRender<'_, '_>, view: &GroupView, channel: &
                 <header class="agent-menu-head">
                     <strong>{channel.label.clone()}</strong>
                 </header>
-                {render_group_actions(render, view, channel)}
+                {render_group_actions(render, channel)}
                 {render_preparation(render.runtime, &channel.stamp)}
                 {oops_grooming_form(render.runtime, &toast(render), render.sender, &channel.stamp)}
             </div>
@@ -592,64 +592,45 @@ fn render_design_menu(render: &GroupRender<'_, '_>, view: &GroupView, channel: &
 /// The design-side twin of an agent's **Create new team** and **Leave all
 /// teams**: begin a group holding only this design, or take it out of its
 /// group, which ends once its last design leaves.
-fn render_group_actions(render: &GroupRender<'_, '_>, view: &GroupView, channel: &Channel) -> Html {
-    let partition = render.runtime.room_projection().partition();
-    let Some(group) = partition
-        .groups
-        .iter()
-        .find(|group| group.group == view.group)
-    else {
-        return Html::default();
-    };
+fn render_group_actions(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
+    let runtime = render.runtime;
+    let partition = runtime.room_projection().partition();
+    let tasks = runtime
+        .board()
+        .map_or(&[][..], |board| board.tasks.as_slice());
+    let enabled = runtime.offers(wire::CommandKind::WorkingGroupMove);
+    let menu = crate::roster::working_groups(partition, tasks).menu(&channel.stamp);
     let revision = partition.revision;
-    let can_move = render.runtime.offers(wire::CommandKind::WorkingGroupMove)
-        && group.anchors.contains(&channel.stamp);
-    let can_split = can_move && group.anchors.len() > 1;
-    let split = {
+    let action = |change: Option<crate::roster::Change<RoomAuthorityStamp, wire::TaskStamp>>| {
+        let change = change.filter(|_| enabled);
+        let disabled = change.is_none();
         let controls = render.controls.clone();
         let sender = render.sender.clone();
-        let design = channel.stamp.clone();
-        Callback::from(move |event: MouseEvent| {
-            let Some(created) = super::mint_group() else {
-                controls.report("A working-group identity could not be created.".into());
-                return;
-            };
-            let request = wire::rooms::WorkingGroupMove {
-                design: design.clone(),
-                to: Some(created),
-            };
-            super::submit_move(&sender, &controls, request, revision);
-            close_menu(&event);
-        })
+        let activate = Callback::from(move |event: MouseEvent| {
+            if let Some(change) = change.clone() {
+                super::submit_change(&sender, &controls, change, revision);
+                close_menu(&event);
+            }
+        });
+        (disabled, activate)
     };
-    let leave = {
-        let controls = render.controls.clone();
-        let sender = render.sender.clone();
-        let design = channel.stamp.clone();
-        Callback::from(move |event: MouseEvent| {
-            let request = wire::rooms::WorkingGroupMove {
-                design: design.clone(),
-                to: None,
-            };
-            super::submit_move(&sender, &controls, request, revision);
-            close_menu(&event);
-        })
-    };
+    let (split_disabled, split) = action(menu.new_group);
+    let (leave_disabled, leave) = action(menu.leave);
     html! {
         <div class="app-control-rail" role="group" aria-label="Working group">
             <button
                 class="agent-menu-action"
                 type="button"
-                disabled={!can_split}
-                aria-label={format!("Create new group for {}", channel.label)}
-                title={format!("Move only {} to a new group", channel.label)}
+                disabled={split_disabled}
+                aria-label={format!("New working group for {}", channel.label)}
+                title={format!("Move only {} to a new working group", channel.label)}
                 data-group-split-design={channel.stamp.to_string()}
                 onclick={split}
-            >{"Create new group"}</button>
+            >{"New working group"}</button>
             <button
                 class="agent-menu-action"
                 type="button"
-                disabled={!can_move}
+                disabled={leave_disabled}
                 aria-label={format!("Leave group for {}", channel.label)}
                 title={format!("Remove {} from its group", channel.label)}
                 data-group-leave-design={channel.stamp.to_string()}

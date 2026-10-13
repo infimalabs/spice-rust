@@ -345,7 +345,6 @@ fn render_compose(
                             standing,
                             select,
                             command: &member_command,
-                            can_arrange,
                             can_configure,
                             topology_revision,
                             topology,
@@ -699,80 +698,55 @@ fn arrange_refusal(
     }
 }
 
-fn agent_split_control(
-    source_team: CanonicalUuid,
-    lane: CanonicalUuid,
-    can_arrange: bool,
+/// The client action one team roster change asks for at `topology_revision`;
+/// none when a fresh team identity cannot be minted.
+pub(in crate::browser) fn team_action(
+    change: crate::roster::Change<CanonicalUuid, CanonicalUuid>,
     topology_revision: u64,
-    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
-    sender: &SenderHandle,
-) -> AgentTeamControl {
-    let enabled = can_arrange
-        && topology.iter().any(|(team, members)| {
-            *team == source_team && members.len() > 1 && members.contains(&lane)
-        });
-    let topology = enabled.then(|| topology.to_vec());
-    let sender = sender.clone();
-    let activate = Callback::from(move |event: MouseEvent| {
-        let Some(topology) = &topology else {
-            return;
-        };
-        let Ok(new_team) = random_uuid() else {
-            return;
-        };
-        let Some(teams) = watchband::split_member(topology, source_team, lane, new_team) else {
-            return;
-        };
-        let teams = teams
-            .into_iter()
-            .map(|(team, lanes)| TeamArrangement { team, lanes })
-            .collect();
-        if admit_action(
-            &sender,
-            ClientAction::ArrangeTeams {
-                topology_revision,
-                teams,
+) -> Option<ClientAction> {
+    use crate::roster::{Change, Destination};
+    Some(match change {
+        Change::Move { member, to } => ClientAction::ConfigureTeam {
+            topology_revision,
+            team: match to {
+                Destination::New => random_uuid().ok()?,
+                Destination::Group(team) => team,
+                Destination::Ungrouped => member,
             },
-        ) {
-            agent_menu::close(&event);
-        }
-    });
-    AgentTeamControl {
-        disabled: !enabled,
-        activate,
-    }
+            member: Some(member),
+            life: None,
+            fast_mode: None,
+        },
+        Change::Arrange(teams) => ClientAction::ArrangeTeams {
+            topology_revision,
+            teams: teams
+                .into_iter()
+                .map(|(team, lanes)| TeamArrangement { team, lanes })
+                .collect(),
+        },
+    })
 }
 
-fn agent_leave_control(
-    source_team: CanonicalUuid,
-    lane: CanonicalUuid,
-    can_configure: bool,
+/// One team composer-menu action: **Create new team** or **Leave all teams**.
+fn agent_team_control(
+    change: Option<crate::roster::Change<CanonicalUuid, CanonicalUuid>>,
+    enabled: bool,
     topology_revision: u64,
-    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     sender: &SenderHandle,
 ) -> AgentTeamControl {
-    let enabled = can_configure && watchband::can_leave_all_teams(topology, source_team, lane);
+    let change = change.filter(|_| enabled);
+    let disabled = change.is_none();
     let sender = sender.clone();
     let activate = Callback::from(move |event: MouseEvent| {
-        if enabled
-            && admit_action(
-                &sender,
-                ClientAction::ConfigureTeam {
-                    topology_revision,
-                    team: lane,
-                    member: Some(lane),
-                    life: None,
-                    fast_mode: None,
-                },
-            )
+        if let Some(action) = change
+            .clone()
+            .and_then(|change| team_action(change, topology_revision))
+            && admit_action(&sender, action)
         {
             agent_menu::close(&event);
         }
     });
-    AgentTeamControl {
-        disabled: !enabled,
-        activate,
-    }
+    AgentTeamControl { disabled, activate }
 }
 
 #[allow(

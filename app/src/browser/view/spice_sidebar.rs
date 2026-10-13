@@ -1,28 +1,25 @@
-//! Spice sidebar content and team-arrangement controls.
-
-use web_sys::{DragEvent, PointerEvent};
+//! Spice sidebar content and the team roster.
 
 use super::*;
-use crate::browser::touch_lift;
+use crate::browser::roster::{self, RosterView, Wording};
 use crate::watchband;
 
-const MEMBER_MIME: &str = "application/x-spice-team-member";
-/// The drop-target value naming Unassigned Agents rather than a team.
-const UNASSIGNED_DROP: &str = "unassigned";
-
-thread_local! {
-    /// The one roster lift a finger or pen holds; mouse uses HTML5 drag and drop.
-    static TOUCH_DRAG: RefCell<watchband::PointerDragSession> = RefCell::default();
-    /// A lifted drag's release can still click the slot link; that click is swallowed.
-    static SWALLOW_CLICK: Cell<bool> = const { Cell::new(false) };
-}
+const TEAM_WORDING: Wording = Wording {
+    kind: "team",
+    new_title: "New Team",
+    new_hint: "drop agent to create",
+    new_target: "Drop agent here",
+    ungrouped_title: "Unassigned Agents",
+    ungrouped_hint: "drop to unassign",
+    full: "Teams are limited to six agents",
+};
 
 pub(super) struct Context<'a> {
     pub(super) sender: &'a SenderHandle,
 }
 
-/// One interactive topology: full-width status slots double as draggable
-/// members. A mouse drags the whole slot; a finger or pen drags its name.
+/// The team roster: each team a card named for its host, its agents as
+/// full-width status slots, then New Team and Unassigned Agents.
 pub(super) fn render_arrangement(
     runtime: Option<&AppRuntime>,
     context: &Context<'_>,
@@ -34,61 +31,49 @@ pub(super) fn render_arrangement(
         (Some(_), None) => Some("Waiting for agent state…"),
         (Some(_), Some(_)) => None,
     };
-    let can_configure = lanes.is_some()
-        && runtime.is_some_and(|runtime| runtime.offers(CommandKind::TeamConfigure));
+    let enabled = lanes.is_some()
+        && runtime.is_some_and(|runtime| {
+            runtime.offers(CommandKind::TeamConfigure) && runtime.offers(CommandKind::TeamArrange)
+        });
     let topology_revision = lanes.map_or(0, |lanes| lanes.topology_revision);
     let teams = lanes.map_or(&[][..], |lanes| lanes.lanes.as_slice());
-    let grouped_teams = teams
-        .iter()
-        .filter(|team| team.teamed())
-        .collect::<Vec<_>>();
-    let solo_members = teams
-        .iter()
-        .filter(|team| !team.teamed())
-        .flat_map(|team| &team.members)
-        .collect::<Vec<_>>();
-    let solo_member_ids = solo_members
-        .iter()
-        .map(|member| member.lane)
-        .collect::<Vec<_>>();
-    let new_team = super::super::random_uuid().expect("browser crypto mints a new team identity");
-    let solo_render = SoloDropRender {
-        standings,
-        sender: context.sender,
-        can_configure,
-        topology_revision,
-        empty: awaited.unwrap_or("No unassigned agents"),
-    };
-    html! {
-        <>
-            <div class="app-open-teams">
-                if grouped_teams.is_empty() && solo_members.is_empty() {
-                    <p class="app-empty-state">{awaited.unwrap_or("No agent lanes are connected.")}</p>
-                } else {
-                    {for grouped_teams.into_iter().map(|team| {
-                        render_team(
-                            team,
-                            standings,
-                            context.sender,
-                            can_configure,
-                            topology_revision,
-                        )
-                    })}
-                }
+    let sender = context.sender.clone();
+    let head = |team: &CanonicalUuid, members: &[CanonicalUuid]| {
+        let name = teams
+            .iter()
+            .find(|row| row.lane == *team)
+            .map_or_else(|| watchband::short(*team), super::team_name);
+        html! {
+            <div>
+                <strong>{name}</strong>
+                <span>{super::topology_count(members.len(), "agent", "agents")}</span>
             </div>
-            {render_new_team_drop(
-                new_team,
-                context.sender,
-                can_configure,
-                topology_revision,
-            )}
-            {render_solo_members_drop(
-                &solo_members,
-                solo_member_ids,
-                &solo_render,
-            )}
-        </>
-    }
+        }
+    };
+    let member = |lane: &CanonicalUuid, grouped: bool| {
+        let member = teams.iter().find_map(|row| row.member(*lane));
+        let standing = standings.iter().find(|standing| standing.lane == *lane);
+        match (member, standing) {
+            (Some(member), Some(standing)) => {
+                super::render_topology_agent(member, standing, grouped)
+            }
+            _ => Html::default(),
+        }
+    };
+    roster::render(RosterView {
+        wording: &TEAM_WORDING,
+        roster: Rc::new(crate::roster::teams(&watchband::topology(teams))),
+        revision: topology_revision,
+        enabled,
+        empty: awaited.unwrap_or("No unassigned agents"),
+        submit: Rc::new(move |change| {
+            if let Some(action) = super::super::watchband::team_action(change, topology_revision) {
+                admit_action(&sender, action);
+            }
+        }),
+        head: &head,
+        member: &member,
+    })
 }
 
 pub(super) fn render_global_settings(
@@ -410,444 +395,4 @@ pub(super) fn render_theme_selector() -> Html {
                     })}
             </div>
     }
-}
-
-fn render_team(
-    team: &crate::runtime::LaneRow,
-    standings: &[watchband::Standing],
-    sender: &SenderHandle,
-    can_configure: bool,
-    topology_revision: u64,
-) -> Html {
-    let target = team.lane;
-    let current = team
-        .members
-        .iter()
-        .map(|member| member.lane)
-        .collect::<Vec<_>>();
-    let can_drop = can_configure && current.len() < wire::head::TEAM_MEMBER_LIMIT;
-    let ondragover = allow_drop(can_drop);
-    let ondrop = drop_into_team(sender.clone(), target, current, can_drop, topology_revision);
-    html! {
-        <article
-            class="app-team"
-            data-team={team.lane.to_string()}
-            data-topology-drop={team.lane.to_string()}
-            data-drop-enabled={can_drop.to_string()}
-            title={(!can_drop && can_configure).then_some("Teams are limited to six agents")}
-            {ondragover}
-            {ondrop}
-        >
-            <header>
-                <div>
-                    <strong>{super::team_name(team)}</strong>
-                    <span>{super::topology_count(team.members.len(), "agent", "agents")}</span>
-                </div>
-            </header>
-            <div class="app-team-members">
-                {for team.members.iter().filter_map(|member| {
-                    let standing = standings.iter().find(|standing| standing.lane == member.lane)?;
-                    Some(render_member(
-                        member,
-                        standing,
-                        team.lane,
-                        true,
-                        sender,
-                        can_configure,
-                        topology_revision,
-                    ))
-                })}
-            </div>
-        </article>
-    }
-}
-
-fn render_member(
-    member: &crate::runtime::LaneMember,
-    standing: &watchband::Standing,
-    source: CanonicalUuid,
-    linked: bool,
-    sender: &SenderHandle,
-    can_configure: bool,
-    topology_revision: u64,
-) -> Html {
-    let lane = member.lane;
-    let ondragstart = begin_drag(lane, can_configure);
-    let onpointerdown = touch_drag_start(lane, can_configure, topology_revision);
-    let onpointermove = touch_drag_movement(lane, source, can_configure, topology_revision);
-    let onpointerup = touch_drag_finish(
-        lane,
-        source,
-        sender.clone(),
-        can_configure,
-        topology_revision,
-    );
-    let cancel = touch_drag_cancel(lane);
-    html! {
-        <div
-            class="app-topology-member"
-            draggable={can_configure.to_string()}
-            data-team-member={lane.to_string()}
-            data-source-team={source.to_string()}
-            {ondragstart}
-            {onpointerdown}
-            {onpointermove}
-            {onpointerup}
-            onpointercancel={cancel.clone()}
-            onlostpointercapture={cancel}
-            onclick={swallow_drag_click()}
-        >
-            {super::render_topology_agent(member, standing, linked)}
-        </div>
-    }
-}
-
-fn render_new_team_drop(
-    target: CanonicalUuid,
-    sender: &SenderHandle,
-    can_configure: bool,
-    topology_revision: u64,
-) -> Html {
-    let ondragover = allow_drop(can_configure);
-    let ondrop = drop_into_new_team(sender.clone(), target, can_configure, topology_revision);
-    html! {
-        <section
-            class="app-sheet-section app-team-drop"
-            data-topology-drop={target.to_string()}
-            data-drop-enabled={can_configure.to_string()}
-            {ondragover}
-            {ondrop}
-        >
-            <header><h2>{"New Team"}</h2><span>{"drop agent to create"}</span></header>
-            <div class="app-drop-target" data-team-drop="new">{"Drop agent here"}</div>
-        </section>
-    }
-}
-
-struct SoloDropRender<'a> {
-    standings: &'a [watchband::Standing],
-    sender: &'a SenderHandle,
-    can_configure: bool,
-    topology_revision: u64,
-    /// What the empty member list says: none unassigned, or what is awaited.
-    empty: &'a str,
-}
-
-fn render_solo_members_drop(
-    members: &[&crate::runtime::LaneMember],
-    current: Vec<CanonicalUuid>,
-    render: &SoloDropRender<'_>,
-) -> Html {
-    let ondragover = allow_drop(render.can_configure);
-    let ondrop = drop_into_solo_team(
-        render.sender.clone(),
-        current,
-        render.can_configure,
-        render.topology_revision,
-    );
-    html! {
-        <section
-            class="app-sheet-section app-unassigned"
-            data-topology-drop={UNASSIGNED_DROP}
-            data-drop-enabled={render.can_configure.to_string()}
-            {ondragover}
-            {ondrop}
-        >
-            <header>
-                <h2>{"Unassigned Agents"}</h2>
-                <span>{"drop to unassign"}</span>
-            </header>
-            <div class="app-team-members" data-team-drop="unassigned">
-                if members.is_empty() {
-                    <p class="app-empty-state">{render.empty}</p>
-                } else {
-                    {for members.iter().filter_map(|member| {
-                        let standing = render.standings.iter().find(|standing| standing.lane == member.lane)?;
-                        Some(render_member(
-                            member,
-                            standing,
-                            member.lane,
-                            false,
-                            render.sender,
-                            render.can_configure,
-                            render.topology_revision,
-                        ))
-                    })}
-                }
-            </div>
-        </section>
-    }
-}
-
-fn begin_drag(lane: CanonicalUuid, enabled: bool) -> Callback<DragEvent> {
-    Callback::from(move |event: DragEvent| {
-        if !enabled {
-            event.prevent_default();
-            return;
-        }
-        let Some(transfer) = event.data_transfer() else {
-            return;
-        };
-        if transfer.set_data(MEMBER_MIME, &lane.to_string()).is_ok() {
-            transfer.set_effect_allowed("move");
-        }
-    })
-}
-
-fn allow_drop(enabled: bool) -> Callback<DragEvent> {
-    Callback::from(move |event: DragEvent| {
-        if enabled {
-            event.prevent_default();
-            if let Some(transfer) = event.data_transfer() {
-                transfer.set_drop_effect("move");
-            }
-        }
-    })
-}
-
-fn dragged_member(event: &DragEvent) -> Option<CanonicalUuid> {
-    event
-        .data_transfer()?
-        .get_data(MEMBER_MIME)
-        .ok()?
-        .parse()
-        .ok()
-}
-
-fn drop_into_team(
-    sender: SenderHandle,
-    target: CanonicalUuid,
-    current: Vec<CanonicalUuid>,
-    enabled: bool,
-    topology_revision: u64,
-) -> Callback<DragEvent> {
-    Callback::from(move |event: DragEvent| {
-        event.prevent_default();
-        let Some(member) = dragged_member(&event) else {
-            return;
-        };
-        if enabled
-            && !current.contains(&member)
-            && send_member(&sender, target, member, topology_revision)
-        {
-            event.stop_propagation();
-        }
-    })
-}
-
-fn drop_into_new_team(
-    sender: SenderHandle,
-    target: CanonicalUuid,
-    enabled: bool,
-    topology_revision: u64,
-) -> Callback<DragEvent> {
-    Callback::from(move |event: DragEvent| {
-        event.prevent_default();
-        let Some(member) = dragged_member(&event) else {
-            return;
-        };
-        if enabled && send_member(&sender, target, member, topology_revision) {
-            event.stop_propagation();
-        }
-    })
-}
-
-fn drop_into_solo_team(
-    sender: SenderHandle,
-    current: Vec<CanonicalUuid>,
-    enabled: bool,
-    topology_revision: u64,
-) -> Callback<DragEvent> {
-    Callback::from(move |event: DragEvent| {
-        event.prevent_default();
-        let Some(member) = dragged_member(&event) else {
-            return;
-        };
-        if enabled
-            && !current.contains(&member)
-            && send_member(&sender, member, member, topology_revision)
-        {
-            event.stop_propagation();
-        }
-    })
-}
-
-/// Begin a finger or pen lift from a slot's name; a tap still opens the slot.
-fn touch_drag_start(
-    lane: CanonicalUuid,
-    enabled: bool,
-    topology_revision: u64,
-) -> Callback<PointerEvent> {
-    Callback::from(move |event: PointerEvent| {
-        SWALLOW_CLICK.set(false);
-        if event.pointer_type() == "mouse" || !event.is_primary() || !on_touch_handle(&event) {
-            return;
-        }
-        // A primary contact going down ends any lift whose release never arrived.
-        if TOUCH_DRAG.with_borrow_mut(watchband::PointerDragSession::clear) {
-            touch_lift::clear();
-        }
-        TOUCH_DRAG.with_borrow_mut(|session| {
-            session.begin(
-                enabled,
-                lane,
-                event.pointer_id(),
-                event.client_x(),
-                event.client_y(),
-                topology_revision,
-            )
-        });
-    })
-}
-
-fn on_touch_handle(event: &PointerEvent) -> bool {
-    event
-        .target()
-        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .and_then(|element| {
-            element
-                .closest(".app-spice-topology-agent > header > strong")
-                .ok()
-                .flatten()
-        })
-        .is_some()
-}
-
-fn touch_drag_movement(
-    lane: CanonicalUuid,
-    source: CanonicalUuid,
-    enabled: bool,
-    topology_revision: u64,
-) -> Callback<PointerEvent> {
-    Callback::from(move |event: PointerEvent| {
-        if TOUCH_DRAG.with_borrow_mut(|session| session.reconcile(enabled, Some(topology_revision)))
-        {
-            touch_lift::clear();
-            return;
-        }
-        let Some(lift) = TOUCH_DRAG.with_borrow_mut(|session| {
-            let active = session.movement(
-                &lane,
-                event.pointer_id(),
-                event.client_x(),
-                event.client_y(),
-                topology_revision,
-            )?;
-            let lift = !active.dragging;
-            active.dragging = true;
-            Some(lift)
-        }) else {
-            return;
-        };
-        let Some(handle) = event
-            .target()
-            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        else {
-            return;
-        };
-        if lift
-            && (handle.set_pointer_capture(event.pointer_id()).is_err()
-                || touch_lift::begin(
-                    &handle,
-                    ".app-topology-member",
-                    "data-team-member",
-                    event.client_x(),
-                    event.client_y(),
-                )
-                .is_none())
-        {
-            TOUCH_DRAG.with_borrow_mut(watchband::PointerDragSession::clear);
-            touch_lift::clear();
-            return;
-        }
-        event.prevent_default();
-        touch_lift::follow(&handle, event.client_x(), event.client_y());
-        touch_lift::preview(
-            touch_drop_at(lane, source, event.client_x(), event.client_y())
-                .map(|(_, target)| target)
-                .as_ref(),
-        );
-    })
-}
-
-fn touch_drag_finish(
-    lane: CanonicalUuid,
-    source: CanonicalUuid,
-    sender: SenderHandle,
-    enabled: bool,
-    topology_revision: u64,
-) -> Callback<PointerEvent> {
-    Callback::from(move |event: PointerEvent| {
-        let finished = TOUCH_DRAG.with_borrow_mut(|session| {
-            if session.reconcile(enabled, Some(topology_revision)) {
-                return None;
-            }
-            session.finish(&lane, event.pointer_id(), topology_revision)
-        });
-        let Some(active) = finished.filter(|active| active.dragging) else {
-            touch_lift::clear();
-            return;
-        };
-        let team =
-            touch_drop_at(lane, source, event.client_x(), event.client_y()).map(|(team, _)| team);
-        touch_lift::clear();
-        SWALLOW_CLICK.set(true);
-        event.prevent_default();
-        if let Some(team) = team {
-            send_member(&sender, team, active.source, topology_revision);
-        }
-    })
-}
-
-fn touch_drag_cancel(lane: CanonicalUuid) -> Callback<PointerEvent> {
-    Callback::from(move |event: PointerEvent| {
-        if TOUCH_DRAG.with_borrow_mut(|session| session.cancel(&lane, event.pointer_id())) {
-            touch_lift::clear();
-        }
-    })
-}
-
-fn swallow_drag_click() -> Callback<MouseEvent> {
-    Callback::from(|event: MouseEvent| {
-        if SWALLOW_CLICK.replace(false) {
-            event.prevent_default();
-            event.stop_propagation();
-        }
-    })
-}
-
-/// The team a lifted member would join if released here, beside the target
-/// element that states it. Releasing where the member already is states nothing.
-fn touch_drop_at(
-    lane: CanonicalUuid,
-    source: CanonicalUuid,
-    client_x: i32,
-    client_y: i32,
-) -> Option<(CanonicalUuid, web_sys::Element)> {
-    let target = touch_lift::target_at("data-topology-drop", client_x, client_y)?;
-    let value = target.get_attribute("data-topology-drop")?;
-    let team = if value == UNASSIGNED_DROP {
-        lane
-    } else {
-        value.parse().ok()?
-    };
-    (team != source).then_some((team, target))
-}
-
-fn send_member(
-    sender: &SenderHandle,
-    team: CanonicalUuid,
-    member: CanonicalUuid,
-    topology_revision: u64,
-) -> bool {
-    admit_action(
-        sender,
-        ClientAction::ConfigureTeam {
-            topology_revision,
-            team,
-            member: Some(member),
-            life: None,
-            fast_mode: None,
-        },
-    )
 }

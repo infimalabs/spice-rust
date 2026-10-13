@@ -799,19 +799,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    so a roster reads as a stack of equal rows. */
 .app-spice-topology,
 .room-group-section { --app-topology-slot-block: 50px; }
-.app-topology-member { min-width: 0; }
-.app-topology-member[draggable="true"] { cursor: grab; }
-.app-topology-member[draggable="true"]:active { cursor: grabbing; }
-/* A finger or pen drags a configurable slot by its name; the rest of the slot
-   still scrolls the sheet and opens Chat. */
-.app-topology-member[draggable="true"] .app-spice-topology-agent > header > strong {
-  touch-action: none;
-  -webkit-touch-callout: none;
-  user-select: none;
+/* A tile's name is its finger or pen handle; it reaches past the line box so a
+   thumb finds it. */
+.app-roster-member[draggable="true"] strong[data-roster-handle] {
   padding-block: 8px;
   margin-block: -8px;
 }
-.app-topology-member[data-topology-drag-source] { opacity: .38; }
 .app-topology-drag-ghost {
   position: fixed;
   z-index: 60;
@@ -1058,16 +1051,6 @@ tbody tr:last-child td { border-bottom: 0; }
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-/* Whole-team actions ported from the predecessor lane menu. */
-.app-team > header {
-  align-items: center;
-  justify-content: space-between;
-}
-.app-team > header > div { display: grid; min-width: 0; gap: 2px; }
-.app-spice-sidebar-content .app-team-member {
-  grid-template-columns: 28px minmax(0, 1fr) 16px;
-}
-
 /* Keep team overlays inside their own stacking context, below global chrome. */
 .team-surface {
   position: relative;

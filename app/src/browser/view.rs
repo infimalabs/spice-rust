@@ -395,7 +395,7 @@ fn render_topology_agent(
         >
             <header>
                 {render_member_presence(status)}
-                <strong>{standing.label.clone()}</strong>
+                <strong data-roster-handle="">{standing.label.clone()}</strong>
                 if standing.label != branch {
                     <span class="app-spice-topology-agent-worktree" title={standing.worktree.clone()}>{branch.to_owned()}</span>
                 }

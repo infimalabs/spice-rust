@@ -2,31 +2,49 @@
 
 use super::*;
 
-pub(super) async fn send_group_move(
+pub(super) async fn send_group_change(
     principal: &Principal,
     writer: &mut SocketWriter,
     actions: &ActionQueue,
-    request: &wire::rooms::WorkingGroupMove,
+    change: &crate::client_action::GroupChange,
     revision: u64,
     respond: &crate::client_action::GroupResponse,
 ) -> Result<CanonicalUuid, String> {
-    send_typed(
-        principal,
-        writer,
-        actions,
-        PendingKind::WorkingGroup {
-            respond: respond.clone(),
-        },
-        CommandKind::WorkingGroupMove,
-        vec![
-            Witness::Group { revision },
-            Witness::Existence {
-                task: request.design.clone(),
-            },
-        ],
-        request.clone(),
-    )
-    .await
+    let pending = PendingKind::WorkingGroup {
+        respond: respond.clone(),
+    };
+    let partition = Witness::Group { revision };
+    match change {
+        crate::client_action::GroupChange::Move(request) => {
+            send_typed(
+                principal,
+                writer,
+                actions,
+                pending,
+                CommandKind::WorkingGroupMove,
+                vec![
+                    partition,
+                    Witness::Existence {
+                        task: request.design.clone(),
+                    },
+                ],
+                request.clone(),
+            )
+            .await
+        }
+        crate::client_action::GroupChange::Arrange(request) => {
+            send_typed(
+                principal,
+                writer,
+                actions,
+                pending,
+                CommandKind::WorkingGroupArrange,
+                vec![partition],
+                request.clone(),
+            )
+            .await
+        }
+    }
 }
 
 pub(super) async fn send_room_post(

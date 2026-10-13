@@ -429,47 +429,6 @@ pub fn arrangement(
     (arranged != teams).then_some(arranged)
 }
 
-/// Move one member of a multi-agent team into one fresh team.
-///
-/// The source team keeps its identity and the relative order of every sibling.
-/// The fresh team stands immediately after it, matching the operator's local
-/// action without disturbing any unrelated team.
-#[must_use]
-pub fn split_member(
-    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
-    source: CanonicalUuid,
-    member: CanonicalUuid,
-    new_team: CanonicalUuid,
-) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
-    if source == new_team || teams.iter().any(|(team, _)| *team == new_team) {
-        return None;
-    }
-    let mut arranged = teams.to_vec();
-    let source_at = arranged.iter().position(|(team, _)| *team == source)?;
-    if arranged[source_at].1.len() < 2 {
-        return None;
-    }
-    let member_at = arranged[source_at]
-        .1
-        .iter()
-        .position(|lane| *lane == member)?;
-    let member = arranged[source_at].1.remove(member_at);
-    arranged.insert(source_at + 1, (new_team, vec![member]));
-    Some(arranged)
-}
-
-/// Whether one member can leave every team while keeping its lane seat.
-#[must_use]
-pub fn can_leave_all_teams(
-    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
-    source: CanonicalUuid,
-    member: CanonicalUuid,
-) -> bool {
-    teams.iter().any(|(team, members)| {
-        *team == source && members.contains(&member) && (source != member || members.len() > 1)
-    })
-}
-
 /// Join the lane table, the inbox and the board into one row per lane.
 ///
 /// Lane order is the resident's; this never sorts. No clock reaches this
