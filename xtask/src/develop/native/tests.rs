@@ -94,6 +94,67 @@ fn source_stamps_read_no_history_past_the_first_earlier_ancestor() {
 }
 
 #[test]
+fn source_stamp_stops_at_a_declared_shallow_boundary() {
+    let fixture = Fixture::new("source-stamp-shallow");
+    let repository = gix::open_opts(&fixture.0, gix::open::Options::isolated())
+        .expect("open in-process scratch repository");
+    let tree = repository
+        .empty_tree()
+        .edit()
+        .expect("edit empty tree")
+        .write()
+        .expect("write empty tree")
+        .detach();
+    let signature = |time| gix::actor::SignatureRef {
+        name: "Source Stamp Fixture".into(),
+        email: "source-stamp@example.invalid".into(),
+        time,
+    };
+    let root = repository
+        .commit_as(
+            signature("1790000000 +0000"),
+            signature("1790000000 +0000"),
+            "refs/heads/main",
+            "root",
+            tree,
+            None::<gix::ObjectId>,
+        )
+        .expect("write root commit")
+        .detach();
+    let head = repository
+        .commit_as(
+            signature("1790000001 +0000"),
+            signature("1790000001 +0000"),
+            "refs/heads/main",
+            "shallow head",
+            tree,
+            Some(root),
+        )
+        .expect("write head commit")
+        .detach();
+    drop(repository);
+
+    let root_hex = root.to_string();
+    fs::remove_file(
+        fixture
+            .0
+            .join(".git/objects")
+            .join(&root_hex[..2])
+            .join(&root_hex[2..]),
+    )
+    .expect("remove the parent object hidden beyond the shallow boundary");
+    fs::write(fixture.0.join(".git/shallow"), format!("{head}\n"))
+        .expect("declare the head as the shallow boundary");
+
+    assert_eq!(
+        source_stamp(&fixture.0)
+            .expect("a declared shallow boundary is a complete local history")
+            .micros(),
+        1_790_000_001_000_000
+    );
+}
+
+#[test]
 fn no_resident_refresh_does_not_inspect_journal_schema() {
     let fixture = Fixture::new("no-resident-schema");
     let repository = fixture.repository();

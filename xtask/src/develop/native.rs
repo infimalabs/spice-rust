@@ -363,16 +363,22 @@ fn source_stamp(root: &Path) -> Result<TaskStamp, RefreshError> {
             RefreshError::SourceStamp(format!("HEAD does not name a commit: {error}"))
         })?
         .detach();
-    stamp_from_committer_seconds(first_parent_seconds(&repository, head))
+    let shallow = repository.shallow_commits().map_err(|error| {
+        RefreshError::SourceStamp(format!("shallow boundaries could not be read: {error}"))
+    })?;
+    stamp_from_committer_seconds(first_parent_seconds(&repository, head, shallow.as_ref()))
         .map_err(RefreshError::SourceStamp)
 }
 
 /// Committer seconds of `head` and each first-parent ancestor, read lazily so
-/// a caller that stops early never visits the rest of history.
-fn first_parent_seconds(
-    repository: &gix::Repository,
+/// a caller that stops early never visits the rest of history. A shallow
+/// boundary is a complete local history even though its commit names a parent
+/// object that is intentionally absent.
+fn first_parent_seconds<'repository>(
+    repository: &'repository gix::Repository,
     head: gix::ObjectId,
-) -> impl Iterator<Item = Result<i64, String>> + '_ {
+    shallow: Option<&'repository gix::shallow::Commits>,
+) -> impl Iterator<Item = Result<i64, String>> + 'repository {
     let mut next = Some(head);
     std::iter::from_fn(move || {
         let id = next.take()?;
@@ -381,7 +387,9 @@ fn first_parent_seconds(
                 .find_commit(id)
                 .map_err(|error| format!("commit {id} could not be read: {error}"))
                 .and_then(|commit| {
-                    next = commit.parent_ids().next().map(gix::Id::detach);
+                    if !shallow.is_some_and(|commits| commits.binary_search(&id).is_ok()) {
+                        next = commit.parent_ids().next().map(gix::Id::detach);
+                    }
                     commit
                         .time()
                         .map(|time| time.seconds)

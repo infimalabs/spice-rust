@@ -106,9 +106,12 @@ Owners: [`app/src/runtime/publication.rs`](../../app/src/runtime/publication.rs)
 
 `spice --version`, `spice version`, and the app menu report the tracked version
 from `dist/VERSION`; an installed pre-release extends it with a source stamp
-that orders successive builds of tied commits. The version never carries the
-executable digest: the native-binary identity is the running executable's
-complete digest, so identical bytes keep one identity without a Git checkout.
+that orders successive builds of tied commits. The stamp follows the locally
+available first-parent chain, treating a declared shallow boundary as the end
+of that history while refusing an unexpectedly missing commit. The version
+never carries the executable digest: the native-binary identity is the running
+executable's complete digest, so identical bytes keep one identity without a
+Git checkout.
 
 Owners: [`spice/src/version.rs`](../../spice/src/version.rs) and
 [`xtask/src/develop/native.rs`](../../xtask/src/develop/native.rs).
