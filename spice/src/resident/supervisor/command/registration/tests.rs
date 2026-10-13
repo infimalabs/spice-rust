@@ -148,6 +148,56 @@ fn a_resumed_seat_is_told_the_authority_current_at_delivery_once() {
 }
 
 #[test]
+fn notices_queued_before_a_resumed_first_turn_follow_its_current_prompt_once() {
+    let authority = Authority::default();
+    authority.set("held claim: TASK-done in phase review");
+    let driver = authority.driver();
+    driver
+        .open(OPENING, Some(FirstTurn::Resumed(NEUTRAL.to_owned())))
+        .expect("opening writes");
+    driver
+        .background("task:TASK-done", "assigned")
+        .expect("a held notice queues");
+    driver
+        .background("task:TASK-done", "assigned")
+        .expect("an unchanged notice queues");
+    driver
+        .background("narration", "withdrawn")
+        .expect("a held notice queues");
+    driver
+        .background("narration", "")
+        .expect("a held notice withdraws");
+    assert_eq!(frames(&driver).len(), 1, "notices wait for the first turn");
+
+    // The notice's turn completed the work before the registration answer.
+    authority.set("held claim: none");
+    answer(&driver, &registration(false));
+    driver
+        .background("renewal", "later")
+        .expect("a later notice writes");
+    let frames = frames(&driver);
+    let ids: Vec<&str> = frames
+        .iter()
+        .filter_map(|frame| frame["id"].as_str())
+        .collect();
+    assert_eq!(ids[1], vendor::omp::PROMPT_REQUEST_ID, "{ids:?}");
+    let prompt = frames[1]["message"].as_str().expect("a prompt message");
+    assert!(prompt.contains("held claim: none"), "{prompt}");
+    assert!(!prompt.contains("TASK-done"), "{prompt}");
+    let asides: Vec<&str> = frames[2..]
+        .iter()
+        .map(|frame| frame["message"].as_str().expect("an aside message"))
+        .collect();
+    assert_eq!(asides.len(), 2, "{asides:?}");
+    assert!(
+        asides[0].contains(r#""purpose":"task:TASK-done""#),
+        "{asides:?}"
+    );
+    assert!(asides[0].contains(r#""message":"assigned""#), "{asides:?}");
+    assert!(asides[1].contains(r#""purpose":"renewal""#), "{asides:?}");
+}
+
+#[test]
 fn launches_that_never_deliver_and_fresh_seats_read_no_resume_authority() {
     let authority = Authority::default();
     for speculative in [
