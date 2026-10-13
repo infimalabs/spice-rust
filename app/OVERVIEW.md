@@ -42,11 +42,14 @@ so it never covers the label, and same-rank nodes keep room between them for
 those badges. A completed task wears a muted **Done** badge, quieter than
 **Blocked**; a withdrawn one wears **Deleted**.
 
-The graph region holds one fixed footprint whatever the diagram's shape. The
-Lineage, Reviews, and Lifecycle lenses list their evidence and any truncation
-in one fixed region below the graph; the Dependency lens lists nothing, since
-its graph already shows every task, so only a truncated read adds its frontier
-there. A first detail read's placeholder holds a full sheet height. A status
+The graph region holds one fixed footprint whatever the diagram's shape. A
+truncated typed read states how many relationships lie outside it in the map
+controls beside a More nodes control that raises the node budget up to the
+repository bound; it never lists the omitted edges. The Dependency lens lists
+nothing below the graph, so the selected task details follow it directly; the
+Lineage, Reviews, and Lifecycle lenses list only the evidence the graph does
+not draw as a task node, in one fixed region below the graph. A first detail
+read's placeholder holds a full sheet height. A status
 change relabels in place: a trust approval in progress relabels its own
 button. The general rule is [A changing region holds its largest
 footprint](../docs/product/invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint);
