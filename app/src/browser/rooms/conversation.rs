@@ -26,28 +26,31 @@ use crate::runtime::{
     RoomEventKind,
 };
 
-/// What a card's controls act through.
+/// What a card reads, and what its controls act through. A card without
+/// controls renders its statuses and nothing that writes.
 #[derive(Clone, Copy)]
 struct Act<'a> {
     runtime: &'a AppRuntime,
-    report: &'a Callback<String>,
-    sender: &'a SenderHandle,
+    controls: Option<CardControls<'a>>,
+}
+
+/// Where a card's controls send and report their outcomes.
+#[derive(Clone, Copy)]
+pub(super) struct CardControls<'a> {
+    pub(super) report: &'a Callback<String>,
+    pub(super) sender: &'a SenderHandle,
 }
 
 /// One room publication card, or `None` for an event outside this family.
-/// Its controls' outcomes and refusals go to `report`.
+/// Its controls' outcomes and refusals go to their `report`; without
+/// controls the card only reads.
 pub(super) fn render_card(
     runtime: &AppRuntime,
-    report: &Callback<String>,
-    sender: &SenderHandle,
+    controls: Option<CardControls<'_>>,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
 ) -> Option<Html> {
-    let act = Act {
-        runtime,
-        report,
-        sender,
-    };
+    let act = Act { runtime, controls };
     let projection = runtime.room_projection().conversation();
     let (author, echoed, conversation, packet) = match &event.kind {
         RoomEventKind::Messaged {
@@ -165,8 +168,7 @@ pub(super) fn render_inbox(
 ) -> (usize, Html) {
     let act = Act {
         runtime,
-        report,
-        sender,
+        controls: Some(CardControls { report, sender }),
     };
     let projection = runtime.room_projection().conversation();
     let open = projection.inbox_items();
@@ -453,9 +455,13 @@ fn item_status(act: Act<'_>, key: &RoomReceiptRef, item: &OperatorItem, destinat
         RoomReceiptState::Expired { at } => ("expired", format!("receipt expired {at}")),
         RoomReceiptState::Cancelled { .. } => ("cancelled", "cancelled".to_owned()),
     };
-    let control = match &item.state {
-        RoomReceiptState::Pending { .. } => dispose_controls(act, key),
-        RoomReceiptState::Expired { .. } => recover_control(act, key),
+    let control = match (&item.state, act.controls) {
+        (RoomReceiptState::Pending { .. }, Some(controls)) => {
+            dispose_controls(act.runtime, controls, key)
+        }
+        (RoomReceiptState::Expired { .. }, Some(controls)) => {
+            recover_control(act.runtime, controls, key)
+        }
         _ => Html::default(),
     };
     let text = format!("{destination}: {label}");
@@ -522,10 +528,11 @@ fn question_result(
         QuestionResultState::Cancelled { .. } => "cancelled".to_owned(),
         QuestionResultState::TimedOut {} => "timed out".to_owned(),
     };
-    let controls = if question.state.is_terminal() {
-        Html::default()
-    } else {
-        result_controls(act, result, question)
+    let controls = match act.controls {
+        Some(controls) if !question.state.is_terminal() => {
+            result_controls(act.runtime, controls, result, question)
+        }
+        _ => Html::default(),
     };
     html! {
         <div class="room-flow-result" data-result-state={state}>
@@ -535,11 +542,15 @@ fn question_result(
     }
 }
 
-fn dispose_controls(act: Act<'_>, key: &RoomReceiptRef) -> Html {
+fn dispose_controls(
+    runtime: &AppRuntime,
+    controls: CardControls<'_>,
+    key: &RoomReceiptRef,
+) -> Html {
     let clause = NodeRef::default();
-    let enabled = act.runtime.offers(CommandKind::RoomControl);
+    let enabled = runtime.offers(CommandKind::RoomControl);
     let dispose = |disposition| {
-        let act = Owned::from(act);
+        let act = Owned::from(controls);
         let clause = clause.clone();
         let key = key.clone();
         move |event: &Event| {
@@ -567,9 +578,9 @@ fn dispose_controls(act: Act<'_>, key: &RoomReceiptRef) -> Html {
     }
 }
 
-fn recover_control(act: Act<'_>, key: &RoomReceiptRef) -> Html {
-    let enabled = act.runtime.offers(CommandKind::RoomControl);
-    let act = Owned::from(act);
+fn recover_control(runtime: &AppRuntime, controls: CardControls<'_>, key: &RoomReceiptRef) -> Html {
+    let enabled = runtime.offers(CommandKind::RoomControl);
+    let act = Owned::from(controls);
     let key = key.clone();
     let onclick = Callback::from(move |event: MouseEvent| {
         act.send(
@@ -584,15 +595,20 @@ fn recover_control(act: Act<'_>, key: &RoomReceiptRef) -> Html {
 
 /// The operator answers or declines what it was asked, and may close a lane
 /// party's question only explicitly on that party's behalf.
-fn result_controls(act: Act<'_>, result: &QuestionResultRef, question: &QuestionResult) -> Html {
+fn result_controls(
+    runtime: &AppRuntime,
+    controls: CardControls<'_>,
+    result: &QuestionResultRef,
+    question: &QuestionResult,
+) -> Html {
     let operator = RoomDestination::Operator {};
     let respondent = *question.record.respondent() == operator;
     let requester = *question.record.requester() == operator;
-    let answerable = respondent && act.runtime.offers(CommandKind::RoomControl);
-    let closable = act.runtime.offers(CommandKind::RoomClose);
+    let answerable = respondent && runtime.offers(CommandKind::RoomControl);
+    let closable = runtime.offers(CommandKind::RoomClose);
     let text = NodeRef::default();
     let close = |closure, override_party| {
-        let act = Owned::from(act);
+        let act = Owned::from(controls);
         let text = text.clone();
         let result = result.clone();
         Callback::from(move |event: MouseEvent| {
@@ -610,7 +626,7 @@ fn result_controls(act: Act<'_>, result: &QuestionResultRef, question: &Question
     let decline = close(QuestionClosure::Declined, !respondent);
     let cancel = close(QuestionClosure::Cancelled, !requester);
     let onsubmit = {
-        let act = Owned::from(act);
+        let act = Owned::from(controls);
         let text = text.clone();
         let result = result.clone();
         Callback::from(move |event: SubmitEvent| {
@@ -638,7 +654,7 @@ fn result_controls(act: Act<'_>, result: &QuestionResultRef, question: &Question
     let prompt = if respondent {
         format!(
             "Answer to {}, or a decline clause",
-            party(act.runtime, question.record.requester())
+            party(runtime, question.record.requester())
         )
     } else {
         "Clause".to_owned()
@@ -667,11 +683,11 @@ struct Owned {
     sender: SenderHandle,
 }
 
-impl From<Act<'_>> for Owned {
-    fn from(act: Act<'_>) -> Self {
+impl From<CardControls<'_>> for Owned {
+    fn from(controls: CardControls<'_>) -> Self {
         Self {
-            report: act.report.clone(),
-            sender: act.sender.clone(),
+            report: controls.report.clone(),
+            sender: controls.sender.clone(),
         }
     }
 }

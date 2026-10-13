@@ -6,7 +6,9 @@ scroll state. Chat is the only durable location, `#/chat`, extended by
 `/card/{target}` for a retained card; any other location normalizes to Chat
 with the unavailable-location notice. Work, task, and direction controls are
 browser-local overview actions that create no history entry and claim no
-restorable URL.
+restorable URL. A Design permalink, `#/chat/design/{stamp}`, is an arrival
+rather than a location: it opens [that Design's read view](#reading-a-design)
+and replaces itself with `#/chat`.
 
 Wide, narrow, short, empty, one-member, and multi-member consoles keep a usable
 header, composer, and stream without a nested vertical scroller.
@@ -56,6 +58,20 @@ per lane currently claiming an open task associated with any of its designs.
 That lane list is derived from board claims on every read; the group stores
 and grants none of it.
 
+## Reading a Design
+
+Any Design, open, completed, or closed, opens for reading in its task
+overview: the **Read** action on each design tile in the Spice menu's Working
+groups catalog, a Design-intent task's detail, and a Design permalink all open
+the same view. Below the task's state, its **Design room** section shows the
+room's standing, its preparation authority records, and its full room history
+newest first, resolved through the Design's birth stamp under its current
+handle, with the permalink beside the heading. The view holds no composer,
+receipt, answer, or coordination control. Opening or reading it moves no group,
+joins, acknowledges, authorizes, and wakes nothing, and commits no journal
+fact; acting on a room stays with the group console and the `spice room`
+commands.
+
 ## Preparation authority
 
 A room for a controlling task shows its retained candidate, critique, review
@@ -92,8 +108,8 @@ The native command surface is `spice room status HANDLE`,
 
 ## Room standing
 
-Each design's menu opens with the room's standing, derived from the room
-snapshot, its live facts, the board, and lane topology on every render:
+Each design's menu and read view open with the room's standing, derived from
+the room snapshot, its live facts, the board, and lane topology on every render:
 
 - **Next action**: the one next useful action that authority supports.
 - **Latest coordination**: its request and that request's disposition. For a
@@ -116,9 +132,9 @@ snapshot, its live facts, the board, and lane topology on every render:
   source coverage, and operator verdict.
 
 Agreement, silence, message count, elapsed time, ACK, and ANS never read as
-progress or approval. The section only renders inside the explicitly opened
-menu: a status, relevance, or automation update changes its text in place and
-never mounts a room, moves a console, or wakes a lane.
+progress or approval. The section only renders inside an explicitly opened menu
+or read view: a status, relevance, or automation update changes its text in
+place and never mounts a room, moves a console, or wakes a lane.
 
 ## Toolbar
 

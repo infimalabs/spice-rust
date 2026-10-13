@@ -403,6 +403,11 @@ fn room_card(
         }
         _ => None,
     };
+    let report = toast(render);
+    let controls = super::conversation::CardControls {
+        report: &report,
+        sender: render.sender,
+    };
     let body = html! {
         <>
             <div class="message-controls" role="group" aria-label={format!("Publication controls for {}", channel.label)}>
@@ -429,7 +434,7 @@ fn room_card(
                     }
                 </div>
             </div>
-            {render_event(render.runtime, &toast(render), render.sender, publication, event)}
+            {render_event(render.runtime, Some(controls), publication, event)}
         </>
     };
     ActivityCard::Room {

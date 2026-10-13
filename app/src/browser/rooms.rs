@@ -1,5 +1,5 @@
-//! Working-group catalog, browser-local working-group consoles, and the
-//! operator's personal inbox.
+//! Working-group catalog, browser-local working-group consoles, each Design's
+//! read view, and the operator's personal inbox.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -25,8 +25,10 @@ use crate::roster::{Change, Destination};
 use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 
 mod console;
+mod reading;
 mod standing;
 pub(super) use console::{GroupRender, render_group_surfaces};
+pub(super) use reading::render_design_room;
 
 const STORAGE: &str = "spice:room-views:v2";
 
@@ -176,6 +178,7 @@ pub(super) fn render_catalog(
     runtime: Option<&AppRuntime>,
     controls: &Controls,
     sender: &SenderHandle,
+    read: &Callback<TaskStamp>,
 ) -> Html {
     let Some(runtime) = runtime else {
         return section(
@@ -196,7 +199,7 @@ pub(super) fn render_catalog(
                 if let Some(notice) = (*controls.notice).clone() {
                     <p class="room-notice" role="status">{notice}</p>
                 }
-                {render_roster(runtime, controls, sender)}
+                {render_roster(runtime, controls, sender, read)}
             </>
         },
     };
@@ -279,7 +282,13 @@ fn section(title: &'static str, body: Html) -> Html {
 
 /// The working-group roster: each group a card named for its lead design with
 /// the console it opens, then New working group and the ungrouped Designs.
-fn render_roster(runtime: &AppRuntime, controls: &Controls, sender: &SenderHandle) -> Html {
+/// Every design tile also opens its read view through `read`.
+fn render_roster(
+    runtime: &AppRuntime,
+    controls: &Controls,
+    sender: &SenderHandle,
+    read: &Callback<TaskStamp>,
+) -> Html {
     let partition = runtime.room_projection().partition();
     let tasks = runtime
         .board()
@@ -304,7 +313,7 @@ fn render_roster(runtime: &AppRuntime, controls: &Controls, sender: &SenderHandl
             </>
         }
     };
-    let member = |design: &TaskStamp, _grouped: bool| render_design(runtime, tasks, design);
+    let member = |design: &TaskStamp, _grouped: bool| render_design(runtime, tasks, design, read);
     let revision = partition.revision;
     let submit = {
         let (sender, controls) = (sender.clone(), controls.clone());
@@ -324,31 +333,35 @@ fn render_roster(runtime: &AppRuntime, controls: &Controls, sender: &SenderHandl
 }
 
 /// One design's tile content: its handle, standing and title while the board
-/// carries its task, else its anchor label.
+/// carries its task, else its anchor label, and the action reading its room.
 fn render_design(
     runtime: &AppRuntime,
     tasks: &[wire::intent::BoardTask],
     design: &TaskStamp,
+    read: &Callback<TaskStamp>,
 ) -> Html {
-    match crate::roster::designs(tasks).find(|task| task.statement.body.born == *design) {
-        Some(task) => {
-            let statement = &task.statement.body;
-            let workflow = &task.workflow.body;
-            html! {
-                <div class="room-design">
-                    <header>
-                        <strong data-roster-handle="">{statement.handle.to_string()}</strong>
-                        <span>{format!("{} · {}", workflow.phase, workflow.status)}</span>
-                    </header>
-                    <span class="room-design-title">{task.presentation_title.clone()}</span>
-                </div>
+    let task = crate::roster::designs(tasks).find(|task| task.statement.body.born == *design);
+    let label = task.map_or_else(
+        || anchor_label(runtime, design),
+        |task| task.statement.body.handle.to_string(),
+    );
+    let onclick = {
+        let (read, design) = (read.clone(), design.clone());
+        Callback::from(move |_: MouseEvent| read.emit(design.clone()))
+    };
+    html! {
+        <div class="room-design">
+            <header>
+                <strong data-roster-handle="">{label.clone()}</strong>
+                if let Some(task) = task {
+                    <span>{format!("{} · {}", task.workflow.body.phase, task.workflow.body.status)}</span>
+                }
+                <button type="button" aria-label={format!("Read {label}")} {onclick}>{"Read"}</button>
+            </header>
+            if let Some(task) = task {
+                <span class="room-design-title">{task.presentation_title.clone()}</span>
             }
-        }
-        None => html! {
-            <div class="room-design">
-                <header><strong data-roster-handle="">{anchor_label(runtime, design)}</strong></header>
-            </div>
-        },
+        </div>
     }
 }
 
@@ -522,12 +535,11 @@ fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {
 
 fn render_event(
     runtime: &AppRuntime,
-    report: &Callback<String>,
-    sender: &SenderHandle,
+    controls: Option<conversation::CardControls<'_>>,
     publication: &RoomAuthorityStamp,
     event: &crate::runtime::RoomEvent,
 ) -> Html {
-    if let Some(card) = conversation::render_card(runtime, report, sender, publication, event) {
+    if let Some(card) = conversation::render_card(runtime, controls, publication, event) {
         return card;
     }
     let (kind, body) = match &event.kind {

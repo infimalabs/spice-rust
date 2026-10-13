@@ -21,7 +21,7 @@ const MICROS_PER_MILLI: i64 = 1_000;
 
 const NOT_PROGRESS: &str = "Agreement, silence, message count, elapsed time, ACK and ANS never count as progress or approval.";
 
-/// The standing section of one design's menu.
+/// The standing section of one design's menu and of its read view.
 pub(super) fn render_standing(runtime: &AppRuntime, room: &TaskStamp) -> Html {
     let projection = runtime.room_projection();
     let participants =

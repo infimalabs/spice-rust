@@ -2,7 +2,8 @@
 //!
 //! Task overviews are browser-local overlays. Their complete selection never
 //! enters the URL or creates a history entry; browser Back and Forward own
-//! plain Chat and retained-card anchors.
+//! plain Chat and retained-card anchors. A Design permalink is an arrival, not
+//! a location: it opens that Design's read view and leaves the location Chat.
 
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::Closure;
@@ -39,6 +40,14 @@ pub(super) struct RouteRefusal {
 pub(super) struct RouteNotice {
     id: u64,
     pub(super) text: String,
+}
+
+/// One arrival at a Design permalink. The identity distinguishes repeated
+/// arrivals at the same Design so each opens its read view.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct DesignLink {
+    id: u64,
+    pub(super) design: wire::TaskStamp,
 }
 
 /// Translate one reader intent against the current board.
@@ -98,9 +107,15 @@ pub(super) fn intent_callback(
 }
 
 #[hook]
-pub(super) fn use_route() -> (AppRoute, Option<RouteNotice>, Callback<RouteRefusal>) {
+pub(super) fn use_route() -> (
+    AppRoute,
+    Option<RouteNotice>,
+    Callback<RouteRefusal>,
+    Option<DesignLink>,
+) {
     let location = use_state(location_route);
     let notice = use_state(|| None::<RouteNotice>);
+    let link = use_state(|| None::<DesignLink>);
     let announced = use_mut_ref(|| 0_u64);
     let announce = {
         let notice = notice.clone();
@@ -113,12 +128,32 @@ pub(super) fn use_route() -> (AppRoute, Option<RouteNotice>, Callback<RouteRefus
             notice.set(Some(RouteNotice { id, text }));
         }
     };
+    let arrivals = use_mut_ref(|| 0_u64);
+    let arrive = {
+        let link = link.clone();
+        move |location: &NormalizedAppLocation| {
+            if let Some(design) = location.design() {
+                let id = {
+                    let mut arrivals = arrivals.borrow_mut();
+                    *arrivals += 1;
+                    *arrivals
+                };
+                link.set(Some(DesignLink {
+                    id,
+                    design: design.clone(),
+                }));
+            }
+        }
+    };
 
     {
         let location = location.clone();
         use_effect_with((), move |()| {
+            arrive(&location);
             let rehydrate = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
-                location.set(location_route());
+                let next = location_route();
+                arrive(&next);
+                location.set(next);
             });
             let window = web_sys::window().expect("app navigation requires a browser window");
             window
@@ -152,7 +187,12 @@ pub(super) fn use_route() -> (AppRoute, Option<RouteNotice>, Callback<RouteRefus
             location.set(location_route());
         })
     };
-    (location.route().clone(), (*notice).clone(), navigate)
+    (
+        location.route().clone(),
+        (*notice).clone(),
+        navigate,
+        (*link).clone(),
+    )
 }
 
 fn location_route() -> NormalizedAppLocation {

@@ -344,11 +344,11 @@ fn use_team_drag(surface: &SurfaceData) -> watchband::TeamDragState {
 
 #[function_component(AppRouter)]
 fn app_router() -> Html {
-    let (route, notice, navigate) = navigation::use_route();
+    let (route, notice, navigate, design) = navigation::use_route();
     html! {
         <toast::ToastProvider>
             <RouteNotice {notice} />
-            <App {route} {navigate} />
+            <App {route} {navigate} {design} />
         </toast::ToastProvider>
     }
 }
@@ -373,6 +373,7 @@ fn route_notice(properties: &RouteNoticeProperties) -> Html {
 struct AppProperties {
     route: AppRoute,
     navigate: Callback<navigation::RouteRefusal>,
+    design: Option<navigation::DesignLink>,
 }
 
 struct AppState {
@@ -528,7 +529,8 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let surface = use_state(SurfaceData::default);
     let spice_sidebar_open = use_state(|| false);
     let card_target_status = use_state(|| None::<card_target::Status>);
-    let local_selection = use_local_overview(&route);
+    let local_selection =
+        use_local_overview(&route, properties.design.as_ref(), &spice_sidebar_open);
     let work_map = use_state(view::WorkMapState::default);
     let identity = use_state(|| None::<AppIdentity>);
     let app_update = use_state(|| None::<AppUpdate>);
@@ -749,6 +751,8 @@ fn teamed_lane_count(surface: &SurfaceData) -> usize {
 #[hook]
 fn use_local_overview(
     route: &AppRoute,
+    design: Option<&navigation::DesignLink>,
+    spice_sidebar_open: &UseStateHandle<bool>,
 ) -> UseStateHandle<Option<crate::work::TaskOverviewSelection>> {
     let selection = use_state(|| None::<crate::work::TaskOverviewSelection>);
     {
@@ -759,7 +763,27 @@ fn use_local_overview(
             }
         });
     }
+    use_design_link(design, &selection, spice_sidebar_open);
     selection
+}
+
+/// A Design permalink arrival opens that Design's read view as the task
+/// overview, in place of whatever sheet was showing.
+#[hook]
+fn use_design_link(
+    link: Option<&navigation::DesignLink>,
+    selection: &UseStateHandle<Option<crate::work::TaskOverviewSelection>>,
+    spice_sidebar_open: &UseStateHandle<bool>,
+) {
+    let (selection, spice_sidebar_open) = (selection.clone(), spice_sidebar_open.clone());
+    use_effect_with(link.cloned(), move |link| {
+        if let Some(link) = link {
+            spice_sidebar_open.set(false);
+            selection.set(Some(crate::work::TaskOverviewSelection::task(
+                link.design.clone(),
+            )));
+        }
+    });
 }
 
 /// Validate the route's data-backed segments once authoritative state
