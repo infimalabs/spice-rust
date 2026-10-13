@@ -3,8 +3,9 @@
 //!
 //! A statement's terms are its lowercase alphabetic words: text splits on
 //! every character that is not a letter or digit, a run that holds any digit
-//! is inert (as in taste bags), words shorter than [`MIN_TERM_CHARS`] letters
-//! and common function words are dropped, and one trailing `s` after a longer
+//! is inert (as in taste bags), words shorter than [`MIN_TERM_CHARS`] letters,
+//! words whose lowercase form is not wholly lowercase letters, and common
+//! function words are dropped, and one trailing `s` after a longer
 //! stem is folded away so `designs` and `design` agree. A Design's terms come
 //! from its title and description; a task's from its title, description, and
 //! acceptance. The task matches the Design when they share at least
@@ -94,7 +95,10 @@ fn terms<'a>(texts: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
                 }
                 _ => word,
             };
-            if word.chars().count() >= MIN_TERM_CHARS && !STOP.contains(&word.as_str()) {
+            if word.chars().count() >= MIN_TERM_CHARS
+                && word.chars().all(|c| c.is_alphabetic() && !c.is_uppercase())
+                && !STOP.contains(&word.as_str())
+            {
                 terms.insert(word);
             }
         }
@@ -183,13 +187,18 @@ mod tests {
     }
 
     #[test]
-    fn function_words_short_words_and_digit_runs_are_not_terms() {
+    fn function_words_short_words_digit_runs_and_unrecordable_words_are_not_terms() {
         assert_eq!(
             terms(["The lane's v2 work with each task: designs and rooms"]),
             ["design", "lane", "room", "task", "work"]
                 .into_iter()
                 .map(str::to_owned)
                 .collect()
+        );
+        assert_eq!(
+            terms(["İstanbul 𝐁𝐎𝐋𝐃 builds"]),
+            BTreeSet::from(["build".to_owned()]),
+            "a word whose lowercase holds a mark or an uppercase letter is never a recorded term"
         );
     }
 
