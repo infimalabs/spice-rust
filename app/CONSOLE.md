@@ -232,3 +232,18 @@ another team, a keyboard, rotation, or arriving team keeps their place.
 Each member heading resolves from that lane's newest eligible authored prose.
 When a history page has none, header demand continues to a newly exposed older
 frontier but never reissues the same frontier without fresh viewport demand.
+
+## Image runs
+
+A lone tool image renders as a cover card. In the message plane, two to four
+such cards in a row from one speaker, each at most two seconds after the
+previous, crystallize into one card at the run's first place; a fifth image, a
+longer gap, another speaker, or any other card starts a new run. The crystal
+keeps one image card's footprint and divides it into one cell per image in
+capture order. The cells follow each image's natural aspect, as the browser
+decoded it for display, and the card's own box, so wide images take wide
+cells, tall images take tall cells, and no image is badly cropped or shrunk to
+a sliver; the cells divide again as images load and whenever the card's box
+changes shape. Each cell opens its own image full size. The effect is the
+plane's presentation only: narration, quotes, receipts, and every other
+surface still see one message per image.

@@ -9,6 +9,11 @@ fn resolve_image(image: web_sys::HtmlImageElement) {
         "error"
     };
     set_image_resolution_state(&image, outcome);
+    // The browser's decode is the only source of an image's natural size, so a
+    // crystal divides its card again as each of its images resolves.
+    if let Ok(Some(crystal)) = image.closest(".mosaic-crystal") {
+        arrange_crystal(&crystal);
+    }
 }
 
 pub(crate) fn scan_complete_images(host: &web_sys::Element) {

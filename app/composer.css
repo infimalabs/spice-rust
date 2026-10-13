@@ -1029,6 +1029,21 @@
   box-shadow: none;
   backdrop-filter: blur(8px);
 }
+/* A crystallized run (mosaic_crystal) divides the cover into one cell per
+   image. Each cell's box is a fraction of the card that the browser's decode
+   of the images chooses; until then the cells read as one square image each.
+   A panel hairline separates the cells, and each fills its own cell. */
+.team-surface .mosaic-message-card--crystal .mosaic-crystal {
+  background: var(--panel);
+}
+.team-surface .mosaic-message-card--crystal .message-image.mosaic-crystal-cell {
+  position: absolute;
+  left: var(--crystal-cell-x, 0%);
+  top: var(--crystal-cell-y, 0%);
+  width: var(--crystal-cell-width, 100%);
+  height: var(--crystal-cell-height, 100%);
+  padding: 1px;
+}
 .team-surface .mosaic-message-card--image-cover.now-playing::before {
   position: absolute;
   z-index: 3;
