@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
+mod engagement;
 mod fact_bounds;
 mod residual;
 
@@ -38,7 +39,9 @@ const PREPARED: &str = "prepared";
 /// projection, per-lane room catch-up cursors and horizons, room coordination
 /// heads, room conversation heads, operator items, required task evidence, and
 /// relevance shadow records a predecessor lacks, replacing its per-route room
-/// receipts, before the schema identity advances.
+/// receipts, and engages every unauthorized controlled output of a Design a
+/// retained working group anchors through that group's head, before the
+/// schema identity advances.
 /// Current readers therefore need no execution arm.
 const PREDECESSOR_SCHEMAS: [u32; 19] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
@@ -302,6 +305,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
             .map_err(OpenError::Sqlite)?;
     }
     create_room_schemas(&transaction, version)?;
+    engagement::cross(&transaction)?;
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
