@@ -18,7 +18,7 @@ use super::input_value;
 use crate::AppRuntime;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, RoomCoordinationRequest};
-use crate::runtime::Seats;
+use crate::runtime::{RoomAnchorAuthority, Seats};
 
 /// The fields one Start or Resume reads.
 #[derive(Clone, Default)]
@@ -53,6 +53,14 @@ pub(super) fn coordination_form(
     let Some(board) = runtime.board() else {
         return Html::default();
     };
+    if !matches!(
+        runtime
+            .room_projection()
+            .anchor_authority(room, Some(board)),
+        RoomAnchorAuthority::Available(_)
+    ) {
+        return Html::default();
+    }
     let Some(anchor) = board
         .tasks
         .iter()
