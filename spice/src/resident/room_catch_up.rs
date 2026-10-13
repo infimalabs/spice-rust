@@ -200,6 +200,7 @@ fn plan(
                 seq,
                 room: room.clone(),
                 publication: publication.publication().clone(),
+                at: publication.at(),
                 author: publication.author_lane(),
                 recipients: publication
                     .recipients()
@@ -612,6 +613,7 @@ mod listening_tests {
                 },
             ],
             left: None,
+            leave_intervals: Vec::new(),
         };
         let block = listening(&handle, Some(&row), &[]);
         assert!(block.contains("invitation dVxJpSbV9"), "{block}");
