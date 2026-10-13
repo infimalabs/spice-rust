@@ -956,10 +956,11 @@ impl TeamSubscription {
     }
 }
 
-/// Maximum membership admitted when forming or growing an app team.
+/// Maximum membership admitted when forming or growing an app team: the one
+/// [grouping limit](crate::grouping::MEMBER_LIMIT).
 ///
 /// Existing larger teams may be restated or reduced, but never enlarged.
-pub const TEAM_MEMBER_LIMIT: usize = 6;
+pub const TEAM_MEMBER_LIMIT: usize = crate::grouping::MEMBER_LIMIT;
 
 /// Whether one app team is a formation rather than a lone seat.
 ///
