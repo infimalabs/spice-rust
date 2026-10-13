@@ -109,3 +109,97 @@ fn only_an_operator_group_anchoring_the_controller_engages_each_output_once() {
     assert_eq!(statement(&journal, &other).engagement, None);
     journal.verify().expect("engaged history verifies");
 }
+
+/// Return `output` to a predecessor's record of an anchored Design's output,
+/// which carried no engagement, at the schema before engagement.
+fn as_predecessor(journal: &Journal, output: &TaskStamp) {
+    let head = TaskHead {
+        engagement: None,
+        ..statement(journal, output)
+    };
+    journal
+        .connection
+        .execute(
+            "UPDATE task_heads SET body = ?1 WHERE stamp = ?2",
+            rusqlite::params![
+                wire::encode(&head).expect("statement encodes"),
+                output.as_str()
+            ],
+        )
+        .expect("strip engagement");
+    journal
+        .connection
+        .execute_batch(&format!(
+            "UPDATE journal_schema SET version = {0} WHERE singleton = 1;
+             PRAGMA user_version = {0};",
+            SCHEMA_VERSION - 1
+        ))
+        .expect("restore predecessor identity");
+}
+
+#[test]
+fn a_crossing_engages_each_output_a_retained_group_anchors_through_its_head() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let (design, output) = gated(&mut journal, 1, 2);
+    let (_, passive) = gated(&mut journal, 3, 4);
+    store(
+        &mut journal,
+        Actor::Operator,
+        1,
+        vec![design.clone()],
+        &[&output],
+    )
+    .expect("the operator anchors the Design");
+    let granted = statement(&journal, &output).engagement;
+    as_predecessor(&journal, &output);
+
+    let migration = crate::migrate::admit(&mut journal.connection)
+        .expect("the predecessor crosses")
+        .expect("the crossing is reported");
+    assert_eq!(
+        (migration.from(), migration.to()),
+        (SCHEMA_VERSION - 1, SCHEMA_VERSION)
+    );
+    assert_eq!(statement(&journal, &output).engagement, granted);
+    assert_eq!(statement(&journal, &passive).engagement, None);
+    rewrite(&mut journal, &output, granted).expect("the crossed output stays writable");
+    journal.verify().expect("crossed history verifies");
+}
+
+#[test]
+fn a_crossing_refuses_an_anchor_whose_group_head_is_no_operator_save() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let (design, output) = gated(&mut journal, 1, 2);
+    store(
+        &mut journal,
+        Actor::Operator,
+        1,
+        vec![design.clone()],
+        &[&output],
+    )
+    .expect("the operator anchors the Design");
+    as_predecessor(&journal, &output);
+    journal
+        .connection
+        .execute(
+            "UPDATE group_heads SET head_seq = ?1",
+            [i64::try_from(statement(&journal, &design).revision.get()).expect("seq fits")],
+        )
+        .expect("point the group head at a task fact");
+    let retained = statement(&journal, &output);
+
+    let refusal = crate::migrate::admit(&mut journal.connection)
+        .expect_err("an unreadable anchor refuses the crossing")
+        .to_string();
+    assert!(refusal.contains("298de2d58"), "{refusal}");
+    assert_eq!(statement(&journal, &output), retained);
+    let version: u32 = journal
+        .connection
+        .query_row("SELECT version FROM journal_schema", [], |row| row.get(0))
+        .expect("identity reads");
+    assert_eq!(
+        version,
+        SCHEMA_VERSION - 1,
+        "the refusal leaves the identity"
+    );
+}
