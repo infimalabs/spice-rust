@@ -113,8 +113,8 @@ impl Controller {
     /// A [`VoiceRequest::Listed`] request speaks with the first candidate this
     /// browser publishes, which stays the agent's voice for the rest of the
     /// page. A [`VoiceRequest::Spread`] request speaks with the member's slot
-    /// among the published voices sharing the device default's language, so
-    /// teammates sound different. [`VoiceRequest::Default`] speaks with the
+    /// among the published macOS premium voices sharing the chosen language,
+    /// so teammates sound different. [`VoiceRequest::Default`] speaks with the
     /// device's default voice.
     ///
     /// A browser publishes its voice list asynchronously: on a fresh page
@@ -122,7 +122,8 @@ impl Controller {
     /// installed voices and fired `voiceschanged`. An empty list is therefore
     /// no verdict on the candidates; it installs the observer that resumes this
     /// request and reports [`SystemStart::AwaitingVoices`]. Only a published
-    /// list carrying no listed candidate is refused.
+    /// list carrying no listed candidate, or no premium voice to spread, is
+    /// refused.
     pub fn start_system<Voices, Ended, Failed>(
         &mut self,
         generation: u64,
@@ -169,7 +170,7 @@ impl Controller {
                 let Some(offered) = self.published(&synthesis, on_voices) else {
                     return Ok(SystemStart::AwaitingVoices);
                 };
-                spread_voice(&offered, teams, member)
+                Some(spread_voice(&offered, teams, member)?)
             }
         };
         let utterance = SpeechSynthesisUtterance::new_with_text(text)
@@ -225,29 +226,42 @@ impl Drop for Controller {
     }
 }
 
-/// The member's slot among the published voices sharing the device default's
-/// language; no such voice leaves the device default speaking.
+/// The member's slot among the published premium voices sharing the chosen
+/// language. A list without one refuses, naming the violated assumption; it
+/// never speaks through another tier or the device default.
 fn spread_voice(
     offered: &[SpeechSynthesisVoice],
     teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     member: CanonicalUuid,
-) -> Option<SpeechSynthesisVoice> {
-    let traits: Vec<(String, String, bool)> = offered
+) -> Result<SpeechSynthesisVoice, String> {
+    let traits: Vec<(String, String, String, bool, bool)> = offered
         .iter()
-        .map(|voice| (voice.name(), voice.lang(), voice.default()))
+        .map(|voice| {
+            (
+                voice.name(),
+                voice.voice_uri(),
+                voice.lang(),
+                voice.local_service(),
+                voice.default(),
+            )
+        })
         .collect();
     let described: Vec<OfferedVoice<'_>> = traits
         .iter()
-        .map(|(name, lang, default)| OfferedVoice {
+        .map(|(name, uri, lang, local, default)| OfferedVoice {
             name,
+            uri,
             lang,
+            local: *local,
             default: *default,
         })
         .collect();
     let language = web_sys::window().and_then(|window| window.navigator().language());
-    let pool = voice_spread::pool(&described, language.as_deref());
-    let slot = voice_spread::voice_slot(teams, member, pool.len())?;
-    offered.get(pool[slot]).cloned()
+    let pool = voice_spread::pool(&described, language.as_deref())
+        .map_err(|refusal| refusal.to_string())?;
+    let slot = voice_spread::voice_slot(teams, member, pool.len())
+        .expect("a nonempty spread pool always yields a slot");
+    Ok(offered[pool[slot]].clone())
 }
 
 /// Refuse a voice list this device carries none of, naming what it offers.

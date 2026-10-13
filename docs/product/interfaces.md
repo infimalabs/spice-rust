@@ -177,9 +177,17 @@ is a nonblocking notice that never blocks the visible stream — the transcript
 remains the record. `say.voices` is an ordered list of voice names, scoped to
 the agent's worktree: each device speaks an agent's messages with the first
 listed name it publishes, and the agent keeps that voice for the page. With an
-empty list, each device spreads agents across its published voices sharing the
-default voice's language: an agent keeps the voice its lane hashes to unless a
-teammate already holds it, so teammates sound different until a team
-outnumbers the voices, and agents on different teams may share. A browser that
-has not yet published voices is waited for under a bound; a published list
-holding none of the names refuses, naming the voices the browser offers.
+empty list, each device spreads roster agents across its published macOS
+premium voices only: Safari's `com.apple.voice.premium.` identifier or
+Chromium's exact ` (Premium)` name suffix, served locally. Enhanced, standard,
+novelty, remote, and unmarked voices never enter. Among the premium voices the
+pool keeps the default premium voice's language, or the browser's language when
+none is default: an agent keeps the voice its lane hashes to unless a teammate
+already holds it, so teammates sound different until a team outnumbers the
+voices, and agents on different teams may share. A published list without a
+premium voice in that language refuses, naming the language and the premium
+languages it does offer; it never falls back to another tier or the browser
+default. A speaker outside the roster with no list uses the browser default. A
+browser that has not yet published voices is waited for under a bound; a
+published list holding none of the configured names refuses, naming the voices
+the browser offers.
