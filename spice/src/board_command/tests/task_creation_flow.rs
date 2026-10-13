@@ -73,6 +73,56 @@ fn complete_review(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHand
 }
 
 #[test]
+fn task_plan_and_design_creation_refusals_name_the_current_public_projects() {
+    let (root, bus, epoch, _) = fixture("creation-project-repair", 1);
+    let projects = guard_projects();
+    let initial = board(&bus, epoch, Actor::Operator).tasks.len();
+    for (name, intent) in [
+        ("ordinary", None),
+        ("plan", Some(wire::TaskIntent::Plan)),
+        ("design", Some(wire::TaskIntent::Design)),
+    ] {
+        let born = stamp(name);
+        let mut add = dependent_add(Vec::new(), Some("todo,review"));
+        add.title = format!("Refused {name} project");
+        add.project = Some("foreign.work".to_owned());
+        add.intent = intent;
+        let command = fixture_command(
+            epoch,
+            Actor::Operator,
+            CommandKind::TaskAdd,
+            vec![Witness::Absence { task: born }],
+            &add,
+        );
+        let Outcome::Refusal(refusal) = task_add(
+            &bus,
+            &command,
+            &add,
+            None,
+            &projects,
+            &board::NextConfig::default(),
+        ) else {
+            panic!("{name} creation did not refuse its unknown project");
+        };
+        assert_eq!(refusal.reason(), "task::add-refused");
+        assert_eq!(
+            refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::detail),
+            Some(
+                "use 2..=3 dotted segments beginning with an admissible public stem: board, rim, serve, task"
+            ),
+        );
+        assert_eq!(
+            board(&bus, epoch, Actor::Operator).tasks.len(),
+            initial,
+            "{name} refusal wrote task state",
+        );
+    }
+    clean(&root, bus);
+}
+
+#[test]
 fn create_and_claim_is_one_transaction_and_active_claim_refusal_is_zero_write() {
     let (root, bus, epoch, seats) = fixture("create-and-claim", 1);
     let seat = &seats[0];

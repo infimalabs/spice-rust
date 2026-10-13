@@ -113,7 +113,7 @@ pub(super) fn task_add_with(
             return refusal(
                 reason,
                 Some(error.to_string()),
-                "use a public project for manual creation or the owning typed system route",
+                &manual_project_repair(projects),
             );
         }
     };
@@ -128,6 +128,21 @@ pub(super) fn task_add_with(
         allocation,
         after_validation,
     )
+}
+
+fn manual_project_repair(projects: &ProjectPolicy) -> String {
+    let mut repair = format!(
+        "use {}..={} dotted segments beginning with an admissible public stem: ",
+        projects.public_min_depth(),
+        projects.public_max_depth(),
+    );
+    for (index, stem) in projects.public_stems().iter().enumerate() {
+        if index > 0 {
+            repair.push_str(", ");
+        }
+        repair.push_str(stem);
+    }
+    repair
 }
 
 pub(super) fn task_oops_add(
