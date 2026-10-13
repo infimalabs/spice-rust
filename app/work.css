@@ -595,7 +595,6 @@
   display: grid;
   gap: 10px;
 }
-.room-group-section > header,
 .room-console-header,
 .room-pane-header,
 .room-card > header {
@@ -605,13 +604,11 @@
   gap: 8px;
 }
 
-.room-group-section > header h2,
 .room-console-header h2,
 .room-pane-header h3 {
   margin: 0;
 }
 
-.room-group-section > header span,
 .room-console-kicker,
 .room-card code {
   color: var(--muted);
