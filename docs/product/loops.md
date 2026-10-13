@@ -120,6 +120,10 @@ flowchart LR
   that changes no tree. A landing commit carries the task's key, project, phase,
   and session trailers; first-parent history records mutating landings, not
   every transition.
+- `task add`, `task plan`, and `task design` share one manual-project
+  admission. A refused project names the captured policy's complete public stem
+  set and dotted depth range, so the author can repair it without probing.
+  Hidden roots remain reserved for their typed system routes.
 - `task oops` parks a row in plan through the hidden `.oops` filing filter; only an explicit
   `task wake` promotes it, and every destination passes manual admission.
 
