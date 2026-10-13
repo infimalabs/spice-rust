@@ -1129,3 +1129,144 @@ fn operator_inbox_order_is_immutable_across_receipt_lapse_and_recovery() {
     );
     assert_eq!(order(&runtime), stable);
 }
+
+fn conversation_text_reply(
+    session: &Session,
+    publication: &str,
+    content: wire::intent::RoomConversationContent,
+) -> app::Admitted<Response<wire::intent::RoomConversationTextAnswer>> {
+    let bytes = support::response(
+        WireVersion::CURRENT,
+        uuid(REQUEST),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(9)),
+            body: wire::intent::RoomConversationTextAnswer {
+                publication: authority(publication),
+                content,
+            },
+        }),
+    );
+    session
+        .admit_frame(&bytes)
+        .expect("conversation text response is admitted")
+}
+
+/// A lane's operator MSG and ASK carry their words only in the author's
+/// transcript, so the runtime asks the resident for each exactly once and
+/// shows what it read; operator-authored text needs no read. Only the ASK
+/// carries an answer owed back to its requesting lane.
+#[test]
+fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
+    const MSG_PACKET: &str = "dVsYdDj7v";
+    const MSG: &str = "dVsYdDj7w";
+    const OPERATOR_MSG: &str = "dVsYdDj7x";
+    let session = session(OPERATOR, EPOCH);
+    let operator_route = || {
+        vec![RoomRoute {
+            destination: RoomDestination::Operator {},
+            context: Some(room()),
+        }]
+    };
+    let [ask_packet, asked] = conversed(
+        1,
+        (ASK_PACKET, ASK),
+        LANE,
+        RoomPublicationKind::Ask {
+            result: QuestionResultRef::new(authority(RESULT)),
+            deadline: instant("2030-04-12T19:44:09.271Z"),
+        },
+        operator_route(),
+        &[],
+    );
+    let [msg_packet, messaged] = conversed(
+        3,
+        (MSG_PACKET, MSG),
+        LANE,
+        RoomPublicationKind::Msg {},
+        operator_route(),
+        &[],
+    );
+    let snapshot = [
+        ask_packet,
+        asked,
+        msg_packet,
+        messaged,
+        operator_message(5, OPERATOR_MSG),
+    ];
+    let mut runtime = conversation_runtime(&session, &snapshot);
+
+    let inbox = runtime.room_projection().conversation().inbox_items();
+    let duty = |publication: &str| {
+        inbox
+            .iter()
+            .find(|entry| *entry.item.value.record.publication() == authority(publication))
+            .expect("open operator item")
+            .result
+            .map(|result| {
+                (
+                    result.value.record.requester().clone(),
+                    result.value.record.respondent().clone(),
+                )
+            })
+    };
+    assert_eq!(
+        duty(ASK),
+        Some((
+            RoomDestination::Lane { lane: uuid(LANE) },
+            RoomDestination::Operator {}
+        )),
+        "the operator answers an ASK back to its requesting lane"
+    );
+    assert_eq!(duty(MSG), None, "a MSG asks only for receipt");
+
+    assert_eq!(
+        runtime.begin_operator_item_texts(),
+        vec![authority(ASK), authority(MSG)],
+        "only lane-authored items need their transcript read"
+    );
+    assert!(runtime.begin_operator_item_texts().is_empty());
+
+    let asked_text = "Build bounded room automation? A, B or C.";
+    runtime.apply_conversation_text(
+        &authority(ASK),
+        &conversation_text_reply(
+            &session,
+            ASK,
+            wire::intent::RoomConversationContent::Text {
+                text: asked_text.to_owned(),
+            },
+        ),
+    );
+    assert_eq!(
+        runtime.conversation_text(&authority(ASK)),
+        Some(&app::ConversationText::Read(
+            wire::intent::RoomConversationContent::Text {
+                text: asked_text.to_owned()
+            }
+        ))
+    );
+
+    // A drop loses the MSG read in flight; the next subscription asks again
+    // while the settled ASK text stands.
+    runtime.reconnect(&acceptance(&session, "operator", EPOCH));
+    runtime.apply_stream(&operator_facts(&session, snapshot.len() as u64));
+    runtime.apply_stream(&room_page(&session, &snapshot, None, snapshot.len() as u64));
+    assert_eq!(runtime.begin_operator_item_texts(), vec![authority(MSG)]);
+
+    // A reply naming another publication never becomes this one's text.
+    runtime.apply_conversation_text(
+        &authority(MSG),
+        &conversation_text_reply(
+            &session,
+            ASK,
+            wire::intent::RoomConversationContent::Text {
+                text: asked_text.to_owned(),
+            },
+        ),
+    );
+    assert!(matches!(
+        runtime.conversation_text(&authority(MSG)),
+        Some(app::ConversationText::Failed(_))
+    ));
+}

@@ -866,6 +866,8 @@
 
 .room-flow-result p { margin: 0; min-block-size: 2lh; }
 
+.room-card p.room-flow-guide { color: var(--muted); font-size: var(--app-type-meta); }
+
 .room-flow-slot {
   display: flex;
   align-items: center;

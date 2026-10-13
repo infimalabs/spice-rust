@@ -38,6 +38,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::DocLedger
         | CommandKind::RoomPost
         | CommandKind::RoomCoordinationRead
+        | CommandKind::RoomConversationText
         | CommandKind::RoomCoordinate
         | CommandKind::RoomPutAside
         | CommandKind::RoomControl

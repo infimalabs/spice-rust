@@ -18,13 +18,14 @@ use super::{
     LaneJobRef, LaneJobsAnswer, LaneJobsRead, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer,
     LaneRetune, LaneSeat, LaneState, QuoteRead, RecallAnswer, RecognitionAnswer, Recognize,
     ReleasePublish, ReportAnswer, ReportRead, RoomClose, RoomControl, RoomControlAnswer,
-    RoomCoordinate, RoomCoordinationRead, RoomCoordinationView, RoomPutAside, StateAnswer,
-    SteerDispose, SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose,
-    TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote,
-    TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline,
-    TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
-    TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
-    WorkingGroupArrange, WorkingGroupChange, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
+    RoomConversationText, RoomConversationTextAnswer, RoomCoordinate, RoomCoordinationRead,
+    RoomCoordinationView, RoomPutAside, StateAnswer, SteerDispose, SteerHistory, SteerInbox,
+    SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskDefer, TaskDelete, TaskDepends,
+    TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef,
+    TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake,
+    TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer,
+    TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer, WorkingGroupArrange,
+    WorkingGroupChange, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -50,6 +51,8 @@ pub enum BodyShape {
     RoomPost,
     /// [`RoomCoordinationRead`]
     RoomCoordinationRead,
+    /// [`RoomConversationText`]
+    RoomConversationText,
     /// [`RoomCoordinate`]
     RoomCoordinate,
     /// [`RoomPutAside`]
@@ -201,6 +204,8 @@ pub enum AnswerShape {
     RoomCoordination,
     /// [`RoomControlAnswer`]
     RoomControl,
+    /// [`RoomConversationTextAnswer`]
+    RoomConversationText,
     /// [`TaskAnswer`]
     Task,
     /// [`ClaimAnswer`]
@@ -273,6 +278,8 @@ pub enum CommandAnswer {
     RoomCoordination(RoomCoordinationView),
     /// [`AnswerShape::RoomControl`]
     RoomControl(RoomControlAnswer),
+    /// [`AnswerShape::RoomConversationText`]
+    RoomConversationText(RoomConversationTextAnswer),
     /// [`AnswerShape::Task`]
     Task(TaskAnswer),
     /// [`AnswerShape::Claim`]
@@ -334,6 +341,7 @@ impl CommandAnswer {
             | Self::RoomPost(_)
             | Self::RoomCoordination(_)
             | Self::RoomControl(_)
+            | Self::RoomConversationText(_)
             | Self::Task(_)
             | Self::Claim(_)
             | Self::Doc(_) => self.board_answer_shape(),
@@ -369,6 +377,7 @@ impl CommandAnswer {
             Self::RoomPost(_) => AnswerShape::RoomPost,
             Self::RoomCoordination(_) => AnswerShape::RoomCoordination,
             Self::RoomControl(_) => AnswerShape::RoomControl,
+            Self::RoomConversationText(_) => AnswerShape::RoomConversationText,
             Self::Task(_) => AnswerShape::Task,
             Self::Claim(_) => AnswerShape::Claim,
             Self::Doc(_) => AnswerShape::Doc,
@@ -427,7 +436,10 @@ impl AnswerShape {
             Self::LaneJobs => Ok(CommandAnswer::LaneJobs(Box::new(source.read()?))),
             Self::LaneJob => Ok(CommandAnswer::LaneJob(Box::new(source.read()?))),
             Self::WorkingGroupPage | Self::WorkingGroupChange => self.decode_working_group(source),
-            Self::RoomPost | Self::RoomCoordination | Self::RoomControl => self.decode_room(source),
+            Self::RoomPost
+            | Self::RoomCoordination
+            | Self::RoomControl
+            | Self::RoomConversationText => self.decode_room(source),
             Self::Board
             | Self::Report
             | Self::TaskDetail
@@ -481,6 +493,7 @@ impl AnswerShape {
             Self::RoomPost => CommandAnswer::RoomPost(body.read()?),
             Self::RoomCoordination => CommandAnswer::RoomCoordination(body.read()?),
             Self::RoomControl => CommandAnswer::RoomControl(body.read()?),
+            Self::RoomConversationText => CommandAnswer::RoomConversationText(body.read()?),
             _ => unreachable!("room answer decode partition is closed"),
         })
     }
@@ -569,6 +582,7 @@ impl CommandKind {
             }
             Self::RoomPost
             | Self::RoomCoordinationRead
+            | Self::RoomConversationText
             | Self::RoomCoordinate
             | Self::RoomPutAside
             | Self::RoomControl
@@ -694,6 +708,9 @@ impl CommandKind {
         match self {
             Self::RoomPost => Binding::of(B::RoomPost, A::RoomPost),
             Self::RoomCoordinationRead => Binding::of(B::RoomCoordinationRead, A::RoomCoordination),
+            Self::RoomConversationText => {
+                Binding::of(B::RoomConversationText, A::RoomConversationText)
+            }
             Self::RoomCoordinate => Binding::of(B::RoomCoordinate, A::RoomCoordination),
             Self::RoomPutAside => Binding::of(B::RoomPutAside, A::RoomCoordination),
             Self::RoomControl => Binding::of(B::RoomControl, A::RoomControl),
@@ -820,6 +837,8 @@ pub enum Intent {
     RoomPost(RoomPost),
     /// [`BodyShape::RoomCoordinationRead`]
     RoomCoordinationRead(RoomCoordinationRead),
+    /// [`BodyShape::RoomConversationText`]
+    RoomConversationText(RoomConversationText),
     /// [`BodyShape::RoomCoordinate`]
     RoomCoordinate(RoomCoordinate),
     /// [`BodyShape::RoomPutAside`]
@@ -958,6 +977,7 @@ impl Intent {
             | Self::WorkingGroupArrange(_) => self.working_group_shape(),
             Self::RoomPost(_)
             | Self::RoomCoordinationRead(_)
+            | Self::RoomConversationText(_)
             | Self::RoomCoordinate(_)
             | Self::RoomPutAside(_)
             | Self::RoomControl(_)
@@ -1066,6 +1086,7 @@ impl Intent {
         match self {
             Self::RoomPost(_) => BodyShape::RoomPost,
             Self::RoomCoordinationRead(_) => BodyShape::RoomCoordinationRead,
+            Self::RoomConversationText(_) => BodyShape::RoomConversationText,
             Self::RoomCoordinate(_) => BodyShape::RoomCoordinate,
             Self::RoomPutAside(_) => BodyShape::RoomPutAside,
             Self::RoomControl(_) => BodyShape::RoomControl,
@@ -1168,6 +1189,7 @@ impl BodyShape {
                 | Self::DocLedger
                 | Self::RoomPost
                 | Self::RoomCoordinationRead
+                | Self::RoomConversationText
                 | Self::RoomCoordinate
                 | Self::RoomPutAside
                 | Self::RoomControl
@@ -1216,6 +1238,7 @@ impl BodyShape {
                 | Self::DocLedger
                 | Self::RoomPost
                 | Self::RoomCoordinationRead
+                | Self::RoomConversationText
                 | Self::RoomCoordinate
                 | Self::RoomPutAside
                 | Self::RoomControl
@@ -1255,6 +1278,7 @@ impl BodyShape {
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
             Self::RoomPost
             | Self::RoomCoordinationRead
+            | Self::RoomConversationText
             | Self::RoomCoordinate
             | Self::RoomPutAside
             | Self::RoomControl
@@ -1276,6 +1300,7 @@ impl BodyShape {
         Ok(match self {
             Self::RoomPost => Intent::RoomPost(crate::decode(bytes)?),
             Self::RoomCoordinationRead => Intent::RoomCoordinationRead(crate::decode(bytes)?),
+            Self::RoomConversationText => Intent::RoomConversationText(crate::decode(bytes)?),
             Self::RoomCoordinate => Intent::RoomCoordinate(crate::decode(bytes)?),
             Self::RoomPutAside => Intent::RoomPutAside(crate::decode(bytes)?),
             Self::RoomControl => Intent::RoomControl(crate::decode(bytes)?),

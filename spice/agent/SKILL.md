@@ -78,7 +78,8 @@ intent as the assistant message's only verbatim words. That no-prose intent is
 the packet's fallback source; ordinary intents, reasoning, code, quotes, and
 tool arguments never send. A selector is `ADDRESS`, `ADDRESS#TASK`, `#TASK`
 (only a deliberate room record; ordinary output needs no packet header), or
-`operator`; TASK is a handle, and `operator` opens one pending operator item.
+`operator`; TASK is a handle. `operator`, your one route to the operator, opens
+an Operator inbox item.
 The body ends at the next placed ACK, NAK, MSG, ASK, or ANS header or the text
 block's end. A seated address receives immediately. A valid address whose
 logical lane is vacant queues unheard under the same key and deadline for that

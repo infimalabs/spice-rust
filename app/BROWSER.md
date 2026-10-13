@@ -141,14 +141,24 @@ declined, expired, or cancelled), and a question's substantive result
 answered, declined, cancelled, or timed out). ACK settles only a receipt; an
 answer is its own ANS card whose return carries a separate receipt. None of
 these is styled as review coverage or output authorization, which stay in the
-preparation section. Operator items carry explicit ACK/NAK with a clause,
-**Recover** once lapsed, and Answer/Decline/Cancel result controls. Closing a
-lane party's question is an explicit override. The catalog keeps an
-operator-targeted ASK in immutable admission order while either its receipt or
-its answer duty remains open, so ACK cannot hide the still-pending result.
-Receipt and result rows keep one geometry in every state. Acting moves keyboard
-focus to the acting card, and its outcome or refusal is reported in the
-composer toast for a console card and in the catalog for an inbox item.
+preparation section.
+
+The **Operator inbox** catalogs every open operator item, such as the one a
+lane's `operator` packet opens. Each item shows its publication's full body. A
+lane's body stays in its transcript, so the app reads it once through the
+operator-only `room::conversation-text` read, which projects the same text
+`spice://room/inbox` prints; the transcript echo stands in while
+that read runs. An ASK item leads with the answer it owes: **Answer** sends the
+reply back to the requesting lane as an ANS and settles the receipt, and
+**Decline** refuses the question. Its receipt row is separate: ACK only marks
+the item seen and NAK declines it. An MSG item offers only that receipt row.
+**Recover** returns a lapsed receipt to pending. Closing a lane party's
+question is an explicit override. The catalog keeps an operator-targeted ASK in
+immutable admission order while either its receipt or its answer duty remains
+open, so ACK cannot hide the still-pending result. Receipt and result rows keep
+one geometry in every state. Acting moves keyboard focus to the acting card,
+and its outcome or refusal is reported in the composer toast for a console card
+and in the catalog for an inbox item.
 
 **Close group** and the group order controls change only this browser.
 Opened groups, their order, each design composer's draft, and the last focused

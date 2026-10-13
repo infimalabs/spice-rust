@@ -46,6 +46,8 @@ pub enum CommandKind {
     RoomPost,
     /// Read one anchor's current native coordination projection.
     RoomCoordinationRead,
+    /// Read one conversation publication's text from its owning source.
+    RoomConversationText,
     /// Send one scoped preparation request to a chosen logical lane.
     RoomCoordinate,
     /// Withdraw unanswered coordination and request native holder disposition.

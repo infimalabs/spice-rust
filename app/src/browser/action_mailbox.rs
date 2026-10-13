@@ -221,6 +221,7 @@ impl PendingKind {
             Self::Vendors => Some(CurrentRead::Vendors),
             Self::Consent => Some(CurrentRead::Consent),
             Self::TaskDetail { .. }
+            | Self::ConversationText { .. }
             | Self::Job { .. }
             | Self::Jobs { .. }
             | Self::WorkingGroup { .. }

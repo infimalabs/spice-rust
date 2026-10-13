@@ -613,6 +613,62 @@ fn transcript(tape: &Path, hunk: TranscriptHunk) -> Content {
     }
 }
 
+/// One conversation publication's text, read from its owning source exactly
+/// as [`inbox`] reads it; an unknown publication is a missing source.
+pub(crate) fn conversation_text(
+    bus: &bus::Bus,
+    tape: &Path,
+    request: &wire::intent::RoomConversationText,
+) -> Outcome<wire::intent::CommandAnswer> {
+    use wire::intent::RoomConversationContent as Text;
+
+    let publication = request.publication.clone();
+    let read = bus.read(move |read| {
+        let body = match read.room_conversation(&publication)? {
+            Some((_, admitted)) => {
+                Some(conversation_body(read, &admitted).map_err(Failure::guard)?)
+            }
+            None => None,
+        };
+        Ok((read.cursor()?, body))
+    });
+    let (cursor, body) = match read {
+        Ok((Some(cursor), body)) => (cursor, body),
+        Ok((None, _)) => {
+            return fault(
+                FaultClass::Store,
+                "room::cursor-missing",
+                "the admitted journal names no read position",
+            )
+            .outcome();
+        }
+        Err(error) => {
+            return fault(FaultClass::Store, "room::journal-unreadable", error).outcome();
+        }
+    };
+    let content = match body.map(|body| project_body(body, tape).0) {
+        None => Text::Unavailable {
+            unavailable: RoomSourceUnavailable::Missing {},
+        },
+        Some(Content::Text { text }) => Text::Text { text },
+        Some(Content::Linked { source }) => Text::Linked { source },
+        Some(Content::Unavailable { unavailable, .. }) => Text::Unavailable { unavailable },
+        // A conversation body is authored or linked, never a grooming.
+        Some(Content::OopsGroomed { .. }) => Text::Unavailable {
+            unavailable: RoomSourceUnavailable::Unreadable {},
+        },
+    };
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Snapshot(cursor),
+        body: wire::intent::CommandAnswer::RoomConversationText(
+            wire::intent::RoomConversationTextAnswer {
+                publication: request.publication.clone(),
+                content,
+            },
+        ),
+    })
+}
+
 impl fmt::Display for RoomHistory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

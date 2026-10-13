@@ -399,6 +399,12 @@ fn apply_mutating_response(
         PendingKind::Inbox { covered } => {
             apply_inbox_response(session, handles, runtime, &covered, bytes)?
         }
+        PendingKind::ConversationText { publication } => {
+            let admitted: crate::Admitted<Response<wire::intent::RoomConversationTextAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_conversation_text(&publication, &admitted);
+            CommandApplication::ordinary(false)
+        }
         PendingKind::WakeSubmission { lane, submission } => CommandApplication::ordinary(
             apply_wake_submission_response(session, handles, submission, lane, bytes)?,
         ),

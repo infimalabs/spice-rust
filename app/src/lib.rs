@@ -121,6 +121,10 @@ pub(crate) enum PendingKind {
     TaskDetail {
         task: wire::TaskStamp,
     },
+    /// One lane-authored conversation publication's text.
+    ConversationText {
+        publication: wire::rooms::RoomAuthorityStamp,
+    },
     TaskRelations {
         key: runtime::TaskRelationsKey,
     },
@@ -167,8 +171,8 @@ mod speech;
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
     AppRuntime, AppSurface, BlockerActionState, BoardView, Conversation, ConversationProjection,
-    Delivery, LaneActivity, LaneMember, LaneRow, LaneStatus, LaneView, OperatorItem,
-    ParticipantReason, PreparationProjection, QuestionResult, RoomAnchorAuthority,
+    ConversationText, Delivery, LaneActivity, LaneMember, LaneRow, LaneStatus, LaneView,
+    OperatorItem, ParticipantReason, PreparationProjection, QuestionResult, RoomAnchorAuthority,
     RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomParticipant, RoomPositioned,
     RoomProjection, RoomProjectionStatus, RoomState, Stale, StreamApplication, StreamDirective,
     StreamTerminal, TaskDetailState, TaskRelationsKey, TaskRelationsState, stale_reads,
