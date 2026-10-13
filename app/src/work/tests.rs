@@ -116,7 +116,21 @@ pub(crate) fn board(tasks: Vec<BoardTask>) -> BoardView {
 }
 
 #[test]
-fn lifecycle_precedence_is_terminal_then_claim_then_deferral_then_blocker() {
+fn lifecycle_precedence_follows_task_status_standings() {
+    let deferral = || {
+        Some(
+            "2026-09-24T06:00:00.000Z"
+                .parse()
+                .expect("fixture deferral"),
+        )
+    };
+    let upgrade = || {
+        wire::EnvironmentRequirements::one(
+            EnvironmentRequirement::journal_schema(2).expect("fixture requirement"),
+        )
+    };
+    let review = || "review".parse().expect("review phase");
+
     let mut terminal = task(1, "alpha.lifecycle");
     terminal.workflow.body.completion = Some(
         "2026-09-23T06:00:00.000Z"
@@ -126,33 +140,42 @@ fn lifecycle_precedence_is_terminal_then_claim_then_deferral_then_blocker() {
     terminal.claim = Some(claim(&terminal, ClaimDisposition::Active));
 
     let mut in_flight = task(2, "alpha.lifecycle");
-    in_flight.workflow.body.deferral = Some(
-        "2026-09-24T06:00:00.000Z"
-            .parse()
-            .expect("fixture deferral"),
-    );
-    in_flight.statement.body.requirements = wire::EnvironmentRequirements::one(
-        EnvironmentRequirement::journal_schema(2).expect("fixture requirement"),
-    );
+    in_flight.workflow.body.deferral = deferral();
+    in_flight.statement.body.requirements = upgrade();
     in_flight.claim = Some(claim(&in_flight, ClaimDisposition::Active));
 
-    let mut deferred = task(3, "alpha.lifecycle");
-    deferred.workflow.body.deferral = Some(
-        "2026-09-24T06:00:00.000Z"
-            .parse()
-            .expect("fixture deferral"),
-    );
-    deferred.statement.body.requirements = wire::EnvironmentRequirements::one(
-        EnvironmentRequirement::journal_schema(2).expect("fixture requirement"),
-    );
+    let mut stale = task(3, "alpha.lifecycle");
+    stale.workflow.body.deferral = deferral();
+    stale.claim = Some(claim(&stale, ClaimDisposition::Lapsed));
 
-    let mut blocked = task(4, "alpha.lifecycle");
-    blocked.statement.body.requirements = wire::EnvironmentRequirements::one(
-        EnvironmentRequirement::journal_schema(2).expect("fixture requirement"),
-    );
+    let mut deferred = task(4, "alpha.lifecycle");
+    deferred.workflow.body.deferral = deferral();
+    deferred.statement.body.requirements = upgrade();
 
-    let ready = task(5, "alpha.lifecycle");
-    let board = board(vec![terminal, in_flight, deferred, blocked, ready]);
+    let mut gated_review = task(5, "alpha.lifecycle");
+    gated_review.workflow.body.phase = review();
+    gated_review.statement.body.requirements = upgrade();
+
+    let mut held_review = task(6, "alpha.lifecycle");
+    held_review.workflow.body.phase = review();
+    held_review.statement.body.requirements = upgrade();
+
+    let mut held = task(7, "alpha.lifecycle");
+    held.statement.body.requirements = upgrade();
+
+    let ready = task(8, "alpha.lifecycle");
+    let mut board = board(vec![
+        terminal,
+        in_flight,
+        stale,
+        deferred,
+        gated_review,
+        held_review,
+        held,
+        ready,
+    ]);
+    // The resident's gate holds back the stale, deferred, and gated rows.
+    board.blocked.extend([3, 4, 5].map(stamp));
     let projection = WorkProjection::from_board(&board);
 
     assert_eq!(
@@ -164,10 +187,25 @@ fn lifecycle_precedence_is_terminal_then_claim_then_deferral_then_blocker() {
         [
             WorkAvailability::Terminal,
             WorkAvailability::InFlight,
+            WorkAvailability::Stale,
             WorkAvailability::Deferred,
             WorkAvailability::Blocked,
+            WorkAvailability::Review,
+            WorkAvailability::Held,
             WorkAvailability::Ready,
         ]
+    );
+    let counts = projection.counts();
+    assert_eq!(
+        [
+            counts.ready(),
+            counts.review(),
+            counts.stale(),
+            counts.blocked(),
+            counts.waiting(),
+        ],
+        [1, 1, 1, 1, 2],
+        "each open category counts exactly its own rows"
     );
     assert_eq!(projection.tasks[0].working_claimant(), None);
     assert_eq!(
@@ -175,8 +213,7 @@ fn lifecycle_precedence_is_terminal_then_claim_then_deferral_then_blocker() {
         Some(&Actor::Operator),
     );
     assert!(projection.tasks[1].environment_blocked);
-    assert!(projection.tasks[2].environment_blocked);
-    assert!(projection.tasks[3].environment_blocked);
+    assert!(projection.tasks[6].environment_blocked);
 }
 
 #[test]
@@ -286,7 +323,7 @@ fn relationships_claim_dispositions_and_ranking_are_deterministic() {
         .blocked
         .insert(board.tasks[2].statement.body.born.clone());
     let projection = WorkProjection::from_board(&board);
-    assert_eq!(projection.tasks[1].availability, WorkAvailability::Ready);
+    assert_eq!(projection.tasks[1].availability, WorkAvailability::Stale);
     assert_eq!(projection.tasks[2].availability, WorkAvailability::Blocked);
     assert_eq!(projection.tasks[3].availability, WorkAvailability::Ready);
     assert_eq!(
@@ -313,14 +350,14 @@ fn relationships_claim_dispositions_and_ranking_are_deterministic() {
             .collect::<Vec<_>>(),
         [
             WorkAvailability::Ready,
-            WorkAvailability::Ready,
+            WorkAvailability::Stale,
             WorkAvailability::Blocked,
             WorkAvailability::Terminal,
         ]
     );
-    assert_eq!(lane.tasks, [1, 3, 2, 0]);
+    assert_eq!(lane.tasks, [3, 1, 2, 0]);
     assert_eq!(projection.tasks[2].project, 0);
-    assert_eq!(lane.counts.unavailable(), 1);
+    assert_eq!(lane.counts.blocked(), 1);
 }
 
 #[test]

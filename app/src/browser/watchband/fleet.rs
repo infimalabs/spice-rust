@@ -397,7 +397,6 @@ fn render_team_task_group(
 
 /// One task-detail target inside its stem group.
 fn render_team_task_handle(task: &crate::work::WorkTask<'_>, render: &FleetRender<'_, '_>) -> Html {
-    use crate::work::WorkAvailability::{InFlight, Ready};
     let statement = &task.row().statement.body;
     let availability = task.availability();
     let owner_accent = task.working_claimant_accent(render.runtime.lanes());
@@ -420,7 +419,7 @@ fn render_team_task_handle(task: &crate::work::WorkTask<'_>, render: &FleetRende
                 "app-horn-tab",
                 "app-horn-tab--up",
                 "app-horn-tab__handle",
-                (!matches!(availability, InFlight | Ready)).then_some("dormant"),
+                (!availability.moving()).then_some("dormant"),
             )}
             type="button"
             title={handle_label.clone()}

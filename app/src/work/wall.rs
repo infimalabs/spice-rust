@@ -80,7 +80,11 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
         let task = &work.tasks()[index];
         let born = &task.row().statement.body.born;
         match task.availability() {
-            WorkAvailability::InFlight | WorkAvailability::Ready => None,
+            WorkAvailability::InFlight
+            | WorkAvailability::Ready
+            | WorkAvailability::Review
+            | WorkAvailability::Stale => None,
+            WorkAvailability::Held => Some(DependencyWall::Environment(born)),
             WorkAvailability::Deferred => Some(DependencyWall::Deferred(born)),
             WorkAvailability::Parked => Some(DependencyWall::Parked(born)),
             WorkAvailability::Terminal => Some(DependencyWall::Unreachable(born)),
