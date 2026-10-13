@@ -837,8 +837,8 @@ fn verify_task_intents(
             violations.push(Violation::new(
                 ViolationClass::Head,
                 format!("task_heads:{stamp}"),
-                "engagement names no operator working group anchoring its controller, or joins \
-                 a decision authorization"
+                "retained group marker names no historical operator working-group fact for its \
+                 controller, or joins a selected authorization"
                     .to_owned(),
             ));
         }
@@ -862,9 +862,9 @@ fn verify_task_intents(
     Ok(())
 }
 
-/// Whether `head` carries no engagement, or one naming an operator
-/// working-group fact that anchors its gating controller, exclusive with a
-/// decision authorization.
+/// Whether `head` carries no retained group marker, or one naming its
+/// historical operator working-group fact, exclusive with selected
+/// authorization.
 fn engagement_sound(head: &wire::TaskHead, facts: &BTreeMap<u64, FactRecord>) -> bool {
     let Some(granted) = head.engagement else {
         return true;

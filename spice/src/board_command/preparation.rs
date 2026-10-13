@@ -28,8 +28,7 @@ pub(super) fn dispatch_preparation(
 }
 
 /// Refuse a positive Design conclusion while any live output it constructed
-/// directly still lacks its selection: that Design's exact execution
-/// authorization or the operator's engagement of it in a working group.
+/// directly still lacks that Design's exact execution authorization.
 ///
 /// A Plan concludes like any reviewed task; its outputs then wait only for
 /// that positive boundary and ordinary dependencies. Operator close and delete
@@ -69,8 +68,7 @@ pub(super) fn require_no_pending_controlled_outputs(
         Some(outputs.join(", ")),
         &format!(
             "authorize the exact accepted selection of {} with `spice preparation authorize \
-             AUTHORIZATION_JSON`, place it in a working group, or close or delete each unselected \
-             output before concluding it",
+             AUTHORIZATION_JSON`, or close or delete each unselected output before concluding it",
             controller.handle()
         ),
     ))
@@ -537,13 +535,10 @@ pub(super) fn adopt_output(
         Ok(fact) => fact,
         Err(error) => return store_fault("preparation::adoption-invalid", &error.to_string()),
     };
-    let mut head = TaskHead {
+    let head = TaskHead {
         preparation: Some(preparation),
         ..output_heads.statement().body().clone()
     };
-    if let Err(outcome) = super::engagement::engage(bus, &mut head) {
-        return outcome;
-    }
     write.task_head(fact, move |revision| TaskHead { revision, ..head });
     let answer = TextAnswer {
         text: format!(

@@ -599,7 +599,7 @@ fn grooming_summary(runtime: &AppRuntime, grooming: &wire::rooms::OopsGrooming) 
             } else if task.statement.body.authorization.is_some() {
                 "selected authorization"
             } else if task.statement.body.engagement.is_some() {
-                "engaged authorization"
+                "retained authorization"
             } else if let Some(preparation) = &task.statement.body.preparation {
                 let design = runtime.board().is_some_and(|board| {
                     board.tasks.iter().any(|parent| {

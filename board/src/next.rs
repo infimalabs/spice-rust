@@ -643,10 +643,11 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
 
 /// A constructed output waits for its preparation and controller to conclude
 /// positively; nothing else, including operator closure, releases it. When
-/// that preparation is a Design, the output, Plan or task, also waits for its
-/// own selection: the Design's exact execution authorization or the operator's
-/// engagement of the Design in a working group. A preparation a Plan constructs
-/// runs alongside it. An unknown preparation leaves the output gated.
+/// that preparation is a Design, the output, Plan or task, also waits for the
+/// Design's exact execution authorization. A retained pre-cutover group marker
+/// remains eligible as immutable history, but current group membership grants
+/// nothing. A preparation a Plan constructs runs alongside it. An unknown
+/// preparation leaves the output gated.
 fn control_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
     let statement = entry.statement();
     let Some(preparation) = &statement.preparation else {

@@ -41,10 +41,7 @@ pub(crate) use coordination::{
     Direction, Record as CoordinationRecord, SCHEMA_SQL as COORDINATION_SCHEMA_SQL,
     require_writes as require_coordination_writes,
 };
-pub(crate) use engagement::{
-    engages, gated_controller, require_complete as require_engaged_outputs,
-    require_transition as require_engagement,
-};
+pub(crate) use engagement::{engages, gated_controller, require_transition as require_engagement};
 pub(crate) use evidence::{SCHEMA_SQL as EVIDENCE_SCHEMA_SQL, fold as fold_evidence};
 pub(crate) use relevance::SCHEMA_SQL as RELEVANCE_SCHEMA_SQL;
 pub(crate) use sql::{Stored, require_open_controllers, settle_controls, write_projection};
