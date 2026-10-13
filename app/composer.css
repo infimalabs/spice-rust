@@ -437,6 +437,17 @@
 .team-composer .team-composer-controls:has(.team-send:not(:disabled):is(:hover, :focus-visible))::after { opacity: .72; }
 .team-composer .team-composer-controls:has(.team-send:not(:disabled):is(:active, [data-touch-contact]))::after { opacity: .46; }
 .team-composer .team-composer-controls:has(.team-send:disabled)::after { opacity: .32; }
+/* An idle team's controls carry no light: the emitter goes dark, SEND rests as
+   the same flush glass as TURBO and the menu, and each slider keeps its stop's
+   accent wash but drops the lit thumb's glass catches, halo, and cast shadow. */
+.team-composer .team-composer-controls[data-idle="true"]:has(.team-send:disabled)::after { opacity: 0; }
+.team-composer .team-composer-controls[data-idle="true"] .team-send:disabled {
+  opacity: var(--inactive-lane-opacity); cursor: default;
+  background: var(--team-control-face); box-shadow: var(--team-send-command-ring), var(--team-control-rest);
+  backdrop-filter: blur(1.5px) saturate(1.15); -webkit-backdrop-filter: blur(1.5px) saturate(1.15);
+}
+.team-composer .team-composer-controls[data-idle="true"] > .team-slider { --team-slider-light-shadow: 0 0 0 0 transparent; --team-slider-thumb-face: var(--team-control-face); --team-slider-thumb-shadow: var(--team-control-rest); }
+.team-composer .team-composer-controls[data-idle="true"] > .team-slider::after { backdrop-filter: none; -webkit-backdrop-filter: none; }
 /* A wake in flight keeps the panel lit; until residency or a refusal settles it,
    SEND's rim breathes in the waking members' accents. Drafted recipients keep
    their steady rim, and an undrafted SEND stays disabled while it waits. */

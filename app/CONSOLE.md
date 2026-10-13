@@ -180,10 +180,16 @@ even diffuse field across the whole disc that softens into the panel just
 beyond the glass, with no drawn ring and no center hotspot. In front, a frosted
 glass face transmits that field and collects light in irregular catches along
 its curved perimeter: brighter low on the left, a fainter answer high on the
-right, as the sliders are lit. Every presentation keeps both layers: idle,
+right, as the sliders are lit. Every lit presentation keeps both layers:
 hover, keyboard focus, contact, disabled, waking, recipient, `FULL SEND` and
 command states change only the field's intensity, the face's pressure, and
 their own typed rims, which stay separate layers above the glass.
+
+A team is idle when no member is starting or running, nothing is drafted, and
+no wake is in flight. Its controls then carry no light: the emitter goes dark
+and SEND rests as the same flush glass as TURBO and the menu, and the sliders
+keep their stop's accent but drop the lit thumb's glass catches and halo. Any
+member starting or running, a draft, or a wake relights the panel live.
 
 SEND's rim is lit in the actual recipients' accents: one continuous rim for one
 recipient, separated arcs for several. Its title names the recipient count.

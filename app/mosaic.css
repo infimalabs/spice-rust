@@ -900,7 +900,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-send {
   grid-row: 4; grid-column: 1 / -1;
   width: var(--team-control-send-size); min-width: var(--team-control-send-size); max-width: var(--team-control-send-size); height: var(--team-control-send-size); min-height: var(--team-control-send-size);
-  /* Uneven perimeter catches over the even emitter (CONSOLE.md); every state keeps them. */
+  /* Uneven perimeter catches over the even emitter (CONSOLE.md); every lit state keeps them. */
   --team-send-glass-catch: inset 2px -2px 1px -1px color-mix(in srgb, var(--app-highlight-source) 34%, transparent), inset 5px -5px 5px -4px color-mix(in srgb, var(--app-highlight-source) 16%, transparent), inset -2px 1.5px 1px -1px color-mix(in srgb, var(--app-highlight-source) 20%, transparent), inset -4px 4px 6px -5px color-mix(in srgb, var(--app-highlight-source) 12%, transparent), inset 0 0 2px color-mix(in srgb, var(--app-shadow-source) 28%, transparent);
   background: radial-gradient(ellipse 64% 30% at 40% -6%, color-mix(in srgb, var(--app-highlight-source) 18%, transparent), transparent 74%), radial-gradient(ellipse 72% 34% at 60% 106%, color-mix(in srgb, var(--app-highlight-source) 9%, transparent), transparent 72%), linear-gradient(color-mix(in srgb, var(--app-highlight-source) 2.5%, transparent), color-mix(in srgb, var(--app-highlight-source) 2.5%, transparent));
   box-shadow: var(--team-send-command-ring), var(--team-control-rest), var(--team-send-glass-catch);
@@ -1019,9 +1019,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 .team-composer .team-composer-controls[data-idle="true"] > :not(.team-send) { opacity: var(--inactive-lane-opacity); }
 .team-composer .team-composer-controls[data-idle="true"] > :is(.team-turbo, .team-menu, .team-slider) { filter: saturate(.55); }
-.team-composer .team-composer-controls[data-idle="true"] .team-send:disabled {
-  opacity: var(--inactive-lane-opacity); box-shadow: var(--team-send-command-ring), var(--team-control-rest), var(--team-send-glass-catch); cursor: default;
-}
 /* Command previews ring outside SEND, thinner than the recipient bands they frame;
    broadcast selects its recipient rim without replacing the neutral transmitted-glass face. */
 .team-composer:has(.team-agent[data-accent="0"] textarea:focus) .team-send { --team-send-command-accent: var(--accent-0); }
