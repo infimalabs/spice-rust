@@ -1206,21 +1206,7 @@ fn authored_blocks(events: &[listen::Event]) -> impl Iterator<Item = (usize, &st
 /// The complete assistant text block `event` carries, when it holds a placed
 /// packet.
 fn packet_prose(event: &listen::Event) -> Option<&str> {
-    let text = match event {
-        listen::Event::StreamedProse(prose) if prose.role == listen::ProseRole::Assistant => {
-            prose.text.as_str()
-        }
-        listen::Event::Tool(listen::Tool {
-            moment:
-                listen::ToolMoment::Call {
-                    intent: Some(intent),
-                    ..
-                },
-            ..
-        }) => intent,
-        _ => return None,
-    };
-    steer::ack::scan::has_message(text).then_some(text)
+    spice::quote::packet_text(event).filter(|text| steer::ack::scan::has_message(text))
 }
 
 /// Whether `record` carries an assistant text block that could hold a packet,
