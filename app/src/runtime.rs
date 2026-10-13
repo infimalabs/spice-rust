@@ -1228,11 +1228,21 @@ pub struct Stale {
 impl Stale {
     /// Widen this set by whatever one admitted fact invalidated.
     ///
-    /// The fact namespace selects broad snapshot reads here. Typed task
-    /// relationship semantics live on [`FactKind`] itself; keeping that finer
-    /// mapping on the closed vocabulary prevents a second app-local registry
-    /// from drifting when task facts are added.
+    /// The fact namespace selects broad snapshot reads here, except for the
+    /// facts outside the task namespace that still move task heads. Typed
+    /// task relationship semantics live on [`FactKind`] itself; keeping that
+    /// finer mapping on the closed vocabulary prevents a second app-local
+    /// registry from drifting when task facts are added.
     pub fn widen(&mut self, kind: FactKind) {
+        // Execution authorization completes its controller and authorizes its
+        // selected outputs; a working-group move engages the outputs of a
+        // Design entering a group. Both change allocator eligibility.
+        if matches!(
+            kind,
+            FactKind::ExecutionAuthorized | FactKind::WorkingGroupMoved
+        ) {
+            self.board = true;
+        }
         match kind.as_str().split_once("::") {
             Some(("steer", _)) => {
                 self.inbox = true;
@@ -1264,6 +1274,11 @@ impl Stale {
         self.widen(fact.kind());
         if let Some(task) = fact.task() {
             self.task_details.insert(task);
+        }
+        if let Some(authorized) = fact.read::<wire::rooms::ExecutionAuthorized>() {
+            let authorization = authorized.authorization;
+            self.task_details.insert(authorization.candidate.controller);
+            self.task_details.extend(authorization.selected_outputs);
         }
         if let Some(change) = TaskRelationInvalidation::from_fact(fact) {
             self.task_relations.push(change);
