@@ -123,11 +123,17 @@ impl AppRuntime {
         details.owed.insert(task.clone())
     }
 
-    /// Read a task again after an accepted command changed it, keeping any
-    /// admitted answer on screen meanwhile. A read already in flight may
-    /// predate the change, so this one is owed after it settles.
+    /// Read a shown task again after an accepted command changed it, keeping
+    /// any admitted answer on screen meanwhile. A read already in flight may
+    /// predate the change, so this one is owed after it settles. A task no
+    /// surface shows is forgotten without creating new demand.
     pub fn reread_task_detail(&mut self, task: &TaskStamp) {
         let details = &mut self.task_details;
+        if !details.shown.contains(task) {
+            details.states.remove(task);
+            details.owed.remove(task);
+            return;
+        }
         details
             .states
             .entry(task.clone())
@@ -180,12 +186,13 @@ impl AppRuntime {
     }
 
     /// Apply one correlated detail response without crossing capability scope.
+    /// A response whose surface closed while it was in flight is discarded.
     pub fn apply_task_detail(
         &mut self,
         task: &TaskStamp,
         admitted: &Admitted<Response<TaskDetailAnswer>>,
     ) {
-        if admitted.scope() != self.accepted.scope() {
+        if admitted.scope() != self.accepted.scope() || !self.task_details.shown.contains(task) {
             return;
         }
         let state = match &admitted.get().outcome {

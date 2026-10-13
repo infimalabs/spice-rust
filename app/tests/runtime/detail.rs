@@ -218,6 +218,54 @@ fn a_fact_forgets_a_detail_no_surface_shows_instead_of_reading_it() {
     );
 }
 
+#[test]
+fn a_command_settling_after_deselection_creates_no_hidden_detail_demand() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    let shown = fixture_stamp("detail-shown-command");
+    let hidden = fixture_stamp("detail-hidden-command");
+    runtime.show_task_details([shown.clone(), hidden.clone()]);
+    runtime.take_task_detail_reads(usize::MAX, |_| false);
+    for (task, label) in [
+        (&shown, "detail-shown-command"),
+        (&hidden, "detail-hidden-command"),
+    ] {
+        runtime.apply_task_detail(
+            task,
+            &detail_response(&session, detail_answer(label, "before the command")),
+        );
+    }
+    runtime.show_task_details([shown.clone()]);
+
+    runtime.reread_task_detail(&hidden);
+    assert_eq!(runtime.task_detail(&hidden), None);
+    assert!(
+        runtime
+            .take_task_detail_reads(usize::MAX, |_| false)
+            .is_empty()
+    );
+    runtime.apply_task_detail(
+        &hidden,
+        &detail_response(
+            &session,
+            detail_answer("detail-hidden-command", "late stale answer"),
+        ),
+    );
+    assert_eq!(runtime.task_detail(&hidden), None);
+
+    runtime.reread_task_detail(&shown);
+    assert!(matches!(
+        runtime.task_detail(&shown),
+        Some(TaskDetailState::Refreshing(answer))
+            if answer.notes[0].text == "before the command"
+    ));
+    assert_eq!(
+        runtime.take_task_detail_reads(usize::MAX, |_| false),
+        vec![shown]
+    );
+}
+
 /// Drives the connection's pump against a mailbox that holds `limit` reads
 /// and refuses the next `refusals` sends, answering the oldest in-flight read
 /// between passes. A refusal leaves the rest of that pass owed, as the pump
