@@ -1,6 +1,6 @@
 //! Bounded room delivery to occupied listeners and transcript-backed landing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -31,6 +31,62 @@ struct Presented {
     handle: TaskHandle,
     publication: crate::room_command::Publication,
 }
+
+struct Planning {
+    residency: wire::ResidencyHead,
+    entries: Vec<board::Entry>,
+    rooms: BTreeMap<TaskStamp, usize>,
+    at: Instant,
+}
+
+#[derive(Debug, Default, Eq, PartialEq)]
+pub(in crate::resident) struct Changes {
+    pub(in crate::resident) authority: bool,
+    pub(in crate::resident) lanes: BTreeSet<CanonicalUuid>,
+    pub(in crate::resident) rooms: BTreeSet<TaskStamp>,
+}
+
+const RECONCILE_FACTS: &[wire::FactKind] = &[
+    wire::FactKind::TaskAdded,
+    wire::FactKind::TaskPhased,
+    wire::FactKind::TaskDone,
+    wire::FactKind::TaskReviewed,
+    wire::FactKind::TaskAssigned,
+    wire::FactKind::TaskEdited,
+    wire::FactKind::TaskDeleted,
+    wire::FactKind::TaskClosed,
+    wire::FactKind::OutputControlled,
+    wire::FactKind::ClaimWon,
+    wire::FactKind::ClaimCarried,
+    wire::FactKind::ClaimRebound,
+    wire::FactKind::ClaimFreed,
+    wire::FactKind::ClaimLapsed,
+    wire::FactKind::RoomDelivered,
+    wire::FactKind::LaneSeated,
+    wire::FactKind::LaneArranged,
+    wire::FactKind::LaneRetuned,
+    wire::FactKind::LaneEffortRetuned,
+    wire::FactKind::LaneFastRetuned,
+    wire::FactKind::LaneRuntimeRetuned,
+    wire::FactKind::TeamConfigured,
+    wire::FactKind::TeamArranged,
+    wire::FactKind::LaneSessionDeclared,
+    wire::FactKind::LaneStarted,
+    wire::FactKind::LaneImported,
+    wire::FactKind::LaneRemoved,
+    wire::FactKind::LaneExited,
+    wire::FactKind::LaneTimedOut,
+    wire::FactKind::LaneCancelled,
+    wire::FactKind::LaneSignalled,
+    wire::FactKind::LaneCompacted,
+    wire::FactKind::LaneRenewed,
+    wire::FactKind::LaneRenewalChanged,
+    wire::FactKind::LaneDrained,
+    wire::FactKind::LaneKilled,
+    wire::FactKind::LaneDegraded,
+    wire::FactKind::LaneHeld,
+    wire::FactKind::LaneResumed,
+];
 
 /// Why `lane` listens to one room and how it leaves, as one notice block.
 fn listening(
@@ -86,15 +142,85 @@ pub(in crate::resident) fn reconcile(
     seats: &Seats,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
+    reconcile_selected(
+        bus,
+        paths,
+        config,
+        seats,
+        true,
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+        diagnostic,
+    )
+}
+
+/// Reconcile only authority changed by one durable transaction.
+///
+/// Publications name their indexed rooms, cursor progress names its exact
+/// lane, and task/residency changes retain the complete startup projection.
+pub(in crate::resident) fn reconcile_commit(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    config: &SurfaceConfig,
+    seats: &Seats,
+    commit: bus::JournalCommit,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    let changes = changes(bus, commit)?;
+    if !changes.authority && changes.lanes.is_empty() && changes.rooms.is_empty() {
+        return Ok(());
+    }
+    reconcile_selected(
+        bus,
+        paths,
+        config,
+        seats,
+        changes.authority,
+        &changes.lanes,
+        &changes.rooms,
+        diagnostic,
+    )
+}
+
+fn reconcile_selected(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    config: &SurfaceConfig,
+    seats: &Seats,
+    all: bool,
+    lanes: &BTreeSet<CanonicalUuid>,
+    rooms: &BTreeSet<TaskStamp>,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    let selected_occupant = seats.lanes().into_iter().any(|lane| {
+        seats.occupant(lane).is_some() && (all || lanes.contains(&lane) || !rooms.is_empty())
+    });
+    if !selected_occupant {
+        return Ok(());
+    }
+    let planning = Planning::load(bus, config)?;
     for lane in seats.lanes() {
         let Some(occupant) = seats.occupant(lane).map(lane::occupant::Occupant::occupant) else {
             continue;
         };
+        let selected_rooms = if all || lanes.contains(&lane) {
+            None
+        } else if rooms.is_empty() {
+            continue;
+        } else {
+            Some(rooms)
+        };
         if preserve_landed(bus, paths, lane, occupant)? {
             continue;
         }
+        let selected_rooms =
+            if selected_rooms.is_some() && pending_notice(bus, paths, lane, occupant)? {
+                None
+            } else {
+                selected_rooms
+            };
         let path = notice_path(paths, lane);
-        match plan(bus, paths, config, lane, occupant) {
+        match plan(bus, paths, lane, occupant, &planning, selected_rooms) {
             Ok(Some(notice)) => {
                 let published = path
                     .parent()
@@ -133,90 +259,142 @@ pub(in crate::resident) fn reconcile(
     Ok(())
 }
 
+impl Planning {
+    fn load(bus: &Bus, config: &SurfaceConfig) -> CommandResult<Self> {
+        let snapshot = bus.task_snapshot().map_err(|error| {
+            store_fault("room::catch-up-snapshot-unreadable", &error.to_string())
+        })?;
+        let residency = snapshot
+            .residency()
+            .ok_or_else(|| {
+                store_fault(
+                    "room::catch-up-residency-missing",
+                    "the resident has no residency head",
+                )
+            })?
+            .body()
+            .clone();
+        let entries = snapshot
+            .tasks()
+            .iter()
+            .map(|heads| {
+                board::Entry::new(
+                    heads.statement().body().clone(),
+                    heads.workflow().body().clone(),
+                    heads.claim().map(|head| head.body().clone()),
+                    heads.lease().map(|head| head.body().clone()),
+                    &config.projects,
+                )
+                .map_err(|error| store_fault("room::catch-up-task-invalid", &error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let rooms = entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.born().clone(), index))
+            .collect();
+        let at = Instant::new(jiff::Timestamp::now()).map_err(|error| {
+            environment_fault("room::catch-up-clock-invalid", &error.to_string())
+        })?;
+        Ok(Self {
+            residency,
+            entries,
+            rooms,
+            at,
+        })
+    }
+}
+
+pub(in crate::resident) fn changes(
+    bus: &Bus,
+    commit: bus::JournalCommit,
+) -> CommandResult<Changes> {
+    let first = Seq::new(commit.first()).expect("a committed position is positive");
+    let last = Seq::new(commit.last()).expect("a committed position is positive");
+    bus.read(move |read| {
+        let mut changes = Changes {
+            rooms: read
+                .changed_room_publications(first, last)?
+                .into_iter()
+                .collect(),
+            ..Changes::default()
+        };
+        let mut after = first.get().checked_sub(1).and_then(Seq::new);
+        loop {
+            let page = read.selected_fact_page(
+                RECONCILE_FACTS,
+                after,
+                Some(last),
+                journal::FactReadBudget::RETAINED,
+            )?;
+            for envelope in page.rows {
+                if let Some(delivered) = envelope.fact.read::<RoomDelivered>() {
+                    changes.lanes.insert(delivered.hunk.head.lane);
+                } else {
+                    changes.authority = true;
+                }
+            }
+            let Some(continuation) = page.continuation else {
+                break;
+            };
+            after = Some(continuation);
+        }
+        Ok(changes)
+    })
+    .map_err(|error| store_fault("room::catch-up-changes-unreadable", &error.to_string()))
+}
+
 fn plan(
     bus: &Bus,
     paths: &RuntimePaths,
-    config: &SurfaceConfig,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
+    planning: &Planning,
+    rooms: Option<&BTreeSet<TaskStamp>>,
 ) -> CommandResult<Option<Notice>> {
-    let snapshot = bus
-        .task_snapshot()
-        .map_err(|error| store_fault("room::catch-up-snapshot-unreadable", &error.to_string()))?;
-    let residency = snapshot
-        .residency()
-        .ok_or_else(|| {
-            store_fault(
-                "room::catch-up-residency-missing",
-                "the resident has no residency head",
-            )
-        })?
-        .body()
-        .clone();
-    let entries = snapshot
-        .tasks()
-        .iter()
-        .map(|heads| {
-            board::Entry::new(
-                heads.statement().body().clone(),
-                heads.workflow().body().clone(),
-                heads.claim().map(|head| head.body().clone()),
-                heads.lease().map(|head| head.body().clone()),
-                &config.projects,
-            )
-            .map_err(|error| store_fault("room::catch-up-task-invalid", &error.to_string()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let at = Instant::new(jiff::Timestamp::now())
-        .map_err(|error| environment_fault("room::catch-up-clock-invalid", &error.to_string()))?;
     let after = start(bus, lane)?;
     let mut sources = Vec::new();
     let mut attention = Vec::new();
     let mut presented = BTreeMap::new();
     let mut handles = BTreeMap::new();
-    for entry in &entries {
-        let room = entry.born().clone();
-        let publications = crate::board_command::room_publications_after(bus, &room, after)
-            .map_err(unit_outcome)?;
-        if publications.is_empty() {
-            continue;
+    if let Some(rooms) = rooms {
+        for room in rooms {
+            let index = planning.rooms.get(room).ok_or_else(|| {
+                store_fault(
+                    "room::catch-up-anchor-missing",
+                    &format!("publication index names unknown room {room}"),
+                )
+            })?;
+            let entry = &planning.entries[*index];
+            append_room(
+                bus,
+                paths,
+                lane,
+                planning,
+                entry,
+                after,
+                &mut sources,
+                &mut attention,
+                &mut presented,
+            )?;
+            handles.insert(room.clone(), entry.handle().clone());
         }
-        let room_attention = crate::board_command::project_attention(
-            bus,
-            &entries,
-            &residency,
-            &room,
-            latest_lane_activity(bus, &room, lane)?.as_slice(),
-            at,
-        )
-        .map_err(unit_outcome)?;
-        let unseen = publications;
-        let projections = crate::room_command::project_publications(bus, &paths.tape, unseen)
-            .map_err(|detail| store_fault("room::catch-up-publication-unreadable", &detail))?;
-        for publication in projections {
-            let seq = publication.seq();
-            let display = publication.to_string();
-            sources.push(CatchUpSource {
-                seq,
-                room: room.clone(),
-                publication: publication.publication().clone(),
-                author: publication.author_lane(),
-                recipients: publication
-                    .recipients()
-                    .map_err(|detail| store_fault("room::catch-up-route-invalid", &detail))?,
-                bytes: display.len(),
-            });
-            presented.insert(
-                seq,
-                Presented {
-                    room: room.clone(),
-                    handle: entry.handle().clone(),
-                    publication,
-                },
-            );
+    } else {
+        for entry in &planning.entries {
+            let room = entry.born().clone();
+            append_room(
+                bus,
+                paths,
+                lane,
+                planning,
+                entry,
+                after,
+                &mut sources,
+                &mut attention,
+                &mut presented,
+            )?;
+            handles.insert(room, entry.handle().clone());
         }
-        handles.insert(room.clone(), entry.handle().clone());
-        attention.push(room_attention);
     }
     let selected = select_catch_up(lane, after, &attention, sources, CatchUpBudget::STANDARD)
         .map_err(|error| store_fault("room::catch-up-authority-invalid", &error.to_string()))?;
@@ -224,7 +402,13 @@ fn plan(
         return Ok(None);
     };
     let text = render(
-        lane, through, &selected, &presented, &attention, &handles, &entries,
+        lane,
+        through,
+        &selected,
+        &presented,
+        &attention,
+        &handles,
+        &planning.entries,
     );
     Ok(Some(Notice {
         occupant,
@@ -283,6 +467,61 @@ fn render(
     text
 }
 
+#[allow(clippy::too_many_arguments)]
+fn append_room(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    planning: &Planning,
+    entry: &board::Entry,
+    after: Seq,
+    sources: &mut Vec<CatchUpSource>,
+    attention: &mut Vec<spice::rooms::RoomAttention>,
+    presented: &mut BTreeMap<Seq, Presented>,
+) -> CommandResult<()> {
+    let room = entry.born().clone();
+    let publications =
+        crate::board_command::room_publications_after(bus, &room, after).map_err(unit_outcome)?;
+    if publications.is_empty() {
+        return Ok(());
+    }
+    let room_attention = crate::board_command::project_attention(
+        bus,
+        &planning.entries,
+        &planning.residency,
+        &room,
+        latest_lane_activity(bus, &room, lane)?.as_slice(),
+        planning.at,
+    )
+    .map_err(unit_outcome)?;
+    let projections = crate::room_command::project_publications(bus, &paths.tape, publications)
+        .map_err(|detail| store_fault("room::catch-up-publication-unreadable", &detail))?;
+    for publication in projections {
+        let seq = publication.seq();
+        let display = publication.to_string();
+        sources.push(CatchUpSource {
+            seq,
+            room: room.clone(),
+            publication: publication.publication().clone(),
+            author: publication.author_lane(),
+            recipients: publication
+                .recipients()
+                .map_err(|detail| store_fault("room::catch-up-route-invalid", &detail))?,
+            bytes: display.len(),
+        });
+        presented.insert(
+            seq,
+            Presented {
+                room: room.clone(),
+                handle: entry.handle().clone(),
+                publication,
+            },
+        );
+    }
+    attention.push(room_attention);
+    Ok(())
+}
+
 fn latest_lane_activity(
     bus: &Bus,
     room: &TaskStamp,
@@ -306,7 +545,8 @@ fn start(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Seq> {
         .map_err(|error| store_fault("room::catch-up-horizon-unreadable", &error.to_string()))?;
     match horizon {
         Some(head) => Ok(head.position()),
-        None => commit_fact(bus, lane, RoomHorizon { lane }),
+        None => commit_fact(bus, lane, RoomHorizon { lane })
+            .map(|commit| Seq::new(commit.last()).expect("a committed position is positive")),
     }
 }
 
@@ -317,6 +557,22 @@ fn cursor(bus: &Bus, lane: CanonicalUuid) -> CommandResult<Option<Seq>> {
             cursor
                 .map(|head| Seq::new(head.body().through.get()).expect("a cursor code is positive"))
         })
+}
+
+/// Whether the lane still has a published page that has not advanced its
+/// durable cursor. A changed-room pass must retain full projection in this
+/// case so it cannot replace unrelated pending content.
+fn pending_notice(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> CommandResult<bool> {
+    let Some(notice) = read_notice(&notice_path(paths, lane)) else {
+        return Ok(false);
+    };
+    Ok(notice.occupant == occupant
+        && cursor(bus, lane)?.is_none_or(|cursor| cursor < notice.through))
 }
 
 /// Keep an exact landed page available until its durable cursor proves
@@ -376,11 +632,11 @@ pub(in crate::resident) fn recognize(
     paths: &RuntimePaths,
     record: &lane::capture::CaptureRecord,
     source: CanonicalUuid,
-) -> CommandResult<()> {
+) -> CommandResult<Option<bus::JournalCommit>> {
     let Some(notice) = read_notice(&landed_notice_path(paths, record.lane))
         .or_else(|| read_notice(&notice_path(paths, record.lane)))
     else {
-        return Ok(());
+        return Ok(None);
     };
     let current = bus
         .read({
@@ -390,7 +646,7 @@ pub(in crate::resident) fn recognize(
         .map_err(|error| store_fault("room::catch-up-cursor-unreadable", &error.to_string()))?;
     let current = current.as_ref().map(|head| &head.body().through);
     if notice.occupant != record.occupant {
-        return Ok(());
+        return Ok(None);
     }
     for (event, prose) in
         record
@@ -419,7 +675,7 @@ pub(in crate::resident) fn recognize(
         else {
             continue;
         };
-        commit_fact(
+        let commit = commit_fact(
             bus,
             record.lane,
             RoomDelivered {
@@ -427,14 +683,17 @@ pub(in crate::resident) fn recognize(
                 hunk,
             },
         )?;
-        return Ok(());
+        return Ok(Some(commit));
     }
-    Ok(())
+    Ok(None)
 }
 
-/// Commit one resident-recognized room catch-up fact about `lane`, returning
-/// its journal position.
-fn commit_fact(bus: &Bus, lane: CanonicalUuid, body: impl wire::Body) -> CommandResult<Seq> {
+/// Commit one resident-recognized room catch-up fact about `lane`.
+fn commit_fact(
+    bus: &Bus,
+    lane: CanonicalUuid,
+    body: impl wire::Body,
+) -> CommandResult<bus::JournalCommit> {
     let at = Instant::new(jiff::Timestamp::now())
         .map_err(|error| environment_fault("room::catch-up-clock-invalid", &error.to_string()))?;
     let origin = format!("lane:{lane}")
@@ -448,9 +707,7 @@ fn commit_fact(bus: &Bus, lane: CanonicalUuid, body: impl wire::Body) -> Command
         .commit(write)
         .map_err(|error| store_fault("room::catch-up-commit", &error.to_string()))?
     {
-        CommitOutcome::Committed(commit) => Seq::new(commit.last()).ok_or_else(|| {
-            store_fault("room::catch-up-commit", "a committed position is positive")
-        }),
+        CommitOutcome::Committed(commit) => Ok(commit),
         CommitOutcome::Refused(refusal) => {
             Err(store_fault("room::catch-up-refused", &refusal.to_string()))
         }
