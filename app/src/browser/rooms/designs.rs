@@ -1,11 +1,13 @@
-//! The global menu's Design list and its drop targets. A design lifts into a
-//! new or existing working group exactly as an agent lifts into a team: a
-//! mouse drags the whole row, a finger or pen drags its handle. Every drop only
-//! replaces shared organization through the guarded group put, so the
-//! authority's typed refusals surface in the catalog notice.
+//! The global menu's Design list and its drop targets. A design moves between
+//! working groups exactly as an agent moves between teams: a mouse drags the
+//! whole row, a finger or pen drags its handle. Dropped on New working group it
+//! begins a group, on a group it joins that group, and on the Design list it
+//! leaves its group; a design belongs to at most one group, and a group whose
+//! last design leaves ends. Every drop only replaces shared organization
+//! through the guarded group put, so the authority's typed refusals surface in
+//! the catalog notice.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use wasm_bindgen::JsCast;
@@ -15,7 +17,7 @@ use wire::intent::BoardTask;
 use wire::rooms::{RoomAuthorityStamp, WorkingGroup};
 use yew::prelude::*;
 
-use super::{Controls, input_value, mint_group, submit_group};
+use super::{Controls, mint_group, submit_group};
 use crate::browser::sender::SenderHandle;
 use crate::browser::touch_lift;
 use crate::watchband::PointerDragSession;
@@ -25,6 +27,8 @@ const DESIGN_MIME: &str = "application/x-spice-design";
 const DROP_ATTRIBUTE: &str = "data-design-drop";
 /// The drop-target value naming a new working group rather than a saved one.
 const NEW_GROUP_DROP: &str = "new";
+/// The drop-target value naming no group: a design released there leaves its group.
+const UNGROUP_DROP: &str = "none";
 /// Design lifts span no roster topology: each drop is guarded by its group's
 /// head instead, so one constant revision keeps a lift alive across renders.
 const DESIGN_LIFT_REVISION: u64 = 0;
@@ -42,10 +46,6 @@ pub(super) struct Drops {
     controls: Controls,
     /// Every saved group beside the head its replacement must witness.
     groups: Rc<Vec<(WorkingGroup, wire::Seq)>>,
-    /// The new-group name field; an empty field names the group for its design.
-    name: NodeRef,
-    /// Each listed design's title.
-    titles: Rc<BTreeMap<TaskStamp, String>>,
     enabled: bool,
 }
 
@@ -54,24 +54,12 @@ impl Drops {
         sender: SenderHandle,
         controls: Controls,
         groups: Vec<(WorkingGroup, wire::Seq)>,
-        name: NodeRef,
-        board: Option<&crate::runtime::BoardView>,
         enabled: bool,
     ) -> Self {
-        let titles = designs(board)
-            .map(|task| {
-                (
-                    task.statement.body.born.clone(),
-                    task.presentation_title.clone(),
-                )
-            })
-            .collect();
         Self {
             sender,
             controls,
             groups: Rc::new(groups),
-            name,
-            titles: Rc::new(titles),
             enabled,
         }
     }
@@ -80,42 +68,49 @@ impl Drops {
         self.enabled
     }
 
+    /// The saved group holding `design`, beside its head.
+    fn holder(&self, design: &TaskStamp) -> Option<&(WorkingGroup, wire::Seq)> {
+        self.groups
+            .iter()
+            .find(|(saved, _)| saved.anchors.contains(design))
+    }
+
+    fn grouped(&self, design: &TaskStamp) -> bool {
+        self.holder(design).is_some()
+    }
+
     /// Where a release over `value` lands `design`, absent where the design
     /// already is.
     fn target(&self, value: &str, design: &TaskStamp) -> Option<Target> {
-        if value == NEW_GROUP_DROP {
-            return Some(Target::New);
+        match value {
+            NEW_GROUP_DROP => Some(Target::New),
+            UNGROUP_DROP => self.grouped(design).then_some(Target::Ungroup),
+            _ => {
+                let group = value.parse::<RoomAuthorityStamp>().ok()?;
+                let (saved, _) = self.groups.iter().find(|(saved, _)| saved.group == group)?;
+                (!saved.anchors.contains(design)).then_some(Target::Group(group))
+            }
         }
-        let group = value.parse::<RoomAuthorityStamp>().ok()?;
-        let (saved, _) = self.groups.iter().find(|(saved, _)| saved.group == group)?;
-        (!saved.anchors.contains(design)).then_some(Target::Group(group))
     }
 
     /// Submit the replacement a drop asks for; whether a command was sent.
+    /// Joining or beginning a group names the design there, and the authority
+    /// takes it out of the group that held it.
     fn land(&self, target: Target, design: TaskStamp) -> bool {
-        match target {
+        let (replacement, head) = match target {
             Target::New => {
                 let Some(group) = mint_group() else {
                     self.controls
                         .report("A working-group identity could not be created.".into());
                     return false;
                 };
-                let name = input_value(&self.name)
-                    .map(|name| name.trim().to_owned())
-                    .filter(|name| !name.is_empty())
-                    .or_else(|| self.titles.get(&design).cloned())
-                    .unwrap_or_else(|| design.to_string());
-                submit_group(
-                    &self.sender,
-                    &self.controls,
+                (
                     WorkingGroup {
                         group,
-                        name,
                         anchors: vec![design],
                     },
                     None,
-                );
-                true
+                )
             }
             Target::Group(group) => {
                 let Some((saved, head)) =
@@ -125,16 +120,26 @@ impl Drops {
                 };
                 let mut replacement = saved.clone();
                 replacement.anchors.push(design);
-                submit_group(&self.sender, &self.controls, replacement, Some(*head));
-                true
+                (replacement, Some(*head))
             }
-        }
+            Target::Ungroup => {
+                let Some((saved, head)) = self.holder(&design) else {
+                    return false;
+                };
+                let mut replacement = saved.clone();
+                replacement.anchors.retain(|held| *held != design);
+                (replacement, Some(*head))
+            }
+        };
+        submit_group(&self.sender, &self.controls, replacement, head);
+        true
     }
 }
 
 enum Target {
     New,
     Group(RoomAuthorityStamp),
+    Ungroup,
 }
 
 /// The handlers that make an element a design drop target. The element also
@@ -204,18 +209,30 @@ pub(super) fn designs(
         .filter(|task| task.statement.body.intent == Some(wire::TaskIntent::Design))
 }
 
-/// The Design list, the working-group counterpart of the agent roster.
+/// The Design list, the working-group counterpart of Unassigned Agents: it
+/// shows designs no group holds, and a grouped design dropped here leaves its
+/// group.
 pub(super) fn render_designs(board: Option<&crate::runtime::BoardView>, drops: &Drops) -> Html {
-    let designs = designs(board).collect::<Vec<_>>();
+    let designs = designs(board)
+        .filter(|task| !drops.grouped(&task.statement.body.born))
+        .collect::<Vec<_>>();
+    let DropHandlers { ondragover, ondrop } = target_handlers(drops, UNGROUP_DROP.to_owned());
     html! {
-        <section class="room-designs" data-design-list="">
+        <section
+            class="room-designs"
+            data-design-list=""
+            data-design-drop={UNGROUP_DROP}
+            data-drop-enabled={drops.enabled.to_string()}
+            {ondragover}
+            {ondrop}
+        >
             <header>
                 <h3>{"Designs"}</h3>
-                <span>{"drag into a group"}</span>
+                <span>{"drop to ungroup"}</span>
             </header>
             <div class="room-design-list">
                 if designs.is_empty() {
-                    <p class="app-empty-state">{"No open designs"}</p>
+                    <p class="app-empty-state">{"No ungrouped designs"}</p>
                 } else {
                     {for designs.into_iter().map(|task| render_design(task, drops))}
                 }
@@ -226,8 +243,40 @@ pub(super) fn render_designs(board: Option<&crate::runtime::BoardView>, drops: &
 
 fn render_design(task: &BoardTask, drops: &Drops) -> Html {
     let statement = &task.statement.body;
-    let design = statement.born.clone();
     let workflow = &task.workflow.body;
+    render_draggable(
+        &statement.born,
+        statement.handle.to_string(),
+        html! { <span>{format!("{} · {}", workflow.phase, workflow.status)}</span> },
+        html! { <span class="room-design-title">{task.presentation_title.clone()}</span> },
+        drops,
+    )
+}
+
+/// A grouped design's tile, drawn as the Design list draws it while the board
+/// carries its task, else under its anchor label.
+pub(super) fn render_member(
+    runtime: &crate::AppRuntime,
+    design: &TaskStamp,
+    label: String,
+    drops: &Drops,
+) -> Html {
+    match designs(runtime.board()).find(|task| task.statement.body.born == *design) {
+        Some(task) => render_design(task, drops),
+        None => render_draggable(design, label, Html::default(), Html::default(), drops),
+    }
+}
+
+/// One design as a drag source, wherever it stands: its label is the finger
+/// or pen handle, `aside` shares its header, and `body` follows.
+pub(super) fn render_draggable(
+    design: &TaskStamp,
+    label: String,
+    aside: Html,
+    body: Html,
+    drops: &Drops,
+) -> Html {
+    let design = design.clone();
     html! {
         <div
             key={design.to_string()}
@@ -241,11 +290,8 @@ fn render_design(task: &BoardTask, drops: &Drops) -> Html {
             onpointercancel={touch_cancel(design.clone())}
             onlostpointercapture={touch_cancel(design)}
         >
-            <header>
-                <strong>{statement.handle.to_string()}</strong>
-                <span>{format!("{} · {}", workflow.phase, workflow.status)}</span>
-            </header>
-            <span class="room-design-title">{task.presentation_title.clone()}</span>
+            <header><strong>{label}</strong>{aside}</header>
+            {body}
         </div>
     }
 }

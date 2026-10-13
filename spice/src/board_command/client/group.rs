@@ -3,7 +3,7 @@ use super::*;
 use wire::intent::{
     WORKING_GROUP_PAGE_LIMIT_MAX, WorkingGroupAnchor, WorkingGroupPage, WorkingGroupRead,
 };
-use wire::rooms::{RoomAuthorityStamp, WorkingGroup, WorkingGroupPut, WorkingGroupRemove};
+use wire::rooms::{RoomAuthorityStamp, WorkingGroup, WorkingGroupPut};
 
 const DEFAULT_PAGE_LIMIT: u16 = 25;
 
@@ -73,7 +73,6 @@ pub(super) fn client_group_put(
     let body = WorkingGroupPut {
         group: WorkingGroup {
             group: group.clone(),
-            name: required(matches, "NAME"),
             anchors,
         },
     };
@@ -83,44 +82,6 @@ pub(super) fn client_group_put(
         CommandKind::WorkingGroupPut,
         expected,
         &body,
-    ))
-}
-
-pub(super) fn client_group_remove(
-    repository: &Repository,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    let group = match required(matches, "GROUP").parse::<RoomAuthorityStamp>() {
-        Ok(group) => group,
-        Err(error) => {
-            return refusal(
-                "group::identity-invalid",
-                Some(required(matches, "GROUP")),
-                &error.to_string(),
-            );
-        }
-    };
-    let observed = match exact_group(repository, &group) {
-        Ok(Some(observed)) => observed,
-        Ok(None) => {
-            return refusal(
-                "group::unknown",
-                Some(group.to_string()),
-                "read spice group list and name one current working group",
-            );
-        }
-        Err(outcome) => return outcome,
-    };
-    render_change(crate::command_client::execute_typed(
-        repository,
-        contract,
-        CommandKind::WorkingGroupRemove,
-        vec![Witness::Group {
-            group: group.clone(),
-            head: Some(observed.head),
-        }],
-        &WorkingGroupRemove { group },
     ))
 }
 
@@ -253,7 +214,7 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
                     change.group,
                     match change.status {
                         wire::intent::WorkingGroupChangeStatus::Stored => "stored",
-                        wire::intent::WorkingGroupChangeStatus::Removed => "removed",
+                        wire::intent::WorkingGroupChangeStatus::Removed => "ended",
                     }
                 ),
             }),
@@ -270,7 +231,7 @@ fn render_groups(page: &WorkingGroupPage) -> String {
         text.push_str("no working groups\n");
     }
     for group in &page.groups {
-        text.push_str(&format!("{}  {}\n", group.group, group.name));
+        text.push_str(&format!("{}\n", group.group));
         for anchor in &group.anchors {
             match anchor {
                 WorkingGroupAnchor::Available { handle, .. } => {

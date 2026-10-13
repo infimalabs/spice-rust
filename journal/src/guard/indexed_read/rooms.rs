@@ -43,17 +43,6 @@ pub struct GroupHeadPage {
     pub witness: CurrentHeadWitness,
 }
 
-/// One ordered bounded page of groups containing an anchor task.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AnchorGroupPage {
-    /// Group identities decoded within this call's row and byte budgets.
-    pub rows: Vec<RoomAuthorityStamp>,
-    /// Last returned identity when more matching groups remain.
-    pub continuation: Option<RoomAuthorityStamp>,
-    /// Cursor identity of the projection this page observed.
-    pub witness: CurrentHeadWitness,
-}
-
 /// One ordered page of operator items still owing a disposition.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenRoomItemPage {
@@ -143,56 +132,33 @@ impl JournalRead<'_> {
         })
     }
 
-    /// One page of working groups whose order includes this room anchor,
-    /// strictly after `after` in identity order.
-    pub fn anchor_group_page(
+    /// The current head of the working group that holds this room anchor; a
+    /// design belongs to at most one group.
+    pub fn anchor_group(
         &self,
         anchor: &wire::TaskStamp,
-        after: Option<&RoomAuthorityStamp>,
-        budget: FactReadBudget,
-    ) -> Result<AnchorGroupPage, GuardError> {
-        let after = after.map(ToString::to_string).unwrap_or_default();
+    ) -> Result<Option<JournalHead<WorkingGroup>>, GuardError> {
         read_metrics::observe_query();
-        let mut statement = self
+        let owner = self
             .connection
-            .prepare(
-                "SELECT length(CAST(working_group AS BLOB)), working_group \
-                 FROM group_anchors WHERE anchor = ?1 AND working_group > ?2 \
-                 ORDER BY working_group LIMIT ?3",
+            .query_row(
+                "SELECT working_group FROM group_anchors WHERE anchor = ?1",
+                [anchor.as_str()],
+                |row| row.get::<_, String>(0),
             )
+            .optional()
             .map_err(GuardError::Store)?;
-        let mut rows = statement
-            .query(params![anchor.as_str(), after, probe_limit(budget)?])
-            .map_err(GuardError::Store)?;
-        let mut groups = Vec::with_capacity(budget.rows());
-        let mut decoded = 0usize;
-        let mut continuation = None;
-        while let Some(row) = rows.next().map_err(GuardError::Store)? {
-            read_metrics::observe_row();
-            if groups.len() == budget.rows() {
-                continuation = groups.last().cloned();
-                break;
-            }
-            let length = indexed_length(row, 0, "working-group identity")?;
-            if !groups.is_empty() && decoded.saturating_add(length) > budget.decoded_bytes() {
-                continuation = groups.last().cloned();
-                break;
-            }
-            let indexed = row.get::<_, String>(1).map_err(GuardError::Store)?;
-            let group = indexed.parse().map_err(|error| {
-                GuardError::Invalid(format!("group anchor index names {indexed:?}: {error}"))
-            })?;
-            read_metrics::observe_decode(length);
-            decoded = decoded.saturating_add(length);
-            groups.push(group);
-        }
-        Ok(AnchorGroupPage {
-            rows: groups,
-            continuation,
-            witness: CurrentHeadWitness {
-                cursor: self.cursor,
-            },
-        })
+        let Some(owner) = owner else {
+            return Ok(None);
+        };
+        read_metrics::observe_row();
+        let group = owner.parse::<RoomAuthorityStamp>().map_err(|error| {
+            GuardError::Invalid(format!("group anchor index names {owner:?}: {error}"))
+        })?;
+        let head = self.group_head(&group)?.ok_or_else(|| {
+            GuardError::Invalid(format!("group anchor index names absent group {group}"))
+        })?;
+        Ok(Some(head))
     }
 
     /// The write-once head of one proposal subject, absent before recording.

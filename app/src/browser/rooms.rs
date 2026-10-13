@@ -7,7 +7,7 @@ use std::rc::Rc;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::HtmlElement;
 use wire::intent::WorkingGroupChangeStatus;
-use wire::rooms::{RoomAuthorityStamp, RoomPostOutcome, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup};
+use wire::rooms::{RoomAuthorityStamp, RoomPostOutcome, WorkingGroup};
 use wire::{CommandKind, TaskStamp};
 use yew::prelude::*;
 
@@ -167,7 +167,6 @@ pub(super) fn render_catalog(
     };
     let projection = runtime.room_projection();
     let can_put = runtime.offers(CommandKind::WorkingGroupPut);
-    let can_remove = runtime.offers(CommandKind::WorkingGroupRemove);
     let board = runtime.board();
     let body = match projection.status() {
         RoomProjectionStatus::Loading => {
@@ -177,8 +176,6 @@ pub(super) fn render_catalog(
             html! { <p class="empty">{"Group authority unavailable until reconnect."}</p> }
         }
         RoomProjectionStatus::Available => {
-            let create_name = NodeRef::default();
-            let create_room = NodeRef::default();
             let drops = designs::Drops::new(
                 sender.clone(),
                 controls.clone(),
@@ -187,8 +184,6 @@ pub(super) fn render_catalog(
                     .values()
                     .map(|positioned| (positioned.value.clone(), positioned.position))
                     .collect(),
-                create_name.clone(),
-                board,
                 can_put,
             );
             html! {
@@ -199,25 +194,10 @@ pub(super) fn render_catalog(
                     {conversation::render_inbox(runtime, &controls.reporter(), sender)}
                     <div class="room-group-catalog">
                         {for projection.groups().values().map(|positioned| {
-                            render_catalog_group(
-                                runtime,
-                                &positioned.value,
-                                positioned.position,
-                                can_remove,
-                                &drops,
-                                controls,
-                                sender,
-                            )
+                            render_catalog_group(runtime, &positioned.value, &drops, controls)
                         })}
                     </div>
-                    {render_new_group(
-                        board,
-                        create_name,
-                        create_room,
-                        &drops,
-                        controls.clone(),
-                        sender.clone(),
-                    )}
+                    {render_new_group(&drops)}
                     {designs::render_designs(board, &drops)}
                 </>
             }
@@ -235,135 +215,61 @@ fn section(title: &'static str, body: Html) -> Html {
     }
 }
 
-fn render_new_group(
-    board: Option<&crate::runtime::BoardView>,
-    name_ref: NodeRef,
-    room_ref: NodeRef,
-    drops: &designs::Drops,
-    controls: Controls,
-    sender: SenderHandle,
-) -> Html {
-    let enabled = drops.enabled();
-    let create = new_group_callback(
-        name_ref.clone(),
-        room_ref.clone(),
-        false,
-        controls.clone(),
-        sender.clone(),
-    );
-    let create_open =
-        new_group_callback(name_ref.clone(), room_ref.clone(), true, controls, sender);
+/// The one way a working group begins: a design dropped here, as an agent
+/// dropped on New Team begins a team.
+fn render_new_group(drops: &designs::Drops) -> Html {
     let designs::DropHandlers { ondragover, ondrop } = designs::new_group_target(drops);
     html! {
-        <div
-            class="room-group-create"
+        <section
+            class="app-sheet-section room-group-create"
             data-design-drop={designs::new_group_value()}
-            data-drop-enabled={enabled.to_string()}
+            data-drop-enabled={drops.enabled().to_string()}
             {ondragover}
             {ondrop}
         >
-            <label>
-                <span>{"New working group"}</span>
-                <input ref={name_ref} type="text" maxlength="120" placeholder="Group name" disabled={!enabled} />
-            </label>
-            <label>
-                <span>{"Design"}</span>
-                <select ref={room_ref} disabled={!enabled}>
-                    <option value="">{"No design yet"}</option>
-                    {for task_options(board)}
-                </select>
-            </label>
-            <div class="room-inline-actions">
-                <button type="button" disabled={!enabled} onclick={create}>{"Create"}</button>
-                <button type="button" disabled={!enabled} onclick={create_open}>{"Create & open"}</button>
-            </div>
+            <header><h3>{"New working group"}</h3><span>{"drop design to create"}</span></header>
             <div class="app-drop-target">{"Drop design here"}</div>
-        </div>
+        </section>
     }
 }
 
-fn new_group_callback(
-    name_ref: NodeRef,
-    room_ref: NodeRef,
-    open: bool,
-    controls: Controls,
-    sender: SenderHandle,
-) -> Callback<MouseEvent> {
-    Callback::from(move |_| {
-        let Some(name) = input_value(&name_ref) else {
-            return;
-        };
-        let name = name.trim().to_owned();
-        if name.is_empty() {
-            controls.report("A working-group name is required.".into());
-            return;
-        }
-        let Some(group) = mint_group() else {
-            controls.report("A working-group identity could not be created.".into());
-            return;
-        };
-        let room = input_value(&room_ref)
-            .filter(|value| !value.is_empty())
-            .and_then(|value| value.parse::<TaskStamp>().ok());
-        let anchors = room.clone().into_iter().collect::<Vec<_>>();
-        submit_group(
-            &sender,
-            &controls,
-            WorkingGroup {
-                group: group.clone(),
-                name,
-                anchors,
-            },
-            None,
-        );
-        if open {
-            controls.open(group, room);
-        }
-    })
+/// A group's label, drawn from its lead design as a team's is from its host.
+pub(super) fn group_label(runtime: &AppRuntime, group: &WorkingGroup) -> String {
+    let lead = group.anchors.first();
+    let title = lead.and_then(|lead| {
+        runtime
+            .board()?
+            .tasks
+            .iter()
+            .find(|task| task.statement.body.born == *lead)
+            .map(|task| task.presentation_title.clone())
+    });
+    let host = title.unwrap_or_else(|| {
+        lead.map_or_else(
+            || group.group.to_string(),
+            |lead| anchor_label(runtime, lead),
+        )
+    });
+    format!("{host} group")
 }
 
-#[allow(clippy::too_many_arguments)]
+/// A group's card, read as a team's: its label and size, the console it opens,
+/// and its designs as tiles that drag out to wherever they land.
 fn render_catalog_group(
     runtime: &AppRuntime,
     group: &WorkingGroup,
-    head: wire::Seq,
-    can_remove: bool,
     drops: &designs::Drops,
     controls: &Controls,
-    sender: &SenderHandle,
 ) -> Html {
     let can_put = drops.enabled();
-    let full = group.anchors.len() >= WORKING_GROUP_DESIGN_LIMIT;
-    let can_add = can_put && !full;
-    let add_title =
-        full.then(|| format!("A working group holds at most {WORKING_GROUP_DESIGN_LIMIT} designs"));
-    let select = NodeRef::default();
-    let add = edit_group_callback(
-        select.clone(),
-        group.clone(),
-        head,
-        false,
-        controls.clone(),
-        sender.clone(),
-    );
-    let open = edit_group_callback(
-        select.clone(),
-        group.clone(),
-        head,
-        true,
-        controls.clone(),
-        sender.clone(),
-    );
-    let remove_group = {
-        let group = group.group.clone();
-        let controls = controls.clone();
-        let sender = sender.clone();
-        Callback::from(move |_| submit_group_remove(&sender, &controls, group.clone(), head))
-    };
     let open_group = {
         let group = group.group.clone();
         let controls = controls.clone();
         Callback::from(move |_| controls.open(group.clone(), None))
+    };
+    let size = match group.anchors.len() {
+        1 => "1 design".to_owned(),
+        count => format!("{count} designs"),
     };
     let designs::DropHandlers { ondragover, ondrop } = designs::group_target(drops, &group.group);
     html! {
@@ -377,111 +283,19 @@ fn render_catalog_group(
             {ondrop}
         >
             <header>
-                <strong>{group.name.clone()}</strong>
-                <code>{group.group.to_string()}</code>
+                <strong>{group_label(runtime, group)}</strong>
+                <span>{size}</span>
                 <button type="button" onclick={open_group}>{"Open"}</button>
             </header>
             <ol>
-                {for group.anchors.iter().enumerate().map(|(index, room)| {
-                    render_catalog_anchor(group, head, room, index, can_put, controls, sender, runtime)
+                {for group.anchors.iter().map(|room| html! {
+                    <li key={room.to_string()} data-room={room.to_string()}>
+                        {designs::render_member(runtime, room, anchor_label(runtime, room), drops)}
+                    </li>
                 })}
             </ol>
-            <div class="room-group-add">
-                <select ref={select} disabled={!can_add} aria-label={format!("Design for {}", group.name)}>
-                    <option value="">{"Choose design"}</option>
-                    {for task_options(runtime.board())}
-                </select>
-                <button type="button" disabled={!can_add} title={add_title.clone()} onclick={add}>{"Add to group"}</button>
-                <button type="button" disabled={!can_put} onclick={open}>{"Open in group"}</button>
-            </div>
-            <button class="room-danger" type="button" disabled={!can_remove} onclick={remove_group}>
-                {"Remove group"}
-            </button>
         </article>
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_catalog_anchor(
-    group: &WorkingGroup,
-    head: wire::Seq,
-    room: &TaskStamp,
-    index: usize,
-    enabled: bool,
-    controls: &Controls,
-    sender: &SenderHandle,
-    runtime: &AppRuntime,
-) -> Html {
-    let label = anchor_label(runtime, room);
-    let open = {
-        let controls = controls.clone();
-        let group = group.group.clone();
-        let room = room.clone();
-        Callback::from(move |_| controls.open(group.clone(), Some(room.clone())))
-    };
-    let move_anchor = |delta: isize| {
-        let mut replacement = group.clone();
-        let target = index
-            .saturating_add_signed(delta)
-            .min(replacement.anchors.len() - 1);
-        if target != index {
-            replacement.anchors.swap(index, target);
-        }
-        group_action(sender, controls, replacement, head)
-    };
-    let remove = {
-        let mut replacement = group.clone();
-        replacement.anchors.remove(index);
-        group_action(sender, controls, replacement, head)
-    };
-    html! {
-        <li key={room.to_string()} data-room={room.to_string()}>
-            <button type="button" onclick={open}>{label}</button>
-            <button type="button" disabled={!enabled || index == 0} onclick={move_anchor(-1)} aria-label="Move design left">{"←"}</button>
-            <button type="button" disabled={!enabled || index + 1 == group.anchors.len()} onclick={move_anchor(1)} aria-label="Move design right">{"→"}</button>
-            <button type="button" disabled={!enabled} onclick={remove} aria-label="Remove design from group">{"−"}</button>
-        </li>
-    }
-}
-
-fn edit_group_callback(
-    select: NodeRef,
-    group: WorkingGroup,
-    head: wire::Seq,
-    open: bool,
-    controls: Controls,
-    sender: SenderHandle,
-) -> Callback<MouseEvent> {
-    Callback::from(move |_| {
-        let Some(room) = input_value(&select)
-            .filter(|value| !value.is_empty())
-            .and_then(|value| value.parse::<TaskStamp>().ok())
-        else {
-            controls.report("Choose a design first.".into());
-            return;
-        };
-        if !group.anchors.contains(&room) {
-            let mut replacement = group.clone();
-            replacement.anchors.push(room.clone());
-            submit_group(&sender, &controls, replacement, Some(head));
-        }
-        if open {
-            controls.open(group.group.clone(), Some(room));
-        }
-    })
-}
-
-fn group_action(
-    sender: &SenderHandle,
-    controls: &Controls,
-    replacement: WorkingGroup,
-    head: wire::Seq,
-) -> Callback<MouseEvent> {
-    let sender = sender.clone();
-    let controls = controls.clone();
-    Callback::from(move |_| {
-        submit_group(&sender, &controls, replacement.clone(), Some(head));
-    })
 }
 
 fn submit_group(
@@ -496,7 +310,9 @@ fn submit_group(
             let message = match result {
                 Ok(change) => match change.status {
                     WorkingGroupChangeStatus::Stored => "Working group saved.".to_owned(),
-                    WorkingGroupChangeStatus::Removed => "Working group removed.".to_owned(),
+                    WorkingGroupChangeStatus::Removed => {
+                        "Working group ended; its last design left.".to_owned()
+                    }
                 },
                 Err(error) => error,
             };
@@ -511,43 +327,6 @@ fn submit_group(
             respond,
         },
     );
-}
-
-fn submit_group_remove(
-    sender: &SenderHandle,
-    controls: &Controls,
-    group: RoomAuthorityStamp,
-    head: wire::Seq,
-) {
-    let controls = controls.clone();
-    let respond = Rc::new(
-        move |result: Result<wire::intent::WorkingGroupChange, String>| {
-            controls.report(match result {
-                Ok(_) => "Working group removed; open local views were preserved.".to_owned(),
-                Err(error) => error,
-            });
-        },
-    );
-    let _ = admit_action(
-        sender,
-        ClientAction::WorkingGroupRemove {
-            group,
-            head,
-            respond,
-        },
-    );
-}
-
-/// Every Design task a working group could hold.
-fn task_options(board: Option<&crate::runtime::BoardView>) -> Vec<Html> {
-    designs::designs(board)
-        .map(|task| {
-            let statement = &task.statement.body;
-            html! {
-                <option value={statement.born.to_string()}>{statement.handle.to_string()}</option>
-            }
-        })
-        .collect()
 }
 
 fn input_value(node: &NodeRef) -> Option<String> {

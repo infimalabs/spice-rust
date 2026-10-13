@@ -3,7 +3,7 @@ use super::*;
 mod group;
 mod preparation;
 mod requirements;
-use group::{client_group_list, client_group_put, client_group_remove};
+use group::{client_group_list, client_group_put};
 use requirements::{client_require, environment_requirements};
 mod room;
 use room::dispatch_room_client;
@@ -58,7 +58,6 @@ fn dispatch_client(
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
         ["group", "list"] => client_group_list(repository, contract, matches),
         ["group", "put"] => client_group_put(repository, contract, matches),
-        ["group", "remove"] => client_group_remove(repository, contract, matches),
         ["preparation", verb] => preparation::dispatch_client(repository, contract, matches, verb),
         ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),
@@ -1301,9 +1300,6 @@ fn dispatch_working_group(
     Some(match command.body() {
         wire::intent::Intent::WorkingGroupRead(read) => read_working_groups(bus, read),
         wire::intent::Intent::WorkingGroupPut(put) => put_working_group(bus, command, put),
-        wire::intent::Intent::WorkingGroupRemove(remove) => {
-            remove_working_group(bus, command, remove)
-        }
         _ => return None,
     })
 }

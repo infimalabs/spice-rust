@@ -57,19 +57,23 @@ fn room() -> wire::TaskStamp {
     fixture_stamp("PUBLIC-work1")
 }
 
-fn group(name: &str) -> WorkingGroup {
+/// The fixture group holding the fixture room and each `extra` design.
+fn group(extra: &[&str]) -> WorkingGroup {
     WorkingGroup {
         group: authority(GROUP),
-        name: name.to_owned(),
-        anchors: vec![room()],
+        anchors: std::iter::once(room())
+            .chain(extra.iter().map(|design| fixture_stamp(design)))
+            .collect(),
     }
 }
 
-fn group_stored(position: u64, name: &str) -> serde_json::Value {
+fn group_stored(position: u64, extra: &[&str]) -> serde_json::Value {
     envelope(
         position,
         "group::stored",
-        &WorkingGroupStored { group: group(name) },
+        &WorkingGroupStored {
+            group: group(extra),
+        },
     )
 }
 
@@ -262,7 +266,7 @@ fn opening(session: &Session) -> [app::Admitted<StreamFrame>; 3] {
         operator_facts(session, 8),
         room_page(
             session,
-            &[group_stored(1, "Delivery"), room_message(2)],
+            &[group_stored(1, &[]), room_message(2)],
             Some((4, 4)),
             8,
         ),
@@ -311,10 +315,7 @@ fn operator_subscription_rebuilds_room_authority_from_its_paged_room_snapshot() 
     assert!(runtime.apply_stream(&last).is_empty());
     let projection = runtime.room_projection();
     assert_eq!(projection.status(), app::RoomProjectionStatus::Available);
-    assert_eq!(
-        projection.groups()[&authority(GROUP)].value,
-        group("Delivery")
-    );
+    assert_eq!(projection.groups()[&authority(GROUP)].value, group(&[]));
     assert_eq!(
         projection.preparation().authorizations[&authorization(1).decision].value,
         authorization(1)
@@ -434,7 +435,7 @@ fn same_scope_reconnect_rebuilds_from_the_new_snapshot_with_stable_identities() 
         browser.apply_stream(&operator_facts(&session, 2));
         browser.apply_stream(&room_page(
             &session,
-            &[group_stored(1, "Delivery"), room_message(2)],
+            &[group_stored(1, &[]), room_message(2)],
             None,
             2,
         ));
@@ -476,7 +477,7 @@ fn same_scope_reconnect_rebuilds_from_the_new_snapshot_with_stable_identities() 
         &session,
         &[
             room_message(2),
-            group_stored(4, "Renamed"),
+            group_stored(4, &["PUBLIC-work2"]),
             direction(5, COORDINATION_KEY, SECOND_LANE),
             coordination(6),
         ],
@@ -487,7 +488,7 @@ fn same_scope_reconnect_rebuilds_from_the_new_snapshot_with_stable_identities() 
     assert_eq!(projection.status(), app::RoomProjectionStatus::Available);
     assert_eq!(
         projection.groups()[&authority(GROUP)].value,
-        group("Renamed")
+        group(&["PUBLIC-work2"])
     );
     assert_eq!(projection.groups()[&authority(GROUP)].position, seq(4));
     let events = projection.room(&room()).expect("room").events();
@@ -557,7 +558,7 @@ fn room_snapshots_refuse_moved_horizons_regressions_and_live_gaps() {
 
     runtime.apply_stream(&room_page(
         &session,
-        &[group_stored(1, "A")],
+        &[group_stored(1, &[])],
         Some((1, 3)),
         4,
     ));
@@ -571,7 +572,7 @@ fn room_snapshots_refuse_moved_horizons_regressions_and_live_gaps() {
     assert!(!runtime.reconnect(&accepted));
     runtime.apply_stream(&room_page(
         &session,
-        &[group_stored(1, "A")],
+        &[group_stored(1, &[])],
         Some((1, 3)),
         4,
     ));
@@ -583,9 +584,12 @@ fn room_snapshots_refuse_moved_horizons_regressions_and_live_gaps() {
     assert!(requires_snapshot(&runtime));
 
     assert!(!runtime.reconnect(&accepted));
-    runtime.apply_stream(&admitted_stream(&session, &live_fact(group_stored(6, "B"))));
+    runtime.apply_stream(&admitted_stream(
+        &session,
+        &live_fact(group_stored(6, &["PUBLIC-work2"])),
+    ));
     assert_eq!(
-        runtime.apply_stream(&room_page(&session, &[group_stored(1, "A")], None, 5)),
+        runtime.apply_stream(&room_page(&session, &[group_stored(1, &[])], None, 5)),
         vec![StreamDirective::Reconnect],
         "a live fact past the snapshot horizon before completion is a gap"
     );
@@ -593,24 +597,30 @@ fn room_snapshots_refuse_moved_horizons_regressions_and_live_gaps() {
 
     // The runtime already admitted live position 6; overlap is judged above it.
     assert!(!runtime.reconnect(&accepted));
-    runtime.apply_stream(&room_page(&session, &[group_stored(1, "A")], None, 8));
+    runtime.apply_stream(&room_page(&session, &[group_stored(1, &[])], None, 8));
     assert_eq!(
         runtime.room_projection().status(),
         app::RoomProjectionStatus::Available
     );
     assert_eq!(
-        runtime.apply_stream(&admitted_stream(&session, &live_fact(group_stored(7, "B")))),
+        runtime.apply_stream(&admitted_stream(
+            &session,
+            &live_fact(group_stored(7, &["PUBLIC-work2"]))
+        )),
         vec![StreamDirective::Reconnect],
         "a live fact at or before the horizon overlaps the snapshot"
     );
     assert!(requires_snapshot(&runtime));
 
     assert!(!runtime.reconnect(&accepted));
-    runtime.apply_stream(&room_page(&session, &[group_stored(1, "A")], None, 8));
-    runtime.apply_stream(&admitted_stream(&session, &live_fact(group_stored(9, "B"))));
+    runtime.apply_stream(&room_page(&session, &[group_stored(1, &[])], None, 8));
+    runtime.apply_stream(&admitted_stream(
+        &session,
+        &live_fact(group_stored(9, &["PUBLIC-work2"])),
+    ));
     assert_eq!(
         runtime.room_projection().groups()[&authority(GROUP)].value,
-        group("B")
+        group(&["PUBLIC-work2"])
     );
     assert_eq!(
         runtime.room_projection().status(),

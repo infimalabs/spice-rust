@@ -209,6 +209,8 @@ pub(crate) trait Authority {
     fn horizon(&self, lane: &str) -> Result<bool, Refusal>;
     /// Whether this working group currently exists.
     fn grouped(&self, group: &str) -> Result<bool, Refusal>;
+    /// The working group that currently holds this anchor, if any.
+    fn anchor_owner(&self, anchor: &str) -> Result<Option<String>, Refusal>;
     /// The canonical body of one proposal head.
     fn proposal(&self, subject: &str) -> Result<Option<Vec<u8>>, Refusal>;
     /// The actor that recorded one proposal head.
@@ -454,6 +456,16 @@ impl Authority for History {
 
     fn grouped(&self, group: &str) -> Result<bool, Refusal> {
         Ok(self.projection.groups.contains_key(group))
+    }
+
+    fn anchor_owner(&self, anchor: &str) -> Result<Option<String>, Refusal> {
+        Ok(self
+            .projection
+            .anchors
+            .range((anchor.to_owned(), String::new())..)
+            .next()
+            .filter(|((held, _), _)| held == anchor)
+            .map(|((_, owner), _)| owner.clone()))
     }
 
     fn proposal(&self, subject: &str) -> Result<Option<Vec<u8>>, Refusal> {
@@ -1072,12 +1084,16 @@ fn record<T: serde::Serialize>(
     })
 }
 
-/// Fold one complete group state: at most the design cap, every anchor a task.
+/// Fold one complete group state: one design through the design cap, every
+/// anchor a task that no other group holds.
 fn store_group(
     authority: &mut impl Authority,
     seq: Seq,
     group: &wire::rooms::WorkingGroup,
 ) -> Result<(), Refusal> {
+    if group.anchors.is_empty() {
+        return unsound(format!("working group {} holds no design", group.group));
+    }
     if group.anchors.len() > wire::rooms::WORKING_GROUP_DESIGN_LIMIT {
         return unsound(format!(
             "working group {} holds {} designs, more than {}",
@@ -1086,8 +1102,16 @@ fn store_group(
             wire::rooms::WORKING_GROUP_DESIGN_LIMIT
         ));
     }
+    let key = group.group.to_string();
     for anchor in &group.anchors {
         require_task(authority, anchor, "working-group anchor")?;
+        if let Some(owner) = authority.anchor_owner(anchor.as_str())?
+            && owner != key
+        {
+            return unsound(format!(
+                "design {anchor} already belongs to working group {owner}"
+            ));
+        }
     }
     authority.change(Change::GroupStored {
         group: group.group.to_string(),

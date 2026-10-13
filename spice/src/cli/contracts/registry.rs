@@ -618,19 +618,11 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     operator!(
         ["group", "put"],
-        "group put NAME [ANCHOR...] [--group GROUP]",
+        "group put [ANCHOR...] [--group GROUP]",
         Command,
-        [WorkingGroupStored],
+        [WorkingGroupStored, WorkingGroupRemoved],
         Reply,
         "group::put"
-    ),
-    operator!(
-        ["group", "remove"],
-        "group remove GROUP",
-        Command,
-        [WorkingGroupRemoved],
-        Reply,
-        "group::remove"
     ),
     row!(
         ["preparation", "show"],

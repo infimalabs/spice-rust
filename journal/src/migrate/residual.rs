@@ -58,6 +58,9 @@ const ROOM_CONVERSATION_KINDS: [&str; 9] = [
 /// Last release whose build admitted working groups holding more than
 /// [`wire::rooms::WORKING_GROUP_DESIGN_LIMIT`] designs.
 const GROUP_DESIGN_LIMIT_RELEASE: &str = "577f4f602";
+/// Last release whose build admitted named working groups and removed a
+/// group as an object rather than when its last design left.
+const UNNAMED_GROUP_RELEASE: &str = "370793eca";
 
 /// Refuse every retained shape without a current spelling before mutation, and
 /// derive every retained vendor-failure hold's refused input from its history.
@@ -141,6 +144,25 @@ pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<vendor_holds::Deri
         ],
         GROUP_DESIGN_LIMIT_RELEASE,
         "the working group holds more designs than a group admits",
+    )?;
+    refuse_first(
+        transaction,
+        "fact_envelopes",
+        "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
+         AND json_type(CAST(envelope AS TEXT), '$.fact.group.name') IS NOT NULL ORDER BY seq",
+        [wire::FactKind::WorkingGroupStored.as_str()],
+        UNNAMED_GROUP_RELEASE,
+        "the working group carries an operator-given name",
+    )?;
+    refuse_first(
+        transaction,
+        "command_receipts",
+        "SELECT command_id FROM command_receipts WHERE (command_kind = ?1 \
+         AND json_type(CAST(request AS TEXT), '$.body.group.name') IS NOT NULL) \
+         OR command_kind = 'group::remove' ORDER BY command_id",
+        [wire::CommandKind::WorkingGroupPut.as_str()],
+        UNNAMED_GROUP_RELEASE,
+        "the working-group request names its group or removes it as an object",
     )?;
     refuse_unbound_provenance(transaction)?;
     vendor_holds::derive(transaction)

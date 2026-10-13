@@ -56,10 +56,9 @@ pub enum CommandKind {
     RoomClose,
     /// Read one exact working group or a bounded current catalog page.
     WorkingGroupRead,
-    /// Store one complete working-group name and ordered room association.
+    /// Store one working group's complete ordered design association, moving
+    /// each named design out of any other group and ending a group left empty.
     WorkingGroupPut,
-    /// Remove one working group without changing any room.
-    WorkingGroupRemove,
     /// Retain one exact preparation candidate.
     CandidateRetain,
     /// Record one source-backed critique of a retained candidate.

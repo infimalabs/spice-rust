@@ -773,7 +773,6 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
                 group: wire::rooms::WorkingGroup {
                     group: wire::rooms::RoomAuthorityStamp::for_micros(1_783_748_760_000_000)
                         .expect("demo OOPS group stamp is valid"),
-                    name: "OOPS".to_owned(),
                     anchors: vec![batch],
                 },
             },

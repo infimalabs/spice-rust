@@ -64,7 +64,6 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["preparation", "adopt"] => CommandKind::OutputAdopt,
         ["group", "list"] => CommandKind::WorkingGroupRead,
         ["group", "put"] => CommandKind::WorkingGroupPut,
-        ["group", "remove"] => CommandKind::WorkingGroupRemove,
         ["task", verb] => return task_kind_for(verb),
         ["taste", "add"] | ["taste", "drop"] => CommandKind::TaskAdd,
         ["taste", "mine"] => CommandKind::TasteProposalAdd,

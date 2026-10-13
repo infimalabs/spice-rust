@@ -3,9 +3,12 @@ use super::*;
 use journal::{FactReadBudget, MAX_RETAINED_FACT_PAGE_BYTES};
 use wire::intent::{
     WORKING_GROUP_PAGE_LIMIT_MAX, WorkingGroupAnchor, WorkingGroupChange, WorkingGroupChangeStatus,
-    WorkingGroupPage, WorkingGroupPut, WorkingGroupRead, WorkingGroupRemove, WorkingGroupView,
+    WorkingGroupPage, WorkingGroupPut, WorkingGroupRead, WorkingGroupView,
 };
-use wire::rooms::{WORKING_GROUP_DESIGN_LIMIT, WorkingGroupRemoved, WorkingGroupStored};
+use wire::rooms::{
+    RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupRemoved,
+    WorkingGroupStored,
+};
 
 pub(super) fn read_working_groups(bus: &Bus, request: &WorkingGroupRead) -> Outcome<CommandAnswer> {
     if request.limit == 0 || request.limit > WORKING_GROUP_PAGE_LIMIT_MAX {
@@ -107,12 +110,14 @@ fn working_group_view(
         .collect::<Result<_, GuardError>>()?;
     Ok(WorkingGroupView {
         group: group.group,
-        name: group.name,
         anchors,
         head: position,
     })
 }
 
+/// Store one group's complete design order. Each named design leaves the
+/// group that held it, and a group left without a design ends, all in one
+/// guarded write; an empty order ends this group.
 pub(super) fn put_working_group(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -129,27 +134,111 @@ pub(super) fn put_working_group(
             ),
         );
     }
-    let designs = match design_witnesses(bus, put) {
+    let group = put.group.group.clone();
+    let ending = put.group.anchors.is_empty();
+    if ending && witnessed_head(command, &group).is_none() {
+        return refusal(
+            "group::design-required",
+            Some(group.to_string()),
+            "a working group exists only while it holds a design; drop a design to start one",
+        );
+    }
+    let mut witnesses = match design_witnesses(bus, put) {
         Ok(designs) => designs,
         Err(outcome) => return outcome,
     };
-    let group = put.group.group.clone();
+    let departures = match departures(bus, put) {
+        Ok(departures) => departures,
+        Err(outcome) => return outcome,
+    };
+    witnesses.extend(departures.iter().map(|(head, left)| Witness::Group {
+        group: left.group.clone(),
+        head: Some(*head),
+    }));
+    let status = if ending {
+        WorkingGroupChangeStatus::Removed
+    } else {
+        WorkingGroupChangeStatus::Stored
+    };
     change_working_group(
         bus,
         command,
-        group,
-        WorkingGroupChangeStatus::Stored,
-        designs,
-        |write, cause| {
-            write.fact(
-                WorkingGroupStored {
-                    group: put.group.clone(),
-                },
-                cause,
-            )
+        group.clone(),
+        status,
+        witnesses,
+        |write| {
+            // A group's head may lie under another group's origin once a design
+            // moved, so group facts root their own thread; the group witnesses
+            // guard every head this write replaces.
+            for (_, left) in departures {
+                if left.anchors.is_empty() {
+                    write.fact(WorkingGroupRemoved { group: left.group }, FactCause::Root)?;
+                } else {
+                    write.fact(WorkingGroupStored { group: left }, FactCause::Root)?;
+                }
+            }
+            if ending {
+                write.fact(WorkingGroupRemoved { group }, FactCause::Root)
+            } else {
+                write.fact(
+                    WorkingGroupStored {
+                        group: put.group.clone(),
+                    },
+                    FactCause::Root,
+                )
+            }
         },
         put,
     )
+}
+
+fn witnessed_head(command: &wire::AdmittedCommand, group: &RoomAuthorityStamp) -> Option<Seq> {
+    command.expected().iter().find_map(|witness| match witness {
+        Witness::Group {
+            group: witnessed,
+            head,
+        } if witnessed == group => *head,
+        _ => None,
+    })
+}
+
+/// Every other group a named design leaves, at its observed head, with the
+/// designs that remain in it.
+fn departures(
+    bus: &Bus,
+    put: &WorkingGroupPut,
+) -> Result<Vec<(Seq, WorkingGroup)>, Outcome<CommandAnswer>> {
+    let put = put.group.clone();
+    bus.read(move |read| {
+        let mut departures: Vec<(Seq, WorkingGroup)> = Vec::new();
+        for anchor in &put.anchors {
+            let Some(held) = read.anchor_group(anchor)? else {
+                continue;
+            };
+            let head = held.position();
+            let held = held.into_body();
+            if held.group == put.group
+                || departures.iter().any(|(_, left)| left.group == held.group)
+            {
+                continue;
+            }
+            let remaining = held
+                .anchors
+                .iter()
+                .filter(|design| !put.anchors.contains(design))
+                .cloned()
+                .collect();
+            departures.push((
+                head,
+                WorkingGroup {
+                    group: held.group,
+                    anchors: remaining,
+                },
+            ));
+        }
+        Ok(departures)
+    })
+    .map_err(|error| store_fault("group::read-unavailable", &error.to_string()))
 }
 
 /// Admit only Design anchors, guarding each statement head so a concurrent
@@ -189,35 +278,17 @@ fn design_witnesses(
         .collect()
 }
 
-pub(super) fn remove_working_group(
+fn change_working_group<F>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    remove: &WorkingGroupRemove,
-) -> Outcome<CommandAnswer> {
-    let group = remove.group.clone();
-    change_working_group(
-        bus,
-        command,
-        group.clone(),
-        WorkingGroupChangeStatus::Removed,
-        Vec::new(),
-        |write, cause| write.fact(WorkingGroupRemoved { group }, cause),
-        remove,
-    )
-}
-
-fn change_working_group<B, F>(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    group: wire::rooms::RoomAuthorityStamp,
+    group: RoomAuthorityStamp,
     status: WorkingGroupChangeStatus,
-    designs: Vec<Witness>,
+    witnesses: Vec<Witness>,
     append: F,
-    body: &B,
+    body: &WorkingGroupPut,
 ) -> Outcome<CommandAnswer>
 where
-    B: serde::Serialize + Clone,
-    F: FnOnce(&mut JournalWrite, FactCause) -> Result<PendingFact, journal::BuildError>,
+    F: FnOnce(&mut JournalWrite) -> Result<PendingFact, journal::BuildError>,
 {
     let at = match current_instant() {
         Ok(at) => at,
@@ -228,17 +299,9 @@ where
         .expect("a non-empty group stamp forms a structural origin");
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     let mut expected = command.expected().to_vec();
-    expected.extend(designs);
+    expected.extend(witnesses);
     guard(&mut write, expected);
-    let previous = command.expected().iter().find_map(|witness| match witness {
-        Witness::Group {
-            group: witnessed,
-            head,
-        } if witnessed == &group => *head,
-        _ => None,
-    });
-    let cause = previous.map_or(FactCause::Root, FactCause::Existing);
-    if let Err(error) = append(&mut write, cause) {
+    if let Err(error) = append(&mut write) {
         return store_fault("group::fact-invalid", &error.to_string());
     }
     let answer = WorkingGroupChange { group, status };

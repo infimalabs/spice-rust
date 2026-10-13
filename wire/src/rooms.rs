@@ -603,16 +603,14 @@ pub enum RoomListenerDelivery {
 
 /// Repository-shared organization of ordered room anchors.
 ///
-/// A working group owns only its identity, display name, and ordered anchor
-/// associations. It cannot encode lanes, members, claims, reads, work, or
-/// foreground geometry.
+/// A working group owns only its identity and ordered anchor associations; it
+/// has no name of its own and lives only while it holds a design. It cannot
+/// encode lanes, members, claims, reads, work, or foreground geometry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "WorkingGroupWire", into = "WorkingGroupWire")]
 pub struct WorkingGroup {
     /// Stable repository-shared identity.
     pub group: RoomAuthorityStamp,
-    /// Operator-visible name.
-    pub name: String,
     /// Room anchors in operator order.
     pub anchors: Vec<RoomAnchor>,
 }
@@ -621,7 +619,6 @@ pub struct WorkingGroup {
 #[serde(deny_unknown_fields)]
 struct WorkingGroupWire {
     group: RoomAuthorityStamp,
-    name: String,
     anchors: Vec<RoomAnchor>,
 }
 
@@ -629,9 +626,6 @@ impl TryFrom<WorkingGroupWire> for WorkingGroup {
     type Error = &'static str;
 
     fn try_from(value: WorkingGroupWire) -> Result<Self, Self::Error> {
-        if value.name.trim().is_empty() {
-            return Err("working-group name must contain visible text");
-        }
         if !all_unique(&value.anchors) {
             return Err("working-group anchors must be unique and ordered");
         }
@@ -640,7 +634,6 @@ impl TryFrom<WorkingGroupWire> for WorkingGroup {
         }
         Ok(Self {
             group: value.group,
-            name: value.name,
             anchors: value.anchors,
         })
     }
@@ -650,26 +643,20 @@ impl From<WorkingGroup> for WorkingGroupWire {
     fn from(value: WorkingGroup) -> Self {
         Self {
             group: value.group,
-            name: value.name,
             anchors: value.anchors,
         }
     }
 }
 
-/// Guarded complete replacement command for one working group.
+/// Guarded complete replacement of one working group's designs.
+///
+/// A design the replacement names leaves whatever group held it, and a group
+/// left without a design ends; an empty replacement ends this group.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkingGroupPut {
     /// Complete intended group state.
     pub group: WorkingGroup,
-}
-
-/// Command body removing one working group without touching any room.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkingGroupRemove {
-    /// Group whose saved organization is removed.
-    pub group: RoomAuthorityStamp,
 }
 
 /// Immutable fact body recording a complete working-group state.
@@ -680,11 +667,12 @@ pub struct WorkingGroupStored {
     pub group: WorkingGroup,
 }
 
-/// Immutable fact body recording working-group removal.
+/// Immutable fact body recording that a working group ended because its last
+/// design left.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkingGroupRemoved {
-    /// Removed saved organization; anchor rooms remain unchanged.
+    /// Ended organization; anchor rooms remain unchanged.
     pub group: RoomAuthorityStamp,
 }
 
@@ -1223,10 +1211,9 @@ mod tests {
     }
 
     #[test]
-    fn working_groups_encode_only_name_and_ordered_unique_room_anchors() {
+    fn working_groups_encode_only_ordered_unique_design_anchors() {
         let value = serde_json::json!({
             "group": "1kKRRsDR1",
-            "name": "OOPS grooming",
             "anchors": ["1kKRRsDR0", "1kKRRsDR2"]
         });
         let group: WorkingGroup = serde_json::from_value(value.clone()).unwrap();
@@ -1234,22 +1221,28 @@ mod tests {
 
         let duplicate = serde_json::json!({
             "group": "1kKRRsDR1",
-            "name": "OOPS grooming",
             "anchors": ["1kKRRsDR0", "1kKRRsDR0"]
         });
         assert!(serde_json::from_value::<WorkingGroup>(duplicate).is_err());
         let oversized = serde_json::json!({
             "group": "1kKRRsDR1",
-            "name": "OOPS grooming",
             "anchors": (0..=WORKING_GROUP_ANCHOR_LIMIT)
                 .map(|micros| TaskStamp::for_micros(micros as i64).unwrap().to_string())
                 .collect::<Vec<_>>()
         });
         assert!(serde_json::from_value::<WorkingGroup>(oversized).is_err());
-        let smuggled_membership = serde_json::json!({
+        let named = serde_json::json!({
             "group": "1kKRRsDR1",
             "name": "OOPS grooming",
-            "anchors": [],
+            "anchors": ["1kKRRsDR0"]
+        });
+        assert!(
+            serde_json::from_value::<WorkingGroup>(named).is_err(),
+            "a working group carries no operator-given name"
+        );
+        let smuggled_membership = serde_json::json!({
+            "group": "1kKRRsDR1",
+            "anchors": ["1kKRRsDR0"],
             "lanes": []
         });
         assert!(serde_json::from_value::<WorkingGroup>(smuggled_membership).is_err());
