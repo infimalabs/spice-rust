@@ -192,9 +192,10 @@ pub(super) fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
 }
 
 /// The operator's avatar beside the Git `user.name` and `user.email` it is
-/// drawn from, as read-only reference rows. Until settings arrive both rows
-/// say they are loading, so later admission moves no section below them.
-pub(super) fn render_operator(runtime: Option<&AppRuntime>) -> Html {
+/// drawn from, as read-only reference rows, then their personal inbox. Until
+/// settings arrive both rows say they are loading, so later admission moves
+/// no section below them.
+pub(super) fn render_operator(runtime: Option<&AppRuntime>, inbox: Html) -> Html {
     let settings = runtime.and_then(AppRuntime::settings);
     let unresolved = wire::OperatorIdentity::default();
     let operator = settings.map_or(&unresolved, |settings| &settings.operator);
@@ -221,6 +222,7 @@ pub(super) fn render_operator(runtime: Option<&AppRuntime>) -> Html {
                     {fact("Email", "user.email", operator.email.as_ref())}
                 </dl>
             </div>
+            {inbox}
         </section>
     }
 }

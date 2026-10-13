@@ -156,13 +156,13 @@ pub(super) fn render_card(
 }
 
 /// Operator receipts and answer duties, each with the words it carries and
-/// its exact controls, for the catalog. An ACKed ASK remains here until its
-/// separate result terminates.
+/// its exact controls, as the open count and the inbox body. An ACKed ASK
+/// remains here until its separate result terminates.
 pub(super) fn render_inbox(
     runtime: &AppRuntime,
     report: &Callback<String>,
     sender: &SenderHandle,
-) -> Html {
+) -> (usize, Html) {
     let act = Act {
         runtime,
         report,
@@ -170,11 +170,11 @@ pub(super) fn render_inbox(
     };
     let projection = runtime.room_projection().conversation();
     let open = projection.inbox_items();
-    html! {
-        <section class="room-inbox" data-room-inbox="" aria-label="Operator inbox" tabindex="-1">
-            <header><strong>{"Operator inbox"}</strong><span>{open.len()}</span></header>
+    let count = open.len();
+    let body = html! {
+        <>
             if open.is_empty() {
-                <p class="room-empty">{"No operator receipt or answer awaits action."}</p>
+                <p class="room-empty">{"No receipt or answer awaits action."}</p>
             }
             {for open.into_iter().map(|entry| {
                 let publication = entry.item.value.record.publication();
@@ -242,8 +242,9 @@ pub(super) fn render_inbox(
                     </article>
                 }
             })}
-        </section>
-    }
+        </>
+    };
+    (count, body)
 }
 
 /// What one inbox publication says: the operator's own text, else the

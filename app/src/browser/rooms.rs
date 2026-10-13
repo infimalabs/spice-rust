@@ -1,4 +1,5 @@
-//! Working-group catalog and browser-local working-group consoles.
+//! Working-group catalog, browser-local working-group consoles, and the
+//! operator's personal inbox.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -47,6 +48,8 @@ impl Reducible for RoomViews {
 pub(super) struct Controls {
     views: UseReducerHandle<RoomViews>,
     notice: UseStateHandle<Option<String>>,
+    /// The outcome of the last inbox control, shown beside the inbox.
+    inbox_notice: UseStateHandle<Option<String>>,
     /// Last authoritative name of each group seen in this page's memory, shown
     /// while room authority reloads so a reconnect does not retitle consoles.
     names: Rc<RefCell<BTreeMap<RoomAuthorityStamp, String>>>,
@@ -70,6 +73,7 @@ pub(super) fn use_controls() -> Controls {
     Controls {
         views,
         notice: use_state(|| None),
+        inbox_notice: use_state(|| None),
         names,
         requested,
         drawn,
@@ -112,10 +116,10 @@ impl Controls {
         self.notice.set(Some(notice));
     }
 
-    /// The catalog's notice as a callback for surfaces that report there.
-    fn reporter(&self) -> Callback<String> {
-        let controls = self.clone();
-        Callback::from(move |notice| controls.report(notice))
+    /// The inbox's notice as a callback for its controls.
+    fn inbox_reporter(&self) -> Callback<String> {
+        let notice = self.inbox_notice.clone();
+        Callback::from(move |text| notice.set(Some(text)))
     }
 
     /// The text a design composer draws with: its saved draft the first time
@@ -192,12 +196,69 @@ pub(super) fn render_catalog(
                 if let Some(notice) = (*controls.notice).clone() {
                     <p class="room-notice" role="status">{notice}</p>
                 }
-                {conversation::render_inbox(runtime, &controls.reporter(), sender)}
                 {render_roster(runtime, controls, sender)}
             </>
         },
     };
     section("Working groups", body)
+}
+
+/// The operator's personal inbox, beneath their identity. Its heading follows
+/// the current identity on every render, so a refresh retitles the same
+/// surface without remounting its items.
+pub(super) fn render_inbox(
+    runtime: Option<&AppRuntime>,
+    controls: &Controls,
+    sender: &SenderHandle,
+) -> Html {
+    let unresolved = wire::OperatorIdentity::default();
+    let operator = runtime
+        .and_then(AppRuntime::settings)
+        .map_or(&unresolved, |settings| &settings.operator);
+    let (count, body) = match runtime {
+        None => (
+            None,
+            html! { <p class="room-unavailable">{"Unavailable"}</p> },
+        ),
+        Some(runtime) => match runtime.room_projection().status() {
+            RoomProjectionStatus::Loading => (
+                None,
+                html! { <p class="room-empty" aria-busy="true">{"Loading inbox…"}</p> },
+            ),
+            RoomProjectionStatus::RequiresSnapshot => (
+                None,
+                html! {
+                    <p class="room-unavailable">{"Inbox unavailable until reconnect."}</p>
+                },
+            ),
+            RoomProjectionStatus::Available => {
+                let (count, items) =
+                    conversation::render_inbox(runtime, &controls.inbox_reporter(), sender);
+                (Some(count), items)
+            }
+        },
+    };
+    html! {
+        <section
+            class="room-inbox"
+            data-room-inbox=""
+            aria-labelledby="spice-operator-inbox-heading"
+            tabindex="-1"
+        >
+            <header>
+                <h3 id="spice-operator-inbox-heading">
+                    {crate::operator_inbox::heading(operator)}
+                </h3>
+                if let Some(count) = count {
+                    <span>{count}</span>
+                }
+            </header>
+            if let Some(notice) = (*controls.inbox_notice).clone() {
+                <p class="room-notice" role="status">{notice}</p>
+            }
+            {body}
+        </section>
+    }
 }
 
 fn section(title: &'static str, body: Html) -> Html {
