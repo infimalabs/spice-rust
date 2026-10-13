@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::envelope::{Actor, Seq};
 use crate::head::{ResidentState, TrustState};
 use crate::ident::{CanonicalUuid, Digest};
-use crate::rooms::{ProposalRef, QuestionResultRef, RoomAuthorityStamp, RoomReceiptRef};
+use crate::rooms::{ProposalRef, QuestionResultRef, RoomReceiptRef};
 
 pub(crate) const TASK_STAMP_ALPHABET: &[u8; 52] =
     b"0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz";
@@ -657,17 +657,11 @@ pub enum Witness {
         /// Digest of the canonical [`crate::rooms::RoomSource`] link.
         source: Digest,
     },
-    /// A saved working group's current head, or its witnessed absence.
+    /// The working-group partition's current revision; zero before any
+    /// grouping write.
     Group {
-        /// Stable repository-shared group identity.
-        group: RoomAuthorityStamp,
-        /// Current group head, absent before creation or after deletion.
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "crate::optional::present"
-        )]
-        head: Option<Seq>,
+        /// Revision the change was observed at.
+        revision: u64,
     },
     /// One proposal-authority subject's current head, or witnessed absence.
     Proposal {
@@ -783,7 +777,7 @@ pub enum WitnessKind {
     Sealed,
     /// Exact source authority referenced by a room mutation.
     Source,
-    /// A saved working group's current head.
+    /// The working-group partition's current revision.
     Group,
     /// One candidate, critique, coverage, or decision authority head.
     Proposal,

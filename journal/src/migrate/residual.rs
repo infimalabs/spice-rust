@@ -61,6 +61,12 @@ const GROUP_DESIGN_LIMIT_RELEASE: &str = "577f4f602";
 /// Last release whose build admitted named working groups and removed a
 /// group as an object rather than when its last design left.
 const UNNAMED_GROUP_RELEASE: &str = "370793eca";
+/// Last release whose build stored each working group as its own head
+/// through `group::put`, before one partition held them all.
+const GROUP_PARTITION_RELEASE: &str = "31613dc9a";
+/// Retired per-group fact spellings.
+const GROUP_STORED_KIND: &str = "group::stored";
+const GROUP_REMOVED_KIND: &str = "group::removed";
 
 /// Refuse every retained shape without a current spelling before mutation, and
 /// derive every retained vendor-failure hold's refused input from its history.
@@ -138,19 +144,28 @@ pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<vendor_holds::Deri
         "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
          AND json_array_length(CAST(envelope AS TEXT), '$.fact.group.anchors') > ?2 ORDER BY seq",
         params![
-            wire::FactKind::WorkingGroupStored.as_str(),
+            GROUP_STORED_KIND,
             u32::try_from(wire::rooms::WORKING_GROUP_DESIGN_LIMIT)
                 .expect("the design cap is small")
         ],
         GROUP_DESIGN_LIMIT_RELEASE,
         "the working group holds more designs than a group admits",
     )?;
+    refuse_retired_groups(transaction)?;
+    refuse_unbound_provenance(transaction)?;
+    vendor_holds::derive(transaction)
+}
+
+/// Refuse working groups an earlier release stored by name or as their own
+/// heads, each naming the last release that wrote them; a named group is
+/// refused ahead of the partition crossing that also covers it.
+fn refuse_retired_groups(transaction: &Transaction<'_>) -> Result<(), OpenError> {
     refuse_first(
         transaction,
         "fact_envelopes",
         "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind = ?1 \
          AND json_type(CAST(envelope AS TEXT), '$.fact.group.name') IS NOT NULL ORDER BY seq",
-        [wire::FactKind::WorkingGroupStored.as_str()],
+        [GROUP_STORED_KIND],
         UNNAMED_GROUP_RELEASE,
         "the working group carries an operator-given name",
     )?;
@@ -160,12 +175,27 @@ pub(super) fn refuse(transaction: &Transaction<'_>) -> Result<vendor_holds::Deri
         "SELECT command_id FROM command_receipts WHERE (command_kind = ?1 \
          AND json_type(CAST(request AS TEXT), '$.body.group.name') IS NOT NULL) \
          OR command_kind = 'group::remove' ORDER BY command_id",
-        [wire::CommandKind::WorkingGroupPut.as_str()],
+        ["group::put"],
         UNNAMED_GROUP_RELEASE,
         "the working-group request names its group or removes it as an object",
     )?;
-    refuse_unbound_provenance(transaction)?;
-    vendor_holds::derive(transaction)
+    refuse_first(
+        transaction,
+        "fact_envelopes",
+        "SELECT CAST(seq AS TEXT) FROM fact_envelopes WHERE kind IN (?1, ?2) ORDER BY seq",
+        [GROUP_STORED_KIND, GROUP_REMOVED_KIND],
+        GROUP_PARTITION_RELEASE,
+        "the working group is stored as its own head rather than in the partition",
+    )?;
+    refuse_first(
+        transaction,
+        "command_receipts",
+        "SELECT command_id FROM command_receipts WHERE command_kind = 'group::put' \
+         ORDER BY command_id",
+        (),
+        GROUP_PARTITION_RELEASE,
+        "the working-group request replaces one group rather than moving a design",
+    )
 }
 
 /// Refuse retained facts that omit what binds them to their tape generation,

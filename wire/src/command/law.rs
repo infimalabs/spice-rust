@@ -322,8 +322,8 @@ impl Law {
         optional: &[],
         authority: Authority::Connected,
     };
-    /// Exact saved-group head, or witnessed absence before creation. Task
-    /// existence witnesses are admitted for every proposed room anchor.
+    /// Exact working-group partition revision. A move also witnesses its
+    /// design's existence; nothing else is witnessed.
     pub const GROUP: Self = Self {
         required: &[WitnessKind::Group],
         optional: &[WitnessKind::Existence],
@@ -530,7 +530,7 @@ impl CommandKind {
             | Self::VendorCatalog
             | Self::BoardHandout
             | Self::RoomCoordinationRead => Law::OPERATOR_READ,
-            Self::WorkingGroupPut => Law::GROUP,
+            Self::WorkingGroupMove | Self::WorkingGroupArrange => Law::GROUP,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::RoomPost => Law::ROOM_POST,
             Self::RoomCoordinate => Law::ROOM_COORDINATE,
@@ -667,44 +667,33 @@ impl CommandKind {
                 }
             }
         }
-        let group = match (self, body) {
-            (Self::WorkingGroupPut, Intent::WorkingGroupPut(put)) => Some(&put.group.group),
-            _ => None,
-        };
-        if let Some(group) = group {
-            let group_is_witnessed = expected.iter().any(
-                |witness| matches!(witness, Witness::Group { group: witnessed, .. } if witnessed == group),
+        if let (Self::WorkingGroupMove, Intent::WorkingGroupMove(request)) = (self, body) {
+            let design_is_witnessed = expected.iter().any(
+                |witness| matches!(witness, Witness::Existence { task } if task == &request.design),
             );
-            if !group_is_witnessed {
-                return Err(LawError::SubjectMismatch {
-                    command: self,
-                    kind: WitnessKind::Group,
-                    target: group.to_string(),
-                });
-            }
-        }
-        if let (Self::WorkingGroupPut, Intent::WorkingGroupPut(put)) = (self, body) {
-            for anchor in &put.group.anchors {
-                let anchor_is_witnessed = expected.iter().any(
-                    |witness| matches!(witness, Witness::Existence { task } if task == anchor),
-                );
-                if !anchor_is_witnessed {
-                    return Err(LawError::SubjectMismatch {
-                        command: self,
-                        kind: WitnessKind::Existence,
-                        target: anchor.to_string(),
-                    });
-                }
-            }
-            if expected.iter().any(|witness| {
-                matches!(witness, Witness::Existence { task } if !put.group.anchors.contains(task))
-            }) {
+            if !design_is_witnessed {
                 return Err(LawError::SubjectMismatch {
                     command: self,
                     kind: WitnessKind::Existence,
-                    target: put.group.group.to_string(),
+                    target: request.design.to_string(),
                 });
             }
+        }
+        let moved = match (self, body) {
+            (Self::WorkingGroupMove, Intent::WorkingGroupMove(request)) => Some(&request.design),
+            _ => None,
+        };
+        if matches!(self, Self::WorkingGroupMove | Self::WorkingGroupArrange)
+            && let Some(stray) = expected.iter().find_map(|witness| match witness {
+                Witness::Existence { task } if Some(task) != moved => Some(task),
+                _ => None,
+            })
+        {
+            return Err(LawError::SubjectMismatch {
+                command: self,
+                kind: WitnessKind::Existence,
+                target: stray.to_string(),
+            });
         }
         Ok(())
     }

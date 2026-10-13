@@ -24,7 +24,7 @@ use super::{
     TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline,
     TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
     TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
-    WorkingGroupChange, WorkingGroupPage, WorkingGroupPut, WorkingGroupRead,
+    WorkingGroupArrange, WorkingGroupChange, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -60,8 +60,10 @@ pub enum BodyShape {
     RoomClose,
     /// [`WorkingGroupRead`]
     WorkingGroupRead,
-    /// [`WorkingGroupPut`]
-    WorkingGroupPut,
+    /// [`WorkingGroupMove`]
+    WorkingGroupMove,
+    /// [`WorkingGroupArrange`]
+    WorkingGroupArrange,
     /// [`CandidateRetain`]
     CandidateRetain,
     /// [`CandidateCritiqueRecord`]
@@ -562,7 +564,9 @@ impl CommandKind {
             Self::LaneJobRead | Self::LaneJobStop => {
                 Binding::of(BodyShape::LaneJob, AnswerShape::LaneJob)
             }
-            Self::WorkingGroupRead | Self::WorkingGroupPut => self.working_group_binding(),
+            Self::WorkingGroupRead | Self::WorkingGroupMove | Self::WorkingGroupArrange => {
+                self.working_group_binding()
+            }
             Self::RoomPost
             | Self::RoomCoordinationRead
             | Self::RoomCoordinate
@@ -732,7 +736,8 @@ impl CommandKind {
 
         match self {
             Self::WorkingGroupRead => Binding::of(B::WorkingGroupRead, A::WorkingGroupPage),
-            Self::WorkingGroupPut => Binding::of(B::WorkingGroupPut, A::WorkingGroupChange),
+            Self::WorkingGroupMove => Binding::of(B::WorkingGroupMove, A::WorkingGroupChange),
+            Self::WorkingGroupArrange => Binding::of(B::WorkingGroupArrange, A::WorkingGroupChange),
             _ => panic!("working-group command binding partition is closed"),
         }
     }
@@ -825,8 +830,10 @@ pub enum Intent {
     RoomClose(RoomClose),
     /// [`BodyShape::WorkingGroupRead`]
     WorkingGroupRead(WorkingGroupRead),
-    /// [`BodyShape::WorkingGroupPut`]
-    WorkingGroupPut(WorkingGroupPut),
+    /// [`BodyShape::WorkingGroupMove`]
+    WorkingGroupMove(WorkingGroupMove),
+    /// [`BodyShape::WorkingGroupArrange`]
+    WorkingGroupArrange(WorkingGroupArrange),
     /// [`BodyShape::CandidateRetain`]
     CandidateRetain(CandidateRetain),
     /// [`BodyShape::CandidateCritiqueRecord`]
@@ -946,7 +953,9 @@ impl Intent {
         match self {
             Self::LaneJobs(_) => BodyShape::LaneJobs,
             Self::LaneJob(_) => BodyShape::LaneJob,
-            Self::WorkingGroupRead(_) | Self::WorkingGroupPut(_) => self.working_group_shape(),
+            Self::WorkingGroupRead(_)
+            | Self::WorkingGroupMove(_)
+            | Self::WorkingGroupArrange(_) => self.working_group_shape(),
             Self::RoomPost(_)
             | Self::RoomCoordinationRead(_)
             | Self::RoomCoordinate(_)
@@ -1089,7 +1098,8 @@ impl Intent {
     const fn working_group_shape(&self) -> BodyShape {
         match self {
             Self::WorkingGroupRead(_) => BodyShape::WorkingGroupRead,
-            Self::WorkingGroupPut(_) => BodyShape::WorkingGroupPut,
+            Self::WorkingGroupMove(_) => BodyShape::WorkingGroupMove,
+            Self::WorkingGroupArrange(_) => BodyShape::WorkingGroupArrange,
             _ => panic!("working-group intent shape partition is closed"),
         }
     }
@@ -1163,7 +1173,8 @@ impl BodyShape {
                 | Self::RoomControl
                 | Self::RoomClose
                 | Self::WorkingGroupRead
-                | Self::WorkingGroupPut
+                | Self::WorkingGroupMove
+                | Self::WorkingGroupArrange
                 | Self::CandidateRetain
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
@@ -1210,7 +1221,8 @@ impl BodyShape {
                 | Self::RoomControl
                 | Self::RoomClose
                 | Self::WorkingGroupRead
-                | Self::WorkingGroupPut
+                | Self::WorkingGroupMove
+                | Self::WorkingGroupArrange
                 | Self::CandidateRetain
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
@@ -1248,6 +1260,8 @@ impl BodyShape {
             | Self::RoomControl
             | Self::RoomClose => return self.decode_room_body(bytes),
             Self::WorkingGroupRead => Intent::WorkingGroupRead(crate::decode(bytes)?),
+            Self::WorkingGroupMove => Intent::WorkingGroupMove(crate::decode(bytes)?),
+            Self::WorkingGroupArrange => Intent::WorkingGroupArrange(crate::decode(bytes)?),
             Self::CandidateRetain
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
@@ -1291,7 +1305,6 @@ impl BodyShape {
             Self::TaskDelete => Intent::TaskDelete(crate::decode(bytes)?),
             Self::TaskClose => Intent::TaskClose(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),
-            Self::WorkingGroupPut => Intent::WorkingGroupPut(crate::decode(bytes)?),
             _ => unreachable!("board body partition is closed"),
         })
     }

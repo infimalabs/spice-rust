@@ -19,8 +19,8 @@ use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
     DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
     RetainedCandidate, RoomAnchor, RoomAuthorityStamp, RoomDelivered, RoomHorizon, RoomMessaged,
-    RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk, WorkingGroupRemoved,
-    WorkingGroupStored,
+    RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk, WorkingGroupMoved,
+    WorkingGroupPartition, WorkingGroupsArranged,
 };
 use wire::{
     Actor, AnyFact, CanonicalUuid, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead,
@@ -53,18 +53,6 @@ CREATE TABLE room_publications (
     PRIMARY KEY (room, publication)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX room_publications_room_seq ON room_publications(room, seq);
-CREATE TABLE group_heads (
-    working_group TEXT PRIMARY KEY,
-    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-    body BLOB NOT NULL
-) STRICT;
-CREATE TABLE group_anchors (
-    anchor TEXT NOT NULL,
-    working_group TEXT NOT NULL REFERENCES group_heads(working_group),
-    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
-    PRIMARY KEY (anchor, working_group),
-    UNIQUE (working_group, ordinal)
-) STRICT, WITHOUT ROWID;
 CREATE TABLE proposal_heads (
     subject TEXT PRIMARY KEY,
     controller TEXT NOT NULL,
@@ -79,6 +67,17 @@ CREATE TABLE authorization_heads (
     body BLOB NOT NULL
 ) STRICT;
 CREATE INDEX authorization_heads_decision ON authorization_heads(decision);
+"#;
+
+/// The working-group partition head, replacing per-group heads.
+pub(crate) const GROUP_SCHEMA_SQL: &str = r#"
+DROP TABLE IF EXISTS group_anchors;
+DROP TABLE IF EXISTS group_heads;
+CREATE TABLE group_partition (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+    body BLOB NOT NULL
+) STRICT;
 "#;
 
 /// Per-lane room catch-up cursors, created with the current schema.
@@ -157,10 +156,8 @@ pub(crate) struct AuthorizationRow {
 pub(crate) struct Projection {
     /// `(room, publication)` to publishing fact position.
     pub(crate) publications: BTreeMap<(String, String), u64>,
-    /// Working group to its head position and canonical body.
-    pub(crate) groups: BTreeMap<String, (u64, Vec<u8>)>,
-    /// `(anchor, group)` to the anchor's position in that group's order.
-    pub(crate) anchors: BTreeMap<(String, String), i64>,
+    /// The working-group partition's head position and canonical body.
+    pub(crate) partition: Option<(u64, Vec<u8>)>,
     /// Canonical proposal subject to its write-once head.
     pub(crate) proposals: BTreeMap<String, ProposalRow>,
     /// Selected output to its authorization head.
@@ -207,10 +204,8 @@ pub(crate) trait Authority {
     fn cursor(&self, lane: &str) -> Result<Option<Vec<u8>>, Refusal>;
     /// Whether one lane already has a catch-up horizon.
     fn horizon(&self, lane: &str) -> Result<bool, Refusal>;
-    /// Whether this working group currently exists.
-    fn grouped(&self, group: &str) -> Result<bool, Refusal>;
-    /// The working group that currently holds this anchor, if any.
-    fn anchor_owner(&self, anchor: &str) -> Result<Option<String>, Refusal>;
+    /// The canonical body of the current working-group partition.
+    fn group_partition(&self) -> Result<Option<Vec<u8>>, Refusal>;
     /// The canonical body of one proposal head.
     fn proposal(&self, subject: &str) -> Result<Option<Vec<u8>>, Refusal>;
     /// The actor that recorded one proposal head.
@@ -256,14 +251,9 @@ pub(crate) enum Change {
         publication: String,
         seq: u64,
     },
-    GroupStored {
-        group: String,
+    GroupPartition {
         seq: u64,
         body: Vec<u8>,
-        anchors: Vec<String>,
-    },
-    GroupRemoved {
-        group: String,
     },
     Proposal {
         subject: String,
@@ -308,21 +298,8 @@ impl Projection {
             } => {
                 self.publications.insert((room, publication), seq);
             }
-            Change::GroupStored {
-                group,
-                seq,
-                body,
-                anchors,
-            } => {
-                self.anchors.retain(|(_, owner), _| owner != &group);
-                for (ordinal, anchor) in (0_i64..).zip(anchors) {
-                    self.anchors.insert((anchor, group.clone()), ordinal);
-                }
-                self.groups.insert(group, (seq, body));
-            }
-            Change::GroupRemoved { group } => {
-                self.anchors.retain(|(_, owner), _| owner != &group);
-                self.groups.remove(&group);
+            Change::GroupPartition { seq, body } => {
+                self.partition = Some((seq, body));
             }
             Change::Proposal { subject, row } => {
                 self.proposals.insert(subject, row);
@@ -454,18 +431,12 @@ impl Authority for History {
         Ok(self.projection.horizons.contains_key(lane))
     }
 
-    fn grouped(&self, group: &str) -> Result<bool, Refusal> {
-        Ok(self.projection.groups.contains_key(group))
-    }
-
-    fn anchor_owner(&self, anchor: &str) -> Result<Option<String>, Refusal> {
+    fn group_partition(&self) -> Result<Option<Vec<u8>>, Refusal> {
         Ok(self
             .projection
-            .anchors
-            .range((anchor.to_owned(), String::new())..)
-            .next()
-            .filter(|((held, _), _)| held == anchor)
-            .map(|((_, owner), _)| owner.clone()))
+            .partition
+            .as_ref()
+            .map(|(_, body)| body.clone()))
     }
 
     fn proposal(&self, subject: &str) -> Result<Option<Vec<u8>>, Refusal> {
@@ -632,15 +603,28 @@ pub(crate) fn fold(
     if let Some(result) = fold_traffic(authority, seq, at, actor, fact) {
         return result;
     }
-    if let Some(WorkingGroupStored { group }) = fact.read() {
-        return store_group(authority, seq, &group);
-    }
-    if let Some(WorkingGroupRemoved { group }) = fact.read() {
-        let key = group.to_string();
-        if !authority.grouped(&key)? {
-            return unsound(format!("working group {key} does not exist"));
+    if let Some(moved) = fact.read::<WorkingGroupMoved>() {
+        let current = current_partition(authority)?;
+        if current.holder(&moved.design).map(|group| &group.group) != moved.from.as_ref()
+            || moved
+                .partition
+                .holder(&moved.design)
+                .map(|group| &group.group)
+                != moved.to.as_ref()
+        {
+            return unsound(format!(
+                "design {} does not move from {:?} to {:?}",
+                moved.design, moved.from, moved.to
+            ));
         }
-        return authority.change(Change::GroupRemoved { group: key });
+        return store_partition(authority, seq, &current, &moved.partition);
+    }
+    if let Some(arranged) = fact.read::<WorkingGroupsArranged>() {
+        let current = current_partition(authority)?;
+        if arranged.from != current {
+            return unsound("arrangement does not restate the current partition".to_owned());
+        }
+        return store_partition(authority, seq, &current, &arranged.partition);
     }
     if let Some(CandidateRetained { candidate }) = fact.read() {
         return retain(authority, seq, candidate);
@@ -1084,40 +1068,43 @@ fn record<T: serde::Serialize>(
     })
 }
 
-/// Fold one complete group state: one design through the design cap, every
-/// anchor a task that no other group holds.
-fn store_group(
+fn current_partition(authority: &impl Authority) -> Result<WorkingGroupPartition, Refusal> {
+    Ok(match authority.group_partition()? {
+        Some(body) => wire::decode(&body)?,
+        None => WorkingGroupPartition::default(),
+    })
+}
+
+/// Fold one partition change: the next revision, standing groups of existing
+/// tasks, none past the design cap.
+fn store_partition(
     authority: &mut impl Authority,
     seq: Seq,
-    group: &wire::rooms::WorkingGroup,
+    current: &WorkingGroupPartition,
+    partition: &WorkingGroupPartition,
 ) -> Result<(), Refusal> {
-    if group.anchors.is_empty() {
-        return unsound(format!("working group {} holds no design", group.group));
-    }
-    if group.anchors.len() > wire::rooms::WORKING_GROUP_DESIGN_LIMIT {
+    if Some(partition.revision) != current.revision.checked_add(1) {
         return unsound(format!(
-            "working group {} holds {} designs, more than {}",
-            group.group,
-            group.anchors.len(),
-            wire::rooms::WORKING_GROUP_DESIGN_LIMIT
+            "working-group revision {} does not follow {}",
+            partition.revision, current.revision
         ));
     }
-    let key = group.group.to_string();
-    for anchor in &group.anchors {
-        require_task(authority, anchor, "working-group anchor")?;
-        if let Some(owner) = authority.anchor_owner(anchor.as_str())?
-            && owner != key
-        {
+    for group in &partition.groups {
+        if group.anchors.len() > wire::rooms::WORKING_GROUP_DESIGN_LIMIT {
             return unsound(format!(
-                "design {anchor} already belongs to working group {owner}"
+                "working group {} holds {} designs, more than {}",
+                group.group,
+                group.anchors.len(),
+                wire::rooms::WORKING_GROUP_DESIGN_LIMIT
             ));
         }
+        for anchor in &group.anchors {
+            require_task(authority, anchor, "working-group anchor")?;
+        }
     }
-    authority.change(Change::GroupStored {
-        group: group.group.to_string(),
+    authority.change(Change::GroupPartition {
         seq: seq.get(),
-        body: wire::encode(group)?,
-        anchors: group.anchors.iter().map(ToString::to_string).collect(),
+        body: wire::encode(partition)?,
     })
 }
 

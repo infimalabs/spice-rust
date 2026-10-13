@@ -32,16 +32,18 @@ const PREPARED: &str = "prepared";
 /// directed routes, room coordination records written before the journal
 /// bound them, room conversation records without the current native steering
 /// delivery shape, working groups holding more designs than a group admits,
-/// and named working groups or group removals from before a group lived only
-/// while it held designs, projects frozen peer-message rooms from their
+/// named working groups or group removals from before a group lived only
+/// while it held designs, and working groups stored as their own heads rather
+/// than in the partition, projects frozen peer-message rooms from their
 /// creating facts into steering heads, and creates the room-authority
 /// projection, per-lane room catch-up cursors and horizons, room coordination
-/// heads, room conversation heads, operator items, required task evidence, and
-/// relevance shadow records a predecessor lacks, replacing its per-route room
-/// receipts, before the schema identity advances.
+/// heads, room conversation heads, operator items, required task evidence,
+/// relevance shadow records, and the working-group partition a predecessor
+/// lacks, replacing its per-route room receipts and per-group heads, before
+/// the schema identity advances.
 /// Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 18] = [
-    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+const PREDECESSOR_SCHEMAS: [u32; 19] = [
+    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -65,9 +67,12 @@ pub(crate) const ROOM_ITEM_SCHEMA: u32 = 47;
 pub(crate) const TASK_EVIDENCE_SCHEMA: u32 = 48;
 /// First schema whose baseline carries room relevance shadow observations.
 pub(crate) const ROOM_RELEVANCE_SCHEMA: u32 = 49;
+/// First schema whose baseline carries the working-group partition in place
+/// of per-group heads.
+pub(crate) const GROUP_PARTITION_SCHEMA: u32 = 52;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
-const ROOM_SCHEMA_STEPS: [(u32, &str); 8] = [
+const ROOM_SCHEMA_STEPS: [(u32, &str); 9] = [
     (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
     (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
     (
@@ -82,6 +87,7 @@ const ROOM_SCHEMA_STEPS: [(u32, &str); 8] = [
     (ROOM_ITEM_SCHEMA, crate::rooms::CONVERSATION_ITEM_SCHEMA_SQL),
     (TASK_EVIDENCE_SCHEMA, crate::rooms::EVIDENCE_SCHEMA_SQL),
     (ROOM_RELEVANCE_SCHEMA, crate::rooms::RELEVANCE_SCHEMA_SQL),
+    (GROUP_PARTITION_SCHEMA, crate::rooms::GROUP_SCHEMA_SQL),
 ];
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
@@ -1194,8 +1200,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 51, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 52, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 51;
+PRAGMA user_version = 52;
 "#;

@@ -2,12 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::rooms::WorkingGroupPut;
 use crate::rooms::{
     QuestionClosure, QuestionResultRef, RoomAuthorityStamp, RoomReceiptDisposition, RoomReceiptRef,
     RoomRelevanceVerdict,
 };
-use crate::{OccupantAddress, Seq, SequenceCode, TaskHandle, TaskStamp};
+pub use crate::rooms::{WorkingGroupArrange, WorkingGroupMove};
+use crate::{OccupantAddress, SequenceCode, TaskHandle, TaskStamp};
 
 /// Start or resume one bounded preparation contribution in an anchor room.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,22 +176,10 @@ pub struct RoomCoordinationView {
     pub hide: bool,
 }
 
-/// Largest working-group page one command may request.
-pub const WORKING_GROUP_PAGE_LIMIT_MAX: u16 = 100;
-
-/// Read one group exactly, or page all current groups in stable identity order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Read the current working-group partition.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkingGroupRead {
-    /// Exact group to inspect. When absent, page the current group catalog.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group: Option<RoomAuthorityStamp>,
-    /// Continue the catalog strictly after this identity.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub after: Option<RoomAuthorityStamp>,
-    /// Maximum catalog rows, from one through [`WORKING_GROUP_PAGE_LIMIT_MAX`].
-    pub limit: u16,
-}
+pub struct WorkingGroupRead {}
 
 /// One room anchor as resolved against the current task projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -211,49 +199,45 @@ pub enum WorkingGroupAnchor {
     },
 }
 
-/// One current saved working group.
+/// One current working group.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkingGroupView {
     /// Stable repository-shared identity.
     pub group: RoomAuthorityStamp,
-    /// Room anchors in saved order, resolved through current task authority.
+    /// Room anchors in arranged order, resolved through current task authority.
     pub anchors: Vec<WorkingGroupAnchor>,
-    /// Current journal head guarding complete replacement.
-    pub head: Seq,
 }
 
-/// One bounded working-group catalog page.
+/// The current working-group partition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkingGroupPage {
-    /// Current groups in stable identity order.
+    /// Revision a change must witness.
+    pub revision: u64,
+    /// Current groups in operator order.
     pub groups: Vec<WorkingGroupView>,
-    /// Exact requested group that is not currently available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unavailable: Option<RoomAuthorityStamp>,
-    /// Last returned identity when more groups remain.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub continuation: Option<RoomAuthorityStamp>,
 }
 
-/// Result of one working-group replacement.
+/// Result of one working-group change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkingGroupChange {
-    /// Stable group identity changed by the command.
-    pub group: RoomAuthorityStamp,
+    /// Partition revision the change committed.
+    pub revision: u64,
     /// Current transition outcome.
     pub status: WorkingGroupChangeStatus,
 }
 
-/// Current working-group mutation outcomes.
+/// Current working-group change outcomes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WorkingGroupChangeStatus {
-    /// The complete intended group state was stored.
-    Stored,
-    /// The group's last design left, so the group ended without changing any
-    /// task or room.
-    Removed,
+    /// The design moved and every group it touched still stands.
+    Moved,
+    /// The design moved out of a group that it alone held, so that group
+    /// ended without changing any task or room.
+    Ended,
+    /// The whole partition was restated.
+    Arranged,
 }

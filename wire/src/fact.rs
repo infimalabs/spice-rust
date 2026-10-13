@@ -131,11 +131,11 @@ macro_rules! registered_body {
     (RoomReceiptRecovered) => {
         crate::rooms::RoomReceiptRecovered
     };
-    (WorkingGroupStored) => {
-        crate::rooms::WorkingGroupStored
+    (WorkingGroupMoved) => {
+        crate::rooms::WorkingGroupMoved
     };
-    (WorkingGroupRemoved) => {
-        crate::rooms::WorkingGroupRemoved
+    (WorkingGroupsArranged) => {
+        crate::rooms::WorkingGroupsArranged
     };
     (CandidateRetained) => {
         crate::rooms::CandidateRetained
@@ -314,10 +314,10 @@ vocabulary! {
     RoomReceiptLapsed = "room::lapsed" by BusTimer;
     /// Operator recovery returned a lapsed operator item to pending.
     RoomReceiptRecovered = "room::recovered" by CommandDoor;
-    /// A working group's complete ordered anchor state was saved.
-    WorkingGroupStored = "group::stored" by CommandDoor;
-    /// A working group ended when its last design left, without touching rooms.
-    WorkingGroupRemoved = "group::removed" by CommandDoor;
+    /// One design moved between working groups; carries the whole partition.
+    WorkingGroupMoved = "group::moved" by CommandDoor;
+    /// The whole working-group partition was restated.
+    WorkingGroupsArranged = "group::arranged" by CommandDoor;
 
     /// One exact candidate was retained under its controlling task.
     CandidateRetained = "proposal::retained" by CommandDoor;

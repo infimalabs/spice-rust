@@ -7,7 +7,7 @@ use wire::rooms::{
     ProposalRef, QuestionResultHead, QuestionResultRecord, QuestionResultRef, RetainedCandidate,
     RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomHorizon, RoomMessaged,
     RoomPublication, RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord,
-    RoomReceiptRef, WorkingGroup,
+    RoomReceiptRef, WorkingGroupPartition,
 };
 
 use super::{
@@ -32,17 +32,6 @@ pub enum ProposalAuthority {
     Decision(PreparationDecision),
 }
 
-/// One ordered bounded page of current working-group heads.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GroupHeadPage {
-    /// Working-group heads decoded within this call's row and byte budgets.
-    pub rows: Vec<JournalHead<WorkingGroup>>,
-    /// Last returned identity when more current groups remain.
-    pub continuation: Option<RoomAuthorityStamp>,
-    /// Cursor identity of the projection this page observed.
-    pub witness: CurrentHeadWitness,
-}
-
 /// One ordered page of operator items still owing a disposition.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenRoomItemPage {
@@ -53,112 +42,27 @@ pub struct OpenRoomItemPage {
 }
 
 impl JournalRead<'_> {
-    /// Current working-group head, absent before creation or after removal.
-    pub fn group_head(
+    /// The current working-group partition head, absent before any grouping
+    /// write.
+    pub fn group_partition(
         &self,
-        group: &RoomAuthorityStamp,
-    ) -> Result<Option<JournalHead<WorkingGroup>>, GuardError> {
-        let key = group.to_string();
-        let head = self.text_head::<WorkingGroup>("group_heads", "working_group", &key)?;
-        if let Some(head) = &head
-            && head.body.group != *group
-        {
-            return Err(GuardError::Invalid(format!(
-                "group head indexed as {key} carries body group {}",
-                head.body.group
-            )));
-        }
-        Ok(head)
-    }
-
-    /// One page of current working groups strictly after `after`, in identity
-    /// order.
-    pub fn group_head_page(
-        &self,
-        after: Option<&RoomAuthorityStamp>,
-        budget: FactReadBudget,
-    ) -> Result<GroupHeadPage, GuardError> {
-        let after = after.map(ToString::to_string).unwrap_or_default();
+    ) -> Result<Option<JournalHead<WorkingGroupPartition>>, GuardError> {
         read_metrics::observe_query();
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT working_group, head_seq, length(body), body FROM group_heads \
-                 WHERE working_group > ?1 ORDER BY working_group LIMIT ?2",
-            )
-            .map_err(GuardError::Store)?;
-        let mut rows = statement
-            .query(params![after, probe_limit(budget)?])
-            .map_err(GuardError::Store)?;
-        let mut heads = Vec::with_capacity(budget.rows());
-        let mut decoded = 0usize;
-        let mut continuation = None;
-        while let Some(row) = rows.next().map_err(GuardError::Store)? {
-            let indexed = row.get::<_, String>(0).map_err(GuardError::Store)?;
-            read_metrics::observe_row();
-            if heads.len() == budget.rows() {
-                continuation = heads
-                    .last()
-                    .map(|head: &JournalHead<WorkingGroup>| head.body.group.clone());
-                break;
-            }
-            let length = indexed_length(row, 2, "working-group body")?;
-            if !heads.is_empty() && decoded.saturating_add(length) > budget.decoded_bytes() {
-                continuation = heads.last().map(|head| head.body.group.clone());
-                break;
-            }
-            let group = indexed.parse::<RoomAuthorityStamp>().map_err(|error| {
-                GuardError::Invalid(format!("group head index names {indexed:?}: {error}"))
-            })?;
-            let position = row.get::<_, i64>(1).map_err(GuardError::Store)?;
-            let bytes = row.get::<_, Vec<u8>>(3).map_err(GuardError::Store)?;
-            let head: JournalHead<WorkingGroup> = decode_head(position, &bytes)?;
-            if head.body.group != group {
-                return Err(GuardError::Invalid(format!(
-                    "group head indexed as {group} carries body group {}",
-                    head.body.group
-                )));
-            }
-            read_metrics::observe_decode(length);
-            decoded = decoded.saturating_add(length);
-            heads.push(head);
-        }
-        Ok(GroupHeadPage {
-            rows: heads,
-            continuation,
-            witness: CurrentHeadWitness {
-                cursor: self.cursor,
-            },
-        })
-    }
-
-    /// The current head of the working group that holds this room anchor; a
-    /// design belongs to at most one group.
-    pub fn anchor_group(
-        &self,
-        anchor: &wire::TaskStamp,
-    ) -> Result<Option<JournalHead<WorkingGroup>>, GuardError> {
-        read_metrics::observe_query();
-        let owner = self
+        let row = self
             .connection
             .query_row(
-                "SELECT working_group FROM group_anchors WHERE anchor = ?1",
-                [anchor.as_str()],
-                |row| row.get::<_, String>(0),
+                "SELECT head_seq, body FROM group_partition WHERE singleton = 1",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
             )
             .optional()
             .map_err(GuardError::Store)?;
-        let Some(owner) = owner else {
+        let Some((position, bytes)) = row else {
             return Ok(None);
         };
         read_metrics::observe_row();
-        let group = owner.parse::<RoomAuthorityStamp>().map_err(|error| {
-            GuardError::Invalid(format!("group anchor index names {owner:?}: {error}"))
-        })?;
-        let head = self.group_head(&group)?.ok_or_else(|| {
-            GuardError::Invalid(format!("group anchor index names absent group {group}"))
-        })?;
-        Ok(Some(head))
+        read_metrics::observe_decode(bytes.len());
+        decode_head(position, &bytes).map(Some)
     }
 
     /// The write-once head of one proposal subject, absent before recording.
@@ -1143,7 +1047,7 @@ macro_rules! room_authority {
              json_each(CAST(f.envelope AS TEXT), '$.fact.directed') j \
          ), authority(seq) AS ( \
              SELECT seq FROM recorded \
-             UNION SELECT head_seq FROM group_heads \
+             UNION SELECT head_seq FROM group_partition \
              UNION SELECT head_seq FROM proposal_heads \
              UNION SELECT head_seq FROM authorization_heads \
              UNION SELECT head_seq FROM room_items \

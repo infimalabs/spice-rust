@@ -767,13 +767,20 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
         instant("2026-07-11T05:06:00.000000Z"),
         Producer::CommandDoor,
     );
+    let group = wire::rooms::RoomAuthorityStamp::for_micros(1_783_748_760_000_000)
+        .expect("demo OOPS group stamp is valid");
     write
         .fact(
-            wire::rooms::WorkingGroupStored {
-                group: wire::rooms::WorkingGroup {
-                    group: wire::rooms::RoomAuthorityStamp::for_micros(1_783_748_760_000_000)
-                        .expect("demo OOPS group stamp is valid"),
-                    anchors: vec![batch],
+            wire::rooms::WorkingGroupMoved {
+                design: batch.clone(),
+                from: None,
+                to: Some(group.clone()),
+                partition: wire::rooms::WorkingGroupPartition {
+                    revision: 1,
+                    groups: vec![wire::rooms::WorkingGroup {
+                        group,
+                        anchors: vec![batch],
+                    }],
                 },
             },
             FactCause::Root,

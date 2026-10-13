@@ -7,7 +7,7 @@ use std::rc::Rc;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::HtmlElement;
 use wire::intent::WorkingGroupChangeStatus;
-use wire::rooms::{RoomAuthorityStamp, RoomPostOutcome, WorkingGroup};
+use wire::rooms::{RoomAuthorityStamp, RoomPostOutcome, WorkingGroup, WorkingGroupMove};
 use wire::{CommandKind, TaskStamp};
 use yew::prelude::*;
 
@@ -166,7 +166,7 @@ pub(super) fn render_catalog(
         );
     };
     let projection = runtime.room_projection();
-    let can_put = runtime.offers(CommandKind::WorkingGroupPut);
+    let can_move = runtime.offers(CommandKind::WorkingGroupMove);
     let board = runtime.board();
     let body = match projection.status() {
         RoomProjectionStatus::Loading => {
@@ -179,12 +179,8 @@ pub(super) fn render_catalog(
             let drops = designs::Drops::new(
                 sender.clone(),
                 controls.clone(),
-                projection
-                    .groups()
-                    .values()
-                    .map(|positioned| (positioned.value.clone(), positioned.position))
-                    .collect(),
-                can_put,
+                projection.partition().clone(),
+                can_move,
             );
             html! {
                 <>
@@ -193,8 +189,8 @@ pub(super) fn render_catalog(
                     }
                     {conversation::render_inbox(runtime, &controls.reporter(), sender)}
                     <div class="room-group-catalog">
-                        {for projection.groups().values().map(|positioned| {
-                            render_catalog_group(runtime, &positioned.value, &drops, controls)
+                        {for projection.partition().groups.iter().map(|group| {
+                            render_catalog_group(runtime, group, &drops, controls)
                         })}
                     </div>
                     {render_new_group(&drops)}
@@ -298,21 +294,24 @@ fn render_catalog_group(
     }
 }
 
-fn submit_group(
+/// Send one design move at the observed partition revision and report its
+/// outcome in the catalog notice.
+fn submit_move(
     sender: &SenderHandle,
     controls: &Controls,
-    group: WorkingGroup,
-    head: Option<wire::Seq>,
+    request: WorkingGroupMove,
+    revision: u64,
 ) {
     let controls = controls.clone();
     let respond = Rc::new(
         move |result: Result<wire::intent::WorkingGroupChange, String>| {
             let message = match result {
                 Ok(change) => match change.status {
-                    WorkingGroupChangeStatus::Stored => "Working group saved.".to_owned(),
-                    WorkingGroupChangeStatus::Removed => {
-                        "Working group ended; its last design left.".to_owned()
+                    WorkingGroupChangeStatus::Moved => "Design moved.".to_owned(),
+                    WorkingGroupChangeStatus::Ended => {
+                        "Design moved; its group ended with its last design.".to_owned()
                     }
+                    WorkingGroupChangeStatus::Arranged => "Working groups arranged.".to_owned(),
                 },
                 Err(error) => error,
             };
@@ -321,9 +320,9 @@ fn submit_group(
     );
     let _ = admit_action(
         sender,
-        ClientAction::WorkingGroupPut {
-            group,
-            head,
+        ClientAction::WorkingGroupMove {
+            request,
+            revision,
             respond,
         },
     );

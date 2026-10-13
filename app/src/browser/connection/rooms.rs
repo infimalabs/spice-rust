@@ -2,25 +2,14 @@
 
 use super::*;
 
-pub(super) async fn send_group_put(
+pub(super) async fn send_group_move(
     principal: &Principal,
     writer: &mut SocketWriter,
     actions: &ActionQueue,
-    group: &wire::rooms::WorkingGroup,
-    head: Option<wire::Seq>,
+    request: &wire::rooms::WorkingGroupMove,
+    revision: u64,
     respond: &crate::client_action::GroupResponse,
 ) -> Result<CanonicalUuid, String> {
-    let mut expected = vec![Witness::Group {
-        group: group.group.clone(),
-        head,
-    }];
-    expected.extend(
-        group
-            .anchors
-            .iter()
-            .cloned()
-            .map(|task| Witness::Existence { task }),
-    );
     send_typed(
         principal,
         writer,
@@ -28,11 +17,14 @@ pub(super) async fn send_group_put(
         PendingKind::WorkingGroup {
             respond: respond.clone(),
         },
-        CommandKind::WorkingGroupPut,
-        expected,
-        wire::rooms::WorkingGroupPut {
-            group: group.clone(),
-        },
+        CommandKind::WorkingGroupMove,
+        vec![
+            Witness::Group { revision },
+            Witness::Existence {
+                task: request.design.clone(),
+            },
+        ],
+        request.clone(),
     )
     .await
 }
