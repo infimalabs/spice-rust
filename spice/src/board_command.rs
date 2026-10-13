@@ -125,6 +125,7 @@ mod client_document;
 use client_document::*;
 mod dependency_witness;
 use dependency_witness::*;
+mod engagement;
 mod evidence;
 mod followup;
 use followup::*;

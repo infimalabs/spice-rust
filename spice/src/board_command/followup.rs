@@ -476,6 +476,7 @@ fn create_followup(
     let statement = TaskHead {
         preparation: planning::correction_preparation(context.reviewed_task),
         authorization: None,
+        engagement: None,
         evidence: Vec::new(),
         intent: followup
             .add

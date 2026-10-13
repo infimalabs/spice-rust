@@ -28,7 +28,8 @@ pub(super) fn dispatch_preparation(
 }
 
 /// Refuse a positive controller conclusion while any live controlled output
-/// still lacks that controller's exact execution authorization.
+/// still lacks an authorization: that controller's exact execution
+/// authorization or the operator's engagement of it in a working group.
 ///
 /// Operator close and delete are separate, explicit negative dispositions.
 /// They intentionally leave controlled outputs gated and do not call this
@@ -43,6 +44,7 @@ pub(super) fn require_no_pending_controlled_outputs(
         .filter(|entry| {
             entry.workflow().status == "pending"
                 && entry.statement().authorization.is_none()
+                && entry.statement().engagement.is_none()
                 && entry
                     .statement()
                     .preparation
@@ -59,8 +61,9 @@ pub(super) fn require_no_pending_controlled_outputs(
         "preparation::controlled-outputs-pending",
         Some(outputs.join(", ")),
         &format!(
-            "authorize the exact accepted selection with `spice preparation authorize \
-             AUTHORIZATION_JSON`, or close or delete each unselected output before concluding {}",
+            "place {} in a working group to authorize its outputs, authorize the exact accepted \
+             selection with `spice preparation authorize AUTHORIZATION_JSON`, or close or delete \
+             each unselected output before concluding it",
             controller.handle()
         ),
     ))
@@ -310,6 +313,7 @@ pub(super) fn authorize_execution(
             || heads.workflow().body().completion.is_some()
             || active_claim(heads)
             || heads.statement().body().authorization.is_some()
+            || heads.statement().body().engagement.is_some()
             || heads
                 .statement()
                 .body()
@@ -414,6 +418,7 @@ pub(super) fn adopt_output(
         || active_claim(output_heads)
         || output_heads.statement().body().preparation.is_some()
         || output_heads.statement().body().authorization.is_some()
+        || output_heads.statement().body().engagement.is_some()
         || output_heads.statement().body().intent.is_some()
     {
         return refusal(
@@ -469,12 +474,14 @@ pub(super) fn adopt_output(
         Ok(fact) => fact,
         Err(error) => return store_fault("preparation::adoption-invalid", &error.to_string()),
     };
-    let head = output_heads.statement().body().clone();
-    write.task_head(fact, move |revision| TaskHead {
+    let mut head = TaskHead {
         preparation: Some(preparation),
-        revision,
-        ..head
-    });
+        ..output_heads.statement().body().clone()
+    };
+    if let Err(outcome) = super::engagement::engage(bus, &mut head) {
+        return outcome;
+    }
+    write.task_head(fact, move |revision| TaskHead { revision, ..head });
     let answer = TextAnswer {
         text: format!(
             "adopted {output} under controller {}",

@@ -706,6 +706,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
     write.task_head(added, move |revision| TaskHead {
         preparation: None,
         authorization: None,
+        engagement: None,
         evidence: Vec::new(),
         intent: None,
         born: statement_task,
@@ -836,6 +837,7 @@ fn seed_grooming_task(
     write.task_head(added, move |revision| TaskHead {
         preparation: None,
         authorization: None,
+        engagement: None,
         evidence: Vec::new(),
         intent,
         born: statement_task,

@@ -155,6 +155,19 @@ pub(super) fn put_working_group(
         group: left.group.clone(),
         head: Some(*head),
     }));
+    // Every group fact this write stores engages the outputs of the designs
+    // it anchors, including a group a moved design left behind.
+    let anchors = departures
+        .iter()
+        .flat_map(|(_, left)| &left.anchors)
+        .chain(&put.group.anchors)
+        .cloned()
+        .collect::<Vec<_>>();
+    let (mut outputs, output_witnesses) = match engagement::anchored_outputs(bus, &anchors) {
+        Ok(outputs) => outputs,
+        Err(outcome) => return outcome,
+    };
+    witnesses.extend(output_witnesses);
     let status = if ending {
         WorkingGroupChangeStatus::Removed
     } else {
@@ -174,19 +187,22 @@ pub(super) fn put_working_group(
                 if left.anchors.is_empty() {
                     write.fact(WorkingGroupRemoved { group: left.group }, FactCause::Root)?;
                 } else {
-                    write.fact(WorkingGroupStored { group: left }, FactCause::Root)?;
+                    let anchors = left.anchors.clone();
+                    let stored = write.fact(WorkingGroupStored { group: left }, FactCause::Root)?;
+                    engagement::grant(write, stored, &mut outputs, &anchors);
                 }
             }
             if ending {
-                write.fact(WorkingGroupRemoved { group }, FactCause::Root)
-            } else {
-                write.fact(
-                    WorkingGroupStored {
-                        group: put.group.clone(),
-                    },
-                    FactCause::Root,
-                )
+                return write.fact(WorkingGroupRemoved { group }, FactCause::Root);
             }
+            let stored = write.fact(
+                WorkingGroupStored {
+                    group: put.group.clone(),
+                },
+                FactCause::Root,
+            )?;
+            engagement::grant(write, stored, &mut outputs, &put.group.anchors);
+            Ok(stored)
         },
         put,
     )
