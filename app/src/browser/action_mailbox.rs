@@ -11,6 +11,9 @@ use crate::{PendingKind, client_action::ClientAction};
 
 const ACTION_RECORD_LIMIT: usize = 64;
 const HISTORY_RECORD_LIMIT: usize = 32;
+/// Outstanding task detail reads, kept below [`ACTION_RECORD_LIMIT`] so a
+/// large selection never crowds out current reads and mutations.
+pub(super) const TASK_DETAIL_READ_LIMIT: usize = 16;
 const TEXT_ALLOWANCE_BYTES: usize = wire::media::MAX_MEDIA_BYTES;
 const MEDIA_URL_BYTES: usize = wire::media::MAX_MEDIA_BYTES.div_ceil(3) * 4 + 64;
 const ACTION_PAYLOAD_LIMIT: usize =
@@ -145,6 +148,17 @@ impl ActionQueue {
             return false;
         }
         mailbox.stale_current_reads.remove(&read)
+    }
+    /// How many more task detail reads may be outstanding.
+    pub(super) fn task_detail_slots(&self) -> usize {
+        let outstanding = self
+            .mailbox
+            .borrow()
+            .pending
+            .values()
+            .filter(|entry| matches!(entry.kind, PendingKind::TaskDetail { .. }))
+            .count();
+        TASK_DETAIL_READ_LIMIT.saturating_sub(outstanding)
     }
     pub(super) fn has_task_detail(&self, task: &wire::TaskStamp) -> bool {
         self.mailbox.borrow().pending.values().any(|entry| {
@@ -329,6 +343,7 @@ struct RenewalKey {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ActionClass {
     DrainSubmissions,
+    TaskDetails,
     Settings,
     Other,
 }
@@ -509,7 +524,7 @@ impl ClientAction {
             }),
             Self::GlobalSettings(_)
             | Self::DrainSubmissions
-            | Self::TaskDetail { .. }
+            | Self::TaskDetails
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
             | Self::TrustGrant { .. }
@@ -523,7 +538,7 @@ impl ClientAction {
     pub(super) const fn is_mutation(&self) -> bool {
         !matches!(
             self,
-            Self::TaskDetail { .. }
+            Self::TaskDetails
                 | Self::TaskRelations { .. }
                 | Self::MessageHistory { .. }
                 | Self::Jobs { .. }
@@ -604,13 +619,15 @@ impl ActionMailbox {
         }) {
             return Ok(());
         }
-        if class == ActionClass::DrainSubmissions
-            && self
-                .records
-                .iter()
-                .map(|queued| queued.class)
-                .chain(self.leased.iter().map(|leased| leased.class))
-                .any(|retained| retained == class)
+        if matches!(
+            class,
+            ActionClass::DrainSubmissions | ActionClass::TaskDetails
+        ) && self
+            .records
+            .iter()
+            .map(|queued| queued.class)
+            .chain(self.leased.iter().map(|leased| leased.class))
+            .any(|retained| retained == class)
         {
             return Ok(());
         }
@@ -1017,6 +1034,7 @@ impl ActionClass {
     fn of(action: &ClientAction) -> Self {
         match action {
             ClientAction::DrainSubmissions => Self::DrainSubmissions,
+            ClientAction::TaskDetails => Self::TaskDetails,
             ClientAction::GlobalSettings(_) => Self::Settings,
             _ => Self::Other,
         }
@@ -1223,6 +1241,30 @@ mod tests {
             queue.settle_pending(pending),
             Some(PendingKind::TaskDetail { task }) if task == requested
         ));
+    }
+
+    #[test]
+    fn task_detail_reads_are_capped_below_the_record_pool_and_wakes_coalesce() {
+        let (queue, _wakes) = ActionQueue::new();
+        let task: wire::TaskStamp = "1kKRRsDP".parse().expect("fixture task stamp");
+        for n in 0..TASK_DETAIL_READ_LIMIT {
+            assert_eq!(queue.task_detail_slots(), TASK_DETAIL_READ_LIMIT - n);
+            let pending = id(u8::try_from(n).expect("fixture identity fits"));
+            queue
+                .reserve_pending(pending, PendingKind::TaskDetail { task: task.clone() }, 1)
+                .expect("detail read reserves");
+        }
+        assert_eq!(queue.task_detail_slots(), 0);
+        queue
+            .reserve_pending(id(200), PendingKind::Board, 1)
+            .expect("a capped detail budget leaves records for current reads");
+        queue.settle_pending(id(0));
+        assert_eq!(queue.task_detail_slots(), 1);
+
+        queue.admit(ClientAction::TaskDetails, None).unwrap();
+        queue.admit(ClientAction::TaskDetails, None).unwrap();
+        drop(queue.lease().expect("one wake leases").commit());
+        assert!(queue.lease().is_none(), "a repeated wake adds no record");
     }
 
     #[test]

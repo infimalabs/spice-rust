@@ -66,9 +66,8 @@ pub(crate) enum ClientAction {
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,
     GlobalSettings(GlobalSettingsSet),
-    TaskDetail {
-        task: TaskStamp,
-    },
+    /// Wake the connection to send task detail reads the runtime owes.
+    TaskDetails,
     TaskRelations {
         key: crate::TaskRelationsKey,
     },

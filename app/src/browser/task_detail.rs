@@ -15,7 +15,7 @@ pub(super) struct Controls {
     pub blocker_review_button_ref: NodeRef,
     pub blocker_review_close_ref: NodeRef,
     pub notes: NoteComposers,
-    /// Read one task again without changing the selected set.
+    /// Ask again for one shown task whose read produced no answer.
     pub request: Callback<TaskStamp>,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
     pub grant_trust: Callback<TrustGrantRequest>,
@@ -50,12 +50,19 @@ pub(super) fn use_controls(
     };
     let request = request_callback(sender.clone(), surface.clone());
     {
-        let request = request.clone();
+        let sender = sender.clone();
+        let surface = surface.clone();
         use_effect_with(selection.clone(), move |selection| {
-            if let Some(selection) = selection {
-                for task in selection.tasks() {
-                    request.emit(task.clone());
-                }
+            let tasks = selection
+                .iter()
+                .flat_map(|selection| selection.tasks().iter().cloned());
+            let owed = surface
+                .write()
+                .as_mut()
+                .is_some_and(|runtime| runtime.show_task_details(tasks));
+            surface.set(surface.publication());
+            if owed {
+                let _admitted = admit_action(&sender, ClientAction::TaskDetails);
             }
         });
     }
@@ -123,32 +130,19 @@ fn trust_grant_callback(
     })
 }
 
-/// Read one task's detail unless an admitted answer is already held; every
-/// surface showing a task reads it here without selecting it anywhere.
+/// Ask again for one shown task whose read produced no answer.
 fn request_callback(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
 ) -> Callback<TaskStamp> {
     Callback::from(move |task: TaskStamp| {
-        let request = {
-            let mut data = surface.write();
-            let Some(runtime) = data.as_mut() else {
-                return;
-            };
-            if runtime
-                .task_detail(&task)
-                .and_then(TaskDetailState::answer)
-                .is_some()
-            {
-                false
-            } else {
-                runtime.begin_task_detail(task.clone());
-                true
-            }
-        };
-        surface.set(surface.publication());
-        if request {
-            let _admitted = admit_action(&sender, ClientAction::TaskDetail { task });
+        let owed = surface
+            .write()
+            .as_mut()
+            .is_some_and(|runtime| runtime.retry_task_detail(&task));
+        if owed {
+            surface.set(surface.publication());
+            let _admitted = admit_action(&sender, ClientAction::TaskDetails);
         }
     })
 }

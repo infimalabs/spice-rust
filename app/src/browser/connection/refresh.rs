@@ -1,7 +1,7 @@
 //! Demand-driven app current reads and duplicate-request coalescing.
 
 use super::*;
-use crate::action_mailbox::CurrentRead;
+use crate::action_mailbox::{ActionAdmissionError, CurrentRead};
 
 pub(super) async fn send_jobs(
     principal: &Principal,
@@ -114,27 +114,66 @@ pub(super) async fn send_stale(
     if actions.take_ready_current_read(CurrentRead::Consent) {
         send_consent(principal, writer, actions).await?;
     }
-    for task in stale.task_details() {
-        let _ = send_task_detail(principal, writer, actions, task).await?;
-    }
     Ok(())
 }
 
-/// Re-read every retained task detail after a reconnect; facts published
-/// while the socket was down were never streamed to invalidate them.
-pub(super) async fn send_task_details(
+/// Send owed task detail reads while the mailbox can hold their answers.
+///
+/// At most [`crate::action_mailbox::TASK_DETAIL_READ_LIMIT`] reads are outstanding, which leaves the
+/// rest of the record pool to current reads and mutations. A read the record
+/// or payload pool cannot hold stays owed, and every settled response runs
+/// this again, so any number of shown tasks hydrates without a refusal.
+pub(super) async fn send_task_detail_reads(
     principal: &Principal,
     writer: &mut SocketWriter,
     actions: &ActionQueue,
     data: &SurfaceData,
 ) -> Result<(), String> {
-    let tasks: Vec<wire::TaskStamp> = data
-        .read()
-        .as_ref()
-        .map(|runtime| runtime.task_detail_reads().cloned().collect())
+    let pane = SteerPane::over(principal);
+    if !pane.offers(CommandKind::TaskDetail) {
+        return Ok(());
+    }
+    let tasks = data
+        .write()
+        .as_mut()
+        .map(|runtime| {
+            runtime.take_task_detail_reads(actions.task_detail_slots(), |task| {
+                actions.has_task_detail(task)
+            })
+        })
         .unwrap_or_default();
-    for task in &tasks {
-        let _ = send_task_detail(principal, writer, actions, task).await?;
+    let mut tasks = tasks.into_iter();
+    while let Some(task) = tasks.next() {
+        let id = random_uuid()?;
+        let command = pane
+            .command(
+                id,
+                CommandKind::TaskDetail,
+                vec![],
+                wire::intent::TaskDetail { task: task.clone() },
+            )
+            .map_err(|error| error.to_string())?;
+        let bytes = wire::encode(&command).map_err(|error| error.to_string())?;
+        match actions.reserve_pending(
+            id,
+            PendingKind::TaskDetail { task: task.clone() },
+            bytes.len(),
+        ) {
+            Ok(()) => {}
+            Err(ActionAdmissionError::Records | ActionAdmissionError::Payload) => {
+                if let Some(runtime) = data.write().as_mut() {
+                    std::iter::once(task)
+                        .chain(tasks)
+                        .for_each(|task| runtime.restore_task_detail_read(task));
+                }
+                return Ok(());
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+        if let Err(error) = writer.send(Message::Bytes(bytes)).await {
+            actions.cancel_pending(id);
+            return Err(websocket_error(error));
+        }
     }
     Ok(())
 }
@@ -186,28 +225,6 @@ async fn send_board(
         BoardRead::Open,
     )
     .await
-}
-pub(super) async fn send_task_detail(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    actions: &ActionQueue,
-    task: &wire::TaskStamp,
-) -> Result<Option<CanonicalUuid>, String> {
-    if !SteerPane::over(principal).offers(CommandKind::TaskDetail) || actions.has_task_detail(task)
-    {
-        return Ok(None);
-    }
-    send_typed(
-        principal,
-        writer,
-        actions,
-        PendingKind::TaskDetail { task: task.clone() },
-        CommandKind::TaskDetail,
-        vec![],
-        wire::intent::TaskDetail { task: task.clone() },
-    )
-    .await
-    .map(Some)
 }
 pub(super) async fn send_task_relations(
     principal: &Principal,

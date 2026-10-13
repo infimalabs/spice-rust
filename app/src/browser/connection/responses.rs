@@ -53,7 +53,7 @@ fn handle_stream_frame(
                 stale.invalidate_quiet_lane(runtime.lanes(), message.lane);
             }
         }
-        stale.retain_task_details(|task| changed && runtime.invalidate_task_detail(task));
+        stale.invalidate_task_details(runtime, changed);
         stale.resolve_task_relations(runtime, changed);
         (application.into_directives(), changed)
     };
@@ -164,7 +164,6 @@ pub(super) fn handle_incoming(
     }
     Ok(FrameApplication {
         refresh: application.refresh,
-        stale: application.stale,
         lane_refresh,
         ..FrameApplication::default()
     })
@@ -174,7 +173,6 @@ struct CommandApplication {
     refresh: bool,
     lane_authority: bool,
     publish: bool,
-    stale: crate::Stale,
 }
 
 impl CommandApplication {
@@ -183,18 +181,6 @@ impl CommandApplication {
             refresh,
             lane_authority: false,
             publish: true,
-            stale: crate::Stale::default(),
-        }
-    }
-
-    fn task_detail(task: wire::TaskStamp) -> Self {
-        let mut stale = crate::Stale::default();
-        stale.invalidate_task_detail_read(task);
-        Self {
-            refresh: false,
-            lane_authority: false,
-            publish: true,
-            stale,
         }
     }
 }
@@ -297,7 +283,6 @@ fn apply_command_response(
                 refresh: false,
                 lane_authority: false,
                 publish: false,
-                stale: crate::Stale::default(),
             }
         }
         PendingKind::Job {
@@ -325,7 +310,6 @@ fn apply_command_response(
                 refresh,
                 lane_authority: false,
                 publish: false,
-                stale: crate::Stale::default(),
             }
         }
         PendingKind::WorkingGroup { respond } => {
@@ -351,7 +335,6 @@ fn apply_command_response(
                 refresh: false,
                 lane_authority: false,
                 publish,
-                stale: crate::Stale::default(),
             }
         }
         kind => apply_mutating_response(session, handles, runtime, id, kind, bytes)?,
@@ -378,7 +361,6 @@ fn apply_mutating_response(
                 refresh,
                 lane_authority: applied,
                 publish: true,
-                stale: crate::Stale::default(),
             }
         }
         PendingKind::TeamArrange => {
@@ -388,7 +370,6 @@ fn apply_mutating_response(
                 refresh,
                 lane_authority: applied,
                 publish: true,
-                stale: crate::Stale::default(),
             }
         }
         kind @ (PendingKind::LaneRenewal { .. }
@@ -428,7 +409,6 @@ fn apply_mutating_response(
                 refresh,
                 lane_authority: applied,
                 publish: true,
-                stale: crate::Stale::default(),
             }
         }
         PendingKind::Steer => {
@@ -509,8 +489,8 @@ fn apply_note_response(
                     ..NoteComposer::default()
                 };
             });
-            refresh_task_detail(runtime, &task);
-            Ok(CommandApplication::task_detail(task))
+            runtime.reread_task_detail(&task);
+            Ok(CommandApplication::ordinary(false))
         }
         outcome => {
             let issue = outcome_issue("Observation was not saved", outcome)
@@ -551,8 +531,8 @@ fn apply_close_response(
             handles
                 .notes
                 .update(&task, |composer| *composer = NoteComposer::default());
-            refresh_task_detail(runtime, &task);
-            Ok(CommandApplication::task_detail(task))
+            runtime.reread_task_detail(&task);
+            Ok(CommandApplication::ordinary(false))
         }
         outcome => {
             let issue = outcome_issue("Task was not closed", outcome)
@@ -562,12 +542,6 @@ fn apply_close_response(
             });
             Ok(CommandApplication::ordinary(false))
         }
-    }
-}
-
-fn refresh_task_detail(runtime: &mut AppRuntime, task: &wire::TaskStamp) {
-    if !runtime.invalidate_task_detail(task) {
-        runtime.begin_task_detail(task.clone());
     }
 }
 
@@ -593,8 +567,8 @@ fn reconcile_note_detail(
                 });
                 CommandApplication::ordinary(false)
             } else {
-                refresh_task_detail(runtime, task);
-                CommandApplication::task_detail(task.clone())
+                runtime.reread_task_detail(task);
+                CommandApplication::ordinary(false)
             }
         }
         Some(TaskDetailState::Unavailable { reason, detail }) => {
@@ -611,7 +585,10 @@ fn reconcile_note_detail(
             });
             CommandApplication::ordinary(false)
         }
-        Some(TaskDetailState::Loading) | None => CommandApplication::task_detail(task.clone()),
+        Some(TaskDetailState::Loading) | None => {
+            runtime.reread_task_detail(task);
+            CommandApplication::ordinary(false)
+        }
     }
 }
 
@@ -773,7 +750,6 @@ fn apply_member_response(
                 refresh,
                 lane_authority: applied,
                 publish: true,
-                stale: crate::Stale::default(),
             }
         }
         _ => unreachable!("member response partition is closed"),

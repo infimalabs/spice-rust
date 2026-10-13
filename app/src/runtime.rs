@@ -11,8 +11,7 @@ use std::rc::Rc;
 use wire::intent::{
     BoardAnswer, BoardTask, ConsentQueueAnswer, GlobalSettingsAnswer, InboxAnswer, LaneAnswer,
     LaneLiveness, TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT,
-    TaskDetailAnswer, TaskRelationKind, TaskRelationNodeRef, TaskRelations, TaskRelationsAnswer,
-    VendorCatalogAnswer,
+    TaskRelationKind, TaskRelationNodeRef, TaskRelations, TaskRelationsAnswer, VendorCatalogAnswer,
 };
 use wire::rooms::RoomAuthorityStamp;
 use wire::{
@@ -33,6 +32,7 @@ mod publication;
 mod rooms;
 mod scoped;
 mod stream;
+mod task_detail;
 pub use consent::ConsentRuling;
 pub use conversation_text::ConversationText;
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
@@ -46,6 +46,7 @@ pub use rooms::{
 };
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
+pub use task_detail::TaskDetailState;
 pub(crate) type QuoteTasks = BTreeMap<String, Vec<wire::TaskHandle>>;
 
 /// Whether a topology mutation response leaves the app owing an authoritative read.
@@ -446,47 +447,6 @@ pub enum BlockerActionState {
     Failed(String),
 }
 
-/// Capability-scoped state for one on-demand task detail.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum TaskDetailState {
-    /// A request is queued or in flight without prior admitted detail.
-    Loading,
-    /// Current task evidence and its ordered durable notes.
-    Available(Rc<TaskDetailAnswer>),
-    /// Last admitted evidence retained while a changed task is refreshed.
-    Refreshing(Rc<TaskDetailAnswer>),
-    /// The resident refused or could not serve the selected task.
-    Unavailable {
-        /// Stable resident reason.
-        reason: String,
-        /// Human diagnostic detail, when the resident supplied it.
-        detail: Option<String>,
-    },
-}
-
-impl TaskDetailState {
-    /// Last admitted detail, retained during an in-flight refresh.
-    #[must_use]
-    pub fn answer(&self) -> Option<&TaskDetailAnswer> {
-        match self {
-            Self::Available(answer) | Self::Refreshing(answer) => Some(answer),
-            Self::Loading | Self::Unavailable { .. } => None,
-        }
-    }
-
-    /// Whether this settled state proves the durable task exists: an admitted
-    /// answer does, and the resident's unknown-task refusal proves it does
-    /// not. Loading and other refusals settle nothing.
-    #[must_use]
-    pub fn known(&self) -> Option<bool> {
-        match self {
-            Self::Available(_) | Self::Refreshing(_) => Some(true),
-            Self::Unavailable { reason, .. } if reason == "task::detail-unknown" => Some(false),
-            Self::Loading | Self::Unavailable { .. } => None,
-        }
-    }
-}
-
 /// All state rendered by one capability-scoped app.
 ///
 /// Deliberately not `Debug`: even though scopes redact themselves, snapshots
@@ -497,7 +457,7 @@ pub struct AppRuntime {
     principal: Principal,
     board: ScopedValue<BoardView>,
     lanes: ScopedValue<LaneView>,
-    task_details: BTreeMap<wire::TaskStamp, TaskDetailState>,
+    task_details: task_detail::TaskDetails,
     task_relations: BTreeMap<TaskRelationsKey, TaskRelationsState>,
     blocker_actions: BTreeMap<Digest, BlockerActionState>,
     task_relations_revision: u64,
@@ -556,7 +516,7 @@ impl AppRuntime {
             principal: Principal::admitted(accepted),
             board: ScopedValue::new(accepted),
             lanes: ScopedValue::new(accepted),
-            task_details: BTreeMap::new(),
+            task_details: task_detail::TaskDetails::default(),
             task_relations: BTreeMap::new(),
             blocker_actions: BTreeMap::new(),
             task_relations_revision: 0,
@@ -620,7 +580,7 @@ impl AppRuntime {
             self.rooms = rooms::RoomProjection::default();
             self.reconnect_consent_rulings();
             self.abandon_member_commands();
-            self.task_details.values_mut().for_each(refresh_task_detail);
+            self.reconnect_task_details();
             self.task_relations
                 .retain(|_, state| refresh_task_relations(state, false));
             self.task_relations_revision = self.task_relations_revision.saturating_add(1);
@@ -723,22 +683,6 @@ impl AppRuntime {
         &self.rooms
     }
 
-    /// On-demand detail state retained only for this admitted capability scope.
-    #[must_use]
-    pub fn task_detail(&self, task: &wire::TaskStamp) -> Option<&TaskDetailState> {
-        self.task_details.get(task)
-    }
-
-    /// Every retained task detail, each of which a reconnect must read again.
-    pub fn task_detail_reads(&self) -> impl Iterator<Item = &wire::TaskStamp> {
-        self.task_details.keys()
-    }
-
-    /// Mark one selected detail as requested.
-    pub fn begin_task_detail(&mut self, task: wire::TaskStamp) {
-        self.task_details.insert(task, TaskDetailState::Loading);
-    }
-
     /// Current progress for one exact trust digest.
     #[must_use]
     pub fn blocker_action(&self, digest: &Digest) -> Option<&BlockerActionState> {
@@ -803,14 +747,6 @@ impl AppRuntime {
         self.blocker_actions.insert(digest, state);
     }
 
-    /// Retain one affected detail while its replacement is requested.
-    pub fn invalidate_task_detail(&mut self, task: &wire::TaskStamp) -> bool {
-        let Some(detail) = self.task_details.get_mut(task) else {
-            return false;
-        };
-        refresh_task_detail(detail);
-        true
-    }
     #[must_use]
     pub fn task_relations(&self, key: &TaskRelationsKey) -> Option<&TaskRelationsState> {
         self.task_relations.get(key)
@@ -979,41 +915,6 @@ impl AppRuntime {
             });
             runtime.board.replace(admitted.scope(), board);
         });
-    }
-    /// Apply one correlated detail response without crossing capability scope.
-    pub fn apply_task_detail(
-        &mut self,
-        task: &wire::TaskStamp,
-        admitted: &Admitted<Response<TaskDetailAnswer>>,
-    ) {
-        if admitted.scope() != self.accepted.scope() {
-            return;
-        }
-        let state = match &admitted.get().outcome {
-            Outcome::Reply(reply) if reply.body.task.statement.body.born == *task => {
-                TaskDetailState::Available(Rc::new(reply.body.clone()))
-            }
-            Outcome::Reply(_) => TaskDetailState::Unavailable {
-                reason: "task::detail-identity-mismatch".to_owned(),
-                detail: Some("the detail answer named a different durable task".to_owned()),
-            },
-            Outcome::Refusal(refusal) => {
-                let diagnostic = refusal.diagnostic();
-                TaskDetailState::Unavailable {
-                    reason: diagnostic
-                        .map_or("task::detail-refused", wire::RefusalDiagnostic::reason)
-                        .to_owned(),
-                    detail: diagnostic
-                        .and_then(wire::RefusalDiagnostic::detail)
-                        .map(str::to_owned),
-                }
-            }
-            Outcome::Fault(fault) => TaskDetailState::Unavailable {
-                reason: fault.reason.clone(),
-                detail: Some(fault.detail.clone()),
-            },
-        };
-        self.task_details.insert(task.clone(), state);
     }
     /// Apply one correlated relationship answer without crossing request identity.
     ///
@@ -1204,16 +1105,6 @@ fn refresh_task_relations(state: &mut TaskRelationsState, in_flight_answers: boo
     }
 }
 
-/// Keep a stale detail's answer on screen while its replacement is read.
-fn refresh_task_detail(detail: &mut TaskDetailState) {
-    *detail = match std::mem::replace(detail, TaskDetailState::Loading) {
-        TaskDetailState::Available(answer) | TaskDetailState::Refreshing(answer) => {
-            TaskDetailState::Refreshing(answer)
-        }
-        TaskDetailState::Loading | TaskDetailState::Unavailable { .. } => TaskDetailState::Loading,
-    };
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TaskRelationInvalidation {
     kind: FactKind,
@@ -1376,15 +1267,14 @@ impl Stale {
     }
 
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-    pub(crate) fn retain_task_details(&mut self, mut retain: impl FnMut(&wire::TaskStamp) -> bool) {
-        self.task_details.retain(|task| retain(task));
+    pub(crate) fn invalidate_task_details(&self, runtime: &mut AppRuntime, changed: bool) {
+        if changed {
+            for task in &self.task_details {
+                runtime.invalidate_task_detail(task);
+            }
+        }
     }
 
-    /// Mark one selected task detail for a demand-driven re-read.
-    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-    pub(crate) fn invalidate_task_detail_read(&mut self, task: wire::TaskStamp) {
-        self.task_details.insert(task);
-    }
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn resolve_task_relations(&mut self, runtime: &mut AppRuntime, changed: bool) {
         if changed {
@@ -1465,25 +1355,3 @@ mod topology_tests;
 
 #[cfg(test)]
 mod task_relation_tests;
-
-#[cfg(test)]
-mod task_detail_tests {
-    use super::TaskDetailState;
-
-    #[test]
-    fn only_the_resident_unknown_refusal_settles_a_task_as_missing() {
-        let unavailable = |reason: &str| TaskDetailState::Unavailable {
-            reason: reason.to_owned(),
-            detail: None,
-        };
-        assert_eq!(unavailable("task::detail-unknown").known(), Some(false));
-        for transient in [
-            "task::detail-refused",
-            "task::detail-identity-mismatch",
-            "connection::closed",
-        ] {
-            assert_eq!(unavailable(transient).known(), None, "{transient}");
-        }
-        assert_eq!(TaskDetailState::Loading.known(), None);
-    }
-}
