@@ -20,8 +20,9 @@ pub(in crate::resident) struct OccupantLaunch {
     /// vendor driven entirely by its arguments.
     pub(in crate::resident) opening: Option<Vec<u8>>,
     /// The first turn's message, which the driver writes once the vendor has
-    /// answered its `spice` scheme registration.
-    pub(in crate::resident) first_prompt: Option<String>,
+    /// answered its `spice` scheme registration, marked fresh or resumed so a
+    /// resumed seat's notice is read only then.
+    pub(in crate::resident) first_prompt: Option<crate::resident::supervisor::command::FirstTurn>,
 }
 
 impl OccupantLaunch {
@@ -185,7 +186,14 @@ pub(in crate::resident) fn occupant_launch(
     let stream = record.stream();
     let expected = record.resume().session_id().map(str::to_owned);
     let opening = record.opening().map(<[u8]>::to_vec);
-    let first_prompt = record.first_prompt().map(str::to_owned);
+    let first_prompt = record.first_prompt().map(|prompt| {
+        let prompt = prompt.to_owned();
+        if fresh {
+            crate::resident::supervisor::command::FirstTurn::Fresh(prompt)
+        } else {
+            crate::resident::supervisor::command::FirstTurn::Resumed(prompt)
+        }
+    });
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join(name.as_str()))
         .map_err(|error| store_fault("lane::capture-tape-unavailable", &error.to_string()))?;
     let (session_reply, session) = mpsc::sync_channel(4);
@@ -284,15 +292,16 @@ fn launch_plan(
     };
     let mut prompt = vendor.neutral_launch_prompt(&skill);
     // A fresh session starts with nothing but this turn, so the resident
-    // hands it the briefing itself; a resumed one already holds its context
-    // and learns only that it resumed, what it holds, and what is pending.
-    let session = probes.session(repository.worktree_root().to_path_buf());
-    prompt.push_str("\n\n");
-    prompt.push_str(&if fresh {
-        crate::session_command::lane_launch_briefing(&session, lane, None)
-    } else {
-        crate::session_command::lane_resume_notice(&session, lane, None)
-    });
+    // hands it the briefing itself. A resumed one already holds its context;
+    // the driver appends the notice naming what it holds and what is pending
+    // as it delivers the turn, never from this plan.
+    if fresh {
+        let session = probes.session(repository.worktree_root().to_path_buf());
+        prompt.push_str("\n\n");
+        prompt.push_str(&crate::session_command::lane_launch_briefing(
+            &session, lane, None,
+        ));
+    }
     if let Some(running) = running {
         prompt.push_str("\n\n");
         prompt.push_str(&running);

@@ -172,7 +172,33 @@ impl<W: Write + Send + 'static> Driver<W> {
             Access::Read => read_uri(url),
             Access::Write(_) => Err(vendor::omp::URI_SERVED.to_owned()),
         });
-        Self::with_server(stdin, read_inbox, read_briefing, server, seal, terminal)
+        Self::with_server(
+            stdin,
+            read_inbox,
+            read_briefing,
+            String::new,
+            server,
+            seal,
+            terminal,
+        )
+    }
+
+    /// A driver that reads a resumed seat's notice through `read_resume` and
+    /// serves no `spice://` read.
+    pub(super) fn resuming(
+        stdin: W,
+        read_resume: impl Fn() -> String + Send + Sync + 'static,
+    ) -> Arc<Self> {
+        let server: UriServer = Box::new(|_, _| Err(vendor::omp::URI_SERVED.to_owned()));
+        Self::with_server(
+            stdin,
+            || None,
+            || None,
+            read_resume,
+            server,
+            steer::Key::for_identity(crate::resident::new_uuid()),
+            None,
+        )
     }
 }
 

@@ -305,3 +305,60 @@ fn the_session_stamp_is_omp_s_millisecond_iso_spelling() {
     let whole: jiff::Timestamp = "2026-09-16T06:43:21Z".parse().expect("an instant");
     assert_eq!(session_stamp(whole), "2026-09-16T06:43:21.000Z");
 }
+
+/// Probes for a launch that must not read the lane's session authority.
+struct UnreadAuthority;
+
+impl LaunchProbes for UnreadAuthority {
+    fn advance(&self, repository: &Repository) -> String {
+        InertProbes.advance(repository)
+    }
+
+    fn shadow(&self, repository: &Repository, base: Environment) -> CommandResult<Environment> {
+        InertProbes.shadow(repository, base)
+    }
+
+    fn rtk(
+        &self,
+        executable: &std::ffi::OsStr,
+        working: &Path,
+        environment: &Environment,
+    ) -> wire::body::RtkHealth {
+        InertProbes.rtk(executable, working, environment)
+    }
+
+    fn session(&self, _worktree: PathBuf) -> crate::session_command::Environment {
+        panic!("a resumed launch plan read the lane's authority")
+    }
+}
+
+#[test]
+fn a_resumed_launch_defers_its_authority_to_delivery() {
+    let fixture = LaunchFixture::new();
+    let resume = vendor::Resume::Session(
+        vendor::SessionId::new(super::test_support::SESSION.to_owned()).expect("fixture identity"),
+    );
+    let launch = occupant_launch(
+        &fixture.paths,
+        fixture.request(resume),
+        fixture.reporter(),
+        &UnreadAuthority,
+    )
+    .expect("resumed launch composes without reading authority");
+    let Some(crate::resident::supervisor::command::FirstTurn::Resumed(_)) = launch.first_prompt
+    else {
+        panic!("a resumed launch's first turn is not marked resumed");
+    };
+
+    let launch = occupant_launch(
+        &fixture.paths,
+        fixture.request(vendor::Resume::Fresh),
+        fixture.reporter(),
+        &InertProbes,
+    )
+    .expect("fresh launch composes");
+    let Some(crate::resident::supervisor::command::FirstTurn::Fresh(_)) = launch.first_prompt
+    else {
+        panic!("a fresh launch's first turn is not marked fresh");
+    };
+}
