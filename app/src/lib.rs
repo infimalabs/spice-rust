@@ -55,6 +55,8 @@ mod mermaid_label;
 pub mod mosaic;
 pub mod mosaic_plane;
 pub mod narration;
+#[cfg(any(target_arch = "wasm32", test))]
+mod operator_inbox;
 pub mod pane;
 #[cfg(any(target_arch = "wasm32", test))]
 #[cfg_attr(test, allow(dead_code))]

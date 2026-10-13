@@ -304,8 +304,8 @@ impl MessageRecordedNotice {
         }
         if self.operator {
             clauses.push(
-                "opened one pending operator item, which the operator reads and settles in the \
-                 Operator inbox"
+                "opened one pending operator item, which the operator reads and settles in \
+                 their inbox"
                     .to_owned(),
             );
         }

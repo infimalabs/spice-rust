@@ -143,13 +143,17 @@ answer is its own ANS card whose return carries a separate receipt. None of
 these is styled as review coverage or output authorization, which stay in the
 preparation section.
 
-The **Operator inbox** catalogs every open operator item, such as the one a
-lane's operator route opens. Each item first names what it concerns, most
-contextual first: the operator direction a lane's `#KEY` named, by key and the
-text the operator sent; else the task `operator#TASK` named; else that a bare
-`operator`, the last resort, named nothing. Then it shows its publication's
-full body. A lane's body stays in its transcript, so the app reads it once,
-with the concerned direction's text, through the operator-only
+The operator's inbox sits in the Spice sidebar directly beneath their avatar,
+name, and email and above Jobs, not in the shared Working groups catalog. Its
+heading reads `<initials>'s inbox` (for example, "CA's inbox") once Git
+identity supplies initials, and "Your inbox" until then; an identity refresh
+retitles the same surface in place. It catalogs every open operator item, such
+as the one a lane's operator route opens. Each item first names what it
+concerns, most contextual first: the operator direction a lane's `#KEY` named,
+by key and the text the operator sent; else the task `operator#TASK` named;
+else that a bare `operator`, the last resort, named nothing. Then it shows its
+publication's full body. A lane's body stays in its transcript, so the app
+reads it once, with the concerned direction's text, through the operator-only
 `room::conversation-text` read, which projects the same text
 `spice://room/inbox` prints; the transcript echo stands in while
 that read runs. An ASK item leads with the answer it owes: **Answer** sends the
@@ -162,7 +166,7 @@ immutable admission order while either its receipt or its answer duty remains
 open, so ACK cannot hide the still-pending result. Receipt and result rows keep
 one geometry in every state. Acting moves keyboard focus to the acting card,
 and its outcome or refusal is reported in the composer toast for a console card
-and in the catalog for an inbox item.
+and beside the inbox for an inbox item.
 
 **Close group** and the group order controls change only this browser.
 Opened groups, their order, each design composer's draft, and the last focused
