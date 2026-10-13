@@ -177,6 +177,8 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
                 selection,
                 map: render.work_map,
                 runtime,
+                room_controls: render.room_controls,
+                sender: render.sender,
                 can_note: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskNote)),
                 can_close: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskClose)),
                 blocker_review: render.blocker_review,

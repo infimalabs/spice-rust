@@ -24,6 +24,7 @@ use crate::room_views::{GroupView, RoomViewAction, RoomViews};
 use crate::roster::{Change, Destination};
 use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 
+mod approval;
 mod console;
 mod coordination;
 mod reading;
@@ -53,6 +54,8 @@ pub(super) struct Controls {
     notice: UseStateHandle<Option<String>>,
     /// The outcome of the last inbox control, shown beside the inbox.
     inbox_notice: UseStateHandle<Option<String>>,
+    /// The outcome of the last approval control, shown under its candidate.
+    approval_notice: UseStateHandle<Option<(wire::rooms::CandidateRef, String)>>,
     /// Last authoritative name of each group seen in this page's memory, shown
     /// while room authority reloads so a reconnect does not retitle consoles.
     names: Rc<RefCell<BTreeMap<RoomAuthorityStamp, String>>>,
@@ -84,6 +87,7 @@ pub(super) fn use_controls() -> Controls {
         views,
         notice: use_state(|| None),
         inbox_notice: use_state(|| None),
+        approval_notice: use_state(|| None),
         names,
         requested,
         drawn,
@@ -132,6 +136,12 @@ impl Controls {
     fn inbox_reporter(&self) -> Callback<String> {
         let notice = self.inbox_notice.clone();
         Callback::from(move |text| notice.set(Some(text)))
+    }
+
+    /// One candidate's approval notice as a callback for its controls.
+    fn approval_reporter(&self, candidate: wire::rooms::CandidateRef) -> Callback<String> {
+        let notice = self.approval_notice.clone();
+        Callback::from(move |text| notice.set(Some((candidate.clone(), text))))
     }
 
     /// The text a design composer draws with: its saved draft the first time
@@ -464,6 +474,32 @@ fn input_value(node: &NodeRef) -> Option<String> {
     js_sys::Reflect::get(input.as_ref(), &JsValue::from_str("value"))
         .ok()?
         .as_string()
+}
+
+/// A task's statement head, which a command naming the task witnesses.
+fn statement_witness(task: &wire::intent::BoardTask) -> wire::Witness {
+    wire::Witness::Task {
+        task: task.statement.body.born.clone(),
+        head: task.statement.position,
+    }
+}
+
+/// A task's statement, workflow, and claim heads, which a command transitioning
+/// or settling it witnesses.
+fn transition_witnesses(task: &wire::intent::BoardTask) -> Vec<wire::Witness> {
+    let born = &task.statement.body.born;
+    vec![
+        statement_witness(task),
+        wire::Witness::Workflow {
+            task: born.clone(),
+            head: task.workflow.position,
+            phase: task.workflow.body.phase.clone(),
+        },
+        wire::Witness::Claim {
+            task: born.clone(),
+            head: task.claim.as_ref().map(|claim| claim.position),
+        },
+    ]
 }
 
 fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {

@@ -11,6 +11,7 @@ pub(crate) type RoomControlResponse =
     std::rc::Rc<dyn Fn(Result<wire::intent::RoomControlAnswer, String>)>;
 pub(crate) type RoomCoordinationResponse =
     std::rc::Rc<dyn Fn(Result<wire::intent::RoomCoordinationView, String>)>;
+pub(crate) type PreparationResponse = std::rc::Rc<dyn Fn(Result<wire::intent::TextAnswer, String>)>;
 
 /// One complete room publication request retained by the bounded action mailbox.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
@@ -43,6 +44,21 @@ pub(crate) enum RoomCoordinationRequest {
     /// Put the room aside at the anchor heads it was drawn from.
     PutAside {
         request: wire::intent::RoomPutAside,
+        expected: Vec<wire::Witness>,
+    },
+}
+
+/// One operator decision over a retained candidate, or one exact execution
+/// authorization following an accepted decision, with the heads it was drawn
+/// from.
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+pub(crate) enum PreparationRequest {
+    Decide {
+        request: wire::rooms::PreparationDecide,
+        expected: Vec<wire::Witness>,
+    },
+    Authorize {
+        request: wire::rooms::ExecutionAuthorize,
         expected: Vec<wire::Witness>,
     },
 }
@@ -85,6 +101,11 @@ pub(crate) enum ClientAction {
     RoomCoordination {
         request: RoomCoordinationRequest,
         respond: RoomCoordinationResponse,
+    },
+    /// Decide a Design's retained candidate or authorize its selected outputs.
+    Preparation {
+        request: PreparationRequest,
+        respond: PreparationResponse,
     },
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,

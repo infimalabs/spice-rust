@@ -779,6 +779,7 @@
 }
 
 .room-preparation > header,
+.room-approval > header,
 .room-history > header {
   display: flex;
   justify-content: space-between;
@@ -787,11 +788,13 @@
 }
 
 .room-reading,
+.room-approval,
 .room-history { display: grid; gap: 8px; }
 
 /* Review coverage and output authorization own the accent rail; receipts and
    answers in conversation cards never use it. */
-.room-preparation-card {
+.room-preparation-card,
+.room-approval-card {
   border-inline-start-color: var(--accent);
   box-shadow: none;
 }
@@ -802,6 +805,31 @@
   white-space: pre-wrap;
   font: inherit;
 }
+
+.room-approval-card ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding-inline-start: 1.1rem;
+  overflow-wrap: anywhere;
+}
+
+.room-approval-outputs label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.room-approval-outputs label > span,
+.room-approval-acceptance,
+.room-approval-coverage,
+.room-approval-inputs {
+  color: var(--muted);
+  font-size: var(--app-type-detail);
+}
+
+.room-approval-card .room-inline-actions { margin-top: 8px; }
 
 /* Room standing: each reason kind keeps its own rail so invitation, activity,
    work, requests, owed duties and responsibility never read alike. */

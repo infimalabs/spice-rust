@@ -8,13 +8,11 @@
 
 use std::rc::Rc;
 
-use wire::intent::{
-    BoardTask, RoomCoordinate, RoomCoordinateAction, RoomCoordinationView, RoomPutAside,
-};
+use wire::intent::{RoomCoordinate, RoomCoordinateAction, RoomCoordinationView, RoomPutAside};
 use wire::{CommandKind, TaskHandle, TaskStamp, Witness};
 use yew::prelude::*;
 
-use super::input_value;
+use super::{input_value, transition_witnesses};
 use crate::AppRuntime;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, RoomCoordinationRequest};
@@ -72,7 +70,7 @@ pub(super) fn coordination_form(
         report: report.clone(),
         sender: sender.clone(),
         room: anchor.statement.body.handle.clone(),
-        anchor: anchor_witnesses(anchor),
+        anchor: transition_witnesses(anchor),
         seats: board.seats.clone(),
         inputs: Inputs::default(),
     };
@@ -132,26 +130,6 @@ pub(super) fn coordination_form(
             </div>
         </form>
     }
-}
-
-/// The anchor statement, workflow, and claim heads both commands witness.
-fn anchor_witnesses(anchor: &BoardTask) -> Vec<Witness> {
-    let born = &anchor.statement.body.born;
-    vec![
-        Witness::Task {
-            task: born.clone(),
-            head: anchor.statement.position,
-        },
-        Witness::Workflow {
-            task: born.clone(),
-            head: anchor.workflow.position,
-            phase: anchor.workflow.body.phase.clone(),
-        },
-        Witness::Claim {
-            task: born.clone(),
-            head: anchor.claim.as_ref().map(|claim| claim.position),
-        },
-    ]
 }
 
 impl Coordination {
