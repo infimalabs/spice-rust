@@ -2,9 +2,9 @@
 //!
 //! A dependency on work an agent can claim or is already working resolves
 //! organically, so it is an ordinary wait. A chain is a wall only when every
-//! path forward needs the operator: a deferral, a cycle, a prerequisite that
-//! can never complete, or an environment requirement only the operator can
-//! satisfy.
+//! path forward needs the operator: a deferral, a parked hidden row, a cycle,
+//! a prerequisite that can never complete, or an environment requirement only
+//! the operator can satisfy.
 
 use wire::TaskStamp;
 
@@ -15,6 +15,8 @@ use super::{WorkAvailability, WorkDependency, WorkProjection};
 pub enum DependencyWall<'a> {
     /// The task carries a deferral.
     Deferred(&'a TaskStamp),
+    /// The task sits in a hidden project until the operator promotes it.
+    Parked(&'a TaskStamp),
     /// The task depends on itself through the chain.
     Cycle(&'a TaskStamp),
     /// The task was closed without completing.
@@ -80,6 +82,7 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
         match task.availability() {
             WorkAvailability::InFlight | WorkAvailability::Ready => None,
             WorkAvailability::Deferred => Some(DependencyWall::Deferred(born)),
+            WorkAvailability::Parked => Some(DependencyWall::Parked(born)),
             WorkAvailability::Terminal => Some(DependencyWall::Unreachable(born)),
             WorkAvailability::Blocked if task.environment_blocked() => {
                 Some(DependencyWall::Environment(born))

@@ -42,6 +42,13 @@ so it never covers the label, and same-rank nodes keep room between them for
 those badges. A completed task wears a muted **Done** badge, quieter than
 **Blocked**; a withdrawn one wears **Deleted**.
 
+Whether a row waits on a prerequisite or its controller is the allocator's
+verdict: the resident's open board names every row that gate holds back,
+judged over terminal evidence the browser never receives, so an unauthorized
+controlled output reads **Blocked** exactly when `task next` skips it. A row
+in a hidden project, such as a filed OOPS report, reads **Parked**: the
+allocator never offers it until it is promoted.
+
 The graph region holds one fixed footprint whatever the diagram's shape. A
 truncated typed read states how many relationships lie outside it in the map
 controls beside a More nodes control that raises the node budget up to the

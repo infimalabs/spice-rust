@@ -270,6 +270,15 @@ fn render_dependency(dependency: &TaskStamp, wall: DependencyWall<'_>) -> Html {
             ),
             "Deferred",
         ),
+        DependencyWall::Parked(task) => (
+            "parked",
+            "Parked prerequisite",
+            format!(
+                "{} is parked in a hidden project; no agent is offered it until it is promoted.",
+                via(task)
+            ),
+            "Parked",
+        ),
         DependencyWall::Cycle(task) => (
             "cycle",
             "Dependency cycle",

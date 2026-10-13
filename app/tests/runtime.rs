@@ -316,6 +316,7 @@ fn board_response_with_requirements(
         recent_cell: None,
         next: None,
         offer: Vec::new(),
+        blocked: Vec::new(),
         origins: Default::default(),
         notes: Default::default(),
         acknowledgments: Default::default(),

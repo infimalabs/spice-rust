@@ -294,6 +294,11 @@ fn open_read_offers_the_full_board_allocation_order_from_its_bounded_rows() {
         open.offer,
         crate::board_command::read_guard::board_offer(&entries, &full)
     );
+    assert_eq!(
+        open.blocked,
+        [waiting.born().expect("waiting stamp")],
+        "a settled prerequisite releases its dependent; an open one blocks"
+    );
     let offered = open
         .offer
         .iter()

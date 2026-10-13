@@ -707,13 +707,28 @@ mod tests {
         }
     }
 
+    /// Stands in for the resident's gate: a row waiting on an open
+    /// prerequisite of this fixture is blocked.
     fn board(tasks: Vec<BoardTask>) -> BoardView {
+        let blocked = tasks
+            .iter()
+            .filter(|task| {
+                task.statement.body.dependencies.iter().any(|dependency| {
+                    tasks.iter().any(|other| {
+                        other.statement.body.born == *dependency
+                            && other.workflow.body.completion.is_none()
+                    })
+                })
+            })
+            .map(|task| task.statement.body.born.clone())
+            .collect();
         BoardView {
             schema: 1,
             cursor: seq(100),
             tasks,
             room_anchors: Vec::new(),
             offer: Vec::new(),
+            blocked,
             quote_tasks: std::rc::Rc::default(),
             resident: wire::ResidentState::Seated,
             environment: Environment::journal_schema(1).expect("fixture schema"),

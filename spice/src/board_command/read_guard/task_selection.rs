@@ -39,11 +39,21 @@ pub(super) fn selected_tasks(
             // authority. This compact current-head index does not admit any
             // unrelated terminal history.
             tasks.extend(observed.room_anchor_tasks().cloned());
-            // Readiness reads each open row's direct prerequisites: a settled
-            // one is terminal, so it is carried only as allocation evidence.
+            // Readiness reads each open row's direct prerequisites and, for a
+            // controlled output, its preparation parent and controller: a
+            // settled one is terminal, so it is carried only as allocation
+            // evidence.
             let evidence = observed
                 .allocation_frontier()
-                .flat_map(|heads| &heads.statement().body().dependencies)
+                .flat_map(|heads| {
+                    let statement = heads.statement().body();
+                    statement.dependencies.iter().chain(
+                        statement
+                            .preparation
+                            .iter()
+                            .flat_map(|preparation| [&preparation.parent, &preparation.controller]),
+                    )
+                })
                 .filter(|dependency| !tasks.contains(*dependency))
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>();

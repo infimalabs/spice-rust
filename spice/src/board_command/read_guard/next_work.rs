@@ -110,6 +110,7 @@ pub(super) fn read_next_work(
         next: Some(state),
         tasks: Vec::new(),
         offer: Vec::new(),
+        blocked: Vec::new(),
         origins: Default::default(),
         history: None,
         notes: Default::default(),

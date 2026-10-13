@@ -46,6 +46,9 @@ pub enum WorkAvailability {
     Blocked,
     /// Open and unclaimed, with an explicit wakeable deferral.
     Deferred,
+    /// Open and unclaimed in a hidden project the allocator never offers,
+    /// such as a filed OOPS report awaiting promotion.
+    Parked,
     /// No longer open, regardless of stale possession evidence.
     Terminal,
 }
@@ -59,6 +62,7 @@ impl WorkAvailability {
             Self::Ready => "ready",
             Self::Blocked => "blocked",
             Self::Deferred => "deferred",
+            Self::Parked => "parked",
             Self::Terminal => "terminal",
         }
     }
@@ -204,6 +208,7 @@ pub struct WorkCounts {
     ready: usize,
     blocked: usize,
     deferred: usize,
+    parked: usize,
     terminal: usize,
 }
 
@@ -214,6 +219,7 @@ impl WorkCounts {
             WorkAvailability::Ready => self.ready += 1,
             WorkAvailability::Blocked => self.blocked += 1,
             WorkAvailability::Deferred => self.deferred += 1,
+            WorkAvailability::Parked => self.parked += 1,
             WorkAvailability::Terminal => self.terminal += 1,
         }
     }
@@ -244,11 +250,11 @@ impl WorkCounts {
 
     #[must_use]
     pub const fn unavailable(self) -> usize {
-        self.blocked + self.deferred
+        self.blocked + self.deferred + self.parked
     }
     #[must_use]
     pub const fn open(self) -> usize {
-        self.in_flight + self.ready + self.blocked + self.deferred
+        self.in_flight + self.ready + self.blocked + self.deferred + self.parked
     }
 
     #[must_use]
@@ -567,10 +573,10 @@ impl<'a> WorkProjection<'a> {
     /// changing the tasks' relative order.
     #[must_use]
     pub fn team_task_groups<'p>(&'p self, team: wire::CanonicalUuid) -> Vec<TeamTaskGroup<'p, 'a>> {
-        use WorkAvailability::{Blocked, Deferred, InFlight, Ready};
+        use WorkAvailability::{Blocked, Deferred, InFlight, Parked, Ready};
 
         let mut groups = Vec::<TeamTaskGroup<'p, 'a>>::new();
-        for availability in [InFlight, Ready, Blocked, Deferred] {
+        for availability in [InFlight, Ready, Blocked, Deferred, Parked] {
             for task in self.offered.iter().map(|&index| &self.tasks[index]) {
                 if task.availability != availability || !task.belongs_to_team(team) {
                     continue;
@@ -657,7 +663,7 @@ impl<'a> WorkProjection<'a> {
             .tasks
             .iter()
             .enumerate()
-            .map(|(index, task)| classify(board, task, &by_born, environment_blocked[index]))
+            .map(|(index, task)| classify(board, task, environment_blocked[index]))
             .collect::<Vec<_>>();
 
         let dependent_indexes = dependent_indexes(board, &by_born, &availability);
@@ -901,12 +907,10 @@ fn stem_key(task: &BoardTask) -> StemKey<'_> {
     }
 }
 
-fn classify(
-    board: &BoardView,
-    task: &BoardTask,
-    by_born: &BTreeMap<&TaskStamp, usize>,
-    environment_blocked: bool,
-) -> WorkAvailability {
+/// The allocator never offers a hidden row, and its own prerequisite and
+/// controller gate decides Blocked; the resident judges that gate over
+/// terminal evidence the open board does not carry.
+fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> WorkAvailability {
     let workflow = &task.workflow.body;
     if workflow.status != "pending" || workflow.completion.is_some() {
         return WorkAvailability::Terminal;
@@ -918,15 +922,13 @@ fn classify(
     {
         return WorkAvailability::InFlight;
     }
+    if matches!(task.visibility, ProjectVisibility::Hidden { .. }) {
+        return WorkAvailability::Parked;
+    }
     if workflow.deferral.is_some() {
         return WorkAvailability::Deferred;
     }
-    let dependency_blocked = task.statement.body.dependencies.iter().any(|dependency| {
-        by_born
-            .get(dependency)
-            .is_some_and(|&index| board.tasks[index].workflow.body.completion.is_none())
-    });
-    if environment_blocked || dependency_blocked {
+    if environment_blocked || board.blocked.contains(&task.statement.body.born) {
         WorkAvailability::Blocked
     } else {
         WorkAvailability::Ready
