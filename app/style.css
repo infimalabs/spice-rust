@@ -313,9 +313,9 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 .group-design-pip:is(.settled, .unavailable) { --app-presence-color: var(--muted); --app-presence-opacity: .35; box-shadow: none; }
 .group-surface .ticker-age.unselected { color: var(--warning); }
 .group-surface .ticker-age:is(.settled, .unavailable) { color: var(--muted); opacity: .7; }
-/* The group's name and placement controls close its status row. */
+/* The group's name closes its status row. */
 .group-surface > .team-toolbar > .team-status-row {
-  grid-template-columns: var(--app-total-tab-inline-size) minmax(0, 1fr) auto auto;
+  grid-template-columns: var(--app-total-tab-inline-size) minmax(0, 1fr) auto;
   grid-template-rows: minmax(0, 1fr);
 }
 .group-surface-name {
@@ -330,8 +330,6 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.team-status-row > .room-inline-actions { align-self: stretch; }
-.team-status-row > .room-inline-actions button { min-height: 0; padding-block: 0; align-self: stretch; }
 
 .app-presence-pip--work {
   width: var(--app-presence-pip-size);
