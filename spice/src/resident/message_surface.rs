@@ -438,7 +438,7 @@ fn publish_swept<P>(
             refusals,
             views.diagnostic,
         );
-        super::room_catch_up::recognize(bus, surfaces.paths, record, source)?;
+        let _ = super::room_catch_up::recognize(bus, surfaces.paths, record, source)?;
     }
     Ok(())
 }
