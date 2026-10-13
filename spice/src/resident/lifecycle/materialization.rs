@@ -14,12 +14,15 @@ pub(super) struct Projection {
     ledger: steer::Ledger,
     operator_directives: BTreeSet<CanonicalUuid>,
     entries: Vec<Entry>,
+    selection: board::SelectionIndex,
     heads: BTreeMap<TaskStamp, TaskHeads>,
     fact_instants: BTreeMap<Seq, Instant>,
     ready_at: BTreeMap<TaskStamp, Instant>,
     claim_releases: BTreeMap<TaskStamp, Seq>,
     dependents: BTreeMap<TaskStamp, BTreeSet<TaskStamp>>,
     creator_teams: BTreeMap<TaskStamp, Option<CanonicalUuid>>,
+    #[cfg(test)]
+    selection_rebuilds: usize,
 }
 
 struct EntryUpdate {
@@ -46,12 +49,15 @@ impl Projection {
             ledger: steer::Ledger::new(),
             operator_directives: BTreeSet::new(),
             entries: Vec::new(),
+            selection: board::SelectionIndex::new(&[]),
             heads: BTreeMap::new(),
             fact_instants: BTreeMap::new(),
             ready_at: BTreeMap::new(),
             claim_releases: BTreeMap::new(),
             dependents: BTreeMap::new(),
             creator_teams: BTreeMap::new(),
+            #[cfg(test)]
+            selection_rebuilds: 0,
         }
     }
 
@@ -61,6 +67,15 @@ impl Projection {
 
     pub(super) fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+
+    pub(super) const fn selection(&self) -> &board::SelectionIndex {
+        &self.selection
+    }
+
+    #[cfg(test)]
+    pub(super) const fn selection_rebuilds(&self) -> usize {
+        self.selection_rebuilds
     }
 
     #[cfg(test)]
@@ -294,10 +309,18 @@ impl Projection {
     }
 
     fn apply(&mut self, plan: AdvancePlan) {
+        let task_heads_changed = !plan.entries.is_empty();
         self.operator_directives.extend(plan.operator_directives);
         self.fact_instants.extend(plan.fact_instants);
         for (task, update) in plan.entries {
             self.apply_entry(task, update);
+        }
+        if task_heads_changed {
+            self.selection = board::SelectionIndex::new(&self.entries);
+            #[cfg(test)]
+            {
+                self.selection_rebuilds += 1;
+            }
         }
         self.creator_teams.extend(plan.creator_teams);
         self.ready_at.extend(plan.ready_at);

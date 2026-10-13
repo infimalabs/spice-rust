@@ -5,35 +5,33 @@ use super::*;
 pub(super) fn selected_ready(
     snapshot: &bus::TaskSnapshot,
     entries: &[Entry],
+    selection: &board::SelectionIndex,
     ready_at: &BTreeMap<TaskStamp, Instant>,
     actor: &Actor,
     subscription: &wire::TeamSubscription,
     allocation: &board::NextConfig,
+    environment: &wire::Environment,
     now: Instant,
 ) -> CommandResult<Option<SelectedReady>> {
     let recent_cell = snapshot.recent_claim_cell(actor);
-    let appliance = spice::version::running().map_err(Outcome::Fault)?;
-    let environment = snapshot
-        .environment()
-        .with_appliance(appliance.product.clone());
-    let satisfied = board::resolved_tasks(entries);
-    let selected = board::select_with_satisfied_at(
+    let satisfied = selection.resolved();
+    let selected = board::select_with_index_at(
         entries,
         actor,
         subscription,
         allocation.band(),
         recent_cell.as_ref(),
-        &environment,
-        &satisfied,
+        environment,
+        selection,
         now,
     );
     let Some(selected) = selected else {
         return Ok(board::blocked_handoff_until(
             entries,
-            &satisfied,
+            satisfied,
             actor,
             subscription,
-            &environment,
+            environment,
             now,
         )
         .map(|at| SelectedReady {
@@ -49,7 +47,7 @@ pub(super) fn selected_ready(
     let eligible = entries
         .iter()
         .filter(|entry| {
-            board::selectable_entry_at(&satisfied, entry, actor, subscription, &environment, now)
+            board::selectable_entry_at(satisfied, entry, actor, subscription, environment, now)
         })
         .count();
     Ok(Some(SelectedReady {

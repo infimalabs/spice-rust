@@ -76,6 +76,45 @@ fn one_fact_advancement_is_suffix_bounded_and_restart_equivalent_at_different_sc
 }
 
 #[test]
+fn allocation_index_rebuilds_only_for_changed_task_heads() {
+    let (bus, projects, mut projection) = caught_up_fixture(0);
+    assert_eq!(projection.selection_rebuilds(), 1);
+
+    committed(
+        bus.commit(unrelated_write("allocation-index", 32))
+            .expect("unrelated journal facts commit"),
+    );
+    projection
+        .advance(
+            &bus.task_snapshot().expect("unrelated snapshot reads"),
+            &projects,
+        )
+        .expect("unrelated facts advance the lifecycle cursor");
+    assert_eq!(
+        projection.selection_rebuilds(),
+        1,
+        "unrelated commits retain the task-generation selection index"
+    );
+
+    committed(
+        bus.commit(ready_task_write(NEWER_TASK_MOMENT, instant(31)))
+            .expect("changed task heads commit"),
+    );
+    projection
+        .advance(
+            &bus.task_snapshot().expect("changed-task snapshot reads"),
+            &projects,
+        )
+        .expect("changed task heads advance");
+    assert_eq!(
+        projection.selection_rebuilds(),
+        2,
+        "one task-head generation rebuilds shared allocation evidence once"
+    );
+    bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
 fn org_policy_drives_every_member_while_terminal_seat_life_remains_an_override() {
     for (policy, expected) in [
         (wire::intent::TeamLife::Steer, Resolution::Idle),
@@ -452,6 +491,11 @@ fn drain_org_startup_projects_every_current_member() {
     projection
         .advance(&snapshot, &projects)
         .expect("expanded team projection advances");
+    assert_eq!(
+        projection.selection_rebuilds(),
+        1,
+        "adding vacant lanes reuses the existing task-generation selection index"
+    );
 
     let targets = project_targets(
         &snapshot,
@@ -471,6 +515,11 @@ fn drain_org_startup_projects_every_current_member() {
             .all(|target| target.drain_queue == Available::At(instant(4)))
     );
     bus.shutdown().expect("expanded team bus stops");
+    assert_eq!(
+        projection.selection_rebuilds(),
+        1,
+        "projecting every vacant lane performs no per-lane graph rebuild"
+    );
 }
 
 fn one_fact_scenario(unrelated_history: usize) -> SemanticState {
