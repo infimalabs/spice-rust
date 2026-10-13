@@ -2,7 +2,8 @@ use super::*;
 
 use serde_json::Value;
 use wire::intent::{
-    RoomCoordinate, RoomCoordinateAction, RoomCoordinationRead, RoomCoordinationView, RoomPutAside,
+    RoomCoordinate, RoomCoordinateAction, RoomCoordinationRead, RoomCoordinationView, RoomLeave,
+    RoomLeaveAnswer, RoomListeningDuty, RoomPutAside,
 };
 use wire::rooms::{
     CoordinationControl, OopsDisposition, OopsGrooming, RoomAuthorityStamp,
@@ -156,6 +157,60 @@ fn put_aside(bus: &Bus, command: &wire::AdmittedCommand) -> Outcome<CommandAnswe
         &room_projects(),
         &board::NextConfig::default(),
     )
+}
+
+fn leave(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    room: &TaskHandle,
+) -> Outcome<CommandAnswer> {
+    let command = fixture_command(
+        epoch,
+        actor,
+        CommandKind::RoomLeave,
+        Vec::new(),
+        &RoomLeave {
+            room: room.clone(),
+            clause: "my part is done".to_owned(),
+        },
+    );
+    let wire::intent::Intent::RoomLeave(request) = command.body() else {
+        panic!("fixture command carries room leave");
+    };
+    room_leave(
+        bus,
+        &command,
+        request,
+        &room_projects(),
+        &board::NextConfig::default(),
+    )
+}
+
+fn leave_answer(outcome: Outcome<CommandAnswer>) -> (bool, RoomLeaveAnswer) {
+    match outcome {
+        Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::RoomLeave(answer),
+        }) => (matches!(position, ReplyPosition::Committed(_)), answer),
+        other => panic!("room leave returned another outcome: {other:?}"),
+    }
+}
+
+fn post_listeners(bus: &Bus, epoch: CanonicalUuid, room: &TaskHandle) -> Vec<CanonicalUuid> {
+    let answer = assert_committed(
+        dispatch(bus, &post_command(bus, epoch, room, "Recorded only."))
+            .expect("room command dispatches"),
+    );
+    let CommandAnswer::RoomPost(answer) = answer else {
+        panic!("room post returned another answer shape: {answer:?}");
+    };
+    match answer.outcome {
+        RoomPostOutcome::RecordedWithListeners { listeners } => {
+            listeners.iter().map(|listener| listener.lane).collect()
+        }
+        _ => Vec::new(),
+    }
 }
 
 fn coordination_status(bus: &Bus, room: &TaskHandle) -> RoomCoordinationView {
@@ -597,6 +652,75 @@ fn room_post_reports_occupied_vacant_and_unknown_listeners_without_waking() {
             .iter()
             .any(|row| row.lane == seats[1].lane && row.occupant.is_none())
     );
+}
+
+#[test]
+fn a_left_lane_stops_listening_until_it_contributes_again() {
+    let (_root, bus, epoch, seats) = fixture("room-leave-listening", 1);
+    let lane = seats[0].lane;
+    let room = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "room-leave-listen",
+        "Room",
+        None,
+    );
+    let micros = jiff::Timestamp::now().as_microsecond();
+    publish_listener(&bus, &room, lane, micros);
+    assert_eq!(post_listeners(&bus, epoch, &room), vec![lane]);
+
+    let (committed, first) = leave_answer(leave(&bus, epoch, Actor::Lane(lane), &room));
+    assert!(committed && first.recorded, "{first:?}");
+    assert!(first.kept.is_empty(), "{first:?}");
+    assert!(post_listeners(&bus, epoch, &room).is_empty());
+
+    let (committed, repeated) = leave_answer(leave(&bus, epoch, Actor::Lane(lane), &room));
+    assert!(!committed && !repeated.recorded, "{repeated:?}");
+    assert_eq!(repeated.publication, first.publication);
+
+    publish_listener(&bus, &room, lane, micros + 1_000_000_000);
+    assert_eq!(post_listeners(&bus, epoch, &room), vec![lane]);
+}
+
+#[test]
+fn leaving_names_the_claim_that_keeps_a_lane_listening() {
+    let (_root, bus, epoch, seats) = fixture("room-leave-native", 1);
+    let lane = seats[0].lane;
+    let room = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "room-leave-native",
+        "Room",
+        None,
+    );
+    super::resolution::claim_task(&bus, epoch, &seats[0], &Actor::Lane(lane), &room);
+
+    let (committed, answer) = leave_answer(leave(&bus, epoch, Actor::Lane(lane), &room));
+    assert!(committed && answer.recorded, "{answer:?}");
+    assert_eq!(
+        answer.kept,
+        vec![RoomListeningDuty::Work { task: room.clone() }]
+    );
+    assert_eq!(post_listeners(&bus, epoch, &room), vec![lane]);
+}
+
+#[test]
+fn only_a_lane_leaves_a_room() {
+    let (_root, bus, epoch, _seats) = fixture("room-leave-operator", 0);
+    let room = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "room-leave-operatr",
+        "Room",
+        None,
+    );
+    assert!(matches!(
+        &leave(&bus, epoch, Actor::Operator, &room),
+        Outcome::Refusal(refusal) if refusal.reason() == "room::leave-lane-only"
+    ));
 }
 
 #[test]

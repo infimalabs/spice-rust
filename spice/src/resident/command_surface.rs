@@ -348,6 +348,16 @@ impl<'a> Surface<'a> {
                 };
                 (outcome, notify)
             }
+            (CommandKind::RoomLeave, Intent::RoomLeave(leave)) => (
+                crate::board_command::room_leave(
+                    self.bus,
+                    command,
+                    leave,
+                    &self.config.projects,
+                    &self.config.allocation,
+                ),
+                None,
+            ),
             (CommandKind::RoomControl, Intent::RoomControl(control)) => {
                 crate::board_command::room_control(
                     self.bus,

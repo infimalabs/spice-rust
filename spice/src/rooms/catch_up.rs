@@ -169,6 +169,7 @@ mod tests {
                     availability: LaneAvailability::Occupied,
                     participation: Vec::new(),
                     attention: vec![AttentionReason::Work { task: room.clone() }],
+                    left: None,
                 })
                 .collect(),
         }

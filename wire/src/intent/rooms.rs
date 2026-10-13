@@ -49,6 +49,47 @@ pub struct RoomPutAside {
     pub room: TaskHandle,
 }
 
+/// One lane stops listening to an anchor task's room.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomLeave {
+    /// Current rendered handle of the anchor task.
+    pub room: TaskHandle,
+    /// Why the lane leaves; recorded in the room.
+    pub clause: String,
+}
+
+/// The leave in force and each native duty that keeps the lane listening.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomLeaveAnswer {
+    /// Current rendered anchor handle.
+    pub room: TaskHandle,
+    /// The lane's leave publication in force: this command's, or the earlier
+    /// one no contribution has ended since.
+    pub publication: RoomAuthorityStamp,
+    /// Whether this command recorded the leave.
+    pub recorded: bool,
+    /// Native duties leaving cannot end; empty when the lane stopped listening.
+    pub kept: Vec<RoomListeningDuty>,
+}
+
+/// One native duty that keeps a lane listening to a room after it leaves.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "duty", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RoomListeningDuty {
+    /// The lane holds an active claim on the anchor or related work.
+    Work { task: TaskHandle },
+    /// A live room coordination request addresses the lane.
+    Coordination { key: String },
+    /// A live stop request addresses the lane's claim.
+    Stop { key: String },
+    /// The lane owes the receipt of a room delivery.
+    Receipt { key: String },
+    /// The lane owes the substantive result of a room ASK with this handle.
+    Result { key: String },
+}
+
 /// Read one room's current coordination projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

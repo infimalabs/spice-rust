@@ -226,6 +226,7 @@ fn render_lane(runtime: &AppRuntime, participant: &RoomParticipant) -> Html {
 /// One non-history reason as a chip naming its source; contribution history
 /// renders once per lane instead.
 fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Html> {
+    let leave;
     let (kind, label, source) = match reason {
         ParticipantReason::Contribution(_) => return None,
         ParticipantReason::Activity(publication) => (
@@ -263,6 +264,19 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
             "Asked to stop",
             format!("Stop request {key} on its current claim"),
         ),
+        ParticipantReason::Left {
+            publication,
+            clause,
+        } => {
+            leave = format!("Left: {clause}");
+            (
+                "left",
+                leave.as_str(),
+                format!(
+                    "Left at {publication}; only native work and duties keep this lane listening"
+                ),
+            )
+        }
     };
     Some(reason_chip(kind, label, &source))
 }

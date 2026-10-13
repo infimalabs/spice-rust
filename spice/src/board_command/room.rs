@@ -258,10 +258,11 @@ fn bounded_room_publications(
     Ok(rows)
 }
 
-/// One room's listeners: lanes with native work in it, lanes that posted in it
-/// within the activity window, and lanes a `MSG ADDRESS#ROOM` route addressed
-/// within that window. An addressed lane hears the room without becoming a
-/// participant until it posts.
+/// One room's listeners: lanes with native work or duties in it, lanes that
+/// posted in it within the activity window, and lanes a `MSG ADDRESS#ROOM`
+/// route addressed within that window. An addressed lane hears the room
+/// without becoming a participant until it posts; a lane's leave ends its
+/// activity and earlier invitations, never its native work or duties.
 pub(crate) fn project_attention(
     bus: &Bus,
     entries: &[Entry],
@@ -280,14 +281,15 @@ pub(crate) fn project_attention(
         .map_err(|error| environment_fault("room::activity-window-invalid", &error.to_string()))?;
     let since = Instant::new(since)
         .map_err(|error| environment_fault("room::activity-window-invalid", &error.to_string()))?;
-    let invitations = room_invitations(bus, room, residency, since)?;
+    let mut duties = room_invitations(bus, room, residency, since)?;
+    duties.extend(room_native_duties(bus, room)?);
     derive_room_attention(
         room,
         since,
         &RoomProjectionSources {
             publications: Declared::Available(publications),
             work: Declared::Available(&work),
-            duties: Declared::Available(&invitations),
+            duties: Declared::Available(&duties),
             responsibilities: Declared::Available(&[]),
             residency: Declared::Available(residency),
         },
@@ -327,10 +329,73 @@ fn room_invitations(
             lane: head.body().lane,
             kind: RoomDutyKind::Invitation {
                 key: head.body().key.clone(),
+                at: head.body().published,
             },
             standing: RoomDutyStanding::Owed,
         })
         .collect())
+}
+
+/// Every native duty bound to `room` that no leave can end: each live route
+/// told into it is an owed receipt, each live coordination or stop request
+/// addresses its lane, and each pending ASK result a lane owes in it.
+fn room_native_duties(
+    bus: &Bus,
+    room: &wire::TaskStamp,
+) -> Result<Vec<RoomDuty>, Outcome<CommandAnswer>> {
+    let limit = spice::rooms::MAX_ROOM_ATTENTION_SIGNALS;
+    let probe = room.clone();
+    let (steering, results) = bus
+        .read(move |read| {
+            Ok((
+                read.live_room_steering(&probe, limit)?,
+                read.pending_question_results()?,
+            ))
+        })
+        .map_err(|error| store_fault("room::duties-unreadable", &error.to_string()))?;
+    if steering.len() >= limit {
+        return Err(refusal(
+            "room::attention-budget",
+            Some(format!("room {room} holds {limit} or more live directives")),
+            "settle or cancel live room directives before retrying",
+        ));
+    }
+    let duty = |lane, kind| RoomDuty {
+        room: room.clone(),
+        lane,
+        kind,
+        standing: RoomDutyStanding::Owed,
+    };
+    let mut duties = steering
+        .into_iter()
+        .map(|head| {
+            let head = head.into_body();
+            let kind = match head.control.as_deref().map(str::parse) {
+                Some(Ok(wire::rooms::CoordinationControl::Coordinate(_))) => {
+                    RoomDutyKind::Coordination { key: head.key }
+                }
+                Some(Ok(wire::rooms::CoordinationControl::Stop { .. })) => {
+                    RoomDutyKind::Stop { key: head.key }
+                }
+                _ => RoomDutyKind::Delivery { key: head.key },
+            };
+            duty(head.lane, kind)
+        })
+        .collect::<Vec<_>>();
+    duties.extend(results.into_iter().filter_map(|(record, _)| {
+        match (record.respondent(), record.context()) {
+            (wire::rooms::RoomDestination::Lane { lane }, Some(context)) if context == room => {
+                Some(duty(
+                    *lane,
+                    RoomDutyKind::Result {
+                        key: record.result().to_string(),
+                    },
+                ))
+            }
+            _ => None,
+        }
+    }));
+    Ok(duties)
 }
 
 fn projection_refusal(error: RoomProjectionError) -> Outcome<CommandAnswer> {

@@ -18,9 +18,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
     DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAnchor, RoomAuthorityStamp, RoomDelivered, RoomHorizon, RoomMessaged,
-    RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk, WorkingGroupMoved,
-    WorkingGroupPartition, WorkingGroupsArranged,
+    RetainedCandidate, RoomAnchor, RoomAuthorityStamp, RoomDelivered, RoomHorizon, RoomLeft,
+    RoomMessaged, RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk,
+    WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
 };
 use wire::{
     Actor, AnyFact, CanonicalUuid, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead,
@@ -693,8 +693,8 @@ pub(crate) fn fold(
     Ok(())
 }
 
-/// Admit one coordination, catch-up, or conversation fact, or `None` when
-/// `fact` is none of them.
+/// Admit one coordination, catch-up, conversation, or leave fact, or `None`
+/// when `fact` is none of them.
 fn fold_traffic(
     authority: &mut impl Authority,
     seq: Seq,
@@ -713,6 +713,15 @@ fn fold_traffic(
     }
     if let Some(body) = fact.read::<RoomDelivered>() {
         return Some(deliver(authority, seq, &body));
+    }
+    if let Some(body) = fact.read::<RoomLeft>() {
+        if *actor != Actor::Lane(body.lane) {
+            return Some(unsound(format!(
+                "room leave in {} is written by {actor}, not its lane {}",
+                body.room, body.lane
+            )));
+        }
+        return Some(publish(authority, seq, &body.room, &body.publication));
     }
     fact.read::<RoomHorizon>()
         .map(|body| begin(authority, seq, actor, &body))

@@ -11,6 +11,7 @@ pub(super) fn dispatch_room_client(
         ["room", "status"] => client_room_status(repository, contract, matches),
         ["room", "start" | "resume"] => client_room_coordinate(repository, contract, matches),
         ["room", "put-aside"] => client_room_put_aside(repository, contract, matches),
+        ["room", "leave"] => client_room_leave(repository, contract, matches),
         ["room", "ack" | "nak" | "answer" | "recover" | "assess"] => {
             client_room_control(repository, contract, matches)
         }
@@ -262,6 +263,84 @@ pub(super) fn client_room_put_aside(
                 .expect("typed room put-aside encodes"),
         ))
     })
+}
+
+/// Leave one room as the connected lane and say what still keeps it there.
+fn client_room_leave(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let written = required(matches, "HANDLE");
+    let room = match written.parse::<TaskHandle>() {
+        Ok(room) => room,
+        Err(error) => {
+            return refusal(
+                "room::anchor-invalid",
+                Some(written),
+                &format!("name the room's anchor task handle: {error}"),
+            );
+        }
+    };
+    let outcome = crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::RoomLeave,
+        Vec::new(),
+        &wire::intent::RoomLeave {
+            room,
+            clause: matches
+                .get_one::<String>("clause")
+                .cloned()
+                .unwrap_or_default(),
+        },
+    );
+    let Outcome::Reply(Reply {
+        position,
+        body: CommandAnswer::RoomLeave(answer),
+    }) = outcome
+    else {
+        return outcome;
+    };
+    Outcome::Reply(Reply {
+        position,
+        body: CommandAnswer::Text(TextAnswer {
+            text: render_leave(&answer),
+        }),
+    })
+}
+
+fn render_leave(answer: &wire::intent::RoomLeaveAnswer) -> String {
+    use wire::intent::RoomListeningDuty as Duty;
+    let mut lines = vec![if answer.recorded {
+        format!("left {} publication {}", answer.room, answer.publication)
+    } else {
+        format!(
+            "already left {} publication {}",
+            answer.room, answer.publication
+        )
+    }];
+    if answer.kept.is_empty() {
+        lines.push(
+            "no longer listening; a contribution or a new invitation restores listening".to_owned(),
+        );
+        return lines.join("\n");
+    }
+    lines.push("still listening until these native duties end; leaving ends none:".to_owned());
+    for duty in &answer.kept {
+        lines.push(match duty {
+            Duty::Work { task } => {
+                format!("  work {task}: active claim on the anchor or related work")
+            }
+            Duty::Coordination { key } => {
+                format!("  coordination {key}: live room coordination request")
+            }
+            Duty::Stop { key } => format!("  stop {key}: live stop request for this lane's claim"),
+            Duty::Receipt { key } => format!("  receipt {key}: owed ACK or NAK of a room delivery"),
+            Duty::Result { key } => format!("  result {key}: owed answer to a room ASK"),
+        });
+    }
+    lines.join("\n")
 }
 
 /// Submit one operator ACK, NAK, answer, or recovery.

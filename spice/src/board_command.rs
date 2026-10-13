@@ -156,6 +156,8 @@ use room::room_post;
 pub(crate) use room::{project_attention, room_publications_after};
 mod room_control;
 pub(crate) use room_control::{room_close, room_control};
+mod room_leave;
+pub(crate) use room_leave::room_leave;
 mod room_coordination;
 #[cfg(test)]
 pub(crate) use room_coordination::room_coordinate_with;

@@ -24,6 +24,7 @@ impl CommandKind {
         Self::RoomConversationText,
         Self::RoomCoordinate,
         Self::RoomPutAside,
+        Self::RoomLeave,
         Self::RoomControl,
         Self::RoomClose,
         Self::WorkingGroupRead,
@@ -116,6 +117,7 @@ impl CommandKind {
             | Self::RoomConversationText
             | Self::RoomCoordinate
             | Self::RoomPutAside
+            | Self::RoomLeave
             | Self::RoomControl
             | Self::RoomClose
             | Self::WorkingGroupRead
@@ -203,6 +205,7 @@ impl CommandKind {
             | Self::RoomConversationText
             | Self::RoomCoordinate
             | Self::RoomPutAside
+            | Self::RoomLeave
             | Self::RoomControl
             | Self::RoomClose
             | Self::WorkingGroupRead
@@ -238,6 +241,7 @@ impl CommandKind {
             Self::RoomConversationText => "room::conversation-text",
             Self::RoomCoordinate => "room::coordinate",
             Self::RoomPutAside => "room::put-aside",
+            Self::RoomLeave => "room::leave",
             Self::RoomControl => "room::control",
             Self::RoomClose => "room::close",
             Self::WorkingGroupRead => "group::read",

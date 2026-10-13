@@ -109,8 +109,10 @@ snapshot, its live facts, the board, and lane topology on every render:
   - native work;
   - a live coordination request;
   - an owed receipt or ASK result;
-  - a claim-bound stop request.
-  Aging removes only activity and invitation; history and native duties stay.
+  - a claim-bound stop request;
+  - a leave with the lane's clause, in force until the lane contributes again.
+  Aging removes only activity and invitation. A leave ends both, including
+  invitations it postdates. History and native duties stay.
 - **Relevance**: the resident's shadow relevance observations, each with its
   classification, progress standing, explanation, exceptions, uncertainty,
   source coverage, and operator verdict.

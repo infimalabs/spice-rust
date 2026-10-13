@@ -27,8 +27,9 @@ use serde::Serialize;
 use spice::repository::Repository;
 use wire::output::{Bounded, Export};
 use wire::rooms::{
-    RoomAuthorityStamp, RoomCoordinationStarted, RoomMessaged, RoomPosted, RoomPublicationContent,
-    RoomPublished, RoomPutAside, RoomSource, RoomSourceUnavailable, TranscriptHunk,
+    RoomAuthorityStamp, RoomCoordinationStarted, RoomLeft, RoomMessaged, RoomPosted,
+    RoomPublicationContent, RoomPublished, RoomPutAside, RoomSource, RoomSourceUnavailable,
+    TranscriptHunk,
 };
 use wire::{
     Actor, CanonicalUuid, Disposition, Fault, FaultClass, Instant, Outcome, Refusal, Reply,
@@ -92,6 +93,10 @@ enum Content {
     },
     OopsGroomed {
         grooming: wire::rooms::OopsGrooming,
+    },
+    /// The authoring lane left the room for this reason.
+    Left {
+        clause: String,
     },
     Unavailable {
         source: RoomSource,
@@ -309,6 +314,9 @@ enum Body {
         author: CanonicalUuid,
     },
     Linked(RoomSource),
+    Left {
+        clause: String,
+    },
 }
 
 fn recorded(
@@ -444,6 +452,15 @@ fn row(
                 Vec::new(),
                 None,
             )
+        } else if let Some(left) = envelope.fact.read::<RoomLeft>() {
+            (
+                left.publication,
+                Body::Left {
+                    clause: left.clause,
+                },
+                Vec::new(),
+                None,
+            )
         } else {
             return Err(fault(
                 FaultClass::Store,
@@ -545,6 +562,7 @@ fn project_body(body: Body, tape: &Path) -> (Content, Option<CanonicalUuid>) {
         }
         Body::Messaged { hunk, author } => (transcript(tape, hunk), Some(author)),
         Body::Linked(source) => (Content::Linked { source }, None),
+        Body::Left { clause } => (Content::Left { clause }, None),
     }
 }
 
@@ -683,8 +701,8 @@ pub(crate) fn conversation_text(
         Some(Content::Text { text }) => Text::Text { text },
         Some(Content::Linked { source }) => Text::Linked { source },
         Some(Content::Unavailable { unavailable, .. }) => Text::Unavailable { unavailable },
-        // A conversation body is authored or linked, never a grooming.
-        Some(Content::OopsGroomed { .. }) => Text::Unavailable {
+        // A conversation body is authored or linked, never a grooming or leave.
+        Some(Content::OopsGroomed { .. } | Content::Left { .. }) => Text::Unavailable {
             unavailable: RoomSourceUnavailable::Unreadable {},
         },
     };
@@ -753,6 +771,7 @@ fn write_content(formatter: &mut fmt::Formatter<'_>, content: &Content) -> fmt::
             Ok(())
         }
         Content::Linked { source } => write!(formatter, "\n  linked {}", Source(source)),
+        Content::Left { clause } => write!(formatter, "\n  left the room: {clause}"),
         Content::OopsGroomed { grooming } => {
             write!(
                 formatter,

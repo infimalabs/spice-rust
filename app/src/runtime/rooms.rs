@@ -117,6 +117,13 @@ pub enum RoomEventKind {
         /// Exact stop authority, absent when the anchor was idle.
         stop: Option<authority::RoomStopRequest>,
     },
+    /// A lane stopped listening for this reason; native duties still hold it.
+    Left {
+        /// Logical lane that left.
+        lane: CanonicalUuid,
+        /// The lane's stated reason.
+        clause: String,
+    },
 }
 
 /// One task-keyed room projection.
@@ -134,8 +141,8 @@ impl RoomState {
 
 /// Why a logical lane currently appears in a room. Each reason names the
 /// admitted source it traces to; only `Activity` and `Invitation` age out of
-/// the activity window, and native duties end only through their own
-/// dispositions.
+/// the activity window, a leave in force ends both, and native duties end
+/// only through their own dispositions.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ParticipantReason {
     /// The lane authored a transcript-backed publication; history that never
@@ -156,6 +163,14 @@ pub enum ParticipantReason {
     Result(authority::QuestionResultRef),
     /// A live stop request addresses the lane's exact claim.
     Stop(String),
+    /// The lane left after its latest contribution; until it contributes
+    /// again or a later packet addresses it, only native duties keep it.
+    Left {
+        /// The leave's publication identity.
+        publication: RoomAuthorityStamp,
+        /// The lane's stated reason.
+        clause: String,
+    },
 }
 
 /// One logical lane and its exact current reasons, never a team membership.
@@ -477,6 +492,19 @@ impl RoomProjection {
                 fact.read::<authority::RoomPutAside>()
                     .is_some_and(|body| self.apply_put_aside(fact.seq(), body)),
             ),
+            FactKind::RoomLeft => Some(fact.read::<authority::RoomLeft>().is_some_and(|body| {
+                self.insert_event(
+                    body.room,
+                    body.publication,
+                    RoomEvent {
+                        position: fact.seq(),
+                        kind: RoomEventKind::Left {
+                            lane: body.lane,
+                            clause: body.clause,
+                        },
+                    },
+                )
+            })),
             FactKind::RoomRelevanceObserved => Some(
                 fact.read::<authority::RoomRelevanceObserved>()
                     .is_some_and(|body| self.apply_observed(fact.seq(), body.observation)),

@@ -830,6 +830,7 @@
 .room-reason[data-reason="requested"] { border-inline-start-color: var(--focus); }
 .room-reason[data-reason="receipt"], .room-reason[data-reason="result"] { border-inline-start-color: var(--warning); }
 .room-reason[data-reason="responsibility"] { border-inline-start-color: var(--danger); }
+.room-reason[data-reason="left"] { border-style: dotted; border-inline-start-color: var(--muted); color: var(--muted); overflow-wrap: anywhere; }
 
 .room-flow-card > header { gap: 6px; }
 .room-flow-route { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }

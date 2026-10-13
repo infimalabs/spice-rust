@@ -12,7 +12,9 @@ use wire::{Actor, CanonicalUuid, Producer, Seq, SequenceCode, TaskHandle, TaskSt
 
 use super::*;
 
-const NOTICE_BYTES: usize = spice::rooms::MAX_CATCH_UP_BYTES + 4_096;
+const NOTICE_BYTES: usize = spice::rooms::MAX_CATCH_UP_BYTES + 8_192;
+/// Most listening reasons one room's line names before counting the rest.
+const LISTENING_REASONS: usize = 4;
 const NOTICE_DIRECTORY: &str = "room-catch-up";
 const LANDED_DIRECTORY: &str = "room-catch-up-landed";
 
@@ -28,6 +30,51 @@ struct Presented {
     room: TaskStamp,
     handle: TaskHandle,
     publication: crate::room_command::Publication,
+}
+
+/// Why `lane` listens to one room and how it leaves, as one notice block.
+fn listening(
+    handle: &TaskHandle,
+    row: Option<&spice::rooms::RoomLaneAttention>,
+    entries: &[board::Entry],
+) -> String {
+    use spice::rooms::AttentionReason as Reason;
+    let reasons = row.map_or(&[][..], |row| row.attention.as_slice());
+    let task = |task: &TaskStamp| {
+        entries
+            .iter()
+            .find(|entry| entry.born() == task)
+            .map_or_else(|| task.to_string(), |entry| entry.handle().to_string())
+    };
+    let mut named = reasons
+        .iter()
+        .take(LISTENING_REASONS)
+        .map(|reason| match reason {
+            Reason::Work { task: work } => format!("work {}", task(work)),
+            Reason::Responsibility { task: work } => format!("responsibility {}", task(work)),
+            Reason::Activity { publication, .. } => {
+                format!("recent contribution {publication}")
+            }
+            Reason::Invitation { key } => format!("invitation {key}"),
+            Reason::Delivery { key } => format!("owed receipt {key}"),
+            Reason::Result { key } => format!("owed result {key}"),
+            Reason::Coordination { key } => format!("coordination request {key}"),
+            Reason::Stop { key } => format!("stop request {key}"),
+        })
+        .collect::<Vec<_>>();
+    if reasons.len() > LISTENING_REASONS {
+        named.push(format!("{} more", reasons.len() - LISTENING_REASONS));
+    }
+    let native = reasons.iter().any(Reason::is_native);
+    format!(
+        "\nlistening {handle}: {}\nleave: spice room leave {handle} --clause TEXT{}\n",
+        named.join(", "),
+        if native {
+            " (native work and duties keep this lane listening until they end)"
+        } else {
+            ""
+        }
+    )
 }
 
 /// Publish the current bounded delivery for every occupied lane, then notify
@@ -126,6 +173,7 @@ fn plan(
     let mut sources = Vec::new();
     let mut attention = Vec::new();
     let mut presented = BTreeMap::new();
+    let mut handles = BTreeMap::new();
     for entry in &entries {
         let room = entry.born().clone();
         let publications = crate::board_command::room_publications_after(bus, &room, after)
@@ -167,6 +215,7 @@ fn plan(
                 },
             );
         }
+        handles.insert(room.clone(), entry.handle().clone());
         attention.push(room_attention);
     }
     let selected = select_catch_up(lane, after, &attention, sources, CatchUpBudget::STANDARD)
@@ -174,17 +223,49 @@ fn plan(
     let Some(through) = selected.through else {
         return Ok(None);
     };
+    let text = render(
+        lane, through, &selected, &presented, &attention, &handles, &entries,
+    );
+    Ok(Some(Notice {
+        occupant,
+        through,
+        text,
+    }))
+}
+
+/// The notice text for `selected`: each publication under its room, then why
+/// `lane` listens to each room shown and how it leaves.
+fn render(
+    lane: CanonicalUuid,
+    through: Seq,
+    selected: &spice::rooms::CatchUp,
+    presented: &BTreeMap<Seq, Presented>,
+    attention: &[spice::rooms::RoomAttention],
+    handles: &BTreeMap<TaskStamp, TaskHandle>,
+    entries: &[board::Entry],
+) -> String {
     let mut text = String::from(
         "<system-notice>\n# Room catch-up\nBounded background publications for rooms this lane currently listens to:\n",
     );
+    let mut rooms = Vec::new();
     for item in &selected.items {
         let item = presented
             .get(&item.seq)
             .expect("a selected source retains its presentation");
+        if !rooms.contains(&&item.room) {
+            rooms.push(&item.room);
+        }
         text.push_str(&format!(
             "\nroom {} anchor {}\n{}\n",
             item.handle, item.room, item.publication
         ));
+    }
+    for room in rooms {
+        let row = attention
+            .iter()
+            .find(|view| view.room == *room)
+            .and_then(|view| view.lanes.iter().find(|row| row.lane == lane));
+        text.push_str(&listening(&handles[room], row, entries));
     }
     if let Some(continuation) = selected.continuation {
         let withheld = presented
@@ -199,11 +280,7 @@ fn plan(
     text.push_str(&format!(
         "\nroom-delivery lane={lane} through={through}\nThis background delivery needs no acknowledgment and starts no work.\n</system-notice>"
     ));
-    Ok(Some(Notice {
-        occupant,
-        through,
-        text,
-    }))
+    text
 }
 
 fn latest_lane_activity(
@@ -508,5 +585,40 @@ mod tests {
             Some(&landed),
             "source-backed delivery"
         ));
+    }
+}
+
+#[cfg(test)]
+mod listening_tests {
+    use spice::rooms::{AttentionReason, LaneAvailability, RoomLaneAttention};
+
+    use super::*;
+
+    #[test]
+    fn each_room_names_why_the_lane_listens_and_how_it_leaves() {
+        let handle: TaskHandle = "ROOMS-dVxHkZhQY".parse().expect("fixture handle");
+        let row = RoomLaneAttention {
+            lane: "018f82d4-6f59-7d06-92e3-bce913116301"
+                .parse()
+                .expect("fixture lane"),
+            availability: LaneAvailability::Occupied,
+            participation: Vec::new(),
+            attention: vec![
+                AttentionReason::Invitation {
+                    key: "dVxJpSbV9".to_owned(),
+                },
+                AttentionReason::Result {
+                    key: "dVxJkvVCV".to_owned(),
+                },
+            ],
+            left: None,
+        };
+        let block = listening(&handle, Some(&row), &[]);
+        assert!(block.contains("invitation dVxJpSbV9"), "{block}");
+        assert!(block.contains("owed result dVxJkvVCV"), "{block}");
+        assert!(
+            block.contains("spice room leave ROOMS-dVxHkZhQY --clause"),
+            "{block}"
+        );
     }
 }

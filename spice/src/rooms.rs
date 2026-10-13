@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use wire::rooms::{RoomAuthorityStamp, RoomMessaged, RoomPublished};
+use wire::rooms::{RoomAuthorityStamp, RoomLeft, RoomMessaged, RoomPublished};
 use wire::{Actor, CanonicalUuid, Instant, TaskStamp};
 
 mod catch_up;
@@ -115,12 +115,17 @@ pub enum RoomDutyStanding {
 /// Kind and existing public key of one room-scoped duty.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RoomDutyKind {
-    /// An explicit request for involvement; it is not a contribution.
-    Invitation { key: String },
+    /// An explicit request for involvement told at `at`; it is not a
+    /// contribution, and a later leave ends it.
+    Invitation { key: String, at: Instant },
     /// A directed delivery awaiting disposition.
     Delivery { key: String },
     /// A correlated substantive result awaiting the named lane.
     Result { key: String },
+    /// A live room coordination request addressing the lane.
+    Coordination { key: String },
+    /// A live stop request addressing the lane's claim.
+    Stop { key: String },
 }
 
 /// One current room-scoped duty from admitted delivery/result authority.
@@ -260,8 +265,20 @@ pub enum AttentionReason {
     Delivery { key: String },
     /// A correlated substantive result remains owed.
     Result { key: String },
+    /// A live room coordination request addresses the lane.
+    Coordination { key: String },
+    /// A live stop request addresses the lane's claim.
+    Stop { key: String },
     /// Native work records an explicit continuing responsibility.
     Responsibility { task: TaskStamp },
+}
+
+impl AttentionReason {
+    /// Whether this reason is a native duty a leave cannot end.
+    #[must_use]
+    pub const fn is_native(&self) -> bool {
+        !matches!(self, Self::Activity { .. } | Self::Invitation { .. })
+    }
 }
 
 /// Current availability of a lane named by the projection.
@@ -284,6 +301,9 @@ pub struct RoomLaneAttention {
     pub availability: LaneAvailability,
     pub participation: Vec<ParticipationReason>,
     pub attention: Vec<AttentionReason>,
+    /// The lane's leave in force: no contribution followed it. Only native
+    /// duties and later invitations remain in `attention`.
+    pub left: Option<RoomAuthorityStamp>,
 }
 
 impl RoomLaneAttention {
@@ -313,6 +333,18 @@ struct LaneFold {
     participation: BTreeSet<ParticipationReason>,
     attention: BTreeSet<AttentionReason>,
     latest_activity: Option<(Instant, RoomAuthorityStamp)>,
+    latest_leave: Option<(Instant, RoomAuthorityStamp)>,
+}
+
+impl LaneFold {
+    /// The leave no later contribution ended.
+    fn leave(&self) -> Option<&(Instant, RoomAuthorityStamp)> {
+        self.latest_leave.as_ref().filter(|leave| {
+            self.latest_activity
+                .as_ref()
+                .is_none_or(|known| *leave > known)
+        })
+    }
 }
 
 /// Derive one room's complete bounded attention view.
@@ -423,6 +455,7 @@ fn fold_publications(
 ) -> Result<(), RoomProjectionError> {
     let mut seen = BTreeMap::<RoomAuthorityStamp, (CanonicalUuid, Instant)>::new();
     for envelope in publications {
+        let left = envelope.fact.read::<RoomLeft>();
         let Some((anchor, publication)) = envelope
             .fact
             .read::<RoomPublished>()
@@ -432,6 +465,10 @@ fn fold_publications(
                     .fact
                     .read::<RoomMessaged>()
                     .map(|body| (body.room, body.publication))
+            })
+            .or_else(|| {
+                left.as_ref()
+                    .map(|body| (body.room.clone(), body.publication.clone()))
             })
         else {
             continue;
@@ -443,6 +480,11 @@ fn fold_publications(
             continue;
         };
         let lane = *lane;
+        if left.as_ref().is_some_and(|body| body.lane != lane) {
+            return Err(RoomProjectionError::InvalidAuthority(format!(
+                "leave {publication} names a lane other than its author {lane}"
+            )));
+        }
         if let Some((known_lane, known_at)) = seen.get(&publication) {
             if *known_lane != lane || *known_at != envelope.at {
                 return Err(RoomProjectionError::InvalidAuthority(format!(
@@ -453,18 +495,17 @@ fn fold_publications(
         }
         seen.insert(publication.clone(), (lane, envelope.at));
         let folded = lane_fold(lanes, lane, maximum)?;
-        folded
-            .participation
-            .insert(ParticipationReason::Contribution {
-                publication: publication.clone(),
-            });
-        let observed = (envelope.at, publication);
-        if folded
-            .latest_activity
-            .as_ref()
-            .is_none_or(|known| observed > *known)
-        {
-            folded.latest_activity = Some(observed);
+        let observed = (envelope.at, publication.clone());
+        let latest = if left.is_some() {
+            &mut folded.latest_leave
+        } else {
+            folded
+                .participation
+                .insert(ParticipationReason::Contribution { publication });
+            &mut folded.latest_activity
+        };
+        if latest.as_ref().is_none_or(|known| observed > *known) {
+            *latest = Some(observed);
         }
     }
     Ok(())
@@ -488,14 +529,22 @@ fn fold_attention(
         .iter()
         .filter(|duty| duty.room == *room && duty.standing == RoomDutyStanding::Owed)
     {
+        let folded = lane_fold(lanes, duty.lane, maximum)?;
         let reason = match &duty.kind {
-            RoomDutyKind::Invitation { key } => AttentionReason::Invitation { key: key.clone() },
+            RoomDutyKind::Invitation { key, at } => {
+                if folded.leave().is_some_and(|(left, _)| at <= left) {
+                    continue;
+                }
+                AttentionReason::Invitation { key: key.clone() }
+            }
             RoomDutyKind::Delivery { key } => AttentionReason::Delivery { key: key.clone() },
             RoomDutyKind::Result { key } => AttentionReason::Result { key: key.clone() },
+            RoomDutyKind::Coordination { key } => {
+                AttentionReason::Coordination { key: key.clone() }
+            }
+            RoomDutyKind::Stop { key } => AttentionReason::Stop { key: key.clone() },
         };
-        lane_fold(lanes, duty.lane, maximum)?
-            .attention
-            .insert(reason);
+        folded.attention.insert(reason);
     }
     for responsibility in sources
         .responsibilities
@@ -519,7 +568,9 @@ fn finish_lanes(
     lanes
         .into_iter()
         .map(|(lane, mut folded)| {
-            if let Some((at, publication)) = folded.latest_activity
+            let left = folded.leave().map(|(_, publication)| publication.clone());
+            if left.is_none()
+                && let Some((at, publication)) = folded.latest_activity
                 && at >= activity_since
             {
                 folded
@@ -534,6 +585,7 @@ fn finish_lanes(
                     .unwrap_or(LaneAvailability::Unknown),
                 participation: folded.participation.into_iter().collect(),
                 attention: folded.attention.into_iter().collect(),
+                left,
             }
         })
         .collect()
@@ -644,6 +696,179 @@ mod tests {
             fact: wire::decode(&wire::encode(&fact).expect("encode publication"))
                 .expect("decode opaque publication"),
         }
+    }
+
+    fn leave(
+        room: &TaskStamp,
+        identity: &str,
+        lane: CanonicalUuid,
+        at: Instant,
+        seq: u64,
+    ) -> wire::Envelope<wire::AnyFact> {
+        let fact = Fact {
+            body: RoomLeft {
+                room: room.clone(),
+                publication: identity.parse().expect("publication identity"),
+                lane,
+                clause: "my part is done".to_owned(),
+            },
+        };
+        wire::Envelope {
+            v: WireVersion::CURRENT,
+            seq: Seq::new(seq).expect("positive sequence"),
+            at,
+            actor: Actor::Lane(lane),
+            origin: "fixture:room-attention".parse().expect("fixture origin"),
+            cause: None,
+            fact: wire::decode(&wire::encode(&fact).expect("encode leave"))
+                .expect("decode opaque leave"),
+        }
+    }
+
+    fn invitation(room: &TaskStamp, lane: CanonicalUuid, key: &str, told: Instant) -> RoomDuty {
+        RoomDuty {
+            room: room.clone(),
+            lane,
+            kind: RoomDutyKind::Invitation {
+                key: key.to_owned(),
+                at: told,
+            },
+            standing: RoomDutyStanding::Owed,
+        }
+    }
+
+    fn project_one(
+        room: &TaskStamp,
+        publications: &[wire::Envelope<wire::AnyFact>],
+        work: &[RoomWork],
+        duties: &[RoomDuty],
+        topology: &wire::ResidencyHead,
+    ) -> RoomLaneAttention {
+        derive_room_attention(
+            room,
+            at(30),
+            &sources(publications, work, duties, &[], topology),
+            RoomProjectionBudget::STANDARD,
+        )
+        .expect("room projects")
+        .lanes
+        .into_iter()
+        .next()
+        .expect("lane row")
+    }
+
+    #[test]
+    fn a_leave_ends_derived_listening_until_the_lane_returns() {
+        let room = task("1kKRRsDR0");
+        let lane_id = uuid("01");
+        let topology = residency(vec![lane(lane_id, Some(uuid("02")))]);
+        let contributed = publication(&room, "1kKRRsDR1", lane_id, at(40), 1);
+        let left = leave(&room, "1kKRRsDR2", lane_id, at(41), 2);
+        let earlier = invitation(&room, lane_id, "1kKRRsDS0", at(40));
+
+        let row = project_one(
+            &room,
+            &[contributed.clone(), left.clone()],
+            &[],
+            std::slice::from_ref(&earlier),
+            &topology,
+        );
+        assert!(!row.listens(), "{row:?}");
+        assert!(row.participates(), "history survives the leave");
+        assert_eq!(row.left, Some("1kKRRsDR2".parse().expect("leave identity")));
+
+        let later = invitation(&room, lane_id, "1kKRRsDS1", at(42));
+        let invited = project_one(
+            &room,
+            &[contributed.clone(), left.clone()],
+            &[],
+            &[earlier, later],
+            &topology,
+        );
+        assert_eq!(
+            invited.attention,
+            vec![AttentionReason::Invitation {
+                key: "1kKRRsDS1".to_owned()
+            }]
+        );
+
+        let returned = project_one(
+            &room,
+            &[
+                contributed,
+                left,
+                publication(&room, "1kKRRsDR3", lane_id, at(43), 3),
+            ],
+            &[],
+            &[],
+            &topology,
+        );
+        assert_eq!(returned.left, None);
+        assert!(matches!(
+            returned.attention.as_slice(),
+            [AttentionReason::Activity { .. }]
+        ));
+    }
+
+    #[test]
+    fn a_leave_never_ends_native_duties() {
+        let room = task("1kKRRsDR0");
+        let lane_id = uuid("01");
+        let topology = residency(vec![lane(lane_id, Some(uuid("02")))]);
+        let work = vec![
+            RoomWork::from_task(
+                &room,
+                &current_task(&room, task("1kKRRsDR4"), lane_id, ClaimDisposition::Active),
+            )
+            .expect("active associated task is relevant"),
+        ];
+        let owed = |kind| RoomDuty {
+            room: room.clone(),
+            lane: lane_id,
+            kind,
+            standing: RoomDutyStanding::Owed,
+        };
+        let duties = vec![
+            owed(RoomDutyKind::Delivery {
+                key: "1kKRRsDS0".to_owned(),
+            }),
+            owed(RoomDutyKind::Result {
+                key: "1kKRRsDS1".to_owned(),
+            }),
+            owed(RoomDutyKind::Coordination {
+                key: "1kKRRsDS2".to_owned(),
+            }),
+        ];
+        let row = project_one(
+            &room,
+            &[
+                publication(&room, "1kKRRsDR1", lane_id, at(40), 1),
+                leave(&room, "1kKRRsDR2", lane_id, at(41), 2),
+            ],
+            &work,
+            &duties,
+            &topology,
+        );
+        assert!(row.left.is_some());
+        assert_eq!(row.attention.len(), 4, "{row:?}");
+        assert!(row.attention.iter().all(AttentionReason::is_native));
+    }
+
+    #[test]
+    fn a_leave_written_for_another_lane_is_invalid_authority() {
+        let room = task("1kKRRsDR0");
+        let mut forged = leave(&room, "1kKRRsDR2", uuid("01"), at(41), 2);
+        forged.actor = Actor::Lane(uuid("05"));
+        let topology = residency(Vec::new());
+        assert!(matches!(
+            derive_room_attention(
+                &room,
+                at(30),
+                &sources(&[forged], &[], &[], &[], &topology),
+                RoomProjectionBudget::STANDARD,
+            ),
+            Err(RoomProjectionError::InvalidAuthority(_))
+        ));
     }
 
     fn lane(lane: CanonicalUuid, occupant: Option<CanonicalUuid>) -> LaneResidency {
@@ -910,6 +1135,7 @@ mod tests {
             lane: invited,
             kind: RoomDutyKind::Invitation {
                 key: "1kKRRsDS0".to_owned(),
+                at: at(29),
             },
             standing: RoomDutyStanding::Owed,
         }];
