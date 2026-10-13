@@ -109,10 +109,10 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
     ]
 }
 
-/// Facts outside the task namespace that still move task heads, beside a
+/// Facts outside the task namespace that still move board rows, beside a
 /// sibling of each namespace that moves none: authorization completes its
 /// controller and authorizes its selected outputs, and a working-group move
-/// engages the outputs of the Design entering a group.
+/// changes which settled Designs the board carries as room anchors.
 fn task_head_rows() -> Vec<StaleRow> {
     let candidate = serde_json::json!({"controller": "1kKRRsDP", "candidate": "dVsYdDj7h"});
     vec![
