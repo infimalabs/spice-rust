@@ -44,6 +44,11 @@ unavailable. Saved edits are visible to other repository clients, but never
 mount, reorder, or close a browser's foreground views. **New Team** therefore
 remains lane creation; **New working group** is repository organization.
 
+In the Spice menu, Jobs follows the operator identity before the Working groups
+catalog and its New working group and ungrouped Designs targets. The catalog is
+an ordinary sheet section: its heading, secondary label, inset, and spacing use
+the same compact hierarchy as the surrounding menu at every sidebar width.
+
 The browser reads an opened group as a team console with tasks and agents
 swapped: one composer per design, posting to that design's room, and one tab
 per lane currently claiming an open task associated with any of its designs.

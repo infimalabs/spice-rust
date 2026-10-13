@@ -201,7 +201,7 @@ pub(super) fn render_catalog(
 
 fn section(title: &'static str, body: Html) -> Html {
     html! {
-        <section class="app-spice-section room-group-section" data-room-catalog="">
+        <section class="app-sheet-section room-group-section" data-room-catalog="">
             <header><h2>{title}</h2><span>{"shared organization"}</span></header>
             {body}
         </section>

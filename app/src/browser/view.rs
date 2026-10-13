@@ -212,8 +212,8 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
                 render.sender,
             )}
             {spice_sidebar::render_operator(runtime)}
-            {super::rooms::render_catalog(runtime, render.room_controls, render.sender)}
             {spice_jobs::render(standings.clone(), render.connection, runtime, render.sender)}
+            {super::rooms::render_catalog(runtime, render.room_controls, render.sender)}
             {render_spice_topology(render, runtime, standings.as_deref().map(Vec::as_slice))}
             {quota::render_sidebar(runtime)}
         </div>
