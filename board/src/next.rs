@@ -603,8 +603,9 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
 }
 
 /// A controlled output waits for its preparation and controller to conclude
-/// positively and for its own selection by that controller's execution
-/// authorization; nothing else, including operator closure, releases it.
+/// positively and for its own authorization: selection by that controller's
+/// execution authorization or the operator's engagement of the controller in a
+/// working group. Nothing else, including operator closure, releases it.
 fn control_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
     let statement = entry.statement();
     let Some(preparation) = &statement.preparation else {
@@ -615,10 +616,11 @@ fn control_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
     }
     completed.get(&preparation.parent) == Some(&true)
         && completed.get(&preparation.controller) == Some(&true)
-        && statement
-            .authorization
-            .as_ref()
-            .is_some_and(|decision| decision.controller == preparation.controller)
+        && (statement.engagement.is_some()
+            || statement
+                .authorization
+                .as_ref()
+                .is_some_and(|decision| decision.controller == preparation.controller))
 }
 
 /// Whether no claim currently possesses the entry.

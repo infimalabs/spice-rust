@@ -90,6 +90,13 @@ impl Journal {
                 .zip(write.facts.iter().map(|proposed| &proposed.fact)),
         )
         .map_err(room_refusal)?;
+        crate::rooms::require_engaged_outputs(
+            &transaction,
+            assigned[0],
+            *assigned.last().expect("nonempty fact assignment"),
+            proposed(),
+        )
+        .map_err(room_refusal)?;
         if let Some(receipt) = write.receipt {
             insert_receipt(
                 &transaction,
@@ -771,6 +778,12 @@ fn apply_heads(
         if row.transcript_lane.is_some() {
             apply_transcript_head(transaction, &row)?;
             continue;
+        }
+        if row.table == "task_heads"
+            && let HeadKey::Text(stamp) = &row.key
+        {
+            crate::rooms::require_engagement(transaction, stamp, &row.body)
+                .map_err(room_refusal)?;
         }
         ledger.settle(transaction, &mut row)?;
         let statement = format!(

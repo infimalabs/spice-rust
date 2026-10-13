@@ -5,14 +5,21 @@ use wire::rooms::{
     CandidateRef, CandidateReference, CandidateRetain, CoverageAuthority, CoverageRef, CritiqueRef,
     CritiqueStanding, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorize,
     NegativeDecision, OutputAdopt, PreparationDecide, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomSource,
+    RetainedCandidate, RoomAuthorityStamp, RoomSource, WorkingGroup, WorkingGroupPut,
+    WorkingGroupRemove,
 };
 
 fn add_plan(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
-    add_controller(bus, epoch, name, None)
+    add_controller(bus, epoch, name, wire::TaskIntent::Plan, None)
 }
 
-fn add_controller(bus: &Bus, epoch: CanonicalUuid, name: &str, flow: Option<&str>) -> TaskHandle {
+fn add_controller(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    name: &str,
+    intent: wire::TaskIntent,
+    flow: Option<&str>,
+) -> TaskHandle {
     let born = stamp(name);
     let task = TaskHandle::for_project("board.test", &born);
     assert_committed(issue(
@@ -23,7 +30,7 @@ fn add_controller(bus: &Bus, epoch: CanonicalUuid, name: &str, flow: Option<&str
         vec![Witness::Absence { task: born }],
         &TaskAdd {
             preparation: None,
-            intent: Some(wire::TaskIntent::Plan),
+            intent: Some(intent),
             title: name.to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
@@ -598,7 +605,13 @@ fn assert_controlled_output_refusal(outcome: Outcome<CommandAnswer>, outputs: &[
 #[test]
 fn clean_review_refuses_to_strand_controlled_outputs() {
     let (root, bus, epoch, seats) = fixture("preparation-review-controller", 1);
-    let controller = add_controller(&bus, epoch, "Review controller", Some("review"));
+    let controller = add_controller(
+        &bus,
+        epoch,
+        "Review controller",
+        wire::TaskIntent::Plan,
+        Some("review"),
+    );
     let (output, spare) = adopted_outputs(&bus, epoch, &controller);
     let reviewer = Actor::Lane(seats[0].lane);
     claim_task(&bus, epoch, &seats[0], &reviewer, &controller);
@@ -694,4 +707,226 @@ fn operator_negative_settlements_leave_controlled_outputs_pending_and_unauthoriz
         }
         clean(&root, bus);
     }
+}
+
+/// Add an output under `controller` through explicit preparation.
+fn add_output(bus: &Bus, epoch: CanonicalUuid, controller: &TaskHandle, name: &str) -> TaskHandle {
+    let born = stamp(name);
+    let current = board(bus, epoch, Actor::Operator);
+    let parent = at(&current, controller);
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![
+            Witness::Absence { task: born.clone() },
+            statement_witness(parent),
+            workflow_witness(parent),
+        ],
+        &TaskAdd {
+            preparation: Some(controller.clone()),
+            intent: None,
+            title: name.to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["The output is delivered".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:preparation".parse().expect("fixture origin")),
+            flow: None,
+            depends: Vec::new(),
+            claim: false,
+        },
+    ));
+    TaskHandle::for_project("board.test", &born)
+}
+
+fn store_group(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    group: &RoomAuthorityStamp,
+    head: Option<Seq>,
+    anchors: Vec<TaskStamp>,
+) {
+    let mut expected = vec![Witness::Group {
+        group: group.clone(),
+        head,
+    }];
+    expected.extend(
+        anchors
+            .iter()
+            .cloned()
+            .map(|task| Witness::Existence { task }),
+    );
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::WorkingGroupPut,
+        expected,
+        &WorkingGroupPut {
+            group: WorkingGroup {
+                group: group.clone(),
+                name: "Engaged designs".to_owned(),
+                anchors,
+            },
+        },
+    ));
+}
+
+fn engagement(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> Option<Seq> {
+    at(&board(bus, epoch, Actor::Operator), task)
+        .statement
+        .body
+        .engagement
+}
+
+fn review_clean(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    controller: &TaskHandle,
+) -> Outcome<CommandAnswer> {
+    let reviewer = Actor::Lane(seat.lane);
+    let assigned = board(bus, epoch, reviewer.clone());
+    issue(
+        bus,
+        epoch,
+        reviewer,
+        CommandKind::TaskReview,
+        progress_witnesses(
+            &assigned,
+            at(&assigned, controller),
+            seat.lane,
+            seat.occupant,
+            true,
+        )
+        .expect("review completion witnesses"),
+        &TaskReview {
+            task: controller.clone(),
+            finding: "clean".to_owned(),
+            note: Some("the outputs are coherent".to_owned()),
+            then: Vec::new(),
+            followup: Vec::new(),
+        },
+    )
+}
+
+/// Claim every task in `outputs`, one per seat, in whichever order the
+/// allocator selects them; panics when any output is not eligible.
+fn claim_all(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat], mut outputs: Vec<TaskHandle>) {
+    for seat in seats {
+        let lane = Actor::Lane(seat.lane);
+        let available = board(bus, epoch, lane.clone());
+        let won = outputs.iter().position(|task| {
+            matches!(
+                issue(
+                    bus,
+                    epoch,
+                    lane.clone(),
+                    CommandKind::ClaimWin,
+                    claim_expected(&available, task, seat),
+                    &ClaimWin {
+                        rule: "next".parse().expect("allocator rule"),
+                        recovery: None,
+                    },
+                ),
+                Outcome::Reply(_)
+            )
+        });
+        outputs.remove(won.expect("an authorized output is eligible"));
+    }
+    assert!(outputs.is_empty(), "outputs stayed ineligible: {outputs:?}");
+}
+
+#[test]
+fn working_group_engagement_authorizes_a_design_outputs_once_and_disengagement_stops_later_grants()
+{
+    let (root, bus, epoch, seats) = fixture("preparation-engagement", 4);
+    let design = add_controller(
+        &bus,
+        epoch,
+        "Engaged design",
+        wire::TaskIntent::Design,
+        Some("review"),
+    );
+    let current = add_output(&bus, epoch, &design, "Current output");
+    assert_eq!(engagement(&bus, epoch, &current), None);
+
+    // Dropping the Design into a working group authorizes its current output
+    // and every output it gains while anchored, through the one operator fact.
+    let group = RoomAuthorityStamp::for_micros(1_760_000_000_000_000).expect("fixture group");
+    store_group(&bus, epoch, &group, None, vec![stamp("Engaged design")]);
+    let granted = engagement(&bus, epoch, &current).expect("activation authorizes");
+    let later = add_output(&bus, epoch, &design, "Later output");
+    assert_eq!(engagement(&bus, epoch, &later), Some(granted));
+
+    // Leaving every group stops later grants and revokes none.
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::WorkingGroupRemove,
+        vec![Witness::Group {
+            group: group.clone(),
+            head: Some(granted),
+        }],
+        &WorkingGroupRemove {
+            group: group.clone(),
+        },
+    ));
+    let stray = add_output(&bus, epoch, &design, "Stray output");
+    assert_eq!(engagement(&bus, epoch, &stray), None);
+    assert_eq!(engagement(&bus, epoch, &current), Some(granted));
+    assert_eq!(engagement(&bus, epoch, &later), Some(granted));
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    assert_controlled_output_refusal(review_clean(&bus, epoch, &seats[0], &design), &[&stray]);
+
+    // Engaging again authorizes the stray output without moving earlier grants,
+    // and a clean review then concludes the Design with every output eligible.
+    let regroup = RoomAuthorityStamp::for_micros(1_760_000_000_000_001).expect("fixture group");
+    store_group(&bus, epoch, &regroup, None, vec![stamp("Engaged design")]);
+    let regranted = engagement(&bus, epoch, &stray).expect("re-engagement authorizes");
+    assert_ne!(regranted, granted);
+    assert_eq!(engagement(&bus, epoch, &current), Some(granted));
+    assert_committed(review_clean(&bus, epoch, &seats[0], &design));
+    claim_all(&bus, epoch, &seats[1..], vec![current, later, stray]);
+    clean(&root, bus);
+}
+
+#[test]
+fn a_passive_design_cannot_conclude_and_its_outputs_stay_ineligible() {
+    let (root, bus, epoch, seats) = fixture("preparation-passive-design", 2);
+    let passive = add_controller(
+        &bus,
+        epoch,
+        "Passive design",
+        wire::TaskIntent::Design,
+        Some("review"),
+    );
+    let idle = add_output(&bus, epoch, &passive, "Passive output");
+    claim_task(
+        &bus,
+        epoch,
+        &seats[0],
+        &Actor::Lane(seats[0].lane),
+        &passive,
+    );
+    assert_controlled_output_refusal(review_clean(&bus, epoch, &seats[0], &passive), &[&idle]);
+    assert_eq!(engagement(&bus, epoch, &idle), None);
+    let lane = Actor::Lane(seats[1].lane);
+    let available = board(&bus, epoch, lane.clone());
+    let claim = issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::ClaimWin,
+        claim_expected(&available, &idle, &seats[1]),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+            recovery: None,
+        },
+    );
+    assert!(matches!(claim, Outcome::Refusal(_)), "{claim:?}");
+    clean(&root, bus);
 }

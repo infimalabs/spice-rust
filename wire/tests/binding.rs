@@ -634,6 +634,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
             body: BoardStatement {
                 preparation: None,
                 authorization: None,
+                engagement: None,
                 evidence: Vec::new(),
                 intent: None,
                 handle: handle("SPICE-1kKRRsDP"),
@@ -670,24 +671,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 generation: 0,
             },
         },
-        claim: Some(Positioned {
-            position: seq(4),
-            body: ClaimHead {
-                actor: actor("operator"),
-                fact: seq(4),
-                claimed: seq(4),
-                cell: wire::ClaimCell {
-                    project: "wire.binding".to_owned(),
-                    phase: phase("todo"),
-                },
-                lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
-                occupant: uuid("018f82d4-6f59-7d06-92e3-bce9131163c6"),
-                epoch,
-                recovery: None,
-                disposition: ClaimDisposition::Active,
-                acknowledged: 0,
-            },
-        }),
+        claim: Some(claim_head(epoch)),
         lease: Some(Positioned {
             position: seq(5),
             body: LeaseHead {
@@ -699,38 +683,8 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
             },
         }),
         explicit_release: false,
-        claim_context: Some(wire::intent::TaskClaimContext {
-            claimed: seq(4),
-            lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
-            occupant: uuid("018f82d4-6f59-7d06-92e3-bce9131163c6"),
-            epoch,
-            source: wire::body::SourceBoundary::Proven {
-                heads: vec![wire::TranscriptSourceHead {
-                    lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
-                    vendor: "omp".parse().expect("a vendor"),
-                    stream: "session".to_owned(),
-                    source: uuid("018f82d4-6f59-7d06-92e3-bce9131163c7"),
-                    next: wire::body::TranscriptPosition {
-                        member: 3,
-                        offset: 44,
-                    },
-                }],
-            },
-            recovery: wire::intent::TaskTranscriptRecovery::Transcript {
-                session: "thread-123".to_owned(),
-            },
-        }),
-        git_context: Some(wire::intent::TaskGitContext {
-            fact: seq(6),
-            kind: wire::intent::TaskGitContextKind::Completion,
-            boundary: wire::body::GitBoundary {
-                head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-                integrated: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
-                upstream: Some("origin/main".to_owned()),
-                upstream_head: Some("cccccccccccccccccccccccccccccccccccccccc".to_owned()),
-                local_commits: 2,
-            },
-        }),
+        claim_context: Some(claim_context(epoch)),
+        git_context: Some(completion_context()),
         parked_commits: None,
     };
 
@@ -742,6 +696,68 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
         "the constructed board task and the row spelled in ANSWERS disagree at {}",
         disagreeing_paths(&encoded, &spelled).join(", "),
     );
+}
+
+/// The active claim the spelled board task row carries.
+fn claim_head(epoch: wire::CanonicalUuid) -> Positioned<ClaimHead> {
+    Positioned {
+        position: seq(4),
+        body: ClaimHead {
+            actor: actor("operator"),
+            fact: seq(4),
+            claimed: seq(4),
+            cell: wire::ClaimCell {
+                project: "wire.binding".to_owned(),
+                phase: phase("todo"),
+            },
+            lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+            occupant: uuid("018f82d4-6f59-7d06-92e3-bce9131163c6"),
+            epoch,
+            recovery: None,
+            disposition: ClaimDisposition::Active,
+            acknowledged: 0,
+        },
+    }
+}
+
+/// The claim-opening transcript coordinates the spelled row carries.
+fn claim_context(epoch: wire::CanonicalUuid) -> wire::intent::TaskClaimContext {
+    wire::intent::TaskClaimContext {
+        claimed: seq(4),
+        lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+        occupant: uuid("018f82d4-6f59-7d06-92e3-bce9131163c6"),
+        epoch,
+        source: wire::body::SourceBoundary::Proven {
+            heads: vec![wire::TranscriptSourceHead {
+                lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+                vendor: "omp".parse().expect("a vendor"),
+                stream: "session".to_owned(),
+                source: uuid("018f82d4-6f59-7d06-92e3-bce9131163c7"),
+                next: wire::body::TranscriptPosition {
+                    member: 3,
+                    offset: 44,
+                },
+            }],
+        },
+        recovery: wire::intent::TaskTranscriptRecovery::Transcript {
+            session: "thread-123".to_owned(),
+        },
+    }
+}
+
+/// The completion boundary the spelled board task row carries.
+fn completion_context() -> wire::intent::TaskGitContext {
+    wire::intent::TaskGitContext {
+        fact: seq(6),
+        kind: wire::intent::TaskGitContextKind::Completion,
+        boundary: wire::body::GitBoundary {
+            head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            integrated: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
+            upstream: Some("origin/main".to_owned()),
+            upstream_head: Some("cccccccccccccccccccccccccccccccccccccccc".to_owned()),
+            local_commits: 2,
+        },
+    }
 }
 
 #[test]

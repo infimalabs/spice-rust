@@ -833,6 +833,15 @@ fn verify_task_intents(
                     .to_owned(),
             ));
         }
+        if !engagement_sound(&head, facts) {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                format!("task_heads:{stamp}"),
+                "engagement names no operator working group anchoring its controller, or joins \
+                 a decision authorization"
+                    .to_owned(),
+            ));
+        }
         if let Some(preparation) = preparation
             && (preparation.parent == head.born
                 || [
@@ -851,6 +860,24 @@ fn verify_task_intents(
         }
     }
     Ok(())
+}
+
+/// Whether `head` carries no engagement, or one naming an operator
+/// working-group fact that anchors its gating controller, exclusive with a
+/// decision authorization.
+fn engagement_sound(head: &wire::TaskHead, facts: &BTreeMap<u64, FactRecord>) -> bool {
+    let Some(granted) = head.engagement else {
+        return true;
+    };
+    head.authorization.is_none()
+        && facts
+            .get(&granted.get())
+            .and_then(|record| record.envelope.as_ref())
+            .is_some_and(|envelope| {
+                crate::rooms::gated_controller(head).is_some_and(|controller| {
+                    crate::rooms::engages(&envelope.actor, &envelope.fact, controller)
+                })
+            })
 }
 
 /// Each task's generation index is one contiguous run ending at its workflow

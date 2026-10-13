@@ -355,6 +355,7 @@ fn cover_task_heads() {
             TaskHead {
                 preparation: None,
                 authorization: None,
+                engagement: None,
                 evidence: Vec::new(),
                 intent: None,
                 born: task.clone(),
@@ -375,6 +376,7 @@ fn cover_task_heads() {
             TaskHead {
                 preparation: None,
                 authorization: None,
+                engagement: None,
                 evidence: Vec::new(),
                 intent: None,
                 born: task.clone(),

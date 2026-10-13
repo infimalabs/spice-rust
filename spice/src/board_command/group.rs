@@ -129,10 +129,15 @@ pub(super) fn put_working_group(
             ),
         );
     }
-    let designs = match design_witnesses(bus, put) {
+    let mut designs = match design_witnesses(bus, put) {
         Ok(designs) => designs,
         Err(outcome) => return outcome,
     };
+    let (outputs, output_witnesses) = match engagement::anchored_outputs(bus, &put.group.anchors) {
+        Ok(outputs) => outputs,
+        Err(outcome) => return outcome,
+    };
+    designs.extend(output_witnesses);
     let group = put.group.group.clone();
     change_working_group(
         bus,
@@ -141,12 +146,20 @@ pub(super) fn put_working_group(
         WorkingGroupChangeStatus::Stored,
         designs,
         |write, cause| {
-            write.fact(
+            let stored = write.fact(
                 WorkingGroupStored {
                     group: put.group.clone(),
                 },
                 cause,
-            )
+            )?;
+            for output in outputs {
+                write.task_head(stored, move |seq| TaskHead {
+                    engagement: Some(seq),
+                    revision: seq,
+                    ..output
+                });
+            }
+            Ok(stored)
         },
         put,
     )
