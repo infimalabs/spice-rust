@@ -453,6 +453,13 @@ owns each rule summarized here.
   is shared repository organization read by `spice group list` and changed only
   by `spice group move` and `spice group arrange`. Open consoles, their order,
   drafts, and focus are this browser's foreground and are never shared.
+- **OOPS grooming.** `spice room post DESIGN --report REPORT... --disposition
+  duplicate|no-work|deferred-for-later|covered|proposed-work --cause TEXT
+  [--exceptions TEXT] [--uncertainty TEXT]` records, in an open Design's room,
+  a disposition over parked `.oops` reports. A disposition is evidence, never
+  authority: it changes no report workflow, `deferred-for-later` carries no
+  wake time, and only `spice task wake REPORT --preparation DESIGN` promotes a
+  report, as a controlled output that is not yet authorized.
 
 Every read — `spice room history|inbox|result|relevance|status`,
 `spice preparation show`, `spice group list`, and their `spice://` resources —
@@ -473,6 +480,7 @@ joins, acknowledges, delivers, settles, and wakes nothing.
 | Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an operator answer refuses `room::answer-too-large` |
 | Pending question results per requester | 128 | further ASKs refuse; MSG, controls, and other requesters still admit |
 | Relevance sources per observation | 8 | an observation never cites more |
+| Reports per OOPS grooming record | 100 parked reports, in an open Design room | `room::oops-batch-too-large`; `room::oops-batch-not-open`: groom under a pending Design, since concluded batches stay closed |
 | Late answer | the immutable deadline | `room::deadline-passed`: close with `spice room cancel RESULT --clause TEXT --override` |
 | Answer or close by a non-party | stored parties only | `room::not-respondent` or `room::override-required`, naming the `--override` command |
 | Required evidence | each result answered | `task::evidence-unsatisfied`: ask again, or the operator replaces or waives it |
