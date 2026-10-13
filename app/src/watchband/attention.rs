@@ -245,10 +245,9 @@ fn held_attention(
     let row = task.row();
     let reason = match task.availability() {
         WorkAvailability::InFlight if task.environment_blocked() => TaskAttention::Iced,
+        WorkAvailability::Held => TaskAttention::Blocked,
         WorkAvailability::Blocked if task.environment_blocked() => TaskAttention::Blocked,
-        WorkAvailability::Ready if row.workflow.body.phase.as_str() == "review" => {
-            TaskAttention::Review
-        }
+        WorkAvailability::Review => TaskAttention::Review,
         _ => return None,
     };
     let assigned = match row.workflow.body.assignment.as_ref() {

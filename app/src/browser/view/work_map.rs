@@ -394,7 +394,10 @@ fn task_tone(
     let label = match availability {
         WorkAvailability::InFlight => "In flight",
         WorkAvailability::Ready => "Ready",
+        WorkAvailability::Review => "Review",
+        WorkAvailability::Stale => "Stale",
         WorkAvailability::Blocked => "Blocked",
+        WorkAvailability::Held => "Held",
         WorkAvailability::Deferred => "Deferred",
         WorkAvailability::Parked => "Parked",
         WorkAvailability::Terminal => {

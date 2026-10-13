@@ -224,16 +224,27 @@ pub(in crate::browser) fn render_task_count(counts: WorkCounts) -> Html {
     }
 }
 
+/// Every open category a Work count title names, in task status's terms.
+fn count_breakdown(counts: WorkCounts) -> String {
+    format!(
+        "{} ready, {} review, {} active or in flight, {} stale, {} blocked, {} held, deferred, or parked",
+        counts.ready(),
+        counts.review(),
+        counts.in_flight(),
+        counts.stale(),
+        counts.blocked(),
+        counts.waiting(),
+    )
+}
+
 /// The label-less total leading the global strip, opening all open Work. Like
 /// the team total, its badge is one open-task count.
 fn render_aggregate_pill(counts: WorkCounts, navigate: &Callback<navigation::Intent>) -> Html {
     let open = counts.open();
     let title = format!(
-        "All open work: {open} {}; {} ready, {} active or in flight, {} blocked, deferred, or parked",
+        "All open work: {open} {}; {}",
         if open == 1 { "task" } else { "tasks" },
-        counts.ready(),
-        counts.in_flight(),
-        counts.unavailable(),
+        count_breakdown(counts),
     );
     let navigate = navigate.clone();
     html! {
@@ -259,12 +270,7 @@ fn render_stem_pill(stem: &crate::work::WorkStem, navigate: &Callback<navigation
     let counts = stem.counts();
     let scope = WorkScope::Stem(identity.clone());
     let focus_key = format!("global-work:{identity}");
-    let title = format!(
-        "{identity}: {} ready, {} active or in flight, {} blocked, deferred, or parked",
-        counts.ready(),
-        counts.in_flight(),
-        counts.unavailable(),
-    );
+    let title = format!("{identity}: {}", count_breakdown(counts));
     let navigate = navigate.clone();
     html! {
         <button

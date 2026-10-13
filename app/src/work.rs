@@ -35,15 +35,24 @@ use wire::{Actor, TaskStamp};
 use crate::runtime::{BoardView, LaneMember, LaneView};
 use crate::watchband;
 
-/// One mutually exclusive task lifecycle in the current board projection.
+/// One mutually exclusive task lifecycle in the current board projection,
+/// following task status's standing precedence for open work.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WorkAvailability {
     /// A current active claim possesses this open task.
     InFlight,
     /// Open, unclaimed, and immediately workable.
     Ready,
-    /// Open and unclaimed, but requirements or dependencies do not hold.
+    /// Open and unclaimed in its review phase, awaiting a reviewer.
+    Review,
+    /// Open, with a lapsed claim awaiting takeover.
+    Stale,
+    /// Open and unclaimed, held back by the allocator's prerequisite and
+    /// controller gate.
     Blocked,
+    /// Open and unclaimed, past the gate but needing an environment
+    /// requirement only the operator can satisfy.
+    Held,
     /// Open and unclaimed, with an explicit wakeable deferral.
     Deferred,
     /// Open and unclaimed in a hidden project the allocator never offers,
@@ -60,11 +69,23 @@ impl WorkAvailability {
         match self {
             Self::InFlight => "in-flight",
             Self::Ready => "ready",
+            Self::Review => "review",
+            Self::Stale => "stale",
             Self::Blocked => "blocked",
+            Self::Held => "held",
             Self::Deferred => "deferred",
             Self::Parked => "parked",
             Self::Terminal => "terminal",
         }
+    }
+
+    /// Whether an agent can take this open work up without the operator.
+    #[must_use]
+    pub const fn moving(self) -> bool {
+        matches!(
+            self,
+            Self::InFlight | Self::Ready | Self::Review | Self::Stale
+        )
     }
 }
 
@@ -206,7 +227,10 @@ impl<'p, 'a> GroupLane<'p, 'a> {
 pub struct WorkCounts {
     in_flight: usize,
     ready: usize,
+    review: usize,
+    stale: usize,
     blocked: usize,
+    held: usize,
     deferred: usize,
     parked: usize,
     terminal: usize,
@@ -217,7 +241,10 @@ impl WorkCounts {
         match availability {
             WorkAvailability::InFlight => self.in_flight += 1,
             WorkAvailability::Ready => self.ready += 1,
+            WorkAvailability::Review => self.review += 1,
+            WorkAvailability::Stale => self.stale += 1,
             WorkAvailability::Blocked => self.blocked += 1,
+            WorkAvailability::Held => self.held += 1,
             WorkAvailability::Deferred => self.deferred += 1,
             WorkAvailability::Parked => self.parked += 1,
             WorkAvailability::Terminal => self.terminal += 1,
@@ -231,6 +258,16 @@ impl WorkCounts {
     #[must_use]
     pub const fn ready(self) -> usize {
         self.ready
+    }
+
+    #[must_use]
+    pub const fn review(self) -> usize {
+        self.review
+    }
+
+    #[must_use]
+    pub const fn stale(self) -> usize {
+        self.stale
     }
 
     #[must_use]
@@ -248,13 +285,15 @@ impl WorkCounts {
         self.terminal
     }
 
+    /// Open work no agent is offered until the operator acts: environment
+    /// held, deferred, or parked in a hidden project.
     #[must_use]
-    pub const fn unavailable(self) -> usize {
-        self.blocked + self.deferred + self.parked
+    pub const fn waiting(self) -> usize {
+        self.held + self.deferred + self.parked
     }
     #[must_use]
     pub const fn open(self) -> usize {
-        self.in_flight + self.ready + self.blocked + self.deferred + self.parked
+        self.in_flight + self.ready + self.review + self.stale + self.blocked + self.waiting()
     }
 
     #[must_use]
@@ -573,10 +612,12 @@ impl<'a> WorkProjection<'a> {
     /// changing the tasks' relative order.
     #[must_use]
     pub fn team_task_groups<'p>(&'p self, team: wire::CanonicalUuid) -> Vec<TeamTaskGroup<'p, 'a>> {
-        use WorkAvailability::{Blocked, Deferred, InFlight, Parked, Ready};
+        use WorkAvailability::{Blocked, Deferred, Held, InFlight, Parked, Ready, Review, Stale};
 
         let mut groups = Vec::<TeamTaskGroup<'p, 'a>>::new();
-        for availability in [InFlight, Ready, Blocked, Deferred, Parked] {
+        for availability in [
+            InFlight, Ready, Review, Stale, Blocked, Held, Deferred, Parked,
+        ] {
             for task in self.offered.iter().map(|&index| &self.tasks[index]) {
                 if task.availability != availability || !task.belongs_to_team(team) {
                     continue;
@@ -907,29 +948,31 @@ fn stem_key(task: &BoardTask) -> StemKey<'_> {
     }
 }
 
-/// The allocator never offers a hidden row, and its own prerequisite and
-/// controller gate decides Blocked; the resident judges that gate over
-/// terminal evidence the open board does not carry.
+/// Task status's standing precedence: possession, then deferral, then the
+/// allocator's prerequisite and controller gate, then the review phase, then
+/// the environment. The resident judges the gate over terminal evidence the
+/// open board does not carry, and the allocator never offers a hidden row.
 fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> WorkAvailability {
     let workflow = &task.workflow.body;
     if workflow.status != "pending" || workflow.completion.is_some() {
         return WorkAvailability::Terminal;
     }
-    if task
-        .claim
-        .as_ref()
-        .is_some_and(|claim| claim.body.disposition == ClaimDisposition::Active)
-    {
-        return WorkAvailability::InFlight;
-    }
-    if matches!(task.visibility, ProjectVisibility::Hidden { .. }) {
-        return WorkAvailability::Parked;
+    match task.claim.as_ref().map(|claim| claim.body.disposition) {
+        Some(ClaimDisposition::Active) => return WorkAvailability::InFlight,
+        _ if matches!(task.visibility, ProjectVisibility::Hidden { .. }) => {
+            return WorkAvailability::Parked;
+        }
+        Some(ClaimDisposition::Lapsed) => return WorkAvailability::Stale,
+        _ => {}
     }
     if workflow.deferral.is_some() {
-        return WorkAvailability::Deferred;
-    }
-    if environment_blocked || board.blocked.contains(&task.statement.body.born) {
+        WorkAvailability::Deferred
+    } else if board.blocked.contains(&task.statement.body.born) {
         WorkAvailability::Blocked
+    } else if workflow.phase.as_str() == "review" {
+        WorkAvailability::Review
+    } else if environment_blocked {
+        WorkAvailability::Held
     } else {
         WorkAvailability::Ready
     }
