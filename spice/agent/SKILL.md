@@ -104,9 +104,18 @@ it as MSG. `[PEER REPLY sender ADDRESS lane ID]` is that answer at your lane's
 next seat; ACK it and nothing more is sent. `sender unproved` means no address
 is proved. Peer messages and replies never wake a lane.
 
-Each `# Room catch-up` room names why you listen. Once a room is low value or
-your part is done, `spice room leave HANDLE --clause TEXT`; contributing or a
-new invitation undoes it, and native duties still hold you.
+A private `# Design awareness` notice is background only: it names why the
+current claim may matter, and how to read the Design's room or contribute. It
+does not make the lane a listener, create a duty, or need acknowledgment.
+
+Each `# Room catch-up` room names why the lane currently listens and the exact
+leave command. Once the room is low value or the lane's part is done, run
+`spice room leave HANDLE --clause TEXT`. That attributed act is recorded in the
+room and ends listening derived from prior contribution, activity, or
+invitation; contributing again or receiving a later addressed packet resumes
+that attention. Leaving never frees a claim, settles a delivery, answers a
+question, or removes a native duty, and its reply names any duty that still
+holds the lane.
 
 If continuity is clipped, recover only the detail needed with
 `spice session sweep` (newest compaction windows first, each naming its bounded
@@ -168,16 +177,27 @@ command for more.
   operator state, update, split, or release the task rather than force it.
 - `task plan` defaults to `plan,review`; `task design` to `design,review`.
   Declared purpose survives phases and corrections and cannot be cleared or
-  reinterpreted as execution. A Plan must construct an acceptance-bearing
-  output; its own acceptance does not replace that duty. Ordinary done cannot
-  supply a required review verdict or skip later declared phases.
-- Ordinary task creation without another `--origin` under an ambient planning
-  controller binds to it. A Plan's tasks wait only for its positive review and
-  ordinary dependencies. A Design's outputs, normally Plans, wait for the
-  operator's exact execution authorization; candidates and authorization apply
-  only to Designs. `--preparation HANDLE` binds explicitly; `--depends` never
-  removes that gate. Never add a reciprocal controller-to-output edge. Origin
-  creates no dependency; closure, deletion, or a finding releases nothing.
+  reinterpreted as execution. A Design plans Plans; a Plan plans executable
+  tasks. Ordinary done cannot supply a required review verdict or skip later
+  declared phases.
+- A Plan must create at least one acceptance-bearing executable task under
+  itself; its own acceptance does not replace that duty. Ordinary task creation
+  without another `--origin` under the ambient Plan binds automatically. The
+  Plan's positive review releases those tasks onto their ordinary dependencies;
+  Plans have no candidate, selection, or execution authorization.
+- When a Design concludes that follow-up is warranted, create its
+  acceptance-bearing output Plans under it, then run `spice preparation retain
+  CANDIDATE_JSON` with a candidate naming those outputs before completion. If
+  the conclusion is no follow-up, say so explicitly in the Design's acceptance
+  evidence. A Design reviewer MUST inspect `spice preparation show HANDLE` and
+  refuse a clean verdict when implied follow-up has no retained candidate.
+  Leave candidate selection and `spice preparation authorize
+  AUTHORIZATION_JSON` to the operator.
+- A Design's outputs wait for the operator's exact execution authorization;
+  candidates and authorization apply only to Designs. `--preparation HANDLE`
+  binds explicitly; `--depends` never removes that gate. Never add a reciprocal
+  controller-to-output edge. Origin creates no dependency; closure, deletion,
+  a finding, or a working-group move releases or authorizes nothing.
 - Keep work incremental and validated. Commit only while holding the matching
   claim. Git synchronization belongs to allocation and completion: never pull
   or push during implementation or alter harness-added attribution trailers.
