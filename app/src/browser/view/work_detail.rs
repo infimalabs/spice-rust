@@ -104,7 +104,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
     });
     sidebar::Content {
         label: "Task overview".into(),
-        title: overview_title(render.selection, render.lanes).into(),
+        title: overview_title(render.selection, render.runtime).into(),
         width: sidebar::Width::Large,
         body,
         overlay,
@@ -114,15 +114,32 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
     }
 }
 
-fn overview_title(selection: &TaskOverviewSelection, lanes: Option<&LaneView>) -> String {
+fn overview_title(selection: &TaskOverviewSelection, runtime: Option<&AppRuntime>) -> String {
     let count = selection.tasks().len();
-    let lanes = lanes.map_or(&[][..], |view| &view.lanes);
     format!(
         "{} · {count} {}",
-        selection
-            .context()
-            .label(|team| crate::watchband::team_label_in(lanes, team)),
+        context_label(selection, runtime),
         if count == 1 { "task" } else { "tasks" },
+    )
+}
+
+/// The selection's heading, naming a team from its lanes and a working group
+/// from its lead Design.
+pub(super) fn context_label(
+    selection: &TaskOverviewSelection,
+    runtime: Option<&AppRuntime>,
+) -> String {
+    let lanes = runtime
+        .and_then(AppRuntime::lanes)
+        .map_or(&[][..], |view| &view.lanes);
+    selection.context().label(
+        |team| crate::watchband::team_label_in(lanes, team),
+        |group, designs| {
+            runtime.map_or_else(
+                || group.to_string(),
+                |runtime| super::super::rooms::lead_label(runtime, group, designs.first()),
+            )
+        },
     )
 }
 

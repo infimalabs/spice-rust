@@ -54,10 +54,11 @@ inset, and spacing use the same heading row as Jobs, Resident topology, and
 Provider quota at every sidebar width.
 
 The browser reads an opened group as a team console with tasks and agents
-swapped: one composer per design, posting to that design's room, and one tab
-per lane currently claiming an open task associated with any of its designs.
-That lane list is derived from board claims on every read; the group stores
-and grants none of it.
+swapped: one composer per design, posting to that design's room, and the
+team toolbar read from the group's designs (see [Group toolbar](#group-toolbar)).
+Everything the toolbar shows is derived from the board, room projection, and
+lane topology on every read; the group stores and grants none of it, and
+reading it changes nothing.
 
 A design composer's cue states that posts are recorded in the room for its
 listeners and ask no lane for anything: a post never wakes, obligates, or
@@ -197,6 +198,26 @@ lane is unteamed), otherwise its creator team, otherwise its last claimant's
 team. Project controls select the exact dotted project, and a relationship
 control extends the current selection with that task. Selection always follows
 the resident's offer order and may be explicitly empty.
+
+## Group toolbar
+
+A working group's toolbar keeps team-console geometry and maps each team
+element to a design-side analog:
+
+| Team toolbar | Group toolbar |
+| --- | --- |
+| Team total: opens the overview with the team's task set selected | Group total: opens the overview with every open task associated with the group's designs selected |
+| Stem tabs clustered by Work's rule; a stem target selects the team's stem | The same clustering over the group's associated tasks; a stem target selects that stem within them |
+| A task handle carries the accent of the lane working it | A task handle carries the accent of the design it serves |
+| Presence pips: one per member, by state | Design lights: one per design in its accent, distinguishing open, claimed, in review, holding unauthorized outputs, and settled, with an accessible label naming the standing; a design whose board row is unavailable invents no standing |
+| Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest room publication or coordination event across the group's designs, with the same age, prefix, accessible label, and live region; its accent and status are the design it landed in |
+
+A design light reads settled once its task is completed, closed, or deleted;
+otherwise it reads holding unauthorized outputs while any output it
+constructed is pending without a selection or the group's engagement, then in
+review in its review phase, then claimed while a lane actively claims it, and
+open otherwise. The group's name and this browser's own move-left, move-right,
+and close controls close the status row.
 
 ## Team composer controls
 

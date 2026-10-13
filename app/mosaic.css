@@ -505,8 +505,8 @@ path.image-annotation-hit { fill: none; }
   margin: 0 var(--team-toolbar-inline-inset);
   overflow: hidden;
 }
-.team-task-rail > :is(.team-tasks, [data-work-scope="team"]) { align-self: end; }
-.team-task-rail > [data-work-scope="team"] { grid-column: 1; grid-row: 1; z-index: 2; }
+.team-task-rail > :is(.team-tasks, [data-work-scope="team"], [data-work-scope="group"]) { align-self: end; }
+.team-task-rail > :is([data-work-scope="team"], [data-work-scope="group"]) { grid-column: 1; grid-row: 1; z-index: 2; }
 .team-task-rail > .team-tasks {
   grid-column: 2;
   grid-row: 1;

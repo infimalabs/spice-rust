@@ -287,7 +287,7 @@ fn render_team_toolbar(
 fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     let groups = render
         .work
-        .map(|work| work.team_task_groups(team))
+        .map(|work| work.stem_task_groups(&crate::work::WorkScope::team_wide(team)))
         .unwrap_or_default();
     html! {
         <div class="team-task-rail">
@@ -305,7 +305,7 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
 /// the unified overview with that team's complete current selection.
 fn render_team_total(
     team: CanonicalUuid,
-    groups: &[crate::work::TeamTaskGroup<'_, '_>],
+    groups: &[crate::work::StemTaskGroup<'_, '_>],
     navigate: &Callback<navigation::Intent>,
 ) -> Html {
     use crate::work::{WorkCounts, WorkScope};
@@ -346,7 +346,7 @@ fn render_team_total(
 /// team-local task handle grouped beneath it.
 fn render_team_task_group(
     team: CanonicalUuid,
-    group: &crate::work::TeamTaskGroup<'_, '_>,
+    group: &crate::work::StemTaskGroup<'_, '_>,
     render: &FleetRender<'_, '_>,
 ) -> Html {
     let stem = group.stem().clone();

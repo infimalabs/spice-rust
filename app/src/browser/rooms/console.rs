@@ -1,9 +1,11 @@
 //! Working-group consoles: a team watchband with tasks and agents swapped.
 //!
-//! A group's designs are its composers and its accented channels; the lanes
-//! working any task associated with those designs are its tabs. Every other
-//! piece is the team console's own: the packed plane, its composer slot, the
-//! quote shards, and the composer issue toast.
+//! A group's designs are its composers and its accented channels; its toolbar
+//! is the team toolbar read from those designs. Every other piece is the team
+//! console's own: the packed plane, its composer slot, the quote shards, and
+//! the composer issue toast.
+
+mod toolbar;
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
@@ -33,7 +35,7 @@ use crate::runtime::{
     RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomProjectionStatus,
 };
 use crate::watchband;
-use crate::work::{GroupLane, WorkProjection};
+use crate::work::WorkProjection;
 
 /// Everything one render of the opened group consoles reads.
 pub(in crate::browser) struct GroupRender<'a, 'w> {
@@ -44,6 +46,7 @@ pub(in crate::browser) struct GroupRender<'a, 'w> {
     pub(in crate::browser) drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub(in crate::browser) open_message_task: &'a Callback<(TaskStamp, web_sys::Element)>,
     pub(in crate::browser) select_task: &'a Callback<TaskStamp>,
+    pub(in crate::browser) navigate: &'a Callback<crate::browser::navigation::Intent>,
 }
 
 /// One design as its group shows it: a composer target and an accented channel.
@@ -106,10 +109,7 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
             data-group={view.group.to_string()}
             data-team-weight={watchband::team_visual_weight(channels.len()).to_string()}
         >
-            <header class="team-toolbar">
-                {render_lane_rail(render, &channels)}
-                {render_status(render.controls, view, index, &name, &channels, loaded)}
-            </header>
+            {toolbar::render(render, view, index, &name, &channels, loaded)}
             if absent {
                 <p class="room-unavailable">{"Shared group authority is unavailable. This local view remains in place."}</p>
             }
@@ -173,160 +173,6 @@ fn group_name(
             .get(&view.group)
             .cloned()
             .unwrap_or_else(|| "Loading working group…".to_owned()),
-    }
-}
-
-/// The group's status band: one accented light per design channel, the
-/// group's name, and this browser's own placement of the console.
-fn render_status(
-    controls: &Controls,
-    view: &GroupView,
-    index: usize,
-    name: &str,
-    channels: &[Channel],
-    loaded: bool,
-) -> Html {
-    let close = {
-        let controls = controls.clone();
-        let group = view.group.clone();
-        Callback::from(move |_| controls.close_group(group.clone()))
-    };
-    let move_group = |delta| {
-        let controls = controls.clone();
-        let group = view.group.clone();
-        Callback::from(move |_| controls.move_group(group.clone(), delta))
-    };
-    html! {
-        <div class="app-glass-control-surface app-status-band team-status-row">
-            <span class="team-lights" role="group" aria-label={format!("{} designs", channels.len())}>
-                {for channels.iter().map(|channel| html! {
-                    <span
-                        key={channel.stamp.to_string()}
-                        class="app-presence-pip app-presence-pip--status group-design-pip"
-                        role="img"
-                        data-design={channel.stamp.to_string()}
-                        data-accent={channel.accent.to_string()}
-                        aria-label={channel.label.clone()}
-                        title={channel.label.clone()}
-                    ></span>
-                })}
-            </span>
-            <strong class="group-surface-name" aria-busy={(!loaded).to_string()}>{name.to_owned()}</strong>
-            <span class="room-inline-actions">
-                <button type="button" disabled={index == 0} onclick={move_group(-1)} aria-label="Move group left">{"←"}</button>
-                <button type="button" disabled={index + 1 == controls.views.groups().len()} onclick={move_group(1)} aria-label="Move group right">{"→"}</button>
-                <button type="button" onclick={close} aria-label="Close group">{"×"}</button>
-            </span>
-        </div>
-    }
-}
-
-/// The lanes working any task associated with the group's designs, each
-/// followed by the handles of the tasks it is working there.
-fn render_lane_rail(render: &GroupRender<'_, '_>, channels: &[Channel]) -> Html {
-    let designs = channels
-        .iter()
-        .map(|channel| channel.stamp.clone())
-        .collect::<Vec<_>>();
-    let lanes = render
-        .work
-        .map(|work| work.group_lanes(&designs))
-        .unwrap_or_default();
-    html! {
-        <div class="team-task-rail">
-            if !lanes.is_empty() {
-                <nav class="app-horn-tabs team-tasks" aria-label="Lanes working this group's designs">
-                    {for lanes.iter().map(|lane| render_lane_tab(render, lane, channels))}
-                </nav>
-            }
-        </div>
-    }
-}
-
-/// One lane tab: the lane opens its own Chat composer, where its history
-/// plays, and stays inert while it holds no Chat seat.
-fn render_lane_tab(
-    render: &GroupRender<'_, '_>,
-    lane: &GroupLane<'_, '_>,
-    channels: &[Channel],
-) -> Html {
-    let lanes = render.runtime.lanes();
-    let member = lanes.and_then(|lanes| {
-        lanes
-            .lanes
-            .iter()
-            .flat_map(|team| &team.members)
-            .find(|member| member.lane == lane.lane())
-    });
-    let label = member.map_or_else(
-        || lane.lane().to_string(),
-        |member| {
-            watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned()
-        },
-    );
-    let chat = lanes.and_then(|lanes| lanes.chat_target_for_lane(lane.lane()));
-    let target = match chat {
-        Some((_team, member)) => html! {
-            <a
-                class="app-horn-tab__target"
-                href={crate::view::card_href(&primary_textarea_id(&member.to_string()))}
-                title={format!("Open {label} in Chat")}
-                aria-label={format!("Open {label} in Chat")}
-                data-group-lane-link={lane.lane().to_string()}
-            >
-                <span class="app-horn-tab__label">{label.clone()}</span>
-            </a>
-        },
-        None => html! {
-            <span class="app-horn-tab__target" title={label.clone()}>
-                <span class="app-horn-tab__label">{label.clone()}</span>
-            </span>
-        },
-    };
-    html! {
-        <span
-            key={lane.lane().to_string()}
-            class="app-horn-tab app-horn-tab--up app-horn-tab--group"
-            data-group-lane={lane.lane().to_string()}
-        >
-            {target}
-            {for lane.tasks().iter().map(|task| render_lane_task(render, task, channels))}
-        </span>
-    }
-}
-
-/// One task handle under its lane, in the accent of the design it serves.
-fn render_lane_task(
-    render: &GroupRender<'_, '_>,
-    task: &crate::work::WorkTask<'_>,
-    channels: &[Channel],
-) -> Html {
-    let statement = &task.row().statement.body;
-    let accent = channels
-        .iter()
-        .find(|channel| crate::runtime::associated(statement, &channel.stamp))
-        .map(|channel| channel.accent);
-    let label = format!(
-        "Open {}: {}",
-        statement.handle,
-        crate::composer_markdown::inline::plain_text(task.row().presentation_title()),
-    );
-    let open_task = {
-        let select = render.select_task.clone();
-        let born = statement.born.clone();
-        Callback::from(move |_| select.emit(born.clone()))
-    };
-    html! {
-        <button
-            key={statement.born.to_string()}
-            class="app-horn-tab app-horn-tab--up app-horn-tab__handle"
-            type="button"
-            title={label.clone()}
-            aria-label={label}
-            data-availability={task.availability().key()}
-            data-accent={accent.map(|accent| accent.to_string())}
-            onclick={open_task}
-        >{statement.handle.to_string()}</button>
     }
 }
 
