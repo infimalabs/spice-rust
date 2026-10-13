@@ -68,18 +68,16 @@ pub(in crate::browser) fn render_group_surfaces(render: &GroupRender<'_, '_>) ->
 fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) -> Html {
     let projection = render.runtime.room_projection();
     let loaded = projection.status() == RoomProjectionStatus::Available;
-    let authoritative = projection.groups().get(&view.group);
+    let authoritative = projection
+        .partition()
+        .groups
+        .iter()
+        .find(|group| group.group == view.group);
     // Absence is shown only once a completed snapshot lacks the group; while
     // authority reloads, the console keeps its last name and its geometry.
     let absent = loaded && authoritative.is_none();
-    let name = group_name(
-        render.runtime,
-        render.controls,
-        view,
-        authoritative.map(|group| &group.value),
-        absent,
-    );
-    let anchors = authoritative.map_or(&[][..], |group| group.value.anchors.as_slice());
+    let name = group_name(render.runtime, render.controls, view, authoritative, absent);
+    let anchors = authoritative.map_or(&[][..], |group| group.anchors.as_slice());
     let channels = anchors
         .iter()
         .enumerate()
@@ -595,13 +593,18 @@ fn render_design_menu(render: &GroupRender<'_, '_>, view: &GroupView, channel: &
 /// teams**: begin a group holding only this design, or take it out of its
 /// group, which ends once its last design leaves.
 fn render_group_actions(render: &GroupRender<'_, '_>, view: &GroupView, channel: &Channel) -> Html {
-    let Some(held) = render.runtime.room_projection().groups().get(&view.group) else {
+    let partition = render.runtime.room_projection().partition();
+    let Some(group) = partition
+        .groups
+        .iter()
+        .find(|group| group.group == view.group)
+    else {
         return Html::default();
     };
-    let (group, head) = (held.value.clone(), held.position);
-    let can_put = render.runtime.offers(wire::CommandKind::WorkingGroupPut)
+    let revision = partition.revision;
+    let can_move = render.runtime.offers(wire::CommandKind::WorkingGroupMove)
         && group.anchors.contains(&channel.stamp);
-    let can_split = can_put && group.anchors.len() > 1;
+    let can_split = can_move && group.anchors.len() > 1;
     let split = {
         let controls = render.controls.clone();
         let sender = render.sender.clone();
@@ -611,11 +614,11 @@ fn render_group_actions(render: &GroupRender<'_, '_>, view: &GroupView, channel:
                 controls.report("A working-group identity could not be created.".into());
                 return;
             };
-            let alone = wire::rooms::WorkingGroup {
-                group: created,
-                anchors: vec![design.clone()],
+            let request = wire::rooms::WorkingGroupMove {
+                design: design.clone(),
+                to: Some(created),
             };
-            super::submit_group(&sender, &controls, alone, None);
+            super::submit_move(&sender, &controls, request, revision);
             close_menu(&event);
         })
     };
@@ -624,9 +627,11 @@ fn render_group_actions(render: &GroupRender<'_, '_>, view: &GroupView, channel:
         let sender = render.sender.clone();
         let design = channel.stamp.clone();
         Callback::from(move |event: MouseEvent| {
-            let mut remaining = group.clone();
-            remaining.anchors.retain(|held| *held != design);
-            super::submit_group(&sender, &controls, remaining, Some(head));
+            let request = wire::rooms::WorkingGroupMove {
+                design: design.clone(),
+                to: None,
+            };
+            super::submit_move(&sender, &controls, request, revision);
             close_menu(&event);
         })
     };
@@ -644,7 +649,7 @@ fn render_group_actions(render: &GroupRender<'_, '_>, view: &GroupView, channel:
             <button
                 class="agent-menu-action"
                 type="button"
-                disabled={!can_put}
+                disabled={!can_move}
                 aria-label={format!("Leave group for {}", channel.label)}
                 title={format!("Remove {} from its group", channel.label)}
                 data-group-leave-design={channel.stamp.to_string()}

@@ -66,8 +66,8 @@ mod rooms;
 pub use rooms::{
     RoomClose, RoomControl, RoomControlAnswer, RoomCoordinate, RoomCoordinateAction,
     RoomCoordinationRead, RoomCoordinationRequest, RoomCoordinationStop, RoomCoordinationView,
-    RoomItemMove, RoomPutAside, RoomResultMove, WORKING_GROUP_PAGE_LIMIT_MAX, WorkingGroupAnchor,
-    WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupPage, WorkingGroupPut,
+    RoomItemMove, RoomPutAside, RoomResultMove, WorkingGroupAnchor, WorkingGroupArrange,
+    WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupMove, WorkingGroupPage,
     WorkingGroupRead, WorkingGroupView,
 };
 

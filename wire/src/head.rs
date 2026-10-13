@@ -251,14 +251,15 @@ pub struct TaskHead {
         deserialize_with = "crate::optional::present"
     )]
     pub authorization: Option<crate::rooms::DecisionRef>,
-    /// Operator `group::stored` fact that authorized this controlled output by
-    /// holding its controller in a working group; omission leaves the output to
-    /// an execution authorization.
+    /// Operator working-group partition fact that authorized this controlled
+    /// output by holding its controller in a working group; omission leaves
+    /// the output to an execution authorization.
     ///
-    /// It is granted once, when that fact anchors the controller or when the
-    /// output becomes controlled while its controller is anchored, and is
-    /// exclusive with [`Self::authorization`]. No later write moves or drops
-    /// it, including the controller leaving every working group.
+    /// It is granted once, when a `group::moved` fact places the controller in
+    /// a group or when the output becomes controlled while the partition
+    /// groups its controller, and is exclusive with [`Self::authorization`].
+    /// No later write moves or drops it, including the controller leaving
+    /// every working group.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

@@ -762,19 +762,24 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
     )?;
     let group = wire::rooms::RoomAuthorityStamp::for_micros(DEMO_OOPS_GROUP_MICROS)
         .expect("demo OOPS group stamp is valid");
-    let origin = wire::rooms::working_group_origin(&group);
     let mut write = JournalWrite::new(
         Actor::Operator,
-        origin,
+        wire::rooms::working_group_origin(),
         instant("2026-07-11T05:06:00.000000Z"),
         Producer::CommandDoor,
     );
     write
         .fact(
-            wire::rooms::WorkingGroupStored {
-                group: wire::rooms::WorkingGroup {
-                    group,
-                    anchors: vec![batch],
+            wire::rooms::WorkingGroupMoved {
+                design: batch.clone(),
+                from: None,
+                to: Some(group.clone()),
+                partition: wire::rooms::WorkingGroupPartition {
+                    revision: 1,
+                    groups: vec![wire::rooms::WorkingGroup {
+                        group,
+                        anchors: vec![batch],
+                    }],
                 },
             },
             FactCause::Root,

@@ -198,7 +198,7 @@ pub struct RoomProjection {
     /// Greatest live position seen before the snapshot completed.
     early: Option<Seq>,
     direction: Option<Direction>,
-    groups: BTreeMap<RoomAuthorityStamp, RoomPositioned<authority::WorkingGroup>>,
+    partition: authority::WorkingGroupPartition,
     rooms: BTreeMap<TaskStamp, RoomState>,
     preparation: PreparationProjection,
     conversation: ConversationProjection,
@@ -218,7 +218,7 @@ impl Default for RoomProjection {
             last_fact: None,
             early: None,
             direction: None,
-            groups: BTreeMap::new(),
+            partition: authority::WorkingGroupPartition::default(),
             rooms: BTreeMap::new(),
             preparation: PreparationProjection::default(),
             conversation: ConversationProjection::default(),
@@ -235,9 +235,11 @@ impl RoomProjection {
         self.status
     }
 
-    /// Repository-shared groups only; no browser view state is represented here.
-    pub fn groups(&self) -> &BTreeMap<RoomAuthorityStamp, RoomPositioned<authority::WorkingGroup>> {
-        &self.groups
+    /// The repository-shared working-group partition: group order, design
+    /// order, and the revision a change witnesses. No browser view state is
+    /// represented here.
+    pub const fn partition(&self) -> &authority::WorkingGroupPartition {
+        &self.partition
     }
 
     /// One durable task room, when any timeline authority exists for it.
@@ -469,20 +471,13 @@ impl RoomProjection {
 
     fn apply_room_fact(&mut self, fact: &StreamFact) -> Option<bool> {
         match fact.kind() {
-            FactKind::WorkingGroupStored => Some(
-                fact.read::<authority::WorkingGroupStored>()
-                    .is_some_and(|body| {
-                        replace(
-                            &mut self.groups,
-                            body.group.group.clone(),
-                            fact.seq(),
-                            body.group,
-                        )
-                    }),
+            FactKind::WorkingGroupMoved => Some(
+                fact.read::<authority::WorkingGroupMoved>()
+                    .is_some_and(|body| self.replace_partition(body.partition)),
             ),
-            FactKind::WorkingGroupRemoved => Some(
-                fact.read::<authority::WorkingGroupRemoved>()
-                    .is_some_and(|body| self.groups.remove(&body.group).is_some()),
+            FactKind::WorkingGroupsArranged => Some(
+                fact.read::<authority::WorkingGroupsArranged>()
+                    .is_some_and(|body| self.replace_partition(body.partition)),
             ),
             FactKind::RoomPublished => {
                 Some(fact.read::<authority::RoomPublished>().is_some_and(|body| {
@@ -794,6 +789,14 @@ impl RoomProjection {
             state.live = true;
             changed
         })
+    }
+
+    fn replace_partition(&mut self, partition: authority::WorkingGroupPartition) -> bool {
+        if self.partition == partition {
+            return false;
+        }
+        self.partition = partition;
+        true
     }
 }
 

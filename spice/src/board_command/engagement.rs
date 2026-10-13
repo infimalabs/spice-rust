@@ -1,9 +1,9 @@
 //! Working-group engagement authorizes a Design's controlled outputs.
 //!
-//! Anchoring a Design in a working group is the operator's activation of it:
-//! the storing write authorizes every controlled output the Design already
-//! has, and an output that becomes controlled while some working group still
-//! anchors its controller carries that group's operator fact from birth.
+//! Moving a Design into a working group is the operator's activation of it:
+//! the move authorizes every controlled output the Design already has, and an
+//! output that becomes controlled while the partition still groups its
+//! controller carries that partition head's operator fact from birth.
 
 use super::*;
 
@@ -79,14 +79,21 @@ pub(super) fn grant(
     }
 }
 
-/// Authorize `statement` by its controller's current engagement when it is
-/// an unauthorized controlled output whose controller a working group anchors.
+/// Authorize `statement` by the current partition head when it is an
+/// unauthorized controlled output whose controller the partition groups.
 pub(super) fn engage(bus: &Bus, statement: &mut TaskHead) -> Result<(), Outcome<CommandAnswer>> {
     let Some(controller) = unauthorized_controller(statement).cloned() else {
         return Ok(());
     };
     statement.engagement = bus
-        .read(move |read| Ok(read.anchor_group(&controller)?.map(|head| head.position())))
+        .read(move |read| {
+            Ok(read.group_partition()?.and_then(|head| {
+                head.body()
+                    .holder(&controller)
+                    .is_some()
+                    .then(|| head.position())
+            }))
+        })
         .map_err(|error| store_fault("preparation::engagement-unreadable", &error.to_string()))?;
     Ok(())
 }

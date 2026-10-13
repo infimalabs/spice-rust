@@ -121,20 +121,12 @@ impl Authority for Stored<'_> {
         self.exists("SELECT 1 FROM room_horizons WHERE lane = ?1", [lane])
     }
 
-    fn grouped(&self, group: &str) -> Result<bool, Refusal> {
-        self.exists(
-            "SELECT 1 FROM group_heads WHERE working_group = ?1",
-            [group],
-        )
-    }
-
-    fn anchor_owner(&self, anchor: &str) -> Result<Option<String>, Refusal> {
+    fn group_partition(&self) -> Result<Option<Vec<u8>>, Refusal> {
         Ok(self
             .connection
             .query_row(
-                "SELECT working_group FROM group_anchors WHERE anchor = ?1 \
-                 ORDER BY working_group LIMIT 1",
-                [anchor],
+                "SELECT body FROM group_partition WHERE singleton = 1",
+                [],
                 |row| row.get(0),
             )
             .optional()?)
@@ -285,33 +277,7 @@ fn apply(connection: &Connection, change: Change) -> Result<(), rusqlite::Error>
                 params![room, publication, sql(seq)],
             )?;
         }
-        Change::GroupStored {
-            group,
-            seq,
-            body,
-            anchors,
-        } => {
-            connection.execute(
-                "INSERT INTO group_heads(working_group, head_seq, body) VALUES (?1, ?2, ?3) \
-                 ON CONFLICT(working_group) DO UPDATE SET \
-                    head_seq = excluded.head_seq, body = excluded.body",
-                params![group, sql(seq), body],
-            )?;
-            connection.execute(
-                "DELETE FROM group_anchors WHERE working_group = ?1",
-                [&group],
-            )?;
-            for (ordinal, anchor) in (0_i64..).zip(anchors) {
-                insert_anchor(connection, &anchor, &group, ordinal)?;
-            }
-        }
-        Change::GroupRemoved { group } => {
-            connection.execute(
-                "DELETE FROM group_anchors WHERE working_group = ?1",
-                [&group],
-            )?;
-            connection.execute("DELETE FROM group_heads WHERE working_group = ?1", [&group])?;
-        }
+        Change::GroupPartition { seq, body } => put_partition(connection, seq, &body)?,
         Change::Proposal { subject, row } => insert_proposal(connection, &subject, &row)?,
         Change::Authorization { outputs, row } => {
             for output in outputs {
@@ -364,15 +330,11 @@ fn apply(connection: &Connection, change: Change) -> Result<(), rusqlite::Error>
     Ok(())
 }
 
-fn insert_anchor(
-    connection: &Connection,
-    anchor: &str,
-    group: &str,
-    ordinal: i64,
-) -> Result<(), rusqlite::Error> {
+fn put_partition(connection: &Connection, seq: u64, body: &[u8]) -> Result<(), rusqlite::Error> {
     connection.execute(
-        "INSERT INTO group_anchors(anchor, working_group, ordinal) VALUES (?1, ?2, ?3)",
-        params![anchor, group, ordinal],
+        "INSERT INTO group_partition(singleton, head_seq, body) VALUES (1, ?1, ?2) \
+         ON CONFLICT(singleton) DO UPDATE SET head_seq = excluded.head_seq, body = excluded.body",
+        params![sql(seq), body],
     )?;
     Ok(())
 }
@@ -411,15 +373,13 @@ impl Projection {
                 "SELECT room, publication, seq FROM room_publications",
                 |row| Ok(((row.get(0)?, row.get(1)?), unsql(row.get(2)?))),
             )?,
-            groups: heads(
-                connection,
-                "SELECT working_group, head_seq, body FROM group_heads",
-            )?,
-            anchors: table(
-                connection,
-                "SELECT anchor, working_group, ordinal FROM group_anchors",
-                |row| Ok(((row.get(0)?, row.get(1)?), row.get(2)?)),
-            )?,
+            partition: connection
+                .query_row(
+                    "SELECT head_seq, body FROM group_partition WHERE singleton = 1",
+                    [],
+                    |row| Ok((unsql(row.get(0)?), row.get(1)?)),
+                )
+                .optional()?,
             proposals: table(
                 connection,
                 "SELECT subject, controller, head_seq, body FROM proposal_heads",
@@ -494,7 +454,7 @@ pub(crate) fn write_projection(
     projection: &Projection,
 ) -> Result<(), rusqlite::Error> {
     connection.execute_batch(
-        "DELETE FROM room_publications; DELETE FROM group_anchors; DELETE FROM group_heads; \
+        "DELETE FROM room_publications; DELETE FROM group_partition; \
          DELETE FROM proposal_heads; DELETE FROM authorization_heads; DELETE FROM room_cursors; \
          DELETE FROM room_horizons; DELETE FROM room_directions; DELETE FROM room_shelvings; \
          DELETE FROM task_evidence;",
@@ -505,14 +465,8 @@ pub(crate) fn write_projection(
             params![room, publication, sql(*seq)],
         )?;
     }
-    for (group, (seq, body)) in &projection.groups {
-        connection.execute(
-            "INSERT INTO group_heads(working_group, head_seq, body) VALUES (?1, ?2, ?3)",
-            params![group, sql(*seq), body],
-        )?;
-    }
-    for ((anchor, group), ordinal) in &projection.anchors {
-        insert_anchor(connection, anchor, group, *ordinal)?;
+    if let Some((seq, body)) = &projection.partition {
+        put_partition(connection, *seq, body)?;
     }
     for (subject, row) in &projection.proposals {
         insert_proposal(connection, subject, row)?;

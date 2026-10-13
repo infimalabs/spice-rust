@@ -1,15 +1,16 @@
 //! Working-group engagement as execution authorization.
 //!
-//! An operator `group::stored` fact anchoring a Design is that Design's
-//! activation. It authorizes every controlled output the Design already has,
-//! and each output that becomes controlled while the Design stays anchored in
-//! some working group. A statement records the authorizing fact as its
-//! engagement: granted once, exclusive with a decision's execution
-//! authorization, and never moved or dropped afterward, so a Design leaving
-//! every group stops later grants without revoking earlier ones.
+//! An operator working-group move placing a Design in a group is that
+//! Design's activation. It authorizes every controlled output the Design
+//! already has, and each output that becomes controlled while the partition
+//! still groups the Design, through the partition head that groups it. A
+//! statement records the authorizing fact as its engagement: granted once,
+//! exclusive with a decision's execution authorization, and never moved or
+//! dropped afterward, so a Design leaving every group stops later grants
+//! without revoking earlier ones.
 
 use rusqlite::{Connection, OptionalExtension, params};
-use wire::rooms::WorkingGroupStored;
+use wire::rooms::{WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged};
 use wire::{Actor, AnyFact, Seq, TaskHead, TaskStamp};
 
 use super::sql::sql;
@@ -25,14 +26,22 @@ pub(crate) fn gated_controller(head: &TaskHead) -> Option<&TaskStamp> {
         .map(|preparation| &preparation.controller)
 }
 
-/// Whether `fact`, written by `actor`, is an operator working-group state
-/// anchoring `controller`.
+/// Whether `fact`, written by `actor`, is an operator partition change whose
+/// partition groups `controller`.
 #[must_use]
 pub(crate) fn engages(actor: &Actor, fact: &AnyFact, controller: &TaskStamp) -> bool {
     *actor == Actor::Operator
-        && fact
-            .read::<WorkingGroupStored>()
-            .is_some_and(|stored| stored.group.anchors.contains(controller))
+        && stated_partition(fact).is_some_and(|partition| partition.holder(controller).is_some())
+}
+
+/// The whole partition a working-group fact states.
+fn stated_partition(fact: &AnyFact) -> Option<WorkingGroupPartition> {
+    fact.read::<WorkingGroupMoved>()
+        .map(|moved| moved.partition)
+        .or_else(|| {
+            fact.read::<WorkingGroupsArranged>()
+                .map(|arranged| arranged.partition)
+        })
 }
 
 /// Admit one task statement row before it replaces the stored statement:
@@ -104,10 +113,10 @@ fn require_grant(
     Ok(())
 }
 
-/// After the write's heads land, every controlled output whose controller a
-/// working group anchors carries an authorization: each statement written in
-/// `first..=last`, and each output of every Design a working-group fact in the
-/// write anchors.
+/// After the write's heads land, every controlled output whose controller the
+/// partition groups carries an authorization: each statement written in
+/// `first..=last`, and each output of every Design a move in the write places
+/// in a group.
 pub(crate) fn require_complete<'a>(
     connection: &Connection,
     first: Seq,
@@ -130,16 +139,19 @@ pub(crate) fn require_complete<'a>(
          WHERE json_extract(CAST(body AS TEXT), '$.preparation.controller') = ?1",
     )?;
     for fact in facts {
-        let Some(WorkingGroupStored { group }) = fact.read() else {
+        let Some(WorkingGroupMoved {
+            design,
+            to: Some(_),
+            ..
+        }) = fact.read()
+        else {
             continue;
         };
-        for anchor in &group.anchors {
-            let mut rows = outputs.query([anchor.as_str()])?;
-            while let Some(row) = rows.next()? {
-                let head = wire::decode::<TaskHead>(&row.get::<_, Vec<u8>>(1)?)?;
-                if gated_controller(&head).is_some() {
-                    require_authorized(&row.get::<_, String>(0)?, &head)?;
-                }
+        let mut rows = outputs.query([design.as_str()])?;
+        while let Some(row) = rows.next()? {
+            let head = wire::decode::<TaskHead>(&row.get::<_, Vec<u8>>(1)?)?;
+            if gated_controller(&head).is_some() {
+                require_authorized(&row.get::<_, String>(0)?, &head)?;
             }
         }
     }
@@ -156,12 +168,14 @@ fn require_authorized(stamp: &str, head: &TaskHead) -> Result<(), Refusal> {
 }
 
 fn anchored(connection: &Connection, controller: &TaskStamp) -> Result<bool, Refusal> {
-    Ok(connection
+    let partition = connection
         .query_row(
-            "SELECT 1 FROM group_anchors WHERE anchor = ?1 LIMIT 1",
-            [controller.as_str()],
-            |_| Ok(()),
+            "SELECT body FROM group_partition WHERE singleton = 1",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
         )
         .optional()?
-        .is_some())
+        .map(|body| wire::decode::<WorkingGroupPartition>(&body))
+        .transpose()?;
+    Ok(partition.is_some_and(|partition| partition.holder(controller).is_some()))
 }

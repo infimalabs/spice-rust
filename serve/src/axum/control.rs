@@ -43,7 +43,8 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::RoomControl
         | CommandKind::RoomClose
         | CommandKind::WorkingGroupRead
-        | CommandKind::WorkingGroupPut
+        | CommandKind::WorkingGroupMove
+        | CommandKind::WorkingGroupArrange
         | CommandKind::CandidateRetain
         | CommandKind::CandidateCritiqueRecord
         | CommandKind::CandidateCoverageRecord

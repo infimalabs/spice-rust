@@ -54,11 +54,13 @@ pub enum CommandKind {
     RoomControl,
     /// Decline or cancel one pending question by its party or operator override.
     RoomClose,
-    /// Read one exact working group or a bounded current catalog page.
+    /// Read the current working-group partition.
     WorkingGroupRead,
-    /// Store one working group's complete ordered design association, moving
-    /// each named design out of any other group and ending a group left empty.
-    WorkingGroupPut,
+    /// Move one design into a group, founding it, or out of every group, at
+    /// the observed partition revision.
+    WorkingGroupMove,
+    /// Restate the whole working-group partition at the observed revision.
+    WorkingGroupArrange,
     /// Retain one exact preparation candidate.
     CandidateRetain,
     /// Record one source-backed critique of a retained candidate.

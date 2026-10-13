@@ -207,47 +207,18 @@ struct Indexes {
     task_origins: HashMap<journal::crossing::TaskStamp, TaskOrigin>,
     duplicate_task_origins: HashSet<journal::crossing::TaskStamp>,
     invalid_creator_teams: HashSet<journal::crossing::TaskStamp>,
-    working_groups: Arc<
-        HashMap<journal::crossing::rooms::RoomAuthorityStamp, Vec<journal::crossing::TaskStamp>>,
-    >,
-    room_anchor_references: Arc<HashMap<journal::crossing::TaskStamp, usize>>,
+    grouped_designs: Arc<HashSet<journal::crossing::TaskStamp>>,
 }
 
 impl Indexes {
-    fn replace_working_group(
-        &mut self,
-        group: journal::crossing::rooms::RoomAuthorityStamp,
-        anchors: Vec<journal::crossing::TaskStamp>,
-    ) {
-        let replaced = Arc::make_mut(&mut self.working_groups).insert(group, anchors.clone());
-        if let Some(replaced) = replaced {
-            self.remove_room_anchors(&replaced);
-        }
-        let references = Arc::make_mut(&mut self.room_anchor_references);
-        for anchor in anchors {
-            *references.entry(anchor).or_default() += 1;
-        }
-    }
-
-    fn remove_working_group(&mut self, group: &journal::crossing::rooms::RoomAuthorityStamp) {
-        if let Some(removed) = Arc::make_mut(&mut self.working_groups).remove(group) {
-            self.remove_room_anchors(&removed);
-        }
-    }
-
-    fn remove_room_anchors(&mut self, anchors: &[journal::crossing::TaskStamp]) {
-        let references = Arc::make_mut(&mut self.room_anchor_references);
-        for anchor in anchors {
-            let remove = references.get_mut(anchor).is_some_and(|count| {
-                *count = count
-                    .checked_sub(1)
-                    .expect("indexed room anchor retains a positive reference");
-                *count == 0
-            });
-            if remove {
-                references.remove(anchor);
-            }
-        }
+    fn replace_partition(&mut self, partition: journal::crossing::rooms::WorkingGroupPartition) {
+        self.grouped_designs = Arc::new(
+            partition
+                .groups
+                .into_iter()
+                .flat_map(|group| group.anchors)
+                .collect(),
+        );
     }
 
     fn advanced(&self, rows: &[journal::crossing::Envelope<journal::crossing::AnyFact>]) -> Self {
@@ -302,16 +273,16 @@ impl Indexes {
                 }
             } else if let Some(pended) = row.fact.read::<journal::crossing::body::TrustPended>() {
                 next.trust_surfaces.insert(pended.surface, pended.digest);
-            } else if let Some(stored) = row
+            } else if let Some(moved) = row
                 .fact
-                .read::<journal::crossing::rooms::WorkingGroupStored>()
+                .read::<journal::crossing::rooms::WorkingGroupMoved>()
             {
-                next.replace_working_group(stored.group.group, stored.group.anchors);
-            } else if let Some(removed) = row
+                next.replace_partition(moved.partition);
+            } else if let Some(arranged) = row
                 .fact
-                .read::<journal::crossing::rooms::WorkingGroupRemoved>()
+                .read::<journal::crossing::rooms::WorkingGroupsArranged>()
             {
-                next.remove_working_group(&removed.group);
+                next.replace_partition(arranged.partition);
             } else if let Some(done) = row.fact.read::<journal::crossing::body::TaskDone>() {
                 if let Some(terminal) = done.terminal {
                     next.terminals = next
@@ -622,11 +593,11 @@ impl TaskFacts {
         self.indexes.births.get(&occupant).copied()
     }
 
-    /// Current task identities retained by at least one saved working group.
+    /// Current task identities the working-group partition holds.
     pub fn room_anchor_tasks(
         &self,
     ) -> impl Iterator<Item = &journal::crossing::TaskStamp> + ExactSizeIterator {
-        self.indexes.room_anchor_references.keys()
+        self.indexes.grouped_designs.iter()
     }
 
     fn retain_allocation_origins(&mut self, frontier: &[journal::TaskHeads]) {

@@ -251,86 +251,77 @@ fn seeded_oops_group_changes_through_shared_group_authority() {
         seed_test_environment(Some(&root), Path::new("/opt/spice")).expect("demo seed succeeds");
     let journal = journal::Journal::open(environment.state.journal()).expect("seed journal opens");
     let bus = bus::Bus::start(journal).expect("seed journal bus starts");
+    let partition = || {
+        bus.read(|read| read.group_partition())
+            .expect("seed partition reads")
+            .expect("seed partition exists")
+    };
+    let seeded = partition();
     let group = wire::rooms::RoomAuthorityStamp::for_micros(DEMO_OOPS_GROUP_MICROS)
         .expect("demo OOPS group stamp is valid");
-    let head = bus
-        .read({
-            let group = group.clone();
-            move |read| read.group_head(&group)
-        })
-        .expect("seed group reads")
-        .expect("seed group exists");
-    let anchor = head.body().anchors[0].clone();
-    let put = wire::rooms::WorkingGroupPut {
-        group: wire::rooms::WorkingGroup {
-            group: group.clone(),
-            anchors: vec![anchor.clone()],
-        },
+    assert_eq!(seeded.body().groups[0].group, group);
+    let design = seeded.body().groups[0].anchors[0].clone();
+    let revision = seeded.body().revision;
+    let leave = wire::rooms::WorkingGroupMove {
+        design: design.clone(),
+        to: None,
     };
     let command = admitted_demo_group_command(
         "018f82d4-6f59-7d06-92e3-bce913116421",
-        CommandKind::WorkingGroupPut,
+        CommandKind::WorkingGroupMove,
         vec![
-            wire::Witness::Group {
-                group: group.clone(),
-                head: Some(head.position()),
+            wire::Witness::Group { revision },
+            wire::Witness::Existence {
+                task: design.clone(),
             },
-            wire::Witness::Existence { task: anchor },
         ],
-        &put,
+        &leave,
     );
-    let put = crate::board_command::dispatch(&bus, &command)
-        .expect("working-group put dispatches through the command door");
+    let left = crate::board_command::dispatch(&bus, &command)
+        .expect("working-group move dispatches through the command door");
     assert!(
         matches!(
-            put,
+            left,
             Outcome::Reply(Reply {
                 position: ReplyPosition::Committed(_),
                 body: CommandAnswer::WorkingGroupChange(_),
             })
         ),
-        "seeded group put must commit: {put:?}"
+        "the seeded design must leave its group: {left:?}"
     );
+    let ended = partition();
+    assert!(ended.body().groups.is_empty());
 
-    let stored = bus
-        .read({
-            let group = group.clone();
-            move |read| read.group_head(&group)
-        })
-        .expect("changed group reads")
-        .expect("changed group exists");
-    let end = wire::rooms::WorkingGroupPut {
-        group: wire::rooms::WorkingGroup {
-            group: group.clone(),
-            anchors: Vec::new(),
-        },
+    let rejoin = wire::rooms::WorkingGroupMove {
+        design: design.clone(),
+        to: Some(group.clone()),
     };
     let command = admitted_demo_group_command(
         "018f82d4-6f59-7d06-92e3-bce913116422",
-        CommandKind::WorkingGroupPut,
-        vec![wire::Witness::Group {
-            group: group.clone(),
-            head: Some(stored.position()),
-        }],
-        &end,
+        CommandKind::WorkingGroupMove,
+        vec![
+            wire::Witness::Group {
+                revision: ended.body().revision,
+            },
+            wire::Witness::Existence {
+                task: design.clone(),
+            },
+        ],
+        &rejoin,
     );
-    let end = crate::board_command::dispatch(&bus, &command)
-        .expect("empty working-group put dispatches through the command door");
+    let rejoined = crate::board_command::dispatch(&bus, &command)
+        .expect("working-group move dispatches through the command door");
     assert!(
         matches!(
-            end,
+            rejoined,
             Outcome::Reply(Reply {
                 position: ReplyPosition::Committed(_),
                 body: CommandAnswer::WorkingGroupChange(_),
             })
         ),
-        "seeded group end must commit: {end:?}"
+        "the seeded design must begin a group again: {rejoined:?}"
     );
-    assert!(
-        bus.read(move |read| read.group_head(&group))
-            .expect("removed group reads")
-            .is_none()
-    );
+    assert_eq!(partition().body().groups[0].anchors, vec![design]);
 }
 
 #[test]

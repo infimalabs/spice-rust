@@ -81,12 +81,13 @@ impl RoomAuthorityStamp {
     }
 }
 
-/// Canonical command attribution for a mutation targeting `group`.
+/// Canonical command attribution for every working-group partition change:
+/// the partition is one authority, whatever group a change touches.
 #[must_use]
-pub fn working_group_origin(group: &RoomAuthorityStamp) -> Origin {
-    format!("group:{group}")
+pub fn working_group_origin() -> Origin {
+    "group:partition"
         .parse()
-        .expect("a room-authority stamp forms a structural working-group origin")
+        .expect("the working-group partition forms a structural origin")
 }
 
 impl FromStr for RoomAuthorityStamp {
@@ -656,32 +657,135 @@ impl From<WorkingGroup> for WorkingGroupWire {
     }
 }
 
-/// Guarded complete replacement of one working group's designs.
+/// The working-group partition: every current group in operator order, each
+/// holding its designs in order, guarded by one revision.
 ///
-/// A design the replacement names leaves whatever group held it, and a group
-/// left without a design ends; an empty replacement ends this group.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkingGroupPut {
-    /// Complete intended group state.
-    pub group: WorkingGroup,
+/// A group stands only while it holds a design, no design stands in two
+/// groups, and no group appears twice. Revision zero is the empty partition
+/// before any grouping write.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    try_from = "WorkingGroupPartitionWire",
+    into = "WorkingGroupPartitionWire"
+)]
+pub struct WorkingGroupPartition {
+    /// Revision every grouping change is admitted against.
+    pub revision: u64,
+    /// Current groups in operator order.
+    pub groups: Vec<WorkingGroup>,
 }
 
-/// Immutable fact body recording a complete working-group state.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkingGroupStored {
-    /// Complete guarded state after the mutation.
-    pub group: WorkingGroup,
+struct WorkingGroupPartitionWire {
+    revision: u64,
+    groups: Vec<WorkingGroup>,
 }
 
-/// Immutable fact body recording that a working group ended because its last
-/// design left.
+impl TryFrom<WorkingGroupPartitionWire> for WorkingGroupPartition {
+    type Error = &'static str;
+
+    fn try_from(value: WorkingGroupPartitionWire) -> Result<Self, Self::Error> {
+        for (index, group) in value.groups.iter().enumerate() {
+            if group.anchors.is_empty() {
+                return Err("a working group stands only while it holds a design");
+            }
+            for earlier in &value.groups[..index] {
+                if earlier.group == group.group {
+                    return Err("a working group appears once in the partition");
+                }
+                if earlier
+                    .anchors
+                    .iter()
+                    .any(|anchor| group.anchors.contains(anchor))
+                {
+                    return Err("a design stands in at most one working group");
+                }
+            }
+        }
+        Ok(Self {
+            revision: value.revision,
+            groups: value.groups,
+        })
+    }
+}
+
+impl From<WorkingGroupPartition> for WorkingGroupPartitionWire {
+    fn from(value: WorkingGroupPartition) -> Self {
+        Self {
+            revision: value.revision,
+            groups: value.groups,
+        }
+    }
+}
+
+impl WorkingGroupPartition {
+    /// The group holding `design`, if any.
+    #[must_use]
+    pub fn holder(&self, design: &RoomAnchor) -> Option<&WorkingGroup> {
+        self.groups
+            .iter()
+            .find(|group| group.anchors.contains(design))
+    }
+}
+
+/// Move one design into a group, founding it under a fresh identity when no
+/// group holds that identity, or out of every group.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkingGroupRemoved {
-    /// Ended organization; anchor rooms remain unchanged.
-    pub group: RoomAuthorityStamp,
+pub struct WorkingGroupMove {
+    /// The moving design.
+    pub design: RoomAnchor,
+    /// Destination group, or absent to leave every group.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub to: Option<RoomAuthorityStamp>,
+}
+
+/// Restate the whole partition: group order, designs per group, and design
+/// order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkingGroupArrange {
+    /// Every current group in intended order.
+    pub groups: Vec<WorkingGroup>,
+}
+
+/// Immutable fact body recording one design's move and the resulting partition.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkingGroupMoved {
+    /// The design that moved.
+    pub design: RoomAnchor,
+    /// The group it stood in before, if any.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub from: Option<RoomAuthorityStamp>,
+    /// The group it stands in after, if any.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub to: Option<RoomAuthorityStamp>,
+    /// The complete partition after the move.
+    pub partition: WorkingGroupPartition,
+}
+
+/// Immutable fact body recording one whole-partition arrangement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkingGroupsArranged {
+    /// The complete partition before the arrangement.
+    pub from: WorkingGroupPartition,
+    /// The complete partition after it.
+    pub partition: WorkingGroupPartition,
 }
 
 /// Open relation from a retained candidate to exact supporting authority.
@@ -1254,6 +1358,41 @@ mod tests {
             "lanes": []
         });
         assert!(serde_json::from_value::<WorkingGroup>(smuggled_membership).is_err());
+    }
+
+    #[test]
+    fn a_partition_decodes_only_standing_disjoint_groups() {
+        let partition = |groups: serde_json::Value| {
+            serde_json::from_value::<WorkingGroupPartition>(serde_json::json!({
+                "revision": 3,
+                "groups": groups
+            }))
+        };
+        let value = serde_json::json!([
+            {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR0"]},
+            {"group": "1kKRRsDR3", "anchors": ["1kKRRsDR2", "1kKRRsDR4"]}
+        ]);
+        let decoded = partition(value).unwrap();
+        assert_eq!(decoded.revision, 3);
+        assert_eq!(
+            decoded
+                .holder(&"1kKRRsDR4".parse().unwrap())
+                .map(|group| group.group.to_string()),
+            Some("1kKRRsDR3".to_owned())
+        );
+        for refused in [
+            serde_json::json!([{"group": "1kKRRsDR1", "anchors": []}]),
+            serde_json::json!([
+                {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR0"]},
+                {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR2"]}
+            ]),
+            serde_json::json!([
+                {"group": "1kKRRsDR1", "anchors": ["1kKRRsDR0"]},
+                {"group": "1kKRRsDR3", "anchors": ["1kKRRsDR0"]}
+            ]),
+        ] {
+            assert!(partition(refused.clone()).is_err(), "{refused}");
+        }
     }
 
     #[test]

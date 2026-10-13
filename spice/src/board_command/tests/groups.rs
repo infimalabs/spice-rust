@@ -2,32 +2,24 @@ use super::*;
 
 use wire::intent::{
     WorkingGroupAnchor, WorkingGroupChangeStatus, WorkingGroupPage, WorkingGroupRead,
-    WorkingGroupView,
 };
-use wire::rooms::{RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupPut};
+use wire::rooms::{
+    RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupArrange,
+    WorkingGroupMove,
+};
 
 fn group_stamp(offset: i64) -> RoomAuthorityStamp {
     RoomAuthorityStamp::for_micros(1_760_000_000_000_000 + offset).expect("fixture group stamp")
 }
 
-fn read_groups(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    group: Option<RoomAuthorityStamp>,
-    after: Option<RoomAuthorityStamp>,
-    limit: u16,
-) -> WorkingGroupPage {
+fn read_partition(bus: &Bus, epoch: CanonicalUuid) -> WorkingGroupPage {
     let outcome = issue(
         bus,
         epoch,
         Actor::Operator,
         CommandKind::WorkingGroupRead,
         Vec::new(),
-        &WorkingGroupRead {
-            group,
-            after,
-            limit,
-        },
+        &WorkingGroupRead {},
     );
     let Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(_),
@@ -39,54 +31,82 @@ fn read_groups(
     page
 }
 
-fn read_group(bus: &Bus, epoch: CanonicalUuid, group: &RoomAuthorityStamp) -> WorkingGroupView {
-    read_groups(bus, epoch, Some(group.clone()), None, 1)
+/// Every group in partition order with its designs in order.
+fn standing(bus: &Bus, epoch: CanonicalUuid) -> Vec<(RoomAuthorityStamp, Vec<TaskStamp>)> {
+    read_partition(bus, epoch)
         .groups
         .into_iter()
-        .next()
-        .expect("fixture group exists")
-}
-
-fn group_absent(bus: &Bus, epoch: CanonicalUuid, group: &RoomAuthorityStamp) -> bool {
-    let page = read_groups(bus, epoch, Some(group.clone()), None, 1);
-    page.groups.is_empty() && page.unavailable.as_ref() == Some(group)
-}
-
-fn borns(view: &WorkingGroupView) -> Vec<TaskStamp> {
-    view.anchors
-        .iter()
-        .map(|anchor| match anchor {
-            WorkingGroupAnchor::Available { born, .. }
-            | WorkingGroupAnchor::Unavailable { born } => born.clone(),
+        .map(|group| {
+            let borns = group
+                .anchors
+                .into_iter()
+                .map(|anchor| match anchor {
+                    WorkingGroupAnchor::Available { born, .. }
+                    | WorkingGroupAnchor::Unavailable { born } => born,
+                })
+                .collect();
+            (group.group, borns)
         })
         .collect()
 }
 
-fn put_group(
+fn move_at(
     bus: &Bus,
     epoch: CanonicalUuid,
-    group: RoomAuthorityStamp,
-    head: Option<Seq>,
-    anchors: Vec<TaskStamp>,
+    revision: u64,
+    design: &TaskStamp,
+    to: Option<&RoomAuthorityStamp>,
 ) -> Outcome<CommandAnswer> {
-    let mut expected = vec![Witness::Group {
-        group: group.clone(),
-        head,
-    }];
-    expected.extend(
-        anchors
-            .iter()
-            .cloned()
-            .map(|task| Witness::Existence { task }),
-    );
     issue(
         bus,
         epoch,
         Actor::Operator,
-        CommandKind::WorkingGroupPut,
-        expected,
-        &WorkingGroupPut {
-            group: WorkingGroup { group, anchors },
+        CommandKind::WorkingGroupMove,
+        vec![
+            Witness::Group { revision },
+            Witness::Existence {
+                task: design.clone(),
+            },
+        ],
+        &WorkingGroupMove {
+            design: design.clone(),
+            to: to.cloned(),
+        },
+    )
+}
+
+/// Move `design` at the current revision.
+fn move_design(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    design: &TaskStamp,
+    to: Option<&RoomAuthorityStamp>,
+) -> Outcome<CommandAnswer> {
+    let revision = read_partition(bus, epoch).revision;
+    move_at(bus, epoch, revision, design, to)
+}
+
+/// Arrange the partition at the current revision.
+fn arrange(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    groups: &[(&RoomAuthorityStamp, &[&TaskStamp])],
+) -> Outcome<CommandAnswer> {
+    let revision = read_partition(bus, epoch).revision;
+    issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::WorkingGroupArrange,
+        vec![Witness::Group { revision }],
+        &WorkingGroupArrange {
+            groups: groups
+                .iter()
+                .map(|(group, anchors)| WorkingGroup {
+                    group: (*group).clone(),
+                    anchors: anchors.iter().map(|anchor| (*anchor).clone()).collect(),
+                })
+                .collect(),
         },
     )
 }
@@ -97,7 +117,7 @@ fn change_status(outcome: Outcome<CommandAnswer>) -> WorkingGroupChangeStatus {
             body: CommandAnswer::WorkingGroupChange(change),
             ..
         }) => change.status,
-        other => panic!("working-group put did not commit: {other:?}"),
+        other => panic!("working-group change did not commit: {other:?}"),
     }
 }
 
@@ -143,7 +163,6 @@ fn assert_anchor_resolution_and_group_end(
     epoch: CanonicalUuid,
     first: &TaskHandle,
     second: &TaskHandle,
-    group: &RoomAuthorityStamp,
 ) {
     let first_born = first.born().expect("first room identity");
     let second_born = second.born().expect("second room identity");
@@ -164,7 +183,14 @@ fn assert_anchor_resolution_and_group_end(
         },
     ));
     let renamed = TaskHandle::for_project("board.renamed", &first_born);
-    assert!(read_group(bus, epoch, group).anchors.iter().any(|anchor| {
+    let anchors = || {
+        read_partition(bus, epoch)
+            .groups
+            .into_iter()
+            .flat_map(|group| group.anchors)
+            .collect::<Vec<_>>()
+    };
+    assert!(anchors().iter().any(|anchor| {
         matches!(
             anchor,
             WorkingGroupAnchor::Available { born, handle }
@@ -173,25 +199,22 @@ fn assert_anchor_resolution_and_group_end(
     }));
 
     delete_task(bus, epoch, second);
-    let unavailable = read_group(bus, epoch, group);
-    assert!(matches!(
-        &unavailable.anchors[0],
+    assert!(anchors().iter().any(|anchor| matches!(
+        anchor,
         WorkingGroupAnchor::Unavailable { born } if *born == second_born
-    ));
+    )));
 
-    let rooms = [first_born, second_born];
+    let rooms = [first_born.clone(), second_born.clone()];
     let before = room_heads(bus, &rooms);
     assert_eq!(
-        change_status(put_group(
-            bus,
-            epoch,
-            group.clone(),
-            Some(unavailable.head),
-            Vec::new(),
-        )),
-        WorkingGroupChangeStatus::Removed
+        change_status(move_design(bus, epoch, &second_born, None)),
+        WorkingGroupChangeStatus::Moved
     );
-    assert!(group_absent(bus, epoch, group));
+    assert_eq!(
+        change_status(move_design(bus, epoch, &first_born, None)),
+        WorkingGroupChangeStatus::Ended
+    );
+    assert!(standing(bus, epoch).is_empty());
     assert_eq!(
         room_heads(bus, &rooms),
         before,
@@ -229,29 +252,17 @@ fn open_board_retains_only_terminal_tasks_anchored_by_current_groups() {
     assert!(open_stamps(&bus).is_empty());
 
     let group = group_stamp(9);
-    assert_committed(put_group(
-        &bus,
-        epoch,
-        group.clone(),
-        None,
-        vec![terminal[0].clone()],
-    ));
+    assert_committed(move_design(&bus, epoch, &terminal[0], Some(&group)));
     assert_eq!(open_stamps(&bus), [terminal[0].clone()].into());
 
-    let head = read_group(&bus, epoch, &group).head;
-    assert_committed(put_group(
-        &bus,
-        epoch,
-        group,
-        Some(head),
-        vec![terminal[1].clone()],
-    ));
+    assert_committed(move_design(&bus, epoch, &terminal[1], Some(&group)));
+    assert_committed(move_design(&bus, epoch, &terminal[0], None));
     assert_eq!(open_stamps(&bus), [terminal[1].clone()].into());
     clean(&root, bus);
 }
 
 #[test]
-fn a_design_belongs_to_one_group_and_a_group_lives_only_while_it_holds_one() {
+fn a_design_moves_between_groups_and_a_group_lives_only_while_it_holds_one() {
     let (root, bus, epoch, _) = fixture("working-groups", 0);
     let first = add_design_room(&bus, epoch, stamp("group-first"), "First room");
     let second = add_design_room(&bus, epoch, stamp("group-second"), "Second room");
@@ -261,74 +272,93 @@ fn a_design_belongs_to_one_group_and_a_group_lives_only_while_it_holds_one() {
     let secondary = group_stamp(222);
 
     assert!(refused_as(
-        put_group(&bus, epoch, primary.clone(), None, Vec::new()),
-        "group::design-required",
-    ));
-    assert!(group_absent(&bus, epoch, &primary));
-
-    assert_committed(put_group(
-        &bus,
-        epoch,
-        primary.clone(),
-        None,
-        vec![first_born.clone(), second_born.clone()],
-    ));
-    let original = read_group(&bus, epoch, &primary);
-    assert_committed(put_group(
-        &bus,
-        epoch,
-        secondary.clone(),
-        None,
-        vec![first_born.clone()],
+        move_design(&bus, epoch, &first_born, None),
+        "group::design-unchanged",
     ));
     assert_eq!(
-        borns(&read_group(&bus, epoch, &primary)),
-        vec![second_born.clone()]
+        change_status(move_design(&bus, epoch, &first_born, Some(&primary))),
+        WorkingGroupChangeStatus::Moved
     );
+    assert_committed(move_design(&bus, epoch, &second_born, Some(&primary)));
+    let observed = read_partition(&bus, epoch).revision;
+    assert_committed(move_design(&bus, epoch, &first_born, Some(&secondary)));
     assert_eq!(
-        borns(&read_group(&bus, epoch, &secondary)),
-        vec![first_born.clone()]
+        standing(&bus, epoch),
+        vec![
+            (secondary.clone(), vec![first_born.clone()]),
+            (primary.clone(), vec![second_born.clone()]),
+        ],
+        "a founded group takes its design's place in the partition order"
     );
-
-    let first_page = read_groups(&bus, epoch, None, None, 1);
-    assert_eq!(first_page.groups.len(), 1);
-    assert_eq!(first_page.continuation, Some(primary.clone()));
-    let second_page = read_groups(&bus, epoch, None, first_page.continuation, 1);
-    assert_eq!(second_page.groups[0].group, secondary);
-    assert_eq!(second_page.continuation, None);
 
     assert!(refused_as(
-        put_group(
-            &bus,
-            epoch,
-            primary.clone(),
-            Some(original.head),
-            vec![first_born.clone(), second_born.clone()],
-        ),
-        "board::witness-moved",
+        move_at(&bus, epoch, observed, &second_born, Some(&secondary)),
+        "group::partition-moved",
     ));
-
-    let current = read_group(&bus, epoch, &primary);
     assert_eq!(
-        change_status(put_group(
-            &bus,
-            epoch,
-            primary.clone(),
-            Some(current.head),
-            vec![second_born.clone(), first_born.clone()],
-        )),
-        WorkingGroupChangeStatus::Stored
-    );
-    assert_eq!(
-        borns(&read_group(&bus, epoch, &primary)),
-        vec![second_born.clone(), first_born.clone()]
-    );
-    assert!(
-        group_absent(&bus, epoch, &secondary),
+        change_status(move_design(&bus, epoch, &first_born, Some(&primary))),
+        WorkingGroupChangeStatus::Ended,
         "a group whose last design moved away ends"
     );
+    assert_eq!(
+        standing(&bus, epoch),
+        vec![(
+            primary.clone(),
+            vec![second_born.clone(), first_born.clone()]
+        )]
+    );
+    assert!(refused_as(
+        move_design(&bus, epoch, &first_born, Some(&primary)),
+        "group::design-unchanged",
+    ));
 
-    assert_anchor_resolution_and_group_end(&bus, epoch, &first, &second, &primary);
+    assert_eq!(
+        change_status(arrange(
+            &bus,
+            epoch,
+            &[(&primary, &[&first_born, &second_born])]
+        )),
+        WorkingGroupChangeStatus::Arranged
+    );
+    assert_eq!(
+        standing(&bus, epoch),
+        vec![(
+            primary.clone(),
+            vec![first_born.clone(), second_born.clone()]
+        )]
+    );
+    let third = add_design_room(&bus, epoch, stamp("group-third"), "Third room")
+        .born()
+        .expect("third room identity");
+    for (groups, reason) in [
+        (
+            vec![(&primary, &[&first_born][..])],
+            "group::arrangement-incomplete",
+        ),
+        (
+            vec![
+                (&primary, &[&first_born, &second_born][..]),
+                (&secondary, &[&first_born][..]),
+            ],
+            "group::arrangement-duplicate-design",
+        ),
+        (
+            vec![(&primary, &[&first_born, &second_born, &third][..])],
+            "group::arrangement-unknown-design",
+        ),
+        (vec![(&primary, &[][..])], "group::arrangement-vacant-group"),
+    ] {
+        assert!(
+            refused_as(arrange(&bus, epoch, &groups), reason),
+            "{reason}"
+        );
+    }
+    assert_eq!(
+        standing(&bus, epoch),
+        vec![(primary, vec![first_born.clone(), second_born.clone()])]
+    );
+
+    assert_anchor_resolution_and_group_end(&bus, epoch, &first, &second);
     clean(&root, bus);
 }
 
@@ -374,30 +404,29 @@ fn working_groups_admit_at_most_six_designs_and_nothing_but_designs() {
     let plain = add_born(&bus, epoch, stamp("plain-room"), "Plain task")
         .born()
         .expect("plain identity");
-    let six = &designs[..WORKING_GROUP_DESIGN_LIMIT];
 
     let group = group_stamp(333);
-    assert_committed(put_group(&bus, epoch, group.clone(), None, six.to_vec()));
-    let full = read_group(&bus, epoch, &group);
+    for design in &designs[..WORKING_GROUP_DESIGN_LIMIT] {
+        assert_committed(move_design(&bus, epoch, design, Some(&group)));
+    }
+    let full = read_partition(&bus, epoch);
     assert!(refused_as(
-        put_group(&bus, epoch, group.clone(), Some(full.head), designs.clone()),
-        "group::design-limit",
-    ));
-    let mut swapped = designs[..WORKING_GROUP_DESIGN_LIMIT - 1].to_vec();
-    swapped.push(plain.clone());
-    assert!(refused_as(
-        put_group(&bus, epoch, group.clone(), Some(full.head), swapped),
-        "group::design-only",
-    ));
-    assert_eq!(read_group(&bus, epoch, &group), full);
-    assert!(refused_as(
-        put_group(&bus, epoch, group_stamp(444), None, designs.clone()),
+        move_design(
+            &bus,
+            epoch,
+            &designs[WORKING_GROUP_DESIGN_LIMIT],
+            Some(&group)
+        ),
         "group::design-limit",
     ));
     assert!(refused_as(
-        put_group(&bus, epoch, group_stamp(555), None, vec![plain]),
+        move_design(&bus, epoch, &plain, Some(&group)),
         "group::design-only",
     ));
-    assert_eq!(read_group(&bus, epoch, &group), full);
+    assert!(refused_as(
+        move_design(&bus, epoch, &plain, Some(&group_stamp(444))),
+        "group::design-only",
+    ));
+    assert_eq!(read_partition(&bus, epoch), full);
     clean(&root, bus);
 }

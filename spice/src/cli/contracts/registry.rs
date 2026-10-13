@@ -610,19 +610,27 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     operator!(
         ["group", "list"],
-        "group list [--after GROUP] [--limit N]",
+        "group list",
         Read,
         [],
         Reply,
         "group::read"
     ),
     operator!(
-        ["group", "put"],
-        "group put [ANCHOR...] [--group GROUP]",
+        ["group", "move"],
+        "group move ANCHOR [--to GROUP] [--new]",
         Command,
-        [WorkingGroupStored, WorkingGroupRemoved],
+        [WorkingGroupMoved],
         Reply,
-        "group::put"
+        "group::move"
+    ),
+    operator!(
+        ["group", "arrange"],
+        "group arrange GROUPING...",
+        Command,
+        [WorkingGroupsArranged],
+        Reply,
+        "group::arrange"
     ),
     row!(
         ["preparation", "show"],

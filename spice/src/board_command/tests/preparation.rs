@@ -5,7 +5,7 @@ use wire::rooms::{
     CandidateRef, CandidateReference, CandidateRetain, CoverageAuthority, CoverageRef, CritiqueRef,
     CritiqueStanding, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorize,
     NegativeDecision, OutputAdopt, PreparationDecide, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomSource, WorkingGroup, WorkingGroupPut,
+    RetainedCandidate, RoomAuthorityStamp, RoomSource, WorkingGroupMove,
 };
 
 fn add_plan(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
@@ -740,34 +740,32 @@ fn add_output(bus: &Bus, epoch: CanonicalUuid, controller: &TaskHandle, name: &s
     TaskHandle::for_project("board.test", &born)
 }
 
-fn store_group(
+/// Move `design` into `to`, or out of every group, at the current partition
+/// revision.
+fn move_design(
     bus: &Bus,
     epoch: CanonicalUuid,
-    group: &RoomAuthorityStamp,
-    head: Option<Seq>,
-    anchors: Vec<TaskStamp>,
+    design: TaskStamp,
+    to: Option<&RoomAuthorityStamp>,
 ) {
-    let mut expected = vec![Witness::Group {
-        group: group.clone(),
-        head,
-    }];
-    expected.extend(
-        anchors
-            .iter()
-            .cloned()
-            .map(|task| Witness::Existence { task }),
-    );
+    let revision = bus
+        .read(|read| read.group_partition())
+        .expect("partition reads")
+        .map_or(0, |head| head.body().revision);
     assert_committed(issue(
         bus,
         epoch,
         Actor::Operator,
-        CommandKind::WorkingGroupPut,
-        expected,
-        &WorkingGroupPut {
-            group: WorkingGroup {
-                group: group.clone(),
-                anchors,
+        CommandKind::WorkingGroupMove,
+        vec![
+            Witness::Group { revision },
+            Witness::Existence {
+                task: design.clone(),
             },
+        ],
+        &WorkingGroupMove {
+            design,
+            to: to.cloned(),
         },
     ));
 }
@@ -854,13 +852,13 @@ fn working_group_engagement_authorizes_a_design_outputs_once_and_disengagement_s
     // Dropping the Design into a working group authorizes its current output
     // and every output it gains while anchored, through the one operator fact.
     let group = RoomAuthorityStamp::for_micros(1_760_000_000_000_000).expect("fixture group");
-    store_group(&bus, epoch, &group, None, vec![stamp("Engaged design")]);
+    move_design(&bus, epoch, stamp("Engaged design"), Some(&group));
     let granted = engagement(&bus, epoch, &current).expect("activation authorizes");
     let later = add_output(&bus, epoch, &design, "Later output");
     assert_eq!(engagement(&bus, epoch, &later), Some(granted));
 
     // Leaving every group stops later grants and revokes none.
-    store_group(&bus, epoch, &group, Some(granted), Vec::new());
+    move_design(&bus, epoch, stamp("Engaged design"), None);
     let stray = add_output(&bus, epoch, &design, "Stray output");
     assert_eq!(engagement(&bus, epoch, &stray), None);
     assert_eq!(engagement(&bus, epoch, &current), Some(granted));
@@ -871,7 +869,7 @@ fn working_group_engagement_authorizes_a_design_outputs_once_and_disengagement_s
     // Engaging again authorizes the stray output without moving earlier grants,
     // and a clean review then concludes the Design with every output eligible.
     let regroup = RoomAuthorityStamp::for_micros(1_760_000_000_000_001).expect("fixture group");
-    store_group(&bus, epoch, &regroup, None, vec![stamp("Engaged design")]);
+    move_design(&bus, epoch, stamp("Engaged design"), Some(&regroup));
     let regranted = engagement(&bus, epoch, &stray).expect("re-engagement authorizes");
     assert_ne!(regranted, granted);
     assert_eq!(engagement(&bus, epoch, &current), Some(granted));
