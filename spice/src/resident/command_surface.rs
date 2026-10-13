@@ -313,6 +313,10 @@ impl<'a> Surface<'a> {
                 ),
                 None,
             ),
+            (CommandKind::RoomConversationText, Intent::RoomConversationText(request)) => (
+                crate::room_command::conversation_text(self.bus, &self.paths.tape, request),
+                None,
+            ),
             (CommandKind::RoomCoordinate, Intent::RoomCoordinate(request)) => (
                 crate::board_command::room_coordinate(
                     self.bus,

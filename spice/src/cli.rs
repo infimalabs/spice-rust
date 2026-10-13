@@ -189,6 +189,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::VendorCatalog
         | CommandKind::RoomPost
         | CommandKind::RoomCoordinationRead
+        | CommandKind::RoomConversationText
         | CommandKind::RoomCoordinate
         | CommandKind::RoomPutAside
         | CommandKind::RoomControl

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::rooms::{
     QuestionClosure, QuestionResultRef, RoomAuthorityStamp, RoomReceiptDisposition, RoomReceiptRef,
-    RoomRelevanceVerdict,
+    RoomRelevanceVerdict, RoomSource, RoomSourceUnavailable,
 };
 pub use crate::rooms::{WorkingGroupArrange, WorkingGroupMove};
 use crate::{OccupantAddress, SequenceCode, TaskHandle, TaskStamp};
@@ -51,6 +51,38 @@ pub struct RoomPutAside {
 pub struct RoomCoordinationRead {
     /// Current rendered handle of the anchor task.
     pub room: TaskHandle,
+}
+
+/// Read one conversation publication's text from its owning source: an
+/// operator's from its journal fact, a lane's from its transcript.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomConversationText {
+    /// The admitted MSG, ASK, or ANS.
+    pub publication: RoomAuthorityStamp,
+}
+
+/// One conversation publication's text, or why its source cannot supply it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomConversationTextAnswer {
+    /// The publication read.
+    pub publication: RoomAuthorityStamp,
+    /// Its text at the read barrier.
+    pub content: RoomConversationContent,
+}
+
+/// What a conversation publication's owning source supplied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RoomConversationContent {
+    /// The exact authored text.
+    Text { text: String },
+    /// A journal fact or retained artifact the publication cites rather than
+    /// quotes.
+    Linked { source: RoomSource },
+    /// The source does not supply it, for a typed reason.
+    Unavailable { unavailable: RoomSourceUnavailable },
 }
 
 /// One operator control over its own operator items or the questions it

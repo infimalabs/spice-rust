@@ -316,6 +316,48 @@ fn operator_routes_open_pending_items() {
     lanes.finish();
 }
 
+/// The operator reads a lane's operator ASK body from the author's transcript,
+/// the bytes `spice room inbox` prints, and an unknown publication reads as
+/// missing rather than as some other text.
+#[test]
+fn an_operator_item_body_reads_back_from_its_authoring_transcript() {
+    let lanes = Lanes::new("conv-operator-text");
+    let room = lanes.room("dVrD244Jd");
+    let asking = lanes.say(SENDER, &format!("ASK operator#{room}: ship it?"));
+    asked(&asking);
+    let [asked] = lanes
+        .conversations()
+        .try_into()
+        .expect("one conversation record");
+    let read = |publication| {
+        let outcome = crate::room_command::conversation_text(
+            &lanes.bus,
+            &lanes.paths.tape,
+            &wire::intent::RoomConversationText { publication },
+        );
+        let wire::Outcome::Reply(reply) = outcome else {
+            panic!("the conversation text read answers: {outcome:?}");
+        };
+        let wire::intent::CommandAnswer::RoomConversationText(answer) = reply.body else {
+            panic!("another answer shape: {:?}", reply.body);
+        };
+        answer.content
+    };
+    assert_eq!(
+        read(asked.publication.clone()),
+        wire::intent::RoomConversationContent::Text {
+            text: "ship it?".to_owned()
+        }
+    );
+    assert_eq!(
+        read("dVrD244Jz".parse().expect("fixture publication")),
+        wire::intent::RoomConversationContent::Unavailable {
+            unavailable: wire::rooms::RoomSourceUnavailable::Missing {}
+        }
+    );
+    lanes.finish();
+}
+
 /// An ASK whose one address proves no occupant publishes nothing.
 #[test]
 fn an_ask_to_an_unproved_audience_publishes_nothing() {

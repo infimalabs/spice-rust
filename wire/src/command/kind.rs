@@ -21,6 +21,7 @@ impl CommandKind {
         Self::DocLedger,
         Self::RoomPost,
         Self::RoomCoordinationRead,
+        Self::RoomConversationText,
         Self::RoomCoordinate,
         Self::RoomPutAside,
         Self::RoomControl,
@@ -112,6 +113,7 @@ impl CommandKind {
             | Self::DocLedger
             | Self::RoomPost
             | Self::RoomCoordinationRead
+            | Self::RoomConversationText
             | Self::RoomCoordinate
             | Self::RoomPutAside
             | Self::RoomControl
@@ -198,6 +200,7 @@ impl CommandKind {
             Self::DocLedger => "doc::ledger",
             Self::RoomPost
             | Self::RoomCoordinationRead
+            | Self::RoomConversationText
             | Self::RoomCoordinate
             | Self::RoomPutAside
             | Self::RoomControl
@@ -232,6 +235,7 @@ impl CommandKind {
         match self {
             Self::RoomPost => "room::post",
             Self::RoomCoordinationRead => "room::coordination-read",
+            Self::RoomConversationText => "room::conversation-text",
             Self::RoomCoordinate => "room::coordinate",
             Self::RoomPutAside => "room::put-aside",
             Self::RoomControl => "room::control",
@@ -335,6 +339,7 @@ impl CommandKind {
                 | Self::LaneJobRead
                 | Self::WorkingGroupRead
                 | Self::RoomCoordinationRead
+                | Self::RoomConversationText
                 | Self::LaneRecall
         )
     }

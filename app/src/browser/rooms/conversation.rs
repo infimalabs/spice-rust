@@ -8,11 +8,12 @@ use std::rc::Rc;
 
 use wasm_bindgen::JsCast;
 use web_sys::{Element, HtmlElement, HtmlInputElement, HtmlTextAreaElement};
-use wire::intent::{RoomClose, RoomControl, RoomControlAnswer};
+use wire::intent::{RoomClose, RoomControl, RoomControlAnswer, RoomConversationContent};
 use wire::rooms::{
     QuestionClosure, QuestionResultRef, QuestionResultState, ROOM_PENDING_RESULT_LIMIT,
     RoomAuthorityStamp, RoomDelivery, RoomDestination, RoomPublicationContent, RoomPublicationKind,
-    RoomReceiptDisposition, RoomReceiptRef, RoomReceiptState, TranscriptHunk,
+    RoomReceiptDisposition, RoomReceiptRef, RoomReceiptState, RoomSource, RoomSourceUnavailable,
+    TranscriptHunk,
 };
 use wire::{CanonicalUuid, CommandKind, Disposition};
 use yew::prelude::*;
@@ -21,7 +22,8 @@ use crate::AppRuntime;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, RoomControlRequest};
 use crate::runtime::{
-    Conversation, Delivery, OperatorItem, QuestionResult, RoomEvent, RoomEventKind,
+    Conversation, ConversationText, Delivery, OperatorItem, QuestionResult, RoomEvent,
+    RoomEventKind,
 };
 
 /// What a card's controls act through.
@@ -77,7 +79,8 @@ pub(super) fn render_card(
         _ => return None,
     };
     // A lane's bytes stay in its transcript; absent its echo, the text its
-    // own deliveries carried stands in.
+    // own deliveries carried, then the resident's read of that transcript,
+    // stands in.
     let text = echoed.or_else(|| {
         packet
             .unwrap_or_default()
@@ -85,6 +88,16 @@ pub(super) fn render_card(
             .chain(conversation.map_or(&[][..], |conversation| &conversation.directed))
             .find_map(|directive| projection.delivery(directive))
             .map(|delivery| delivery.value.text.clone())
+            .or_else(|| {
+                conversation.and_then(|conversation| {
+                    match runtime.conversation_text(conversation.publication.publication()) {
+                        Some(ConversationText::Read(RoomConversationContent::Text { text })) => {
+                            Some(text.clone())
+                        }
+                        _ => None,
+                    }
+                })
+            })
     });
     let (verb, routes, result) = match conversation {
         Some(conversation) => (
@@ -141,8 +154,9 @@ pub(super) fn render_card(
     })
 }
 
-/// Operator receipts and answer duties, each with its exact controls, for the
-/// catalog. An ACKed ASK remains here until its separate result terminates.
+/// Operator receipts and answer duties, each with the words it carries and
+/// its exact controls, for the catalog. An ACKed ASK remains here until its
+/// separate result terminates.
 pub(super) fn render_inbox(
     runtime: &AppRuntime,
     report: &Callback<String>,
@@ -163,15 +177,21 @@ pub(super) fn render_inbox(
             }
             {for open.into_iter().map(|entry| {
                 let publication = entry.item.value.record.publication();
-                let summary = projection
-                    .conversation(publication)
-                    .map_or_else(String::new, |conversation| {
-                        format!(
-                            "{} from {}",
-                            verb(conversation),
-                            party(runtime, conversation.publication.author()),
-                        )
-                    });
+                let conversation = projection.conversation(publication);
+                let summary = conversation.map_or_else(String::new, |conversation| {
+                    format!(
+                        "{} from {}",
+                        verb(conversation),
+                        party(runtime, conversation.publication.author()),
+                    )
+                });
+                let words = conversation.map_or_else(
+                    || "The publication this item stands for is not loaded.".to_owned(),
+                    |conversation| inbox_words(runtime, conversation),
+                );
+                let asked = entry.result.map(|result| {
+                    party(runtime, result.value.record.requester())
+                });
                 let room = entry
                     .item
                     .value
@@ -183,8 +203,16 @@ pub(super) fn render_inbox(
                         act,
                         result.value.record.result(),
                         &result.value,
+                        true,
                     )
                 });
+                let guide = match &asked {
+                    Some(requester) => format!(
+                        "Answer sends your reply back to {requester} and settles the receipt; \
+                         Decline refuses the question. ACK only marks it seen; NAK also declines it."
+                    ),
+                    None => "ACK marks this message seen; NAK declines it. Nothing is asked of you.".to_owned(),
+                };
                 html! {
                     <article
                         class="room-card room-flow-card"
@@ -198,14 +226,52 @@ pub(super) fn render_inbox(
                             <span>{room}</span>
                             <code>{publication.to_string()}</code>
                         </header>
-                        <ul class="room-flow-statuses">
-                            {item_status(act, entry.key, &entry.item.value, "Operator")}
-                        </ul>
+                        <p class="room-flow-text">{words}</p>
                         {result}
+                        <ul class="room-flow-statuses" aria-label="Receipt">
+                            {item_status(act, entry.key, &entry.item.value, "You")}
+                        </ul>
+                        <p class="room-flow-guide">{guide}</p>
                     </article>
                 }
             })}
         </section>
+    }
+}
+
+/// What one inbox publication says: the operator's own text, else the
+/// resident's read of the authoring lane's transcript, else that lane's echo
+/// while the read runs.
+fn inbox_words(runtime: &AppRuntime, conversation: &Conversation) -> String {
+    if let Some(text) = &conversation.text {
+        return text.clone();
+    }
+    match runtime.conversation_text(conversation.publication.publication()) {
+        Some(ConversationText::Read(RoomConversationContent::Text { text })) => text.clone(),
+        Some(ConversationText::Read(RoomConversationContent::Linked { source })) => {
+            format!("Linked source: {source:?}")
+        }
+        Some(ConversationText::Read(RoomConversationContent::Unavailable { unavailable })) => {
+            format!("Text unavailable: {}", unavailable_reason(unavailable))
+        }
+        Some(ConversationText::Failed(reason)) => format!("Text could not be read: {reason}"),
+        Some(ConversationText::Loading) | None => match conversation.publication.source() {
+            RoomSource::Transcript(hunk) => echo(runtime, hunk),
+            _ => None,
+        }
+        .unwrap_or_else(|| "Reading the author's transcript…".to_owned()),
+    }
+}
+
+fn unavailable_reason(unavailable: &RoomSourceUnavailable) -> String {
+    match unavailable {
+        RoomSourceUnavailable::Missing {} => "the source is missing".to_owned(),
+        RoomSourceUnavailable::Hidden {} => "the source is hidden".to_owned(),
+        RoomSourceUnavailable::Changed {} => "the source no longer holds these bytes".to_owned(),
+        RoomSourceUnavailable::Unreadable {} => "the source cannot be read now".to_owned(),
+        RoomSourceUnavailable::UnsupportedRetained { release } => {
+            format!("retained by release {release}, which this release cannot decode")
+        }
     }
 }
 
@@ -414,17 +480,28 @@ fn result(act: Act<'_>, conversation: &Conversation) -> Html {
             </p>
         };
     }
-    question_result(act, result, question)
+    question_result(act, result, question, false)
 }
 
-fn question_result(act: Act<'_>, result: &QuestionResultRef, question: &QuestionResult) -> Html {
+/// A question's result line and controls. The inbox leads with the answer
+/// owed; a room card also shows the requester's pending-result load.
+fn question_result(
+    act: Act<'_>,
+    result: &QuestionResultRef,
+    question: &QuestionResult,
+    inbox: bool,
+) -> Html {
     let projection = act.runtime.room_projection().conversation();
     let state = question.state.name();
+    let requester = party(act.runtime, question.record.requester());
     let label = match &question.state {
-        QuestionResultState::Pending {} => format!(
-            "pending until {} · {} holds {} of {ROOM_PENDING_RESULT_LIMIT} pending results",
+        QuestionResultState::Pending {} if inbox => format!(
+            "{requester} awaits your answer until {}",
             question.record.deadline(),
-            party(act.runtime, question.record.requester()),
+        ),
+        QuestionResultState::Pending {} => format!(
+            "pending until {} · {requester} holds {} of {ROOM_PENDING_RESULT_LIMIT} pending results",
+            question.record.deadline(),
             projection.pending_results(question.record.requester()),
         ),
         QuestionResultState::Answered { answer, .. } => format!("answered by {answer}"),
@@ -545,12 +622,20 @@ fn result_controls(act: Act<'_>, result: &QuestionResultRef, question: &Question
     } else {
         "Cancel for requester"
     };
+    let prompt = if respondent {
+        format!(
+            "Answer to {}, or a decline clause",
+            party(act.runtime, question.record.requester())
+        )
+    } else {
+        "Clause".to_owned()
+    };
     html! {
         <form class="room-flow-control" {onsubmit}>
             <textarea
                 ref={text}
-                aria-label={if respondent { "Answer or clause" } else { "Clause" }}
-                placeholder={if respondent { "Answer, or a decline clause" } else { "Clause" }}
+                aria-label={prompt.clone()}
+                placeholder={prompt}
                 disabled={!(answerable || closable)}
             />
             if respondent {

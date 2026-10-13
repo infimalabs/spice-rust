@@ -139,6 +139,39 @@ pub(super) async fn send_task_details(
     Ok(())
 }
 
+/// Read the text of every open operator item that arrived without it; a
+/// lane's bytes stay in its transcript, which only the resident reads.
+pub(super) async fn send_operator_item_texts(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    data: &SurfaceData,
+) -> Result<(), String> {
+    if !SteerPane::over(principal).offers(CommandKind::RoomConversationText) {
+        return Ok(());
+    }
+    let publications = data
+        .write()
+        .as_mut()
+        .map(AppRuntime::begin_operator_item_texts)
+        .unwrap_or_default();
+    for publication in publications {
+        send_typed(
+            principal,
+            writer,
+            actions,
+            PendingKind::ConversationText {
+                publication: publication.clone(),
+            },
+            CommandKind::RoomConversationText,
+            vec![],
+            wire::intent::RoomConversationText { publication },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 async fn send_board(
     principal: &Principal,
     writer: &mut SocketWriter,

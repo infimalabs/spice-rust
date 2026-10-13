@@ -331,6 +331,7 @@ async fn apply_incoming_frame(
         application.stale,
     )
     .await?;
+    refresh::send_operator_item_texts(principal, writer, actions, data).await?;
     drain_submissions(principal, writer, actions, &handles.submissions).await?;
     actions.rearm().map_err(|error| error.to_string())?;
     Ok(application.lane_refresh)

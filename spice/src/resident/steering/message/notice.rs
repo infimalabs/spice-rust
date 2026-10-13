@@ -283,7 +283,11 @@ impl MessageRecordedNotice {
             ));
         }
         if self.operator {
-            clauses.push("opened one pending operator item".to_owned());
+            clauses.push(
+                "opened one pending operator item, which the operator reads and settles in the \
+                 Operator inbox"
+                    .to_owned(),
+            );
         }
         if !self.rooms.is_empty() {
             clauses.push(format!("was recorded in room {}", self.rooms.join(", ")));

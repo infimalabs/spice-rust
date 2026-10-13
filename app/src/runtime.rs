@@ -14,6 +14,7 @@ use wire::intent::{
     TaskDetailAnswer, TaskRelationKind, TaskRelationNodeRef, TaskRelations, TaskRelationsAnswer,
     VendorCatalogAnswer,
 };
+use wire::rooms::RoomAuthorityStamp;
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, Digest, FactKind,
     MessageLocus, Outcome, Packed, Response, Seq, StreamCursor, StreamFrame, ViewSubject,
@@ -24,6 +25,7 @@ use crate::socket::Admitted;
 use crate::watchband;
 
 mod consent;
+mod conversation_text;
 mod lanes;
 mod member_control;
 mod message_cards;
@@ -32,6 +34,7 @@ mod rooms;
 mod scoped;
 mod stream;
 pub use consent::ConsentRuling;
+pub use conversation_text::ConversationText;
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 pub use publication::AppSurface;
@@ -498,6 +501,9 @@ pub struct AppRuntime {
     task_relations: BTreeMap<TaskRelationsKey, TaskRelationsState>,
     blocker_actions: BTreeMap<Digest, BlockerActionState>,
     task_relations_revision: u64,
+    /// Text of lane-authored publications the operator inbox shows; a
+    /// publication's bytes never change, so a settled read stands.
+    conversation_texts: BTreeMap<RoomAuthorityStamp, ConversationText>,
     member_controls: member_control::MemberControls,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
@@ -554,6 +560,7 @@ impl AppRuntime {
             task_relations: BTreeMap::new(),
             blocker_actions: BTreeMap::new(),
             task_relations_revision: 0,
+            conversation_texts: BTreeMap::new(),
             member_controls: member_control::MemberControls::default(),
             lane_position: None,
             inbox: ScopedValue::new(accepted),
@@ -617,6 +624,7 @@ impl AppRuntime {
             self.task_relations
                 .retain(|_, state| refresh_task_relations(state, false));
             self.task_relations_revision = self.task_relations_revision.saturating_add(1);
+            self.forget_conversation_text_reads();
             false
         } else {
             *self = Self::new(accepted);
