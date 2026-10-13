@@ -1033,3 +1033,65 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     claim_all(&bus, epoch, &seats[1..], vec![task]);
     clean(&root, bus);
 }
+
+#[test]
+fn a_design_refuses_authorization_until_its_pending_dependencies_settle() {
+    let (root, bus, epoch, seats) = fixture("preparation-design-blocked", 2);
+    let design = add_controller(
+        &bus,
+        epoch,
+        "Blocked design",
+        wire::TaskIntent::Design,
+        None,
+    );
+    let selected = add_plan_output(&bus, epoch, &design, "Selected plan");
+    let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
+    let (candidate, source) =
+        retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
+    let coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    record_test_decisions(&bus, epoch, &design, &selected, &candidate, &source);
+    let correction = todo_task(&bus, epoch, "PREP-correct01", "Open review correction");
+    connect_child(&bus, epoch, &design, &correction);
+
+    let current = board(&bus, epoch, Actor::Operator);
+    let mut expected = transition_witnesses(at(&current, &design));
+    expected.extend(transition_witnesses(at(&current, &selected)));
+    expected.push(Witness::Authorization {
+        output: selected.born().expect("output stamp"),
+        head: None,
+    });
+    let refused = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::ExecutionAuthorize,
+        expected,
+        &ExecutionAuthorize {
+            authorization: ExecutionAuthorization {
+                decision: DecisionRef {
+                    controller: design.born().expect("design stamp"),
+                    decision: wire::SequenceCode::new(3),
+                },
+                candidate: candidate.clone(),
+                governed_inputs: Vec::new(),
+                selected_outputs: vec![selected.born().expect("output stamp")],
+                coverage: vec![coverage[1].clone()],
+            },
+        },
+    );
+    assert!(
+        matches!(&refused, Outcome::Refusal(refusal)
+            if refusal.reason() == "preparation::controller-blocked"),
+        "{refused:?}"
+    );
+    let unchanged = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&unchanged, &design).workflow.body.status, "pending");
+    assert_eq!(at(&unchanged, &selected).statement.body.authorization, None);
+
+    let fixer = Actor::Lane(seats[1].lane);
+    claim_and_complete_task(&bus, epoch, &seats[1], &fixer, &correction);
+    authorize_test_output(
+        &bus, epoch, &design, &selected, &sibling, candidate, &coverage,
+    );
+    clean(&root, bus);
+}

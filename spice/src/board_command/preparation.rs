@@ -99,9 +99,12 @@ fn design_controller(
     ))
 }
 
-/// Admit an authorization's controller: a witnessed, pending, unclaimed Design.
+/// Admit an authorization's controller: a witnessed, pending, unclaimed
+/// Design with no unsettled dependency, so a review finding's corrections
+/// settle before the authorization concludes it.
 fn require_open_design(
     command: &wire::AdmittedCommand,
+    snapshot: &bus::TaskSnapshot,
     heads: &journal::TaskHeads,
     controller: &TaskStamp,
 ) -> Result<(), Outcome<CommandAnswer>> {
@@ -116,6 +119,16 @@ fn require_open_design(
             Some(controller.to_string()),
             "free any active claim and authorize while the preparation controller is pending",
         ));
+    }
+    for dependency in &heads.statement().body().dependencies {
+        if task_heads(snapshot, dependency)?.workflow().body().status == "pending" {
+            return Err(refusal(
+                "preparation::controller-blocked",
+                Some(dependency.to_string()),
+                "settle the Design's pending dependencies, including review corrections, before \
+                 authorizing its outputs",
+            ));
+        }
     }
     Ok(())
 }
@@ -334,9 +347,12 @@ pub(super) fn authorize_execution(
         Ok(heads) => heads,
         Err(outcome) => return outcome,
     };
-    if let Err(outcome) =
-        require_open_design(command, controller, &authorization.candidate.controller)
-    {
+    if let Err(outcome) = require_open_design(
+        command,
+        &snapshot,
+        controller,
+        &authorization.candidate.controller,
+    ) {
         return outcome;
     }
     let mut outputs = Vec::with_capacity(authorization.selected_outputs.len());

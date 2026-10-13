@@ -303,8 +303,8 @@ fn admit_plan_transition(
 ) -> Result<(), Outcome<CommandAnswer>> {
     let owner = planning::construction_owner(entry.born(), entry.statement().preparation.as_ref());
     let task = visible_task(snapshot, owner)?;
-    let construction_required =
-        planning::requires_construction(task.statement.body.intent, &task.workflow.body.flow);
+    let construction_required = task.workflow.body.status == "pending"
+        && planning::requires_construction(task.statement.body.intent, &task.workflow.body.flow);
     if !construction_required && entry.workflow().phase.as_str() != "plan" {
         return Ok(());
     }

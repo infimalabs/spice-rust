@@ -489,6 +489,7 @@ joins, acknowledges, delivers, settles, and wakes nothing.
 | Required evidence | each result answered | `task::evidence-unsatisfied`: ask again, or the operator replaces or waives it |
 | Positive Design conclusion with gated outputs | none unauthorized | `preparation::controlled-outputs-pending`: authorize the exact selection, engage the Design, or close each unselected output |
 | Candidate or authorization controller | a Design | `preparation::controller-not-design`: a Plan's outputs follow its positive review |
+| Authorizing Design dependencies | none pending, including review corrections | `preparation::controller-blocked`: settle the dependency first, so a finding keeps the Design pending |
 
 ### Rollout boundary
 

@@ -507,3 +507,88 @@ fn planning_corrections_keep_the_original_construction_duty_and_later_declared_p
     assert_eq!(at(&view, &plan).workflow.body.status, "pending");
     clean(&root, bus);
 }
+
+#[test]
+fn a_correction_outlives_its_settled_plan_without_the_construction_duty() {
+    let (root, bus, epoch, seats) = fixture("planning-correction-settled", 1);
+    let actor = Actor::Lane(seats[0].lane);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    let plan = add_planning(
+        &bus,
+        epoch,
+        "Construct executable contract",
+        wire::TaskIntent::Plan,
+        Some("review"),
+    );
+    claim_task(&bus, epoch, &seats[0], &actor, &plan);
+    let view = board(&bus, epoch, actor.clone());
+    let correction_born = stamp("Repair the plan");
+    let correction = TaskHandle::for_project("board.test", &correction_born);
+    let mut expected = progress_witnesses(
+        &view,
+        at(&view, &plan),
+        seats[0].lane,
+        seats[0].occupant,
+        true,
+    )
+    .expect("review witnesses");
+    expected.push(Witness::Absence {
+        task: correction_born.clone(),
+    });
+    assert_committed(issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::TaskReview,
+        expected,
+        &TaskReview {
+            task: plan.clone(),
+            finding: "The executable contract is absent".to_owned(),
+            note: None,
+            followup: Vec::new(),
+            then: vec![wire::intent::ReviewFollowup {
+                task: correction_born,
+                add: TaskAdd {
+                    preparation: None,
+                    intent: None,
+                    title: "Repair the plan".to_owned(),
+                    project: Some("board.test".to_owned()),
+                    description: None,
+                    acceptance: Vec::new(),
+                    requirements: wire::EnvironmentRequirements::default(),
+                    origin: None,
+                    flow: Some("todo".to_owned()),
+                    depends: Vec::new(),
+                    claim: false,
+                },
+            }],
+        },
+    ));
+    let operator_view = board(&bus, epoch, Actor::Operator);
+    let heads = at(&operator_view, &plan);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskClose,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ],
+        &TaskClose {
+            task: plan,
+            validation: "The plan is withdrawn".to_owned(),
+            force_claimed: false,
+        },
+    ));
+    claim_and_complete_task(&bus, epoch, &seats[0], &actor, &correction);
+    assert_eq!(
+        at(&board(&bus, epoch, actor), &correction)
+            .workflow
+            .body
+            .status,
+        "completed"
+    );
+    clean(&root, bus);
+}
