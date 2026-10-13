@@ -245,20 +245,14 @@ fn render_ticker(
         .iter()
         .zip(standings)
         .filter_map(|(channel, standing)| {
-            let (publication, event) = projection.room(&channel.stamp)?.events().iter().max_by(
-                |(left, _), (right, _)| {
-                    left.micros()
-                        .cmp(&right.micros())
-                        .then_with(|| left.cmp(right))
-                },
-            )?;
+            let (publication, event) = projection
+                .room(&channel.stamp)?
+                .events()
+                .iter()
+                .max_by_key(|(_, event)| event.position)?;
             Some((channel, *standing, publication, event))
         })
-        .max_by(|(_, _, left, _), (_, _, right, _)| {
-            left.micros()
-                .cmp(&right.micros())
-                .then_with(|| left.cmp(right))
-        });
+        .max_by_key(|(_, _, _, event)| event.position);
     let Some((channel, standing, publication, event)) = newest else {
         return view::chrome::render_empty_team_ticker();
     };
