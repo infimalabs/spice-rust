@@ -541,7 +541,30 @@ pub fn decode_record(
     listen::decode(dialect, &bytes, record_locus).map_err(|_| RecordError::Unreadable)
 }
 
-/// The exact assistant prose one room transcript hunk names, read from its
+/// The complete assistant words a room packet may cite in `event`: streamed
+/// assistant prose, or the intent a tool call declares.
+///
+/// The packet publisher and the room hunk resolver both select through this,
+/// so every published hunk names an event the resolver reads back.
+#[must_use]
+pub fn packet_text(event: &listen::Event) -> Option<&str> {
+    match event {
+        listen::Event::StreamedProse(prose) if prose.role == listen::ProseRole::Assistant => {
+            Some(prose.text.as_str())
+        }
+        listen::Event::Tool(listen::Tool {
+            moment:
+                listen::ToolMoment::Call {
+                    intent: Some(intent),
+                    ..
+                },
+            ..
+        }) => Some(intent),
+        _ => None,
+    }
+}
+
+/// The exact assistant words one room transcript hunk names, read from its
 /// lane's durable tape under `tape`.
 ///
 /// # Errors
@@ -568,20 +591,27 @@ pub fn room_hunk_text(
                 RecordError::Unreadable => RoomSourceUnavailable::Unreadable {},
             },
         )?;
-    let event = usize::try_from(hunk.locus.event)
+    hunk_text(decoded.events(), hunk.locus.event, hunk.text)
+}
+
+/// The cited bytes of one decoded record's events, or `changed` when the
+/// named event no longer carries packet text spanning that range.
+fn hunk_text(
+    events: &[listen::Event],
+    event: u32,
+    range: wire::rooms::TextRange,
+) -> Result<String, wire::rooms::RoomSourceUnavailable> {
+    let text = usize::try_from(event)
         .ok()
-        .and_then(|event| decoded.events().get(event));
-    let Some(listen::Event::StreamedProse(prose)) = event else {
-        return Err(RoomSourceUnavailable::Changed {});
-    };
-    let range = usize::try_from(hunk.text.start)
+        .and_then(|event| events.get(event))
+        .and_then(packet_text);
+    let range = usize::try_from(range.start)
         .ok()
-        .zip(usize::try_from(hunk.text.end).ok());
-    range
-        .filter(|_| prose.role == listen::ProseRole::Assistant)
-        .and_then(|(start, end)| prose.text.get(start..end))
+        .zip(usize::try_from(range.end).ok());
+    text.zip(range)
+        .and_then(|(text, (start, end))| text.get(start..end))
         .map(str::to_owned)
-        .ok_or(RoomSourceUnavailable::Changed {})
+        .ok_or(wire::rooms::RoomSourceUnavailable::Changed {})
 }
 
 fn resolve_tape(
@@ -1396,5 +1426,71 @@ mod tests {
         assert!(!expanded.contains("[quote]("), "{expanded}");
         assert!(expanded.contains("[quote unavailable: reason=depth-exceeded source="));
         assert_eq!(expanded.lines().count(), 1);
+    }
+
+    /// One settled omp assistant message whose visible prose the provider
+    /// folded into reasoning, so its only verbatim words are the call intent.
+    const NARRATED_ASK: &str = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"ASK operator: paraphrased question"},{"type":"toolCall","id":"call-1","name":"shell","arguments":{"command":"true","i":"ASK operator: arguments are not authored words"},"intent":"ASK operator: Which gesture activates a design?"}],"stopReason":"toolUse"}}"#;
+
+    fn narrated_events() -> Vec<listen::Event> {
+        let decoded = listen::decode(
+            listen::Dialect::Omp,
+            NARRATED_ASK.as_bytes(),
+            tape::Locus::new(1, 0, NARRATED_ASK.len() as u64),
+        )
+        .expect("fixture record decodes");
+        decoded.events().to_vec()
+    }
+
+    fn range(start: u64, end: u64) -> wire::rooms::TextRange {
+        wire::rooms::TextRange { start, end }
+    }
+
+    #[test]
+    fn a_packet_cited_from_a_call_intent_resolves_to_its_exact_bytes() {
+        let events = narrated_events();
+        let call = events
+            .iter()
+            .position(|event| matches!(event, listen::Event::Tool(_)))
+            .expect("the record carries the call");
+        let header = "ASK operator: ".len() as u64;
+        let end = "ASK operator: Which gesture activates a design?".len() as u64;
+
+        assert_eq!(
+            hunk_text(&events, call as u32, range(header, end)),
+            Ok("Which gesture activates a design?".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_hunk_naming_reasoning_or_an_out_of_range_span_reads_as_changed() {
+        let events = narrated_events();
+        let reasoning = events
+            .iter()
+            .position(|event| matches!(event, listen::Event::Reasoning(_)))
+            .expect("the record carries reasoning");
+        let call = events
+            .iter()
+            .position(|event| matches!(event, listen::Event::Tool(_)))
+            .expect("the record carries the call");
+        let changed = Err(wire::rooms::RoomSourceUnavailable::Changed {});
+
+        assert_eq!(hunk_text(&events, reasoning as u32, range(0, 3)), changed);
+        assert_eq!(hunk_text(&events, call as u32, range(14, 999)), changed);
+        assert_eq!(hunk_text(&events, u32::MAX, range(0, 3)), changed);
+    }
+
+    #[test]
+    fn operator_prose_is_never_packet_text() {
+        let operator = listen::Event::StreamedProse(listen::Prose {
+            role: listen::ProseRole::Operator,
+            text: "ASK operator: not authored by the lane".to_owned(),
+            phase: None,
+            media: Vec::new(),
+            external_media: Vec::new(),
+            locus: tape::Locus::new(1, 0, 1),
+        });
+
+        assert_eq!(packet_text(&operator), None);
     }
 }
