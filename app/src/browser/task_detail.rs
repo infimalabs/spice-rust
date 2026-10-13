@@ -52,7 +52,13 @@ pub(super) fn use_controls(
     {
         let sender = sender.clone();
         let surface = surface.clone();
-        use_effect_with(selection.clone(), move |selection| {
+        // A selection can precede the runtime (a cold permalink), and a
+        // changed scope replaces it, so demand follows the runtime as well.
+        let scope = surface
+            .read()
+            .as_ref()
+            .map(|runtime| runtime.principal().scope());
+        use_effect_with((selection.clone(), scope), move |(selection, _)| {
             let tasks = selection
                 .iter()
                 .flat_map(|selection| selection.tasks().iter().cloned());
