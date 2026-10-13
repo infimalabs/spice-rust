@@ -150,6 +150,43 @@ pub(super) fn client_room_status(
     )
 }
 
+pub(in crate::board_command) fn coordinate_target(
+    board: &BoardAnswer,
+    target: wire::OccupantAddress,
+) -> Result<(wire::CanonicalUuid, wire::CanonicalUuid), Outcome<CommandAnswer>> {
+    let unavailable = || {
+        refusal(
+            "room::address-unavailable",
+            Some(target.to_string()),
+            "name the current base-52 address of a seated occupant",
+        )
+    };
+    let lane = board
+        .addresses
+        .iter()
+        .find_map(|(lane, address)| (address.address() == Some(target)).then_some(*lane))
+        .ok_or_else(unavailable)?;
+    let seat = board
+        .residency
+        .body
+        .lanes
+        .iter()
+        .find(|row| row.lane == lane)
+        .ok_or_else(unavailable)?;
+    if seat.disposition != "occupied" {
+        return Err(refusal(
+            "room::address-unoccupied",
+            Some(format!("{target}: {}", seat.disposition)),
+            &format!(
+                "address {target} names a seat whose disposition is {}; name the current address of an occupied seat",
+                seat.disposition
+            ),
+        ));
+    }
+    let occupant = seat.occupant.ok_or_else(unavailable)?;
+    Ok((lane, occupant))
+}
+
 pub(super) fn client_room_coordinate(
     repository: &Repository,
     contract: &Contract,
@@ -159,25 +196,7 @@ pub(super) fn client_room_coordinate(
         let target = required(matches, "ADDRESS")
             .parse::<wire::OccupantAddress>()
             .map_err(|error| refusal("room::address-invalid", None, &error.to_string()))?;
-        let lane = board
-            .addresses
-            .iter()
-            .find_map(|(lane, address)| (address.address() == Some(target)).then_some(*lane))
-            .ok_or_else(|| {
-                refusal(
-                    "room::address-unavailable",
-                    Some(target.to_string()),
-                    "name the current base-52 address of a seated occupant",
-                )
-            })?;
-        let occupant = board
-            .residency
-            .body
-            .lanes
-            .iter()
-            .find(|row| row.lane == lane)
-            .and_then(|row| row.occupant)
-            .expect("an addressable residency lane has its proved occupant");
+        let (lane, occupant) = coordinate_target(board, target)?;
         let action = if contract.path == ["room", "resume"] {
             wire::intent::RoomCoordinateAction::Resume
         } else {
