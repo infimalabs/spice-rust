@@ -918,6 +918,11 @@ async fn dispatch_action(
                 .await
                 .map(Some)
         }
+        ClientAction::RoomCoordination { request, respond } => {
+            rooms::send_room_coordination(principal, writer, actions, request, respond)
+                .await
+                .map(Some)
+        }
         ClientAction::DrainSubmissions => {
             drain_submissions(principal, writer, actions, submissions)
                 .await

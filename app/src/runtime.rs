@@ -83,8 +83,57 @@ pub struct BoardView {
     pub(crate) quote_tasks: Rc<QuoteTasks>,
     /// Complete environment observed at the same board snapshot barrier.
     pub(crate) environment: wire::Environment,
-    /// Current resident state.
-    pub resident: wire::ResidentState,
+    /// Every residency seat and the address it offers.
+    pub(crate) seats: Seats,
+}
+
+/// Every residency seat at one board snapshot and the address it offers;
+/// cloning shares the snapshot.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Seats {
+    residency: Rc<wire::ResidencyHead>,
+    addresses: Rc<BTreeMap<CanonicalUuid, wire::SeatAddress>>,
+}
+
+impl Seats {
+    pub(crate) fn new(
+        residency: wire::ResidencyHead,
+        addresses: BTreeMap<CanonicalUuid, wire::SeatAddress>,
+    ) -> Self {
+        Self {
+            residency: Rc::new(residency),
+            addresses: Rc::new(addresses),
+        }
+    }
+
+    /// Every occupied seat's lane and address, in residency order.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) fn occupied(&self) -> impl Iterator<Item = (CanonicalUuid, wire::OccupantAddress)> {
+        self.residency
+            .lanes
+            .iter()
+            .filter(|seat| seat.disposition == "occupied")
+            .filter_map(|seat| Some((seat.lane, self.addresses.get(&seat.lane)?.address()?)))
+    }
+
+    /// The residency witness of the occupied seat `target` names, which room
+    /// coordination requires.
+    ///
+    /// # Errors
+    ///
+    /// [`wire::SeatRefusal`] names why `target` names no occupied seat.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) fn witness(
+        &self,
+        target: wire::OccupantAddress,
+    ) -> Result<wire::Witness, wire::SeatRefusal> {
+        let (lane, occupant) = self.residency.occupied_seat(&self.addresses, target)?;
+        Ok(wire::Witness::Residency {
+            lane,
+            occupant: Some(occupant),
+            epoch: self.residency.epoch,
+        })
+    }
 }
 
 impl From<&BoardAnswer> for BoardView {
@@ -104,7 +153,7 @@ impl From<&BoardAnswer> for BoardView {
             awaiting_selection: answer.awaiting_selection.iter().cloned().collect(),
             quote_tasks: Rc::new(answer.origins.clone()),
             environment,
-            resident: answer.residency.body.state,
+            seats: Seats::new(answer.residency.body.clone(), answer.addresses.clone()),
         }
     }
 }

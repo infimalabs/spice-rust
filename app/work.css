@@ -650,6 +650,7 @@
 .room-design > header button,
 .room-inline-actions button,
 .room-grooming button,
+.room-coordination button,
 .room-composer button {
   min-height: 30px;
   padding: 5px 8px;
@@ -661,6 +662,7 @@
 .room-design > header button:disabled,
 .room-inline-actions button:disabled,
 .room-grooming button:disabled,
+.room-coordination button:disabled,
 .room-composer button:disabled {
   cursor: not-allowed;
   opacity: .52;
@@ -944,7 +946,8 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
 
 .room-inbox > header > h3 { margin: 0; font-size: inherit; }
 
-.room-grooming {
+.room-grooming,
+.room-coordination {
   display: grid;
   gap: 6px;
   flex: 0 0 auto;
@@ -955,7 +958,8 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
   background: var(--control-surface-soft);
 }
 
-.room-grooming label {
+.room-grooming label,
+.room-coordination label {
   display: grid;
   grid-template-columns: minmax(7rem, .45fr) minmax(0, 1fr);
   align-items: center;
@@ -963,7 +967,8 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
 }
 
 .room-grooming input,
-.room-grooming select {
+.room-grooming select,
+.room-coordination input {
   min-width: 0;
 }
 

@@ -6,8 +6,6 @@ mod requirements;
 use group::{client_group_arrange, client_group_list, client_group_move};
 use requirements::{client_require, environment_requirements};
 mod room;
-#[cfg(test)]
-pub(in crate::board_command) use room::coordinate_target;
 use room::dispatch_room_client;
 
 /// Execute one generated board-family CLI leaf.
