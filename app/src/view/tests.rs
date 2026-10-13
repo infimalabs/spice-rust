@@ -117,6 +117,29 @@ fn unknown_app_locations_open_chat_and_name_the_refused_input() {
 }
 
 #[test]
+fn a_design_permalink_opens_its_design_over_chat() {
+    let location = normalize_app_location("", "#/chat/design/dVxHkZhQY");
+    assert_eq!(location.route(), &AppRoute::chat());
+    assert!(location.needs_replace());
+    assert_eq!(location.notice(), None);
+    assert_eq!(
+        location.design().map(ToString::to_string).as_deref(),
+        Some("dVxHkZhQY")
+    );
+
+    for hash in [
+        "#/chat/design/",
+        "#/chat/design/not-a-stamp",
+        "#/chat/design/dVxHkZhQY/extra",
+    ] {
+        let location = normalize_app_location("", hash);
+        assert_eq!(location.design(), None, "{hash}");
+        assert!(location.notice().is_some(), "{hash}");
+    }
+    assert_eq!(normalize_app_location("", "#/chat").design(), None);
+}
+
+#[test]
 fn settled_missing_chat_card_rewrites_to_chat() {
     let card = AppRoute::card(CARD.to_owned()).expect("fixture card");
     assert_eq!(card.unavailable(RouteEvidence::default()), None);

@@ -210,6 +210,12 @@ fn render_available(
         .find(|task| task.row().statement.body.born == statement.born);
     let messages = render.creator_messages.iter().map(AsRef::as_ref);
     let creator_context = crate::view::creator_context_href(&statement.creation, messages);
+    let design_room = render
+        .runtime
+        .filter(|_| statement.intent == Some(wire::TaskIntent::Design))
+        .map_or_else(Html::default, |runtime| {
+            super::super::rooms::render_design_room(runtime, &statement.born)
+        });
     html! {
         <div class="app-sheet-body">
             <div class="app-sheet-identity">
@@ -249,6 +255,7 @@ fn render_available(
                 </dl>
                 {render_possession(row, render)}
             </section>
+            {design_room}
             <section class="app-sheet-section">
                 <h3>{"Relationships"}</h3>
                 {render_relationships(render.work, projected, statement, render.selection, focus_task)}

@@ -197,6 +197,7 @@ pub(crate) struct NormalizedAppLocation {
     route: AppRoute,
     replace: bool,
     notice: Option<String>,
+    design: Option<wire::TaskStamp>,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -214,6 +215,12 @@ impl NormalizedAppLocation {
     #[must_use]
     pub(crate) fn notice(&self) -> Option<&str> {
         self.notice.as_deref()
+    }
+
+    /// The Design whose read view a permalink arrival opens over Chat.
+    #[must_use]
+    pub(crate) const fn design(&self) -> Option<&wire::TaskStamp> {
+        self.design.as_ref()
     }
 }
 
@@ -242,18 +249,32 @@ pub(crate) fn app_auth_token_is_valid(token: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~'))
 }
 
-/// Resolve a browser query and hash through the one Chat route grammar.
+/// Resolve a browser query and hash through the one Chat route grammar. A
+/// Design permalink opens that Design's read view over Chat and leaves the
+/// location at Chat, since the view is a browser-local overview.
 #[cfg(any(target_arch = "wasm32", test))]
 #[must_use]
 pub(crate) fn normalize_app_location(search: &str, hash: &str) -> NormalizedAppLocation {
     let fragment = hash.strip_prefix('#').unwrap_or(hash);
     if search.is_empty() {
+        if let Some(design) = fragment
+            .strip_prefix(DESIGN_PREFIX)
+            .and_then(|stamp| stamp.parse::<wire::TaskStamp>().ok())
+        {
+            return NormalizedAppLocation {
+                route: AppRoute::chat(),
+                replace: true,
+                notice: None,
+                design: Some(design),
+            };
+        }
         if let Some(route) = AppRoute::from_path(fragment) {
             let replace = hash.strip_prefix('#') != Some(route.path().as_str());
             return NormalizedAppLocation {
                 route,
                 replace,
                 notice: None,
+                design: None,
             };
         }
         let name = fragment.trim_matches('/');
@@ -262,6 +283,7 @@ pub(crate) fn normalize_app_location(search: &str, hash: &str) -> NormalizedAppL
                 route: AppRoute::chat(),
                 replace: true,
                 notice: None,
+                design: None,
             };
         }
     }
@@ -270,7 +292,18 @@ pub(crate) fn normalize_app_location(search: &str, hash: &str) -> NormalizedAppL
         route: AppRoute::chat(),
         replace: true,
         notice: Some(format!("Unrecognized route `{search}{hash}`; opened Chat.")),
+        design: None,
     }
+}
+
+/// The location prefix of a Design permalink, followed by its birth stamp.
+#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+const DESIGN_PREFIX: &str = "/chat/design/";
+
+/// Link one Design's read view by its immutable birth stamp.
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
+pub(crate) fn design_href(design: &wire::TaskStamp) -> String {
+    format!("#{DESIGN_PREFIX}{design}")
 }
 
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
