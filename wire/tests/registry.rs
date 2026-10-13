@@ -432,9 +432,6 @@ fn sample_room_witnesses(task: &wire::TaskStamp) -> Vec<Witness> {
     let seq = |value: u64| wire::Seq(value.try_into().expect("a position"));
     let digest =
         |byte: char| Digest::from_str(&String::from(byte).repeat(64)).expect("a digest spelling");
-    let group = "1kKRRsDR1"
-        .parse::<wire::rooms::RoomAuthorityStamp>()
-        .expect("a group stamp");
     let candidate = wire::rooms::CandidateRef {
         controller: task.clone(),
         candidate: "1kKRRsDR2".parse().expect("a candidate stamp"),
@@ -443,10 +440,7 @@ fn sample_room_witnesses(task: &wire::TaskStamp) -> Vec<Witness> {
         Witness::Source {
             source: digest('1'),
         },
-        Witness::Group {
-            group,
-            head: Some(seq(8)),
-        },
+        Witness::Group { revision: 8 },
         Witness::Proposal {
             proposal: wire::rooms::ProposalRef::Candidate { candidate },
             head: Some(seq(9)),

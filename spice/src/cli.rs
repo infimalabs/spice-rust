@@ -176,7 +176,8 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::BoardHandout
         | CommandKind::DocLedger
         | CommandKind::WorkingGroupRead
-        | CommandKind::WorkingGroupPut
+        | CommandKind::WorkingGroupMove
+        | CommandKind::WorkingGroupArrange
         | CommandKind::CandidateRetain
         | CommandKind::CandidateCritiqueRecord
         | CommandKind::CandidateCoverageRecord
@@ -414,7 +415,8 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["room", "decline"]
             | ["room", "cancel"]
             | ["group", "list"]
-            | ["group", "put"]
+            | ["group", "move"]
+            | ["group", "arrange"]
             | ["preparation", "retain"]
             | ["preparation", "show"]
             | ["preparation", "critique"]

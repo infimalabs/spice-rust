@@ -1,34 +1,14 @@
 use super::*;
 
-use wire::intent::{
-    WORKING_GROUP_PAGE_LIMIT_MAX, WorkingGroupAnchor, WorkingGroupPage, WorkingGroupRead,
-};
-use wire::rooms::{RoomAuthorityStamp, WorkingGroup, WorkingGroupPut};
-
-const DEFAULT_PAGE_LIMIT: u16 = 25;
+use wire::intent::{WorkingGroupAnchor, WorkingGroupPage, WorkingGroupRead};
+use wire::rooms::{RoomAuthorityStamp, WorkingGroup, WorkingGroupArrange, WorkingGroupMove};
 
 pub(super) fn client_group_list(
     repository: &Repository,
     contract: &Contract,
-    matches: &ArgMatches,
+    _matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let after = match optional_group(matches, "after") {
-        Ok(after) => after,
-        Err(outcome) => return outcome,
-    };
-    let limit = match numeric_limit(matches) {
-        Ok(limit) => limit,
-        Err(outcome) => return outcome,
-    };
-    match execute_group_read(
-        repository,
-        contract,
-        WorkingGroupRead {
-            group: None,
-            after,
-            limit,
-        },
-    ) {
+    match execute_group_read(repository, contract) {
         Ok((position, page)) => Outcome::Reply(Reply {
             position,
             body: CommandAnswer::Text(TextAnswer {
@@ -39,81 +19,114 @@ pub(super) fn client_group_list(
     }
 }
 
-pub(super) fn client_group_put(
+/// Move one design into `--to GROUP`, into a fresh group with `--new`, or out
+/// of every group with neither.
+pub(super) fn client_group_move(
     repository: &Repository,
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let anchors = match anchors(matches) {
-        Ok(anchors) => anchors,
+    let Some(written) = matches.get_one::<String>("ANCHOR") else {
+        return refusal("group::anchor-missing", None, "name the design to move");
+    };
+    let design = match anchor(written) {
+        Ok(design) => design,
         Err(outcome) => return outcome,
     };
-    let group = match optional_group(matches, "group") {
-        Ok(Some(group)) => group,
-        Ok(None) => match mint_group(repository) {
-            Ok(group) => group,
+    let to = match matches
+        .get_one::<String>("to")
+        .map(|written| group(written))
+    {
+        Some(Ok(to)) => Some(to),
+        Some(Err(outcome)) => return outcome,
+        None => None,
+    };
+    let founding = matches.get_flag("new");
+    if founding && to.is_some() {
+        return refusal(
+            "group::destination-ambiguous",
+            None,
+            "name an existing group with --to or found one with --new, not both",
+        );
+    }
+    let page = match observed(repository) {
+        Ok(page) => page,
+        Err(outcome) => return outcome,
+    };
+    let to = if founding {
+        match mint_group(&page) {
+            Ok(group) => Some(group),
             Err(outcome) => return outcome,
+        }
+    } else {
+        to
+    };
+    let expected = vec![
+        Witness::Group {
+            revision: page.revision,
         },
+        Witness::Existence {
+            task: design.clone(),
+        },
+    ];
+    render_change(crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::WorkingGroupMove,
+        expected,
+        &WorkingGroupMove { design, to },
+    ))
+}
+
+/// Restate the whole partition, one `GROUP=ANCHOR[,ANCHOR...]` per group in
+/// intended order.
+pub(super) fn client_group_arrange(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let groups = match matches
+        .get_many::<String>("GROUPING")
+        .into_iter()
+        .flatten()
+        .map(|written| grouping(written))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(groups) => groups,
         Err(outcome) => return outcome,
     };
-    let observed = match exact_group(repository, &group) {
-        Ok(observed) => observed,
+    let page = match observed(repository) {
+        Ok(page) => page,
         Err(outcome) => return outcome,
-    };
-    let mut expected = vec![Witness::Group {
-        group: group.clone(),
-        head: observed.as_ref().map(|view| view.head),
-    }];
-    expected.extend(
-        anchors
-            .iter()
-            .cloned()
-            .map(|task| Witness::Existence { task }),
-    );
-    let body = WorkingGroupPut {
-        group: WorkingGroup {
-            group: group.clone(),
-            anchors,
-        },
     };
     render_change(crate::command_client::execute_typed(
         repository,
         contract,
-        CommandKind::WorkingGroupPut,
-        expected,
-        &body,
+        CommandKind::WorkingGroupArrange,
+        vec![Witness::Group {
+            revision: page.revision,
+        }],
+        &WorkingGroupArrange { groups },
     ))
 }
 
-fn exact_group(
-    repository: &Repository,
-    group: &RoomAuthorityStamp,
-) -> Result<Option<wire::intent::WorkingGroupView>, Outcome<CommandAnswer>> {
+/// The current partition a change witnesses.
+fn observed(repository: &Repository) -> Result<WorkingGroupPage, Outcome<CommandAnswer>> {
     let contract = crate::cli::contract(&["group", "list"])
         .expect("working-group read contract is registered");
-    execute_group_read(
-        repository,
-        contract,
-        WorkingGroupRead {
-            group: Some(group.clone()),
-            after: None,
-            limit: 1,
-        },
-    )
-    .map(|(_, page)| page.groups.into_iter().next())
+    execute_group_read(repository, contract).map(|(_, page)| page)
 }
 
 fn execute_group_read(
     repository: &Repository,
     contract: &Contract,
-    body: WorkingGroupRead,
 ) -> Result<(ReplyPosition, WorkingGroupPage), Outcome<CommandAnswer>> {
     match crate::command_client::execute_typed(
         repository,
         contract,
         CommandKind::WorkingGroupRead,
         Vec::new(),
-        &body,
+        &WorkingGroupRead {},
     ) {
         Outcome::Reply(Reply {
             position,
@@ -128,11 +141,12 @@ fn execute_group_read(
     }
 }
 
-fn mint_group(repository: &Repository) -> Result<RoomAuthorityStamp, Outcome<CommandAnswer>> {
+/// A fresh group identity no current group holds.
+fn mint_group(page: &WorkingGroupPage) -> Result<RoomAuthorityStamp, Outcome<CommandAnswer>> {
     let mut micros = jiff::Timestamp::now().as_microsecond();
     loop {
         if let Ok(group) = RoomAuthorityStamp::for_micros(micros)
-            && exact_group(repository, &group)?.is_none()
+            && page.groups.iter().all(|held| held.group != group)
         {
             return Ok(group);
         }
@@ -145,60 +159,47 @@ fn mint_group(repository: &Repository) -> Result<RoomAuthorityStamp, Outcome<Com
     }
 }
 
-fn optional_group(
-    matches: &ArgMatches,
-    name: &str,
-) -> Result<Option<RoomAuthorityStamp>, Outcome<CommandAnswer>> {
-    matches
-        .get_one::<String>(name)
-        .map(|written| {
-            written.parse::<RoomAuthorityStamp>().map_err(|error| {
-                refusal(
-                    "group::identity-invalid",
-                    Some(written.clone()),
-                    &error.to_string(),
-                )
-            })
-        })
-        .transpose()
+fn group(written: &str) -> Result<RoomAuthorityStamp, Outcome<CommandAnswer>> {
+    written.parse::<RoomAuthorityStamp>().map_err(|error| {
+        refusal(
+            "group::identity-invalid",
+            Some(written.to_owned()),
+            &error.to_string(),
+        )
+    })
 }
 
-fn numeric_limit(matches: &ArgMatches) -> Result<u16, Outcome<CommandAnswer>> {
-    let Some(written) = matches.get_one::<String>("limit") else {
-        return Ok(DEFAULT_PAGE_LIMIT);
+fn anchor(written: &str) -> Result<TaskStamp, Outcome<CommandAnswer>> {
+    let invalid = |error: &dyn std::fmt::Display| {
+        refusal(
+            "group::anchor-invalid",
+            Some(written.to_owned()),
+            &error.to_string(),
+        )
     };
-    match written.parse::<u16>() {
-        Ok(limit) if (1..=WORKING_GROUP_PAGE_LIMIT_MAX).contains(&limit) => Ok(limit),
-        _ => Err(refusal(
-            "group::limit-invalid",
-            Some(written.clone()),
-            "use a limit from 1 through 100",
-        )),
-    }
+    written
+        .parse::<TaskHandle>()
+        .map_err(|error| invalid(&error))?
+        .born()
+        .map_err(|error| invalid(&error))
 }
 
-fn anchors(matches: &ArgMatches) -> Result<Vec<TaskStamp>, Outcome<CommandAnswer>> {
-    matches
-        .get_many::<String>("ANCHOR")
-        .into_iter()
-        .flatten()
-        .map(|written| {
-            let handle = written.parse::<TaskHandle>().map_err(|error| {
-                refusal(
-                    "group::anchor-invalid",
-                    Some(written.clone()),
-                    &error.to_string(),
-                )
-            })?;
-            handle.born().map_err(|error| {
-                refusal(
-                    "group::anchor-invalid",
-                    Some(written.clone()),
-                    &error.to_string(),
-                )
-            })
-        })
-        .collect()
+fn grouping(written: &str) -> Result<WorkingGroup, Outcome<CommandAnswer>> {
+    let Some((stamp, anchors)) = written.split_once('=') else {
+        return Err(refusal(
+            "group::grouping-invalid",
+            Some(written.to_owned()),
+            "write each group as GROUP=ANCHOR[,ANCHOR...]",
+        ));
+    };
+    Ok(WorkingGroup {
+        group: group(stamp)?,
+        anchors: anchors
+            .split(',')
+            .filter(|anchor| !anchor.is_empty())
+            .map(anchor)
+            .collect::<Result<_, _>>()?,
+    })
 }
 
 fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
@@ -210,11 +211,12 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
             position,
             body: CommandAnswer::Text(TextAnswer {
                 text: format!(
-                    "{} {}",
-                    change.group,
+                    "revision {} {}",
+                    change.revision,
                     match change.status {
-                        wire::intent::WorkingGroupChangeStatus::Stored => "stored",
-                        wire::intent::WorkingGroupChangeStatus::Removed => "ended",
+                        wire::intent::WorkingGroupChangeStatus::Moved => "moved",
+                        wire::intent::WorkingGroupChangeStatus::Ended => "moved; its group ended",
+                        wire::intent::WorkingGroupChangeStatus::Arranged => "arranged",
                     }
                 ),
             }),
@@ -224,10 +226,8 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
 }
 
 fn render_groups(page: &WorkingGroupPage) -> String {
-    let mut text = String::new();
-    if let Some(group) = &page.unavailable {
-        text.push_str(&format!("unavailable:{group}\n"));
-    } else if page.groups.is_empty() {
+    let mut text = format!("revision {}\n", page.revision);
+    if page.groups.is_empty() {
         text.push_str("no working groups\n");
     }
     for group in &page.groups {
@@ -242,9 +242,6 @@ fn render_groups(page: &WorkingGroupPage) -> String {
                 }
             }
         }
-    }
-    if let Some(after) = &page.continuation {
-        text.push_str(&format!("continue: spice group list --after {after}\n"));
     }
     text
 }

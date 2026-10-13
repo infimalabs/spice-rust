@@ -3,8 +3,8 @@
 //! whole row, a finger or pen drags its handle. Dropped on New working group it
 //! begins a group, on a group it joins that group, and on the Design list it
 //! leaves its group; a design belongs to at most one group, and a group whose
-//! last design leaves ends. Every drop only replaces shared organization
-//! through the guarded group put, so the authority's typed refusals surface in
+//! last design leaves ends. Every drop sends one guarded group move at the
+//! observed partition revision, so the authority's typed refusals surface in
 //! the catalog notice.
 
 use std::cell::RefCell;
@@ -14,10 +14,10 @@ use wasm_bindgen::JsCast;
 use web_sys::{DragEvent, PointerEvent};
 use wire::TaskStamp;
 use wire::intent::BoardTask;
-use wire::rooms::{RoomAuthorityStamp, WorkingGroup};
+use wire::rooms::{RoomAuthorityStamp, WorkingGroupMove, WorkingGroupPartition};
 use yew::prelude::*;
 
-use super::{Controls, mint_group, submit_group};
+use super::{Controls, mint_group, submit_move};
 use crate::browser::sender::SenderHandle;
 use crate::browser::touch_lift;
 use crate::watchband::PointerDragSession;
@@ -29,8 +29,9 @@ const DROP_ATTRIBUTE: &str = "data-design-drop";
 const NEW_GROUP_DROP: &str = "new";
 /// The drop-target value naming no group: a design released there leaves its group.
 const UNGROUP_DROP: &str = "none";
-/// Design lifts span no roster topology: each drop is guarded by its group's
-/// head instead, so one constant revision keeps a lift alive across renders.
+/// Design lifts span no roster topology: each drop is guarded by the
+/// partition revision instead, so one constant revision keeps a lift alive
+/// across renders.
 const DESIGN_LIFT_REVISION: u64 = 0;
 
 thread_local! {
@@ -38,14 +39,14 @@ thread_local! {
     static TOUCH_DRAG: RefCell<PointerDragSession<TaskStamp>> = RefCell::default();
 }
 
-/// Everything a design drop needs to replace shared organization, captured
-/// from the render that drew the targets.
+/// Everything a design drop needs to move a design, captured from the render
+/// that drew the targets.
 #[derive(Clone)]
 pub(super) struct Drops {
     sender: SenderHandle,
     controls: Controls,
-    /// Every saved group beside the head its replacement must witness.
-    groups: Rc<Vec<(WorkingGroup, wire::Seq)>>,
+    /// The partition every move witnesses.
+    partition: Rc<WorkingGroupPartition>,
     enabled: bool,
 }
 
@@ -53,13 +54,13 @@ impl Drops {
     pub(super) fn new(
         sender: SenderHandle,
         controls: Controls,
-        groups: Vec<(WorkingGroup, wire::Seq)>,
+        partition: WorkingGroupPartition,
         enabled: bool,
     ) -> Self {
         Self {
             sender,
             controls,
-            groups: Rc::new(groups),
+            partition: Rc::new(partition),
             enabled,
         }
     }
@@ -68,15 +69,8 @@ impl Drops {
         self.enabled
     }
 
-    /// The saved group holding `design`, beside its head.
-    fn holder(&self, design: &TaskStamp) -> Option<&(WorkingGroup, wire::Seq)> {
-        self.groups
-            .iter()
-            .find(|(saved, _)| saved.anchors.contains(design))
-    }
-
     fn grouped(&self, design: &TaskStamp) -> bool {
-        self.holder(design).is_some()
+        self.partition.holder(design).is_some()
     }
 
     /// Where a release over `value` lands `design`, absent where the design
@@ -87,51 +81,36 @@ impl Drops {
             UNGROUP_DROP => self.grouped(design).then_some(Target::Ungroup),
             _ => {
                 let group = value.parse::<RoomAuthorityStamp>().ok()?;
-                let (saved, _) = self.groups.iter().find(|(saved, _)| saved.group == group)?;
+                let saved = self
+                    .partition
+                    .groups
+                    .iter()
+                    .find(|saved| saved.group == group)?;
                 (!saved.anchors.contains(design)).then_some(Target::Group(group))
             }
         }
     }
 
-    /// Submit the replacement a drop asks for; whether a command was sent.
-    /// Joining or beginning a group names the design there, and the authority
-    /// takes it out of the group that held it.
+    /// Send the move a drop asks for; whether a command was sent.
     fn land(&self, target: Target, design: TaskStamp) -> bool {
-        let (replacement, head) = match target {
+        let to = match target {
             Target::New => {
                 let Some(group) = mint_group() else {
                     self.controls
                         .report("A working-group identity could not be created.".into());
                     return false;
                 };
-                (
-                    WorkingGroup {
-                        group,
-                        anchors: vec![design],
-                    },
-                    None,
-                )
+                Some(group)
             }
-            Target::Group(group) => {
-                let Some((saved, head)) =
-                    self.groups.iter().find(|(saved, _)| saved.group == group)
-                else {
-                    return false;
-                };
-                let mut replacement = saved.clone();
-                replacement.anchors.push(design);
-                (replacement, Some(*head))
-            }
-            Target::Ungroup => {
-                let Some((saved, head)) = self.holder(&design) else {
-                    return false;
-                };
-                let mut replacement = saved.clone();
-                replacement.anchors.retain(|held| *held != design);
-                (replacement, Some(*head))
-            }
+            Target::Group(group) => Some(group),
+            Target::Ungroup => None,
         };
-        submit_group(&self.sender, &self.controls, replacement, head);
+        submit_move(
+            &self.sender,
+            &self.controls,
+            WorkingGroupMove { design, to },
+            self.partition.revision,
+        );
         true
     }
 }

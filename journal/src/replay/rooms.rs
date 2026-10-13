@@ -45,11 +45,13 @@ pub(super) fn verify(
         &stored.publications,
         violations,
     );
-    compare("group_heads", &expected.groups, &stored.groups, violations);
+    fn singleton(partition: &Option<(u64, Vec<u8>)>) -> BTreeMap<u8, &(u64, Vec<u8>)> {
+        partition.iter().map(|head| (1_u8, head)).collect()
+    }
     compare(
-        "group_anchors",
-        &expected.anchors,
-        &stored.anchors,
+        "group_partition",
+        &singleton(&expected.partition),
+        &singleton(&stored.partition),
         violations,
     );
     compare(
@@ -112,7 +114,7 @@ pub(super) fn verify(
         &stored.evidence,
         violations,
     );
-    Ok(stored.groups.len()
+    Ok(usize::from(stored.partition.is_some())
         + stored.proposals.len()
         + stored.authorizations.len()
         + stored.cursors.len()

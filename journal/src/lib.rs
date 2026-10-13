@@ -7,7 +7,7 @@
 /// shape. Retired schemas refuse before persistent storage configuration and
 /// name the release that last migrated them; newer schemas refuse because this
 /// build cannot know what their owning release added.
-pub const SCHEMA_VERSION: u32 = 52;
+pub const SCHEMA_VERSION: u32 = 53;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
@@ -43,13 +43,13 @@ mod taste_index;
 #[cfg(not(target_arch = "wasm32"))]
 pub use guard::{
     Applied, BuildError, CommandReplay, CommitError, CommitFault, CurrentHeadWitness, FactCause,
-    FactPageStart, FactReadBudget, GroupHeadPage, GuardError, GuardRefusal, JournalGuard,
-    JournalHead, JournalRead, JournalWrite, MAX_DURABLE_FACT_ENVELOPE_BYTES,
-    MAX_RETAINED_FACT_PAGE_BYTES, MAX_RETAINED_FACT_PAGE_ROWS, MAX_STEERING_PAGE_ROWS,
-    OpenRoomItemPage, OperatorDirection, OperatorDirections, PendingFact, ProposalAuthority,
-    ROOM_AUTHORITY_REFUSED, ReadError, RetiredSteering, RoomRelevanceMetrics, RoomRelevancePage,
-    RoomRelevanceRecord, SelectedFactPage, SteeringPage, TaskGeneration, TaskHeadPage, TaskHeads,
-    TasteEvidenceFact, TasteEvidencePage, TasteEvidenceSummary, ThreadError, TrustHeadPage,
+    FactPageStart, FactReadBudget, GuardError, GuardRefusal, JournalGuard, JournalHead,
+    JournalRead, JournalWrite, MAX_DURABLE_FACT_ENVELOPE_BYTES, MAX_RETAINED_FACT_PAGE_BYTES,
+    MAX_RETAINED_FACT_PAGE_ROWS, MAX_STEERING_PAGE_ROWS, OpenRoomItemPage, OperatorDirection,
+    OperatorDirections, PendingFact, ProposalAuthority, ROOM_AUTHORITY_REFUSED, ReadError,
+    RetiredSteering, RoomRelevanceMetrics, RoomRelevancePage, RoomRelevanceRecord,
+    SelectedFactPage, SteeringPage, TaskGeneration, TaskHeadPage, TaskHeads, TasteEvidenceFact,
+    TasteEvidencePage, TasteEvidenceSummary, ThreadError, TrustHeadPage,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use migrate::{Migration, MigrationError, OpenError};

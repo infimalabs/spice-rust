@@ -380,14 +380,23 @@ fn current_conversations_cross_a_predecessor_schema_without_changing_authority()
     assert_eq!(rows(&journal), before);
 }
 
-fn plant_overfull_group(journal: &Journal) -> String {
-    let stored = wire::rooms::WorkingGroupStored {
-        group: wire::rooms::WorkingGroup {
-            group: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_000)
-                .expect("fixture group"),
-            anchors: (0..=wire::rooms::WORKING_GROUP_DESIGN_LIMIT)
-                .map(|micros| wire::TaskStamp::for_micros(micros as i64).expect("fixture anchor"))
-                .collect(),
+/// Plant one per-group `group::stored` fact holding `anchors` designs, as a
+/// release before the partition wrote it.
+fn plant_stored_group(journal: &Journal, anchors: usize) -> String {
+    let group = wire::rooms::WorkingGroup {
+        group: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_000)
+            .expect("fixture group"),
+        anchors: (1..=anchors)
+            .map(|micros| wire::TaskStamp::for_micros(micros as i64).expect("fixture anchor"))
+            .collect(),
+    };
+    let moved = wire::rooms::WorkingGroupMoved {
+        design: group.anchors[0].clone(),
+        from: None,
+        to: Some(group.group.clone()),
+        partition: wire::rooms::WorkingGroupPartition {
+            revision: 1,
+            groups: vec![group.clone()],
         },
     };
     insert_fact(
@@ -395,31 +404,29 @@ fn plant_overfull_group(journal: &Journal) -> String {
         fact(
             3,
             Some(2),
-            FactKind::WorkingGroupStored,
-            serde_json::to_value(stored).expect("group encodes"),
+            FactKind::WorkingGroupMoved,
+            serde_json::to_value(moved).expect("move encodes"),
         ),
     );
+    journal
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET kind = 'group::stored', envelope = CAST(json_set( \
+             json_remove(CAST(envelope AS TEXT), '$.fact.design', '$.fact.from', '$.fact.to', \
+             '$.fact.partition'), '$.fact.kind', 'group::stored', '$.fact.group', json(?1)) \
+             AS BLOB) WHERE seq = 3",
+            [serde_json::to_string(&group).expect("group encodes")],
+        )
+        .expect("per-group fact is planted");
     "3".to_owned()
 }
 
+fn plant_overfull_group(journal: &Journal) -> String {
+    plant_stored_group(journal, wire::rooms::WORKING_GROUP_DESIGN_LIMIT + 1)
+}
+
 fn plant_group(journal: &Journal) -> String {
-    let stored = wire::rooms::WorkingGroupStored {
-        group: wire::rooms::WorkingGroup {
-            group: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_000)
-                .expect("fixture group"),
-            anchors: vec![wire::TaskStamp::for_micros(1).expect("fixture anchor")],
-        },
-    };
-    insert_fact(
-        journal,
-        fact(
-            3,
-            Some(2),
-            FactKind::WorkingGroupStored,
-            serde_json::to_value(stored).expect("group encodes"),
-        ),
-    );
-    "3".to_owned()
+    plant_stored_group(journal, 1)
 }
 
 fn plant_millisecond_steering_head(journal: &Journal) -> String {
@@ -469,7 +476,7 @@ fn assert_retained_refusals(cases: &[RetainedCase]) {
 
 #[test]
 fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
-    let cases: [RetainedCase; 5] = [
+    let cases: [RetainedCase; 6] = [
         (
             "fact_envelopes",
             "ea3fe662a",
@@ -498,6 +505,12 @@ fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
             retained_receipt,
         ),
         (
+            "command_receipts",
+            "45eb87f84",
+            "UPDATE command_receipts SET command_kind = 'group::put'",
+            retained_receipt,
+        ),
+        (
             "steering_heads",
             "d811711a3",
             "",
@@ -509,7 +522,7 @@ fn retained_scalar_shapes_without_a_current_spelling_refuse_without_mutation() {
 
 #[test]
 fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutation() {
-    let cases: [RetainedCase; 9] = [
+    let cases: [RetainedCase; 10] = [
         (
             "fact_envelopes",
             "a4abe071f",
@@ -561,6 +574,7 @@ fn retained_runtime_authority_without_a_current_spelling_refuses_without_mutatio
              '$.fact.group.name', 'Named') AS BLOB) WHERE seq = 3",
             plant_group,
         ),
+        ("fact_envelopes", "45eb87f84", "", plant_group),
     ];
     assert_retained_refusals(&cases);
 }

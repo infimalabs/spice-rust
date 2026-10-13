@@ -3,7 +3,7 @@ use super::*;
 mod group;
 mod preparation;
 mod requirements;
-use group::{client_group_list, client_group_put};
+use group::{client_group_arrange, client_group_list, client_group_move};
 use requirements::{client_require, environment_requirements};
 mod room;
 use room::dispatch_room_client;
@@ -57,7 +57,8 @@ fn dispatch_client(
         ["doc"] => run_doc(repository, contract, matches, dialect::emit),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
         ["group", "list"] => client_group_list(repository, contract, matches),
-        ["group", "put"] => client_group_put(repository, contract, matches),
+        ["group", "move"] => client_group_move(repository, contract, matches),
+        ["group", "arrange"] => client_group_arrange(repository, contract, matches),
         ["preparation", verb] => preparation::dispatch_client(repository, contract, matches, verb),
         ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),
@@ -1299,7 +1300,10 @@ fn dispatch_working_group(
 ) -> Option<Outcome<CommandAnswer>> {
     Some(match command.body() {
         wire::intent::Intent::WorkingGroupRead(read) => read_working_groups(bus, read),
-        wire::intent::Intent::WorkingGroupPut(put) => put_working_group(bus, command, put),
+        wire::intent::Intent::WorkingGroupMove(moving) => move_working_group(bus, command, moving),
+        wire::intent::Intent::WorkingGroupArrange(arrange) => {
+            arrange_working_groups(bus, command, arrange)
+        }
         _ => return None,
     })
 }

@@ -72,9 +72,7 @@ fn witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool, Guar
         | Witness::Eligibility { .. }
         | Witness::Preview { .. }
         | Witness::Barrier { .. } => board_witness_holds(read, witness),
-        Witness::Group { group, head } => {
-            Ok(read.group_head(group)?.map(|head| head.position()) == *head)
-        }
+        Witness::Group { revision } => Ok(partition_revision(read)? == *revision),
         Witness::Proposal { proposal, head } => {
             Ok(read.proposal_head(proposal)?.map(|head| head.position()) == *head)
         }
@@ -97,6 +95,13 @@ fn witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool, Guar
             "board transaction carried a witness outside its authority plane".to_owned(),
         )),
     }
+}
+
+/// The current working-group partition revision, zero before any grouping.
+fn partition_revision(read: &JournalRead<'_>) -> Result<u64, GuardError> {
+    Ok(read
+        .group_partition()?
+        .map_or(0, |head| head.body().revision))
 }
 
 fn task_witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool, GuardError> {

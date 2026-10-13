@@ -359,7 +359,8 @@ fn put_aside_lists_its_writes_cancellations_and_stops_the_active_holder() {
 fn room_authority_pages_current_heads_through_their_horizon() {
     let mut journal = Journal::in_memory().expect("journal");
     let room = task(&mut journal, 1, None);
-    commit(&mut journal, group(1, vec![room.clone()])).expect("group stored");
+    let grouped = moved(&journal, &room, Some(1));
+    commit(&mut journal, grouped).expect("group stored");
     let control = CoordinationControl::Coordinate(room.clone());
     journal
         .apply(start(
@@ -386,7 +387,8 @@ fn room_authority_pages_current_heads_through_their_horizon() {
         .expect("coordination put aside");
     let shelved = cursor(&journal).expect("shelved");
     let canceled = Seq::new(shelved.get() - 1).expect("cancellation position");
-    commit(&mut journal, group(1, vec![room.clone()])).expect("group restored");
+    let restated = arranged(&journal, vec![(1, vec![room.clone()])]);
+    commit(&mut journal, restated).expect("group restated");
     let restored = cursor(&journal).expect("restored");
 
     let pages = |horizon: Seq| {

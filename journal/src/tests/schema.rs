@@ -43,8 +43,7 @@ fn current_schema_is_the_only_executable_journal_shape() {
 /// Return a current fixture to a predecessor's shape and identity.
 fn restore_predecessor(journal: &Journal, predecessor: u32) {
     let rooms = if predecessor < crate::migrate::ROOM_AUTHORITY_SCHEMA {
-        "DROP TABLE room_publications; DROP TABLE group_anchors; DROP TABLE group_heads;
-         DROP TABLE proposal_heads; DROP TABLE authorization_heads;"
+        "DROP TABLE room_publications; DROP TABLE proposal_heads; DROP TABLE authorization_heads;"
     } else {
         ""
     };
@@ -89,10 +88,30 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
+    let groups = if predecessor < crate::migrate::ROOM_AUTHORITY_SCHEMA {
+        "DROP TABLE group_partition;"
+    } else if predecessor < crate::migrate::GROUP_PARTITION_SCHEMA {
+        "DROP TABLE group_partition;
+         CREATE TABLE group_heads (
+             working_group TEXT PRIMARY KEY,
+             head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+             body BLOB NOT NULL
+         ) STRICT;
+         CREATE TABLE group_anchors (
+             anchor TEXT NOT NULL,
+             working_group TEXT NOT NULL REFERENCES group_heads(working_group),
+             ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+             PRIMARY KEY (anchor, working_group),
+             UNIQUE (working_group, ordinal)
+         ) STRICT, WITHOUT ROWID;"
+    } else {
+        ""
+    };
     journal
         .connection
         .execute_batch(&format!(
-            "{rooms} {cursors} {coordination} {horizons} {conversations} {evidence} {relevance}
+            "{rooms} {groups} {cursors} {coordination} {horizons} {conversations} {evidence} \
+             {relevance}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",
         ))
@@ -102,7 +121,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
     for predecessor in [
-        33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+        33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
     ] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");

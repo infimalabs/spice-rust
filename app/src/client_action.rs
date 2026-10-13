@@ -39,11 +39,11 @@ pub(crate) enum ClientAction {
         stop: bool,
         respond: JobResponse,
     },
-    /// Store one repository-shared working group's design order; an empty
-    /// order ends it, and each named design leaves any other group.
-    WorkingGroupPut {
-        group: wire::rooms::WorkingGroup,
-        head: Option<wire::Seq>,
+    /// Move one design into a working group, founding it under a fresh
+    /// identity, or out of every group, at the observed partition revision.
+    WorkingGroupMove {
+        request: wire::rooms::WorkingGroupMove,
+        revision: u64,
         respond: GroupResponse,
     },
     /// Publish operator-authored text or one typed OOPS disposition to a task room.

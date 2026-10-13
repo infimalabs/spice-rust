@@ -345,10 +345,9 @@ fn operator_reconnect_begins_live_instead_of_draining_missed_history() {
 
 /// Commit one design task and a working group holding it, as one write.
 fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
-    let group = group.parse().expect("group stamp");
     let mut write = JournalWrite::new(
         Actor::Operator,
-        wire::rooms::working_group_origin(&group),
+        wire::rooms::working_group_origin(),
         "2030-04-12T18:44:09.271Z".parse().expect("instant"),
         Producer::CommandDoor,
     );
@@ -411,12 +410,26 @@ fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
         completion: None,
         generation: 0,
     });
+    let current = bus
+        .read(|read| read.group_partition())
+        .expect("partition reads")
+        .map(journal::JournalHead::into_body)
+        .unwrap_or_default();
+    let group: wire::rooms::RoomAuthorityStamp = group.parse().expect("group stamp");
+    let mut groups = current.groups;
+    groups.push(wire::rooms::WorkingGroup {
+        group: group.clone(),
+        anchors: vec![task.clone()],
+    });
     write
         .fact(
-            wire::rooms::WorkingGroupStored {
-                group: wire::rooms::WorkingGroup {
-                    group,
-                    anchors: vec![task],
+            wire::rooms::WorkingGroupMoved {
+                design: task,
+                from: None,
+                to: Some(group),
+                partition: wire::rooms::WorkingGroupPartition {
+                    revision: current.revision + 1,
+                    groups,
                 },
             },
             FactCause::Root,
@@ -428,13 +441,39 @@ fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
     }
 }
 
+/// Commit one operator post in `design`'s room.
+fn commit_post(bus: &Bus, design: &str, publication: &str) -> JournalCommit {
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "thread:operator".parse().expect("origin"),
+        "2030-04-12T18:44:10.271Z".parse().expect("instant"),
+        Producer::CommandDoor,
+    );
+    write
+        .fact(
+            wire::rooms::RoomPublished {
+                room: design.parse().expect("design stamp"),
+                publication: publication.parse().expect("publication stamp"),
+                content: wire::rooms::RoomPublicationContent::Authored {
+                    text: "ship it".to_owned(),
+                },
+            },
+            FactCause::Root,
+        )
+        .expect("post fact builds");
+    match bus.commit(write).expect("commit answers") {
+        CommitOutcome::Committed(commit) => commit,
+        other => panic!("post commit failed: {other:?}"),
+    }
+}
+
 /// An operator subscription starts live, so its room authority arrives as a
 /// room snapshot at that same horizon, and only later facts arrive live.
 #[test]
 fn operator_room_snapshot_meets_live_facts_at_one_horizon() {
     let bus = fixture(2);
     let first = commit_group(&bus, "dVsYdDj7d", "dVsYdDj70");
-    let second = commit_group(&bus, "dVsYdDj7f", "dVsYdDj71");
+    let second = commit_post(&bus, "dVsYdDj70", "dVsYdDj7f");
     let source = Source::new(bus.reader(), epoch(), 1, presenter());
     let (mut subscription, frames) = source
         .begin(

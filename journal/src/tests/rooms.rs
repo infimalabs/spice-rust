@@ -4,7 +4,8 @@ use wire::rooms::{
     CritiqueStanding, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorized,
     NegativeDecision, OutputControlled, PreparationDecided, PreparationDecision, ProposalRef,
     RetainedCandidate, RoomAuthorityStamp, RoomPublicationContent, RoomPublished, RoomSource,
-    TextRange, TranscriptHunk, WorkingGroup, WorkingGroupRemoved, WorkingGroupStored,
+    TextRange, TranscriptHunk, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
+    WorkingGroupsArranged,
 };
 use wire::{Producer, SequenceCode, TaskPreparation};
 
@@ -449,12 +450,60 @@ fn publication(room: &TaskStamp, micros: i64, content: RoomPublicationContent) -
     }
 }
 
-fn group(micros: i64, anchors: Vec<TaskStamp>) -> WorkingGroupStored {
-    WorkingGroupStored {
-        group: WorkingGroup {
-            group: authority(micros),
-            anchors,
+/// The partition the journal currently holds.
+fn partition(journal: &Journal) -> WorkingGroupPartition {
+    journal
+        .read(|read| read.group_partition())
+        .expect("partition reads")
+        .map(crate::JournalHead::into_body)
+        .unwrap_or_default()
+}
+
+/// `design` moving from wherever it stands into group `to`, or out.
+fn moved(journal: &Journal, design: &TaskStamp, to: Option<i64>) -> WorkingGroupMoved {
+    let current = partition(journal);
+    let from = current.holder(design).map(|group| group.group.clone());
+    let to = to.map(authority);
+    let mut groups = current.groups;
+    for group in &mut groups {
+        group.anchors.retain(|anchor| anchor != design);
+    }
+    groups.retain(|group| !group.anchors.is_empty());
+    if let Some(target) = &to {
+        match groups.iter_mut().find(|group| &group.group == target) {
+            Some(group) => group.anchors.push(design.clone()),
+            None => groups.push(WorkingGroup {
+                group: target.clone(),
+                anchors: vec![design.clone()],
+            }),
+        }
+    }
+    WorkingGroupMoved {
+        design: design.clone(),
+        from,
+        to,
+        partition: WorkingGroupPartition {
+            revision: current.revision + 1,
+            groups,
         },
+    }
+}
+
+/// The current partition restated as `groups`, at the next revision.
+fn arranged(journal: &Journal, groups: Vec<(i64, Vec<TaskStamp>)>) -> WorkingGroupsArranged {
+    let from = partition(journal);
+    WorkingGroupsArranged {
+        partition: WorkingGroupPartition {
+            revision: from.revision + 1,
+            groups: groups
+                .into_iter()
+                .map(|(group, anchors)| WorkingGroup {
+                    group: authority(group),
+                    anchors,
+                })
+                .collect(),
+        },
+        from,
     }
 }
 

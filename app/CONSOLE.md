@@ -20,18 +20,24 @@ while designs belong to it, carries no operator-given name (its label derives
 from its lead design, as a team's does from its host), and is never created
 empty, renamed, or removed as an object. A design belongs to at most one group.
 It owns no lanes, roster, claims, wake behavior, read permission, task
-lifecycle, open view, draft, focus, order, or geometry.
+lifecycle, open view, draft, focus, console order, or geometry.
 
-`spice group list` pages saved groups. `spice group put [ANCHOR...]` begins a
-group holding those designs, while `--group GROUP` completely replaces that
-group's design order. Each named design leaves any other group in the same
-guarded write, and a group left without a design ends there; an empty order
-therefore ends the named group, and an empty put naming no current group
-refuses as `group::design-required`. A put naming a task without Design intent
-refuses as `group::design-only`, and one naming a seventh design refuses as
-`group::design-limit`; the journal folds no group past six designs, and a
-predecessor journal holding one, a named group, or a removal-by-name receipt
-refuses to cross, naming the last release that admitted it. Anchors resolve by
+Every working group lives in one repository partition: groups in order, each
+holding its designs in order, under one revision. `spice group list` reads the
+whole partition. `spice group move ANCHOR --to GROUP` moves one design into a
+saved group, `--new` begins a group holding only that design under a fresh
+identity, standing where the design stood, and neither flag takes the design
+out of every group. `spice group arrange GROUP=ANCHOR,ANCHOR...` restates the
+whole partition in a new group order and design order. Each write witnesses the
+revision it read and refuses as `group::partition-moved` once another write
+has moved it; a group whose last design moves out ends there. A move naming a
+task without Design intent refuses as `group::design-only`, and one naming a
+seventh design refuses as `group::design-limit`; an arrangement that drops,
+repeats, or invents a design, or names a group without designs, refuses with
+its `group::arrangement-*` reason. The journal folds no group past six
+designs, and a predecessor journal holding one, a named group, a per-group
+head, or a receipt of the retired whole-group put refuses to cross, naming the
+last release that admitted it. Anchors resolve by
 immutable task birth stamp and display the task's current handle. An anchor
 whose task is deleted or no longer declares Design intent remains explicit as
 unavailable. Saved edits are visible to other repository clients, but never

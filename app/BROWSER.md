@@ -46,8 +46,9 @@ rebuilds one deterministic projection of task-keyed room timelines,
 repository working groups, participant reasons, preparation evidence,
 decisions, authorizations, and claim-bound stop requests. The `rooms` subject
 pages the facts behind current room authority at the subscription horizon:
-every room publication, the current head of each group, proposal, and
-authorization, and each coordination's direction and current steering head.
+every room publication, the current head of the working-group partition and
+of each proposal and authorization, and each coordination's direction and
+current steering head.
 Live facts strictly after that horizon continue it, so the operator's
 live-start fact stream neither repeats nor misses authority. The projection is
 unavailable until its snapshot completes.
@@ -73,15 +74,18 @@ team, or lane authority, and a group edit never mounts, reorders, or closes a
 browser view.
 
 The Spice sidebar is the working-group catalog, the design-side twin of the
-team roster. A group exists only while designs belong to it: it is never
-created empty, never named, and never removed as an object. Each group card
-reads as a team card: labelled from its lead design, as a team is from its
-host, with its size and its designs as draggable tiles. A group's **Open**
-mounts its console, as a team's watchband shows it, and is the only foreground
-action. In that console a design's menu carries **Create new group** and
-**Leave group**, the twins of an agent's **Create new team** and **Leave all
-teams**; they and every drop replace shared organization through the guarded
-group put. A group whose last design leaves ends, and any already-open local
+team roster. It reads one shared partition: every group in partition order,
+each holding its designs in order, guarded by one revision. A group exists
+only while designs belong to it: it is never created empty, never named, and
+never removed as an object. Each group card reads as a team card: labelled from
+its lead design, member zero, as a team is from its host, with its size and its
+designs as draggable tiles. A group's **Open** mounts its console, as a team's
+watchband shows it, and is the only foreground action. In that console a
+design's menu carries **Create new group** and **Leave group**, the twins of an
+agent's **Create new team** and **Leave all teams**; they and every drop send
+one `group::move` witnessing the partition revision the browser last folded,
+and a change that partition revision no longer matches is refused rather than
+merged. A group whose last design leaves ends, and any already-open local
 console becomes an unavailable placeholder once a completed room snapshot
 lacks the group; while room authority loads or reconnects, the console keeps
 its last label and geometry.
@@ -90,15 +94,18 @@ its last label and geometry.
 lists lanes in no team, and a design moves between groups exactly as an agent
 moves between teams: a mouse drags the whole row, a finger or pen drags its
 handle, and holding a lifted design near the sheet's edge scrolls it. Dropping
-it on **New working group** begins a group holding only that design; dropping
-it on a saved group appends it there; dropping a grouped design on **Designs**
-takes it out of its group. A design belongs to at most one group, so joining or
-beginning a group takes it out of the one that held it, and a drop where the
-design already is changes nothing. A full group still accepts the drop, so the
-authority's `group::design-limit` refusal reports it in the catalog notice, as
-does `group::design-only` for a task without Design intent; either leaves every
-group unchanged. A drop changes only shared organization and never mounts,
-reorders, closes, or focuses a console.
+it on **New working group** begins a group holding only that design, standing
+where the design stood in the partition order or, for an ungrouped design,
+last; dropping it on a saved group appends it there; dropping a grouped design
+on **Designs** takes it out of its group. A
+design belongs to at most one group, so joining or beginning a group takes it
+out of the one that held it, and a drop where the design already is changes
+nothing. A full group still accepts the drop, so the authority's
+`group::design-limit` refusal reports it in the catalog notice, as does
+`group::design-only` for a task without Design intent and
+`group::partition-moved` for a partition that changed since the browser read
+it; each leaves every group unchanged. A drop changes only shared organization
+and never mounts, reorders, closes, or focuses a console.
 
 Each opened group is a console in the team fleet, after the teams, read exactly
 as a team console with tasks and agents swapped. A team's composers target its

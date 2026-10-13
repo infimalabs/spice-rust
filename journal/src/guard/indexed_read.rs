@@ -23,7 +23,7 @@ use bounds::{admitted_envelope_length, decode_bounded_fact};
 pub(crate) use head_page::verify_task_page_plan;
 pub use head_page::{CurrentHeadWitness, TaskHeadPage, TrustHeadPage};
 pub use rooms::{
-    GroupHeadPage, OpenRoomItemPage, ProposalAuthority, RoomRelevanceMetrics, RoomRelevancePage,
+    OpenRoomItemPage, ProposalAuthority, RoomRelevanceMetrics, RoomRelevancePage,
     RoomRelevanceRecord,
 };
 pub use taste::{TasteEvidenceFact, TasteEvidencePage, TasteEvidenceSummary};

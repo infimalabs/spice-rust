@@ -1,113 +1,81 @@
-//! Working-group order, single membership, ending, and bounded group indexes.
+//! The working-group partition: one revision, standing groups of existing
+//! designs, and nothing a fact does not restate exactly.
 
 use super::*;
 
 #[test]
-fn a_group_keeps_its_order_holds_designs_alone_and_ends_without_touching_rooms() {
+fn the_partition_advances_one_revision_per_fact_and_ends_empty_groups() {
     let mut journal = Journal::in_memory().expect("journal");
     let first = task(&mut journal, 1, None);
     let second = task(&mut journal, 2, None);
     let third = task(&mut journal, 3, None);
-    let id = authority(7);
-    let read_group = |journal: &Journal| {
-        journal
-            .read(|read| {
-                Ok((
-                    read.group_head(&id)?.map(|head| head.into_body().anchors),
-                    read.anchor_group(&second)?
-                        .map(|head| head.into_body().group),
-                    read.group_head_page(None, fact_budget(8))?.rows.len(),
-                ))
-            })
-            .expect("group reads")
-    };
-
-    commit(
-        &mut journal,
-        group(7, vec![third.clone(), first.clone(), second.clone()]),
-    )
-    .expect("group stored");
-    assert_eq!(
-        read_group(&journal),
+    let standing = |journal: &Journal| {
+        let current = partition(journal);
         (
-            Some(vec![third.clone(), first.clone(), second.clone()]),
-            Some(id.clone()),
-            1
+            current.revision,
+            current
+                .groups
+                .into_iter()
+                .map(|group| (group.group, group.anchors))
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(standing(&journal), (0, Vec::new()));
+
+    let founded = moved(&journal, &first, Some(7));
+    commit(&mut journal, founded).expect("a design founds a group");
+    let joined = moved(&journal, &second, Some(7));
+    commit(&mut journal, joined).expect("a design joins a group");
+    let other = moved(&journal, &third, Some(8));
+    commit(&mut journal, other).expect("a second group follows the first");
+    assert_eq!(
+        standing(&journal),
+        (
+            3,
+            vec![
+                (authority(7), vec![first.clone(), second.clone()]),
+                (authority(8), vec![third.clone()]),
+            ]
         )
     );
-    commit(&mut journal, group(7, vec![first.clone(), third.clone()])).expect("group reordered");
-    assert_eq!(
-        read_group(&journal),
-        (Some(vec![first.clone(), third.clone()]), None, 1)
+
+    let stale = arranged(&journal, vec![(8, vec![third.clone()])]);
+    let restated = arranged(
+        &journal,
+        vec![
+            (8, vec![third.clone()]),
+            (7, vec![second.clone(), first.clone()]),
+        ],
     );
+    commit(&mut journal, restated).expect("an arrangement restates order");
+    let result = commit(&mut journal, stale);
+    refused(&journal, result);
+
+    let mut skipped = arranged(&journal, vec![(8, vec![third.clone()])]);
+    skipped.partition.revision += 1;
+    let result = commit(&mut journal, skipped);
+    refused(&journal, result);
     let absent = TaskStamp::for_micros(99_999).expect("absent stamp");
-    let result = commit(&mut journal, group(7, vec![first.clone(), absent]));
+    let invented = arranged(&journal, vec![(8, vec![third.clone(), absent])]);
+    let result = commit(&mut journal, invented);
     refused(&journal, result);
-    let result = commit(&mut journal, group(7, Vec::new()));
+    let mut misattributed = moved(&journal, &first, Some(8));
+    misattributed.from = Some(authority(8));
+    let result = commit(&mut journal, misattributed);
     refused(&journal, result);
-    let result = commit(&mut journal, group(8, vec![second.clone(), first.clone()]));
+    let crowd = (10..=16)
+        .map(|offset| task(&mut journal, offset, None))
+        .collect::<Vec<_>>();
+    let overfull = arranged(&journal, vec![(9, crowd)]);
+    let result = commit(&mut journal, overfull);
     refused(&journal, result);
+    assert_eq!(partition(&journal).revision, 4);
+
+    let left = moved(&journal, &third, None);
+    commit(&mut journal, left).expect("the last design leaves its group");
     assert_eq!(
-        read_group(&journal),
-        (Some(vec![first.clone(), third.clone()]), None, 1)
+        standing(&journal),
+        (5, vec![(authority(7), vec![second.clone(), first.clone()])])
     );
-    journal.verify().expect("ordered groups verify");
-
-    commit(&mut journal, WorkingGroupRemoved { group: id.clone() }).expect("group ended");
-    assert_eq!(read_group(&journal), (None, None, 0));
-    let result = commit(&mut journal, WorkingGroupRemoved { group: id.clone() });
-    refused(&journal, result);
-    assert!(
-        journal
-            .read(|read| read.task_head(&first))
-            .expect("room reads")
-            .is_some()
-    );
-    commit(&mut journal, group(8, vec![first.clone(), second.clone()]))
-        .expect("an ended group's designs join another group");
-    commit(&mut journal, group(7, vec![third.clone()])).expect("an ended group recreates");
-    journal.verify().expect("group history verifies");
-}
-
-#[test]
-fn group_catalog_pages_by_bytes_without_gaps() {
-    let mut journal = Journal::in_memory().expect("journal");
-    let groups = [1, 2, 3].map(authority);
-    for micros in [1, 2, 3] {
-        let anchor = task(&mut journal, micros, None);
-        commit(&mut journal, group(micros, vec![anchor])).expect("group commits");
-    }
-
-    let row_limited = journal
-        .read(|read| read.group_head_page(None, fact_budget(1)))
-        .expect("row-limited group page");
-    assert_eq!(row_limited.rows.len(), 1);
-    assert_eq!(row_limited.continuation, Some(groups[0].clone()));
-
-    let anchor = TaskStamp::for_micros(1).expect("fixture anchor");
-    let group_bytes = serde_json::to_vec(&group(1, vec![anchor]).group)
-        .expect("group encodes")
-        .len();
-    let group_budget = FactReadBudget::new(8, group_bytes).expect("one group body");
-    let mut after = None;
-    for expected in &groups {
-        let page = journal
-            .read(|read| read.group_head_page(after.as_ref(), group_budget))
-            .expect("group page");
-        assert_eq!(
-            page.rows
-                .iter()
-                .map(|head| head.body().group.clone())
-                .collect::<Vec<_>>(),
-            vec![expected.clone()]
-        );
-        after = page.continuation;
-    }
-    assert_eq!(after, None);
-    let too_small = FactReadBudget::new(8, group_bytes - 1).expect("smaller body budget");
-    let indivisible = journal
-        .read(|read| read.group_head_page(None, too_small))
-        .expect("first indivisible group head advances the page");
-    assert_eq!(indivisible.rows[0].body().group, groups[0]);
-    assert_eq!(indivisible.continuation, Some(groups[0].clone()));
+    journal.verify().expect("partition history verifies");
 }

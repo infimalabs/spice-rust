@@ -10,7 +10,7 @@ use wire::rooms::{
     RoomCoordinationStarted, RoomDelivery, RoomDestination, RoomDisposed, RoomMessaged, RoomPosted,
     RoomPublicationKind, RoomPutAside, RoomReceiptDisposition, RoomReceiptLapsed,
     RoomReceiptRecovered, RoomReceiptRef, RoomReceiptState, RoomRoute, RoomStopRequest, TextRange,
-    WorkingGroup, WorkingGroupRemoved, WorkingGroupStored,
+    WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
 };
 
 const ROOM_EVENT: &str = "dVsYdDj7d";
@@ -67,12 +67,43 @@ fn group(extra: &[&str]) -> WorkingGroup {
     }
 }
 
-fn group_stored(position: u64, extra: &[&str]) -> serde_json::Value {
+/// The fixture group's last design moving in, leaving the partition at
+/// revision `position` with that one group.
+fn group_moved(position: u64, extra: &[&str]) -> serde_json::Value {
+    let group = group(extra);
     envelope(
         position,
-        "group::stored",
-        &WorkingGroupStored {
-            group: group(extra),
+        "group::moved",
+        &WorkingGroupMoved {
+            design: group
+                .anchors
+                .last()
+                .expect("fixture group holds a design")
+                .clone(),
+            from: None,
+            to: Some(group.group.clone()),
+            partition: WorkingGroupPartition {
+                revision: position,
+                groups: vec![group],
+            },
+        },
+    )
+}
+
+/// The fixture room's design leaving its group at `position`, ending the
+/// partition's only group.
+fn group_ended(position: u64) -> serde_json::Value {
+    envelope(
+        position,
+        "group::moved",
+        &WorkingGroupMoved {
+            design: room(),
+            from: Some(authority(GROUP)),
+            to: None,
+            partition: WorkingGroupPartition {
+                revision: position,
+                groups: Vec::new(),
+            },
         },
     )
 }
@@ -266,7 +297,7 @@ fn opening(session: &Session) -> [app::Admitted<StreamFrame>; 3] {
         operator_facts(session, 8),
         room_page(
             session,
-            &[group_stored(1, &[]), room_message(2)],
+            &[group_moved(1, &[]), room_message(2)],
             Some((4, 4)),
             8,
         ),
@@ -315,7 +346,7 @@ fn operator_subscription_rebuilds_room_authority_from_its_paged_room_snapshot() 
     assert!(runtime.apply_stream(&last).is_empty());
     let projection = runtime.room_projection();
     assert_eq!(projection.status(), app::RoomProjectionStatus::Available);
-    assert_eq!(projection.groups()[&authority(GROUP)].value, group(&[]));
+    assert_eq!(projection.partition().groups, vec![group(&[])]);
     assert_eq!(
         projection.preparation().authorizations[&authorization(1).decision].value,
         authorization(1)
@@ -435,25 +466,16 @@ fn same_scope_reconnect_rebuilds_from_the_new_snapshot_with_stable_identities() 
         browser.apply_stream(&operator_facts(&session, 2));
         browser.apply_stream(&room_page(
             &session,
-            &[group_stored(1, &[]), room_message(2)],
+            &[group_moved(1, &[]), room_message(2)],
             None,
             2,
         ));
     }
-    let removal = admitted_stream(
-        &session,
-        &live_fact(envelope(
-            3,
-            "group::removed",
-            &WorkingGroupRemoved {
-                group: authority(GROUP),
-            },
-        )),
-    );
+    let removal = admitted_stream(&session, &live_fact(group_ended(3)));
     runtime.apply_stream(&removal);
     other_browser.apply_stream(&removal);
     for browser in [&runtime, &other_browser] {
-        assert!(browser.room_projection().groups().is_empty());
+        assert!(browser.room_projection().partition().groups.is_empty());
         assert!(
             browser
                 .room_projection()
@@ -477,7 +499,7 @@ fn same_scope_reconnect_rebuilds_from_the_new_snapshot_with_stable_identities() 
         &session,
         &[
             room_message(2),
-            group_stored(4, &["PUBLIC-work2"]),
+            group_moved(4, &["PUBLIC-work2"]),
             direction(5, COORDINATION_KEY, SECOND_LANE),
             coordination(6),
         ],
@@ -487,10 +509,10 @@ fn same_scope_reconnect_rebuilds_from_the_new_snapshot_with_stable_identities() 
     let projection = runtime.room_projection();
     assert_eq!(projection.status(), app::RoomProjectionStatus::Available);
     assert_eq!(
-        projection.groups()[&authority(GROUP)].value,
-        group(&["PUBLIC-work2"])
+        projection.partition().groups,
+        vec![group(&["PUBLIC-work2"])]
     );
-    assert_eq!(projection.groups()[&authority(GROUP)].position, seq(4));
+    assert_eq!(projection.partition().revision, 4);
     let events = projection.room(&room()).expect("room").events();
     assert_eq!(events[&authority(ROOM_EVENT)].position, seq(2));
     assert!(events.contains_key(&authority(COORDINATION_EVENT)));
@@ -558,7 +580,7 @@ fn room_snapshots_refuse_moved_horizons_regressions_and_live_gaps() {
 
     runtime.apply_stream(&room_page(
         &session,
-        &[group_stored(1, &[])],
+        &[group_moved(1, &[])],
         Some((1, 3)),
         4,
     ));
@@ -572,7 +594,7 @@ fn room_snapshots_refuse_moved_horizons_regressions_and_live_gaps() {
     assert!(!runtime.reconnect(&accepted));
     runtime.apply_stream(&room_page(
         &session,
-        &[group_stored(1, &[])],
+        &[group_moved(1, &[])],
         Some((1, 3)),
         4,
     ));
@@ -586,10 +608,10 @@ fn room_snapshots_refuse_moved_horizons_regressions_and_live_gaps() {
     assert!(!runtime.reconnect(&accepted));
     runtime.apply_stream(&admitted_stream(
         &session,
-        &live_fact(group_stored(6, &["PUBLIC-work2"])),
+        &live_fact(group_moved(6, &["PUBLIC-work2"])),
     ));
     assert_eq!(
-        runtime.apply_stream(&room_page(&session, &[group_stored(1, &[])], None, 5)),
+        runtime.apply_stream(&room_page(&session, &[group_moved(1, &[])], None, 5)),
         vec![StreamDirective::Reconnect],
         "a live fact past the snapshot horizon before completion is a gap"
     );
@@ -597,7 +619,7 @@ fn room_snapshots_refuse_moved_horizons_regressions_and_live_gaps() {
 
     // The runtime already admitted live position 6; overlap is judged above it.
     assert!(!runtime.reconnect(&accepted));
-    runtime.apply_stream(&room_page(&session, &[group_stored(1, &[])], None, 8));
+    runtime.apply_stream(&room_page(&session, &[group_moved(1, &[])], None, 8));
     assert_eq!(
         runtime.room_projection().status(),
         app::RoomProjectionStatus::Available
@@ -605,7 +627,7 @@ fn room_snapshots_refuse_moved_horizons_regressions_and_live_gaps() {
     assert_eq!(
         runtime.apply_stream(&admitted_stream(
             &session,
-            &live_fact(group_stored(7, &["PUBLIC-work2"]))
+            &live_fact(group_moved(7, &["PUBLIC-work2"]))
         )),
         vec![StreamDirective::Reconnect],
         "a live fact at or before the horizon overlaps the snapshot"
@@ -613,14 +635,14 @@ fn room_snapshots_refuse_moved_horizons_regressions_and_live_gaps() {
     assert!(requires_snapshot(&runtime));
 
     assert!(!runtime.reconnect(&accepted));
-    runtime.apply_stream(&room_page(&session, &[group_stored(1, &[])], None, 8));
+    runtime.apply_stream(&room_page(&session, &[group_moved(1, &[])], None, 8));
     runtime.apply_stream(&admitted_stream(
         &session,
-        &live_fact(group_stored(9, &["PUBLIC-work2"])),
+        &live_fact(group_moved(9, &["PUBLIC-work2"])),
     ));
     assert_eq!(
-        runtime.room_projection().groups()[&authority(GROUP)].value,
-        group(&["PUBLIC-work2"])
+        runtime.room_projection().partition().groups,
+        vec![group(&["PUBLIC-work2"])]
     );
     assert_eq!(
         runtime.room_projection().status(),
