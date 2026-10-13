@@ -22,44 +22,75 @@ fn executable_rollback_requires_the_journal_schema_to_be_proven_unchanged() {
     assert!(!schema_rollback_safe(Some(CURRENT), None));
 }
 
+fn stamp(seconds: &[i64]) -> Result<TaskStamp, String> {
+    stamp_from_committer_seconds(seconds.iter().copied().map(Ok))
+}
+
 #[test]
 fn source_stamps_order_first_parent_commits_even_when_their_seconds_tie() {
-    let stamp = |log| stamp_from_committer_seconds(log);
-    let head = stamp("1790000001\n1790000000\n").expect("later commit stamps");
+    let head = stamp(&[1_790_000_001, 1_790_000_000]).expect("later commit stamps");
     assert_eq!(
         head,
         TaskStamp::for_micros(1_790_000_001_000_000).expect("stamp")
     );
     assert_eq!(
-        stamp("1790000001\n"),
+        stamp(&[1_790_000_001]),
         Ok(head.clone()),
         "a root commit has no parent to precede"
     );
-    let tied =
-        stamp("1790000001\n1790000001\n1790000000\n").expect("same-second descendant stamps");
-    let next = stamp("1790000001\n1790000001\n1790000001\n1790000000\n")
+    let tied = stamp(&[1_790_000_001, 1_790_000_001, 1_790_000_000])
+        .expect("same-second descendant stamps");
+    let next = stamp(&[1_790_000_001, 1_790_000_001, 1_790_000_001, 1_790_000_000])
         .expect("another same-second descendant stamps");
     assert_eq!(tied.micros(), head.micros() + 1);
     assert_eq!(next.micros(), tied.micros() + 1);
-    let later = stamp("1790000002\n1790000001\n1790000001\n1790000001\n1790000000\n")
-        .expect("later second stamps");
+    let later = stamp(&[
+        1_790_000_002,
+        1_790_000_001,
+        1_790_000_001,
+        1_790_000_001,
+        1_790_000_000,
+    ])
+    .expect("later second stamps");
     assert!(head < tied && tied < next && next < later);
     assert_eq!(
-        stamp("1790000001\n1790000001\n"),
+        stamp(&[1_790_000_001, 1_790_000_001]),
         Ok(tied),
         "a tied root has the same first-parent position"
     );
     for refused in [
-        "1790000000\n1790000001\n",
-        "1790000000\n1790000000\n1790000001\n",
-        "",
-        "HEAD\n",
-        "1790000000\nparent\n",
-        "-1\n",
-        "9223372036854775807\n",
+        &[1_790_000_000, 1_790_000_001][..],
+        &[1_790_000_000, 1_790_000_000, 1_790_000_001],
+        &[],
+        &[-1],
+        &[i64::MAX],
     ] {
         assert!(stamp(refused).is_err(), "{refused:?} must not stamp");
     }
+}
+
+/// Only the tied prefix and the first earlier ancestor are read, however long
+/// the history behind them, and an unreadable commit inside that prefix
+/// refuses rather than stamping short.
+#[test]
+fn source_stamps_read_no_history_past_the_first_earlier_ancestor() {
+    let mut read = 0;
+    let history = [1_790_000_001, 1_790_000_001, 1_790_000_000]
+        .into_iter()
+        .chain(std::iter::repeat(1_789_999_999))
+        .inspect(|_| read += 1)
+        .map(Ok);
+    assert_eq!(
+        stamp_from_committer_seconds(history).map(|stamp| stamp.micros()),
+        Ok(1_790_000_001_000_001)
+    );
+    assert_eq!(read, 3, "the walk stops at the first earlier ancestor");
+
+    let unreadable = [Ok(1_790_000_001), Err("commit unreadable".to_owned())];
+    assert_eq!(
+        stamp_from_committer_seconds(unreadable),
+        Err("commit unreadable".to_owned())
+    );
 }
 
 #[test]

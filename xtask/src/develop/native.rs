@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+use gate::test_support::gix;
+
 use spice::install::{self, InstallError};
 use spice::repository::Repository;
 use spice::resident_lock::{
@@ -352,31 +354,54 @@ pub fn refresh_install(repository: &Repository, binary: &Path) -> Result<Digest,
 
 /// Order this build by its source commit's clock and first-parent tie position.
 fn source_stamp(root: &Path) -> Result<TaskStamp, RefreshError> {
-    let logged = Command::new("git")
-        .current_dir(root)
-        .args(["log", "--first-parent", "--format=%ct", "HEAD"])
-        .stderr(Stdio::inherit())
-        .output()?;
-    if !logged.status.success() {
-        return Err(RefreshError::SourceStamp(
-            "git log could not read HEAD's committer instants".to_owned(),
-        ));
-    }
-    stamp_from_committer_seconds(&String::from_utf8_lossy(&logged.stdout))
+    let repository = gix::open_opts(root, gix::open::Options::isolated()).map_err(|error| {
+        RefreshError::SourceStamp(format!("repository could not open: {error}"))
+    })?;
+    let head = repository
+        .head_id()
+        .map_err(|error| {
+            RefreshError::SourceStamp(format!("HEAD does not name a commit: {error}"))
+        })?
+        .detach();
+    stamp_from_committer_seconds(first_parent_seconds(&repository, head))
         .map_err(RefreshError::SourceStamp)
+}
+
+/// Committer seconds of `head` and each first-parent ancestor, read lazily so
+/// a caller that stops early never visits the rest of history.
+fn first_parent_seconds(
+    repository: &gix::Repository,
+    head: gix::ObjectId,
+) -> impl Iterator<Item = Result<i64, String>> + '_ {
+    let mut next = Some(head);
+    std::iter::from_fn(move || {
+        let id = next.take()?;
+        Some(
+            repository
+                .find_commit(id)
+                .map_err(|error| format!("commit {id} could not be read: {error}"))
+                .and_then(|commit| {
+                    next = commit.parent_ids().next().map(gix::Id::detach);
+                    commit
+                        .time()
+                        .map(|time| time.seconds)
+                        .map_err(|error| format!("commit {id} has no committer instant: {error}"))
+                }),
+        )
+    })
 }
 
 /// Stamp HEAD from its committer second and its position in a same-second
 /// first-parent chain. Git stores only seconds, and deterministic task landings
 /// inherit the later parent's clock. Each tied descendant therefore advances
 /// one microsecond. The whole tied prefix is needed so repeated landings cannot
-/// reuse their parent's adjusted stamp. Refuse backward clocks and chains that
-/// exhaust the second's precision rather than overlap the next second.
-fn stamp_from_committer_seconds(log: &str) -> Result<TaskStamp, String> {
-    let mut instants = log.lines().map(|line| {
-        line.parse::<i64>()
-            .map_err(|_| format!("committer instant is not decimal seconds: {line:?}"))
-    });
+/// reuse their parent's adjusted stamp; nothing past the first earlier
+/// ancestor is read. Refuse backward clocks and chains that exhaust the
+/// second's precision rather than overlap the next second.
+fn stamp_from_committer_seconds(
+    instants: impl IntoIterator<Item = Result<i64, String>>,
+) -> Result<TaskStamp, String> {
+    let mut instants = instants.into_iter();
     let head = instants
         .next()
         .ok_or_else(|| "HEAD has no committer instant".to_owned())??;
