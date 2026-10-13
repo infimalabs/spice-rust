@@ -27,17 +27,21 @@ pub(super) fn dispatch_preparation(
     })
 }
 
-/// Refuse a positive controller conclusion while any live controlled output
-/// still lacks an authorization: that controller's exact execution
+/// Refuse a positive Design conclusion while any live output it constructed
+/// directly still lacks its selection: that Design's exact execution
 /// authorization or the operator's engagement of it in a working group.
 ///
-/// Operator close and delete are separate, explicit negative dispositions.
-/// They intentionally leave controlled outputs gated and do not call this
-/// guard.
+/// A Plan concludes like any reviewed task; its outputs then wait only for
+/// that positive boundary and ordinary dependencies. Operator close and delete
+/// are separate, explicit negative dispositions. They intentionally leave
+/// outputs gated and do not call this guard.
 pub(super) fn require_no_pending_controlled_outputs(
     snapshot: &ValidatedSnapshot,
     controller: &Entry,
 ) -> Result<(), Outcome<CommandAnswer>> {
+    if controller.statement().intent != Some(wire::TaskIntent::Design) {
+        return Ok(());
+    }
     let mut outputs = snapshot
         .entries
         .iter()
@@ -49,7 +53,10 @@ pub(super) fn require_no_pending_controlled_outputs(
                     .statement()
                     .preparation
                     .as_ref()
-                    .is_some_and(|preparation| preparation.controller == *controller.born())
+                    .is_some_and(|preparation| {
+                        preparation.parent == *controller.born()
+                            && preparation.construction == *entry.born()
+                    })
         })
         .map(|entry| entry.handle().to_string())
         .collect::<Vec<_>>();
@@ -61,12 +68,56 @@ pub(super) fn require_no_pending_controlled_outputs(
         "preparation::controlled-outputs-pending",
         Some(outputs.join(", ")),
         &format!(
-            "place {} in a working group to authorize its outputs, authorize the exact accepted \
-             selection with `spice preparation authorize AUTHORIZATION_JSON`, or close or delete \
-             each unselected output before concluding it",
+            "authorize the exact accepted selection of {} with `spice preparation authorize \
+             AUTHORIZATION_JSON`, place it in a working group, or close or delete each unselected \
+             output before concluding it",
             controller.handle()
         ),
     ))
+}
+
+/// Refuse candidate selection authority over anything but a Design.
+fn require_design(bus: &Bus, controller: &TaskStamp) -> Result<(), Outcome<CommandAnswer>> {
+    let snapshot = bus
+        .task_snapshot()
+        .map_err(|error| store_fault("preparation::heads-unreadable", &error.to_string()))?;
+    design_controller(task_heads(&snapshot, controller)?, controller)
+}
+
+fn design_controller(
+    heads: &journal::TaskHeads,
+    controller: &TaskStamp,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if heads.statement().body().intent == Some(wire::TaskIntent::Design) {
+        return Ok(());
+    }
+    Err(refusal(
+        "preparation::controller-not-design",
+        Some(controller.to_string()),
+        "retain candidates and authorize selections only under a Design; a Plan's outputs follow \
+         its positive review",
+    ))
+}
+
+/// Admit an authorization's controller: a witnessed, pending, unclaimed Design.
+fn require_open_design(
+    command: &wire::AdmittedCommand,
+    heads: &journal::TaskHeads,
+    controller: &TaskStamp,
+) -> Result<(), Outcome<CommandAnswer>> {
+    require_transition_witnesses(command, heads)?;
+    design_controller(heads, controller)?;
+    if heads.workflow().body().status != "pending"
+        || heads.workflow().body().completion.is_some()
+        || active_claim(heads)
+    {
+        return Err(refusal(
+            "preparation::controller-not-open",
+            Some(controller.to_string()),
+            "free any active claim and authorize while the preparation controller is pending",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn retain_candidate(
@@ -78,6 +129,9 @@ pub(super) fn retain_candidate(
         candidate: request_body.candidate.candidate.clone(),
     };
     if let Err(outcome) = require_proposal_absence(command, &subject) {
+        return outcome;
+    }
+    if let Err(outcome) = require_design(bus, &request_body.candidate.candidate.controller) {
         return outcome;
     }
     record(
@@ -280,18 +334,10 @@ pub(super) fn authorize_execution(
         Ok(heads) => heads,
         Err(outcome) => return outcome,
     };
-    if let Err(outcome) = require_transition_witnesses(command, controller) {
-        return outcome;
-    }
-    if controller.workflow().body().status != "pending"
-        || controller.workflow().body().completion.is_some()
-        || active_claim(controller)
+    if let Err(outcome) =
+        require_open_design(command, controller, &authorization.candidate.controller)
     {
-        return refusal(
-            "preparation::controller-not-open",
-            Some(authorization.candidate.controller.to_string()),
-            "free any active claim and authorize while the preparation controller is pending",
-        );
+        return outcome;
     }
     let mut outputs = Vec::with_capacity(authorization.selected_outputs.len());
     for output in &authorization.selected_outputs {
@@ -320,13 +366,14 @@ pub(super) fn authorize_execution(
                 .preparation
                 .as_ref()
                 .is_none_or(|preparation| {
-                    preparation.controller != authorization.candidate.controller
+                    preparation.parent != authorization.candidate.controller
+                        || preparation.construction != *output
                 })
         {
             return refusal(
                 "preparation::output-not-authorizable",
                 Some(output.to_string()),
-                "select a pending, unclaimed, unauthorized output controlled by this preparation",
+                "select a pending, unclaimed, unauthorized output this Design constructed",
             );
         }
         outputs.push(heads.statement().body().clone());

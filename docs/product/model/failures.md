@@ -55,12 +55,12 @@ Recovery messages follow the [refusal grammar](decisions.md#refusal-grammar-repa
 | **origin** | why a task exists | who filed it, or a scheduling or control edge |
 | **room** | the conversation attached to one anchor task, indexed from admitted publications | a filing filter, a participation roster, or a copy of transcripts |
 | **anchor** | the task whose born stamp names a room | a lane, a worktree, or a separate room identity |
-| **Plan** | declared task intent to construct and review executable contracts | permission to implement them |
-| **Design** | declared task intent to justify an assembly, or conclude that none is justified | a team or a parallel task store |
-| **preparation** | a task's recorded parent, controller, and construction owner | a prerequisite; an associated preparation stays schedulable |
-| **controller** | the Plan or Design whose positive conclusion and authorization govern an output | every ancestor, origin, or dependency |
-| **gated output** | pending controlled work that lacks execution authorization | a held claim, a deferral, or another task status |
-| **execution authorization** | operator-attributed permission for one exact output, by working-group engagement or by decision | a claim release, wake, receipt, review, or closure |
+| **Plan** | declared task intent to construct and review executable contracts; its positive review releases the tasks it constructs | permission to implement them, or a selection authority |
+| **Design** | declared task intent to justify an assembly, normally of Plans, or conclude that none is justified | a team or a parallel task store |
+| **preparation** | a task's recorded parent, controller, and construction owner | a prerequisite; a Plan a Plan constructs stays schedulable |
+| **controller** | the root Plan or Design whose positive conclusion governs an output | every ancestor, origin, or dependency |
+| **gated output** | pending output of a Design that lacks execution authorization | a held claim, a deferral, another task status, or a Plan's task awaiting review |
+| **execution authorization** | operator-attributed permission for one exact Design output, by working-group engagement or by decision | a claim release, wake, receipt, review, or closure |
 | **question result** | an ASK's substantive outcome under an immutable deadline | the ASK's delivery receipt |
 | **footprint** | the task-owned path boundary defined by [landing](boundaries.md#landing-refusals) | the integrated diff |
 | **baseline** | shared line a lane integrates with | an agent-facing upstream |

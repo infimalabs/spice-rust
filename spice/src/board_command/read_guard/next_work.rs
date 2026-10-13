@@ -175,11 +175,16 @@ pub(in crate::board_command) fn project_frontier<'a>(
             if let Some(standing) = allocation.dependency_standing(dependency)
                 && standing.is_settled()
             {
-                satisfied.insert(
+                satisfied.settle(
                     dependency.clone(),
                     standing == bus::DependencyStanding::Completed,
                 );
             }
+        }
+        if let Some(preparation) = &statement.preparation
+            && let Some(parent) = observed.task_heads(&preparation.parent)
+        {
+            satisfied.know(preparation.parent.clone(), parent.statement().body().intent);
         }
         let explicit_release = heads.claim().is_some_and(|claim| {
             observed

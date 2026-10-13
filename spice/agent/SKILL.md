@@ -170,13 +170,12 @@ command for more.
   output; its own acceptance does not replace that duty. Ordinary done cannot
   supply a required review verdict or skip later declared phases.
 - Ordinary task creation without another `--origin` under an ambient planning
-  controller binds to it and waits for its planning/review boundary and for
-  the operator's execution authorization selecting it. Origin alone never
-  creates a dependency. Use `--preparation HANDLE` for explicit association;
-  an associated preparation Plan may run while its Design is unfinished.
-  Explicit `--depends` adds prerequisites without removing the admitted
-  controller gate. Never add a reciprocal controller-to-output edge. Operator
-  closure or completion without that authorization authorizes nothing.
+  controller binds to it. A Plan's tasks wait only for its positive review and
+  ordinary dependencies. A Design's outputs, normally Plans, wait for the
+  operator's exact execution authorization; candidates and authorization apply
+  only to Designs. `--preparation HANDLE` binds explicitly; `--depends` never
+  removes that gate. Never add a reciprocal controller-to-output edge. Origin
+  creates no dependency; closure, deletion, or a finding releases nothing.
 - Keep work incremental and validated. Commit only while holding the matching
   claim. Git synchronization belongs to allocation and completion: never pull
   or push during implementation or alter harness-added attribution trailers.

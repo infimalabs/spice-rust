@@ -588,8 +588,18 @@ fn grooming_summary(runtime: &AppRuntime, grooming: &wire::rooms::OopsGrooming) 
                 "selected authorization"
             } else if task.statement.body.engagement.is_some() {
                 "engaged authorization"
-            } else if task.statement.body.preparation.is_some() {
-                "controlled · authorization pending"
+            } else if let Some(preparation) = &task.statement.body.preparation {
+                let design = runtime.board().is_some_and(|board| {
+                    board.tasks.iter().any(|parent| {
+                        parent.statement.body.born == preparation.parent
+                            && parent.statement.body.intent == Some(wire::TaskIntent::Design)
+                    })
+                });
+                if design {
+                    "controlled · authorization pending"
+                } else {
+                    "constructed · awaits its Plan"
+                }
             } else {
                 "public · uncontrolled"
             };

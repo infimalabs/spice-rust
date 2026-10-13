@@ -323,66 +323,6 @@ fn add_associated(
 }
 
 #[test]
-fn preparation_runs_inside_an_unfinished_design_but_outputs_wait_for_both_boundaries() {
-    let (root, bus, epoch, seats) = fixture("preparation-boundaries", 2);
-    let design = add_planning(
-        &bus,
-        epoch,
-        "Choose assembly",
-        wire::TaskIntent::Design,
-        None,
-    );
-    let design_actor = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &design_actor, &design);
-    let plan = add_associated(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "Prepare contracts",
-        Some(&design),
-        Some(wire::TaskIntent::Plan),
-    );
-    let plan_actor = Actor::Lane(seats[1].lane);
-    claim_task(&bus, epoch, &seats[1], &plan_actor, &plan);
-    authorize_lane_creation(&bus, epoch, &seats[1]);
-    let output = add_associated(
-        &bus,
-        epoch,
-        plan_actor.clone(),
-        "Execute contract",
-        None,
-        None,
-    );
-    let view = board(&bus, epoch, plan_actor);
-    let entries = actor_entries(&view).expect("entries");
-    let output_entry = task_entry(&entries, &output).expect("output");
-    assert!(!board::eligible_entry(
-        &board::resolved_tasks(&entries),
-        output_entry,
-        &Actor::Spice,
-        &view.environment()
-    ));
-    let output_head = at(&view, &output);
-    assert!(
-        output_head
-            .statement
-            .body
-            .dependencies
-            .contains(&plan.born().expect("plan stamp"))
-    );
-    assert!(
-        output_head
-            .statement
-            .body
-            .dependencies
-            .contains(&design.born().expect("design stamp"))
-    );
-    assert_eq!(at(&view, &plan).workflow.body.status, "pending");
-    assert_eq!(at(&view, &design).workflow.body.status, "pending");
-    clean(&root, bus);
-}
-
-#[test]
 fn negative_controller_closure_resolves_ordinary_edges_without_releasing_controlled_output() {
     let (root, bus, epoch, seats) = fixture("negative-controller", 1);
     let plan = add_planning(
