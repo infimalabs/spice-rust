@@ -1,6 +1,6 @@
 //! The first turn, held until omp answers the `spice` scheme registration:
 //! only a seat that serves the scheme is told about it and handed URLs to
-//! read.
+//! read. A resumed seat's notice is read from current authority only then.
 
 use std::io::{self, Write};
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -12,12 +12,22 @@ use super::Driver;
 #[cfg(test)]
 mod tests;
 
+/// The first turn a launch composed, and whether its seat resumes a session.
+pub(in crate::resident) enum FirstTurn {
+    /// A fresh session's turn, already carrying its startup briefing.
+    Fresh(String),
+    /// A resumed session's neutral turn. The resume notice naming the held
+    /// claim and pending steering joins it only as it is delivered, so no
+    /// launch, however early or abandoned, freezes that authority.
+    Resumed(String),
+}
+
 /// Whether omp serves `spice://`, and the first turn awaiting that answer.
 #[derive(Default)]
 pub(super) struct Registration {
     /// Settled by omp's answer; until then nothing has named a read.
     serves: OnceLock<bool>,
-    first_prompt: Mutex<Option<String>>,
+    first_turn: Mutex<Option<FirstTurn>>,
 }
 
 impl<W: Write + Send + 'static> Driver<W> {
@@ -32,18 +42,20 @@ impl<W: Write + Send + 'static> Driver<W> {
     pub(in crate::resident) fn open(
         &self,
         opening: &[u8],
-        first_prompt: Option<String>,
+        first_turn: Option<FirstTurn>,
     ) -> io::Result<()> {
         *self
             .registration
-            .first_prompt
+            .first_turn
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = first_prompt;
+            .unwrap_or_else(PoisonError::into_inner) = first_turn;
         self.write(opening)
     }
 
     /// Settle whether this seat serves `spice://` from omp's answer to the
-    /// registration, then start the first turn as that answer decides.
+    /// registration, then start the first turn as that answer decides. The
+    /// first answer alone takes the turn, so a resumed seat's authority is
+    /// read once, at this delivery.
     pub(super) fn observe_uri_registration(&self, decoded: &Decoded) {
         let Some(response) = decoded
             .context()
@@ -56,14 +68,22 @@ impl<W: Write + Send + 'static> Driver<W> {
         {
             return;
         }
-        let Some(prompt) = self
+        let Some(turn) = self
             .registration
-            .first_prompt
+            .first_turn
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()
         else {
             return;
+        };
+        let prompt = match turn {
+            FirstTurn::Fresh(prompt) => prompt,
+            FirstTurn::Resumed(mut prompt) => {
+                prompt.push_str("\n\n");
+                prompt.push_str(&(self.read_resume)());
+                prompt
+            }
         };
         if let Err(error) = self.write(&vendor::omp::first_prompt_request(&self.for_seat(prompt))) {
             eprintln!("spice supervisor: first turn unwritten: {error}");

@@ -44,6 +44,8 @@ const RETUNE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 type InboxReader = Box<dyn Fn() -> Option<Vec<u8>> + Send + Sync>;
 /// Composes the lane's folded briefing; `None` when there is none to give.
 type BriefingReader = Box<dyn Fn() -> Option<String> + Send + Sync>;
+/// Composes a resumed seat's notice from the lane's current authority.
+type ResumeReader = Box<dyn Fn() -> String + Send + Sync>;
 
 pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin> {
     stdin: Mutex<Option<W>>,
@@ -51,6 +53,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Read once per compaction, off the decoding path, since a briefing
     /// scans the transcript and the journal.
     read_briefing: BriefingReader,
+    /// Read once, when a resumed seat's first turn is delivered.
+    read_resume: ResumeReader,
     sequence: AtomicU64,
     delivered: Mutex<Option<Vec<u8>>>,
     /// Latest queued background notice per purpose. Superseded notices are
@@ -281,13 +285,17 @@ impl<W: Write + Send + 'static> Driver<W> {
                     .into_bytes(),
                 )
             },
-            move || {
-                Some(crate::session_command::lane_briefing(
-                    &environment,
-                    lane,
-                    None,
-                ))
+            {
+                let environment = environment.clone();
+                move || {
+                    Some(crate::session_command::lane_briefing(
+                        &environment,
+                        lane,
+                        None,
+                    ))
+                }
             },
+            move || crate::session_command::lane_resume_notice(&environment, lane, None),
             uri_server,
             steer::Key::for_identity(lane),
             terminal,
@@ -298,6 +306,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         stdin: W,
         read_inbox: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
         read_briefing: impl Fn() -> Option<String> + Send + Sync + 'static,
+        read_resume: impl Fn() -> String + Send + Sync + 'static,
         uri_server: uri::UriServer,
         seal: steer::Key,
         terminal: Option<Terminal>,
@@ -306,6 +315,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             stdin: Mutex::new(Some(stdin)),
             read_inbox: Box::new(read_inbox),
             read_briefing: Box::new(read_briefing),
+            read_resume: Box::new(read_resume),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             room_catch_up_sent: Mutex::new(None),
@@ -1406,6 +1416,7 @@ mod answered;
 mod event_tests;
 mod media;
 mod registration;
+pub(in crate::resident) use registration::FirstTurn;
 pub(in crate::resident) mod renewal;
 mod steering;
 #[cfg(test)]

@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use super::Driver;
+use super::{Driver, FirstTurn};
 
 const FIRST: &str = "# Spice briefing\nthe first turn";
 const EARLIER: &str = "1kJK6M0V";
@@ -104,7 +104,7 @@ impl Seat {
     /// releases the first turn.
     fn open(&self) {
         self.driver
-            .open(b"", Some(FIRST.to_owned()))
+            .open(b"", Some(FirstTurn::Fresh(FIRST.to_owned())))
             .expect("opening writes");
         let answer = serde_json::to_vec(&serde_json::json!({
             "id": listen::OMP_URI_SCHEMES_REQUEST_ID,
