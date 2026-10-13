@@ -109,6 +109,66 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
     ]
 }
 
+/// Facts outside the task namespace that still move task heads, beside a
+/// sibling of each namespace that moves none: authorization completes its
+/// controller and authorizes its selected outputs, and a working-group move
+/// engages the outputs of the Design entering a group.
+fn task_head_rows() -> Vec<StaleRow> {
+    let candidate = serde_json::json!({"controller": "1kKRRsDP", "candidate": "dVsYdDj7h"});
+    vec![
+        (
+            serde_json::json!({
+                "kind": "proposal::authorized",
+                "authorization": {
+                    "decision": {"controller": "1kKRRsDP", "decision": "1"},
+                    "candidate": candidate,
+                    "governed_inputs": [],
+                    "selected_outputs": ["dVsYdDj7d"],
+                    "coverage": [{"candidate": candidate, "coverage": "1"}],
+                },
+            }),
+            [true, false, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "proposal::decided",
+                "decision": {
+                    "decision": {"controller": "1kKRRsDP", "decision": "1"},
+                    "source": {"kind": "journal", "fact": "1"},
+                    "outcome": {"kind": "accepted", "candidate": candidate},
+                },
+            }),
+            [false, false, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "group::moved",
+                "design": "1kKRRsDP",
+                "to": "dVsYdDj7f",
+                "partition": {
+                    "revision": 1,
+                    "groups": [{"group": "dVsYdDj7f", "anchors": ["1kKRRsDP"]}],
+                },
+            }),
+            [true, false, false],
+        ),
+        (
+            serde_json::json!({
+                "kind": "group::arranged",
+                "from": {
+                    "revision": 1,
+                    "groups": [{"group": "dVsYdDj7f", "anchors": ["1kKRRsDP"]}],
+                },
+                "partition": {
+                    "revision": 2,
+                    "groups": [{"group": "dVsYdDj7f", "anchors": ["1kKRRsDP"]}],
+                },
+            }),
+            [false, false, false],
+        ),
+    ]
+}
+
 /// Facts from `journal::*` and `team::*`, which do not move these cached reads.
 /// These rows separate a per-read mapping from one that widens every read together.
 fn journal_and_team_rows() -> Vec<StaleRow> {
@@ -186,6 +246,7 @@ fn staleness_inventory() -> Vec<StaleRow> {
         .into_iter()
         .chain(lane_rows())
         .chain(task_and_claim_rows())
+        .chain(task_head_rows())
         .chain(journal_and_team_rows())
         .chain(unread_namespace_rows())
         .collect()
@@ -198,7 +259,7 @@ fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
     // The inventory is assembled from one group per namespace, so a dropped
     // group would take its whole namespace out of this loop while every
     // surviving row still passed. The count is what makes that a failure.
-    assert_eq!(inventory.len(), 15, "a namespace left the inventory");
+    assert_eq!(inventory.len(), 19, "a namespace left the inventory");
     for (fact, expected) in inventory {
         let kind = fact["kind"]
             .as_str()
@@ -217,6 +278,32 @@ fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
             "{kind} disagrees with its own summary"
         );
     }
+}
+
+#[test]
+fn an_authorization_rereads_the_controller_and_every_selected_output_detail() {
+    let session = session(OPERATOR, EPOCH);
+    let candidate = serde_json::json!({"controller": "1kKRRsDP", "candidate": "dVsYdDj7h"});
+    let authorized = serde_json::json!({
+        "kind": "proposal::authorized",
+        "authorization": {
+            "decision": {"controller": "1kKRRsDP", "decision": "1"},
+            "candidate": candidate,
+            "governed_inputs": ["dVsYdDj7g"],
+            "selected_outputs": ["dVsYdDj7d", "dVsYdDj7k"],
+            "coverage": [{"candidate": candidate, "coverage": "1"}],
+        },
+    });
+    let pushed = fact_frame(envelope(41, "operator", "task:1kKRRsDP", &authorized));
+    let stale = stale_reads(&admitted_stream(&session, &pushed));
+    assert_eq!(
+        stale
+            .task_details()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["1kKRRsDP", "dVsYdDj7d", "dVsYdDj7k"],
+        "the completed controller and authorized outputs reread; a governed input does not"
+    );
 }
 
 #[test]
