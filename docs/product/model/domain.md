@@ -6,11 +6,12 @@
 
 | Authority | Owns |
 | --- | --- |
-| Journal | tasks, claims, steering dispositions, inbox heads, topology, command receipts |
-| Transcript tape | vendor bytes and evidence of what the occupant produced |
+| Journal | tasks, claims, steering dispositions, inbox heads, topology, command receipts, room publications and their receipts, question results, room coordination and relevance records, preparation and execution-authorization records, the working-group partition |
+| Transcript tape | vendor bytes and evidence of what the occupant produced, including the exact body of every room packet |
 | Admitted target registry | worktree identity |
 | Lifecycle authority | launch and succession decisions |
 | Detached supervisor | the phase of its process turn |
+| Browser preferences | the [foreground](failures.md#ontology): open views, their order and layout, drafts, and focus; no task, lane, or group authority |
 
 The [authority register](../invariants/identity.md#identity-every-fact-has-exactly-one-authority)
 owns the rule for consumers; [session asks](../invariants/session.md#session-asks-are-sourced-from-the-steering-plane)
@@ -42,6 +43,17 @@ One board exposes separate rendered views:
 Collapsing origin and dependency edges loses the difference between provenance
 and a plan. These views are emitted as diagram source, not merely queried as
 rows; [graph reads](../interfaces.md#bounded-reads) describe their export boundary.
+
+Preparation is a third relation beside origin and dependency: it records the
+[controller](failures.md#ontology) that governs an output's execution
+authorization. Every task's mandatory origin stays provenance only. Preparation
+binds explicitly with `--preparation`, or automatically when ordinary creation
+without another origin runs under an ambient planning controller. That
+association is control authority, not scheduling: an associated preparation
+stays schedulable while its controller is unfinished, while a controlled output
+waits on authorization rather than on another task status. The
+[preparation register](../invariants/identity.md#work-preparation-is-explicit-and-provenance-is-not-a-gate)
+owns the rule.
 
 Entity definitions live in the [vocabulary](failures.md#ontology), task identity
 in the [identity register](../invariants/identity.md#identity-a-task-s-born-stamp-is-its-only-stored-identity),

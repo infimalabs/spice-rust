@@ -397,6 +397,121 @@ flowchart TD
 
 ---
 
+## L-ROOM — conversation at a task
+
+A room lets the operator talk at a task while agents challenge the need,
+gather evidence, and construct the smallest justified commitment. An evidenced
+negative conclusion is a result; activity alone is not. Each room is the
+conversation attached to one [anchor](model/failures.md#ontology) task: it
+indexes admitted publications whose bytes stay with their owning source, and it
+is neither a filing filter nor a roster. The
+[register](invariants/identity.md#identity-a-room-reads-back-from-its-owning-sources)
+owns each rule summarized here.
+
+- **Publishing.** A lane publishes only in authored assistant prose:
+  `MSG #TASK` records in a room, `MSG ADDRESS#TASK` also directs a lane,
+  `ASK AUDIENCE[#TASK]` opens a question result, and `ANS RESULT[#TASK]`
+  answers one ([grammar](invariants/identity.md#steering-an-msg-packet-owns-exactly-its-body-hunk)).
+  The operator publishes with `spice room post` and `spice room answer`. A
+  tool call's intent may retire a key, but publishes only as the narrow
+  fallback for a message with no text block.
+- **Delivery.** A directed route is a native steering directive bound to the
+  logical lane: vacancy, resume, and renewal keep its key, body, and expiry for
+  whichever occupant sits there next, while a replacement lane inherits
+  nothing. An operator route opens an operator item in `spice room inbox`.
+  Room-only traffic reaches current listeners as one bounded catch-up aside at
+  a safe boundary. Recording is not receipt.
+- **Receipt, answer, and authorization stay apart.** ACK/NAK settles a
+  delivery. A question result has one immutable deadline and ends answered,
+  declined, cancelled, or timed out; recovery of a lapsed delivery or item
+  never reopens or extends it. Answered means available for assessment: a task
+  that requires a result names it with `spice task require --evidence`, and
+  only `preparation` records carry review coverage and execution
+  authorization.
+- **Coordination.** `spice room start|resume HANDLE ADDRESS` sends one scoped
+  operator direction naming the criterion, contribution, and stop condition;
+  the recipient acquires the anchor through ordinary native possession.
+  `spice room put-aside` cancels unanswered coordination and asks any holder to
+  checkpoint or free, without freeing it. `spice room status` reads the
+  standing.
+- **Attention.** Participation is derived from contribution, recent activity,
+  invitation by a lane-addressed packet, native work, a live request, an owed
+  receipt or result, and a stop request. Aging removes only activity and
+  invitation. Relevance is
+  [shadow evidence](invariants/identity.md#identity-room-relevance-is-shadow-evidence-before-automation)
+  the operator assesses with `spice room assess`.
+- **Preparation.** `task plan` and `task design` declare intent with
+  `plan,review` and `design,review` flows; an associated preparation runs
+  while its controller is open, and active plan and design claims refuse
+  implementation commits. A controlled output waits, gated, until
+  [execution authorization](invariants/identity.md#work-execution-authorization-is-the-controllers-positive-completion):
+  a Design engaged by a working-group move authorizes its outputs, and
+  `spice preparation authorize` admits an exact accepted selection. Operator
+  close concludes negatively and authorizes nothing.
+- **Organization and foreground.** The
+  [working-group partition](invariants/identity.md#identity-working-groups-are-one-guarded-partition-of-designs)
+  is shared repository organization read by `spice group list` and changed only
+  by `spice group move` and `spice group arrange`. Open consoles, their order,
+  drafts, and focus are this browser's foreground and are never shared.
+
+Every read — `spice room history|inbox|result|relevance|status`,
+`spice preparation show`, `spice group list`, and their `spice://` resources —
+joins, acknowledges, delivers, settles, and wakes nothing.
+
+### Limits and their repairs
+
+| Bound | Value | Refusal and repair |
+| --- | --- | --- |
+| Designs per working group | 6, as lanes per team | `group::design-limit`: move one out or choose another group |
+| Group membership | Design tasks only | `group::design-only`: choose a Design or declare its Design intent |
+| Partition revision | the one read | `group::partition-moved`: read the groups and retry |
+| Automated resumes per rule | 1 through 8 | `room::auto-resume-out-of-range` |
+| Scoped request field | 2048 bytes | `room::coordination-scope-too-large` |
+| Live coordination per room | one request | `room::coordination-live`: retire or put aside the unanswered request |
+| Activity-only attention | one day | aging drops the reason, never history or duties |
+| Route fanout per publication | 32 | the packet refuses whole |
+| Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an operator answer refuses `room::answer-too-large` |
+| Pending question results per requester | 128 | further ASKs refuse; MSG, controls, and other requesters still admit |
+| Relevance sources per observation | 8 | an observation never cites more |
+| Late answer | the immutable deadline | `room::deadline-passed`: close with `spice room cancel RESULT --clause TEXT --override` |
+| Answer or close by a non-party | stored parties only | `room::not-respondent` or `room::override-required`, naming the `--override` command |
+| Required evidence | each result answered | `task::evidence-unsatisfied`: ask again, or the operator replaces or waives it |
+| Positive conclusion with gated outputs | none unauthorized | `preparation::controlled-outputs-pending`: engage the Design, authorize the exact selection, or close each unselected output |
+
+### Rollout boundary
+
+All four rollout stages are integrated: native hardening (the plan/design
+commit deny-list, retained planning duties, and renewal continuity); the first
+room loop (publication, reads, catch-up, the shared group partition, and
+preparation records); operator receipt symmetry with correlated ASK/ANS; and
+shadow relevance, explained invitations, and the operator-bounded resume rule.
+Transitions remain explicit operator and agent actions. The one automated
+transition runs the manual Resume's own operation, and final execution
+authorization stays operator-owned.
+
+### Deliberate non-capabilities
+
+- No room event wakes a lane. Only operator-directed steering wakes its named
+  lane; a peer packet, room post, invitation, relevance observation, or
+  automated resume never does.
+- No fallback respondent: a vacant respondent's delivery waits unheard for that
+  lane's next start.
+- Reads, invitations, ACK-only traffic, compaction, and renewal make no
+  participant and grant no claim, read permission, team membership, or wake.
+- No automation beyond the `--auto-resume` rule: nothing else starts work,
+  claims, decides, or authorizes.
+- Agreement, silence, message count, elapsed time, ACK, and ANS never count as
+  progress or approval.
+- No timed deferral coordinates a room, and gating adds no task status.
+- A working group has no name, is never empty, and is never removed as an
+  object; it holds no lanes, claims, or read or work authority. A grouped
+  design that is deleted or loses its Design intent stays in its group,
+  rendered unavailable.
+- Put aside never force-frees a claim or touches child claims and unrelated
+  direction.
+
+---
+
 ## The Jitter Contract
 
 Cross-cutting: a property every loop must preserve, and the appliance's most
@@ -430,8 +545,12 @@ distinctive quality.
 
 ## The spice surface hierarchy
 
-- **The team console is the unit of tiling.** Consoles sit side by side, one per
-  live team; membership widens a console but never adds another peer console.
+- **The console is the unit of tiling.** Consoles sit side by side as peer
+  tiles: one per live team, and one per explicitly opened working group.
+  Membership widens a console but never adds another peer console. A working
+  group's console mounts no lane topology, and only an explicit view action
+  mounts, reorders, or closes one; shared group edits, room traffic, and
+  automation never do.
 - **The mosaic is the evidence layer.** Every agent and compaction card names its
   author lane and worktree explicitly; accent is redundant continuity, never the
   sole identity.

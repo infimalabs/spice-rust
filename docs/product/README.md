@@ -13,7 +13,7 @@ The code is authoritative; a disagreement is a documentation defect.
 | File | What it answers |
 | --- | --- |
 | [value.md](value.md) | Why Spice is worth using: durability, attribution, and calm. |
-| [loops.md](loops.md) | The operating loops, their state machines, and the jitter contract. |
+| [loops.md](loops.md) | The operating loops, including task rooms, their state machines, and the jitter contract. |
 | [invariants.md](invariants.md) | The register of named invariants. |
 | [model.md](model.md) | Authority, state-machine homes, decisions, boundaries, failure semantics, and vocabulary. |
 | [planes.md](planes.md) | Session forensics, metrics and hooks, gate evidence, distribution, and principles. |
@@ -31,6 +31,8 @@ Start with [value](value.md) and [loops](loops.md), then use the
   and the [failure-behavior table](model/failures.md#the-failure-behavior-table).
 - **What does this word mean?** [Ontology](model/failures.md#ontology).
 - **Why does the interface feel like this?** [The jitter contract](loops.md#the-jitter-contract).
+- **What does a room do, and what does it never do?** [The room loop](loops.md#l-room--conversation-at-a-task),
+  its [limits](loops.md#limits-and-their-repairs), and its [non-capabilities](loops.md#deliberate-non-capabilities).
 - **How does an agent recover its own past?** [Session forensics](planes/session.md#session-forensics).
 - **What cannot be taken back?** [Reversal is a claim about identity](planes/distribution.md#reversal-is-a-claim-about-identity).
 

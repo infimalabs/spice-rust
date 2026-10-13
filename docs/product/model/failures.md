@@ -42,6 +42,8 @@ Recovery messages follow the [refusal grammar](decisions.md#refusal-grammar-repa
 | **lane** | independently steerable worktree seat | the occupant or a team |
 | **occupant** | one agent session inhabiting a lane | the lane |
 | **team** | server-owned grouping of one or more lanes rendered in one console | a browser-local view |
+| **working group** | repository-shared grouping of one to six Design tasks rendered in one console, the design-side twin of a team | lane topology, task ownership, a participation roster, or a browser-local view |
+| **foreground** | browser-local open views, their order and layout, drafts, and focus | shared organization or work authority |
 | **watchband** | per-agent status-and-compose strip | a toolbar |
 | **mosaic** | placed, newest-first message lattice | a feed |
 | **shard** | one member's concrete send address | a broadcast |
@@ -50,7 +52,16 @@ Recovery messages follow the [refusal grammar](decisions.md#refusal-grammar-repa
 | **ACK / NAK** | typed answers, `acked` or `declined` | a read receipt or operator cancellation |
 | **claim** | exclusive, leased possession of a task | assignment metadata |
 | **phase** | a named slot in a task's flow | workflow status |
-| **origin** | why a task exists | who filed it |
+| **origin** | why a task exists | who filed it, or a scheduling or control edge |
+| **room** | the conversation attached to one anchor task, indexed from admitted publications | a filing filter, a participation roster, or a copy of transcripts |
+| **anchor** | the task whose born stamp names a room | a lane, a worktree, or a separate room identity |
+| **Plan** | declared task intent to construct and review executable contracts | permission to implement them |
+| **Design** | declared task intent to justify an assembly, or conclude that none is justified | a team or a parallel task store |
+| **preparation** | a task's recorded parent, controller, and construction owner | a prerequisite; an associated preparation stays schedulable |
+| **controller** | the Plan or Design whose positive conclusion and authorization govern an output | every ancestor, origin, or dependency |
+| **gated output** | pending controlled work that lacks execution authorization | a held claim, a deferral, or another task status |
+| **execution authorization** | operator-attributed permission for one exact output, by working-group engagement or by decision | a claim release, wake, receipt, review, or closure |
+| **question result** | an ASK's substantive outcome under an immutable deadline | the ASK's delivery receipt |
 | **footprint** | the task-owned path boundary defined by [landing](boundaries.md#landing-refusals) | the integrated diff |
 | **baseline** | shared line a lane integrates with | an agent-facing upstream |
 | **battery** | deterministic ordered selection of verifications for one run | mutable selection |
