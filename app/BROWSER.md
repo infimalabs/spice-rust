@@ -144,9 +144,13 @@ these is styled as review coverage or output authorization, which stay in the
 preparation section.
 
 The **Operator inbox** catalogs every open operator item, such as the one a
-lane's `operator` packet opens. Each item shows its publication's full body. A
-lane's body stays in its transcript, so the app reads it once through the
-operator-only `room::conversation-text` read, which projects the same text
+lane's operator route opens. Each item first names what it concerns, most
+contextual first: the operator direction a lane's `#KEY` named, by key and the
+text the operator sent; else the task `operator#TASK` named; else that a bare
+`operator`, the last resort, named nothing. Then it shows its publication's
+full body. A lane's body stays in its transcript, so the app reads it once,
+with the concerned direction's text, through the operator-only
+`room::conversation-text` read, which projects the same text
 `spice://room/inbox` prints; the transcript echo stands in while
 that read runs. An ASK item leads with the answer it owes: **Answer** sends the
 reply back to the requesting lane as an ANS and settles the receipt, and

@@ -29,6 +29,10 @@ pub(super) fn refusal_detail(text: &str, refusal: &steer::ack::scan::MessageRefu
         MessageRefusal::Context { span, .. } => {
             format!("`#{}` is not a task handle", &text[span.clone()])
         }
+        MessageRefusal::DirectionAudience { span } => format!(
+            "`{}` names a direction, which concerns only the operator: write `#KEY`",
+            &text[span.clone()]
+        ),
         MessageRefusal::Repeated { audience, .. } => {
             format!("{audience} is named more than once")
         }
@@ -169,6 +173,7 @@ impl Teller<'_> {
         let rooms = rooms.iter().map(ToString::to_string).collect::<Vec<_>>();
         let queued = queued.iter().map(ToString::to_string).collect::<Vec<_>>();
         let operator = conversed.is_some_and(|conversed| conversed.operator);
+        let bare_operator = conversed.and_then(|conversed| conversed.bare_operator.clone());
         let (asked, answered) = match conversed {
             Some(Conversed {
                 verb: Verb::Ask,
@@ -219,6 +224,7 @@ impl Teller<'_> {
                     column: locus.column,
                     rooms,
                     operator,
+                    bare_operator,
                     asked,
                     answered,
                     queued,
@@ -250,6 +256,9 @@ pub(in crate::resident) struct MessageRecordedNotice {
     pub(in crate::resident) queued: Vec<String>,
     /// Whether the packet opened one pending operator item.
     pub(in crate::resident) operator: bool,
+    /// A bare `operator` route and what it could have named instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::resident) bare_operator: Option<BareOperator>,
     /// The question result an ASK opened.
     pub(in crate::resident) asked: Option<String>,
     /// The question result an ANS answered.
@@ -259,6 +268,17 @@ pub(in crate::resident) struct MessageRecordedNotice {
     /// Some `#TASK` the packet named is the task its author's lane holds.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(in crate::resident) held_room: bool,
+}
+
+/// A bare `operator` route and the contextual selector its lane could have
+/// named instead.
+#[derive(Clone, Debug, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::resident) struct BareOperator {
+    /// `#KEY` of the lane's latest operator direction, else `operator#TASK`
+    /// of its active claim; absent when it has neither.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::resident) instead: Option<String>,
 }
 
 impl MessageRecordedNotice {
@@ -288,6 +308,18 @@ impl MessageRecordedNotice {
                  Operator inbox"
                     .to_owned(),
             );
+        }
+        if let Some(bare) = &self.bare_operator {
+            clauses.push(match &bare.instead {
+                Some(selector) => format!(
+                    "named bare `operator`, the last resort, where `{selector}` would have told \
+                     the operator what it concerns"
+                ),
+                None => "named bare `operator`, the last resort, where `#KEY` of a direction \
+                         the operator sent you or `operator#TASK` tells the operator what it \
+                         concerns"
+                    .to_owned(),
+            });
         }
         if !self.rooms.is_empty() {
             clauses.push(format!("was recorded in room {}", self.rooms.join(", ")));
@@ -356,12 +388,13 @@ impl MessageRefusalNotice {
         format!(
             "<system-notice>\nYour packet `{}` at line {}, column {} of its assistant text \
              block {outcome}: {}: {}. {missed}. Name only exact addresses of other seated \
-             occupants (`spice lane list` shows each lane's) or `operator`, each once; give \
-             an ASK exactly one audience and an ANS exactly its question's result handle; \
-             qualify a selector with `#TASK` only for an existing task's handle, close the \
-             list with a colon, and author a packet to the routes that still need it in new \
-             visible text. This is a private refusal notice; no acknowledgment key or \
-             visible ACK/NAK is required.\n</system-notice>",
+             occupants (`spice lane list` shows each lane's) or the operator, each once: \
+             `#KEY` of a direction the operator sent you, else `operator#TASK`, else bare \
+             `operator` as the last resort; give an ASK exactly one audience and an ANS \
+             exactly its question's result handle; qualify a selector with `#TASK` only for \
+             an existing task's handle, close the list with a colon, and author a packet to \
+             the routes that still need it in new visible text. This is a private refusal \
+             notice; no acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
             self.header, self.line, self.column, self.reason, self.detail,
         )
     }

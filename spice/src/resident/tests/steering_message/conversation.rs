@@ -3,7 +3,7 @@
 //! operator route opens an explicit pending item.
 
 use steer::ack::scan::Verb;
-use steering::{Conversed, Published, Unpublished};
+use steering::{BareOperator, Conversed, Published, Unpublished};
 use wire::rooms::{
     QuestionResultHead, QuestionResultRecord, QuestionResultRef, QuestionResultState,
     RoomConversed, RoomDestination, RoomReceiptRef,
@@ -92,6 +92,7 @@ fn an_answer_returns_and_retires_its_question_once() {
                 verb: Verb::Ask,
                 operator: false,
                 result: Some(result.clone()),
+                bare_operator: None,
             }),
             held_room: false,
         })
@@ -130,6 +131,7 @@ fn an_answer_returns_and_retires_its_question_once() {
                 verb: Verb::Ans,
                 operator: false,
                 result: Some(result.clone()),
+                bare_operator: None,
             }),
             held_room: false,
         })
@@ -287,7 +289,7 @@ fn operator_routes_open_pending_items() {
     assert!(
         matches!(
             &telling,
-            Ok(Published::Sent { lanes: reached, conversed: Some(Conversed { verb: Verb::Msg, operator: true, result: None }), .. })
+            Ok(Published::Sent { lanes: reached, conversed: Some(Conversed { verb: Verb::Msg, operator: true, result: None, .. }), .. })
                 if reached == &[test_uuid(FIRST)]
         ),
         "{telling:?}"
@@ -313,6 +315,80 @@ fn operator_routes_open_pending_items() {
         );
     }
     assert!(lanes.pending(SENDER).is_empty());
+    lanes.finish();
+}
+
+/// `#KEY` routes to the operator about a direction the operator sent this
+/// lane; another lane's direction, a peer message's key, an unknown key, or an
+/// occupant asked about a direction publishes nothing. A bare `operator`
+/// route is admitted and its author hears the contextual selector it could
+/// have named.
+#[test]
+fn an_operator_route_names_the_direction_it_concerns() {
+    let lanes = Lanes::new("conv-direction");
+    let (sender, first) = (lanes.address(SENDER), lanes.address(FIRST));
+    let bare = |outcome: &Result<Published, Unpublished>| match outcome {
+        Ok(Published::Sent {
+            conversed:
+                Some(Conversed {
+                    operator: true,
+                    bare_operator,
+                    ..
+                }),
+            ..
+        }) => bare_operator.clone(),
+        other => panic!("the operator route opened an item: {other:?}"),
+    };
+    assert_eq!(
+        bare(&lanes.say(SENDER, "MSG operator: status")),
+        Some(BareOperator { instead: None })
+    );
+
+    let own = lanes.direct(SENDER, 60, "which first");
+    let theirs = lanes.direct(FIRST, 62, "hold the merge");
+    assert!(
+        lanes
+            .say(FIRST, &format!("MSG {sender}: peer note"))
+            .is_ok()
+    );
+    let peer = lanes
+        .pending(SENDER)
+        .into_iter()
+        .map(|pending| pending.key)
+        .find(|key| *key != own)
+        .expect("the peer message is pending");
+    for (selector, reason) in [
+        (format!("#{theirs}"), "msg::direction-other-lane"),
+        (format!("#{peer}"), "msg::direction-not-operator"),
+        ("#dVwg6Zqlf".to_owned(), "msg::direction-unknown"),
+        (format!("{first}#{own}"), "msg::direction-audience"),
+    ] {
+        let outcome = lanes.say(SENDER, &format!("MSG {selector}: about it"));
+        assert_eq!(refused(&outcome), reason, "{selector}");
+    }
+    assert_eq!(lanes.conversations().len(), 1);
+
+    let asking = lanes.say(SENDER, &format!("ASK #{own}: which first?"));
+    let result = asked(&asking);
+    assert_eq!(bare(&asking), None);
+    assert_eq!(
+        lanes.question(&result).0.respondent(),
+        &RoomDestination::Operator {}
+    );
+    let directions = lanes
+        .conversations()
+        .into_iter()
+        .flat_map(|record| record.routes)
+        .map(|route| route.direction)
+        .collect::<Vec<_>>();
+    assert_eq!(directions, [None, Some(own.clone())]);
+
+    assert_eq!(
+        bare(&lanes.say(SENDER, "MSG operator: status again")),
+        Some(BareOperator {
+            instead: Some(format!("#{own}"))
+        })
+    );
     lanes.finish();
 }
 

@@ -1,9 +1,11 @@
 //! `spice room inbox`: open operator items in key order.
 //!
 //! Each item is the receipt the operator owes one publication, pending or
-//! lapsed, shown with the publication's text from its owning source and, for
-//! an ASK, its question result. Items page whole in key order; a page that
-//! withholds any continues at the first withheld item. Reading settles
+//! lapsed, shown with what it concerns, most contextual first: the operator
+//! direction a lane's `#KEY` named, else the task `operator#TASK` named, else
+//! nothing a bare `operator` named. Its text comes from its owning source and,
+//! for an ASK, its question result. Items page whole in key order; a page
+//! that withholds any continues at the first withheld item. Reading settles
 //! nothing.
 
 use std::fmt;
@@ -12,14 +14,17 @@ use std::path::Path;
 use clap::ArgMatches;
 use serde::Serialize;
 use spice::repository::Repository;
+use wire::intent::RoomConcernedDirection;
 use wire::output::Bounded;
-use wire::rooms::{RoomAuthorityStamp, RoomDestination, RoomPublicationKind, RoomReceiptRef};
+use wire::rooms::{
+    RoomAnchor, RoomAuthorityStamp, RoomDestination, RoomPublicationKind, RoomReceiptRef,
+};
 use wire::{FaultClass, Outcome, Reply, ReplyPosition};
 
 use super::conversation::{ItemView, Party, ResultView, item_view, result_view};
 use super::{
-    Body, Content, Failure, conversation_body, discover, fault, open, project_body, store,
-    write_content,
+    Body, Content, Failure, concerned_direction, conversation_body, discover, fault, open,
+    project_body, store, write_content,
 };
 use crate::read_page::Page;
 
@@ -38,9 +43,22 @@ pub(crate) struct InboxItem {
     receipt: ItemView,
     verb: &'static str,
     author: RoomDestination,
+    concerns: Concern,
     content: Content,
     #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<ResultView>,
+}
+
+/// What an operator item concerns, most contextual first.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum Concern {
+    /// The operator direction a lane's `#KEY` named.
+    Direction(RoomConcernedDirection),
+    /// The task `operator#TASK` named.
+    Task { task: RoomAnchor },
+    /// Nothing: a bare `operator` route.
+    Unnamed,
 }
 
 /// One item as the journal records it, before its source is read.
@@ -48,6 +66,7 @@ struct Recorded {
     receipt: ItemView,
     verb: &'static str,
     author: RoomDestination,
+    concerns: Concern,
     body: Body,
     result: Option<ResultView>,
 }
@@ -148,10 +167,18 @@ fn inbox(
                             .transpose()?,
                         None => None,
                     };
+                    let concerns = match concerned_direction(read, &publication)? {
+                        Some(direction) => Concern::Direction(direction),
+                        None => match record.context() {
+                            Some(task) => Concern::Task { task: task.clone() },
+                            None => Concern::Unnamed,
+                        },
+                    };
                     Ok(Recorded {
                         receipt: item_view(read, record, head)?,
                         verb,
                         author: publication.author().clone(),
+                        concerns,
                         body: conversation_body(read, &publication)?,
                         result,
                     })
@@ -173,6 +200,7 @@ fn inbox(
                     receipt: recorded.receipt,
                     verb: recorded.verb,
                     author: recorded.author,
+                    concerns: recorded.concerns,
                     content,
                     result: recorded.result,
                 },
@@ -209,6 +237,16 @@ impl fmt::Display for InboxItem {
             self.verb,
             Party(&self.author)
         )?;
+        match &self.concerns {
+            Concern::Direction(direction) => write!(
+                formatter,
+                "\n  concerns direction {}: {}",
+                direction.key,
+                direction.text.lines().next().unwrap_or_default()
+            )?,
+            Concern::Task { task } => write!(formatter, "\n  concerns task {task}")?,
+            Concern::Unnamed => formatter.write_str("\n  concerns nothing named")?,
+        }
         if let Some(result) = &self.result {
             write!(formatter, "\n  {result}")?;
         }

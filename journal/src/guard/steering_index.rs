@@ -93,6 +93,34 @@ impl JournalRead<'_> {
         Ok(head)
     }
 
+    /// The newest direction the operator sent one lane, in any disposition.
+    pub fn latest_operator_direction(
+        &self,
+        lane: wire::CanonicalUuid,
+    ) -> Result<Option<JournalHead<wire::SteeringHead>>, GuardError> {
+        self.require_current_steering_index()?;
+        let row = self
+            .connection
+            .query_row(
+                "SELECT steering.directive, steering.steer_key, steering.lane, \
+                 steering.disposition, steering.created_seq, steering.minted_micros, \
+                 steering.head_seq, steering.body FROM steering_heads AS steering \
+                 JOIN fact_envelopes AS creating ON creating.seq = steering.created_seq \
+                 WHERE steering.lane = ?1 AND creating.actor = ?2 \
+                 AND json_extract(CAST(steering.body AS TEXT), '$.fanout') IS NOT NULL \
+                 ORDER BY steering.created_seq DESC LIMIT 1",
+                [lane.to_string(), wire::Actor::Operator.to_string()],
+                read_steering_columns,
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        read_metrics::observe_query();
+        if row.is_some() {
+            read_metrics::observe_row();
+        }
+        row.map(|row| self.decode_steering_row(row)).transpose()
+    }
+
     /// One fixed page of live steering for one lane or every lane.
     ///
     /// Heads remain in publication order and overflow names the first omitted

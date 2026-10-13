@@ -488,6 +488,18 @@ fn admit(
         if let Some(context) = &route.context {
             require_task(authority, context, "room route context")?;
         }
+        if let Some(key) = &route.direction {
+            let author = match publication.author() {
+                RoomDestination::Lane { lane } => Some(*lane),
+                _ => None,
+            };
+            if author.is_none() || authority.operator_direction(key)? != author {
+                return unsound(format!(
+                    "room publication {stamp} concerns {key}, which is no operator direction \
+                     to its author"
+                ));
+            }
+        }
     }
     let active = match publication.kind() {
         RoomPublicationKind::Ask { .. } => {

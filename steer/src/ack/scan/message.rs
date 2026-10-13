@@ -1,11 +1,11 @@
 //! Authored `MSG`, `ASK`, and `ANS` publication packets.
 //!
 //! ```text
-//! selector = audience[#context] | #context
+//! selector = audience[#context] | #context | #KEY
 //! audience = agent-code | operator
 //!
 //! MSG selector+: body
-//! ASK audience[#context]: body
+//! ASK audience[#context] | #KEY: body
 //! ANS KEY[#context]: body
 //! ```
 //!
@@ -15,12 +15,14 @@
 //! each body is the source hunk its packet owns.
 //!
 //! An audience is an [`OccupantAddress`] or the literal `operator`, which no
-//! vowel-free address can spell. A `#` qualifier names the [`TaskHandle`] whose
-//! room context the selector carries. A selector owns its qualifier; an
-//! unqualified route borrows no context from its neighbors. ASK names exactly
-//! one audience. ANS names the public result handle of the question it answers;
-//! its optional qualifier asserts that question's stored context and never
-//! retargets it.
+//! vowel-free address can spell. A `#` qualifier with a hyphen names the
+//! [`TaskHandle`] whose room context the selector carries; one without names
+//! the steering [`Key`] of the operator direction the packet concerns, so
+//! `#KEY` and `operator#KEY` both route to the operator about that direction.
+//! A selector owns its qualifier; an unqualified route borrows no context from
+//! its neighbors. ASK names exactly one audience. ANS names the public result
+//! handle of the question it answers; its optional qualifier asserts that
+//! question's stored context and never retargets it.
 //!
 //! A body begins after the header's colon and runs to the next placed ACK,
 //! NAK, MSG, ASK, or ANS header or to the end of the scanned prose, with
@@ -36,6 +38,7 @@ use wire::rooms::{QuestionResultRef, RoomAuthorityStamp, RoomAuthorityStampError
 use wire::{OccupantAddress, OccupantAddressError, TaskHandle, TaskHandleError};
 
 use super::{skip_emphasis, skip_header_space};
+use crate::Key;
 
 /// Every word an authored publication packet leads with.
 pub const MARKERS: [&str; 3] = [Verb::Msg.marker(), Verb::Ask.marker(), Verb::Ans.marker()];
@@ -166,6 +169,8 @@ pub struct Route {
     pub audience: Option<Audience>,
     /// Task whose room context the route carries; absent on a direct route.
     pub context: Option<TaskHandle>,
+    /// Operator direction an operator route concerns.
+    pub direction: Option<Key>,
     /// Byte range of the whole selector.
     pub span: Range<usize>,
 }
@@ -214,6 +219,11 @@ pub enum MessageRefusal {
         /// Why the qualifier is not a task handle.
         error: TaskHandleError,
     },
+    /// An occupant selector names a direction, whose audience is the operator.
+    DirectionAudience {
+        /// Byte range of the selector.
+        span: Range<usize>,
+    },
     /// An audience is named more than once.
     Repeated {
         /// The repeated audience.
@@ -246,6 +256,7 @@ impl MessageRefusal {
             Self::Audience { .. } => "ask::audience-missing",
             Self::Result { .. } => "ans::result-malformed",
             Self::Context { .. } => "msg::context-malformed",
+            Self::DirectionAudience { .. } => "msg::direction-audience",
             Self::Repeated { .. } => "msg::recipient-repeated",
             Self::RepeatedContext { .. } => "msg::context-repeated",
             Self::EmptyBody => "msg::body-empty",
@@ -312,7 +323,11 @@ pub(super) fn header_after(prose: &str, verb: Verb, marker_end: usize) -> Option
             Verb::Ans => lead.parse::<RoomAuthorityStamp>().is_ok(),
             Verb::Msg | Verb::Ask => lead == OPERATOR || lead.parse::<OccupantAddress>().is_ok(),
         };
-        lead_spells || context.is_some_and(|context| prose[context].parse::<TaskHandle>().is_ok())
+        lead_spells
+            || context.is_some_and(|context| {
+                let context = &prose[context];
+                context.parse::<TaskHandle>().is_ok() || (verb != Verb::Ans && Key::shaped(context))
+            })
     };
     let room_like = |&(start, end): &(usize, usize)| {
         let (_, context) = split(prose, start, end);
@@ -441,7 +456,7 @@ fn routes(prose: &str, tokens: &[(usize, usize)]) -> Result<Vec<Route>, MessageR
 /// Judge one selector: its audience, if written, then its qualifier.
 fn route(prose: &str, start: usize, end: usize) -> Result<Route, MessageRefusal> {
     let (audience, context) = split(prose, start, end);
-    let audience = match &prose[audience.clone()] {
+    let mut audience = match &prose[audience.clone()] {
         "" => None,
         OPERATOR => Some(Audience::Operator),
         written => Some(Audience::Occupant(written.parse().map_err(|error| {
@@ -451,9 +466,23 @@ fn route(prose: &str, start: usize, end: usize) -> Result<Route, MessageRefusal>
             }
         })?)),
     };
+    let direction = context
+        .as_ref()
+        .filter(|span| !prose[(*span).clone()].contains('-'))
+        .and_then(|span| prose[span.clone()].parse::<Key>().ok());
+    if direction.is_some() {
+        if matches!(audience, Some(Audience::Occupant(_))) {
+            return Err(MessageRefusal::DirectionAudience { span: start..end });
+        }
+        audience = Some(Audience::Operator);
+    }
     Ok(Route {
         audience,
-        context: context.map(|span| task_context(prose, span)).transpose()?,
+        context: match direction {
+            Some(_) => None,
+            None => context.map(|span| task_context(prose, span)).transpose()?,
+        },
+        direction,
         span: start..end,
     })
 }

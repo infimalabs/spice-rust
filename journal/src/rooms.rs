@@ -223,6 +223,11 @@ pub(crate) trait Authority {
     fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal>;
     /// Record a room-coordination direction's current state.
     fn set_direction(&mut self, key: &str, direction: Direction);
+    /// The lane the operator addressed with direction `key`, if the operator
+    /// sent one under that key.
+    fn operator_direction(&self, key: &str) -> Result<Option<CanonicalUuid>, Refusal>;
+    /// Record the lane one operator direction addresses.
+    fn set_operator_direction(&mut self, key: &str, lane: CanonicalUuid);
     /// One room's latest coordination record of a kind: position and body.
     fn coordination(
         &self,
@@ -367,6 +372,8 @@ pub(crate) struct History {
     authors: BTreeMap<u64, Actor>,
     /// Steering key to the room-coordination direction it names.
     directions: BTreeMap<String, Direction>,
+    /// Operator direction key to the lane it addresses.
+    operator_directions: BTreeMap<String, CanonicalUuid>,
 }
 
 impl History {
@@ -485,6 +492,14 @@ impl Authority for History {
 
     fn set_direction(&mut self, key: &str, direction: Direction) {
         self.directions.insert(key.to_owned(), direction);
+    }
+
+    fn operator_direction(&self, key: &str) -> Result<Option<CanonicalUuid>, Refusal> {
+        Ok(self.operator_directions.get(key).copied())
+    }
+
+    fn set_operator_direction(&mut self, key: &str, lane: CanonicalUuid) {
+        self.operator_directions.insert(key.to_owned(), lane);
     }
 
     fn coordination(

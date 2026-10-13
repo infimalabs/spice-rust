@@ -284,6 +284,7 @@ fn plant_room_conversation(journal: &Journal) -> String {
         routes: vec![wire::rooms::RoomRoute {
             destination: wire::rooms::RoomDestination::Operator {},
             context: None,
+            direction: None,
         }],
         directed: Vec::new(),
         expires: "2030-04-12T19:44:09.271Z".parse().expect("fixture expiry"),
@@ -336,6 +337,7 @@ fn current_conversations_cross_a_predecessor_schema_without_changing_authority()
                     routes: vec![RoomRoute {
                         destination: RoomDestination::Operator {},
                         context: None,
+                        direction: None,
                     }],
                     directed: Vec::new(),
                     expires: "2030-04-12T19:44:09.271Z".parse().expect("expiry"),

@@ -34,7 +34,7 @@ mod scoped;
 mod stream;
 mod task_detail;
 pub use consent::ConsentRuling;
-pub use conversation_text::ConversationText;
+pub use conversation_text::{ConversationText, ItemConcern};
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 pub use publication::AppSurface;

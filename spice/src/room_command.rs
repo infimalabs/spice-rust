@@ -571,6 +571,35 @@ fn conversation_body(
     }))
 }
 
+/// The operator direction `publication`'s operator route concerns, as its
+/// steering head reads.
+fn concerned_direction(
+    read: &journal::JournalRead<'_>,
+    publication: &wire::rooms::RoomPublication,
+) -> Result<Option<wire::intent::RoomConcernedDirection>, Failure> {
+    let Some(key) = publication
+        .routes()
+        .iter()
+        .find_map(|route| route.direction.as_deref())
+    else {
+        return Ok(None);
+    };
+    let head = read.steering_key(key).map_err(store)?.ok_or_else(|| {
+        fault(
+            FaultClass::Store,
+            "room::direction-missing",
+            format!(
+                "publication {} concerns direction {key}, which has no steering head",
+                publication.publication()
+            ),
+        )
+    })?;
+    Ok(Some(wire::intent::RoomConcernedDirection {
+        key: key.to_owned(),
+        text: head.into_body().text,
+    }))
+}
+
 impl Publication {
     pub(crate) fn seq(&self) -> Seq {
         self.seq
@@ -624,17 +653,18 @@ pub(crate) fn conversation_text(
 
     let publication = request.publication.clone();
     let read = bus.read(move |read| {
-        let body = match read.room_conversation(&publication)? {
-            Some((_, admitted)) => {
-                Some(conversation_body(read, &admitted).map_err(Failure::guard)?)
-            }
-            None => None,
+        let (body, direction) = match read.room_conversation(&publication)? {
+            Some((_, admitted)) => (
+                Some(conversation_body(read, &admitted).map_err(Failure::guard)?),
+                concerned_direction(read, &admitted).map_err(Failure::guard)?,
+            ),
+            None => (None, None),
         };
-        Ok((read.cursor()?, body))
+        Ok((read.cursor()?, body, direction))
     });
-    let (cursor, body) = match read {
-        Ok((Some(cursor), body)) => (cursor, body),
-        Ok((None, _)) => {
+    let (cursor, body, direction) = match read {
+        Ok((Some(cursor), body, direction)) => (cursor, body, direction),
+        Ok((None, ..)) => {
             return fault(
                 FaultClass::Store,
                 "room::cursor-missing",
@@ -664,6 +694,7 @@ pub(crate) fn conversation_text(
             wire::intent::RoomConversationTextAnswer {
                 publication: request.publication.clone(),
                 content,
+                direction,
             },
         ),
     })

@@ -66,7 +66,8 @@ pub struct RoomConversationText {
     pub publication: RoomAuthorityStamp,
 }
 
-/// One conversation publication's text, or why its source cannot supply it.
+/// One conversation publication's text, or why its source cannot supply it,
+/// with the operator direction its operator route concerns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomConversationTextAnswer {
@@ -74,6 +75,23 @@ pub struct RoomConversationTextAnswer {
     pub publication: RoomAuthorityStamp,
     /// Its text at the read barrier.
     pub content: RoomConversationContent,
+    /// The operator direction its operator route concerns.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub direction: Option<RoomConcernedDirection>,
+}
+
+/// One operator direction as its steering head reads at the read barrier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomConcernedDirection {
+    /// Its steering key.
+    pub key: String,
+    /// The text the operator sent.
+    pub text: String,
 }
 
 /// What a conversation publication's owning source supplied.

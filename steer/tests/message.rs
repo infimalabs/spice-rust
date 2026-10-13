@@ -131,6 +131,64 @@ fn malformed_or_repeated_contexts_refuse_the_packet() {
     );
 }
 
+/// A hyphenless qualifier names a steering key: `#KEY` and `operator#KEY`
+/// route to the operator about that direction, an ASK may name one alone, an
+/// occupant is never addressed about a direction, and a hyphenless qualifier
+/// that spells no key stays a malformed task context.
+#[test]
+fn a_direction_key_routes_to_the_operator_about_that_direction() {
+    let key = || Some("dVwg6Zqlf".parse::<Key>().expect("fixture key"));
+    let routes = |prose: &str| {
+        let messages = scan_messages(prose);
+        assert_eq!(messages.len(), 1, "expected one packet in {prose:?}");
+        messages[0]
+            .publication
+            .as_ref()
+            .unwrap_or_else(|refusal| panic!("refused {refusal:?} in {prose:?}"))
+            .routes()
+            .iter()
+            .map(|route| {
+                (
+                    route.audience,
+                    route.context.clone(),
+                    route.direction.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        routes("ASK #dVwg6Zqlf: Which first?"),
+        [(Some(Audience::Operator), None, key())]
+    );
+    assert_eq!(
+        routes("MSG operator#dVwg6Zqlf 6HmS#ROOMS-dVrD244Jd: Noted."),
+        [
+            (Some(Audience::Operator), None, key()),
+            (
+                Some(Audience::Occupant(address("6HmS"))),
+                Some(handle("ROOMS-dVrD244Jd")),
+                None
+            ),
+        ]
+    );
+    assert_eq!(
+        refusal("MSG 6HmS#dVwg6Zqlf: wrong audience."),
+        MessageRefusal::DirectionAudience { span: 4..18 }
+    );
+    assert_eq!(
+        refusal("MSG #dVwg6Zqlf operator: twice."),
+        MessageRefusal::Repeated {
+            audience: Audience::Operator,
+            span: 15..23,
+        }
+    );
+    assert!(matches!(
+        refusal("MSG 6HmS#rooms: no key."),
+        MessageRefusal::Context { span, .. } if span == (9..14)
+    ));
+    assert!(scan_messages("We tracked it in #dVwg6Zqlf: done.").is_empty());
+}
+
 /// A body runs from its colon to the next placed packet, keeping its own bytes
 /// and none of the prose before the first header or the framing of the next.
 #[test]

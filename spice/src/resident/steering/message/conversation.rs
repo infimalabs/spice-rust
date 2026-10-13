@@ -63,8 +63,9 @@ pub(super) fn publish_conversation(
     let asserted = answer.as_ref().and_then(|answer| answer.asserted.clone());
     let (operation, keys, result) =
         operation(packet, asserted, targets.len(), &mut minted_micros, expires)?;
-    let routes = conversation_routes(packet, &targets, &identities)?;
+    let routes = conversation_routes(bus, packet, &targets, &identities)?;
     let opens_item = opens_item(answer.as_ref(), &routes);
+    let bare_operator = bare_operator(bus, view, packet.lane, &routes)?;
     let record = RoomRecord {
         hunk: (!rooms.is_empty()).then(|| hunk.clone()),
         rooms,
@@ -122,6 +123,7 @@ pub(super) fn publish_conversation(
             verb: verb(&packet.request),
             operator: opens_item,
             result,
+            bare_operator,
         }),
         held_room: false,
     })
@@ -218,6 +220,48 @@ fn opens_item(answer: Option<&Answerable>, routes: &[RoomRoute]) -> bool {
     }
 }
 
+/// The contextual selector a bare `operator` route could have named: the
+/// lane's latest operator direction, else its active claim's task; `None`
+/// when no operator route is bare.
+fn bare_operator(
+    bus: &Bus,
+    view: &bus::TaskSnapshot,
+    lane: CanonicalUuid,
+    routes: &[RoomRoute],
+) -> Result<Option<BareOperator>, Unpublished> {
+    let bare = RoomRoute {
+        destination: RoomDestination::Operator {},
+        context: None,
+        direction: None,
+    };
+    if !routes.contains(&bare) {
+        return Ok(None);
+    }
+    let direction = bus
+        .read(move |read| read.latest_operator_direction(lane))
+        .map_err(|error| {
+            Unpublished::Failed(typed_store_fault(
+                "steer::room-unreadable",
+                &error.to_string(),
+            ))
+        })?;
+    let instead = match direction {
+        Some(head) => Some(format!("#{}", head.body().key)),
+        None => view.tasks().iter().find_map(|task| {
+            let claim = task.claim()?.body();
+            (claim.lane == lane && claim.disposition == wire::ClaimDisposition::Active).then(|| {
+                let statement = task.statement().body();
+                format!(
+                    "{}#{}",
+                    steer::ack::scan::message::OPERATOR,
+                    TaskHandle::for_project(&statement.project, &statement.born)
+                )
+            })
+        }),
+    };
+    Ok(Some(BareOperator { instead }))
+}
+
 fn verb(request: &Request) -> Verb {
     match request {
         Request::Msg { .. } => Verb::Msg,
@@ -241,8 +285,10 @@ pub(super) fn conversation_stamp(
 
 /// The routes a conversation record freezes: the operator, each admitted lane
 /// with its own context, and each room-only route, in header order. A lane
-/// route is admitted when it delivers to a seat or queues for a vacant lane.
+/// route is admitted when it delivers to a seat or queues for a vacant lane;
+/// an operator route about a direction names one the operator sent this lane.
 fn conversation_routes(
+    bus: &Bus,
     packet: &Packet<'_>,
     targets: &[Target],
     identities: &[CanonicalUuid],
@@ -273,16 +319,62 @@ fn conversation_routes(
                 routes.push(RoomRoute {
                     destination: RoomDestination::Task { task },
                     context: None,
+                    direction: None,
                 });
                 continue;
             }
         };
+        let direction = route
+            .direction
+            .as_ref()
+            .map(|key| operator_direction(bus, packet.lane, key))
+            .transpose()?;
         routes.push(RoomRoute {
             destination,
             context,
+            direction,
         });
     }
     Ok(routes)
+}
+
+/// `key` when it names a direction the operator sent `lane`.
+fn operator_direction(
+    bus: &Bus,
+    lane: CanonicalUuid,
+    key: &steer::Key,
+) -> Result<String, Unpublished> {
+    let key = key.to_string();
+    let read_key = key.clone();
+    let head = bus
+        .read(move |read| read.steering_key(&read_key))
+        .map_err(|error| {
+            Unpublished::Failed(typed_store_fault(
+                "steer::room-unreadable",
+                &error.to_string(),
+            ))
+        })?;
+    let refuse = |reason: &str, detail: String| {
+        Err(Unpublished::Refused {
+            reason: reason.to_owned(),
+            detail,
+        })
+    };
+    match head.map(|head| head.into_body()) {
+        None => refuse(
+            "msg::direction-unknown",
+            format!("#{key} names no direction"),
+        ),
+        Some(head) if head.lane != lane => refuse(
+            "msg::direction-other-lane",
+            format!("#{key} addresses another lane"),
+        ),
+        Some(head) if head.from.is_some() || head.fanout.is_none() => refuse(
+            "msg::direction-not-operator",
+            format!("#{key} is not a direction from the operator"),
+        ),
+        Some(_) => Ok(key),
+    }
 }
 
 /// Whether this lane already admitted a conversation record of these exact
