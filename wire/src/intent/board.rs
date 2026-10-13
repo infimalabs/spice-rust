@@ -892,6 +892,9 @@ pub struct NextWorkCounts {
     pub stale: usize,
     pub blocked: usize,
     pub waiting: usize,
+    /// Designs that can conclude only through the operator's selection.
+    #[serde(default)]
+    pub selection: usize,
     pub oops: usize,
 }
 
@@ -1056,6 +1059,12 @@ pub struct BoardAnswer {
     /// authorized them, in durable identity order. Empty for every other read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked: Vec<crate::TaskStamp>,
+    /// Open-read Designs in their final phase that the allocator holds for
+    /// the operator: an output each constructed still lacks its selection, so
+    /// only an execution authorization or settling that output releases it.
+    /// Durable identity order; empty for every other read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub awaiting_selection: Vec<crate::TaskStamp>,
     /// Every steering key whose direction caused non-deleted work, mapped to
     /// that work's handles in stable order. Open reads carry the whole index,
     /// so a quoted direction keeps its Work after that work settles.

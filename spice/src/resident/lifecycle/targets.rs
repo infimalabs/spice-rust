@@ -19,6 +19,7 @@ pub(super) fn project_targets(
         return Ok(Vec::new());
     }
     let entries = projection.entries();
+    let satisfied = board::resolved_tasks(entries);
     let appliance = spice::version::running().map_err(Outcome::Fault)?;
     let environment = snapshot
         .environment()
@@ -35,12 +36,13 @@ pub(super) fn project_targets(
             continue;
         }
         let pending_inbox = projection.has_operator_steering(row.lane);
-        let (held_claim, trust_blocked) = held_claim(entries, ready_at, row, &environment, now)?;
+        let (held_claim, held_parked) =
+            held_claim(entries, &satisfied, ready_at, row, &environment, now)?;
         let subscription = subscription(projected_residency, row)?;
         let first_drain_member = !projected_residency.lanes.iter().any(|member| {
             member.team == row.team && member.occupant.is_some() && member.disposition == "occupied"
         });
-        let (drain_queue, available, last_resort) = if trust_blocked {
+        let (drain_queue, available, last_resort) = if held_parked {
             (Available::None, Available::None, false)
         } else {
             work_availability(
@@ -70,8 +72,14 @@ pub(super) fn project_targets(
     Ok(targets)
 }
 
+/// The held-claim trigger, and whether the held work is parked on authority no
+/// lane holds: an unsatisfied trust grant, or a Design that can conclude only
+/// through the operator's selection. Parked held work wakes nothing; the lane
+/// also takes no other work while it holds that claim, so pending operator
+/// steering is its only wake.
 fn held_claim(
     entries: &[Entry],
+    satisfied: &board::ResolvedTasks,
     ready_at: &BTreeMap<TaskStamp, Instant>,
     row: &wire::LaneResidency,
     environment: &wire::Environment,
@@ -91,10 +99,11 @@ fn held_claim(
             "one vacant lane carries more than one active claim",
         ));
     }
-    let trust_blocked = entry
+    let parked = entry
         .statement()
         .requirements
-        .has_unsatisfied_trust_grant(environment);
+        .has_unsatisfied_trust_grant(environment)
+        || board::awaits_selection(entry, satisfied);
     let live = entry
         .lease()
         .ok_or_else(|| {
@@ -105,12 +114,12 @@ fn held_claim(
         })?
         .expiry
         > now;
-    let available = if live && !trust_blocked {
+    let available = if live && !parked {
         Available::At(after(ready_instant(entry, ready_at)?, SETTLE_SECONDS)?)
     } else {
         Available::None
     };
-    Ok((available, trust_blocked))
+    Ok((available, parked))
 }
 
 /// Leave a vacant lane whose live held claim waits on its own unfinished

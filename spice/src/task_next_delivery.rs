@@ -77,6 +77,7 @@ mod tests {
                     stale: 0,
                     blocked: 0,
                     waiting: 0,
+                    selection: 0,
                     oops: 0,
                 },
                 team: TeamLife::Steer,

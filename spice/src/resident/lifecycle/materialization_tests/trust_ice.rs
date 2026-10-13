@@ -183,7 +183,7 @@ fn iced_fixture(digest: &wire::Digest) -> (Bus, ProjectPolicy, Projection) {
     (bus, projects, projection)
 }
 
-fn target(snapshot: &bus::TaskSnapshot, projection: &Projection) -> Target {
+pub(super) fn target(snapshot: &bus::TaskSnapshot, projection: &Projection) -> Target {
     let targets = project_targets(
         snapshot,
         projection,
@@ -197,14 +197,26 @@ fn target(snapshot: &bus::TaskSnapshot, projection: &Projection) -> Target {
 }
 
 fn iced_claim_write(bus: &Bus, digest: &wire::Digest, at: Instant) -> JournalWrite {
+    held_claim_write(bus, at, |statement| {
+        statement.requirements = wire::EnvironmentRequirements::one(
+            wire::EnvironmentRequirement::trust_grant(digest.clone()),
+        );
+    })
+}
+
+/// Claim the seeded task for `lane()` on an indefinite lease after `edit`
+/// revises its statement.
+pub(super) fn held_claim_write(
+    bus: &Bus,
+    at: Instant,
+    edit: impl FnOnce(&mut TaskHead),
+) -> JournalWrite {
     let snapshot = bus.task_snapshot().expect("seed snapshot reads");
     let heads = &snapshot.tasks()[0];
     let task = heads.statement().body().born.clone();
     let phase = heads.workflow().body().phase.clone();
     let mut statement = heads.statement().body().clone();
-    statement.requirements = wire::EnvironmentRequirements::one(
-        wire::EnvironmentRequirement::trust_grant(digest.clone()),
-    );
+    edit(&mut statement);
     let horizon = spice::claim_lease::indefinite_horizon();
     let occupant = uuid(9);
     let mut write = JournalWrite::new(
@@ -218,7 +230,9 @@ fn iced_claim_write(bus: &Bus, digest: &wire::Digest, at: Instant) -> JournalWri
     let edited = write
         .fact(
             body::TaskEdited {
-                intent: None,
+                intent: statement
+                    .intent
+                    .map(|intent| wire::TaskIntentEdit::Set { intent }),
                 evidence: None,
                 task: task.clone(),
                 revision: 2,

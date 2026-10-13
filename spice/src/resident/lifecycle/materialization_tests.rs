@@ -16,6 +16,7 @@ use super::{Available, Backoff, Resolution, Target, Trigger, project_targets, re
 mod deferred_exit;
 mod exit_disposal;
 mod reaped_seat;
+mod selection_wait;
 mod trust_ice;
 mod vendor_failure;
 

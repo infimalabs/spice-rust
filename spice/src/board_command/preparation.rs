@@ -46,17 +46,8 @@ pub(super) fn require_no_pending_controlled_outputs(
         .entries
         .iter()
         .filter(|entry| {
-            entry.workflow().status == "pending"
-                && entry.statement().authorization.is_none()
-                && entry.statement().engagement.is_none()
-                && entry
-                    .statement()
-                    .preparation
-                    .as_ref()
-                    .is_some_and(|preparation| {
-                        preparation.parent == *controller.born()
-                            && preparation.construction == *entry.born()
-                    })
+            board::unselected_output_of(entry.statement(), entry.workflow())
+                == Some(controller.born())
         })
         .map(|entry| entry.handle().to_string())
         .collect::<Vec<_>>();

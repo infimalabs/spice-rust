@@ -109,6 +109,7 @@ pub(crate) fn board(tasks: Vec<BoardTask>) -> BoardView {
         room_anchors: Vec::new(),
         offer: Vec::new(),
         blocked: std::collections::BTreeSet::new(),
+        awaiting_selection: std::collections::BTreeSet::new(),
         quote_tasks: std::rc::Rc::default(),
         resident: wire::ResidentState::Seated,
         environment: Environment::journal_schema(1).expect("fixture schema"),

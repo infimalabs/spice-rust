@@ -270,6 +270,51 @@ pub(super) fn board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> BoardAnswe
 /// The rows an Open read reports blocked, after proving they are exactly the
 /// open rows the allocator's own gate holds back on the complete board.
 pub(super) fn open_blocked(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStamp> {
+    let (open, entries, resolved) = open_and_full(bus, epoch);
+    let gated = entries
+        .iter()
+        .filter(|entry| {
+            open.tasks
+                .iter()
+                .any(|task| task.statement.body.born == *entry.born())
+                && entry.workflow().status == "pending"
+                && !board::dependencies_satisfied(entry, &resolved)
+        })
+        .map(|entry| entry.born().clone())
+        .collect::<BTreeSet<_>>();
+    let blocked = open.blocked.iter().cloned().collect::<BTreeSet<_>>();
+    assert_eq!(
+        blocked, gated,
+        "open read blocked rows equal the allocator gate"
+    );
+    blocked
+}
+
+/// The Designs an Open read reports awaiting selection, after proving they are
+/// exactly the rows the allocator holds for the operator on the complete board.
+pub(super) fn open_awaiting_selection(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStamp> {
+    let (open, entries, resolved) = open_and_full(bus, epoch);
+    let held = entries
+        .iter()
+        .filter(|entry| board::awaits_selection(entry, &resolved))
+        .map(|entry| entry.born().clone())
+        .collect::<BTreeSet<_>>();
+    let awaiting = open
+        .awaiting_selection
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        awaiting, held,
+        "open read selection waits equal the allocator's"
+    );
+    awaiting
+}
+
+fn open_and_full(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+) -> (BoardAnswer, Vec<Entry>, board::ResolvedTasks) {
     let outcome = issue(
         bus,
         epoch,
@@ -288,23 +333,7 @@ pub(super) fn open_blocked(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStam
     let full = board(bus, epoch, Actor::Operator);
     let entries = actor_entries(&full).expect("full board entries validate");
     let resolved = board::resolved_tasks(&entries);
-    let gated = entries
-        .iter()
-        .filter(|entry| {
-            open.tasks
-                .iter()
-                .any(|task| task.statement.body.born == *entry.born())
-                && entry.workflow().status == "pending"
-                && !board::dependencies_satisfied(entry, &resolved)
-        })
-        .map(|entry| entry.born().clone())
-        .collect::<BTreeSet<_>>();
-    let blocked = open.blocked.iter().cloned().collect::<BTreeSet<_>>();
-    assert_eq!(
-        blocked, gated,
-        "open read blocked rows equal the allocator gate"
-    );
-    blocked
+    (*open, entries, resolved)
 }
 
 pub(super) fn board_with_allocation(

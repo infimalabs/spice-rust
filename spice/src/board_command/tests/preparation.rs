@@ -854,13 +854,14 @@ fn working_group_engagement_authorizes_a_design_outputs_once_and_disengagement_s
         "engagement waits for its Design to conclude"
     );
 
-    // Leaving every group stops later grants and revokes none.
+    // Leaving every group stops later grants and revokes none. A lane that
+    // already holds the Design cannot conclude it past an unselected output.
     move_design(&bus, epoch, stamp("Engaged design"), None);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
     let stray = add_output(&bus, epoch, &design, "Stray output");
     assert_eq!(engagement(&bus, epoch, &stray), None);
     assert_eq!(engagement(&bus, epoch, &current), Some(granted));
     assert_eq!(engagement(&bus, epoch, &later), Some(granted));
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
     assert_controlled_output_refusal(review_clean(&bus, epoch, &seats[0], &design), &[&stray]);
 
     // Engaging again authorizes the stray output without moving earlier grants,
@@ -877,40 +878,102 @@ fn working_group_engagement_authorizes_a_design_outputs_once_and_disengagement_s
 }
 
 #[test]
-fn a_passive_design_cannot_conclude_and_its_outputs_stay_ineligible() {
-    let (root, bus, epoch, seats) = fixture("preparation-passive-design", 2);
-    let passive = add_controller(
+fn a_design_awaiting_selection_waits_on_the_operator_until_its_outputs_settle() {
+    let (root, bus, epoch, seats) = fixture("preparation-selection-wait", 2);
+    let design = add_controller(
         &bus,
         epoch,
-        "Passive design",
+        "Waiting design",
         wire::TaskIntent::Design,
         Some("review"),
     );
-    let idle = add_output(&bus, epoch, &passive, "Passive output");
-    claim_task(
-        &bus,
-        epoch,
-        &seats[0],
-        &Actor::Lane(seats[0].lane),
-        &passive,
+    let lane = Actor::Lane(seats[0].lane);
+    let selection_count = |bus: &Bus| {
+        let status = task_status(&board(bus, epoch, lane.clone())).expect("status renders");
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix("selection "))
+            .expect("status names the selection wait")
+            .parse::<usize>()
+            .expect("selection count")
+    };
+    assert!(open_awaiting_selection(&bus, epoch).is_empty());
+    assert_eq!(selection_count(&bus), 0);
+
+    // A final-phase Design with an unselected output waits on the operator:
+    // no lane can claim it, nor any output it gates.
+    let closed = add_output(&bus, epoch, &design, "Closed output");
+    let deleted = add_output(&bus, epoch, &design, "Deleted output");
+    assert_eq!(
+        open_awaiting_selection(&bus, epoch),
+        [design.born().expect("design stamp")].into()
     );
-    assert_controlled_output_refusal(review_clean(&bus, epoch, &seats[0], &passive), &[&idle]);
-    assert_eq!(engagement(&bus, epoch, &idle), None);
-    let lane = Actor::Lane(seats[1].lane);
+    assert_eq!(selection_count(&bus), 1);
     let available = board(&bus, epoch, lane.clone());
     let claim = issue(
         &bus,
         epoch,
-        lane,
+        lane.clone(),
         CommandKind::ClaimWin,
-        claim_expected(&available, &idle, &seats[1]),
+        claim_expected(&available, &design, &seats[0]),
         &ClaimWin {
             rule: "next".parse().expect("allocator rule"),
             recovery: None,
         },
     );
-    assert!(matches!(claim, Outcome::Refusal(_)), "{claim:?}");
+    assert!(
+        matches!(&claim, Outcome::Refusal(refusal) if refusal.reason() == "board::allocator-empty"),
+        "{claim:?}"
+    );
+
+    // Settling one output leaves the wait; settling the last releases the
+    // Design with no lane action, and it then concludes like any review.
+    settle_output(&bus, epoch, &closed, false);
+    assert_eq!(selection_count(&bus), 1);
+    settle_output(&bus, epoch, &deleted, true);
+    assert!(open_awaiting_selection(&bus, epoch).is_empty());
+    assert_eq!(selection_count(&bus), 0);
+    claim_task(&bus, epoch, &seats[0], &lane, &design);
+    assert_committed(review_clean(&bus, epoch, &seats[0], &design));
     clean(&root, bus);
+}
+
+/// Close or delete one unclaimed output as the operator.
+fn settle_output(bus: &Bus, epoch: CanonicalUuid, output: &TaskHandle, deleted: bool) {
+    let current = board(bus, epoch, Actor::Operator);
+    let heads = at(&current, output);
+    let expected = vec![
+        statement_witness(heads),
+        workflow_witness(heads),
+        claim_witness(heads),
+    ];
+    assert_committed(if deleted {
+        issue(
+            bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::TaskDelete,
+            expected,
+            &TaskDelete {
+                task: output.clone(),
+                reason: "not selected".to_owned(),
+                force_claimed: false,
+            },
+        )
+    } else {
+        issue(
+            bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::TaskClose,
+            expected,
+            &TaskClose {
+                task: output.clone(),
+                validation: "not selected".to_owned(),
+                force_claimed: false,
+            },
+        )
+    });
 }
 
 #[test]
