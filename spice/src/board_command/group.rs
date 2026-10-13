@@ -179,40 +179,25 @@ pub(super) fn move_working_group(
         to: moved.to.cloned(),
         partition: stated(&next, revision),
     };
-    // Entering a group engages the design: its unauthorized controlled
-    // outputs carry the move as their authorization, each guarded on its
-    // statement so a concurrent edit is never overwritten.
-    let entering = if request.to.is_some() {
-        std::slice::from_ref(&request.design)
-    } else {
-        &[]
-    };
-    let (mut outputs, mut witnesses) = match engagement::anchored_outputs(bus, entering) {
-        Ok(outputs) => outputs,
-        Err(outcome) => return outcome,
-    };
     let status = if ended {
         WorkingGroupChangeStatus::Ended
     } else {
         WorkingGroupChangeStatus::Moved
     };
     // The statement witness keeps a concurrent intent edit from slipping a
-    // withdrawn Design into a group.
-    witnesses.push(Witness::Task {
+    // withdrawn Design into a group. Group membership changes organization
+    // only; execution authorization is an explicit preparation decision.
+    let witnesses = vec![Witness::Task {
         task: task.born.clone(),
         head: head.position(),
-    });
+    }];
     change_partition(
         bus,
         command,
         revision,
         status,
         witnesses,
-        |write| {
-            let moved = write.fact(fact, FactCause::Root)?;
-            engagement::grant(write, moved, &mut outputs, entering);
-            Ok(moved)
-        },
+        |write| write.fact(fact, FactCause::Root),
         request.clone(),
     )
 }

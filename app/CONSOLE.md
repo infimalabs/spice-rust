@@ -43,8 +43,9 @@ last release that admitted it. Anchors resolve by
 immutable task birth stamp and display the task's current handle. An anchor
 whose task is deleted or no longer declares Design intent remains explicit as
 unavailable. Saved edits are visible to other repository clients, but never
-mount, reorder, or close a browser's foreground views. **New Team** therefore
-remains lane creation; **New working group** is repository organization.
+mount, reorder, or close a browser's foreground views. A move changes only
+organization: it authorizes no Design output. **New Team** therefore remains
+lane creation; **New working group** is repository organization.
 
 In the Spice menu, Jobs follows the operator identity before the Working groups
 catalog and its New working group and ungrouped Designs targets. The catalog is

@@ -90,13 +90,6 @@ impl Journal {
                 .zip(write.facts.iter().map(|proposed| &proposed.fact)),
         )
         .map_err(room_refusal)?;
-        crate::rooms::require_engaged_outputs(
-            &transaction,
-            assigned[0],
-            *assigned.last().expect("nonempty fact assignment"),
-            proposed(),
-        )
-        .map_err(room_refusal)?;
         if let Some(receipt) = write.receipt {
             insert_receipt(
                 &transaction,
