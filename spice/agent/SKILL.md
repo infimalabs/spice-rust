@@ -169,15 +169,16 @@ whose omission names the exact continuation.
   positive review releases those tasks onto their ordinary dependencies, with
   no candidate, selection, or authorization. When a Design concludes follow-up
   is warranted, create its acceptance-bearing output Plans under it and run
-  `spice preparation retain CANDIDATE_JSON` naming them before completion; a
-  no-follow-up conclusion says so explicitly in its acceptance evidence. A
-  Design reviewer MUST inspect `spice preparation show HANDLE` and refuse a
-  clean verdict when implied follow-up has no retained candidate. Design
-  outputs wait for the operator's exact execution authorization: leave
-  selection and `spice preparation authorize AUTHORIZATION_JSON` to the
-  operator. `--depends` never removes that gate; never add a reciprocal
-  controller-to-output edge. Origin creates no dependency; closure, deletion, a
-  finding, or a working-group move releases or authorizes nothing.
+  `spice preparation retain CANDIDATE_JSON` naming them before completion (a
+  malformed body's refusal shows an accepted one); a no-follow-up conclusion
+  says so explicitly in its acceptance evidence. A Design reviewer MUST inspect
+  `spice preparation show HANDLE` and refuse a clean verdict when implied
+  follow-up has no retained candidate. Design outputs wait for the operator's
+  exact execution authorization: leave selection and `spice preparation
+  authorize AUTHORIZATION_JSON` to the operator. `--depends` never removes that
+  gate; never add a reciprocal controller-to-output edge. Origin creates no
+  dependency; closure, deletion, a finding, or a working-group move releases or
+  authorizes nothing.
 - Keep work incremental and validated. Commit only while holding the matching
   claim. Git synchronization belongs to allocation and completion: never pull
   or push during implementation or alter harness-added attribution trailers.
