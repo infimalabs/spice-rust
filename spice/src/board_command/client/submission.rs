@@ -510,7 +510,7 @@ pub(in crate::board_command) fn artifact_operation_failure(
         artifact::ErrorClass::Refusal => refusal(
             "artifact::operation-refused",
             Some(error.to_string()),
-            "correct the task artifact request and retry",
+            &crate::task_artifact_command::artifact_refusal_detail(&error),
         ),
         artifact::ErrorClass::Corrupt => store_fault("artifact::store-corrupt", &error.to_string()),
         artifact::ErrorClass::Environment => {

@@ -720,13 +720,19 @@ fn payload_path(root: &Path, task: &TaskStamp, digest: &wire::Digest) -> PathBuf
         .join("payload")
 }
 
+/// The repair an artifact store refusal prints: the store names the refused
+/// operand and its reason, including any admitted values.
+pub(crate) fn artifact_refusal_detail(error: &artifact::Error) -> String {
+    format!("{error}; correct it and retry")
+}
+
 fn artifact_failure(error: artifact::Error) -> Failure {
     match error.class() {
         ErrorClass::Refusal => Failure::refusal(
             "artifact::operation-refused",
             "one admitted task artifact operation",
             error.to_string(),
-            "correct the named artifact operand or preview and retry",
+            artifact_refusal_detail(&error),
         ),
         ErrorClass::Corrupt => Failure::fault(
             FaultClass::Store,
