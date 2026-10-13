@@ -604,3 +604,46 @@ fn retained_lifecycle_facts_without_a_proven_boundary_refuse_without_mutation() 
     ];
     assert_retained_refusals(&cases);
 }
+
+#[test]
+fn current_writable_open_refuses_retained_group_marker_without_mutation() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("retained-group-marker.sqlite3");
+    let journal = authority_file_fixture(&path);
+    let task = journal
+        .connection
+        .query_row(
+            "SELECT stamp FROM task_heads ORDER BY stamp LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("fixture task reads");
+    assert_eq!(
+        journal
+            .connection
+            .execute(
+                "UPDATE task_heads SET body = CAST(json_set(\
+                 CAST(body AS TEXT), '$.engagement', 1) AS BLOB) WHERE stamp = ?1",
+                [&task],
+            )
+            .expect("retained marker stores"),
+        1
+    );
+    drop(journal);
+    let before = fs::read(&path).expect("authority bytes read");
+
+    let error = Journal::open(&path).expect_err("retained marker refuses writable open");
+    assert!(
+        matches!(
+            &error,
+            OpenError::Migration(MigrationError::RetainedRow {
+                table: "task_heads",
+                row,
+                release: "4b805a018",
+                ..
+            }) if row == &task
+        ),
+        "{error}"
+    );
+    assert_eq!(fs::read(&path).expect("authority bytes reread"), before);
+}

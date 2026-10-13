@@ -78,7 +78,7 @@ impl ResolvedTasks {
 
 /// The preparation whose selection one live output still lacks: an output its
 /// preparation constructed directly that is pending without an execution
-/// authorization or a working-group engagement.
+/// authorization.
 ///
 /// A Design cannot conclude positively while it owns such an output; only the
 /// operator's selection, or closing or deleting the output, discharges it.
@@ -91,7 +91,6 @@ pub fn unselected_output_of<'a>(
     (workflow.status == "pending"
         && workflow.completion.is_none()
         && statement.authorization.is_none()
-        && statement.engagement.is_none()
         && preparation.construction == statement.born)
         .then_some(&preparation.parent)
 }
@@ -701,10 +700,11 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
 
 /// A constructed output waits for its preparation and controller to conclude
 /// positively; nothing else, including operator closure, releases it. When
-/// that preparation is a Design, the output, Plan or task, also waits for its
-/// own selection: the Design's exact execution authorization or the operator's
-/// engagement of the Design in a working group. A preparation a Plan constructs
-/// runs alongside it. An unknown preparation leaves the output gated.
+/// that preparation is a Design, the output, Plan or task, also waits for the
+/// Design's exact execution authorization. Retained pre-cutover group markers
+/// are unsupported evidence and never participate in eligibility. A
+/// preparation a Plan constructs runs alongside it. An unknown preparation
+/// leaves the output gated.
 fn control_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
     let statement = entry.statement();
     let Some(preparation) = &statement.preparation else {
@@ -719,11 +719,10 @@ fn control_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
         None => false,
         Some(true) => {
             concluded()
-                && (statement.engagement.is_some()
-                    || statement
-                        .authorization
-                        .as_ref()
-                        .is_some_and(|decision| decision.controller == preparation.controller))
+                && statement
+                    .authorization
+                    .as_ref()
+                    .is_some_and(|decision| decision.controller == preparation.controller)
         }
         Some(false) => statement.intent.is_some() || concluded(),
     }

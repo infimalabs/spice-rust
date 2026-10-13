@@ -313,9 +313,6 @@ fn promote_oops(
     let mut statement = entry.statement().clone();
     statement.project = project.as_str().to_owned();
     statement.preparation = preparation;
-    if let Err(outcome) = super::engagement::engage(bus, &mut statement) {
-        return outcome;
-    }
     let mut workflow = entry.workflow().clone();
     workflow.deferral = None;
     let post = match Entry::new(

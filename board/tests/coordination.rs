@@ -1107,6 +1107,19 @@ fn constructed(
     admitted(head, workflow("todo"), None, None).expect("output heads")
 }
 
+fn retained_design_output() -> Entry {
+    let head = TaskHead {
+        preparation: Some(wire::TaskPreparation {
+            parent: stamp("BOARD-design"),
+            controller: stamp("BOARD-design"),
+            construction: stamp("BOARD-output"),
+        }),
+        engagement: Some(seq(1)),
+        ..statement("BOARD-output")
+    };
+    admitted(head, workflow("todo"), None, None).expect("retained output heads")
+}
+
 /// Whether the first entry is eligible against the readiness of all of them.
 fn first_eligible(entries: &[Entry]) -> bool {
     let actor = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e408"));
@@ -1174,6 +1187,13 @@ fn a_design_output_is_eligible_only_under_that_designs_selection() {
             "a selected {intent:?} output of a concluded Design is eligible"
         );
     }
+    assert!(
+        !first_eligible(&[
+            retained_design_output(),
+            planning("BOARD-design", wire::TaskIntent::Design, Standing::Positive,),
+        ]),
+        "a retained pre-cutover marker is never executable eligibility"
+    );
 }
 
 #[test]
