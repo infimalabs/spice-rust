@@ -9,13 +9,13 @@
   --work-deleted: var(--danger);
 }
 
-:is(.work-map-node-button, .work-map-task)[data-work-availability="in-flight"] { --work-card-tone: var(--work-in-flight); }
-:is(.work-map-node-button, .work-map-task)[data-work-availability="ready"] { --work-card-tone: var(--work-ready); }
-:is(.work-map-node-button, .work-map-task)[data-work-availability="blocked"] { --work-card-tone: var(--work-blocked); }
-:is(.work-map-node-button, .work-map-task)[data-work-availability="deferred"] { --work-card-tone: var(--work-deferred); }
-:is(.work-map-node-button, .work-map-task)[data-work-availability="terminal"] { --work-card-tone: var(--work-terminal); }
-:is(.work-map-node-button, .work-map-task)[data-work-disposition="completed"] { --work-card-tone: var(--work-completed); }
-:is(.work-map-node-button, .work-map-task)[data-work-disposition="deleted"] { --work-card-tone: var(--work-deleted); }
+.work-map-node-button[data-work-availability="in-flight"] { --work-card-tone: var(--work-in-flight); }
+.work-map-node-button[data-work-availability="ready"] { --work-card-tone: var(--work-ready); }
+.work-map-node-button[data-work-availability="blocked"] { --work-card-tone: var(--work-blocked); }
+.work-map-node-button[data-work-availability="deferred"] { --work-card-tone: var(--work-deferred); }
+.work-map-node-button[data-work-availability="terminal"] { --work-card-tone: var(--work-terminal); }
+.work-map-node-button[data-work-disposition="completed"] { --work-card-tone: var(--work-completed); }
+.work-map-node-button[data-work-disposition="deleted"] { --work-card-tone: var(--work-deleted); }
 
 .work-context-link {
   flex: none;
@@ -240,9 +240,9 @@
   padding: 18px 0 0;
   border-top: var(--app-edge-soft);
 }
-/* Graph evidence arrives with enrichment and changes with the board, so its
-   rows and any truncation scroll inside one fixed footprint instead of moving
-   the task details below. At its bounds, scrolling continues to the side view. */
+/* Lens evidence arrives with enrichment and changes with the board, so its
+   rows scroll inside one fixed footprint instead of moving the task details
+   below. At its bounds, scrolling continues to the side view. */
 .work-map-list-scroll {
   display: grid;
   align-content: start;
@@ -385,12 +385,11 @@
   outline-offset: -3px;
 }
 .work-map-node-button[data-task-selected="true"] { border-width: var(--app-focus-ring-strong-width); }
-.work-map-task-list {
+.work-map-fact-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
-.work-map-task,
 .work-map-fact {
   display: grid;
   justify-items: start;
@@ -398,38 +397,21 @@
   min-width: 0;
   margin: 0;
   padding: 9px 10px;
+  border-radius: var(--app-radius-element);
+  background: var(--control-surface-soft);
   text-align: left;
 }
-.work-map-task {
-  --work-card-tone: var(--work-terminal);
-  border-left: var(--app-focus-ring-strong-width) solid var(--work-card-tone);
-}
-.work-map-task[data-task-selected="true"] {
-  background: color-mix(in srgb, var(--work-card-tone) 7%, var(--control-surface));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--work-card-tone) 28%, transparent);
-}
-.work-map-fact { border-radius: var(--app-radius-element); background: var(--control-surface-soft); }
-.work-map-task span,
 .work-map-fact span { color: var(--accent); font-size: var(--app-type-xs); text-transform: uppercase; }
-.work-map-task strong,
-.work-map-task small,
 .work-map-fact strong,
 .work-map-fact small { max-width: 100%; overflow-wrap: anywhere; }
-.work-map-task small,
 .work-map-fact small { color: var(--muted); }
-.work-map-frontiers {
-  min-width: 0;
-  padding: 18px 0 0;
-  border-top: var(--app-edge-soft);
+.work-map-budget {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
-.work-map-frontier-list {
-  display: grid;
-  gap: 7px;
-  margin: 0 0 10px;
-  padding-left: 20px;
-  color: var(--muted);
-  font-size: var(--app-type-label);
-}
+.work-map-budget .work-map-bounds { margin: 0; }
 .work-map-problem {
   display: grid;
   justify-items: center;

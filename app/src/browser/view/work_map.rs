@@ -5,7 +5,7 @@ use std::rc::Rc;
 use wire::TaskStamp;
 use wire::intent::{
     TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT,
-    TaskRelationKind, TaskRelationNodeRef, TaskRelationTruncation,
+    TaskRelationKind, TaskRelationTruncation,
 };
 use yew::prelude::*;
 
@@ -108,14 +108,6 @@ impl WorkMapState {
             .collect::<Vec<_>>();
         TaskRelationsKey::new(roots, self.lens.relation(), self.depth, self.max_nodes)
     }
-
-    fn expand(&mut self) {
-        self.depth = self.depth.saturating_add(1).min(TASK_RELATION_DEPTH_LIMIT);
-        self.max_nodes = self
-            .max_nodes
-            .saturating_add(NODE_STEP)
-            .min(TASK_RELATION_NODE_LIMIT);
-    }
 }
 
 pub(super) struct WorkMapRender<'a, 'work> {
@@ -145,7 +137,10 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
         render.state.direction,
         render.selection,
     );
-    let controls = render_controls(render.state);
+    let controls = render_controls(
+        render.state,
+        answer.and_then(|answer| answer.truncation.as_ref()),
+    );
     let can_read = render
         .runtime
         .is_some_and(|runtime| runtime.offers(wire::CommandKind::TaskRelations));
@@ -218,14 +213,7 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
                     matches!(relations, Some(TaskRelationsState::Unavailable { .. }))
                         .then(|| render.retry.clone()),
                 )}
-                {render_relationship_list(
-                    &presentation,
-                    render.work,
-                    render.selection,
-                    render.state.lens,
-                    &activate_task,
-                    render_truncation(answer.and_then(|answer| answer.truncation.as_ref()), render.state),
-                )}
+                {render_relationship_list(&presentation, render.state.lens)}
             } else {
                 <div class="work-map-problem" role="alert">
                     <h4>{"Relationship graph unavailable"}</h4>
@@ -279,7 +267,10 @@ fn render_graph(
     }
 }
 
-fn render_controls(state: &UseStateHandle<WorkMapState>) -> Html {
+fn render_controls(
+    state: &UseStateHandle<WorkMapState>,
+    truncation: Option<&TaskRelationTruncation>,
+) -> Html {
     html! {
         <>
             <div class="work-map-primary-controls">
@@ -303,7 +294,7 @@ fn render_controls(state: &UseStateHandle<WorkMapState>) -> Html {
                     <span>{format!("Depth {}", state.depth)}</span>
                     <button type="button" aria-label="Increase map depth" disabled={state.depth >= TASK_RELATION_DEPTH_LIMIT} onclick={depth_callback(state.clone(), true)}>{"+"}</button>
                 </div>
-                <span class="work-map-bounds">{format!("Limit {} enrichment nodes", state.max_nodes)}</span>
+                {render_budget(truncation, state)}
             </section>
         </>
     }
@@ -431,70 +422,39 @@ fn settled_tone(deleted: bool) -> TaskTone {
     }
 }
 
-/// The lens's evidence list below the graph. The dependency graph already
-/// shows every task it names, so it keeps only the truncation frontier.
-fn render_relationship_list(
-    presentation: &lens::Presentation,
-    work: &WorkProjection<'_>,
-    selection: &TaskOverviewSelection,
-    active_lens: WorkMapLens,
-    activate: &Callback<TaskStamp>,
-    truncation: Html,
-) -> Html {
+/// The lens's evidence below the graph. Task nodes are already the graph's own
+/// interactive nodes, so only evidence the graph draws as non-task facts is
+/// listed; the Dependency graph has none and lists nothing.
+fn render_relationship_list(presentation: &lens::Presentation, active_lens: WorkMapLens) -> Html {
     let (title, note) = match active_lens {
-        WorkMapLens::Dependency => return truncation,
+        WorkMapLens::Dependency => return Html::default(),
         WorkMapLens::Origin => (
             "Lineage evidence",
-            "Selected roots first; task, ACK, and origin identities stay explicit",
+            "ACK and origin identities stay explicit",
         ),
         WorkMapLens::Review => (
             "Review chain evidence",
-            "Phase authors, reviewers, and verdicts remain in graph order",
+            "Reviews and verdicts remain in graph order",
         ),
         WorkMapLens::Lifecycle => (
             "Ordered lifecycle evidence",
             "Durable lifecycle facts remain in source order",
         ),
     };
-    let rows = presentation
+    let facts = presentation
         .nodes
         .iter()
+        .filter(|node| node.task.is_none())
         .map(|node| {
-            if let Some(task) = &node.task {
-                let activate = {
-                    let activate = activate.clone();
-                    let task = task.clone();
-                    Callback::from(move |_| activate.emit(task.clone()))
-                };
-                let tone = task_tone(work, task, node.status.as_deref());
-                html! {
-                    <button
-                        key={node.id.clone()}
-                        type="button"
-                        class="work-map-task"
-                        data-task-stamp={task.to_string()}
-                        data-task-selected={selection.tasks().contains(task).to_string()}
-                        data-work-availability={tone.map(|tone| tone.availability)}
-                        data-work-disposition={tone.and_then(|tone| tone.disposition)}
-                        data-work-state={tone.map(|tone| tone.label)}
-                        onclick={activate}
-                    >
-                        <span>{node.kind}</span>
-                        <strong>{node.label.clone()}</strong>
-                        <small>{node.detail.clone()}</small>
-                    </button>
-                }
-            } else {
-                html! {
-                    <article key={node.id.clone()} class="work-map-fact">
-                        <span>{node.kind}</span>
-                        <strong>{node.label.clone()}</strong>
-                        <small>{node.detail.clone()}</small>
-                    </article>
-                }
+            html! {
+                <article key={node.id.clone()} class="work-map-fact">
+                    <span>{node.kind}</span>
+                    <strong>{node.label.clone()}</strong>
+                    <small>{node.detail.clone()}</small>
+                </article>
             }
         })
-        .collect::<Html>();
+        .collect::<Vec<_>>();
     html! {
         <section class="work-map-list" aria-labelledby="work-map-list-title">
             <div class="work-map-heading">
@@ -502,75 +462,61 @@ fn render_relationship_list(
                 <span>{note}</span>
             </div>
             <div class="work-map-list-scroll" tabindex="0" role="region" aria-labelledby="work-map-list-title">
-                <div class="work-map-task-list">{rows}</div>
-                {truncation}
+                if facts.is_empty() {
+                    <p class="work-map-context">{"No evidence beyond the tasks the graph shows."}</p>
+                } else {
+                    <div class="work-map-fact-list">{facts}</div>
+                }
             </div>
         </section>
     }
 }
 
-fn render_truncation(
+/// The enrichment node budget and, for a truncated read, how many
+/// relationships lie outside it, with the one control that raises the budget.
+/// Both hold their slot in every state, so a read truncating or expanding
+/// never moves the graph.
+fn render_budget(
     truncation: Option<&TaskRelationTruncation>,
     state: &UseStateHandle<WorkMapState>,
 ) -> Html {
-    let Some(truncation) = truncation else {
-        return Html::default();
+    let omitted = truncation.map(|truncation| {
+        u32::try_from(truncation.frontier.len())
+            .unwrap_or(u32::MAX)
+            .saturating_add(truncation.omitted)
+    });
+    let at_bound = state.max_nodes >= TASK_RELATION_NODE_LIMIT;
+    let next = state
+        .max_nodes
+        .saturating_add(NODE_STEP)
+        .min(TASK_RELATION_NODE_LIMIT);
+    let status = match omitted {
+        Some(omitted) if at_bound => format!(
+            "{omitted} relationships outside the {}-node bound",
+            state.max_nodes
+        ),
+        Some(omitted) => format!(
+            "{omitted} relationships outside this {}-node read",
+            state.max_nodes
+        ),
+        None => format!("Limit {} enrichment nodes", state.max_nodes),
     };
-    let total = u32::try_from(truncation.frontier.len())
-        .unwrap_or(u32::MAX)
-        .saturating_add(truncation.omitted);
-    let cannot_expand =
-        state.depth >= TASK_RELATION_DEPTH_LIMIT && state.max_nodes >= TASK_RELATION_NODE_LIMIT;
     let expand = {
         let state = state.clone();
-        Callback::from(move |_| update(&state, WorkMapState::expand))
+        Callback::from(move |_| update(&state, |state| state.max_nodes = next))
     };
     html! {
-        <section class="work-map-frontiers" aria-labelledby="work-map-frontiers-title">
-            <div class="work-map-heading">
-                <h3 id="work-map-frontiers-title">{"Truncated relationships"}</h3>
-                <span>{format!("{total} omitted · nothing silently hidden")}</span>
-            </div>
-            <ul class="work-map-frontier-list">
-                {for truncation.frontier.iter().map(|frontier| {
-                    let edge = &frontier.edge;
-                    let (from, to) = if edge.relation == TaskRelationKind::Dependency {
-                        (&edge.to, &edge.from)
-                    } else {
-                        (&edge.from, &edge.to)
-                    };
-                    html! {
-                        <li>{format!(
-                            "Depth {} · {} · {} → {}",
-                            frontier.depth,
-                            lens::edge_label(edge.relation),
-                            reference_label(from),
-                            reference_label(to),
-                        )}</li>
-                    }
-                })}
-                if truncation.omitted > 0 {
-                    <li>{format!("{} additional frontier edges exceed the metadata bound", truncation.omitted)}</li>
-                }
-            </ul>
-            <button type="button" class="app-compact-control" disabled={cannot_expand} onclick={expand}>{"Expand typed read"}</button>
-        </section>
-    }
-}
-
-fn reference_label(reference: &TaskRelationNodeRef) -> String {
-    match reference {
-        TaskRelationNodeRef::Task { task } => format!("task {task}"),
-        TaskRelationNodeRef::Origin { origin } => format!("origin {origin}"),
-        TaskRelationNodeRef::Review { task, position } => {
-            format!("task {task} review fact {position}")
-        }
-        TaskRelationNodeRef::Lifecycle { task, position } => {
-            format!("task {task} lifecycle fact {position}")
-        }
-        TaskRelationNodeRef::Claim { task, position } => {
-            format!("task {task} claim fact {position}")
-        }
+        <div class="work-map-budget">
+            <span id="work-map-budget-status" class="work-map-bounds" role="status">{status}</span>
+            <button
+                type="button"
+                class="app-compact-control"
+                aria-label={format!("Raise the node budget to {next}")}
+                aria-describedby="work-map-budget-status"
+                disabled={omitted.is_none() || at_bound}
+                onclick={expand}
+            >{"More nodes"}</button>
+        </div>
     }
 }
 
