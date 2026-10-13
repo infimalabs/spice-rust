@@ -1,8 +1,7 @@
 use super::*;
 
 mod frame;
-use frame::ControlsFrame;
-pub(super) use frame::SendSlot;
+pub(in crate::browser) use frame::{ControlsFrame, SendSlot, holds_text};
 
 const TEAM_SPEECH_STORAGE: &str = "spice:team-speech:v1";
 
@@ -615,8 +614,10 @@ pub(super) fn render_team_controls(
             {ready}
             {topology_revision}
             {slots}
-            speech={speech.label()}
-            lifetime={selected.label()}
+            verb="Send"
+            noun="agent"
+            speech={Some(speech.label())}
+            lifetime={Some(selected.label())}
             lifetime_pending={control.pending_life.is_some()}
             {turbo}
             {menu}
