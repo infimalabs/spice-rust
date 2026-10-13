@@ -104,9 +104,10 @@ it as MSG. `[PEER REPLY sender ADDRESS lane ID]` is that answer at your lane's
 next seat; ACK it and nothing more is sent. `sender unproved` means no address
 is proved. Peer messages and replies never wake a lane.
 
-A private `# Design awareness` notice is background only: it names why the
-current claim may matter, and how to read the Design's room or contribute. It
-does not make the lane a listener, create a duty, or need acknowledgment.
+A private `<system-notice>` naming an open Design that matches your claimed
+task is background only: it names the matched terms, the Design's pitch, and
+how to read its room or contribute. It does not make the lane a listener,
+create a duty, or need acknowledgment.
 
 Each `# Room catch-up` room names why the lane currently listens and the exact
 leave command. Once the room is low value or the lane's part is done, run
