@@ -137,11 +137,15 @@ reads fenced code or Markdown marks. A pending allocation-policy command admits
 no send and lights no recipients. Reduced motion removes slider travel, never a
 state distinction.
 
-SEND floats over a dull, even transmitted-light layer. A separate glass face
-uses the sliders' opposing edge highlights, low shadow and frost, so light
-collects at its perimeter rather than forming hotspots through its center.
-Availability and contact change only the emitter's intensity; neither layer
-carries recipient color or replaces the rim.
+SEND is one optical system of two layers. Behind it, an emitter spreads an
+even diffuse field across the whole disc that softens into the panel just
+beyond the glass, with no drawn ring and no center hotspot. In front, a frosted
+glass face transmits that field and collects light in irregular catches along
+its curved perimeter: brighter low on the left, a fainter answer high on the
+right, as the sliders are lit. Every presentation keeps both layers: idle,
+hover, keyboard focus, contact, disabled, waking, recipient, `FULL SEND` and
+command states change only the field's intensity, the face's pressure, and
+their own typed rims, which stay separate layers above the glass.
 
 SEND's rim is lit in the actual recipients' accents: one continuous rim for one
 recipient, separated arcs for several. Its title names the recipient count.

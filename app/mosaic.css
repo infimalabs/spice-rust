@@ -900,9 +900,10 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-send {
   grid-row: 4; grid-column: 1 / -1;
   width: var(--team-control-send-size); min-width: var(--team-control-send-size); max-width: var(--team-control-send-size); height: var(--team-control-send-size); min-height: var(--team-control-send-size);
-  /* The uniform emitter stays behind these slider-like glass edge catches. */
-  background: radial-gradient(ellipse 82% 36% at 50% -8%, color-mix(in srgb, var(--app-highlight-source) 30%, transparent), transparent 76%), radial-gradient(ellipse 84% 42% at 50% 108%, color-mix(in srgb, var(--app-highlight-source) 14%, transparent), transparent 72%), linear-gradient(90deg, color-mix(in srgb, var(--app-highlight-source) 11%, transparent), transparent 14%, transparent 86%, color-mix(in srgb, var(--app-highlight-source) 11%, transparent)), linear-gradient(color-mix(in srgb, var(--app-highlight-source) 2.5%, transparent), color-mix(in srgb, var(--app-highlight-source) 2.5%, transparent));
-  box-shadow: var(--team-send-command-ring), var(--team-control-rest), inset 2px -2px 1px -1px color-mix(in srgb, var(--app-highlight-source) 12%, transparent);
+  /* Uneven perimeter catches over the even emitter (CONSOLE.md); every state keeps them. */
+  --team-send-glass-catch: inset 2px -2px 1px -1px color-mix(in srgb, var(--app-highlight-source) 34%, transparent), inset 5px -5px 5px -4px color-mix(in srgb, var(--app-highlight-source) 16%, transparent), inset -2px 1.5px 1px -1px color-mix(in srgb, var(--app-highlight-source) 20%, transparent), inset -4px 4px 6px -5px color-mix(in srgb, var(--app-highlight-source) 12%, transparent), inset 0 0 2px color-mix(in srgb, var(--app-shadow-source) 28%, transparent);
+  background: radial-gradient(ellipse 64% 30% at 40% -6%, color-mix(in srgb, var(--app-highlight-source) 18%, transparent), transparent 74%), radial-gradient(ellipse 72% 34% at 60% 106%, color-mix(in srgb, var(--app-highlight-source) 9%, transparent), transparent 72%), linear-gradient(color-mix(in srgb, var(--app-highlight-source) 2.5%, transparent), color-mix(in srgb, var(--app-highlight-source) 2.5%, transparent));
+  box-shadow: var(--team-send-command-ring), var(--team-control-rest), var(--team-send-glass-catch);
   backdrop-filter: blur(2px) saturate(1.45) brightness(1.08) contrast(1.22);
   -webkit-backdrop-filter: blur(2px) saturate(1.45) brightness(1.08) contrast(1.22);
 }
@@ -910,7 +911,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .app-spice-settings .app-spice-turbo:not(:disabled):hover, .agent-menu > .agent-menu-button:hover { background-color: color-mix(in srgb, var(--app-highlight-source) 7.5%, transparent); }
 .team-composer :is(.team-send, .team-turbo, .team-menu):not(:disabled):is(:active, [data-touch-contact]),
 .app-spice-settings .app-spice-turbo:not(:disabled):active, .agent-menu > .agent-menu-button:active {
-  transform: translateY(1.5px); box-shadow: var(--team-send-command-ring), var(--team-control-contact);
+  transform: translateY(1.5px); box-shadow: var(--team-send-command-ring), var(--team-control-contact), var(--team-send-glass-catch, 0 0 0 0 transparent);
 }
 .team-composer .team-turbo[data-lit="true"]:not(:disabled),
 .app-spice-settings .app-spice-turbo[data-lit="true"]:not(:disabled) { background-color: color-mix(in srgb, var(--app-highlight-source) 12%, transparent); color: var(--ink); }
@@ -1019,7 +1020,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-composer .team-composer-controls[data-idle="true"] > :not(.team-send) { opacity: var(--inactive-lane-opacity); }
 .team-composer .team-composer-controls[data-idle="true"] > :is(.team-turbo, .team-menu, .team-slider) { filter: saturate(.55); }
 .team-composer .team-composer-controls[data-idle="true"] .team-send:disabled {
-  opacity: var(--inactive-lane-opacity); box-shadow: var(--team-send-command-ring), var(--team-control-rest); cursor: default;
+  opacity: var(--inactive-lane-opacity); box-shadow: var(--team-send-command-ring), var(--team-control-rest), var(--team-send-glass-catch); cursor: default;
 }
 /* Command previews ring outside SEND, thinner than the recipient bands they frame;
    broadcast selects its recipient rim without replacing the neutral transmitted-glass face. */
