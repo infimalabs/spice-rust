@@ -8,11 +8,14 @@ use wire::{CanonicalUuid, FactKind, Packed, Seq, StreamFact, TaskHandle, TaskSta
 
 use super::BoardView;
 
+mod contributions;
 mod conversation;
 #[cfg(test)]
 mod design_standing_tests;
+mod invitations;
 mod standing;
 
+pub use contributions::{Contribution, ContributionGroup};
 pub use conversation::{
     Conversation, ConversationProjection, Delivery, OperatorItem, QuestionResult,
 };
@@ -180,6 +183,18 @@ pub enum RoomEventKind {
         /// The lane's stated reason.
         clause: String,
     },
+    /// A lane's typed problem-space contribution to an open Design. Its text
+    /// is the fact's own; each source stays a link the resident resolves.
+    Contributed {
+        /// Logical lane that contributed.
+        lane: CanonicalUuid,
+        /// What the contribution offers.
+        contribution: authority::RoomContributionKind,
+        /// The complete contributed text.
+        text: String,
+        /// Cited sources, in the author's order.
+        sources: Vec<authority::RoomSource>,
+    },
 }
 
 /// One task-keyed room projection.
@@ -189,6 +204,15 @@ pub struct RoomState {
 }
 
 impl RoomState {
+    /// Every event in journal order, so typed contributions and ordinary
+    /// conversation interleave exactly as the journal admitted them.
+    #[must_use]
+    pub fn in_journal_order(&self) -> Vec<(&RoomAuthorityStamp, &RoomEvent)> {
+        let mut ordered = self.events.iter().collect::<Vec<_>>();
+        ordered.sort_by_key(|(_, event)| event.position);
+        ordered
+    }
+
     /// Stable events, keyed by their immutable publication identity.
     pub fn events(&self) -> &BTreeMap<RoomAuthorityStamp, RoomEvent> {
         &self.events
@@ -298,6 +322,8 @@ pub struct RoomProjection {
     /// Each room's latest put-aside position.
     shelved: BTreeMap<TaskStamp, Seq>,
     relevance: BTreeMap<RoomAuthorityStamp, RoomPositioned<Relevance>>,
+    /// Every Design notice, keyed by the position that recorded it.
+    invitations: BTreeMap<Seq, RoomPositioned<authority::DesignNoticed>>,
 }
 
 impl Default for RoomProjection {
@@ -319,6 +345,7 @@ impl Default for RoomProjection {
             directed: BTreeMap::new(),
             shelved: BTreeMap::new(),
             relevance: BTreeMap::new(),
+            invitations: BTreeMap::new(),
         }
     }
 }
@@ -541,6 +568,7 @@ impl RoomProjection {
             .or_else(|| self.conversation.apply(fact))
             .or_else(|| self.apply_preparation_fact(fact))
             .or_else(|| self.apply_steering_fact(fact))
+            .or_else(|| self.apply_notice(fact))
             .unwrap_or(false);
         if fact.kind() != FactKind::RoomMessaged {
             self.messaged.clear();
@@ -603,6 +631,24 @@ impl RoomProjection {
                     },
                 )
             })),
+            FactKind::RoomContributed => Some(
+                fact.read::<authority::RoomContributed>()
+                    .is_some_and(|body| {
+                        self.insert_event(
+                            body.room,
+                            body.publication,
+                            RoomEvent {
+                                position: fact.seq(),
+                                kind: RoomEventKind::Contributed {
+                                    lane: body.lane,
+                                    contribution: body.contribution,
+                                    text: body.text,
+                                    sources: body.sources,
+                                },
+                            },
+                        )
+                    }),
+            ),
             FactKind::RoomRelevanceObserved => Some(
                 fact.read::<authority::RoomRelevanceObserved>()
                     .is_some_and(|body| self.apply_observed(fact.seq(), body.observation)),

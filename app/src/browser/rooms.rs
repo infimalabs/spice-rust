@@ -27,10 +27,14 @@ use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 mod approval;
 mod conclusion;
 mod console;
+mod contribute;
+mod contributions;
 mod coordination;
+mod invitations;
 mod reading;
 mod standing;
 pub(super) use console::{GroupRender, render_group_surfaces};
+pub(super) use invitations::render_invitations;
 pub(super) use reading::render_design_room;
 
 const STORAGE: &str = "spice:room-views:v2";
@@ -59,6 +63,10 @@ pub(super) struct Controls {
     approval_notice: UseStateHandle<Option<(wire::rooms::CandidateRef, String)>>,
     /// The read view's Design conclusion preview and last outcome.
     conclusion: UseStateHandle<Option<conclusion::Conclusion>>,
+    /// The read view's lane contribution draft.
+    composer: UseReducerHandle<contribute::Composer>,
+    /// Designs whose contribution awaits the resident's answer.
+    contributing: Rc<RefCell<BTreeSet<TaskStamp>>>,
     /// Last authoritative name of each group seen in this page's memory, shown
     /// while room authority reloads so a reconnect does not retitle consoles.
     names: Rc<RefCell<BTreeMap<RoomAuthorityStamp, String>>>,
@@ -82,6 +90,7 @@ pub(super) fn use_controls() -> Controls {
     let requested = use_mut_ref(|| None);
     let drawn = use_mut_ref(BTreeMap::new);
     let posting = use_mut_ref(BTreeSet::new);
+    let contributing = use_mut_ref(BTreeSet::new);
     let arranging = use_state_eq(|| None);
     let slots = super::watchband::ComposerSlots(use_mut_ref(std::collections::HashMap::new));
     use_effect_with((*views).clone(), store);
@@ -92,6 +101,8 @@ pub(super) fn use_controls() -> Controls {
         inbox_notice: use_state(|| None),
         approval_notice: use_state(|| None),
         conclusion: use_state(|| None),
+        composer: use_reducer(contribute::Composer::default),
+        contributing,
         names,
         requested,
         drawn,
@@ -586,7 +597,9 @@ fn render_event(
     publication: &RoomAuthorityStamp,
     event: &crate::runtime::RoomEvent,
 ) -> Html {
-    if let Some(card) = conversation::render_card(runtime, controls, publication, event) {
+    if let Some(card) = conversation::render_card(runtime, controls, publication, event)
+        .or_else(|| contributions::render_card(runtime, publication, event))
+    {
         return card;
     }
     let (kind, body) = event_summary(runtime, event);
@@ -656,6 +669,15 @@ fn event_summary(
                 "{} left: {clause}",
                 conversation::lane_label(runtime, *lane)
             ),
+        ),
+        RoomEventKind::Contributed {
+            lane,
+            contribution,
+            text,
+            ..
+        } => (
+            contributions::kind_label(*contribution),
+            format!("{}: {text}", conversation::lane_label(runtime, *lane)),
         ),
     }
 }

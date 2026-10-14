@@ -120,6 +120,11 @@ impl RoomProjection {
                         leaves.insert(*lane, (publication, clause));
                         continue;
                     }
+                    RoomEventKind::Contributed { lane, .. } => {
+                        add(*lane, ParticipantReason::Contribution(publication.clone()));
+                        latest.insert(*lane, publication);
+                        continue;
+                    }
                     _ => continue,
                 };
                 let answer = conversation

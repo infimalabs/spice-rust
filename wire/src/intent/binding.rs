@@ -20,15 +20,16 @@ use super::{
     LaneJobRef, LaneJobsAnswer, LaneJobsRead, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer,
     LaneRetune, LaneSeat, LaneState, QuoteRead, RecallAnswer, RecognitionAnswer, Recognize,
     ReleasePublish, ReportAnswer, ReportRead, RoomClose, RoomContribute, RoomContributeAnswer,
-    RoomControl, RoomControlAnswer, RoomConversationText, RoomConversationTextAnswer,
-    RoomCoordinate, RoomCoordinationRead, RoomCoordinationView, RoomLeave, RoomLeaveAnswer,
-    RoomPutAside, StateAnswer, SteerDispose, SteerHistory, SteerInbox, SteerSend, TaskAdd,
-    TaskAnswer, TaskAssign, TaskClose, TaskConclude, TaskDefer, TaskDelete, TaskDepends,
-    TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskFile, TaskNote, TaskOopsAdd, TaskPhase,
-    TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer,
-    TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer,
-    TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer, WorkingGroupArrange,
-    WorkingGroupChange, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
+    RoomContributionSources, RoomContributionSourcesAnswer, RoomControl, RoomControlAnswer,
+    RoomConversationText, RoomConversationTextAnswer, RoomCoordinate, RoomCoordinationRead,
+    RoomCoordinationView, RoomLeave, RoomLeaveAnswer, RoomPutAside, StateAnswer, SteerDispose,
+    SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskConclude,
+    TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskFile,
+    TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview,
+    TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord,
+    TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog,
+    VendorCatalogAnswer, WorkingGroupArrange, WorkingGroupChange, WorkingGroupMove,
+    WorkingGroupPage, WorkingGroupRead,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -64,6 +65,8 @@ pub enum BodyShape {
     RoomLeave,
     /// [`RoomContribute`]
     RoomContribute,
+    /// [`RoomContributionSources`]
+    RoomContributionSources,
     /// [`RoomControl`]
     RoomControl,
     /// [`RoomClose`]
@@ -215,6 +218,8 @@ pub enum AnswerShape {
     RoomLeave,
     /// [`RoomContributeAnswer`]
     RoomContribute,
+    /// [`RoomContributionSourcesAnswer`]
+    RoomContributionSources,
     /// [`RoomControlAnswer`]
     RoomControl,
     /// [`RoomConversationTextAnswer`]
@@ -293,6 +298,8 @@ pub enum CommandAnswer {
     RoomLeave(RoomLeaveAnswer),
     /// [`AnswerShape::RoomContribute`]
     RoomContribute(RoomContributeAnswer),
+    /// [`AnswerShape::RoomContributionSources`]
+    RoomContributionSources(RoomContributionSourcesAnswer),
     /// [`AnswerShape::RoomControl`]
     RoomControl(RoomControlAnswer),
     /// [`AnswerShape::RoomConversationText`]
@@ -359,6 +366,7 @@ impl CommandAnswer {
             | Self::RoomCoordination(_)
             | Self::RoomLeave(_)
             | Self::RoomContribute(_)
+            | Self::RoomContributionSources(_)
             | Self::RoomControl(_)
             | Self::RoomConversationText(_)
             | Self::Task(_)
@@ -397,6 +405,7 @@ impl CommandAnswer {
             Self::RoomCoordination(_) => AnswerShape::RoomCoordination,
             Self::RoomLeave(_) => AnswerShape::RoomLeave,
             Self::RoomContribute(_) => AnswerShape::RoomContribute,
+            Self::RoomContributionSources(_) => AnswerShape::RoomContributionSources,
             Self::RoomControl(_) => AnswerShape::RoomControl,
             Self::RoomConversationText(_) => AnswerShape::RoomConversationText,
             Self::Task(_) => AnswerShape::Task,
@@ -461,6 +470,7 @@ impl AnswerShape {
             | Self::RoomCoordination
             | Self::RoomLeave
             | Self::RoomContribute
+            | Self::RoomContributionSources
             | Self::RoomControl
             | Self::RoomConversationText => self.decode_room(source),
             Self::Board
@@ -600,6 +610,7 @@ impl CommandKind {
             | Self::RoomPutAside
             | Self::RoomLeave
             | Self::RoomContribute
+            | Self::RoomContributionSources
             | Self::RoomControl
             | Self::RoomClose => self.room_binding(),
             Self::CandidateRetain
@@ -845,6 +856,8 @@ pub enum Intent {
     RoomLeave(RoomLeave),
     /// [`BodyShape::RoomContribute`]
     RoomContribute(RoomContribute),
+    /// [`BodyShape::RoomContributionSources`]
+    RoomContributionSources(RoomContributionSources),
     /// [`BodyShape::RoomControl`]
     RoomControl(RoomControl),
     /// [`BodyShape::RoomClose`]
@@ -986,6 +999,7 @@ impl Intent {
             | Self::RoomPutAside(_)
             | Self::RoomLeave(_)
             | Self::RoomContribute(_)
+            | Self::RoomContributionSources(_)
             | Self::RoomControl(_)
             | Self::RoomClose(_) => self.room_shape(),
             Self::CandidateRetain(_)
@@ -1188,6 +1202,7 @@ impl BodyShape {
                 | Self::RoomPutAside
                 | Self::RoomLeave
                 | Self::RoomContribute
+                | Self::RoomContributionSources
                 | Self::RoomControl
                 | Self::RoomClose
                 | Self::WorkingGroupRead
@@ -1240,6 +1255,7 @@ impl BodyShape {
                 | Self::RoomPutAside
                 | Self::RoomLeave
                 | Self::RoomContribute
+                | Self::RoomContributionSources
                 | Self::RoomControl
                 | Self::RoomClose
                 | Self::WorkingGroupRead
@@ -1282,6 +1298,7 @@ impl BodyShape {
             | Self::RoomPutAside
             | Self::RoomLeave
             | Self::RoomContribute
+            | Self::RoomContributionSources
             | Self::RoomControl
             | Self::RoomClose => return self.decode_room_body(bytes),
             Self::WorkingGroupRead => Intent::WorkingGroupRead(crate::decode(bytes)?),

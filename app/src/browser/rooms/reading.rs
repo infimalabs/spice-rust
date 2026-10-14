@@ -1,8 +1,8 @@
 //! A Design's room read in place: its standing, conclusion control, approval
-//! control, preparation authority, and room history, for open and concluded
-//! Designs alike. The controls that write are the operator's conclusion of an
-//! open Design and review evidence over a retained candidate; showing the
-//! view joins, groups, or wakes nothing.
+//! control, preparation authority, kind-grouped contributions, and room
+//! history, for open and concluded Designs alike. The controls that write are
+//! the operator's conclusion of an open Design and review evidence over a
+//! retained candidate; showing the view joins, groups, or wakes nothing.
 
 use wire::intent::BoardTask;
 use yew::prelude::*;
@@ -34,20 +34,22 @@ pub(in crate::browser) fn render_design_room(
             html! { <p class="room-unavailable">{"Room authority unavailable until reconnect."}</p> }
         }
         RoomProjectionStatus::Available => {
-            let events = projection.room(design).map(|room| room.events());
+            let events = projection.room(design).map(|room| room.in_journal_order());
             html! {
                 <>
                     {super::standing::render_standing(runtime, design, Some(row))}
                     {super::conclusion::render_conclusion(runtime, controls, sender, row)}
                     {super::approval::render_approval(runtime, controls, sender, design)}
                     {render_preparation(runtime, design)}
+                    {super::contributions::render_groups(runtime, design)}
+                    {super::contribute::render_composer(runtime, controls, sender, row)}
                     <section class="room-history" aria-label="Room history">
                         <header>
                             <strong>{"Room history"}</strong>
-                            <span>{events.map_or(0, |events| events.len())}</span>
+                            <span>{events.as_ref().map_or(0, Vec::len)}</span>
                         </header>
                         if let Some(events) = events.filter(|events| !events.is_empty()) {
-                            {for events.iter().rev().map(|(publication, event)| {
+                            {for events.into_iter().rev().map(|(publication, event)| {
                                 render_event(runtime, None, publication, event)
                             })}
                         } else {

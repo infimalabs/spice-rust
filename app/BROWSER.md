@@ -149,6 +149,16 @@ answer is its own ANS card whose return carries a separate receipt. None of
 these is styled as review coverage or output authorization, which stay in the
 preparation section.
 
+A Design's read view groups its [typed contributions](CONSOLE.md#design-contributions)
+by kind above the room history, which keeps them in journal order among the
+conversation. Each cited source's availability comes from the
+`room::contribution-sources` read, which the app issues once per cited
+contribution of a shown Design, at most eight in flight, and again after a
+reconnect; it resolves through the same resident path as `spice room history`.
+A lane session submits through the guarded `room::contribute` command from the
+Design view's form, and its sidebar lists the lane's Design invitations from
+the room snapshot's `room::noticed` records.
+
 The operator's inbox sits in the Spice sidebar directly beneath their avatar,
 name, and email and above Jobs, not in the shared Working groups catalog. Its
 heading reads `<initials>'s inbox` (for example, "CA's inbox") once Git

@@ -386,6 +386,12 @@ fn apply_mutating_response(
             runtime.apply_conversation_text(&publication, &admitted);
             CommandApplication::ordinary(false)
         }
+        PendingKind::ContributionSources { publication } => {
+            let admitted: crate::Admitted<Response<wire::intent::RoomContributionSourcesAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_contribution_sources(&publication, &admitted);
+            CommandApplication::ordinary(false)
+        }
         PendingKind::TeamConfigure {
             team,
             life,
@@ -453,6 +459,11 @@ fn apply_task_mutation_response(
             refresh: true,
             ..apply_callback_reply(session, bytes, "Conclusion failed", &respond)?
         },
+        // The recorded contribution renders from its live room fact, never
+        // from this answer, so nothing is re-read.
+        PendingKind::Contribute { respond } => {
+            apply_callback_reply(session, bytes, "Contribution failed", &respond)?
+        }
         _ => unreachable!("read and mutation response partitions are closed"),
     })
 }

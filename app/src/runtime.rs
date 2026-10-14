@@ -24,6 +24,7 @@ use crate::socket::Admitted;
 use crate::watchband;
 
 mod consent;
+mod contribution_sources;
 mod conversation_text;
 mod lanes;
 mod member_control;
@@ -34,15 +35,17 @@ mod scoped;
 mod stream;
 mod task_detail;
 pub use consent::ConsentRuling;
+pub use contribution_sources::ContributionSources;
 pub use conversation_text::{ConversationText, ItemConcern};
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 pub use publication::AppSurface;
 pub use rooms::{
-    Conversation, ConversationProjection, CoordinationStanding, Delivery, DesignStanding,
-    OperatorItem, ParticipantReason, PreparationProjection, QuestionResult, Relevance,
-    ResumeAutomation, RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind,
-    RoomParticipant, RoomPositioned, RoomProjection, RoomProjectionStatus, RoomState, associated,
+    Contribution, ContributionGroup, Conversation, ConversationProjection, CoordinationStanding,
+    Delivery, DesignStanding, OperatorItem, ParticipantReason, PreparationProjection,
+    QuestionResult, Relevance, ResumeAutomation, RoomAnchorAuthority, RoomAnchorSettlement,
+    RoomEvent, RoomEventKind, RoomParticipant, RoomPositioned, RoomProjection,
+    RoomProjectionStatus, RoomState, associated,
 };
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
@@ -530,6 +533,8 @@ pub struct AppRuntime {
     /// Text of lane-authored publications the operator inbox shows; a
     /// publication's bytes never change, so a settled read stands.
     conversation_texts: BTreeMap<RoomAuthorityStamp, ConversationText>,
+    /// Resolved sources of contributions in shown Designs.
+    contribution_sources: BTreeMap<RoomAuthorityStamp, ContributionSources>,
     member_controls: member_control::MemberControls,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
@@ -587,6 +592,7 @@ impl AppRuntime {
             blocker_actions: BTreeMap::new(),
             task_relations_revision: 0,
             conversation_texts: BTreeMap::new(),
+            contribution_sources: BTreeMap::new(),
             member_controls: member_control::MemberControls::default(),
             lane_position: None,
             inbox: ScopedValue::new(accepted),
@@ -651,6 +657,7 @@ impl AppRuntime {
                 .retain(|_, state| refresh_task_relations(state, false));
             self.task_relations_revision = self.task_relations_revision.saturating_add(1);
             self.forget_conversation_text_reads();
+            self.forget_contribution_sources();
             false
         } else {
             *self = Self::new(accepted);

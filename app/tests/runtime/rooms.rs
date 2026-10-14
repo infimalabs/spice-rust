@@ -9,6 +9,8 @@ use wire::rooms::{
     TextRange, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
 };
 
+#[path = "rooms/contributions.rs"]
+mod contributions;
 #[path = "rooms/conversation.rs"]
 mod conversation;
 

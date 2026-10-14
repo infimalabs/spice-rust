@@ -1134,8 +1134,9 @@ impl JournalRead<'_> {
     /// of each working group, proposal, and authorization, for each room
     /// coordination the direction it follows and that direction's current
     /// steering head, every conversation record with the current head of
-    /// each operator item and question result, and the opening and current
-    /// steering head of each directive a publication or conversation names.
+    /// each operator item and question result, the opening and current
+    /// steering head of each directive a publication or conversation names,
+    /// and every Design notice, so an invitation survives a reconnect.
     ///
     /// A head that moves past `horizon` leaves this set, so the facts after
     /// `horizon` complete the authority it describes without overlap.
@@ -1161,13 +1162,20 @@ impl JournalRead<'_> {
         };
         let (first, last) = (sql(first)?, sql(horizon.get())?);
         let directed = wire::FactKind::RoomCoordinationStarted.as_str();
+        let noticed = wire::FactKind::DesignNoticed.as_str();
         read_metrics::observe_query();
         let mut statement = self
             .connection
             .prepare(ROOM_AUTHORITY_PAGE)
             .map_err(GuardError::Store)?;
         let mut rows = statement
-            .query(params![directed, first, last, probe_limit(budget)?])
+            .query(params![
+                directed,
+                noticed,
+                first,
+                last,
+                probe_limit(budget)?
+            ])
             .map_err(GuardError::Store)?;
         let mut facts = Vec::with_capacity(budget.rows());
         let mut decoded = 0usize;
@@ -1195,7 +1203,7 @@ impl JournalRead<'_> {
                     .connection
                     .query_row(
                         ROOM_AUTHORITY_REMAINING,
-                        params![directed, continuation, last],
+                        params![directed, noticed, continuation, last],
                         |row| row.get::<_, i64>(0),
                     )
                     .map_err(GuardError::Store)?;
@@ -1234,7 +1242,8 @@ impl JournalRead<'_> {
 }
 
 /// Positions of the facts behind current room authority; `?1` spells the
-/// room-coordination kind, whose direction always sits one position earlier.
+/// room-coordination kind, whose direction always sits one position earlier,
+/// and `?2` the Design-notice kind, whose every invitation stays readable.
 /// A publication's or conversation's lane deliveries are the directives its
 /// own fact names.
 macro_rules! room_authority {
@@ -1258,6 +1267,7 @@ macro_rules! room_authority {
              UNION SELECT head_seq FROM room_results \
              UNION SELECT head_seq FROM room_relevance_observations \
              UNION SELECT head_seq FROM room_relevance_assessments \
+             UNION SELECT seq FROM fact_envelopes WHERE kind = ?2 \
              UNION SELECT seq - 1 FROM directed \
              UNION SELECT h.head_seq FROM directed d \
              JOIN steering_heads h ON h.created_seq = d.seq - 1 \
@@ -1273,12 +1283,12 @@ const ROOM_AUTHORITY_PAGE: &str = concat!(
     room_authority!(),
     "SELECT f.seq, f.kind, length(f.envelope), f.envelope FROM authority a \
      JOIN fact_envelopes f ON f.seq = a.seq \
-     WHERE a.seq >= ?2 AND a.seq <= ?3 ORDER BY a.seq LIMIT ?4"
+     WHERE a.seq >= ?3 AND a.seq <= ?4 ORDER BY a.seq LIMIT ?5"
 );
 
 const ROOM_AUTHORITY_REMAINING: &str = concat!(
     room_authority!(),
-    "SELECT count(*) FROM authority WHERE seq >= ?2 AND seq <= ?3"
+    "SELECT count(*) FROM authority WHERE seq >= ?3 AND seq <= ?4"
 );
 
 fn probe_limit(budget: FactReadBudget) -> Result<i64, GuardError> {

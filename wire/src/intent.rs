@@ -65,13 +65,14 @@ mod simple_answers;
 pub use simple_answers::{RecognitionAnswer, TasteAnswer};
 mod rooms;
 pub use rooms::{
-    RoomClose, RoomConcernedDirection, RoomContribute, RoomContributeAnswer, RoomControl,
-    RoomControlAnswer, RoomConversationContent, RoomConversationText, RoomConversationTextAnswer,
-    RoomCoordinate, RoomCoordinateAction, RoomCoordinationRead, RoomCoordinationRequest,
-    RoomCoordinationStop, RoomCoordinationView, RoomItemMove, RoomLeave, RoomLeaveAnswer,
-    RoomListeningDuty, RoomPutAside, RoomResultMove, RoomResumeBudget, WorkingGroupAnchor,
-    WorkingGroupArrange, WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupMove,
-    WorkingGroupPage, WorkingGroupRead, WorkingGroupView,
+    RoomClose, RoomConcernedDirection, RoomContribute, RoomContributeAnswer,
+    RoomContributionSources, RoomContributionSourcesAnswer, RoomControl, RoomControlAnswer,
+    RoomConversationContent, RoomConversationText, RoomConversationTextAnswer, RoomCoordinate,
+    RoomCoordinateAction, RoomCoordinationRead, RoomCoordinationRequest, RoomCoordinationStop,
+    RoomCoordinationView, RoomItemMove, RoomLeave, RoomLeaveAnswer, RoomListeningDuty,
+    RoomPutAside, RoomResultMove, RoomResumeBudget, WorkingGroupAnchor, WorkingGroupArrange,
+    WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupMove, WorkingGroupPage,
+    WorkingGroupRead, WorkingGroupView,
 };
 
 mod task;

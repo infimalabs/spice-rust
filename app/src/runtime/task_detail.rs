@@ -71,6 +71,13 @@ pub(super) struct TaskDetails {
     owed: BTreeSet<TaskStamp>,
 }
 
+impl TaskDetails {
+    /// Tasks some surface currently shows.
+    pub(super) const fn shown(&self) -> &BTreeSet<TaskStamp> {
+        &self.shown
+    }
+}
+
 impl AppRuntime {
     /// On-demand detail state retained only for this admitted capability scope.
     #[must_use]
