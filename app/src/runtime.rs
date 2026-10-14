@@ -45,7 +45,7 @@ pub use rooms::{
     Delivery, DesignStanding, OperatorItem, ParticipantReason, PreparationProjection,
     QuestionResult, Relevance, ResumeAutomation, RoomAnchorAuthority, RoomAnchorSettlement,
     RoomEvent, RoomEventKind, RoomParticipant, RoomPositioned, RoomProjection,
-    RoomProjectionStatus, RoomState, associated,
+    RoomProjectionStatus, RoomState, associated, prepared_open_count,
 };
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};

@@ -1,7 +1,7 @@
 use wire::head::ClaimDisposition;
 use wire::intent::BoardTask;
 
-use super::{DesignStanding, RoomProjection};
+use super::{DesignStanding, RoomProjection, prepared_open_count};
 use crate::work::tests::{board, claim, stamp, task};
 
 fn design(grouped: bool) -> BoardTask {
@@ -132,4 +132,36 @@ fn terminal_standing_outranks_retained_group_membership() {
         Some(wire::intent::DesignStanding::Deleted)
     );
     assert_eq!(light(vec![deleted]), DesignStanding::Deleted);
+}
+
+fn prepared(number: i64, parent: i64, controller: i64, construction: i64) -> BoardTask {
+    let mut task = task(number, "rooms.output");
+    task.statement.body.preparation = Some(wire::TaskPreparation {
+        parent: stamp(parent),
+        controller: stamp(controller),
+        construction: stamp(construction),
+    });
+    task
+}
+
+#[test]
+fn prepared_open_count_admits_each_direct_role_once_and_excludes_retained_rows() {
+    let design = stamp(1);
+    let mut board = board(vec![
+        prepared(2, 1, 20, 21),
+        prepared(3, 30, 1, 31),
+        prepared(4, 40, 41, 1),
+        prepared(5, 1, 1, 1),
+        prepared(6, 60, 61, 62),
+    ]);
+    let mut terminal = prepared(7, 1, 70, 71);
+    terminal.workflow.body.status = "completed".to_owned();
+    terminal.workflow.body.completion = Some(
+        "2026-10-14T00:00:00.000Z"
+            .parse()
+            .expect("fixture completion"),
+    );
+    board.room_anchors.push(terminal);
+
+    assert_eq!(prepared_open_count(&board, &design), 4);
 }
