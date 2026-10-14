@@ -68,13 +68,23 @@ body:has(.shell),
 }
 
 
-/* The global work rail hangs horn tabs from the command bar's top edge. The
-   material itself is shared in style.css with team-local work tabs. */
-.app-global-work-tabs {
+/* The global execution and Design work rails hang mirrored horn tabs from the
+   command bar's top edge. The material itself is shared in style.css with
+   team-local work tabs. */
+:is(.app-global-work-tabs, .app-design-work-tabs) {
   grid-area: 1 / 1;
-  justify-self: start;
   align-self: start;
   margin-block-start: calc(-1 * var(--app-commandbar-block-pad));
+}
+.app-global-work-tabs { justify-self: start; }
+.app-design-work-tabs {
+  justify-self: end;
+  flex-direction: row-reverse;
+}
+:is(.app-global-work-tabs, .app-design-work-tabs):empty { display: none; }
+.app-commandbar-content:has(> .app-design-work-tabs:not(:empty))
+  > :is(.app-global-work-tabs, .app-design-work-tabs) {
+  max-width: calc(50% - var(--mosaic-gap) / 2);
 }
 .app-spice-button {
   --app-spice-edge: var(--accent-slot, var(--line));

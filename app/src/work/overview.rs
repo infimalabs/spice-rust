@@ -34,8 +34,12 @@ impl TaskOverviewContext {
     ) -> String {
         match self {
             Self::Task => "Selected task".to_owned(),
-            Self::Scope(WorkScope::AllOpen) => "All open work".to_owned(),
+            Self::Scope(WorkScope::AllOpen) => "All open execution work".to_owned(),
             Self::Scope(WorkScope::Stem(stem)) => stem.to_string(),
+            Self::Scope(WorkScope::Planning { stem: None }) => "All open Design work".to_owned(),
+            Self::Scope(WorkScope::Planning { stem: Some(stem) }) => {
+                format!("Design work · {stem}")
+            }
             Self::Scope(WorkScope::Team {
                 team: id,
                 stem: None,

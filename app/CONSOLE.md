@@ -232,31 +232,42 @@ empty fleet reserves no pips and invents no status.
 
 ## Task strips
 
-The global strip and each team's strip share one horned-tab construction. Each
-leads with a badge-only total: the global total opens every current task, and a
-team total opens the overview with that team's complete current task set
-selected without changing the durable location. Both totals keep one footprint
-for every count, so the totals and the pips beneath stay aligned. Tabs past the
-total scroll horizontally under edge fades and never enter the status row.
+The command bar has two mirrored global strips and each team has one local
+strip. Every strip uses the same horned-tab construction and leads with a
+badge-only total. The left global total opens all current execution work. The
+right global total opens all current Design-owned work: each Design root and
+each open task directly controlled by a Design. A team total opens the overview
+with that team's complete current execution set selected without changing the
+durable location. Totals keep one footprint for every count. Tabs past a total
+scroll horizontally under edge fades and never enter the status row.
 
 Task tabs are neutral. Only a handle a lane is working carries that lane's
 accent, beside the lane's name in its text; hover and keyboard focus stay
-neutral in both strips. Every count badge is one neutral open-task total; see
+neutral in every strip. Every count badge is one neutral open-task total; see
 [Task counts show one open
 total](../docs/product/loops.md#the-jitter-contract).
 
-A global stem tab opens its complete visibility-qualified stem. A team strip
-clusters by Work's rule: in in-flight, ready, blocked, and deferred offer order,
-each stem's first task places one flag and later matches join it in order. The
-flag's stem target opens the overview with that team's stem selected; each
-following handle opens its exact task. Closing any overview returns focus to the
-control that opened it.
+Each global stem tab opens its complete visibility-qualified stem within its
+own partition. A team strip clusters by Work's rule: in in-flight, ready,
+blocked, and deferred offer order, each stem's first task places one flag and
+later matches join it in order. The flag's stem target opens the overview with
+that team's stem selected; each following handle opens its exact task. Closing
+any overview returns focus to the control that opened it.
 
-A task belongs to the team of the lane actively claiming it (no team when that
-lane is unteamed), otherwise its creator team, otherwise its last claimant's
-team. Project controls select the exact dotted project, and a relationship
-control extends the current selection with that task. Selection always follows
-the resident's offer order and may be explicitly empty.
+Work keeps immutable creator-team provenance separate from its current
+accountable owner. A Design owns itself and tasks it directly controls. All
+other work belongs to the team of the lane actively claiming it (no team when
+that lane is unteamed), otherwise to a still-live creator team, otherwise to
+its last claimant's current team. A task can therefore move from a dissolved
+creator team to a live team without losing who created it. A Design-produced
+Plan stays on the right planning strip; tasks that Plan creates for authorized
+execution use the ordinary team and left-global strips. Ownership is never
+inferred from dependency reachability, working-group placement, or a transitive
+preparation ancestor.
+
+Project controls select the exact dotted project, and a relationship control
+extends the current selection with that task. Selection always follows the
+resident's offer order and may be explicitly empty.
 
 ## Group toolbar
 

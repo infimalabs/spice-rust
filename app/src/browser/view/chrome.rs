@@ -1,11 +1,11 @@
 //! The chrome standing above the feed.
 //!
-//! One bar of stem tabs and the connectivity-bearing Spice button across the top, one
-//! band of lane standings under it, one line of the newest command outcome
-//! under that, and the card the feed packs. All four are placement and markup
-//! only: every number they show is derived in [`crate::watchband`], which a
-//! native test can reach, so what is left here is the part that genuinely
-//! needs a browser.
+//! Mirrored execution and Design-planning task rails across the top, one band
+//! of lane standings under them, one line of the newest command outcome under
+//! that, and the card the feed packs. All four are placement and markup only:
+//! every number they show is derived in [`crate::watchband`], which a native
+//! test can reach, so what is left here is the part that genuinely needs a
+//! browser.
 //!
 //! The connection state lives in this bar because this bar is the one piece of
 //! chrome every layout renders. The surface keeps the last admitted runtime on
@@ -34,29 +34,15 @@ pub(super) struct CommandBarRender<'a> {
 pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let surface = render.surface.read();
     let runtime = surface.as_ref();
-    let stems = render
-        .work
-        .into_iter()
-        .flat_map(WorkProjection::stems)
-        .filter(|stem| stem.counts().has_open())
-        .collect::<Vec<_>>();
-    // The strip rolls up every open task, team-associated or not; the total
-    // leads it whenever any open work exists.
-    let all_work_pill = render
-        .work
-        .map(WorkProjection::counts)
-        .filter(|counts| counts.has_open())
-        .map(|counts| render_aggregate_pill(counts, render.navigate));
+    let execution_rail =
+        render_global_work_rail(render.work, render.navigate, GlobalWorkRail::Execution);
+    let design_rail = render_global_work_rail(render.work, render.navigate, GlobalWorkRail::Design);
     let connection_label: AttrValue = render.connection.label().into();
     html! {
         <header class="commandbar commandbar--mosaic">
             <div class="app-commandbar-content">
-                <nav class="app-horn-tabs app-global-work-tabs" aria-label="Open task stems">
-                    {all_work_pill}
-                    {for stems.into_iter().map(|stem| {
-                        render_stem_pill(stem, render.navigate)
-                    })}
-                </nav>
+                {execution_rail}
+                {design_rail}
                 // Connection is routine state: the Spice button, tab title, and
                 // icon carry it visibly; only assistive technology hears it.
                 <span class="visually-hidden" role="status">{connection_label.clone()}</span>
@@ -237,44 +223,135 @@ fn count_breakdown(counts: WorkCounts) -> String {
     )
 }
 
-/// The label-less total leading the global strip, opening all open Work. Like
-/// the team total, its badge is one open-task count.
-fn render_aggregate_pill(counts: WorkCounts, navigate: &Callback<navigation::Intent>) -> Html {
+#[derive(Clone, Copy)]
+enum GlobalWorkRail {
+    Execution,
+    Design,
+}
+
+impl GlobalWorkRail {
+    fn scope(self) -> WorkScope {
+        match self {
+            Self::Execution => WorkScope::AllOpen,
+            Self::Design => WorkScope::planning(),
+        }
+    }
+
+    fn stem_scope(self, stem: crate::work::WorkStemIdentity) -> WorkScope {
+        match self {
+            Self::Execution => WorkScope::Stem(stem),
+            Self::Design => WorkScope::Planning { stem: Some(stem) },
+        }
+    }
+
+    const fn class(self) -> &'static str {
+        match self {
+            Self::Execution => "app-global-work-tabs",
+            Self::Design => "app-design-work-tabs",
+        }
+    }
+
+    const fn aria_label(self) -> &'static str {
+        match self {
+            Self::Execution => "Open execution task stems",
+            Self::Design => "Open Design task stems",
+        }
+    }
+
+    const fn focus_prefix(self) -> &'static str {
+        match self {
+            Self::Execution => "global-work",
+            Self::Design => "design-work",
+        }
+    }
+
+    const fn aggregate_title(self) -> &'static str {
+        match self {
+            Self::Execution => "All open execution work",
+            Self::Design => "All open Design work",
+        }
+    }
+
+    const fn data_scope(self) -> &'static str {
+        match self {
+            Self::Execution => "all",
+            Self::Design => "design",
+        }
+    }
+}
+
+fn render_global_work_rail(
+    work: Option<&WorkProjection<'_>>,
+    navigate: &Callback<navigation::Intent>,
+    rail: GlobalWorkRail,
+) -> Html {
+    let scope = rail.scope();
+    let groups = work
+        .map(|work| work.stem_task_groups(&scope))
+        .unwrap_or_default();
+    let total = work
+        .map(|work| work.scope_counts(&scope))
+        .filter(|counts| counts.has_open())
+        .map(|counts| render_aggregate_pill(counts, navigate, rail));
+    html! {
+        <nav
+            class={classes!("app-horn-tabs", rail.class())}
+            aria-label={rail.aria_label()}
+        >
+            {total}
+            {for groups.iter().map(|group| render_stem_pill(group, navigate, rail))}
+        </nav>
+    }
+}
+
+/// The label-less total leading one global rail. Its badge is one open-task
+/// count, matching every team total.
+fn render_aggregate_pill(
+    counts: WorkCounts,
+    navigate: &Callback<navigation::Intent>,
+    rail: GlobalWorkRail,
+) -> Html {
     let open = counts.open();
     let title = format!(
-        "All open work: {open} {}; {}",
+        "{}: {open} {}; {}",
+        rail.aggregate_title(),
         if open == 1 { "task" } else { "tasks" },
         count_breakdown(counts),
     );
+    let focus_key = rail.focus_prefix();
+    let scope = rail.scope();
     let navigate = navigate.clone();
     html! {
         <button
-            key="global-work"
+            key={focus_key}
             class="app-horn-tab app-horn-tab--down app-horn-tab--wide"
             type="button"
             title={title.clone()}
             aria-label={title}
-            data-work-scope="all"
-            data-sidebar-focus-key="global-work"
-            onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(WorkScope::AllOpen)))}
+            data-work-scope={rail.data_scope()}
+            data-sidebar-focus-key={focus_key}
+            onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
         >
             {render_task_count(counts)}
         </button>
     }
 }
 
-/// One global stem tab opening that stem's Work, the scope its counts
-/// describe.
-fn render_stem_pill(stem: &crate::work::WorkStem, navigate: &Callback<navigation::Intent>) -> Html {
-    let identity = stem.identity();
-    let counts = stem.counts();
-    let scope = WorkScope::Stem(identity.clone());
-    let focus_key = format!("global-work:{identity}");
+/// One stem tab opening the exact rail partition its count describes.
+fn render_stem_pill(
+    group: &crate::work::StemTaskGroup<'_, '_>,
+    navigate: &Callback<navigation::Intent>,
+    rail: GlobalWorkRail,
+) -> Html {
+    let identity = group.stem();
+    let counts = group.counts();
+    let scope = rail.stem_scope(identity.clone());
+    let focus_key = format!("{}:{identity}", rail.focus_prefix());
     let title = format!("{identity}: {}", count_breakdown(counts));
     let navigate = navigate.clone();
     html! {
         <button
-            key={identity.to_string()}
+            key={focus_key.clone()}
             class="app-horn-tab app-horn-tab--down"
             type="button"
             title={title.clone()}

@@ -106,16 +106,31 @@ pub enum WorkVisibility {
     Public,
     Hidden,
 }
+
+/// Current UI-placement owner, separate from immutable creator provenance.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorkOwner {
+    /// Current live team home.
+    Team(wire::CanonicalUuid),
+    /// Design owning its root or one directly controlled planning task.
+    Design(TaskStamp),
+}
+
 /// Browser-local policy selecting a complete set for the unified overview.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum WorkScope {
-    /// Every open task across every visibility-qualified stem.
+    /// Every open execution task across every visibility-qualified stem.
     #[default]
     AllOpen,
-    /// Open tasks under one exact public or hidden stem.
+    /// Open execution tasks under one exact public or hidden stem.
+    ///
+    /// Design-owned planning tasks use [`Self::Planning`] even when they share
+    /// the same project stem.
     Stem(WorkStemIdentity),
-    /// Open tasks created by one current team or last claimed by one of its
-    /// current member lanes, optionally narrowed to one exact stem.
+    /// Design roots and directly Design-controlled planning tasks.
+    Planning { stem: Option<WorkStemIdentity> },
+    /// Open execution tasks currently accountable to one team, optionally
+    /// narrowed to one exact stem.
     Team {
         team: wire::CanonicalUuid,
         stem: Option<WorkStemIdentity>,
@@ -167,11 +182,15 @@ impl WorkScope {
         Self::Team { team, stem: None }
     }
 
-    /// The exact stem this scope narrows to, alone or within a team or group.
+    /// The exact stem this scope narrows to, alone or within a team, group, or
+    /// Design-planning rail.
     #[must_use]
     pub const fn stem(&self) -> Option<&WorkStemIdentity> {
         match self {
             Self::Stem(identity)
+            | Self::Planning {
+                stem: Some(identity),
+            }
             | Self::Team {
                 stem: Some(identity),
                 ..
@@ -180,15 +199,24 @@ impl WorkScope {
                 stem: Some(identity),
                 ..
             } => Some(identity),
-            Self::AllOpen | Self::Team { stem: None, .. } | Self::Group { stem: None, .. } => None,
+            Self::AllOpen
+            | Self::Planning { stem: None }
+            | Self::Team { stem: None, .. }
+            | Self::Group { stem: None, .. } => None,
         }
+    }
+
+    /// Every open Design-owned planning task.
+    #[must_use]
+    pub const fn planning() -> Self {
+        Self::Planning { stem: None }
     }
 
     #[must_use]
     pub const fn team(&self) -> Option<wire::CanonicalUuid> {
         match self {
             Self::Team { team, .. } => Some(*team),
-            Self::AllOpen | Self::Stem(_) | Self::Group { .. } => None,
+            Self::AllOpen | Self::Stem(_) | Self::Planning { .. } | Self::Group { .. } => None,
         }
     }
 }
@@ -212,6 +240,11 @@ impl<'p, 'a> StemTaskGroup<'p, 'a> {
     #[must_use]
     pub fn tasks(&self) -> &[&'p WorkTask<'a>] {
         &self.tasks
+    }
+
+    #[must_use]
+    pub fn counts(&self) -> WorkCounts {
+        self.tasks.iter().map(|task| task.availability()).collect()
     }
 }
 
@@ -367,10 +400,9 @@ pub struct WorkTask<'a> {
     offer_rank: Option<usize>,
     dependencies: Vec<WorkDependency<'a>>,
     dependents: Vec<WorkDependent>,
-    /// The one current roster team that homes this task, by strength: the
-    /// team of the lane actively claiming it (none when that lane is
-    /// unteamed), then its creator team, then its last claimant's team.
-    team: Option<wire::CanonicalUuid>,
+    /// Current accountable placement owner; immutable creator-team provenance
+    /// remains on the board row.
+    owner: Option<WorkOwner>,
 }
 
 impl<'a> WorkTask<'a> {
@@ -456,8 +488,18 @@ impl<'a> WorkTask<'a> {
     }
 
     #[must_use]
+    pub const fn accountable_owner(&self) -> Option<&WorkOwner> {
+        self.owner.as_ref()
+    }
+
+    #[must_use]
     pub fn belongs_to_team(&self, team: wire::CanonicalUuid) -> bool {
-        self.team == Some(team)
+        self.owner == Some(WorkOwner::Team(team))
+    }
+
+    #[must_use]
+    pub fn belongs_to_design(&self) -> bool {
+        matches!(self.owner, Some(WorkOwner::Design(_)))
     }
 }
 
@@ -565,8 +607,10 @@ impl<'a> WorkProjection<'a> {
     #[must_use]
     pub fn contains_scope(&self, scope: &WorkScope) -> Option<bool> {
         match scope {
-            WorkScope::AllOpen => Some(true),
-            WorkScope::Stem(identity) => Some(self.stem(identity).is_some()),
+            WorkScope::AllOpen | WorkScope::Planning { stem: None } => Some(true),
+            WorkScope::Stem(_) | WorkScope::Planning { stem: Some(_) } => {
+                Some(self.tasks.iter().any(|task| self.in_scope(task, scope)))
+            }
             WorkScope::Team { team, stem } => self.teams.as_ref().map(|teams| {
                 teams.contains(team) && stem.as_ref().is_none_or(|stem| self.stem(stem).is_some())
             }),
@@ -578,15 +622,21 @@ impl<'a> WorkProjection<'a> {
 
     #[must_use]
     pub fn scope_counts(&self, scope: &WorkScope) -> WorkCounts {
+        let mut counts = WorkCounts::default();
+        let mut matched = false;
+        for task in &self.tasks {
+            if self.in_scope(task, scope) {
+                matched = true;
+                counts.record(task.availability);
+            }
+        }
+        if matched {
+            return counts;
+        }
         match scope {
-            WorkScope::AllOpen => self.counts,
-            WorkScope::Stem(identity) => self.stem(identity).map_or(self.counts, WorkStem::counts),
-            WorkScope::Team { .. } | WorkScope::Group { .. } => self
-                .tasks
-                .iter()
-                .filter(|task| self.in_scope(task, scope))
-                .map(|task| task.availability)
-                .collect(),
+            WorkScope::Stem(_) => self.scope_counts(&WorkScope::AllOpen),
+            WorkScope::Planning { stem: Some(_) } => self.scope_counts(&WorkScope::planning()),
+            _ => WorkCounts::default(),
         }
     }
 
@@ -594,8 +644,16 @@ impl<'a> WorkProjection<'a> {
     #[must_use]
     pub fn in_scope(&self, task: &WorkTask<'_>, scope: &WorkScope) -> bool {
         match scope {
-            WorkScope::AllOpen => true,
-            WorkScope::Stem(identity) => self.task_stem(task) == identity,
+            WorkScope::AllOpen => !task.belongs_to_design(),
+            WorkScope::Stem(identity) => {
+                !task.belongs_to_design() && self.task_stem(task) == identity
+            }
+            WorkScope::Planning { stem } => {
+                task.belongs_to_design()
+                    && stem
+                        .as_ref()
+                        .is_none_or(|stem| self.task_stem(task) == stem)
+            }
             WorkScope::Team { team, stem } => {
                 task.belongs_to_team(*team)
                     && stem
@@ -753,7 +811,7 @@ impl<'a> WorkProjection<'a> {
             .enumerate()
             .map(|(index, row)| {
                 let dependencies = work_dependencies(row, board, &by_born);
-                let team = home_team(row, teams.as_ref(), member_teams);
+                let owner = accountable_owner(row, board, &by_born, teams.as_ref(), member_teams);
                 let dependents = dependent_indexes[index]
                     .iter()
                     .copied()
@@ -768,7 +826,7 @@ impl<'a> WorkProjection<'a> {
                     offer_rank: offer_ranks[index],
                     dependencies,
                     dependents,
-                    team,
+                    owner,
                 }
             })
             .collect();
@@ -784,6 +842,33 @@ impl<'a> WorkProjection<'a> {
             teams,
         }
     }
+}
+
+fn accountable_owner(
+    task: &BoardTask,
+    board: &BoardView,
+    by_born: &BTreeMap<&TaskStamp, usize>,
+    teams: Option<&BTreeSet<wire::CanonicalUuid>>,
+    member_teams: &BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
+) -> Option<WorkOwner> {
+    if task.statement.body.intent == Some(wire::TaskIntent::Design) {
+        return Some(WorkOwner::Design(task.statement.body.born.clone()));
+    }
+    if let Some(controller) = task
+        .statement
+        .body
+        .preparation
+        .as_ref()
+        .map(|preparation| &preparation.controller)
+        .filter(|controller| {
+            by_born.get(*controller).is_some_and(|&index| {
+                board.tasks[index].statement.body.intent == Some(wire::TaskIntent::Design)
+            })
+        })
+    {
+        return Some(WorkOwner::Design(controller.clone()));
+    }
+    home_team(task, teams, member_teams).map(WorkOwner::Team)
 }
 
 fn home_team(

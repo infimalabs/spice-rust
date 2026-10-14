@@ -228,14 +228,14 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 }
 .app-horn-tab--group > button:first-child { padding-inline-start: var(--app-horn-tab-inset); }
 .app-horn-tab--group > button:last-child { padding-inline-end: var(--app-horn-tab-inset); }
-.app-horn-tab:is([data-work-scope="all"], [data-work-scope="team"], [data-work-scope="group"]) {
+.app-horn-tab:is([data-work-scope="all"], [data-work-scope="design"], [data-work-scope="team"], [data-work-scope="group"]) {
   box-sizing: border-box;
   min-inline-size: var(--app-total-tab-inline-size);
   justify-content: center;
   padding-inline: 0;
 }
 .app-horn-tab:is([data-work-scope="team"], [data-work-scope="group"]) > button { flex: 1 1 auto; justify-content: center; padding-inline: 0; }
-:is([data-work-scope="all"], [data-work-scope="team"], [data-work-scope="group"]) .app-count-badge {
+:is([data-work-scope="all"], [data-work-scope="design"], [data-work-scope="team"], [data-work-scope="group"]) .app-count-badge {
   display: inline-block;
   box-sizing: border-box;
   min-inline-size: var(--app-total-badge-inline-size);

@@ -4,7 +4,7 @@ use wire::CanonicalUuid;
 use wire::head::ClaimDisposition;
 
 use super::tests::{board, claim, stamp, task};
-use super::{WorkProjection, WorkScope, WorkStemIdentity, WorkVisibility};
+use super::{WorkOwner, WorkProjection, WorkScope, WorkStemIdentity, WorkVisibility};
 
 fn uuid(value: &str) -> CanonicalUuid {
     value.parse().expect("fixture uuid")
@@ -241,6 +241,87 @@ fn task_home_is_the_active_claimant_team_then_creator_then_last_claimant() {
         "an active claim homes the task with the claimant's team, or no team for an \
          unteamed claimant; otherwise the roster creator team, then the last claimant's",
     );
+}
+
+#[test]
+fn accountable_owner_partitions_design_planning_from_team_execution() {
+    let creator = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    let executor = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    let member = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    let dissolved = uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+    let design_born = stamp(1);
+    let plan_born = stamp(3);
+    let preparation = |controller: wire::TaskStamp| wire::TaskPreparation {
+        parent: controller.clone(),
+        controller,
+        construction: stamp(90),
+    };
+
+    let mut design = task(1, "rooms.design");
+    design.creator_team = Some(creator);
+    design.statement.body.intent = Some(wire::TaskIntent::Design);
+
+    let mut direct_output = task(2, "plan.candidate");
+    direct_output.creator_team = Some(creator);
+    direct_output.statement.body.intent = Some(wire::TaskIntent::Plan);
+    direct_output.statement.body.preparation = Some(preparation(design_born.clone()));
+    let mut active_claim = claim(&direct_output, ClaimDisposition::Active);
+    active_claim.body.lane = member;
+    direct_output.claim = Some(active_claim);
+
+    let mut plan = task(3, "plan.followup");
+    plan.creator_team = Some(creator);
+    plan.statement.body.intent = Some(wire::TaskIntent::Plan);
+    plan.statement.body.preparation = Some(preparation(design_born.clone()));
+
+    let mut execution = task(4, "app.execute");
+    execution.creator_team = Some(executor);
+    execution.statement.body.preparation = Some(preparation(plan_born));
+
+    let mut rehomed = task(5, "app.rehomed");
+    rehomed.creator_team = Some(dissolved);
+    let mut past_claim = claim(&rehomed, ClaimDisposition::Freed);
+    past_claim.body.lane = member;
+    rehomed.claim = Some(past_claim);
+
+    let board = board(vec![design, direct_output, plan, execution, rehomed]);
+    let projection = WorkProjection::from_board_with_team_memberships(
+        &board,
+        Some(BTreeSet::from([creator, executor])),
+        &BTreeMap::from([(member, executor)]),
+    );
+    let borns = |scope: &WorkScope| {
+        projection
+            .scope_tasks(scope)
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+    };
+
+    assert_eq!(
+        borns(&WorkScope::planning()),
+        BTreeSet::from([stamp(1), stamp(2), stamp(3)]),
+        "a Design owns itself and every direct output, including one a team currently claims",
+    );
+    assert_eq!(
+        borns(&WorkScope::AllOpen),
+        BTreeSet::from([stamp(4), stamp(5)]),
+        "a Plan-controlled task stays execution work and no Design-owned row is duplicated",
+    );
+    assert_eq!(
+        borns(&WorkScope::team_wide(executor)),
+        BTreeSet::from([stamp(4), stamp(5)]),
+        "a current team strip excludes Design-owned planning even while its member claims it",
+    );
+    assert_eq!(
+        projection.tasks()[1].accountable_owner(),
+        Some(&WorkOwner::Design(design_born)),
+    );
+    assert_eq!(
+        projection.tasks()[4].accountable_owner(),
+        Some(&WorkOwner::Team(executor)),
+        "a live last claimant can rehome work without changing its dissolved creator provenance",
+    );
+    assert_eq!(projection.tasks()[4].row().creator_team, Some(dissolved));
 }
 
 #[test]
