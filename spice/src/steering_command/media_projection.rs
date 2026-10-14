@@ -60,13 +60,17 @@ impl Projection {
     }
 }
 
-pub(crate) fn reconcile(
+/// Publishes every pending attachment into `occupant`'s private tree under
+/// `lane`, naming where each one is readable and the records now advertised.
+///
+/// Nothing outside that occupant's tree is touched, so two occupants of one
+/// lane can never publish over or remove each other's paths.
+pub(crate) fn publish(
     lane: CanonicalUuid,
+    occupant: CanonicalUuid,
     pending: &[wire::intent::PendingDirective],
-    retained: &mut Vec<Record>,
     root: &Path,
-    retire_previous_generation: bool,
-) -> Result<BTreeMap<CanonicalUuid, Vec<Projection>>, String> {
+) -> Result<(BTreeMap<CanonicalUuid, Vec<Projection>>, Vec<Record>), String> {
     let mut desired = Vec::new();
     let mut projected = BTreeMap::new();
     for directive in pending {
@@ -88,7 +92,7 @@ pub(crate) fn reconcile(
                 )
             })?;
             let record = Record::from_reference(&reference);
-            let path = projection_path(root, lane, &record)?;
+            let path = projection_path(root, lane, occupant, &record)?;
             publish_verified(&path, &bytes)?;
             let path = path
                 .to_str()
@@ -109,60 +113,64 @@ pub(crate) fn reconcile(
         }
         projected.insert(directive.directive, items);
     }
-    reconcile_retention(
-        lane,
-        retained,
-        root,
-        &mut desired,
-        retire_previous_generation,
-    )?;
-    *retained = desired;
-    Ok(projected)
+    Ok((projected, desired))
 }
 
-fn reconcile_retention(
-    lane: CanonicalUuid,
-    retained: &[Record],
+/// Removes the projection of every record in `records` from `occupant`'s tree.
+pub(crate) fn retire<'a>(
     root: &Path,
-    desired: &mut Vec<Record>,
-    retire_previous_generation: bool,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    records: impl IntoIterator<Item = &'a Record>,
 ) -> Result<(), String> {
-    if retire_previous_generation {
-        for obsolete in retained.iter().filter(|record| !desired.contains(record)) {
-            remove_projection(&projection_path(root, lane, obsolete)?)?;
-        }
-    } else {
-        // A path already advertised into this session remains readable after ACK. The next
-        // occupant or compaction generation is the first point that can retire it safely.
-        let still_owned = retained
-            .iter()
-            .filter(|record| !desired.contains(record))
-            .cloned()
-            .collect::<Vec<_>>();
-        desired.extend(still_owned);
+    for record in records {
+        remove_projection(&record_path(root, lane, occupant, record)?)?;
     }
     Ok(())
 }
 
-/// Retires every projection an earlier occupant left under `lane`.
+/// Retires everything under `lane` except `occupant`'s own tree.
 ///
-/// A lane has one occupant at a time, so a new occupant owns no path its
-/// predecessor advertised.
-pub(crate) fn retire_lane(root: &Path, lane: CanonicalUuid) -> Result<(), String> {
+/// A lane has one occupant at a time, so a seated occupant owns no path any
+/// other occupant advertised.
+pub(crate) fn retire_other_occupants(
+    root: &Path,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> Result<(), String> {
     let path = root.join(lane.to_string());
     match fs::symlink_metadata(&path) {
-        Ok(metadata) if metadata.file_type().is_dir() => {
-            fs::remove_dir_all(&path).map_err(|error| {
-                format!("earlier occupant steering media could not be retired: {error}")
-            })
+        Ok(metadata) if metadata.file_type().is_dir() => {}
+        Ok(_) => {
+            return Err(format!(
+                "steering media lane {} is not a directory",
+                path.display(),
+            ));
         }
-        Ok(_) => Err(format!(
-            "steering media lane {} is not a directory",
-            path.display(),
-        )),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!("steering media lane is unreadable: {error}")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("steering media lane is unreadable: {error}")),
     }
+    let own = occupant.to_string();
+    let entries = fs::read_dir(&path)
+        .map_err(|error| format!("steering media lane is unreadable: {error}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("steering media lane is unreadable: {error}"))?;
+        if entry.file_name().to_str() == Some(own.as_str()) {
+            continue;
+        }
+        let kind = entry
+            .file_type()
+            .map_err(|error| format!("steering media lane is unreadable: {error}"))?;
+        let removed = if kind.is_dir() {
+            fs::remove_dir_all(entry.path())
+        } else {
+            fs::remove_file(entry.path())
+        };
+        removed.map_err(|error| {
+            format!("another occupant's steering media could not be retired: {error}")
+        })?;
+    }
+    Ok(())
 }
 
 impl Record {
@@ -187,17 +195,22 @@ const EXTENSIONS: [(&str, &str); 4] = [
 
 /// Whether `path` names a file in `lane`'s projection layout.
 ///
-/// The layout is `<root>/<lane>/<directive>/<ordinal>-<digest>.<extension>`,
-/// so a lane reading one of these files is looking at an attachment the
-/// operator sent it, not at media the lane produced.
+/// The layout is
+/// `<root>/<lane>/<occupant>/<directive>/<ordinal>-<digest>.<extension>`, so a
+/// lane reading one of these files is looking at an attachment the operator
+/// sent it, not at media the lane produced.
 pub(crate) fn names_projection(path: &str, lane: CanonicalUuid) -> bool {
     fn name(path: Option<&Path>) -> Option<&str> {
         path.and_then(Path::file_name)
             .and_then(|name| name.to_str())
     }
+    fn identity(path: Option<&Path>) -> bool {
+        name(path).is_some_and(|name| name.parse::<CanonicalUuid>().is_ok())
+    }
     let path = Path::new(path);
     let directive = path.parent();
-    let owner = directive.and_then(Path::parent);
+    let occupant = directive.and_then(Path::parent);
+    let owner = occupant.and_then(Path::parent);
     let file = name(Some(path)).and_then(|file| {
         let (ordinal, rest) = file.split_once('-')?;
         let (digest, extension) = rest.rsplit_once('.')?;
@@ -207,11 +220,43 @@ pub(crate) fn names_projection(path: &str, lane: CanonicalUuid) -> bool {
         ordinal.parse::<u8>().is_ok()
             && digest.parse::<Digest>().is_ok()
             && EXTENSIONS.iter().any(|(_, known)| *known == extension)
-    }) && name(directive).is_some_and(|directive| directive.parse::<CanonicalUuid>().is_ok())
+    }) && identity(directive)
+        && identity(occupant)
         && name(owner) == Some(lane.to_string().as_str())
 }
 
-fn projection_path(root: &Path, lane: CanonicalUuid, record: &Record) -> Result<PathBuf, String> {
+/// Where `record` lives in `occupant`'s tree, its directories made private.
+fn projection_path(
+    root: &Path,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    record: &Record,
+) -> Result<PathBuf, String> {
+    let file = file_name(record)?;
+    let lane = root.join(lane.to_string());
+    let occupant = lane.join(occupant.to_string());
+    let directive = occupant.join(record.directive.to_string());
+    for directory in [root, &lane, &occupant, &directive] {
+        ensure_private_directory(directory)?;
+    }
+    Ok(directive.join(file))
+}
+
+/// Where `record` lives in `occupant`'s tree, creating nothing.
+fn record_path(
+    root: &Path,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    record: &Record,
+) -> Result<PathBuf, String> {
+    Ok(root
+        .join(lane.to_string())
+        .join(occupant.to_string())
+        .join(record.directive.to_string())
+        .join(file_name(record)?))
+}
+
+fn file_name(record: &Record) -> Result<String, String> {
     let Some((_, extension)) = EXTENSIONS
         .iter()
         .find(|(content_type, _)| *content_type == record.content_type)
@@ -221,15 +266,10 @@ fn projection_path(root: &Path, lane: CanonicalUuid, record: &Record) -> Result<
             record.content_type
         ));
     };
-    let lane = root.join(lane.to_string());
-    let directive = lane.join(record.directive.to_string());
-    ensure_private_directory(root)?;
-    ensure_private_directory(&lane)?;
-    ensure_private_directory(&directive)?;
-    Ok(directive.join(format!(
+    Ok(format!(
         "{}-{}.{}",
-        record.ordinal, record.digest, extension,
-    )))
+        record.ordinal, record.digest, extension
+    ))
 }
 
 fn publish_verified(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -345,6 +385,7 @@ mod tests {
     use super::*;
 
     const LANE: &str = "0a2f5b6c-1d3e-4f50-8a91-b2c3d4e5f607";
+    const OCCUPANT: &str = "3d5b8e9f-4061-4273-9d24-e5f607182930";
     const DIRECTIVE: &str = "1b3f6c7d-2e4f-4051-9b02-c3d4e5f60718";
     const PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgo=";
 
@@ -356,17 +397,16 @@ mod tests {
             uuid::Uuid::new_v4().simple(),
         ));
         let lane: CanonicalUuid = LANE.parse().expect("fixture lane");
+        let occupant: CanonicalUuid = OCCUPANT.parse().expect("fixture occupant");
         let pending = [directive()];
-        let mut retained = Vec::new();
-        let projected = reconcile(lane, &pending, &mut retained, &root, false)
-            .expect("initial projection publishes");
+        let (projected, _) =
+            publish(lane, occupant, &pending, &root).expect("initial projection publishes");
         let path =
             PathBuf::from(&projected[&DIRECTIVE.parse().expect("fixture directive")][0].path);
         fs::remove_file(&path).expect("remove initial projection");
         fs::create_dir(&path).expect("substitute a directory");
 
-        reconcile(lane, &pending, &mut retained, &root, false)
-            .expect_err("non-regular projection must refuse");
+        publish(lane, occupant, &pending, &root).expect_err("non-regular projection must refuse");
         assert!(path.is_dir(), "refusal replaced the substituted path");
         fs::remove_dir_all(root).expect("remove projection fixture");
     }

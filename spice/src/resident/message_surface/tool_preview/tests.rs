@@ -109,8 +109,11 @@ fn a_read_of_a_steering_attachment_does_not_repeat_the_operator_image() {
     };
     let digest = "106b88688d8fe98f675979cff3d3e7f093a123e9df68e923b581bf6fd0db162a";
     let directive = "a817f232-b702-4925-9eef-f4b958b9186c";
+    let occupant = lane(3);
     let attachment = |owner: CanonicalUuid| {
-        format!(r#"{{"path":"/repo/.spice-rs/steering-media/{owner}/{directive}/0-{digest}.png"}}"#)
+        format!(
+            r#"{{"path":"/repo/.spice-rs/steering-media/{owner}/{occupant}/{directive}/0-{digest}.png"}}"#
+        )
     };
     let shown = |arguments: &str| {
         let mut previews = CallPreviews::default();
