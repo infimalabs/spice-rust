@@ -710,18 +710,20 @@ impl<'a> WorkProjection<'a> {
         strip
     }
 
-    /// One tab per lane actively working inside a group scope.
+    /// Every active task count and one tab per lane working in a group scope.
     ///
     /// Tasks retain strip order. A malformed snapshot that binds several
-    /// active tasks to one lane still presents that lane once, with its first
-    /// task retaining that lane's ordering and lifecycle count.
+    /// active tasks to one lane contributes every task to the total while
+    /// presenting that lane once, at its first task's position.
     #[must_use]
     pub fn group_worker_strip<'p>(
         &'p self,
         scope: &WorkScope,
-    ) -> Vec<(wire::CanonicalUuid, &'p WorkTask<'a>)> {
+    ) -> (WorkCounts, Vec<(wire::CanonicalUuid, &'p WorkTask<'a>)>) {
+        let mut counts = WorkCounts::default();
         let mut workers = Vec::new();
         for task in self.scope_strip(scope) {
+            counts.record(task.availability());
             let Some(lane) = task.working_lane() else {
                 continue;
             };
@@ -729,7 +731,7 @@ impl<'a> WorkProjection<'a> {
                 workers.push((lane, task));
             }
         }
-        workers
+        (counts, workers)
     }
 
     /// One scope's open task strip, grouped by visibility-qualified stem.

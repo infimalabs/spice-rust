@@ -271,6 +271,9 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
         .expect("active output claim")
         .body
         .lane = second_lane;
+    let mut second_active_output = task(5, "rooms.active");
+    second_active_output.statement.body.preparation = Some(preparation());
+    activate(&mut second_active_output);
     let mut inactive_output = task(3, "rooms.inactive");
     inactive_output.statement.body.preparation = Some(preparation());
     let mut unrelated = task(4, "rooms.unrelated");
@@ -281,24 +284,25 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
         active_output,
         inactive_output,
         unrelated,
+        second_active_output,
     ]);
     let projection = WorkProjection::from_board(&board);
     let scope = WorkScope::Group {
         group,
         designs: vec![design],
     };
+    let (group_counts, workers) = projection.group_worker_strip(&scope);
     assert_eq!(
         projection
             .scope_tasks(&scope)
             .into_iter()
             .collect::<BTreeSet<_>>(),
-        BTreeSet::from([stamp(1), stamp(2)]),
+        BTreeSet::from([stamp(1), stamp(2), stamp(5)]),
         "association without active work does not dock a group tab, and an unrelated claim does not enter",
     );
-    assert_eq!(projection.scope_counts(&scope).open(), 2);
+    assert_eq!(group_counts.open(), 3);
     assert_eq!(
-        projection
-            .group_worker_strip(&scope)
+        workers
             .into_iter()
             .map(|(lane, task)| (lane, task.row().statement.body.born.clone()))
             .collect::<Vec<_>>(),
@@ -306,14 +310,14 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
             (uuid("11111111-1111-4111-8111-111111111111"), stamp(1),),
             (second_lane, stamp(2)),
         ],
-        "the group rail presents each working lane once in active-task strip order",
+        "every active task contributes to the total while the group rail presents each working lane once in active-task strip order",
     );
     assert_eq!(
         projection
             .scope_tasks(&WorkScope::planning())
             .into_iter()
             .collect::<BTreeSet<_>>(),
-        BTreeSet::from([stamp(1), stamp(2), stamp(3)]),
+        BTreeSet::from([stamp(1), stamp(2), stamp(3), stamp(5)]),
         "active and inactive Design work remain in the global planning namespace",
     );
 }

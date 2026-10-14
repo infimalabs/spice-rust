@@ -143,8 +143,8 @@ final accent rather than its first. This uses the object-level base-flavor
 contract: an unselected object is an exact identity over the existing
 green-flavored roles, while a selected object rebuilds panel, control, ink,
 muted, line, ground, and focus roles from one arbitrary base color and the
-page's achromatic anchors, then binds its subtree's primitive neutrals and
-accent to them. Everything the subtree derives from those primitives follows,
+page's achromatic anchors, then binds its subtree's primitive neutrals, focus,
+and accent to them. Everything the subtree derives from those primitives follows,
 so relationships among its objects hold under any base. Lane and Design accent
 slots stay the page's. Accent slots are convenient inputs to that contract, not
 its boundary; no old green is tinted underneath the selected base. An open
@@ -401,7 +401,7 @@ element to a design-side analog:
 
 | Team toolbar | Group toolbar |
 | --- | --- |
-| Team total: opens the overview with exactly the tasks its members are actively working | Group total: opens the overview with exactly the actively claimed work associated with the group's designs |
+| Team total: counts and opens exactly the tasks its members are actively working | Group total: counts and opens exactly all actively claimed work associated with the group's designs, even when one lane holds several tasks |
 | One tab per task a member actively claims, including Design work | One tab per lane actively claiming work associated with the group's designs, never a task handle |
 | A task handle carries the accent of the lane working it | A lane tab carries that lane's canonical accent and opens its Chat composer when the lane holds a Chat seat |
 | Presence pips: one per member, by state | Design lights: one per design in its accent, distinguishing open passive, open active, claimed, holding unauthorized outputs, concluded done, concluded collapsed, and deleted, with an accessible label naming the standing; a design whose board row is unavailable invents no standing |
