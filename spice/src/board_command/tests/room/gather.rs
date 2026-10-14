@@ -3,14 +3,47 @@
 //! and no standing as candidate outputs.
 
 use super::super::preparation::{conclude, done_conclusion};
+use super::super::taste_review::{configured_repository, issue_repository, modify_with_repository};
 use super::design_standing::{active_holder, born, design, move_out, offered, refused, win_named};
 use super::*;
 use wire::rooms::{
     CandidateRef, CandidateReference, CandidateRetain, RetainedCandidate, RoomSource,
 };
 
-/// Add a task under `parent` through explicit preparation, or outside every
-/// Design without one.
+/// The witnesses and request adding a task under `parent` through explicit
+/// preparation, or outside every Design without one.
+fn add_request(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    parent: Option<&TaskHandle>,
+    name: &str,
+    flow: Option<&str>,
+    intent: Option<wire::TaskIntent>,
+) -> (TaskHandle, Vec<Witness>, TaskAdd) {
+    let born = stamp(name);
+    let mut expected = vec![Witness::Absence { task: born.clone() }];
+    if let Some(parent) = parent {
+        let current = board(bus, epoch, Actor::Operator);
+        let heads = at(&current, parent);
+        expected.extend([statement_witness(heads), workflow_witness(heads)]);
+    }
+    let add = TaskAdd {
+        preparation: parent.cloned(),
+        intent,
+        title: name.to_owned(),
+        project: Some("board.test".to_owned()),
+        description: None,
+        acceptance: vec!["The gather task records what the idea showed".to_owned()],
+        requirements: wire::EnvironmentRequirements::default(),
+        origin: Some("fixture:gather".parse().expect("fixture origin")),
+        flow: flow.map(str::to_owned),
+        depends: Vec::new(),
+        claim: false,
+        draft: false,
+    };
+    (TaskHandle::for_project("board.test", &born), expected, add)
+}
+
 fn add_under(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -19,35 +52,37 @@ fn add_under(
     flow: Option<&str>,
     intent: Option<wire::TaskIntent>,
 ) -> (TaskHandle, Outcome<CommandAnswer>) {
-    let born = stamp(name);
-    let mut expected = vec![Witness::Absence { task: born.clone() }];
-    if let Some(parent) = parent {
-        let current = board(bus, epoch, Actor::Operator);
-        let heads = at(&current, parent);
-        expected.extend([statement_witness(heads), workflow_witness(heads)]);
-    }
+    let (task, expected, add) = add_request(bus, epoch, parent, name, flow, intent);
     let outcome = issue(
         bus,
         epoch,
         Actor::Operator,
         CommandKind::TaskAdd,
         expected,
-        &TaskAdd {
-            preparation: parent.cloned(),
-            intent,
-            title: name.to_owned(),
-            project: Some("board.test".to_owned()),
-            description: None,
-            acceptance: vec!["The gather task records what the idea showed".to_owned()],
-            requirements: wire::EnvironmentRequirements::default(),
-            origin: Some("fixture:gather".parse().expect("fixture origin")),
-            flow: flow.map(str::to_owned),
-            depends: Vec::new(),
-            claim: false,
-            draft: false,
-        },
+        &add,
     );
-    (TaskHandle::for_project("board.test", &born), outcome)
+    (task, outcome)
+}
+
+/// Add a gather task under `design` where `repository`'s taste policy applies.
+fn add_gather_with_policy(
+    bus: &Bus,
+    repository: &Repository,
+    epoch: CanonicalUuid,
+    design: &TaskHandle,
+    name: &str,
+) -> (TaskHandle, Outcome<CommandAnswer>) {
+    let (task, expected, add) = add_request(bus, epoch, Some(design), name, Some("gather"), None);
+    let outcome = issue_repository(
+        bus,
+        repository,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        expected,
+        &add,
+    );
+    (task, outcome)
 }
 
 fn gather(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle, name: &str) -> TaskHandle {
@@ -249,6 +284,30 @@ fn retain(
     )
 }
 
+/// Record `text` on `trial` and return the exact source a candidate cites.
+fn gathered(bus: &Bus, epoch: CanonicalUuid, trial: &TaskHandle, text: &str) -> RoomSource {
+    let Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(noted),
+        ..
+    }) = issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskNote,
+        vec![Witness::Existence { task: born(trial) }],
+        &TaskNote {
+            task: trial.clone(),
+            note: text.to_owned(),
+        },
+    )
+    else {
+        panic!("gather note did not commit");
+    };
+    RoomSource::Journal {
+        fact: wire::SequenceCode::new(noted.last.get()),
+    }
+}
+
 #[test]
 fn a_candidate_cites_gathered_evidence_but_never_selects_a_gather_task() {
     let (root, bus, epoch, seats) = fixture("gather-candidate", 1);
@@ -257,26 +316,7 @@ fn a_candidate_cites_gathered_evidence_but_never_selects_a_gather_task() {
     let trial = gather(&bus, epoch, &task, "Evidence gather");
     let (output, added) = add_under(&bus, epoch, Some(&task), "Real output", None, None);
     assert_committed(added);
-    let Outcome::Reply(Reply {
-        position: ReplyPosition::Committed(noted),
-        ..
-    }) = issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskNote,
-        vec![Witness::Existence { task: born(&trial) }],
-        &TaskNote {
-            task: trial.clone(),
-            note: "the idea held under load".to_owned(),
-        },
-    )
-    else {
-        panic!("gather note did not commit");
-    };
-    let finding = RoomSource::Journal {
-        fact: wire::SequenceCode::new(noted.last.get()),
-    };
+    let finding = gathered(&bus, epoch, &trial, "the idea held under load");
 
     assert_eq!(
         refused(&retain(
@@ -290,5 +330,68 @@ fn a_candidate_cites_gathered_evidence_but_never_selects_a_gather_task() {
         "preparation::gather-output"
     );
     assert_committed(retain(&bus, epoch, &seats[0], &task, &[&output], finding));
+    clean(&root, bus);
+}
+
+#[test]
+fn a_taste_hold_never_changes_what_a_gather_task_is() {
+    let (root, bus, epoch, seats) = fixture("gather-taste-hold", 1);
+    let repository = configured_repository(&root, &["sloppy"]);
+    let task = design(&bus, epoch, "Held design");
+    let (_, passive) = add_gather_with_policy(&bus, &repository, epoch, &task, "Sloppy passive");
+    assert_eq!(
+        refused(&passive),
+        "task::gather-design",
+        "a held gather task still needs an active Design"
+    );
+
+    group_design(&bus, epoch, &task);
+    let (trial, added) = add_gather_with_policy(&bus, &repository, epoch, &task, "Sloppy gather");
+    assert_committed(added);
+    let route = |bus: &Bus| {
+        at(&board(bus, epoch, Actor::Operator), &trial)
+            .workflow
+            .body
+            .flow
+            .iter()
+            .map(|phase| phase.as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(route(&bus), ["plan", "gather"], "the hold waits it in plan");
+    let finding = gathered(&bus, epoch, &trial, "the held idea still showed something");
+
+    for standing in ["held", "cleared"] {
+        assert!(
+            open_awaiting_selection(&bus, epoch).is_empty(),
+            "a {standing} gather task holds no Design awaiting selection"
+        );
+        assert_eq!(
+            refused(&retain(
+                &bus,
+                epoch,
+                &seats[0],
+                &task,
+                &[&trial],
+                finding.clone()
+            )),
+            "preparation::gather-output",
+            "a {standing} gather task is never a candidate output"
+        );
+        assert!(
+            runnable(&bus, epoch, &trial),
+            "a {standing} gather task runs"
+        );
+        if standing == "held" {
+            assert_committed(modify_with_repository(
+                &bus,
+                &repository,
+                epoch,
+                Actor::Operator,
+                &trial,
+                "Careful gather",
+            ));
+            assert_eq!(route(&bus), ["gather"], "clearing returns its gather route");
+        }
+    }
     clean(&root, bus);
 }

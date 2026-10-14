@@ -51,14 +51,15 @@ pub(super) fn constructing_design<'a>(
     })
 }
 
-/// Refuse a gather task outside an open Design the working-group partition
-/// holds: it exists only to gather evidence for an active Design.
+/// Refuse a gather route outside an open Design the working-group partition
+/// holds: it exists only to gather evidence for an active Design. Creation
+/// judges the authored route, before any taste hold waits it in plan.
 pub(super) fn admit_gather_design(
     intent: Option<wire::TaskIntent>,
     flow: &[wire::Phase],
     design: Option<&BoardTask>,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    if !board::gather_task(intent, flow) {
+    if !board::gather_route(intent, flow) {
         return Ok(());
     }
     if design.is_some_and(|design| {

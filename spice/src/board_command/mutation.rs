@@ -311,15 +311,15 @@ fn create_task<B: serde::Serialize>(
             "correct the capture title and retry; no task or claim was created and the local commits remain on this lane",
         );
     }
+    if let Err(outcome) = admit_prepared(&snapshot, command, add, filing, &mut prepared) {
+        return outcome;
+    }
     let mut tags = Vec::new();
     if taste_review_required {
         hold_for_taste(&mut prepared.flow, &mut tags);
         prepared.phase = prepared.flow[0].clone();
         prepared.workflow.flow.clone_from(&prepared.flow);
         prepared.workflow.phase.clone_from(&prepared.phase);
-    }
-    if let Err(outcome) = admit_prepared(&snapshot, command, add, filing, &mut prepared) {
-        return outcome;
     }
     let post = prepared_entry(&mut prepared, &tags, projects);
     let added_claim = if add.claim {
