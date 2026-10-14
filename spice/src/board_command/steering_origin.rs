@@ -107,7 +107,8 @@ pub(super) fn steering_during_claims(
             | wire::FactKind::TaskReviewed
             | wire::FactKind::TaskDeferred
             | wire::FactKind::TaskDeleted
-            | wire::FactKind::TaskClosed => {
+            | wire::FactKind::TaskClosed
+            | wire::FactKind::TaskConcluded => {
                 if let Some(task) = fact_task(envelope) {
                     held.retain(|_, holding| *holding != task);
                 }

@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
+mod designs;
 mod fact_bounds;
 mod residual;
 
@@ -35,15 +36,16 @@ const PREPARED: &str = "prepared";
 /// named working groups or group removals from before a group lived only
 /// while it held designs, and working groups stored as their own heads rather
 /// than in the partition, projects frozen peer-message rooms from their
-/// creating facts into steering heads, and creates the room-authority
-/// projection, per-lane room catch-up cursors and horizons, room coordination
-/// heads, room conversation heads, operator items, required task evidence,
-/// relevance shadow records, and the working-group partition a predecessor
-/// lacks, replacing its per-route room receipts and per-group heads, before
-/// the schema identity advances.
+/// creating facts into steering heads, moves each open Design onto its one
+/// open phase and drops its pending outputs' ordinary dependency on it, and
+/// creates the room-authority projection, per-lane room catch-up cursors and
+/// horizons, room coordination heads, room conversation heads, operator items,
+/// required task evidence, relevance shadow records, and the working-group
+/// partition a predecessor lacks, replacing its per-route room receipts and
+/// per-group heads, before the schema identity advances.
 /// Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 20] = [
-    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+const PREDECESSOR_SCHEMAS: [u32; 21] = [
+    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -305,6 +307,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     cross_retired_task_guidance(&transaction)?;
     residual::cross(&transaction, vendor_holds)?;
     residual::cross_steering_rooms(&transaction)?;
+    designs::cross(&transaction)?;
     if (ROOM_CONVERSATION_SCHEMA..ROOM_ITEM_SCHEMA).contains(&version) {
         transaction
             .execute_batch("DROP TABLE room_receipts;")
@@ -1203,8 +1206,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 53, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 54, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 53;
+PRAGMA user_version = 54;
 "#;

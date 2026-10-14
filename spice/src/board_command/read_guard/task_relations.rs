@@ -514,6 +514,10 @@ fn lifecycle_event(
             envelope.fact.read::<body::TaskClosed>()?.task,
             TaskLifecycleKind::Completed,
         ),
+        wire::FactKind::TaskConcluded => (
+            envelope.fact.read::<body::TaskConcluded>()?.task,
+            TaskLifecycleKind::Completed,
+        ),
         wire::FactKind::TaskAssigned => (
             envelope.fact.read::<body::TaskAssigned>()?.task,
             TaskLifecycleKind::Assigned,

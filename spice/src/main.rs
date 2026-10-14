@@ -553,6 +553,7 @@ impl NativeInvocation<'_> {
             | ["task", "modify"]
             | ["task", "require"]
             | ["task", "delete"]
+            | ["task", "conclude"]
             | ["group", "list"]
             | ["group", "move"]
             | ["group", "arrange"]

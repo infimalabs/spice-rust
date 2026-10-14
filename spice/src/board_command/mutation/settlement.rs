@@ -1,16 +1,18 @@
 //! Operator-decided terminal settlement of a task that need not be held.
 //!
-//! Withdrawal (`deleted`) and closure (`completed`) share one shape: the
-//! journal keeps the statement, so either is a terminal workflow status rather
-//! than a removal. The row stops being allocatable, stops blocking its
-//! dependents, and keeps its history and its stated text readable.
+//! Withdrawal (`deleted`), closure (`completed`), and a Design's conclusion
+//! (`completed`, done or collapsed) share one shape: the journal keeps the
+//! statement, so each is a terminal workflow status rather than a removal. The
+//! row stops being allocatable, stops blocking its dependents, and keeps its
+//! history and its stated text readable.
 //!
-//! A live claim refuses either by default, because taking work away from a
+//! A live claim refuses each by default, because taking work away from a
 //! lane mid-flight is a decision an operator makes deliberately, not one they
-//! discover afterwards. `force_claimed` makes it, and then the fact names the
-//! actor whose claim was overridden and the claim is freed in the same
-//! transaction -- a lane left holding a settled task would renew its lease
-//! against a row nothing can ever advance.
+//! discover afterwards. `force_claimed` makes it for withdrawal and closure,
+//! and then the fact names the actor whose claim was overridden and the claim
+//! is freed in the same transaction -- a lane left holding a settled task
+//! would renew its lease against a row nothing can ever advance. A Design is
+//! never concluded over its holder: the holder checkpoints and frees it first.
 
 use super::*;
 
@@ -19,6 +21,7 @@ use super::*;
 enum Settlement<'a> {
     Delete(&'a TaskDelete),
     Close(&'a TaskClose),
+    Conclude(&'a TaskConclude),
 }
 
 impl Settlement<'_> {
@@ -26,6 +29,7 @@ impl Settlement<'_> {
         match self {
             Self::Delete(_) => "delete",
             Self::Close(_) => "close",
+            Self::Conclude(_) => "conclude",
         }
     }
 
@@ -33,13 +37,19 @@ impl Settlement<'_> {
         match self {
             Self::Delete(delete) => &delete.task,
             Self::Close(close) => &close.task,
+            Self::Conclude(conclude) => &conclude.task,
         }
     }
 
-    fn text(&self) -> &str {
+    /// The stated reason this settlement requires, if it requires one.
+    fn text(&self) -> Option<&str> {
         match self {
-            Self::Delete(delete) => &delete.reason,
-            Self::Close(close) => &close.validation,
+            Self::Delete(delete) => Some(&delete.reason),
+            Self::Close(close) => Some(&close.validation),
+            Self::Conclude(conclude) => match &conclude.conclusion {
+                body::DesignConclusion::Done {} => None,
+                body::DesignConclusion::Collapsed { reason } => Some(reason),
+            },
         }
     }
 
@@ -47,14 +57,26 @@ impl Settlement<'_> {
         match self {
             Self::Delete(delete) => delete.force_claimed,
             Self::Close(close) => close.force_claimed,
+            Self::Conclude(_) => false,
         }
     }
 
     fn status(self) -> &'static str {
         match self {
             Self::Delete(_) => "deleted",
-            Self::Close(_) => "completed",
+            Self::Close(_) | Self::Conclude(_) => "completed",
         }
+    }
+
+    /// Whether this settlement approves nothing the task controls.
+    fn negative(self) -> bool {
+        !matches!(
+            self,
+            Self::Conclude(TaskConclude {
+                conclusion: body::DesignConclusion::Done {},
+                ..
+            })
+        )
     }
 
     fn empty_refusal(self) -> (&'static str, &'static str) {
@@ -66,6 +88,10 @@ impl Settlement<'_> {
             Self::Close(_) => (
                 "task::close-validation-empty",
                 "state the evidence or reason the task is complete",
+            ),
+            Self::Conclude(_) => (
+                "task::collapse-reason-empty",
+                "state why the Design's premise did not hold",
             ),
         }
     }
@@ -79,6 +105,11 @@ impl Settlement<'_> {
             Self::Close(_) => (
                 "task::close-claimed",
                 "close with force_claimed to take the task from the lane holding it",
+            ),
+            Self::Conclude(_) => (
+                "task::conclude-claimed",
+                "the holder checkpoints its work and runs `spice task free`; conclude the Design \
+                 once it is unheld",
             ),
         }
     }
@@ -108,6 +139,13 @@ impl Settlement<'_> {
                 },
                 FactCause::Root,
             ),
+            Self::Conclude(conclude) => write.fact(
+                body::TaskConcluded {
+                    task,
+                    conclusion: conclude.conclusion.clone(),
+                },
+                FactCause::Root,
+            ),
         };
         built.map_err(|error| {
             store_fault(&format!("task::{}-build", self.verb()), &error.to_string())
@@ -126,6 +164,9 @@ impl Settlement<'_> {
             }
             Self::Close(close) => {
                 write.command_result(request(command, close.clone()), command.epoch(), answer)
+            }
+            Self::Conclude(conclude) => {
+                write.command_result(request(command, conclude.clone()), command.epoch(), answer)
             }
         };
         recorded.map_err(|error| {
@@ -169,6 +210,28 @@ pub(in crate::board_command) fn task_close(
     settle(bus, command, Settlement::Close(close), projects, allocation)
 }
 
+/// Conclude an open, unheld Design done or collapsed on the operator's word.
+///
+/// This is a Design's only terminal act: no lane step and no selection
+/// concludes it. Done refuses while an output it constructed still awaits
+/// selection; collapse records why the premise did not hold and leaves such
+/// outputs gated.
+pub(in crate::board_command) fn task_conclude(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    conclude: &TaskConclude,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Outcome<CommandAnswer> {
+    settle(
+        bus,
+        command,
+        Settlement::Conclude(conclude),
+        projects,
+        allocation,
+    )
+}
+
 fn settle(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -190,6 +253,11 @@ fn settle(
         Ok(entry) => entry,
         Err(outcome) => return outcome,
     };
+    if !settlement.negative()
+        && let Err(outcome) = require_no_pending_controlled_outputs(&snapshot, entry)
+    {
+        return outcome;
+    }
     let claimed = entry
         .claim()
         .filter(|claim| claim.disposition == ClaimDisposition::Active)
@@ -202,7 +270,7 @@ fn settle(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    let post = projected_settled_entry(entry, settlement.status(), at, claimed.is_some(), projects);
+    let post = projected_settled_entry(entry, settlement, at, claimed.is_some(), projects);
     let next = next_action(&snapshot, &post);
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
@@ -235,7 +303,8 @@ fn settle(
     committed(bus, write, CommandAnswer::Task(answer))
 }
 
-/// The named, unsettled entry, refusing empty text and an unforced live claim.
+/// The named, unsettled entry, refusing empty text, a settlement that does not
+/// fit its intent, and an unforced live claim.
 fn admitted_entry<'a>(
     snapshot: &'a ValidatedSnapshot,
     settlement: Settlement<'_>,
@@ -247,9 +316,30 @@ fn admitted_entry<'a>(
             "read board and name one current task handle",
         ));
     };
-    if settlement.text().trim().is_empty() {
+    if settlement.text().is_some_and(|text| text.trim().is_empty()) {
         let (reason, remedy) = settlement.empty_refusal();
         return Err(refusal(reason, Some(entry.handle().to_string()), remedy));
+    }
+    let design = entry.statement().intent == Some(wire::TaskIntent::Design);
+    match settlement {
+        Settlement::Close(_) if design => {
+            return Err(refusal(
+                "task::close-design",
+                Some(entry.handle().to_string()),
+                &format!(
+                    "conclude a Design with `spice task conclude {} --done` or `--collapse REASON`",
+                    entry.handle()
+                ),
+            ));
+        }
+        Settlement::Conclude(_) if !design => {
+            return Err(refusal(
+                "task::conclude-not-design",
+                Some(entry.handle().to_string()),
+                "conclude only a Design; close or delete other work",
+            ));
+        }
+        _ => {}
     }
     match entry.workflow().status.as_str() {
         "completed" => {
@@ -281,15 +371,17 @@ fn admitted_entry<'a>(
 
 fn projected_settled_entry(
     entry: &Entry,
-    status: &str,
+    settlement: Settlement<'_>,
     at: Instant,
     release_claim: bool,
     projects: &ProjectPolicy,
 ) -> Entry {
     let mut workflow = entry.workflow().clone();
-    workflow.status = status.to_owned();
+    workflow.status = settlement.status().to_owned();
     workflow.completion = Some(at);
-    workflow.review = "closed".to_owned();
+    if settlement.negative() {
+        workflow.review = "closed".to_owned();
+    }
     workflow.assignment = None;
     let mut claim = entry.claim().cloned();
     if let Some(claim) = claim.as_mut()

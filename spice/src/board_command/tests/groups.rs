@@ -379,7 +379,7 @@ fn add_design_room(bus: &Bus, epoch: CanonicalUuid, born: TaskStamp, title: &str
             acceptance: vec!["The design records its disposition".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
             origin: Some("fixture:identity".parse().expect("fixture origin")),
-            flow: Some("design,review".to_owned()),
+            flow: Some("design".to_owned()),
             depends: Vec::new(),
             claim: false,
         },

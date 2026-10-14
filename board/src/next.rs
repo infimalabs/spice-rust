@@ -8,13 +8,13 @@ use crate::urgency::{Urgency, declared_priority};
 /// Readiness facts every allocation surface shares.
 ///
 /// Ordinary dependencies require settlement: each settled task records whether
-/// it ended positively. Controlled outputs also require positive completion of
-/// their immediate preparation and their controller. An output whose immediate
-/// preparation is a Design further requires that Design's exact selection; an
-/// output of a Plan needs no selection, so each known preparation parent records
-/// whether it is a Design. Each preparation parent that still has a live output
-/// awaiting that selection is recorded too, so a Design that can conclude only
-/// through the operator's selection waits on the operator rather than a lane.
+/// it ended positively. Controlled outputs also require that their controller
+/// has not settled negatively, and an output of a Plan further requires that
+/// Plan's positive completion. An output whose immediate preparation is a
+/// Design instead requires that Design's exact selection, which never
+/// concludes it, so each known preparation parent records whether it is a
+/// Design. Each Design that still has a live output awaiting that selection is
+/// recorded too, so it waits on the operator rather than a lane.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResolvedTasks {
     settled: BTreeMap<TaskStamp, bool>,
@@ -47,8 +47,8 @@ impl ResolvedTasks {
         }
     }
 
-    /// Whether this task state is a Design waiting for one of the observed
-    /// outputs to receive the operator's selection.
+    /// Whether this task state is an open Design waiting for one of the
+    /// observed outputs to receive the operator's selection.
     #[must_use]
     pub fn awaits_selection(
         &self,
@@ -58,7 +58,6 @@ impl ResolvedTasks {
         statement.intent == Some(TaskIntent::Design)
             && workflow.status == "pending"
             && workflow.completion.is_none()
-            && workflow.flow.last() == Some(&workflow.phase)
             && self.unselected.contains(&statement.born)
     }
 
@@ -68,6 +67,12 @@ impl ResolvedTasks {
 
     fn positive(&self, task: &TaskStamp) -> bool {
         self.settled.get(task) == Some(&true)
+    }
+
+    /// Whether `task` is known here and has not settled negatively: it is
+    /// still open, or it concluded positively.
+    fn standing(&self, task: &TaskStamp) -> bool {
+        self.designs.contains_key(task) && self.settled.get(task) != Some(&false)
     }
 
     /// Whether `task` is a Design; `None` when its intent is unknown here.
@@ -127,7 +132,7 @@ impl SelectionIndex {
 /// preparation constructed directly that is pending without an execution
 /// authorization.
 ///
-/// A Design cannot conclude positively while it owns such an output; only the
+/// A Design cannot be concluded done while it owns such an output; only the
 /// operator's selection, or closing or deleting the output, discharges it.
 #[must_use]
 pub fn unselected_output_of<'a>(
@@ -142,10 +147,9 @@ pub fn unselected_output_of<'a>(
         .then_some(&preparation.parent)
 }
 
-/// Whether a Design waits on the operator's selection: it is pending in its
-/// final phase, so its next lane step is the positive conclusion, and an
-/// output it constructed still lacks selection. No lane can discharge that, so
-/// the Design is ineligible until the operator selects or settles its outputs.
+/// Whether an open Design waits on the operator's selection: an output it
+/// constructed still lacks selection. No lane can discharge that, so the
+/// Design is ineligible until the operator selects or settles its outputs.
 /// A Plan never waits here: its outputs follow its own positive review.
 #[must_use]
 pub fn awaits_selection(entry: &Entry, satisfied: &ResolvedTasks) -> bool {
@@ -813,13 +817,15 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
         && control_satisfied(entry.statement(), completed)
 }
 
-/// A constructed output waits for its preparation and controller to conclude
-/// positively; nothing else, including operator closure, releases it. When
-/// that preparation is a Design, the output, Plan or task, also waits for the
-/// Design's exact execution authorization. Retained pre-cutover group markers
-/// are unsupported evidence and never participate in eligibility. A
-/// preparation a Plan constructs runs alongside it. An unknown preparation
-/// leaves the output gated.
+/// A constructed output waits for its controller to stand: known, and not
+/// settled negatively by collapse, closure, or deletion. When its preparation
+/// is a Design, the output, Plan or task, also waits for that Design's exact
+/// execution authorization, which leaves the Design open. Otherwise it waits
+/// for its preparation to conclude positively; nothing else, including
+/// operator closure, releases it. Retained pre-cutover group markers are
+/// unsupported evidence and never participate in eligibility. A preparation a
+/// Plan constructs runs alongside it. An unknown preparation leaves the output
+/// gated.
 fn control_satisfied(statement: &wire::TaskHead, completed: &ResolvedTasks) -> bool {
     let Some(preparation) = &statement.preparation else {
         return true;
@@ -827,18 +833,19 @@ fn control_satisfied(statement: &wire::TaskHead, completed: &ResolvedTasks) -> b
     if preparation.construction != statement.born {
         return true;
     }
-    let concluded =
-        || completed.positive(&preparation.parent) && completed.positive(&preparation.controller);
+    let controller = completed.standing(&preparation.controller);
     match completed.design(&preparation.parent) {
         None => false,
         Some(true) => {
-            concluded()
+            controller
                 && statement
                     .authorization
                     .as_ref()
                     .is_some_and(|decision| decision.controller == preparation.controller)
         }
-        Some(false) => statement.intent.is_some() || concluded(),
+        Some(false) => {
+            statement.intent.is_some() || (controller && completed.positive(&preparation.parent))
+        }
     }
 }
 

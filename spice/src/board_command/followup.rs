@@ -410,6 +410,7 @@ fn prepare_followup_policy(
             &add.acceptance,
         )?
     };
+    planning::admit_design_flow(intent, &flow)?;
     let reviewed = &context.reviewed_task.workflow.body;
     // Ordinary corrections may rely on their parent's re-review. Planning
     // corrections retain their own planning route and construction owner.

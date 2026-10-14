@@ -159,25 +159,25 @@ whose omission names the exact continuation.
   and task state, and do not bypass `session::context-live-session-self` by
   opening that transcript. If the description no longer matches repository or
   operator state, update, split, or release the task rather than force it.
-- `task plan` defaults to `plan,review`; `task design` to `design,review`.
-  Declared purpose survives phases and corrections and cannot be cleared or
-  reinterpreted as execution. Ordinary done cannot supply a required review
-  verdict or skip later declared phases.
+- `task plan` defaults to `plan,review`; `task design` to its one open
+  `design` phase. Declared purpose survives phases and corrections and cannot
+  be cleared or reinterpreted as execution. Ordinary done cannot supply a
+  required review verdict or skip later declared phases.
 - A Design plans Plans; a Plan plans executable tasks. Creation without another
   `--origin` under an ambient Plan or Design binds to it; `--preparation
   HANDLE` binds explicitly. A Plan must create at least one acceptance-bearing
   executable task under itself, which its own acceptance does not replace; its
   positive review releases those tasks onto their ordinary dependencies, with
-  no candidate, selection, or authorization. When a Design concludes follow-up
-  is warranted, create its acceptance-bearing output Plans under it and run
-  `spice preparation retain CANDIDATE_JSON` naming them before completion (a
-  malformed body's refusal shows an accepted one); a no-follow-up conclusion
-  says so explicitly in its acceptance evidence. A Design reviewer MUST inspect
-  `spice preparation show HANDLE` and refuse a clean verdict when implied
-  follow-up has no retained candidate. Design outputs wait for the operator's
-  exact execution authorization: leave selection and `spice preparation
-  authorize AUTHORIZATION_JSON` to the operator. `--depends` never removes that
-  gate; never add a reciprocal controller-to-output edge. Origin creates no
+  no candidate, selection, or authorization. When a Design finds follow-up
+  warranted, create its acceptance-bearing output Plans under it and run
+  `spice preparation retain CANDIDATE_JSON` naming them (a malformed body's
+  refusal shows an accepted one); a no-follow-up finding says so explicitly in
+  the Design's notes. A Design stays open: `spice task done` refuses it, so
+  checkpoint and run `spice task free HANDLE`; only the operator concludes it
+  with `spice task conclude`. Design outputs wait for the operator's exact
+  execution authorization: leave selection and `spice preparation authorize
+  AUTHORIZATION_JSON` to the operator. `--depends` never removes that gate;
+  never add a reciprocal controller-to-output edge. Origin creates no
   dependency; closure, deletion, a finding, or a working-group move releases or
   authorizes nothing.
 - Keep work incremental and validated. Commit only while holding the matching

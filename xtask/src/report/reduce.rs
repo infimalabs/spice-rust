@@ -244,6 +244,7 @@ impl History {
                 | FactKind::TaskEdited
                 | FactKind::TaskDeleted
                 | FactKind::TaskClosed
+                | FactKind::TaskConcluded
         ) {
             self.lifecycle.push(fact);
         }
@@ -327,6 +328,19 @@ fn fold_task(
             task.claims.push(claim);
             task.closure = None;
         }
+        FactKind::TaskDeleted | FactKind::TaskClosed | FactKind::TaskConcluded => {
+            fold_settlement(fact, task)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Fold one operator settlement: withdrawal, closure, or Design conclusion,
+/// where a collapsed conclusion counts as a withdrawal.
+fn fold_settlement(fact: &StreamFact, task: &mut Task) -> Result<()> {
+    let body = fact.body();
+    match fact.kind() {
         FactKind::TaskDeleted => {
             task.withdrawals.push(observation(fact, &task.phase)?);
             task.deleted = true;
@@ -336,6 +350,17 @@ fn fold_task(
             task.withdrawals
                 .push(observation(fact, text(body, "phase")?)?);
             task.closure = Some(observation(fact, text(body, "phase")?)?);
+        }
+        FactKind::TaskConcluded => {
+            let collapsed = body
+                .get("conclusion")
+                .and_then(|conclusion| conclusion.get("outcome"))
+                .and_then(Value::as_str)
+                == Some("collapsed");
+            if collapsed {
+                task.withdrawals.push(observation(fact, &task.phase)?);
+            }
+            task.closure = Some(observation(fact, &task.phase)?);
         }
         _ => {}
     }

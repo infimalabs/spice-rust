@@ -45,6 +45,7 @@ impl CommandKind {
         Self::TaskEdit,
         Self::TaskDelete,
         Self::TaskClose,
+        Self::TaskConclude,
         Self::TaskNote,
         Self::TaskDefer,
         Self::TaskWake,
@@ -135,6 +136,7 @@ impl CommandKind {
             | Self::TaskEdit
             | Self::TaskDelete
             | Self::TaskClose
+            | Self::TaskConclude
             | Self::TaskNote
             | Self::TaskDefer
             | Self::TaskWake
@@ -223,6 +225,7 @@ impl CommandKind {
             Self::TaskEdit => "task::edit",
             Self::TaskDelete => "task::delete",
             Self::TaskClose => "task::close",
+            Self::TaskConclude => "task::conclude",
             Self::TaskNote => "task::note",
             Self::TaskDefer => "task::defer",
             Self::TaskWake => "task::wake",

@@ -91,6 +91,7 @@ fn task_kind_for(verb: &str) -> Option<CommandKind> {
         "depends" => CommandKind::TaskDepends,
         "modify" | "require" => CommandKind::TaskEdit,
         "delete" => CommandKind::TaskDelete,
+        "conclude" => CommandKind::TaskConclude,
         _ => return None,
     })
 }

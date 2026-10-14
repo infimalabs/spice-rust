@@ -1176,7 +1176,7 @@ fn a_design_output_is_eligible_only_under_that_designs_selection() {
                 design(Standing::Positive),
             ),
             (
-                "an operator-closed Design",
+                "a collapsed Design",
                 output(selected, Vec::new()),
                 design(Standing::Closed),
             ),
@@ -1184,11 +1184,6 @@ fn a_design_output_is_eligible_only_under_that_designs_selection() {
                 "a deleted Design",
                 output(selected, Vec::new()),
                 design(Standing::Deleted),
-            ),
-            (
-                "an open Design",
-                output(selected, Vec::new()),
-                design(Standing::Open),
             ),
             (
                 "an open ordinary dependency",
@@ -1201,10 +1196,12 @@ fn a_design_output_is_eligible_only_under_that_designs_selection() {
                 "{reason} must leave a {intent:?} Design output gated"
             );
         }
-        assert!(
-            first_eligible(&[output(selected, Vec::new()), design(Standing::Positive)]),
-            "a selected {intent:?} output of a concluded Design is eligible"
-        );
+        for standing in [Standing::Open, Standing::Positive] {
+            assert!(
+                first_eligible(&[output(selected, Vec::new()), design(standing)]),
+                "a selected {intent:?} output of an open or done Design is eligible"
+            );
+        }
     }
     assert!(
         !first_eligible(&[
@@ -1301,22 +1298,26 @@ fn a_plan_output_waits_only_for_its_plans_positive_conclusion() {
 
     let design = |standing| planning("BOARD-design", wire::TaskIntent::Design, standing);
     let selected_plan_task = constructed("BOARD-plan", "BOARD-design", None, None, Vec::new());
-    assert!(
-        !first_eligible(&[
-            selected_plan_task.clone(),
-            plan(Standing::Positive),
-            design(Standing::Open),
-        ]),
-        "a task under a Design's Plan waits for that Design too"
-    );
-    assert!(
-        first_eligible(&[
-            selected_plan_task,
-            plan(Standing::Positive),
-            design(Standing::Positive),
-        ]),
-        "a task under a selected Plan needs no selection of its own"
-    );
+    for standing in [Standing::Closed, Standing::Deleted] {
+        assert!(
+            !first_eligible(&[
+                selected_plan_task.clone(),
+                plan(Standing::Positive),
+                design(standing),
+            ]),
+            "a task under a negatively settled Design's Plan stays gated"
+        );
+    }
+    for standing in [Standing::Open, Standing::Positive] {
+        assert!(
+            first_eligible(&[
+                selected_plan_task.clone(),
+                plan(Standing::Positive),
+                design(standing),
+            ]),
+            "a task under a selected Plan runs while its Design stands"
+        );
+    }
     assert!(
         first_eligible(&[
             constructed(

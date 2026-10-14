@@ -955,6 +955,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "board::task_delete"
     ),
+    operator!(
+        ["task", "conclude"],
+        "task conclude HANDLE [--done] [--collapse REASON]",
+        Command,
+        [TaskConcluded],
+        Reply,
+        "board::task_conclude"
+    ),
     row!(
         ["task", "artifact", "add"],
         "task artifact add HANDLE PATH [--name NAME] [--type TYPE] [--retention RETENTION]",

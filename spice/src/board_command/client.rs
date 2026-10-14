@@ -77,6 +77,7 @@ fn dispatch_client(
         ["task", "modify"] => client_modify(repository, contract, matches),
         ["task", "require"] => client_require(repository, contract, matches),
         ["task", "delete"] => client_delete(repository, contract, matches),
+        ["task", "conclude"] => client_conclude(repository, contract, matches),
         ["task", "done"] => client_done(repository, contract, matches),
         ["task", "review"] => client_review(repository, contract, matches),
         _ => refusal(
@@ -421,6 +422,8 @@ fn existing_next_claim_reply(board: &BoardAnswer, task: &NextWorkTask) -> Reply<
         format!(
             "next: spice task review {handle} --finding clean --note \"description current; ...\""
         )
+    } else if task.statement.body.intent == Some(wire::TaskIntent::Design) {
+        format!("next: spice task free {handle} (only the operator concludes a Design)")
     } else {
         "next: spice task done --validation \"...\"".to_owned()
     };
@@ -943,6 +946,41 @@ fn client_delete(
     })
 }
 
+/// Conclude a Design done, or collapsed with the stated reason.
+fn client_conclude(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let conclusion = match (
+        matches.get_flag("done"),
+        matches.get_one::<String>("collapse").cloned(),
+    ) {
+        (true, None) => body::DesignConclusion::Done {},
+        (false, Some(reason)) => body::DesignConclusion::Collapsed { reason },
+        _ => {
+            return refusal(
+                "task::conclusion-shape",
+                None,
+                "name exactly one of --done or --collapse REASON",
+            );
+        }
+    };
+    mutate_task_from_board(repository, contract, matches, |_board, task, heads| {
+        // Law::CONCLUDE witnesses the claim head, so a claim landing between
+        // this read and the door refuses the conclusion.
+        Ok((
+            CommandKind::TaskConclude,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+            ],
+            serde_json::to_value(TaskConclude { task, conclusion }).expect("typed intent encodes"),
+        ))
+    })
+}
+
 pub(super) fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
     board
         .tasks
@@ -1375,6 +1413,9 @@ pub(crate) fn dispatch_with_repository(
         }
         wire::intent::Intent::TaskClose(close) => {
             task_close(bus, command, close, projects, allocation)
+        }
+        wire::intent::Intent::TaskConclude(conclude) => {
+            task_conclude(bus, command, conclude, projects, allocation)
         }
         wire::intent::Intent::TaskDefer(defer) => {
             task_defer(bus, command, defer, repository, projects, allocation)

@@ -264,6 +264,7 @@ fn done_transition(
         ));
     }
     acknowledged(entry)?;
+    require_lane_progress(entry)?;
     if entry.workflow().phase.as_str() == "review" {
         return Err(refusal(
             "task::review-required",
@@ -288,11 +289,26 @@ fn done_transition(
             "complete only the currently held workflow phase",
         )
     })?;
-    if matches!(transition.kind(), board::TransitionKind::Complete { .. }) {
-        require_no_pending_controlled_outputs(snapshot, entry)?;
-    }
     admit_plan_transition(snapshot, entry, command, &transition)?;
     Ok((at, active.lane(), transition))
+}
+
+/// Refuse a lane step on a Design: a Design walks one open phase that no lane
+/// step advances or concludes. Its holder checkpoints and frees it; only the
+/// operator concludes it.
+fn require_lane_progress(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
+    if entry.statement().intent != Some(wire::TaskIntent::Design) {
+        return Ok(());
+    }
+    Err(refusal(
+        "task::design-open",
+        Some(entry.handle().to_string()),
+        &format!(
+            "a Design stays open until the operator concludes it; retain your proposal and \
+             notes, then checkpoint and run `spice task free {}`",
+            entry.handle()
+        ),
+    ))
 }
 
 fn admit_plan_transition(
@@ -656,11 +672,6 @@ fn prepare_review(
         .source_boundary(&lane)
         .map_err(|error| store_fault("review::boundary-unreadable", &error.to_string()))?;
     let (verdict, finding, note) = review_verdict(review)?;
-    if verdict == body::Verdict::Clean
-        && matches!(transition.kind(), board::TransitionKind::Complete { .. })
-    {
-        require_no_pending_controlled_outputs(&snapshot, entry)?;
-    }
     if verdict == body::Verdict::Clean {
         evidence::require_answered(bus, entry)?;
     }

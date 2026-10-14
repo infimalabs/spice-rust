@@ -173,14 +173,14 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
 }
 
 #[test]
-fn operator_selection_concludes_and_releases_a_parked_design_claim() {
+fn operator_selection_releases_outputs_and_leaves_a_held_design_open() {
     let (root, bus, epoch, seats) = fixture("preparation-held-selection", 2);
     let controller = add_controller(
         &bus,
         epoch,
         "Held preparation controller",
         wire::TaskIntent::Design,
-        Some("review"),
+        None,
     );
     claim_task(
         &bus,
@@ -212,11 +212,24 @@ fn operator_selection_concludes_and_releases_a_parked_design_claim() {
     );
 
     let current = board(&bus, epoch, Actor::Operator);
-    assert!(matches!(
-        at(&current, &controller).claim.as_ref(),
-        Some(claim) if claim.body.disposition == ClaimDisposition::Freed
-    ));
-    assert!(open_awaiting_selection(&bus, epoch).is_empty());
+    assert!(
+        matches!(
+            at(&current, &controller).claim.as_ref(),
+            Some(claim) if claim.body.disposition == ClaimDisposition::Active
+        ),
+        "selection never takes a Design from its holder"
+    );
+    let blocked = open_blocked(&bus, epoch);
+    assert!(
+        !blocked.contains(&output.born().expect("output stamp")),
+        "the selected output runs while its Design stays open"
+    );
+    assert!(blocked.contains(&spare.born().expect("spare stamp")));
+    assert_eq!(
+        open_awaiting_selection(&bus, epoch),
+        [controller.born().expect("controller stamp")].into(),
+        "the unselected spare still waits on the operator"
+    );
     clean(&root, bus);
 }
 fn adopted_outputs(
@@ -568,7 +581,12 @@ fn authorize_test_output(
         Some(decision)
     );
     assert_eq!(at(&current, &spare).statement.body.authorization, None);
-    assert_eq!(at(&current, &controller).workflow.body.status, "completed");
+    let design = &at(&current, &controller).workflow.body;
+    assert_eq!(
+        (design.status.as_str(), design.completion),
+        ("pending", None),
+        "selection releases outputs and leaves the Design open"
+    );
 }
 
 #[test]
@@ -857,40 +875,19 @@ fn review_clean(
     )
 }
 
-fn complete(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    seat: &Seat,
-    task: &TaskHandle,
-) -> Outcome<CommandAnswer> {
-    let actor = Actor::Lane(seat.lane);
-    let held = board(bus, epoch, actor.clone());
-    issue(
-        bus,
-        epoch,
-        actor,
-        CommandKind::TaskDone,
-        progress_witnesses(&held, at(&held, task), seat.lane, seat.occupant, false)
-            .expect("completion witnesses"),
-        &TaskDone {
-            task: task.clone(),
-            validation: "the Design is complete".to_owned(),
-            operation: Some(completion_operation()),
-        },
-    )
-}
+mod conclude;
+use conclude::{conclude, done_conclusion};
 
 #[test]
 fn working_group_moves_organize_designs_without_authorizing_outputs() {
-    let (root, bus, epoch, seats) = fixture("preparation-group-organization", 2);
+    let (root, bus, epoch, _seats) = fixture("preparation-group-organization", 1);
     let design = add_controller(
         &bus,
         epoch,
         "Grouped design",
         wire::TaskIntent::Design,
-        Some("review"),
+        None,
     );
-    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
     let current = add_output(&bus, epoch, &design, "Current output");
 
     let group = RoomAuthorityStamp::for_micros(1_760_000_000_000_000).expect("fixture group");
@@ -914,31 +911,8 @@ fn working_group_moves_organize_designs_without_authorizing_outputs() {
             "regrouping granted output authority"
         );
     }
-
-    let done_design = add_controller(
-        &bus,
-        epoch,
-        "Grouped done design",
-        wire::TaskIntent::Design,
-        Some("design"),
-    );
-    claim_task(
-        &bus,
-        epoch,
-        &seats[1],
-        &Actor::Lane(seats[1].lane),
-        &done_design,
-    );
-    let done_output = add_output(&bus, epoch, &done_design, "Done output");
-    let done_group = RoomAuthorityStamp::for_micros(1_760_000_000_000_002).expect("fixture group");
-    move_design(&bus, epoch, stamp("Grouped done design"), Some(&done_group));
-    assert_eq!(engagement(&bus, epoch, &done_output), None);
     assert_controlled_output_refusal(
-        complete(&bus, epoch, &seats[1], &done_design),
-        &[&done_output],
-    );
-    assert_controlled_output_refusal(
-        review_clean(&bus, epoch, &seats[0], &design),
+        conclude(&bus, epoch, Actor::Operator, &design, done_conclusion()),
         &[&current, &later],
     );
     clean(&root, bus);
@@ -952,12 +926,12 @@ fn a_design_awaiting_selection_waits_on_the_operator_until_its_outputs_settle() 
         epoch,
         "Waiting design",
         wire::TaskIntent::Design,
-        Some("review"),
+        None,
     );
     let lane = Actor::Lane(seats[0].lane);
 
-    // A final-phase Design with an unselected output waits on the operator:
-    // no lane can claim it, nor any output it gates.
+    // An open Design with an unselected output waits on the operator: no lane
+    // can claim it, nor any output it gates.
     let closed = add_output(&bus, epoch, &design, "Closed output");
     let deleted = add_output(&bus, epoch, &design, "Deleted output");
     assert_eq!(
@@ -981,13 +955,18 @@ fn a_design_awaiting_selection_waits_on_the_operator_until_its_outputs_settle() 
         "{claim:?}"
     );
 
-    // Settling one output leaves the wait; settling the last releases the
-    // Design with no lane action, and it then concludes like any review.
+    // Settling one output leaves the wait; settling the last ends it with no
+    // lane action, and only the operator concludes the Design.
     settle_output(&bus, epoch, &closed, false);
     settle_output(&bus, epoch, &deleted, true);
     assert!(open_awaiting_selection(&bus, epoch).is_empty());
-    claim_task(&bus, epoch, &seats[0], &lane, &design);
-    assert_committed(review_clean(&bus, epoch, &seats[0], &design));
+    assert_committed(conclude(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &design,
+        done_conclusion(),
+    ));
     clean(&root, bus);
 }
 

@@ -785,6 +785,7 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
         (&["task", "modify"][..], CommandKind::TaskEdit),
         (&["task", "require"][..], CommandKind::TaskEdit),
         (&["task", "delete"][..], CommandKind::TaskDelete),
+        (&["task", "conclude"][..], CommandKind::TaskConclude),
         (&["group", "list"][..], CommandKind::WorkingGroupRead),
         (&["group", "move"][..], CommandKind::WorkingGroupMove),
         (&["group", "arrange"][..], CommandKind::WorkingGroupArrange),

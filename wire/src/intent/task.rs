@@ -256,6 +256,16 @@ pub struct TaskClose {
     pub force_claimed: bool,
 }
 
+/// Conclude an open, unheld Design on the operator's word.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskConclude {
+    /// Design the operator concludes.
+    pub task: TaskHandle,
+    /// Done, or collapsed with the reason its premise did not hold.
+    pub conclusion: crate::body::DesignConclusion,
+}
+
 /// Append an observation without replacing the statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

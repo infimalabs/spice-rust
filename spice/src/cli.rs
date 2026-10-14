@@ -201,6 +201,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::TaskEdit
         | CommandKind::TaskDelete
         | CommandKind::TaskClose
+        | CommandKind::TaskConclude
         | CommandKind::TaskNote
         | CommandKind::TaskDefer
         | CommandKind::TaskWake
@@ -449,6 +450,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["task", "modify"]
             | ["task", "require"]
             | ["task", "delete"]
+            | ["task", "conclude"]
             | ["task", "artifact", "add"]
             | ["task", "artifact", "list"]
             | ["task", "artifact", "show"]

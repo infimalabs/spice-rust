@@ -8,6 +8,7 @@
 
 use super::*;
 
+mod designs;
 mod probe;
 mod retained;
 mod vendor_holds;

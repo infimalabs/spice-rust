@@ -6,6 +6,7 @@ pub(super) enum NextTransition {
     Settled,
     Review,
     Done,
+    Free,
     Wake,
     Next,
     Inert,
@@ -16,6 +17,7 @@ impl NextTransition {
         match self {
             Self::Review => Some(format!("spice task review {task}").into_boxed_str()),
             Self::Done => Some("spice task done".into()),
+            Self::Free => Some(format!("spice task free {task}").into_boxed_str()),
             Self::Wake => Some(format!("spice task wake {task}").into_boxed_str()),
             Self::Next => Some("spice task next".into()),
             Self::Settled | Self::Inert => None,
@@ -76,6 +78,11 @@ pub(super) fn accepted_transition(
             && workflow.assignment.as_ref() == Some(principal)
         {
             return NextTransition::Review;
+        }
+        // A Design stays open until the operator concludes it, so its holder
+        // ends a pass by freeing it rather than completing it.
+        if entry.statement().intent == Some(wire::TaskIntent::Design) {
+            return NextTransition::Free;
         }
         return NextTransition::Done;
     }

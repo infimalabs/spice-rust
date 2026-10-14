@@ -7,7 +7,7 @@ mod requirements;
 mod settlement;
 mod taste_proposal;
 pub(super) use deferral::{task_defer, task_wake};
-pub(super) use settlement::{task_close, task_delete};
+pub(super) use settlement::{task_close, task_conclude, task_delete};
 
 #[cfg(test)]
 pub(super) use claim::Possession;
@@ -609,6 +609,7 @@ fn task_flow_for_dependencies(
         requested
     };
     let mut flow = task_flow(requested, &add.acceptance)?;
+    planning::admit_design_flow(add.intent, &flow)?;
     if (captures_implementation(command) || recovers_implementation(command))
         && (add.intent.is_some() || gate::is_planning_phase(flow[0].as_str()))
     {
