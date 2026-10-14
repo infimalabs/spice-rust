@@ -1028,6 +1028,13 @@ pub struct LaneJob {
     pub id: String,
     /// The command as the model wrote it.
     pub command: String,
+    /// Ambient task held when the job was launched, if any.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub task: Option<crate::TaskStamp>,
     /// How the command lives: waited on, served, or watched.
     pub kind: LaneJobKind,
     /// Whether the command still runs, or ended unheard.

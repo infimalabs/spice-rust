@@ -7,14 +7,16 @@
 //! when asked to stop, and publishes how the command ended. A command
 //! started with events has its stdout read by the keeper instead, which
 //! still copies it to the log and publishes its lines as events before the
-//! ending. The keeper is its own process group under nobody's supervision,
-//! so the command survives the turn, the occupant, and the supervisor that
-//! started it; its result waits in the job's state for whoever asks. The
-//! lane observes a job through its durable state: a direct kernel watch on
-//! the job's directory wakes every read, and the keeper's exit names a
-//! keeper that died without an ending. The keeper reads its stop request
-//! the same way, and an ending or event nobody hears within the grace wakes
-//! the lane, so its next occupant hears it.
+//! ending. The keeper is its own process group under nobody's supervision.
+//! Deadline-bounded commands survive the turn, occupant, and supervisor that
+//! started them; task-associated services survive only their exact claim win,
+//! while an unanchored service is stopped with its launching occupant turn.
+//! A result waits in the job's state for whoever asks. The lane observes a job
+//! through its durable state: a direct kernel watch on the job's directory
+//! wakes every read, and the keeper's exit names a keeper that died without an
+//! ending. The keeper reads its stop request the same way, and an ending or
+//! event nobody hears within the grace wakes the lane, so its next occupant
+//! hears it.
 
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -26,7 +28,7 @@ use std::time::{Duration, Instant as Monotonic};
 use serde::{Deserialize, Serialize};
 use sill::Environment;
 use steer::Key;
-use wire::CanonicalUuid;
+use wire::{CanonicalUuid, TaskStamp};
 
 use super::super::super::RuntimePaths;
 use super::super::super::daemon::observer;
@@ -39,6 +41,7 @@ mod events;
 mod index;
 mod keeper;
 mod launch;
+mod reconcile;
 mod service;
 #[cfg(test)]
 mod tests;
@@ -49,8 +52,9 @@ pub(in crate::resident::supervisor) use keeper::keep;
 pub(in crate::resident) use keeper::{Control, Handle, Observed};
 use keeper::{Signal, watch};
 use launch::{KeeperLaunch, Launch, failed_start_error, launch_detached};
-use service::ServiceClaim;
+pub(in crate::resident) use reconcile::{reconcile_services, reconcile_turn_services};
 pub(in crate::resident) use service::{ServiceAdmission, ServiceAuthority};
+use service::{ServiceClaim, ServiceOwner};
 
 /// The hidden entry the keeper runs under.
 pub(in crate::resident::supervisor) const ENTRY: &str = "__lane-job";
@@ -90,9 +94,15 @@ struct Request {
     /// What the results carry ahead of the command's output, as omp noted it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     notices: Vec<String>,
+    /// Ambient task held when this job was launched, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task: Option<TaskStamp>,
     /// The exact active claim that owns an unbounded service.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     service_claim: Option<ServiceClaim>,
+    /// Occupant turn owning an unanchored service.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    service_turn: Option<CanonicalUuid>,
     /// The lane to wake when nobody hears the ending.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lane: Option<CanonicalUuid>,
@@ -179,7 +189,9 @@ pub(in crate::resident) struct Job {
     command: String,
     cwd: PathBuf,
     timeout: Option<Duration>,
+    task: Option<TaskStamp>,
     service_claim: Option<ServiceClaim>,
+    service_turn: Option<CanonicalUuid>,
     notices: Vec<String>,
     events: bool,
     keeper: Option<u32>,
@@ -214,6 +226,7 @@ impl Jobs {
         cwd: &Path,
         environment: &Environment,
         timeout: Option<Duration>,
+        task: Option<TaskStamp>,
         service: Option<ServiceAdmission<'_>>,
         notices: &[String],
         events: bool,
@@ -228,6 +241,7 @@ impl Jobs {
                 notices,
                 events,
             },
+            task,
             service,
             |directory, request, cwd, environment| {
                 launch_detached(directory, request, cwd, environment)
@@ -240,11 +254,16 @@ impl Jobs {
     fn start_with(
         &self,
         job: Launch<'_>,
+        task: Option<TaskStamp>,
         service: Option<ServiceAdmission<'_>>,
         launch: impl FnOnce(&Path, &Path, &Path, &Environment) -> KeeperLaunch,
         cleanup: impl FnOnce(&Path) -> io::Result<()>,
     ) -> io::Result<Job> {
-        let service_claim = service.as_ref().map(|service| service.claim.clone());
+        let (service_claim, service_turn) = match service.as_ref().map(|service| &service.owner) {
+            Some(ServiceOwner::Task(claim)) => (Some(claim.clone()), None),
+            Some(ServiceOwner::Turn(turn)) => (None, Some(*turn)),
+            None => (None, None),
+        };
         fs::create_dir_all(&self.root)?;
         let (id, directory) = self.claim()?;
         let request_path = directory.join(REQUEST);
@@ -263,7 +282,9 @@ impl Jobs {
                     .transpose()
                     .map_err(io::Error::other)?,
                 notices: job.notices.to_vec(),
+                task: task.clone(),
                 service_claim: service_claim.clone(),
+                service_turn,
                 lane: Some(self.lane),
                 events: job.events,
             },
@@ -301,7 +322,9 @@ impl Jobs {
             command: job.command.to_owned(),
             cwd: job.cwd.to_path_buf(),
             timeout: job.timeout,
+            task,
             service_claim,
+            service_turn,
             notices: job.notices.to_vec(),
             events: job.events,
             keeper: Some(keeper),
@@ -356,7 +379,9 @@ impl Jobs {
             command: request.command,
             cwd: request.cwd,
             timeout: request.timeout_millis.map(Duration::from_millis),
+            task: request.task,
             service_claim: request.service_claim,
+            service_turn: request.service_turn,
             notices: request.notices,
             events: request.events,
             keeper,
@@ -465,143 +490,6 @@ impl Jobs {
     }
 }
 
-/// Stop every running service whose exact task possession is no longer active.
-///
-/// Reconciliation reads the live-service index, so its cost follows the
-/// services that may still run rather than retained job history. `rebuild`
-/// first indexes every undelivered service record of every lane, which
-/// covers services an earlier resident started; the resident asks for it on
-/// its first reconciliation. Finite jobs are lane-owned and never enter this
-/// reconciliation. A malformed indexed record is stopped fail-closed because
-/// it cannot prove a bound.
-pub(in crate::resident) fn reconcile_services(
-    paths: &RuntimePaths,
-    snapshot: &bus::TaskSnapshot,
-    rebuild: bool,
-    diagnostic: &mut dyn io::Write,
-) {
-    reconcile_services_beneath(
-        &paths.supervisors,
-        rebuild,
-        |claim| snapshot.tasks().iter().any(|heads| claim.matches(heads)),
-        diagnostic,
-    );
-}
-
-fn reconcile_services_beneath(
-    supervisors: &Path,
-    rebuild: bool,
-    owned: impl Fn(&ServiceClaim) -> bool,
-    diagnostic: &mut dyn io::Write,
-) {
-    let index = ServiceIndex::beneath(supervisors);
-    if rebuild {
-        index_undelivered_services(supervisors, &index, diagnostic);
-    }
-    let entries = match index.entries() {
-        Ok(entries) => entries,
-        Err(error) => {
-            let _ = writeln!(diagnostic, "service index unavailable: {error}");
-            return;
-        }
-    };
-    for (lane, id) in entries {
-        Jobs::beneath(supervisors, lane).reconcile_service(&id, &owned, diagnostic);
-    }
-}
-
-/// Index every undelivered record that is or may be a service. A record that
-/// cannot be read is indexed too, so reconciliation stops it fail-closed.
-fn index_undelivered_services(
-    supervisors: &Path,
-    index: &ServiceIndex,
-    diagnostic: &mut dyn io::Write,
-) {
-    let lanes = match fs::read_dir(supervisors) {
-        Ok(lanes) => lanes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return,
-        Err(error) => {
-            let _ = writeln!(diagnostic, "service reconciliation unavailable: {error}");
-            return;
-        }
-    };
-    for lane in lanes {
-        let Ok(lane) = lane else {
-            continue;
-        };
-        let Some(Ok(lane)) = lane.file_name().to_str().map(str::parse::<CanonicalUuid>) else {
-            continue;
-        };
-        let jobs = Jobs::beneath(supervisors, lane);
-        let ids = match jobs.ids(|directory| !directory.join(DELIVERED).exists()) {
-            Ok(ids) => ids,
-            Err(error) => {
-                let _ = writeln!(diagnostic, "service records unavailable: {error}");
-                continue;
-            }
-        };
-        for id in ids {
-            let service = jobs.open(&id).map_or(true, |job| job.timeout.is_none());
-            if service && let Err(error) = index.insert(lane, &id) {
-                let _ = writeln!(diagnostic, "service index unavailable: {error}");
-            }
-        }
-    }
-}
-
-impl Jobs {
-    fn reconcile_service(
-        &self,
-        id: &str,
-        owned: &impl Fn(&ServiceClaim) -> bool,
-        diagnostic: &mut dyn io::Write,
-    ) {
-        let directory = self.root.join(id);
-        let ended = |state: io::Result<Option<State>>| {
-            state
-                .ok()
-                .flatten()
-                .is_some_and(|state| state.ending.is_some())
-        };
-        let job = match self.open(id) {
-            Ok(job) => job,
-            Err(_) if !directory.try_exists().unwrap_or(true) || ended(read_state(&directory)) => {
-                self.retire_service(id, diagnostic);
-                return;
-            }
-            Err(error) => {
-                let _ = File::create(directory.join(STOP));
-                let _ = writeln!(
-                    diagnostic,
-                    "stopping unbound job {id}: its durable request is invalid: {error}"
-                );
-                return;
-            }
-        };
-        if job.timeout.is_some() || ended(job.state()) {
-            self.retire_service(id, diagnostic);
-            return;
-        }
-        if !job.service_claim.as_ref().is_some_and(owned) {
-            let stopped = job.stop();
-            let _ = writeln!(
-                diagnostic,
-                "stopping service {} after its task claim ended{}",
-                job.id,
-                stopped
-                    .err()
-                    .map_or_else(String::new, |error| format!(": {error}"))
-            );
-        }
-    }
-
-    fn retire_service(&self, id: &str, diagnostic: &mut dyn io::Write) {
-        if let Err(error) = self.services.remove(self.lane, id) {
-            let _ = writeln!(diagnostic, "service index entry {id} not retired: {error}");
-        }
-    }
-}
-
 /// The state a job directory holds, with a keeper that vanished before
 /// publishing an ending read as lost; `None` before the keeper has spoken.
 fn read_state(directory: &Path) -> io::Result<Option<State>> {
@@ -626,6 +514,10 @@ impl Job {
 
     pub(in crate::resident) fn command(&self) -> &str {
         &self.command
+    }
+    /// Ambient task held when the job launched, if any.
+    pub(in crate::resident) fn task(&self) -> Option<&TaskStamp> {
+        self.task.as_ref()
     }
 
     /// How long the command may run before the keeper ends it, if bounded.
@@ -713,6 +605,7 @@ impl Job {
             started_millis: state.as_ref().map(|state| state.started_millis),
             id: self.id,
             command: self.command,
+            task: self.task,
         })
     }
 
@@ -739,6 +632,7 @@ impl Job {
             kind: self.kind(),
             phase: self.phase(state.as_ref())?,
             cwd: self.cwd.to_string_lossy().into_owned(),
+            task: self.task,
             started_millis: state.as_ref().map(|state| state.started_millis),
             timeout_millis: self
                 .timeout
@@ -939,12 +833,25 @@ impl Job {
 /// keeper, so a test says what the command printed and how it ended.
 #[cfg(test)]
 impl Jobs {
-    /// Record one job as its call declared it; `None` timeout is a service.
+    /// Record one job as its call declared it; `None` timeout is an unbound
+    /// service fixture.
     pub(in crate::resident) fn record_for_tests(
         &self,
         command: &str,
         events: bool,
         timeout_millis: Option<u64>,
+    ) -> Job {
+        self.record_bound_for_tests(command, events, timeout_millis, None, None, None)
+    }
+
+    pub(super) fn record_bound_for_tests(
+        &self,
+        command: &str,
+        events: bool,
+        timeout_millis: Option<u64>,
+        task: Option<TaskStamp>,
+        service_claim: Option<ServiceClaim>,
+        service_turn: Option<CanonicalUuid>,
     ) -> Job {
         fs::create_dir_all(&self.root).expect("job root");
         let (id, directory) = self.claim().expect("job directory");
@@ -959,7 +866,9 @@ impl Jobs {
                 environment: Environment::empty(),
                 timeout_millis,
                 notices: Vec::new(),
-                service_claim: None,
+                task,
+                service_claim,
+                service_turn,
                 lane: Some(self.lane),
                 events,
             },

@@ -1,7 +1,7 @@
 //! Operator job evidence and keeper-owned termination, independent of delivery.
 
 use super::LaneJobKind;
-use crate::SequenceCode;
+use crate::{SequenceCode, TaskStamp};
 use serde::{Deserialize, Serialize};
 
 const JOB_KEY_WIDTH: usize = 9;
@@ -77,6 +77,13 @@ pub struct KeptJob {
     pub id: String,
     /// Complete shell command declared by its agent.
     pub command: String,
+    /// Ambient task held when the job was launched, if any.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub task: Option<TaskStamp>,
     /// Command, service, or event watch.
     pub kind: LaneJobKind,
     /// Keeper-observed lifecycle.
@@ -127,6 +134,13 @@ pub struct LaneJobAnswer {
     pub command: String,
     /// Actual working directory declared for execution.
     pub cwd: String,
+    /// Ambient task held when the job was launched, if any.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub task: Option<TaskStamp>,
     /// Command, service, or event watch.
     pub kind: LaneJobKind,
     /// Current keeper lifecycle.

@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::{Ending, Jobs, REQUEST, STOP, ServiceIndex, reconcile_services_beneath};
+use super::reconcile::reconcile_services_beneath;
+use super::service::ServiceClaim;
+use super::{Ending, Jobs, REQUEST, STOP, ServiceIndex};
 
 fn scratch() -> PathBuf {
     std::env::temp_dir().join(format!(
@@ -12,8 +14,17 @@ fn scratch() -> PathBuf {
 }
 
 fn reconcile(root: &std::path::Path, rebuild: bool) -> String {
+    reconcile_with(root, rebuild, |_| false, |_, _| false)
+}
+
+fn reconcile_with(
+    root: &std::path::Path,
+    rebuild: bool,
+    task_owned: impl Fn(&ServiceClaim) -> bool,
+    turn_owned: impl Fn(wire::CanonicalUuid, wire::CanonicalUuid) -> bool,
+) -> String {
     let mut diagnostic = Vec::new();
-    reconcile_services_beneath(root, rebuild, |_| false, &mut diagnostic);
+    reconcile_services_beneath(root, rebuild, task_owned, turn_owned, &mut diagnostic);
     String::from_utf8(diagnostic).expect("diagnostic text")
 }
 
@@ -105,5 +116,95 @@ fn an_entry_without_a_record_is_retired() {
     assert!(
         diagnostic.is_empty(),
         "a vanished record was reported: {diagnostic}"
+    );
+}
+
+#[test]
+fn job_records_preserve_ambient_task_presence_and_absence() {
+    let root = scratch();
+    let lane = crate::resident::new_uuid();
+    let jobs = Jobs::beneath(&root, lane);
+    let task = wire::TaskStamp::for_micros(10).expect("fixture task");
+    let associated = jobs.record_bound_for_tests(
+        "cargo test",
+        false,
+        Some(600_000),
+        Some(task.clone()),
+        None,
+        None,
+    );
+    let unassociated = jobs.record_for_tests("cargo check", false, Some(600_000));
+
+    let associated = associated.listing().expect("associated job lists");
+    let unassociated = unassociated.listing().expect("unassociated job lists");
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(associated.task.as_ref(), Some(&task));
+    assert_eq!(unassociated.task, None);
+}
+
+#[test]
+fn task_service_lifetime_follows_its_exact_claim_owner() {
+    let root = scratch();
+    let lane = crate::resident::new_uuid();
+    let occupant = crate::resident::new_uuid();
+    let task = wire::TaskStamp::for_micros(20).expect("fixture task");
+    let claim = ServiceClaim::for_tests(task.clone(), lane, occupant);
+    let service = Jobs::beneath(&root, lane).record_bound_for_tests(
+        "serve",
+        false,
+        None,
+        Some(task.clone()),
+        Some(claim),
+        None,
+    );
+
+    reconcile_with(&root, false, |_| true, |_, _| false);
+    let retained = !service.directory.join(STOP).exists();
+    reconcile_with(&root, false, |_| false, |_, _| true);
+    let stopped = service.directory.join(STOP).exists();
+    let recorded_task = service.task().cloned();
+    let _ = fs::remove_dir_all(&root);
+
+    assert!(retained, "an active task service was stopped");
+    assert!(stopped, "a task service survived its claim owner");
+    assert_eq!(recorded_task, Some(task));
+}
+
+#[test]
+fn turn_reconciliation_stops_only_that_turns_unanchored_services() {
+    let root = scratch();
+    let lane = crate::resident::new_uuid();
+    let turn = crate::resident::new_uuid();
+    let other_turn = crate::resident::new_uuid();
+    let task = wire::TaskStamp::for_micros(30).expect("fixture task");
+    let jobs = Jobs::beneath(&root, lane);
+    let ending = jobs.record_bound_for_tests("serve one", false, None, None, None, Some(turn));
+    let other = jobs.record_bound_for_tests("serve two", false, None, None, None, Some(other_turn));
+    let anchored = jobs.record_bound_for_tests(
+        "serve task",
+        false,
+        None,
+        Some(task.clone()),
+        Some(ServiceClaim::for_tests(task, lane, turn)),
+        None,
+    );
+
+    reconcile_with(
+        &root,
+        false,
+        |_| true,
+        |active_lane, owner| active_lane == lane && owner == other_turn,
+    );
+    let ending_stopped = ending.directory.join(STOP).exists();
+    let other_stopped = other.directory.join(STOP).exists();
+    let anchored_stopped = anchored.directory.join(STOP).exists();
+    let _ = fs::remove_dir_all(&root);
+
+    assert!(ending_stopped, "the ended turn's service kept running");
+    assert!(!other_stopped, "another turn's service was stopped");
+    assert!(
+        !anchored_stopped,
+        "a task-owned service was stopped at turn end"
     );
 }

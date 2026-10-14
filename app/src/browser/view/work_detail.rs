@@ -88,7 +88,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
                 }
             </section>
             if let Some(lanes) = render.lanes {
-                {super::work_jobs::render(&lanes.lanes)}
+                {super::work_jobs::render(&lanes.lanes, render.selection.tasks())}
             }
         </div>
     };
