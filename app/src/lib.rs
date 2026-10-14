@@ -113,6 +113,9 @@ pub(crate) enum PendingKind {
     Preparation {
         respond: client_action::PreparationResponse,
     },
+    Draft {
+        respond: client_action::DraftResponse,
+    },
     Board,
     Lanes {
         wakes: Vec<wire::CanonicalUuid>,

@@ -787,7 +787,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--intent INTENT] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
-         [--origin ORIGIN] [--claim] [--recover]",
+         [--origin ORIGIN] [--claim] [--recover] [--draft]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskEdited, TaskNoted, ClaimWon],
@@ -801,7 +801,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task plan TITLE [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
-         [--origin ORIGIN] [--claim] [--recover]",
+         [--origin ORIGIN] [--claim] [--recover] [--draft]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskEdited, TaskNoted, ClaimWon],
@@ -815,7 +815,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task design TITLE [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
-         [--origin ORIGIN] [--claim] [--recover]",
+         [--origin ORIGIN] [--claim] [--recover] [--draft]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskEdited, TaskNoted, ClaimWon],
@@ -895,7 +895,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task file HANDLE [--into PROJECT] [--preparation HANDLE] [--claim]",
         OperatorOrLane,
         Command,
-        [TaskFiled, OutputControlled, ClaimWon],
+        [TaskFiled, OutputControlled, TaskNoted, ClaimWon],
         [Resident, Toolful],
         TASK_GIT_TOOLS,
         Reply,
@@ -936,7 +936,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         ["task", "modify"],
         "task modify HANDLE [--title TITLE] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--priority PRIORITY] [--project PROJECT] \
-         [--intent INTENT] [--clear-intent]",
+         [--intent INTENT] [--clear-intent] [--flow PHASES]",
         OperatorOrLane,
         Command,
         [TaskEdited, TaskNoted],

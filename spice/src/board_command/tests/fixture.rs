@@ -423,6 +423,7 @@ pub(super) fn add_project_with_acceptance(
                 .map(str::to_owned),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     task

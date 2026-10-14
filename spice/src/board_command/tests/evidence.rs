@@ -109,6 +109,7 @@ fn change(
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     )
 }

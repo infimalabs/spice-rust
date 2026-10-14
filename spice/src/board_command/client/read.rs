@@ -393,6 +393,7 @@ pub(in crate::board_command) fn task_show_bounded(
         format!("handle {}", statement.handle),
         format!("title {}", task.presentation_title()),
         format!("project {}", statement.project),
+        format!("filing {}", statement.filing.as_str()),
         format!("priority {}", task_priority(&statement.tags).unwrap_or("-")),
         format!(
             "intent {}",
@@ -1029,7 +1030,7 @@ fn push_bulleted(lines: &mut Vec<String>, text: &str) {
 fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
     let statement = &task.statement.body;
     let workflow = &task.workflow.body;
-    if statement.filing.is_oops()
+    if !statement.filing.is_filed()
         || workflow.status != "pending"
         || workflow.phase.as_str() != "plan"
     {
@@ -1106,7 +1107,7 @@ fn render_dependency(board: &BoardAnswer, dependency: &TaskStamp) -> String {
 }
 
 pub(super) fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String {
-    if task.statement.body.filing.is_oops() {
+    if !task.statement.body.filing.is_filed() {
         return format!("next: spice task file {}", task.statement.body.handle);
     }
     if has_taste_review(&task.statement.body.tags) {
@@ -1213,7 +1214,7 @@ pub(in crate::board_command) fn task_status(
          trust-grant required={} \
          appliance-version after={} observed={} \
          satisfied={} blocked={}\n\
-         stale {stale}\noops {oops}",
+         stale {stale}\noops {oops}\ndrafts {drafts}",
         board.actor_route.actor,
         actor_route_filter(board),
         board.project_policy.public_min_depth,
@@ -1230,6 +1231,7 @@ pub(in crate::board_command) fn task_status(
         waiting = parked.waiting,
         stale = parked.stale,
         oops = parked.oops,
+        drafts = actor_drafts(board, &entries),
     ))
 }
 

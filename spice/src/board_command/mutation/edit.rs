@@ -70,9 +70,13 @@ fn prepare_correction(
             "only the operator replaces or waives required evidence",
         ));
     }
-    let mut statement = corrected_statement(entry, edit, projects)?;
-    let (taste_review, was_required, released) =
-        review_taste(repository, snapshot, command, edit, entry, &mut statement)?;
+    let (mut statement, flow) = corrected_statement(entry, edit, projects)?;
+    // A Draft asserts nothing yet; taste policy binds when it is filed.
+    let (taste_review, was_required, released) = if entry.is_draft() {
+        (None, false, None)
+    } else {
+        review_taste(repository, snapshot, command, edit, entry, &mut statement)?
+    };
     let at = current_instant()?;
     let requirement_change = requirements::prepare(
         entry,
@@ -85,12 +89,18 @@ fn prepare_correction(
     let claim = released
         .as_ref()
         .map_or_else(|| entry.claim().cloned(), ReleasedPlan::claim);
+    let workflow = match (&released, flow) {
+        (Some(released), _) => released.workflow().clone(),
+        (None, Some(flow)) => wire::WorkflowHead {
+            phase: flow[0].clone(),
+            flow,
+            ..entry.workflow().clone()
+        },
+        (None, None) => entry.workflow().clone(),
+    };
     let post = Entry::new(
         statement.clone(),
-        released.as_ref().map_or_else(
-            || entry.workflow().clone(),
-            |released| released.workflow().clone(),
-        ),
+        workflow.clone(),
         claim,
         requirement_change
             .lease()
@@ -105,12 +115,26 @@ fn prepare_correction(
             "submit a statement the board admits",
         )
     })?;
+    // A cleared taste hold publishes its own released workflow. A Draft route
+    // replaces the workflow it read, so a concurrent workflow change refuses.
+    let workflow = if released.is_none() && workflow != *entry.workflow() {
+        let heads = snapshot
+            .answer
+            .tasks
+            .iter()
+            .find(|heads| &heads.statement.body.born == entry.born())
+            .expect("validated snapshot entries and answer share task authority");
+        Some((workflow, workflow_witness(heads)))
+    } else {
+        None
+    };
     let publication = CorrectionPublication {
         next: next_action(snapshot, &post),
         at,
         requirement_change,
         taste_review: taste_review.filter(|review| was_required || review.required()),
         released,
+        workflow,
     };
     Ok((statement, publication))
 }
@@ -165,12 +189,12 @@ fn review_taste(
 /// Only fields the caller named move; the rest ride through from the filed
 /// statement untouched. A field this refuses is refused before anything is
 /// written, so a correction that names two fields and gets one wrong publishes
-/// neither.
+/// neither. A Draft's replacement route returns beside its statement.
 fn corrected_statement(
     entry: &Entry,
     edit: &TaskEdit,
     projects: &ProjectPolicy,
-) -> Result<TaskHead, Outcome<CommandAnswer>> {
+) -> Result<(TaskHead, Option<Vec<wire::Phase>>), Outcome<CommandAnswer>> {
     if edit.title.is_none()
         && edit.description.is_none()
         && edit.acceptance.is_empty()
@@ -179,13 +203,19 @@ fn corrected_statement(
         && edit.priority.is_none()
         && edit.project.is_none()
         && edit.evidence.is_none()
+        && edit.flow.is_none()
     {
         return Err(refusal(
             "task::edit-empty",
             Some(edit.task.to_string()),
-            "name at least one statement field, an environmental requirement edit, an intent edit, or an evidence edit",
+            "name at least one statement field, an environmental requirement edit, an intent edit, an evidence edit, or a Draft flow",
         ));
     }
+    let flow = edit
+        .flow
+        .as_deref()
+        .map(|flow| corrected_flow(entry, flow))
+        .transpose()?;
     let mut statement = entry.statement().clone();
     if let Some(title) = &edit.title {
         statement.title = title.clone();
@@ -207,7 +237,8 @@ fn corrected_statement(
                 "an associated preparation or controlled output keeps the intent it was created with",
             ));
         }
-        if statement.intent != intent.intent() && statement.intent.is_some() {
+        // A Draft has not declared any purpose yet; its author may revise it.
+        if statement.intent != intent.intent() && statement.intent.is_some() && !entry.is_draft() {
             return Err(refusal(
                 "task::planning-intent-stable",
                 Some(entry.handle().to_string()),
@@ -231,7 +262,19 @@ fn corrected_statement(
             )
         })?;
     }
-    Ok(statement)
+    Ok((statement, flow))
+}
+
+/// A Draft's replacement route; filed work keeps the route it was filed with.
+fn corrected_flow(entry: &Entry, flow: &str) -> Result<Vec<wire::Phase>, Outcome<CommandAnswer>> {
+    if !entry.is_draft() {
+        return Err(refusal(
+            "task::flow-fixed",
+            Some(filing_state(entry)),
+            "a route moves only while the task is a Draft; filed work keeps its flow",
+        ));
+    }
+    phases(Some(flow))
 }
 
 fn correct_priority(tags: &mut Vec<String>, priority: &str) -> Result<(), Outcome<CommandAnswer>> {
@@ -253,10 +296,10 @@ fn corrected_project(
     projects: &ProjectPolicy,
     requested: &str,
 ) -> Result<String, Outcome<CommandAnswer>> {
-    if is_oops(entry) {
+    if entry.is_oops() {
         return Err(refusal(
             "task::filing-required",
-            Some(oops_state(entry)),
+            Some(filing_state(entry)),
             &format!(
                 "file the OOPS row with spice task file {} --into {requested}",
                 entry.handle(),
@@ -287,6 +330,9 @@ struct CorrectionPublication {
     taste_review: Option<TasteReview>,
     /// The authored workflow a cleared hold returns the task to.
     released: Option<ReleasedPlan>,
+    /// The replacement workflow a Draft's route edit publishes, with the
+    /// workflow witness it replaces.
+    workflow: Option<(wire::WorkflowHead, Witness)>,
 }
 
 fn publish_correction(
@@ -302,6 +348,7 @@ fn publish_correction(
         requirement_change,
         taste_review,
         released,
+        workflow,
     } = publication;
     let status = released.as_ref().map_or_else(
         || "edited".to_owned(),
@@ -345,7 +392,11 @@ fn publish_correction(
     {
         return outcome;
     }
-    let rendered = TaskHandle::for_project(&statement.project, &statement.born);
+    if let Some((workflow, read)) = workflow {
+        guard(&mut write, vec![read]);
+        write.workflow_head(statement.born.clone(), edited, move |_| workflow);
+    }
+    let rendered = TaskHandle::for_filing(&statement.project, &statement.born, statement.filing);
     write.task_head(edited, move |position| TaskHead {
         revision: position,
         ..statement

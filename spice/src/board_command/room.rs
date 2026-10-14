@@ -205,7 +205,7 @@ fn validate_oops_grooming(
                 "read the board and name a retained parked OOPS report",
             ));
         };
-        if !is_oops(entry) || entry.workflow().completion.is_some() {
+        if !entry.is_oops() || entry.workflow().completion.is_some() {
             return Err(refusal(
                 "room::oops-report-not-parked",
                 Some(entry.handle().to_string()),

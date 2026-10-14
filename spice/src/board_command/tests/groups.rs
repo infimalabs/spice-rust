@@ -180,6 +180,7 @@ fn assert_anchor_resolution_and_group_end(
             evidence: None,
             priority: None,
             project: Some("board.renamed".to_owned()),
+            flow: None,
         },
     ));
     let renamed = TaskHandle::for_project("board.renamed", &first_born);
@@ -382,6 +383,7 @@ fn add_design_room(bus: &Bus, epoch: CanonicalUuid, born: TaskStamp, title: &str
             flow: Some("design,review".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     task

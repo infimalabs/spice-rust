@@ -101,6 +101,9 @@ pub(super) fn task_add_with(
     allocation: &board::NextConfig,
     after_validation: impl FnOnce(),
 ) -> Outcome<CommandAnswer> {
+    if let Err(outcome) = draft_creation_admitted(add) {
+        return outcome;
+    }
     let requested = add.project.as_deref().unwrap_or("task.private");
     let project = match projects.admit_manual_creation(requested) {
         Ok(project) => project,
@@ -122,13 +125,49 @@ pub(super) fn task_add_with(
         command,
         add,
         Some(project),
-        wire::TaskFiling::Filed,
+        if add.draft {
+            wire::TaskFiling::Draft
+        } else {
+            wire::TaskFiling::Filed
+        },
         add.clone(),
         repository,
         projects,
         allocation,
         after_validation,
     )
+}
+
+/// A Draft names its exact public project and enters no claim or preparation.
+///
+/// Both attachments are filing-time authority, so the repair moves them to
+/// the file transition rather than dropping them.
+fn draft_creation_admitted(add: &TaskAdd) -> Result<(), Outcome<CommandAnswer>> {
+    if !add.draft {
+        return Ok(());
+    }
+    if add.project.is_none() {
+        return Err(refusal(
+            "task::draft-project-required",
+            None,
+            "name the Draft's public project with --project PROJECT",
+        ));
+    }
+    if add.claim {
+        return Err(refusal(
+            "task::draft-claim-refused",
+            None,
+            "create the Draft without --claim, then claim it with spice task file DRAFT --claim",
+        ));
+    }
+    if add.preparation.is_some() {
+        return Err(refusal(
+            "task::draft-preparation-refused",
+            None,
+            "create the Draft without --preparation, then bind it with spice task file DRAFT --preparation CONTROLLER",
+        ));
+    }
+    Ok(())
 }
 
 fn manual_project_repair(projects: &ProjectPolicy) -> String {
@@ -171,6 +210,7 @@ pub(super) fn task_oops_add(
         flow: None,
         depends: Vec::new(),
         claim: false,
+        draft: false,
     };
     create_task(
         bus,
@@ -220,12 +260,13 @@ fn create_task<B: serde::Serialize>(
             Err(outcome) => return outcome,
         },
     };
-    let parked = referenced_oops(&snapshot.entries, add.depends.iter());
-    if !parked.is_empty() {
-        return oops_dependency_refusal(&parked);
+    let unfiled = referenced_unfiled(&snapshot.entries, add.depends.iter());
+    if !unfiled.is_empty() {
+        return unfiled_dependency_refusal(&unfiled);
     }
+    let intrinsic = operator_draft_origin(command.actor(), filing);
     let origin =
-        match resolve_creation_origin(add.origin.as_ref(), command.actor(), &snapshot, None) {
+        match resolve_creation_origin(add.origin.as_ref(), command.actor(), &snapshot, intrinsic) {
             Ok(origin) => origin,
             Err(outcome) => return outcome,
         };
@@ -246,16 +287,21 @@ fn create_task<B: serde::Serialize>(
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
-    let taste_review = match task_taste_review(
-        repository,
-        &snapshot,
-        command.actor(),
-        &prepared.statement.title,
-        prepared.statement.description.as_deref(),
-        &prepared.statement.acceptance,
-    ) {
-        Ok(review) => review,
-        Err(outcome) => return outcome,
+    // A Draft asserts nothing yet: taste and preparation bind when it is filed.
+    let taste_review = if filing.is_draft() {
+        None
+    } else {
+        match task_taste_review(
+            repository,
+            &snapshot,
+            command.actor(),
+            &prepared.statement.title,
+            prepared.statement.description.as_deref(),
+            &prepared.statement.acceptance,
+        ) {
+            Ok(review) => review,
+            Err(outcome) => return outcome,
+        }
     };
     let taste_review_required = taste_review.as_ref().is_some_and(TasteReview::required);
     if taste_review_required && captures_implementation(command) {
@@ -272,8 +318,9 @@ fn create_task<B: serde::Serialize>(
         prepared.workflow.flow.clone_from(&prepared.flow);
         prepared.workflow.phase.clone_from(&prepared.phase);
     }
-    if let Err(outcome) =
-        planning::admit_preparation(&snapshot, command, add, &mut prepared.statement)
+    if !filing.is_draft()
+        && let Err(outcome) =
+            planning::admit_preparation(&snapshot, command, add, &mut prepared.statement)
     {
         return outcome;
     }
@@ -301,6 +348,17 @@ fn create_task<B: serde::Serialize>(
         |_| {},
         added_claim,
     )
+}
+
+/// The operator is the root authority, so a Draft it authors needs no further
+/// cause. A lane's Draft still names its directive or held parent, so drafting
+/// never mints causeless work for an agent.
+fn operator_draft_origin(actor: &Actor, filing: wire::TaskFiling) -> Option<wire::Origin> {
+    (filing.is_draft() && *actor == Actor::Operator).then(|| {
+        "operator:draft"
+            .parse()
+            .expect("constant origin is well formed")
+    })
 }
 
 fn oops_claim_project(
@@ -946,12 +1004,15 @@ fn dependency_entry<'a>(
     snapshot: &'a ValidatedSnapshot,
     depends: &TaskDepends,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
-    let parked = referenced_oops(
-        &snapshot.entries,
-        std::iter::once(&depends.task).chain(depends.after.iter()),
-    );
-    if !parked.is_empty() {
-        return Err(oops_dependency_refusal(&parked));
+    let mut unfiled = referenced_unfiled(&snapshot.entries, depends.after.iter());
+    if let Some(follower) = task_entry(&snapshot.entries, &depends.task)
+        && follower.is_oops()
+        && !unfiled.iter().any(|seen| seen.born() == follower.born())
+    {
+        unfiled.insert(0, follower);
+    }
+    if !unfiled.is_empty() {
+        return Err(unfiled_dependency_refusal(&unfiled));
     }
     let Some(entry) = task_entry(&snapshot.entries, &depends.task) else {
         return Err(refusal(
@@ -1117,11 +1178,8 @@ fn dependency_reaches(entries: &[Entry], start: &TaskStamp, target: &TaskStamp) 
     false
 }
 
-pub(super) fn is_oops(entry: &Entry) -> bool {
-    entry.statement().filing.is_oops()
-}
-
-pub(super) fn oops_state(entry: &Entry) -> String {
+/// One unfiled row's filing standing and possession, for refusal detail.
+pub(super) fn filing_state(entry: &Entry) -> String {
     let claim = match entry.claim().map(|claim| claim.disposition) {
         Some(ClaimDisposition::Active) => "active",
         Some(ClaimDisposition::Freed) => "freed",
@@ -1129,44 +1187,46 @@ pub(super) fn oops_state(entry: &Entry) -> String {
         None => "none",
     };
     format!(
-        "{} project={} filing=oops status={} claim={claim}",
+        "{} project={} filing={} status={} claim={claim}",
         entry.handle(),
         entry.project(),
+        entry.statement().filing.as_str(),
         entry.workflow().status,
     )
 }
 
-fn oops_dependency_refusal(entries: &[&Entry]) -> Outcome<CommandAnswer> {
+fn unfiled_dependency_refusal(entries: &[&Entry]) -> Outcome<CommandAnswer> {
     let offenders = entries
         .iter()
-        .map(|entry| oops_state(entry))
+        .map(|entry| filing_state(entry))
         .collect::<Vec<_>>()
         .join("; ");
     refusal(
-        "task::dependency-oops-refused",
+        "task::dependency-unfiled",
         Some(offenders.clone()),
         &format!(
-            "OOPS dependency endpoint(s): {offenders}; file every OOPS row first with spice task file HANDLE [--into PUBLIC_PROJECT]",
+            "unfiled dependency endpoint(s): {offenders}; file every OOPS or Draft row first with spice task file HANDLE [--into PUBLIC_PROJECT]",
         ),
     )
 }
 
-fn referenced_oops<'a, 'b>(
+/// Named rows that are not filed work: OOPS evidence and Drafts.
+fn referenced_unfiled<'a, 'b>(
     entries: &'a [Entry],
     handles: impl IntoIterator<Item = &'b TaskHandle>,
 ) -> Vec<&'a Entry> {
-    let mut parked = Vec::new();
+    let mut unfiled = Vec::new();
     for born in handles.into_iter().filter_map(|handle| handle.born().ok()) {
         let Some(entry) = entries.iter().find(|entry| entry.born() == &born) else {
             continue;
         };
-        if is_oops(entry)
-            && !parked
+        if !entry.is_filed()
+            && !unfiled
                 .iter()
                 .any(|seen: &&Entry| seen.born() == entry.born())
         {
-            parked.push(entry);
+            unfiled.push(entry);
         }
     }
-    parked
+    unfiled
 }

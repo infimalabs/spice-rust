@@ -190,7 +190,8 @@ pub struct TaskPreparation {
     pub construction: TaskStamp,
 }
 
-/// Whether a task is filed allocator work or parked unexpected-behavior evidence.
+/// Whether a task is filed allocator work, parked unexpected-behavior
+/// evidence, or prospective work its author has not filed yet.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskFiling {
@@ -199,6 +200,8 @@ pub enum TaskFiling {
     Filed,
     /// Evidence awaiting explicit triage and filing.
     Oops,
+    /// Editable prospective work that asserts nothing until it is filed.
+    Draft,
 }
 
 impl TaskFiling {
@@ -212,6 +215,22 @@ impl TaskFiling {
     #[must_use]
     pub const fn is_oops(&self) -> bool {
         matches!(self, Self::Oops)
+    }
+
+    /// Whether this task is an unfiled draft.
+    #[must_use]
+    pub const fn is_draft(&self) -> bool {
+        matches!(self, Self::Draft)
+    }
+
+    /// Stable lower-case spelling shared by the wire and the command line.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Filed => "filed",
+            Self::Oops => "oops",
+            Self::Draft => "draft",
+        }
     }
 }
 

@@ -270,8 +270,11 @@ returns focus to the control that opened it.
 
 Typed OOPS rows retain their public project but stay out of allocator and
 team-local work until the operator uses `spice task file`; task detail presents
-them as Parked. Their filing state, rather than a hidden stem, controls that
-placement.
+them as Parked. A Draft row is prospective work rather than a report: it shows
+its project and editor to the operator and its origin thread, and stays out of
+the same work until `spice task file` admits it, so task detail presents it as
+Draft. Filed rows are ordinary work. Their filing state, rather than a hidden
+stem, controls that placement.
 
 Work keeps immutable creator-team provenance separate from its current
 accountable owner. A Design owns itself and tasks it directly controls. All

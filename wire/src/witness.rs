@@ -253,12 +253,14 @@ impl TaskHandle {
     }
 
     /// Render a task name from its public project and filing standing.
+    ///
+    /// Parked OOPS evidence and unfiled drafts present their standing in place
+    /// of their project; the birth stamp keeps the identity unchanged.
     #[must_use]
     pub fn for_filing(project: &str, born: &TaskStamp, filing: crate::TaskFiling) -> Self {
-        let source = if filing.is_oops() {
-            "oops"
-        } else {
-            project.rsplit('.').next().unwrap_or(project)
+        let source = match filing {
+            crate::TaskFiling::Filed => project.rsplit('.').next().unwrap_or(project),
+            crate::TaskFiling::Oops | crate::TaskFiling::Draft => filing.as_str(),
         };
         let stem = source
             .bytes()

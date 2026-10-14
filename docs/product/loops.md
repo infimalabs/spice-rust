@@ -137,6 +137,22 @@ flowchart LR
   `task file` changes it to ordinary Filed work and can atomically rehome it,
   attach a preparation controller, or claim an uncontrolled row. `task wake`
   remains only for ordinary deferred work.
+- `task add --draft` (and `task plan --draft`, `task design --draft`) records a
+  typed Draft: prospective work under an admitted public project, distinct from
+  both OOPS and Filed. A Draft asserts no unexpected behavior and never joins
+  OOPS grooming. Default reads show it only to the operator and its origin
+  thread, and complete operator reads retain it. Its author revises title,
+  description, acceptance, intent, flow (`task modify --flow`), dependencies,
+  and project. It never allocates, claims, captures, completes, defers,
+  satisfies another task's dependency, or enters team strips and execution
+  summaries.
+  An operator Draft records `operator:draft` provenance when no `--origin` is
+  named; a lane Draft still names its directive or held parent. Each refusal
+  names `task file` or the Draft field to repair. `task file`
+  validates it as a complete ordinary Task, Plan, or Design under current
+  project, flow, acceptance, dependency, preparation, environment, and taste
+  policy, then atomically turns it into Filed work and can claim it. A failed
+  filing writes nothing.
 
 ---
 

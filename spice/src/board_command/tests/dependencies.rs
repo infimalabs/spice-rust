@@ -724,6 +724,7 @@ fn plan_removes_a_forward_child_while_an_accepted_child_depends_on_the_plan() {
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     ));
     let refused = issue(

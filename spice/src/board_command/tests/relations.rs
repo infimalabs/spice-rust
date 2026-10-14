@@ -55,6 +55,7 @@ fn related_task(bus: &Bus, epoch: CanonicalUuid, parent: &TaskHandle, name: &str
             flow: Some("todo".to_owned()),
             depends: vec![parent.clone()],
             claim: false,
+            draft: false,
         },
     ));
     task

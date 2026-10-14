@@ -15,7 +15,7 @@ use super::{WorkAvailability, WorkDependency, WorkProjection};
 pub enum DependencyWall<'a> {
     /// The task carries a deferral.
     Deferred(&'a TaskStamp),
-    /// The task remains OOPS work until the operator files it.
+    /// The task remains OOPS or Draft work until it is filed.
     Parked(&'a TaskStamp),
     /// The task depends on itself through the chain.
     Cycle(&'a TaskStamp),
@@ -89,7 +89,9 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
             WorkAvailability::Held => Some(DependencyWall::Environment(born)),
             WorkAvailability::Selection => Some(DependencyWall::Selection(born)),
             WorkAvailability::Deferred => Some(DependencyWall::Deferred(born)),
-            WorkAvailability::Parked => Some(DependencyWall::Parked(born)),
+            WorkAvailability::Parked | WorkAvailability::Draft => {
+                Some(DependencyWall::Parked(born))
+            }
             WorkAvailability::Terminal => Some(DependencyWall::Unreachable(born)),
             WorkAvailability::Blocked if task.environment_blocked() => {
                 Some(DependencyWall::Environment(born))

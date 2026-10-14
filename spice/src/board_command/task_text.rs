@@ -146,6 +146,7 @@ pub(crate) fn text_edit(
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         })
         .expect("typed intent encodes"),
     ))

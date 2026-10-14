@@ -471,6 +471,7 @@ fn shape_case_418_inserts_plan_without_review_for_bare_review_followup() {
                     flow: None,
                     depends: Vec::new(),
                     claim: false,
+                    draft: false,
                 },
             }],
             followup: Vec::new(),
@@ -564,6 +565,7 @@ fn wk_plan_phase_requires_acceptance_before_it_advances() {
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     ));
     // The operator changed the held task, so the holder acknowledges it first.

@@ -144,6 +144,7 @@ fn drain_add(title: &str, origin: &wire::Origin) -> TaskAdd {
         depends: Vec::new(),
         claim: false,
         intent: None,
+        draft: false,
     }
 }
 

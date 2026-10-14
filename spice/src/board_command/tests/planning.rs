@@ -27,6 +27,7 @@ fn add_planning(
             depends: Vec::new(),
             intent: Some(intent),
             claim: false,
+            draft: false,
         },
     ));
     task
@@ -106,6 +107,7 @@ fn atomic_recovery_cannot_create_a_declared_planning_task() {
             depends: Vec::new(),
             intent: Some(wire::TaskIntent::Plan),
             claim: true,
+            draft: false,
         },
     );
     assert!(
@@ -305,6 +307,7 @@ fn add_associated(
         flow: None,
         depends: Vec::new(),
         claim: false,
+        draft: false,
     };
     let view = board(bus, epoch, actor.clone());
     let mut expected = vec![Witness::Absence { task: born }];
@@ -438,6 +441,7 @@ fn planning_corrections_keep_the_original_construction_duty_and_later_declared_p
                     flow: None,
                     depends: Vec::new(),
                     claim: false,
+                    draft: false,
                 },
             }],
         },
@@ -558,6 +562,7 @@ fn a_correction_outlives_its_settled_plan_without_the_construction_duty() {
                     flow: Some("todo".to_owned()),
                     depends: Vec::new(),
                     claim: false,
+                    draft: false,
                 },
             }],
         },

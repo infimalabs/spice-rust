@@ -447,6 +447,7 @@ pub(crate) fn add(
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     )
 }
@@ -565,6 +566,7 @@ pub(crate) fn drop(
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     )
 }

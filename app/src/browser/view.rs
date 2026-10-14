@@ -88,6 +88,7 @@ pub(super) struct AppRender<'a> {
     pub unsafe_intent: bool,
     pub sender: &'a SenderHandle,
     pub room_controls: &'a super::rooms::Controls,
+    pub draft_controls: &'a super::drafts::Controls,
     pub agents: &'a AgentControls,
     pub sidebar_content: &'a UseStateHandle<Option<super::sidebar::Content>>,
     pub sidebar_presented: bool,
@@ -179,6 +180,7 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
                 runtime,
                 room_controls: render.room_controls,
                 sender: render.sender,
+                draft_controls: render.draft_controls,
                 can_note: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskNote)),
                 can_close: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskClose)),
                 blocker_review: render.blocker_review,
@@ -217,6 +219,7 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
                 runtime,
                 super::rooms::render_inbox(runtime, render.room_controls, render.sender),
             )}
+            {super::drafts::render_section(runtime, render.draft_controls, render.sender, &render.select_task)}
             {spice_jobs::render(standings.clone(), render.connection, runtime, render.sender)}
             {super::rooms::render_catalog(runtime, render.room_controls, render.sender, &render.select_task)}
             {render_spice_topology(render, runtime, standings.as_deref().map(Vec::as_slice))}

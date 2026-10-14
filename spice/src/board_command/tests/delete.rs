@@ -379,6 +379,7 @@ fn a_withdrawn_prerequisite_releases_the_task_that_waited_on_it() {
             flow: Some("todo".to_owned()),
             depends: vec![blocker.clone()],
             claim: false,
+            draft: false,
         },
     ));
 
@@ -450,6 +451,7 @@ fn a_released_dependent_is_not_still_reported_blocked() {
             flow: Some("todo".to_owned()),
             depends: vec![blocker.clone()],
             claim: false,
+            draft: false,
         },
     ));
 
@@ -518,6 +520,7 @@ fn a_withdrawn_task_refuses_the_moves_a_completed_task_refuses() {
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     );
     assert_eq!(

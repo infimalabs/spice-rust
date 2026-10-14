@@ -419,6 +419,18 @@ fn apply_mutating_response(
         PendingKind::SteerSubmission { lane } => CommandApplication::ordinary(
             apply_submission_response(session, handles, id, lane, bytes)?,
         ),
+        kind => apply_task_mutation_response(session, handles, runtime, kind, bytes)?,
+    })
+}
+
+fn apply_task_mutation_response(
+    session: &Session,
+    handles: &SurfaceHandles,
+    runtime: &mut AppRuntime,
+    kind: PendingKind,
+    bytes: &[u8],
+) -> Result<CommandApplication, String> {
+    Ok(match kind {
         PendingKind::TrustGrant { digest } => {
             apply_trust_grant_response(session, runtime, digest, bytes)?
         }
@@ -434,6 +446,11 @@ fn apply_mutating_response(
         PendingKind::Preparation { respond } => {
             apply_callback_reply(session, bytes, "Preparation failed", &respond)?
         }
+        // A landed Draft change re-reads the board so its list and detail move.
+        PendingKind::Draft { respond } => CommandApplication {
+            refresh: true,
+            ..apply_callback_reply(session, bytes, "Draft change failed", &respond)?
+        },
         _ => unreachable!("read and mutation response partitions are closed"),
     })
 }

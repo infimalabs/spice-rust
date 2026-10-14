@@ -87,12 +87,24 @@ pub(super) fn admit_preparation(
     let Some(parent) = preparation_parent(&snapshot.answer, add)? else {
         return Ok(());
     };
-    require_expected(command, &statement_witness(parent))?;
-    require_expected(command, &workflow_witness(parent))?;
     if add.preparation.is_none() {
         require_expected(command, &claim_witness(parent))?;
     }
-    if add.intent == Some(wire::TaskIntent::Design)
+    bind_preparation(command, parent, statement)
+}
+
+/// Bind a new statement to its pending planning parent under current policy.
+///
+/// An ordinary output also follows its parent and controller; a Design never
+/// becomes a preparation output.
+pub(super) fn bind_preparation(
+    command: &wire::AdmittedCommand,
+    parent: &BoardTask,
+    statement: &mut TaskHead,
+) -> Result<(), Outcome<CommandAnswer>> {
+    require_expected(command, &statement_witness(parent))?;
+    require_expected(command, &workflow_witness(parent))?;
+    if statement.intent == Some(wire::TaskIntent::Design)
         || parent.workflow.body.status != "pending"
         || (parent.statement.body.intent.is_none()
             && !gate::is_planning_phase(parent.workflow.body.phase.as_str())
@@ -112,7 +124,7 @@ pub(super) fn admit_preparation(
         ),
         construction: statement.born.clone(),
     });
-    if add.intent.is_none() {
+    if statement.intent.is_none() {
         let preparation = statement
             .preparation
             .as_ref()

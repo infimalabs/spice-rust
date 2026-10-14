@@ -61,6 +61,9 @@ pub enum WorkAvailability {
     /// Open and unclaimed OOPS work the allocator never offers until the
     /// operator files it.
     Parked,
+    /// Editable prospective work that is not filed yet. It is not work: no
+    /// strip, count, or allocator ever includes it.
+    Draft,
     /// No longer open, regardless of stale possession evidence.
     Terminal,
 }
@@ -79,6 +82,7 @@ impl WorkAvailability {
             Self::Held => "held",
             Self::Deferred => "deferred",
             Self::Parked => "parked",
+            Self::Draft => "draft",
             Self::Terminal => "terminal",
         }
     }
@@ -256,6 +260,7 @@ impl WorkCounts {
             WorkAvailability::Deferred => self.deferred += 1,
             WorkAvailability::Parked => self.parked += 1,
             WorkAvailability::Terminal => self.terminal += 1,
+            WorkAvailability::Draft => {}
         }
     }
     #[must_use]
@@ -999,6 +1004,9 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
     let workflow = &task.workflow.body;
     if workflow.status != "pending" || workflow.completion.is_some() {
         return WorkAvailability::Terminal;
+    }
+    if task.statement.body.filing.is_draft() {
+        return WorkAvailability::Draft;
     }
     match task.claim.as_ref().map(|claim| claim.body.disposition) {
         Some(ClaimDisposition::Active) => return WorkAvailability::InFlight,

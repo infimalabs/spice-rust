@@ -103,10 +103,10 @@ pub(super) fn task_done(
     {
         return replayed;
     }
-    if is_oops(entry) {
+    if !entry.is_filed() {
         return refusal(
             "task::filing-required",
-            Some(oops_state(entry)),
+            Some(filing_state(entry)),
             &format!(
                 "file with spice task file {} [--into PUBLIC_PROJECT], add required public dependencies, then complete it",
                 entry.handle(),
@@ -651,6 +651,18 @@ fn prepare_review(
         projects,
         allocation,
     )?;
+    if let Some(entry) = task_entry(&snapshot.entries, &review.task)
+        && !entry.is_filed()
+    {
+        return Err(refusal(
+            "task::filing-required",
+            Some(filing_state(entry)),
+            &format!(
+                "file with spice task file {} before it enters review",
+                entry.handle(),
+            ),
+        ));
+    }
     let (entry, transition, at, lane) = admit_review(&snapshot, command, review)?;
     let source = bus
         .source_boundary(&lane)

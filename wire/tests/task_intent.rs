@@ -89,6 +89,7 @@ fn intent_edits_bind_their_statement_witness_to_the_edited_task() {
         intent: Some(TaskIntentEdit::Set {
             intent: TaskIntent::Design,
         }),
+        flow: None,
     };
     let command = |task| Command {
         v: WireVersion::CURRENT,

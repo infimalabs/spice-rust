@@ -243,6 +243,7 @@ impl PendingKind {
             | Self::RoomControl { .. }
             | Self::RoomCoordination { .. }
             | Self::Preparation { .. }
+            | Self::Draft { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
             | Self::TrustGrant { .. }
@@ -438,6 +439,7 @@ impl ClientAction {
             Self::RoomControl { request, .. } => room_control_bytes(request),
             Self::RoomCoordination { request, .. } => room_coordination_bytes(request),
             Self::Preparation { request, .. } => preparation_bytes(request),
+            Self::Draft { request, .. } => draft_bytes(request),
             Self::ArrangeTeams { teams, .. } => teams.iter().fold(
                 teams.len() * std::mem::size_of::<wire::intent::TeamArrangement>(),
                 |bytes, team| {
@@ -651,6 +653,36 @@ fn preparation_bytes(request: &crate::client_action::PreparationRequest) -> usiz
                 )
         }
     }
+}
+
+fn draft_bytes(request: &crate::client_action::DraftRequest) -> usize {
+    use crate::client_action::DraftRequest;
+    let text = |text: Option<&String>| text.map_or(0, String::len);
+    let criteria = |acceptance: &[String]| acceptance.iter().map(String::len).sum::<usize>();
+    let (content, expected) = match request {
+        DraftRequest::Create { request, expected } => (
+            request.title.len()
+                + text(request.project.as_ref())
+                + text(request.description.as_ref())
+                + text(request.flow.as_ref())
+                + criteria(&request.acceptance),
+            expected,
+        ),
+        DraftRequest::Edit { request, expected } => (
+            request.task.as_str().len()
+                + text(request.title.as_ref())
+                + text(request.project.as_ref())
+                + text(request.description.as_ref())
+                + text(request.flow.as_ref())
+                + criteria(&request.acceptance),
+            expected,
+        ),
+        DraftRequest::File { request, expected } => (
+            request.task.as_str().len() + text(request.into.as_ref()),
+            expected,
+        ),
+    };
+    content.saturating_add(expected.len() * std::mem::size_of::<wire::Witness>())
 }
 
 impl ActionMailbox {
