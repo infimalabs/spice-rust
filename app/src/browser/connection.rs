@@ -928,8 +928,8 @@ async fn dispatch_action(
                 .await
                 .map(Some)
         }
-        ClientAction::Draft { request, respond } => {
-            send_draft(principal, writer, actions, request, respond)
+        action @ (ClientAction::Draft { .. } | ClientAction::Conclude { .. }) => {
+            send_task_change(principal, writer, actions, action)
                 .await
                 .map(Some)
         }
@@ -1473,6 +1473,6 @@ mod drafts;
 mod refresh;
 mod responses;
 mod rooms;
-use drafts::send_draft;
+use drafts::send_task_change;
 use refresh::{send_after_frame, send_refresh};
 use responses::handle_incoming;

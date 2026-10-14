@@ -94,7 +94,9 @@ lacks the group; while room authority loads or reconnects, the console keeps
 its last label and geometry.
 
 **Designs** lists the open Design tasks no group holds, as Unassigned Agents
-lists lanes in no team. Dropping a design on **New working group** begins a
+lists lanes in no team; each tile there reads open, passive, and each grouped
+tile reads its [standing](CONSOLE.md#design-standing). Dropping a design on
+**New working group** begins a
 group holding only that design, standing where the design stood in the
 partition order or, for an ungrouped design, last. The catalog notice reports
 every outcome; the authority's typed refusals, `group::design-limit` from a
@@ -129,10 +131,11 @@ expands it from the room's journal record. Room posts carry no images. A post
 is recorded in the room and asks no lane for anything, which the composer's cue
 states. An admitted reply clears the composer only while it still holds
 exactly the posted text and shards; a refusal keeps everything and shows in
-the composer toast. The design's menu carries its standing, the
+the composer toast. The design's menu carries its
+[standing](CONSOLE.md#design-standing), the
 [coordination controls](CONSOLE.md#room-coordination) that ask a seated lane
-for a contribution or put the room aside, its preparation authority and, for
-an open OOPS batch, the grooming form below.
+for a contribution or put the room aside while the Design is active, its
+preparation authority and, for an open OOPS batch, the grooming form below.
 
 Operator posts and lane MSG, ASK, and ANS publications share one card family:
 sender → destinations, verb, and text. A lane's own bytes come from its

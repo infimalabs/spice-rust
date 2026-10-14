@@ -212,6 +212,7 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 .app-horn-tab--up { border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
 .app-horn-tab--wide { border-inline-width: var(--message-rail); }
 .app-horn-tab__label { color: var(--muted); opacity: .72; }
+.app-horn-tab--passive { border-style: dashed; opacity: .64; }
 .app-horn-tab--group { gap: 0; padding: 0; }
 .app-horn-tab--group > button {
   align-self: stretch;
@@ -304,15 +305,15 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 }
 .app-presence-pip--status:is(.bound, .unbound) { box-shadow: none; }
 /* A working group's lights are its design channels, each in its accent and
-   shaped by its standing: claimed burns, open dims, review rings, an output
-   owing selection warns, and settled or unavailable fades. */
+   shaped by its standing: claimed burns, active dims, passive rings, an output
+   owing selection warns, and concluded, deleted, or unavailable fades. */
 .app-presence-pip--status.group-design-pip { --app-presence-color: var(--accent-slot); }
-.group-design-pip.open { --app-presence-opacity: .55; }
-.group-design-pip.review { background: transparent; box-shadow: inset 0 0 0 2px var(--app-presence-color); }
+.group-design-pip.active { --app-presence-opacity: .55; }
+.group-design-pip.passive { background: transparent; box-shadow: inset 0 0 0 2px var(--app-presence-color); }
 .group-design-pip.unselected { --app-presence-color: var(--warning); }
-.group-design-pip:is(.settled, .unavailable) { --app-presence-color: var(--muted); --app-presence-opacity: .35; box-shadow: none; }
+.group-design-pip:is(.done, .collapsed, .deleted, .unavailable) { --app-presence-color: var(--muted); --app-presence-opacity: .35; box-shadow: none; }
 .group-surface .ticker-age.unselected { color: var(--warning); }
-.group-surface .ticker-age:is(.settled, .unavailable) { color: var(--muted); opacity: .7; }
+.group-surface .ticker-age:is(.done, .collapsed, .deleted, .unavailable) { color: var(--muted); opacity: .7; }
 /* The group's name closes its status row. */
 .group-surface > .team-toolbar > .team-status-row {
   grid-template-columns: var(--app-total-tab-inline-size) minmax(0, 1fr) auto;

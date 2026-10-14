@@ -194,7 +194,7 @@ fn assert_anchor_resolution_and_group_end(
     assert!(anchors().iter().any(|anchor| {
         matches!(
             anchor,
-            WorkingGroupAnchor::Available { born, handle }
+            WorkingGroupAnchor::Available { born, handle, .. }
                 if *born == first_born && *handle == renamed
         )
     }));

@@ -298,6 +298,9 @@ pub struct RoomCoordinationView {
     /// The live automated-resume rule's budget, when the latest record carries one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<RoomResumeBudget>,
+    /// The anchor's Design lifecycle standing; absent for a non-Design anchor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub design: Option<crate::intent::DesignStanding>,
     /// Presentation instruction local consumers apply without persisting geometry.
     pub hide: bool,
 }
@@ -327,6 +330,9 @@ pub enum WorkingGroupAnchor {
         born: TaskStamp,
         /// Handle rendered from the task's current project.
         handle: TaskHandle,
+        /// The Design's lifecycle standing; a concluded Design keeps its
+        /// retained membership but stands terminal.
+        design: crate::intent::DesignStanding,
     },
     /// The anchor identity remains in saved organization, but the task is unavailable.
     Unavailable {

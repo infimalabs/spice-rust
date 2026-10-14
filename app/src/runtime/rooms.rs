@@ -78,23 +78,28 @@ impl RoomAnchorSettlement {
     }
 }
 
-/// One Design's standing as its working group's light shows it, derived from
-/// the board and room authority on every read.
+/// One Design's standing as its working group's light shows it: the board
+/// row's lifecycle standing, refined while active by what the operator or a
+/// lane owes it. Derived from the board on every read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesignStanding {
     /// No board snapshot, or the board no longer carries the anchor.
     Unavailable,
-    /// Pending with no lane on it.
-    Open,
-    /// A lane actively claims it.
+    /// Open outside every working group; no lane can acquire it.
+    Passive,
+    /// Open inside a working group with no lane on it.
+    Active,
+    /// Active, and a lane claims it.
     Claimed,
-    /// In its review phase.
-    Review,
-    /// It constructed a pending output that neither a selection nor the
-    /// group's engagement authorizes, so the operator owes a decision.
+    /// Active, and it constructed a pending output that neither a selection
+    /// nor the group's engagement authorizes, so the operator owes a decision.
     Unselected,
-    /// Completed, closed, or deleted.
-    Settled,
+    /// The operator concluded it done.
+    Done,
+    /// The operator concluded it collapsed.
+    Collapsed,
+    /// The operator withdrew it.
+    Deleted,
 }
 
 impl DesignStanding {
@@ -102,11 +107,13 @@ impl DesignStanding {
     pub const fn key(self) -> &'static str {
         match self {
             Self::Unavailable => "unavailable",
-            Self::Open => "open",
+            Self::Passive => "passive",
+            Self::Active => "active",
             Self::Claimed => "claimed",
-            Self::Review => "review",
             Self::Unselected => "unselected",
-            Self::Settled => "settled",
+            Self::Done => "done",
+            Self::Collapsed => "collapsed",
+            Self::Deleted => "deleted",
         }
     }
 
@@ -114,11 +121,13 @@ impl DesignStanding {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Unavailable => "unavailable",
-            Self::Open => "open",
-            Self::Claimed => "claimed",
-            Self::Review => "in review",
-            Self::Unselected => "holding unauthorized outputs",
-            Self::Settled => "settled",
+            Self::Passive => "open, passive",
+            Self::Active => "open, active",
+            Self::Claimed => "open, active, claimed",
+            Self::Unselected => "open, active, holding unauthorized outputs",
+            Self::Done => "concluded done",
+            Self::Collapsed => "concluded collapsed",
+            Self::Deleted => "deleted",
         }
     }
 }
@@ -375,50 +384,45 @@ impl RoomProjection {
             })
     }
 
-    /// One Design's standing. Settlement wins; then an output still owing the
-    /// operator's selection, since no lane can discharge it; then review; then
-    /// an active claim.
+    /// One Design's standing. The board row's lifecycle standing decides
+    /// terminal and passive Designs; an active one then shows an output still
+    /// owing the operator's selection, since no lane can discharge it, then an
+    /// active claim.
     pub fn design_standing(&self, room: &TaskStamp, board: Option<&BoardView>) -> DesignStanding {
-        match self.anchor_authority(room, board) {
-            RoomAnchorAuthority::Unavailable | RoomAnchorAuthority::Missing => {
-                return DesignStanding::Unavailable;
-            }
-            RoomAnchorAuthority::Settled { .. } => return DesignStanding::Settled,
-            RoomAnchorAuthority::Available(_) => {}
-        }
         let Some(board) = board else {
             return DesignStanding::Unavailable;
         };
-        let unselected = board.tasks.iter().any(|task| {
-            let (statement, workflow) = (&task.statement.body, &task.workflow.body);
-            statement.preparation.as_ref().is_some_and(|preparation| {
-                preparation.parent == *room && preparation.construction == statement.born
-            }) && workflow.status == "pending"
-                && workflow.completion.is_none()
-                && statement.authorization.is_none()
-                && statement.engagement.is_none()
-        });
-        if unselected {
-            return DesignStanding::Unselected;
-        }
-        let Some(design) = board
-            .tasks
-            .iter()
-            .chain(board.room_anchors.iter())
-            .find(|task| task.statement.body.born == *room)
-        else {
+        let Some(design) = board.row(room) else {
             return DesignStanding::Unavailable;
         };
-        if design.workflow.body.phase.as_str() == "review" {
-            DesignStanding::Review
-        } else if design
-            .claim
-            .as_ref()
-            .is_some_and(|claim| claim.body.disposition == wire::ClaimDisposition::Active)
-        {
-            DesignStanding::Claimed
-        } else {
-            DesignStanding::Open
+        match design.design_standing() {
+            None => DesignStanding::Unavailable,
+            Some(wire::intent::DesignStanding::Passive) => DesignStanding::Passive,
+            Some(wire::intent::DesignStanding::Done) => DesignStanding::Done,
+            Some(wire::intent::DesignStanding::Collapsed { .. }) => DesignStanding::Collapsed,
+            Some(wire::intent::DesignStanding::Deleted) => DesignStanding::Deleted,
+            Some(wire::intent::DesignStanding::Active) => {
+                let unselected = board.tasks.iter().any(|task| {
+                    let (statement, workflow) = (&task.statement.body, &task.workflow.body);
+                    statement.preparation.as_ref().is_some_and(|preparation| {
+                        preparation.parent == *room && preparation.construction == statement.born
+                    }) && workflow.status == "pending"
+                        && workflow.completion.is_none()
+                        && statement.authorization.is_none()
+                        && statement.engagement.is_none()
+                });
+                if unselected {
+                    DesignStanding::Unselected
+                } else if design
+                    .claim
+                    .as_ref()
+                    .is_some_and(|claim| claim.body.disposition == wire::ClaimDisposition::Active)
+                {
+                    DesignStanding::Claimed
+                } else {
+                    DesignStanding::Active
+                }
+            }
         }
     }
 

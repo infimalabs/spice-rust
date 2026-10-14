@@ -555,7 +555,7 @@ fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
                     <strong>{channel.label.clone()}</strong>
                 </header>
                 {render_group_actions(render, channel)}
-                {super::standing::render_standing(render.runtime, &channel.stamp)}
+                {super::standing::render_standing(render.runtime, &channel.stamp, render.runtime.board().and_then(|board| board.row(&channel.stamp)))}
                 {super::coordination::coordination_form(render.runtime, &toast(render), render.sender, &channel.stamp)}
                 {render_preparation(render.runtime, &channel.stamp)}
                 {oops_grooming_form(render.runtime, &toast(render), render.sender, &channel.stamp)}

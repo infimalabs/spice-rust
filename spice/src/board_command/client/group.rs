@@ -234,8 +234,8 @@ fn render_groups(page: &WorkingGroupPage) -> String {
         text.push_str(&format!("{}\n", group.group));
         for anchor in &group.anchors {
             match anchor {
-                WorkingGroupAnchor::Available { handle, .. } => {
-                    text.push_str(&format!("  {handle}\n"));
+                WorkingGroupAnchor::Available { handle, design, .. } => {
+                    text.push_str(&format!("  {handle} {design}\n"));
                 }
                 WorkingGroupAnchor::Unavailable { born } => {
                     text.push_str(&format!("  unavailable:{born}\n"));
