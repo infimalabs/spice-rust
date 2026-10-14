@@ -105,6 +105,7 @@ fn declared_planning_intent_survives_phases_and_corrections_without_reinterpreta
             flow: None,
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     claim_and_complete_task(&bus, epoch, &seats[0], &lane, &task);

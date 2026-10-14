@@ -260,8 +260,9 @@ fn draft_filing(
             ));
         }
         let parent = task_heads(&snapshot.answer, named)?;
-        planning::bind_preparation(command, parent, statement)?;
+        planning::bind_preparation(&snapshot.answer, command, parent, statement)?;
     }
+    planning::admit_design_flow(statement.intent, &workflow.flow)?;
     validate_acceptance(&statement.acceptance)?;
     let mut dependency_witnesses = Vec::with_capacity(statement.dependencies.len());
     for born in &statement.dependencies {

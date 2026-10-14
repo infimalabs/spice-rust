@@ -277,6 +277,94 @@ fn a_filed_task_keeps_its_flow() {
 }
 
 #[test]
+fn a_draft_edit_that_leaves_a_design_any_other_route_refuses() {
+    let (root, bus, epoch, _seats) = fixture("draft-design-route", 1);
+    let design = add_draft(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "DRAFT-desnflow",
+        Some(wire::TaskIntent::Design),
+        &["The design is supported"],
+    );
+    let ordinary = add_draft(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "DRAFT-ordflow1",
+        None,
+        &["The work is verified"],
+    );
+    let set_design = Some(wire::TaskIntentEdit::Set {
+        intent: wire::TaskIntent::Design,
+    });
+    let facts = fact_count(&bus);
+    for (task, refused) in [
+        (
+            &design,
+            TaskEdit {
+                flow: Some("design,review".to_owned()),
+                ..edit(&design)
+            },
+        ),
+        (
+            &ordinary,
+            TaskEdit {
+                intent: set_design,
+                ..edit(&ordinary)
+            },
+        ),
+        (
+            &ordinary,
+            TaskEdit {
+                intent: set_design,
+                flow: Some("todo".to_owned()),
+                ..edit(&ordinary)
+            },
+        ),
+    ] {
+        let current = board(&bus, epoch, Actor::Operator);
+        let outcome = issue(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::TaskEdit,
+            vec![statement_witness(at(&current, task))],
+            &refused,
+        );
+        assert_eq!(refusal_reason(&outcome), "task::design-flow");
+    }
+    assert_eq!(fact_count(&bus), facts, "a refused route edit wrote facts");
+
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskEdit,
+        vec![statement_witness(at(&current, &ordinary))],
+        &TaskEdit {
+            intent: set_design,
+            flow: Some("design".to_owned()),
+            ..edit(&ordinary)
+        },
+    ));
+    let heads = at(&board(&bus, epoch, Actor::Operator), &ordinary).clone();
+    assert_eq!(heads.statement.body.intent, Some(wire::TaskIntent::Design));
+    assert_eq!(
+        heads
+            .workflow
+            .body
+            .flow
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["design"],
+    );
+    clean(&root, bus);
+}
+
+#[test]
 fn default_reads_show_a_draft_only_to_the_operator_and_its_origin_thread() {
     let (root, bus, epoch, seats) = fixture("draft-visibility", 2);
     authorize_lane_creation(&bus, epoch, &seats[0]);
@@ -439,7 +527,6 @@ fn a_draft_refuses_closure_deferral_and_grooming() {
         &TaskAdd {
             title: "Grooming batch".to_owned(),
             acceptance: vec!["Each report receives a disposition".to_owned()],
-            flow: Some("design,review".to_owned()),
             intent: Some(wire::TaskIntent::Design),
             draft: false,
             ..draft_add("DRAFT-groom001", None, &[])
@@ -569,16 +656,16 @@ fn a_failed_filing_writes_nothing_and_keeps_the_editable_draft() {
 #[test]
 fn filing_turns_a_complete_task_plan_or_design_draft_into_offered_work() {
     for (name, intent, flow) in [
-        ("DRAFT-task0001", None, ["todo", "review"]),
+        ("DRAFT-task0001", None, &["todo", "review"][..]),
         (
             "DRAFT-plan0001",
             Some(wire::TaskIntent::Plan),
-            ["plan", "review"],
+            &["plan", "review"][..],
         ),
         (
             "DRAFT-desn0001",
             Some(wire::TaskIntent::Design),
-            ["design", "review"],
+            &["design"][..],
         ),
     ] {
         let (root, bus, epoch, seats) = fixture(name, 1);

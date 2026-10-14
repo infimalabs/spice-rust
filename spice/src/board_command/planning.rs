@@ -113,7 +113,7 @@ pub(super) fn admit_preparation(
     if add.preparation.is_none() {
         require_expected(command, &claim_witness(parent))?;
     }
-    bind_preparation(command, parent, statement)
+    bind_preparation(&snapshot.answer, command, parent, statement)
 }
 
 /// Bind a new statement to its pending planning parent under current policy.
@@ -121,6 +121,7 @@ pub(super) fn admit_preparation(
 /// An ordinary output also follows its parent and controller; a Design never
 /// becomes a preparation output.
 pub(super) fn bind_preparation(
+    board: &BoardAnswer,
     command: &wire::AdmittedCommand,
     parent: &BoardTask,
     statement: &mut TaskHead,
@@ -156,9 +157,7 @@ pub(super) fn bind_preparation(
         // Design stays open after selecting it, so an ordinary edge to an open
         // Design would hold its output until the Design concluded.
         for prerequisite in [&preparation.parent, &preparation.controller] {
-            if !statement.dependencies.contains(prerequisite)
-                && !is_design(&snapshot.answer, prerequisite)
-            {
+            if !statement.dependencies.contains(prerequisite) && !is_design(board, prerequisite) {
                 statement.dependencies.push(prerequisite.clone());
             }
         }
