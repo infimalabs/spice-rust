@@ -40,11 +40,7 @@ fn sent<'prose>(prose: &'prose str, message: &Message) -> (Vec<&'prose str>, &'p
             let (audience, context) = written.split_once('#').unwrap_or((written, ""));
             assert_eq!(
                 route.audience,
-                if audience.is_empty() {
-                    Audience::OperatorConcern
-                } else {
-                    Audience::Occupant(address(audience))
-                }
+                (!audience.is_empty()).then(|| Audience::Occupant(address(audience)))
             );
             assert_eq!(
                 route.context,
@@ -69,11 +65,10 @@ fn refusal(prose: &str) -> MessageRefusal {
         .expect_err("packet is refused")
 }
 
-/// Each selector owns its own qualifier: operator concern, directed-in-room,
-/// and direct occupant routes share one body without lending each other
-/// context.
+/// Each selector owns its own qualifier: room records, directed-in-room, and
+/// direct occupant routes share one body without lending each other context.
 #[test]
-fn selectors_route_to_occupants_operator_concerns_or_both() {
+fn selectors_route_to_occupants_rooms_or_both() {
     let prose = "MSG #ROOMS-dVrD244Jd: Background note.\n\
                  MSG 6HmS#ROOMS-dVrD244Jd 7Bc, #DESIGN-dVrD1Kz1l: Shared.";
     let messages = scan_messages(prose);
@@ -96,27 +91,31 @@ fn selectors_route_to_occupants_operator_concerns_or_both() {
     );
 }
 
-/// A task pointer names both the operator recipient and the room it concerns;
-/// the context-free legacy spelling is not an audience.
+/// A task pointer records its room and reaches nobody, so it cannot answer an
+/// ASK; the context-free legacy operator spelling is not an audience either.
 #[test]
-fn concern_pointers_route_to_the_operator_without_an_operator_audience() {
-    let prose = "ASK #ROOMS-dVrD244Jd: Which first?";
+fn a_task_pointer_records_the_room_without_reaching_the_operator() {
+    let prose = "MSG #ROOMS-dVrD244Jd: Background note.";
     let [message] = scan_messages(prose).try_into().expect("one packet");
-    let publication = message.publication.expect("the task pointer routes");
-    let Request::Ask { route } = publication.request else {
-        panic!("the packet asks");
+    let publication = message.publication.expect("the task pointer records");
+    let [route] = publication.routes() else {
+        panic!("one route");
     };
-    assert_eq!(route.audience, Audience::OperatorConcern);
+    assert_eq!(route.audience, None);
     assert_eq!(route.context, Some(handle("ROOMS-dVrD244Jd")));
 
-    let [legacy] = scan_messages("MSG operator: context-free")
-        .try_into()
-        .expect("the legacy spelling remains a visible attempt");
-    assert!(legacy.publication.is_err(), "bare operator must refuse");
+    assert_eq!(
+        refusal("ASK #ROOMS-dVrD244Jd: Which first?"),
+        MessageRefusal::Respondent { span: 4..20 }
+    );
+    assert_eq!(
+        refusal("MSG operator: context-free"),
+        MessageRefusal::Concern { span: 4..12 }
+    );
 }
 
-/// A malformed qualifier, a repeated destination, or two concern pointers
-/// refuse the whole packet.
+/// A malformed qualifier, a repeated destination, or a room named twice
+/// refuses the whole packet.
 #[test]
 fn malformed_or_repeated_destinations_refuse_the_packet() {
     assert!(matches!(
@@ -132,10 +131,10 @@ fn malformed_or_repeated_destinations_refuse_the_packet() {
         MessageRefusal::Context { span, .. } if span == (9..9)
     ));
     assert_eq!(
-        refusal("MSG #ROOMS-dVrD244Jd #PLAN-dVrD245Kc: two concerns."),
-        MessageRefusal::Repeated {
-            audience: Audience::OperatorConcern,
-            span: 21..36,
+        refusal("MSG #ROOMS-dVrD244Jd #ROOMS-dVrD244Jd: twice."),
+        MessageRefusal::RepeatedContext {
+            context: handle("ROOMS-dVrD244Jd"),
+            span: 21..37,
         }
     );
     assert_eq!(
@@ -145,10 +144,14 @@ fn malformed_or_repeated_destinations_refuse_the_packet() {
             span: 25..29,
         }
     );
-    let prose = "MSG #ROOMS-dVrD244Jd 6HmS#ROOMS-dVrD244Jd: room and directed.";
+    let prose = "MSG #ROOMS-dVrD244Jd #PLAN-dVrD245Kc 6HmS#ROOMS-dVrD244Jd: two rooms.";
     assert_eq!(
         sent(prose, &scan_messages(prose)[0]).0,
-        ["#ROOMS-dVrD244Jd", "6HmS#ROOMS-dVrD244Jd"]
+        [
+            "#ROOMS-dVrD244Jd",
+            "#PLAN-dVrD245Kc",
+            "6HmS#ROOMS-dVrD244Jd"
+        ]
     );
 }
 
@@ -179,14 +182,14 @@ fn a_direction_key_routes_to_the_operator_about_that_direction() {
     };
     assert_eq!(
         routes("ASK #dVwg6Zqlf: Which first?"),
-        [(Audience::OperatorConcern, None, key())]
+        [(Some(Audience::Operator), None, key())]
     );
     assert_eq!(
         routes("MSG #dVwg6Zqlf 6HmS#ROOMS-dVrD244Jd: Noted."),
         [
-            (Audience::OperatorConcern, None, key()),
+            (Some(Audience::Operator), None, key()),
             (
-                Audience::Occupant(address("6HmS")),
+                Some(Audience::Occupant(address("6HmS"))),
                 Some(handle("ROOMS-dVrD244Jd")),
                 None
             ),
@@ -199,7 +202,7 @@ fn a_direction_key_routes_to_the_operator_about_that_direction() {
     assert_eq!(
         refusal("MSG #dVwg6Zqlf #dVwg6Zqlf: twice."),
         MessageRefusal::Repeated {
-            audience: Audience::OperatorConcern,
+            audience: Audience::Operator,
             span: 15..25,
         }
     );
@@ -388,14 +391,13 @@ fn result(text: &str) -> wire::rooms::QuestionResultRef {
     wire::rooms::QuestionResultRef::new(text.parse().expect("fixture result handle"))
 }
 
-/// ASK names one occupant or concern pointer, ANS names the answered result and
+/// ASK names one occupant or `#KEY`, ANS names the answered result and
 /// only asserts a context, and every placed header of either verb bounds the
 /// body before it.
 #[test]
 fn questions_and_answers_route_by_verb() {
     let prose = "MSG #ROOMS-dVrD244Jd 6HmS#ROOMS-dVrD244Jd: Heads up.\n\
                  ASK 6HmS#ROOMS-dVrD244Jd: Does caching explain it?\n\
-                 ASK #PLAN-dVrD1Kz1l: May I widen scope?\n\
                  ANS dVtYchNJW#ROOMS-dVrD244Jd: It does not.\n\
                  ANS dVtYcnvty: Yes.";
     let messages = scan_messages(prose);
@@ -404,7 +406,7 @@ fn questions_and_answers_route_by_verb() {
             .iter()
             .map(|message| message.verb)
             .collect::<Vec<_>>(),
-        [Verb::Msg, Verb::Ask, Verb::Ask, Verb::Ans, Verb::Ans]
+        [Verb::Msg, Verb::Ask, Verb::Ans, Verb::Ans]
     );
     assert_eq!(
         sent(prose, &messages[0]),
@@ -417,11 +419,7 @@ fn questions_and_answers_route_by_verb() {
         sent(prose, &messages[1]),
         (vec!["6HmS#ROOMS-dVrD244Jd"], "Does caching explain it?")
     );
-    assert_eq!(
-        sent(prose, &messages[2]),
-        (vec!["#PLAN-dVrD1Kz1l"], "May I widen scope?")
-    );
-    for (message, (handle_text, context, body)) in messages[3..].iter().zip([
+    for (message, (handle_text, context, body)) in messages[2..].iter().zip([
         ("dVtYchNJW", Some(handle("ROOMS-dVrD244Jd")), "It does not."),
         ("dVtYcnvty", None, "Yes."),
     ]) {
@@ -471,7 +469,7 @@ fn question_and_answer_defects_refuse_whole() {
         MessageRefusal::Concern { span: 4..12 }
     );
     assert_eq!(
-        refusal("ASK #ROOMS-dVrD244Jd:   "),
+        refusal("ASK 6HmS#ROOMS-dVrD244Jd:   "),
         MessageRefusal::EmptyBody
     );
 }

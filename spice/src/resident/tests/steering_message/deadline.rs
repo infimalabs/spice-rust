@@ -77,8 +77,8 @@ fn shifted(at: Instant, millis: i64) -> Instant {
 #[test]
 fn due_results_time_out_and_due_items_lapse_once_each() {
     let lanes = Lanes::new("deadline-due");
-    let room = lanes.room("dVrD244Jd");
-    let result = asked(&lanes.say(SENDER, &format!("ASK #{room}: ship it?")));
+    let key = lanes.direct(SENDER, 20, "ship when green");
+    let result = asked(&lanes.say(SENDER, &format!("ASK #{key}: ship it?")));
     let item = RoomReceiptRef::new(result.authority().clone());
     let (asked_due, item_due) = (RoomDue::Result(result.clone()), RoomDue::Item(item.clone()));
     let mut timers = lanes.timers();
@@ -194,8 +194,8 @@ fn an_answer_committed_first_wins_over_the_timeout() {
 #[test]
 fn items_written_under_another_origin_still_lapse() {
     let lanes = Lanes::new("deadline-origin");
-    let room = lanes.room("dVrD244Jd");
-    let result = asked(&lanes.say(SENDER, &format!("ASK #{room}: ship it?")));
+    let key = lanes.direct(SENDER, 20, "ship when green");
+    let result = asked(&lanes.say(SENDER, &format!("ASK #{key}: ship it?")));
     let item = RoomReceiptRef::new(result.authority().clone());
     let due = RoomDue::Item(item.clone());
     let RoomReceiptState::Pending { expires } = lanes.item_state(&item) else {
@@ -248,8 +248,8 @@ fn items_written_under_another_origin_still_lapse() {
 #[test]
 fn restarted_residents_catch_up_one_timeout() {
     let lanes = Lanes::new("deadline-restart");
-    let room = lanes.room("dVrD244Jd");
-    let result = asked(&lanes.say(SENDER, &format!("ASK #{room}: ship it?")));
+    let key = lanes.direct(SENDER, 20, "ship when green");
+    let result = asked(&lanes.say(SENDER, &format!("ASK #{key}: ship it?")));
     let due = RoomDue::Result(result.clone());
     let deadline = lanes.question(&result).0.deadline();
     let mut before = lanes.timers();

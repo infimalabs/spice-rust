@@ -637,10 +637,10 @@ fn operator_route(
     }]
 }
 
-/// Current operator items concern a direction or task; a retained pre-cutover
-/// route with neither still replays and presents as unnamed.
+/// Current operator items concern a direction; retained pre-cutover routes
+/// naming only a task, or neither, still replay and present that concern.
 #[test]
-fn operator_items_concern_their_direction_or_task_and_retain_legacy_unnamed() {
+fn operator_items_concern_their_direction_and_retain_legacy_concerns() {
     const MSG_PACKET: &str = "dVsYdDj7v";
     const MSG: &str = "dVsYdDj7w";
     const BARE_PACKET: &str = "dVsYdDj7x";
