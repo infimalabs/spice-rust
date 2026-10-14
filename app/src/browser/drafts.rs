@@ -53,8 +53,8 @@ impl Controls {
     }
 }
 
-/// The operator's open Drafts, each opening its task detail, above the form
-/// that records a new one.
+/// The operator's open Drafts, each opening its task detail, above a compact
+/// disclosure that reveals the full creator only on demand.
 pub(super) fn render_section(
     runtime: Option<&AppRuntime>,
     controls: &Controls,
@@ -111,7 +111,7 @@ pub(super) fn render_section(
             </div>
             {controls.notice()}
             if drafts.is_empty() {
-                <p class="empty">{"No Drafts. A Draft is private, editable, and never offered to an agent until it is filed."}</p>
+                <p class="empty">{"No unfiled Drafts."}</p>
             } else {
                 <ul class="draft-list">
                     {for drafts.into_iter().map(|task| {
@@ -129,13 +129,18 @@ pub(super) fn render_section(
                 </ul>
             }
             if creates {
-                <form class="draft-form" data-draft-create="" onsubmit={submit}>
-                    <strong>{"New Draft"}</strong>
-                    {content_fields(None)}
-                    <div class="draft-actions">
-                        <button type="submit">{"Create Draft"}</button>
-                    </div>
-                </form>
+                <details class="draft-create">
+                    <summary class="draft-create-summary">
+                        <span>{"New Draft"}</span>
+                        <small>{"Task · Plan · Design"}</small>
+                    </summary>
+                    <form class="draft-form draft-form-create" data-draft-create="" onsubmit={submit}>
+                        {content_fields(None)}
+                        <div class="draft-actions">
+                            <button type="submit">{"Create Draft"}</button>
+                        </div>
+                    </form>
+                </details>
             }
         </section>
     }
@@ -231,11 +236,12 @@ fn content_fields(row: Option<&BoardTask>) -> Html {
             .collect::<Vec<_>>()
             .join(",")
     });
+    let textarea_rows = if row.is_some() { "3" } else { "2" };
     html! {
         <>
-            <label><span>{"Title"}</span><input name="title" type="text" required=true value={title} /></label>
-            <label><span>{"Project"}</span><input name="project" type="text" required=true placeholder="spice.task" value={project} /></label>
-            <label>
+            <label class="draft-field-title"><span>{"Title"}</span><input name="title" type="text" required=true value={title} /></label>
+            <label class="draft-field-project"><span>{"Project"}</span><input name="project" type="text" required=true placeholder="spice.task" value={project} /></label>
+            <label class="draft-field-kind">
                 <span>{"Kind"}</span>
                 <select name="intent">
                     <option value="" selected={intent.is_none()}>{"Task"}</option>
@@ -247,10 +253,10 @@ fn content_fields(row: Option<&BoardTask>) -> Html {
                 </select>
             </label>
             if row.is_some() {
-                <label><span>{"Flow"}</span><input name="flow" type="text" value={flow} /></label>
+                <label class="draft-field-flow"><span>{"Flow"}</span><input name="flow" type="text" value={flow} /></label>
             }
-            <label><span>{"Description"}</span><textarea name="description" rows="3" value={description} /></label>
-            <label><span>{"Acceptance"}</span><textarea name="acceptance" rows="3" placeholder="One criterion per line" value={acceptance} /></label>
+            <label class="draft-field-description"><span>{"Description"}</span><textarea name="description" rows={textarea_rows} value={description} /></label>
+            <label class="draft-field-acceptance"><span>{"Acceptance"}</span><textarea name="acceptance" rows={textarea_rows} placeholder="One criterion per line" value={acceptance} /></label>
         </>
     }
 }
