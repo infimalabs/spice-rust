@@ -170,6 +170,12 @@ impl RuntimePaths {
         })
     }
 
+    /// The task artifact store under this resident's runtime root.
+    pub(super) fn artifacts(&self) -> artifact::Store {
+        let (data, lock) = spice::repository::StatePaths::task_artifacts_under(&self.runtime);
+        artifact::Store::new(data, lock)
+    }
+
     /// Browser speech contract for one admitted worktree, read from its
     /// current configuration.
     pub(super) fn speech_for_worktree(

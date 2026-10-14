@@ -18,8 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
     DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAnchor, RoomAuthorityStamp, RoomDelivered, RoomHorizon, RoomLeft,
-    RoomMessaged, RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk,
+    RetainedCandidate, RoomAnchor, RoomAuthorityStamp, RoomContributed, RoomDelivered, RoomHorizon,
+    RoomLeft, RoomMessaged, RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk,
     WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
 };
 use wire::{
@@ -724,6 +724,9 @@ fn fold_traffic(
         }
         return Some(publish(authority, seq, &body.room, &body.publication));
     }
+    if let Some(body) = fact.read::<RoomContributed>() {
+        return Some(contribute(authority, seq, actor, &body));
+    }
     fact.read::<RoomHorizon>()
         .map(|body| begin(authority, seq, actor, &body))
 }
@@ -870,6 +873,30 @@ fn begin(
         seq: seq.get(),
         body: wire::encode(horizon)?,
     })
+}
+
+/// A contribution is its own lane's bounded text, and each source it cites is
+/// authority that exists before it. Its Design's openness is checked against
+/// stored heads at commit, by [`require_open_controllers`].
+fn contribute(
+    authority: &mut impl Authority,
+    seq: Seq,
+    actor: &Actor,
+    body: &RoomContributed,
+) -> Result<(), Refusal> {
+    if *actor != Actor::Lane(body.lane) {
+        return unsound(format!(
+            "contribution in {} is written by {actor}, not its lane {}",
+            body.room, body.lane
+        ));
+    }
+    if let Err(error) = RoomContributed::admit(&body.text, &body.sources) {
+        return unsound(format!("contribution in {}: {error}", body.room));
+    }
+    for source in &body.sources {
+        require_source(authority, seq, source)?;
+    }
+    publish(authority, seq, &body.room, &body.publication)
 }
 
 /// Coverage authority is the principal that wrote it: the operator, an

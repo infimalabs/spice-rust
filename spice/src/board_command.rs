@@ -157,6 +157,8 @@ mod room_control;
 pub(crate) use room_control::{room_close, room_control};
 mod room_leave;
 pub(crate) use room_leave::room_leave;
+mod room_contribute;
+pub(crate) use room_contribute::room_contribute;
 mod room_coordination;
 use room_coordination::coordinate_target;
 #[cfg(test)]

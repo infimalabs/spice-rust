@@ -114,6 +114,9 @@ task handles instead.
 | Pending question results per requester | 128 | further ASKs refuse; MSG, controls, and other requesters still admit |
 | Relevance sources per observation | 8 | an observation never cites more |
 | Reports per OOPS grooming record | 100 parked reports, in an open Design room | `room::oops-batch-too-large`; `room::oops-batch-not-open`: groom under a Design room |
+| Design contribution text | 4096 bytes, nonempty after trimming | `room::contribution-empty` or `room::contribution-too-long` |
+| Sources per Design contribution | 8 distinct | `room::contribution-sources-exceeded` or `room::contribution-source-duplicate` |
+| Contribution room | an open Design, by a lane | `room::contribution-not-design`, `room::contribution-design-concluded`, or `room::contribution-lane-only` |
 | Post to a settled room | an unresolved anchor only | `room::anchor-settled`, naming the standing: a completed, closed, or deleted anchor's room stays readable, and its open receipts and results still settle |
 | Late answer | the immutable deadline | `room::deadline-passed`: close with `spice room cancel RESULT --clause TEXT --override` |
 | Answer or close by a non-party | stored parties only | `room::not-respondent` or `room::override-required`, naming the `--override` command |

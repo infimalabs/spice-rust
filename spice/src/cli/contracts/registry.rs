@@ -478,7 +478,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["room", "history"],
-        "room history HANDLE [--limit N] [--max-bytes N] [--after PUBLICATION] [--export FILE]",
+        "room history HANDLE [--contributions] [--limit N] [--max-bytes N] [--after PUBLICATION] \
+         [--export FILE]",
         OperatorOrLane,
         Read,
         [],
@@ -529,6 +530,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         [Resident, LaneCapability],
         Reply,
         "room::leave"
+    ),
+    row!(
+        ["room", "contribute"],
+        "room contribute HANDLE KIND TEXT [--source SOURCE...]",
+        Lane,
+        Command => SnapshotOrCommitted,
+        [RoomContributed],
+        [Resident, LaneCapability],
+        Reply,
+        "room::contribute"
     ),
     row!(
         ["room", "inbox"],

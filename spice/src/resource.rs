@@ -49,7 +49,7 @@ spice://task/HANDLE/acceptance  the acceptance as `- ` items, replaced the same 
 spice://task/HANDLE/ledger  doc ledger HANDLE [?max-bytes=N&offset=N&digest=DIGEST]
 spice://task/HANDLE/artifact  task artifact list HANDLE [?limit=N&max-bytes=N&after=ARTIFACT]
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
-spice://task/HANDLE/room  room history HANDLE [?limit=N&max-bytes=N&after=PUBLICATION]; reading joins and acknowledges nothing
+spice://task/HANDLE/room  room history HANDLE [?contributions&limit=N&max-bytes=N&after=PUBLICATION]; contributions pages only typed contributions; every page groups its contributions by kind; reading joins and acknowledges nothing
 spice://task/HANDLE/room/relevance  room relevance HANDLE [?limit=N&max-bytes=N&after=OBSERVATION]; shadow observations, assessments, and whole-room metrics; reading changes nothing
 spice://task/HANDLE/room/awareness  room awareness HANDLE [?limit=N&max-bytes=N&after=POSITION]; lanes told about this Design, with matched terms; reading changes nothing
 spice://task/HANDLE/preparation  preparation show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
@@ -239,6 +239,16 @@ const PAGE: &[Key] = &[
 ];
 /// A page bounded by rows and bytes, resumed after a cursor.
 const ROWS: &[Key] = &[once("limit"), once("max-bytes"), once("after")];
+/// A room page, optionally only its typed contributions.
+const ROOM: &[Key] = &[
+    Key {
+        name: "contributions",
+        arity: Arity::Flag,
+    },
+    once("limit"),
+    once("max-bytes"),
+    once("after"),
+];
 const GRAPH: &[Key] = &[
     Key {
         name: "all",
@@ -325,12 +335,12 @@ impl Shape {
             Self::RoomResult { .. } => &[],
             Self::Ledger { .. } => LEDGER,
             Self::Artifacts { .. }
-            | Self::Room { .. }
             | Self::RoomRelevance { .. }
             | Self::RoomAwareness { .. }
             | Self::Preparation { .. }
             | Self::Lanes
             | Self::RoomInbox => ROWS,
+            Self::Room { .. } => ROOM,
             Self::Artifact { .. } => ARTIFACT_SHOW,
             Self::Session(Session::Briefing) => BRIEFING,
             Self::Session(Session::Turns) => TURNS,

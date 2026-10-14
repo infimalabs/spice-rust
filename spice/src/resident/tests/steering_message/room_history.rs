@@ -24,7 +24,10 @@ impl Lanes {
         let projects = board::ProjectPolicy::new(Vec::new(), 2, 3).expect("fixture project policy");
         crate::room_command::answer(
             &journal,
-            &self.paths.tape,
+            crate::room_command::SourceOwners {
+                tape: &self.paths.tape,
+                artifacts: &self.paths.artifacts(),
+            },
             &projects,
             crate::cli::selected_matches(&matches),
             contract.path,

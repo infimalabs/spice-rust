@@ -478,6 +478,15 @@ owns each rule summarized here.
   still holds the lane. Relevance is
   [shadow evidence](invariants/identity.md#identity-room-relevance-is-shadow-evidence-before-automation)
   the operator assesses with `spice room assess`.
+- **Contribution.** A lane records its reasoning on an open Design with
+  `spice room contribute HANDLE KIND TEXT [--source SOURCE...]`: a
+  [typed](invariants/identity.md#identity-a-lane-contributes-typed-problem-space-records-to-an-open-design)
+  reason for, reason against, evidence, or question citing exact journal,
+  transcript, or retained-artifact sources. Room history groups contributions
+  by kind beside the full chronology, and `--contributions` reads only them. A
+  contribution is problem-space record, never a decision: it changes no task,
+  claim, group, candidate, or authorization, and a concluded Design accepts
+  none.
 - **Design awareness.** A lane whose current task matches an open Design's
   terms hears one private
   [background notice](invariants/identity.md#identity-a-design-notice-is-background-awareness-once-per-claim)

@@ -422,9 +422,17 @@ fn history_page(root: &FixtureRoot, words: &[&str]) -> Value {
     let contract = crate::cli::selected_contract(&matches).expect("room history is registered");
     let journal = journal::JournalReader::open(root.as_ref().join("authority.sqlite3"))
         .expect("fixture journal opens to read");
+    let artifacts = artifact::Store::new(
+        root.as_ref().join("artifacts"),
+        root.as_ref().join("locks/task-artifacts.lock"),
+    );
+    let tape = root.as_ref().join("tape");
     let outcome = crate::room_command::answer(
         &journal,
-        &root.as_ref().join("tape"),
+        crate::room_command::SourceOwners {
+            tape: &tape,
+            artifacts: &artifacts,
+        },
         &room_projects(),
         crate::cli::selected_matches(&matches),
         contract.path,

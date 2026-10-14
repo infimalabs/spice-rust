@@ -358,6 +358,20 @@ impl<'a> Surface<'a> {
                 ),
                 None,
             ),
+            (CommandKind::RoomContribute, Intent::RoomContribute(contribute)) => (
+                crate::board_command::room_contribute(
+                    self.bus,
+                    command,
+                    contribute,
+                    Some(crate::room_command::SourceOwners {
+                        tape: &self.paths.tape,
+                        artifacts: &self.paths.artifacts(),
+                    }),
+                    &self.config.projects,
+                    &self.config.allocation,
+                ),
+                None,
+            ),
             (CommandKind::RoomControl, Intent::RoomControl(control)) => {
                 crate::board_command::room_control(
                     self.bus,

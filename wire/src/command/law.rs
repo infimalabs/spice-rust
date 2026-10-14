@@ -147,6 +147,14 @@ impl Law {
         optional: &[],
         authority: Authority::Connected,
     };
+    /// A lane contributes to one open Design room. It binds the Design's exact
+    /// statement and workflow heads; any connection may submit, and the
+    /// resident admits only a lane principal.
+    pub const ROOM_CONTRIBUTE: Self = Self {
+        required: &[WitnessKind::Task, WitnessKind::Workflow],
+        optional: &[],
+        authority: Authority::Connected,
+    };
     /// Intended birth stamp is absent and every dependency exists at its
     /// named workflow head. Atomic create-and-claim additionally carries the
     /// caller's eligibility and occupied residency predicates.
@@ -552,6 +560,7 @@ impl CommandKind {
             Self::WorkingGroupMove | Self::WorkingGroupArrange => Law::GROUP,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::RoomPost => Law::ROOM_POST,
+            Self::RoomContribute => Law::ROOM_CONTRIBUTE,
             Self::RoomCoordinate => Law::ROOM_COORDINATE,
             Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
             Self::RoomControl => Law::ROOM_CONTROL,
@@ -733,16 +742,17 @@ impl CommandKind {
             (Self::RoomPost, Intent::RoomPost(post)) => Some(&post.room),
             (Self::RoomCoordinate, Intent::RoomCoordinate(request)) => Some(&request.room),
             (Self::RoomPutAside, Intent::RoomPutAside(request)) => Some(&request.room),
+            (Self::RoomContribute, Intent::RoomContribute(request)) => Some(&request.room),
             _ => None,
         };
         let Some(room) = room else {
             return Ok(());
         };
         let target = room.born().ok();
-        let kinds: &[WitnessKind] = if self == Self::RoomPost {
-            &[WitnessKind::Task]
-        } else {
-            &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim]
+        let kinds: &[WitnessKind] = match self {
+            Self::RoomPost => &[WitnessKind::Task],
+            Self::RoomContribute => &[WitnessKind::Task, WitnessKind::Workflow],
+            _ => &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
         };
         for &kind in kinds {
             let matched = expected.iter().any(|witness| {

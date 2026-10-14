@@ -101,6 +101,9 @@ macro_rules! registered_body {
     (RoomLeft) => {
         crate::rooms::RoomLeft
     };
+    (RoomContributed) => {
+        crate::rooms::RoomContributed
+    };
     (RoomDelivered) => {
         crate::rooms::RoomDelivered
     };
@@ -302,6 +305,8 @@ vocabulary! {
     RoomPutAside = "room::shelved" by CommandDoor;
     /// A lane stopped listening to one room's derived background.
     RoomLeft = "room::left" by CommandDoor;
+    /// A lane contributed one typed record to an open Design room.
+    RoomContributed = "room::contributed" by CommandDoor;
     /// A lane's room catch-up landed in its transcript and advanced its cursor.
     RoomDelivered = "room::delivered" by ResidentRecognition;
     /// A lane with no delivery cursor began owing room catch-up here.

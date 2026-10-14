@@ -557,7 +557,8 @@ pub(crate) fn write_projection(
 
 /// Execution authorization is its controller's conclusion, so each controller
 /// it names must still be open as stored before this write's heads move; an
-/// already concluded controller can never authorize afterward.
+/// already concluded controller can never authorize afterward. A room
+/// contribution likewise enters only a stored, open Design.
 pub(crate) fn require_open_controllers<'a>(
     connection: &Connection,
     facts: impl IntoIterator<Item = &'a AnyFact>,
@@ -570,6 +571,17 @@ pub(crate) fn require_open_controllers<'a>(
                 return unsound(format!(
                     "controller {controller} already concluded and cannot authorize afterward"
                 ));
+            }
+        } else if let Some(contributed) = fact.read::<wire::rooms::RoomContributed>() {
+            let room = &contributed.room;
+            let statement = stored::<wire::TaskHead>(connection, STATEMENT, room)?;
+            let workflow = stored::<wire::WorkflowHead>(connection, WORKFLOW, room)?;
+            let design =
+                statement.is_some_and(|(_, head)| head.intent == Some(wire::TaskIntent::Design));
+            let open = workflow
+                .is_some_and(|(_, head)| head.status == "pending" && head.completion.is_none());
+            if !(design && open) {
+                return unsound(format!("contribution in {room} names no open Design"));
             }
         }
     }

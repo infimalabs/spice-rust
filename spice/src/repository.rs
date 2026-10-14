@@ -171,7 +171,7 @@ impl StatePaths {
             tape: runtime.join("tape"),
             rtk: runtime.join("rtk"),
             supervisors: runtime.join("supervisors"),
-            artifacts: artifact_data.join("tasks"),
+            artifacts: Self::task_artifacts_under(&runtime).0,
             install_record: runtime.join("install.json"),
             local_configuration: runtime.join("config.toml"),
             lane_serve: runtime.join("serve-lanes"),
@@ -184,6 +184,16 @@ impl StatePaths {
             worktree_locks,
             data,
         }
+    }
+
+    /// Task-addressed artifact bytes and the lock serializing their store,
+    /// under the shared runtime root `runtime`.
+    #[must_use]
+    pub fn task_artifacts_under(runtime: &Path) -> (PathBuf, PathBuf) {
+        (
+            runtime.join("artifacts").join("tasks"),
+            runtime.join("locks").join("task-artifacts.lock"),
+        )
     }
 
     /// Sole repository-common runtime root.

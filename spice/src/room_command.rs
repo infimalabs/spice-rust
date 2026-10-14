@@ -8,16 +8,21 @@
 //! A conversation publication (MSG, ASK, or ANS) also names its operator
 //! item receipt and its question result at their current heads, apart from
 //! what the room records; [`inbox`] and [`result`] read the same projections.
-//! A source that no longer yields the bytes renders as unavailable with its
-//! reason. Publications page whole in journal order through [`Page`]; a page
-//! that withholds any continues at the first withheld publication. Reading
-//! writes nothing.
+//! A typed contribution's text is its own fact, and each source it cites is
+//! resolved through [`RoomSources`]. A source that no longer yields the bytes
+//! renders as unavailable with its reason. Publications page whole in journal
+//! order through [`Page`]; a page that withholds any continues at the first
+//! withheld publication, and a shown page also groups its contributions by
+//! kind. `--contributions` pages only contributions. Reading writes nothing.
 
 pub(crate) mod awareness;
 mod conversation;
 pub(crate) mod inbox;
 pub(crate) mod relevance;
 pub(crate) mod result;
+mod sources;
+
+pub(crate) use sources::{RoomSources, SourceOwners};
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -28,9 +33,9 @@ use serde::Serialize;
 use spice::repository::Repository;
 use wire::output::{Bounded, Export};
 use wire::rooms::{
-    RoomAuthorityStamp, RoomCoordinationStarted, RoomLeft, RoomMessaged, RoomPosted,
-    RoomPublicationContent, RoomPublished, RoomPutAside, RoomSource, RoomSourceUnavailable,
-    TranscriptHunk,
+    RoomAuthorityStamp, RoomContributed, RoomContributionKind, RoomCoordinationStarted, RoomLeft,
+    RoomMessaged, RoomPosted, RoomPublicationContent, RoomPublished, RoomPutAside, RoomSource,
+    RoomSourceUnavailable, RoomSourceView, TranscriptHunk,
 };
 use wire::{
     Actor, CanonicalUuid, Disposition, Fault, FaultClass, Instant, Outcome, Refusal, Reply,
@@ -52,12 +57,22 @@ pub(crate) enum RoomHistory {
         room: TaskHandle,
         anchor: TaskStamp,
         page: Bounded<Publication>,
+        /// The page's contributions by kind, each in journal order.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        contributions: Vec<ContributionGroup>,
     },
     Exported {
         room: TaskHandle,
         anchor: TaskStamp,
         export: Export,
     },
+}
+
+/// The shown contributions of one kind, in journal order.
+#[derive(Debug, Serialize)]
+pub(crate) struct ContributionGroup {
+    kind: RoomContributionKind,
+    publications: Vec<RoomAuthorityStamp>,
 }
 
 /// One publication as its owning authorities state it.
@@ -98,6 +113,12 @@ enum Content {
     /// The authoring lane left the room for this reason.
     Left {
         clause: String,
+    },
+    /// The authoring lane's typed problem-space contribution.
+    Contribution {
+        kind: RoomContributionKind,
+        text: String,
+        sources: Vec<RoomSourceView>,
     },
     Unavailable {
         source: RoomSource,
@@ -190,22 +211,28 @@ pub(crate) fn run_at(
     };
     match opened() {
         Ok((projects, state, journal)) => {
-            answer(&journal, state.tape(), &projects, matches, contract.path)
+            let artifacts =
+                artifact::Store::new(state.artifacts(), state.locks().join("task-artifacts.lock"));
+            let owners = SourceOwners {
+                tape: state.tape(),
+                artifacts: &artifacts,
+            };
+            answer(&journal, owners, &projects, matches, contract.path)
         }
         Err(failure) => failure.outcome(),
     }
 }
 
-/// One page of the room `matches` names, read from `journal` and the lane
-/// tapes under `tape`.
+/// One page of the room `matches` names, read from `journal` and the
+/// authorities `owners` names.
 pub(crate) fn answer(
     journal: &journal::JournalReader,
-    tape: &Path,
+    owners: SourceOwners<'_>,
     projects: &board::ProjectPolicy,
     matches: &ArgMatches,
     path: &[&str],
 ) -> Outcome<RoomHistory> {
-    match history(journal, tape, projects, matches, path) {
+    match history(journal, owners, projects, matches, path) {
         Ok((position, body)) => Outcome::Reply(Reply { position, body }),
         Err(failure) => failure.outcome(),
     }
@@ -213,12 +240,17 @@ pub(crate) fn answer(
 
 fn history(
     journal: &journal::JournalReader,
-    tape: &Path,
+    owners: SourceOwners<'_>,
     projects: &board::ProjectPolicy,
     matches: &ArgMatches,
     path: &[&str],
 ) -> Result<(ReplyPosition, RoomHistory), Failure> {
     let page = Page::from_matches(matches, path)?;
+    let selection = if matches.get_flag("contributions") {
+        Selection::Contributions
+    } else {
+        Selection::Publications
+    };
     let named = matches
         .get_one::<String>("HANDLE")
         .expect("generated room parser requires HANDLE");
@@ -237,7 +269,7 @@ fn history(
         })
         .transpose()?;
     let recorded = journal
-        .read_with(|read| recorded(read, &anchor, after.as_ref(), &page, projects))
+        .read_with(|read| recorded(read, &anchor, after.as_ref(), &page, projects, selection))
         .map_err(|error| match error {
             journal::ReadError::Journal(error) => store(error),
             journal::ReadError::Answer(failure) => failure,
@@ -245,17 +277,19 @@ fn history(
     if let Some(notice) = crate::board_command::rename_notice(&named, &recorded.room) {
         eprintln!("{notice}");
     }
+    let mut sources = RoomSources::new(Some(owners), &anchor);
     let rows = recorded
         .rows
         .into_iter()
         .map(|row| {
             let key = row.publication.to_string();
-            (row.project(tape), key)
+            (row.project(owners.tape, &mut sources), key)
         })
         .collect();
     let body = match page.admit(rows, recorded.population)? {
         Paged::Shown(page) => RoomHistory::Shown {
             room: recorded.room,
+            contributions: group(&page.rows),
             anchor,
             page,
         },
@@ -268,11 +302,39 @@ fn history(
     Ok((ReplyPosition::Snapshot(recorded.cursor), body))
 }
 
-/// Project admitted room envelopes through the same source-backed rendering as
-/// the room history read.
+/// Which of a room's publications a read pages.
+#[derive(Clone, Copy)]
+enum Selection {
+    /// Every publication: the complete chronological history.
+    Publications,
+    /// Only typed contributions.
+    Contributions,
+}
+
+/// `rows`' contributions grouped by kind in [`RoomContributionKind::ALL`]
+/// order, each group in journal order.
+fn group(rows: &[Publication]) -> Vec<ContributionGroup> {
+    RoomContributionKind::ALL
+        .into_iter()
+        .filter_map(|kind| {
+            let publications: Vec<_> = rows
+                .iter()
+                .filter(|row| {
+                    matches!(&row.content, Content::Contribution { kind: shown, .. } if *shown == kind)
+                })
+                .map(|row| row.publication.clone())
+                .collect();
+            (!publications.is_empty()).then_some(ContributionGroup { kind, publications })
+        })
+        .collect()
+}
+
+/// Project one room's admitted envelopes through the same source-backed
+/// rendering as the room history read.
 pub(crate) fn project_publications(
     bus: &bus::Bus,
-    tape: &Path,
+    owners: SourceOwners<'_>,
+    room: &TaskStamp,
     envelopes: Vec<wire::Envelope<wire::AnyFact>>,
 ) -> Result<Vec<Publication>, String> {
     let rows = bus
@@ -283,7 +345,11 @@ pub(crate) fn project_publications(
                 .collect::<Result<Vec<_>, _>>()
         })
         .map_err(|error| error.to_string())?;
-    Ok(rows.into_iter().map(|row| row.project(tape)).collect())
+    let mut sources = RoomSources::new(Some(owners), room);
+    Ok(rows
+        .into_iter()
+        .map(|row| row.project(owners.tape, &mut sources))
+        .collect())
 }
 
 /// What one read snapshot of the journal holds of a room.
@@ -303,9 +369,21 @@ struct Row {
     seq: Seq,
     at: Instant,
     actor: Actor,
-    body: Body,
+    body: Record,
     directed: Vec<Route>,
     conversation: Option<ConversationView>,
+}
+
+/// What a publication's fact records.
+enum Record {
+    /// A conversation, coordination, or leave body.
+    Body(Body),
+    /// A typed contribution, owning its text and citing its sources.
+    Contributed {
+        kind: RoomContributionKind,
+        text: String,
+        sources: Vec<RoomSource>,
+    },
 }
 
 enum Body {
@@ -326,6 +404,7 @@ fn recorded(
     after: Option<&RoomAuthorityStamp>,
     page: &Page,
     projects: &board::ProjectPolicy,
+    selection: Selection,
 ) -> Result<Recorded, Failure> {
     let room = current_handle(read, anchor, projects)?;
     let cursor = read.cursor().map_err(store)?.ok_or_else(|| {
@@ -345,7 +424,11 @@ fn recorded(
             Seq::new(seq.get() - 1)
         }
     };
-    let population = read.room_publication_count(anchor, start).map_err(store)?;
+    let population = match selection {
+        Selection::Publications => read.room_publication_count(anchor, start),
+        Selection::Contributions => read.room_contribution_count(anchor, start),
+    }
+    .map_err(store)?;
     let retain = page.retain().min(population);
     let budget = journal::FactReadBudget::new(
         retain.clamp(1, journal::FactReadBudget::RETAINED.rows()),
@@ -355,9 +438,11 @@ fn recorded(
     let mut rows = Vec::with_capacity(retain);
     let mut next = start;
     while rows.len() < retain {
-        let fetched = read
-            .room_publications(anchor, next, budget)
-            .map_err(store)?;
+        let fetched = match selection {
+            Selection::Publications => read.room_publications(anchor, next, budget),
+            Selection::Contributions => read.room_contributions(anchor, next, budget),
+        }
+        .map_err(store)?;
         for envelope in fetched.rows.into_iter().take(retain - rows.len()) {
             rows.push(row(read, envelope)?);
         }
@@ -409,7 +494,7 @@ fn row(
         if let Some(published) = envelope.fact.read::<RoomPublished>() {
             (
                 published.publication,
-                Body::Published(published.content),
+                Record::Body(Body::Published(published.content)),
                 Vec::new(),
                 None,
             )
@@ -417,10 +502,10 @@ fn row(
             let conversed = messaged_conversation(read, envelope.seq, &messaged.hunk)?;
             (
                 messaged.publication,
-                Body::Messaged {
+                Record::Body(Body::Messaged {
                     hunk: messaged.hunk,
                     author: messaged.author,
-                },
+                }),
                 messaged.directed,
                 conversed,
             )
@@ -431,33 +516,46 @@ fn row(
                 .map(|(_, publication)| publication);
             (
                 posted.publication,
-                Body::Published(RoomPublicationContent::Authored { text: posted.text }),
+                Record::Body(Body::Published(RoomPublicationContent::Authored {
+                    text: posted.text,
+                })),
                 posted.directed,
                 conversed,
             )
         } else if let Some(started) = envelope.fact.read::<RoomCoordinationStarted>() {
             (
                 started.publication,
-                Body::Linked(RoomSource::Journal {
+                Record::Body(Body::Linked(RoomSource::Journal {
                     fact: SequenceCode::new(envelope.seq.get()),
-                }),
+                })),
                 Vec::new(),
                 None,
             )
         } else if let Some(shelved) = envelope.fact.read::<RoomPutAside>() {
             (
                 shelved.publication,
-                Body::Linked(RoomSource::Journal {
+                Record::Body(Body::Linked(RoomSource::Journal {
                     fact: SequenceCode::new(envelope.seq.get()),
-                }),
+                })),
                 Vec::new(),
                 None,
             )
         } else if let Some(left) = envelope.fact.read::<RoomLeft>() {
             (
                 left.publication,
-                Body::Left {
+                Record::Body(Body::Left {
                     clause: left.clause,
+                }),
+                Vec::new(),
+                None,
+            )
+        } else if let Some(contributed) = envelope.fact.read::<RoomContributed>() {
+            (
+                contributed.publication,
+                Record::Contributed {
+                    kind: contributed.contribution,
+                    text: contributed.text,
+                    sources: contributed.sources,
                 },
                 Vec::new(),
                 None,
@@ -529,9 +627,28 @@ fn receipt(read: &journal::JournalRead<'_>, directive: CanonicalUuid) -> Result<
 }
 
 impl Row {
-    /// This publication with its bytes read from their owning source.
-    fn project(self, tape: &Path) -> Publication {
-        let (content, author) = project_body(self.body, tape);
+    /// This publication with its bytes read from their owning source: a body
+    /// from the tapes under `tape`, a contribution's citations through
+    /// `sources`.
+    fn project(self, tape: &Path, sources: &mut RoomSources<'_>) -> Publication {
+        let (content, author) = match self.body {
+            Record::Body(body) => project_body(body, tape),
+            Record::Contributed {
+                kind,
+                text,
+                sources: cited,
+            } => (
+                Content::Contribution {
+                    kind,
+                    text,
+                    sources: cited
+                        .into_iter()
+                        .map(|source| sources.view(source, self.seq))
+                        .collect(),
+                },
+                None,
+            ),
+        };
         Publication {
             publication: self.publication,
             seq: self.seq,
@@ -706,10 +823,13 @@ pub(crate) fn conversation_text(
         Some(Content::Text { text }) => Text::Text { text },
         Some(Content::Linked { source }) => Text::Linked { source },
         Some(Content::Unavailable { unavailable, .. }) => Text::Unavailable { unavailable },
-        // A conversation body is authored or linked, never a grooming or leave.
-        Some(Content::OopsGroomed { .. } | Content::Left { .. }) => Text::Unavailable {
-            unavailable: RoomSourceUnavailable::Unreadable {},
-        },
+        // A conversation body is authored or linked, never a grooming, leave,
+        // or contribution.
+        Some(Content::OopsGroomed { .. } | Content::Left { .. } | Content::Contribution { .. }) => {
+            Text::Unavailable {
+                unavailable: RoomSourceUnavailable::Unreadable {},
+            }
+        }
     };
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(cursor),
@@ -726,10 +846,21 @@ pub(crate) fn conversation_text(
 impl fmt::Display for RoomHistory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Shown { room, anchor, page } => {
+            Self::Shown {
+                room,
+                anchor,
+                page,
+                contributions,
+            } => {
                 write!(formatter, "room {room} anchor {anchor}")?;
                 for publication in &page.rows {
                     write!(formatter, "\n{publication}")?;
+                }
+                for group in contributions {
+                    write!(formatter, "\n{}:", group.kind)?;
+                    for publication in &group.publications {
+                        write!(formatter, " {publication}")?;
+                    }
                 }
                 match &page.omission {
                     Some(omission) => write!(formatter, "\n{omission}"),
@@ -777,6 +908,33 @@ fn write_content(formatter: &mut fmt::Formatter<'_>, content: &Content) -> fmt::
         }
         Content::Linked { source } => write!(formatter, "\n  linked {}", Source(source)),
         Content::Left { clause } => write!(formatter, "\n  left the room: {clause}"),
+        Content::Contribution {
+            kind,
+            text,
+            sources,
+        } => {
+            write!(formatter, "\n  {kind}")?;
+            for line in text.lines() {
+                write!(formatter, "\n  | {line}")?;
+            }
+            for source in sources {
+                match source {
+                    RoomSourceView::Available { source } => {
+                        write!(formatter, "\n  cites {}", Source(source))?;
+                    }
+                    RoomSourceView::Unavailable {
+                        source,
+                        unavailable,
+                    } => write!(
+                        formatter,
+                        "\n  cites {} unavailable: {}",
+                        Source(source),
+                        Unavailable(unavailable)
+                    )?,
+                }
+            }
+            Ok(())
+        }
         Content::OopsGroomed { grooming } => {
             write!(
                 formatter,
