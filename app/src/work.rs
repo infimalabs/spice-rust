@@ -7,9 +7,11 @@
 
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod lens;
+mod operator;
 mod overview;
 mod relationship;
 mod wall;
+pub use operator::{OperatorQueue, OperatorWait};
 pub use overview::{
     TaskOverviewContext, TaskOverviewEdge, TaskOverviewGraph, TaskOverviewNode,
     TaskOverviewNodeKind, TaskOverviewSelection,
@@ -20,7 +22,7 @@ pub use relationship::{
     WorkRelationshipKind, WorkRelationshipNode, WorkRelationshipOptions,
     WorkRelationshipOriginNode, WorkRelationshipTaskNode,
 };
-pub use wall::{DependencyWall, DependencyWalls};
+pub use wall::DependencyWall;
 #[cfg(test)]
 mod team_scope_tests;
 

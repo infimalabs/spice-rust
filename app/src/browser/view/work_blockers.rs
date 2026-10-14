@@ -1,29 +1,18 @@
-//! Stable task-overview home for walls only the operator can move.
+//! Task-overview home for every task only the operator can move, across the
+//! whole board, with a control that steps to the next one.
 
 use super::*;
 use crate::composer_markdown::inline::LineControls;
 use crate::runtime::BlockerActionState;
 use crate::work::{
-    DependencyWall, DependencyWalls, TaskOverviewSelection, WorkProjection, WorkTask,
+    DependencyWall, OperatorQueue, OperatorWait, TaskOverviewSelection, WorkProjection,
 };
 
-/// One selected task held by operator-only walls. Dependencies on work an
-/// agent can claim or is working are ordinary waits and never appear.
-struct WalledTask<'view, 'board> {
-    task: &'view WorkTask<'board>,
-    requirements: Vec<&'board wire::EnvironmentRequirement>,
-    dependencies: Vec<(&'board TaskStamp, DependencyWall<'board>)>,
-}
-
-impl WalledTask<'_, '_> {
-    fn count(&self) -> usize {
-        self.requirements.len() + self.dependencies.len()
-    }
-}
-
 pub(super) struct BlockerPresentation<'view, 'board> {
-    tasks: Vec<WalledTask<'view, 'board>>,
-    count: usize,
+    work: &'view WorkProjection<'board>,
+    queue: OperatorQueue<'board>,
+    /// The waiting task the next control opens.
+    next: Option<&'board TaskStamp>,
     selection: &'view TaskOverviewSelection,
 }
 
@@ -31,76 +20,61 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
     pub(super) fn new(
         work: &'view WorkProjection<'board>,
         selection: &'view TaskOverviewSelection,
-        runtime: Option<&'view AppRuntime>,
     ) -> Self {
-        let board = runtime.and_then(AppRuntime::board);
-        let mut walls = DependencyWalls::new(work);
-        let tasks = work
-            .tasks()
-            .iter()
-            .enumerate()
-            .filter(|(_, task)| selection.tasks().contains(&task.row().statement.body.born))
-            .map(|(index, task)| WalledTask {
-                task,
-                requirements: task
-                    .row()
-                    .statement
-                    .body
-                    .requirements
-                    .as_slice()
-                    .iter()
-                    .filter(|requirement| requirement_blocked(board, requirement))
-                    .collect(),
-                dependencies: task
-                    .dependencies()
-                    .iter()
-                    .filter_map(|dependency| {
-                        walls
-                            .wall(index, dependency)
-                            .map(|wall| (dependency.born(), wall))
-                    })
-                    .collect(),
-            })
-            .filter(|task| task.count() > 0)
-            .collect::<Vec<_>>();
-        let count = tasks.iter().map(WalledTask::count).sum();
+        let queue = OperatorQueue::new(work);
+        // The next control opens one task, so a one-task overview is the
+        // queue position it steps from.
+        let current = match selection.tasks() {
+            [only] => work
+                .tasks()
+                .iter()
+                .position(|task| task.row().statement.body.born == *only),
+            _ => None,
+        };
+        let next = queue
+            .next_after(current)
+            .map(|index| &work.tasks()[index].row().statement.body.born);
         Self {
-            tasks,
-            count,
+            work,
+            queue,
+            next,
             selection,
         }
     }
 
-    pub(super) fn render_rail(&self, review: &UseStateHandle<bool>, launcher: &NodeRef) -> Html {
-        let active = self.count > 0;
+    pub(super) fn render_rail(
+        &self,
+        review: &UseStateHandle<bool>,
+        launcher: &NodeRef,
+        navigate: &Callback<navigation::Intent>,
+    ) -> Html {
+        let count = self.queue.len();
+        let active = count > 0;
         let summary = if active {
             format!(
-                "{} {} across {} selected {} need attention.",
-                self.count,
-                if self.count == 1 {
-                    "blocker"
+                "{count} {} on you.",
+                if count == 1 {
+                    "task waits"
                 } else {
-                    "blockers"
-                },
-                self.tasks.len(),
-                if self.tasks.len() == 1 {
-                    "task"
-                } else {
-                    "tasks"
-                },
+                    "tasks wait"
+                }
             )
         } else {
-            "Nothing in this selection waits on you.".to_owned()
+            "Nothing waits on you.".to_owned()
         };
         let open = {
             let review = review.clone();
             Callback::from(move |_| review.set(true))
         };
+        let next = self.next.cloned().map(|task| {
+            let navigate = navigate.clone();
+            Callback::from(move |_| navigate.emit(navigation::Intent::Task(task.clone())))
+        });
         html! {
             <section
                 class={classes!("work-blocker-rail", active.then_some("active"))}
-                data-blocker-count={self.count.to_string()}
-                aria-label="Selection blockers"
+                data-blocker-count={count.to_string()}
+                aria-label="Tasks waiting on you"
             >
                 <span class="work-blocker-rail-mark" aria-hidden="true">
                     if active {
@@ -131,16 +105,25 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                     <strong>{if active { "Needs attention" } else { "Ready to proceed" }}</strong>
                     <span>{summary}</span>
                 </span>
-                <button
-                    ref={launcher.clone()}
-                    type="button"
-                    class="app-compact-control work-blocker-review-open"
-                    disabled={!active}
-                    aria-haspopup="dialog"
-                    onclick={open}
-                >
-                    {if active { "Review blockers" } else { "No blockers" }}
-                </button>
+                <span class="work-blocker-rail-actions">
+                    <button
+                        ref={launcher.clone()}
+                        type="button"
+                        class="app-compact-control work-blocker-review-open"
+                        disabled={!active}
+                        aria-haspopup="dialog"
+                        onclick={open}
+                    >
+                        {if active { "Review" } else { "Nothing to review" }}
+                    </button>
+                    <button
+                        type="button"
+                        class="app-compact-control work-blocker-next"
+                        disabled={next.is_none()}
+                        title="Open the next task waiting on you"
+                        onclick={next.unwrap_or_default()}
+                    >{"Next"}</button>
+                </span>
             </section>
         }
     }
@@ -150,6 +133,7 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
         runtime: Option<&AppRuntime>,
         review: &UseStateHandle<bool>,
         close_ref: &NodeRef,
+        navigate: &Callback<navigation::Intent>,
         can_grant: bool,
         grant: &Callback<task_detail::TrustGrantRequest>,
     ) -> Html {
@@ -175,6 +159,15 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                 });
             })
         };
+        // Opening a waiting task leaves the review for that task's overview.
+        let open = {
+            let review = review.clone();
+            let navigate = navigate.clone();
+            Callback::from(move |task: TaskStamp| {
+                review.set(false);
+                navigate.emit(navigation::Intent::Task(task));
+            })
+        };
         let resolves = |task: &wire::TaskHandle| {
             task.born()
                 .is_ok_and(|stamp| self.selection.tasks().contains(&stamp))
@@ -182,19 +175,21 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
         let controls = LineControls::Live {
             resolves: &resolves,
         };
+        let count = self.queue.len();
+        let board = runtime.and_then(AppRuntime::board);
         html! {
             <section
                 class="work-blocker-review app-sheet-overlay"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="work-blocker-review-title"
-                data-blocker-count={self.count.to_string()}
+                data-blocker-count={count.to_string()}
             >
                 <header class="app-sheet-header">
                     <div>
                         <p class="app-sheet-kicker">{"Needs attention"}</p>
                         <h2 id="work-blocker-review-title">
-                            {format!("{} selection {}", self.count, if self.count == 1 { "blocker" } else { "blockers" })}
+                            {format!("{count} {} on you", if count == 1 { "task waits" } else { "tasks wait" })}
                         </h2>
                     </div>
                     <button
@@ -210,11 +205,75 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                     onkeydown={task_detail::task_text_chip_keydown(&focus)}
                 >
                     <p class="work-blocker-review-intro">
-                        {"Only walls you must move appear here. Work waiting on tasks an agent can claim or is working proceeds on its own."}
+                        {"Every task only you can move appears here once, across the whole board. Work waiting on tasks an agent can claim or is working proceeds on its own."}
                     </p>
-                    {for self.tasks.iter().map(|task| render_task(task, &controls, runtime, can_grant, grant))}
+                    {for self.queue.waits().iter().map(|wait| {
+                        self.render_wait(wait, &controls, board, runtime, &open, can_grant, grant)
+                    })}
                 </div>
             </section>
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_wait(
+        &self,
+        wait: &OperatorWait<'board>,
+        controls: &LineControls<'_>,
+        board: Option<&crate::runtime::BoardView>,
+        runtime: Option<&AppRuntime>,
+        open: &Callback<TaskStamp>,
+        can_grant: bool,
+        grant: &Callback<task_detail::TrustGrantRequest>,
+    ) -> Html {
+        let tasks = self.work.tasks();
+        let row = tasks[wait.task()].row();
+        let statement = &row.statement.body;
+        let requirements = wait.environment().then(|| {
+            statement
+                .requirements
+                .as_slice()
+                .iter()
+                .filter(|requirement| requirement_blocked(board, requirement))
+        });
+        let holds = wait
+            .holds()
+            .iter()
+            .map(|&index| tasks[index].row().statement.body.handle.to_string())
+            .collect::<Vec<_>>();
+        let open = {
+            let open = open.clone();
+            let task = statement.born.clone();
+            Callback::from(move |_: MouseEvent| open.emit(task.clone()))
+        };
+        html! {
+            <article class="work-blocker-task" data-task-stamp={statement.born.to_string()}>
+                <header>
+                    <p class="app-sheet-kicker">{"Waiting on you"}</p>
+                    <h3>{task_detail::render_task_title(&row.presentation_title, controls)}</h3>
+                    <code>{statement.handle.to_string()}</code>
+                    <button
+                        type="button"
+                        class="app-compact-control work-blocker-task-open"
+                        onclick={open}
+                    >{"Open task"}</button>
+                </header>
+                <div class="work-blocker-list">
+                    {for requirements.into_iter().flatten()
+                        .map(|requirement| render_requirement(statement, requirement, runtime, can_grant, grant))}
+                    if wait.selection() {
+                        {render_wall(DependencyWall::Selection(&statement.born))}
+                    }
+                    if let Some(wall) = wait.wall() {
+                        {render_wall(wall)}
+                    }
+                </div>
+                if !holds.is_empty() {
+                    <p class="work-blocker-holds">
+                        {format!("Holds back {} {}: {}", holds.len(), if holds.len() == 1 { "task" } else { "tasks" }, holds.join(", "))}
+                    </p>
+                }
+            </article>
         }
     }
 }
@@ -226,101 +285,45 @@ fn requirement_blocked(
     board.is_none_or(|board| !board.requirement_satisfied(requirement))
 }
 
-fn render_task(
-    walled: &WalledTask<'_, '_>,
-    controls: &LineControls<'_>,
-    runtime: Option<&AppRuntime>,
-    can_grant: bool,
-    grant: &Callback<task_detail::TrustGrantRequest>,
-) -> Html {
-    let row = walled.task.row();
-    let statement = &row.statement.body;
-    html! {
-        <article class="work-blocker-task" data-task-stamp={statement.born.to_string()}>
-            <header>
-                <p class="app-sheet-kicker">{"Blocked task"}</p>
-                <h3>{task_detail::render_task_title(&row.presentation_title, controls)}</h3>
-                <code>{statement.handle.to_string()}</code>
-            </header>
-            <div class="work-blocker-list">
-                {for walled.requirements.iter()
-                    .map(|requirement| render_requirement(statement, requirement, runtime, can_grant, grant))}
-                {for walled.dependencies.iter().map(|(dependency, wall)| render_dependency(dependency, *wall))}
-            </div>
-        </article>
-    }
-}
-
-/// Name the task where the chain stops and why only the operator can move it.
-fn render_dependency(dependency: &TaskStamp, wall: DependencyWall<'_>) -> Html {
-    let via = |task: &TaskStamp| {
-        if task == dependency {
-            format!("Task {task}")
-        } else {
-            format!("Task {dependency} waits on task {task}, which")
-        }
-    };
+/// Say why a waiting task stands still and why only the operator can move it.
+/// Its environment is explained by its requirement cards instead.
+fn render_wall(wall: DependencyWall<'_>) -> Html {
     let (kind, title, reason, state) = match wall {
-        DependencyWall::Deferred(task) => (
+        DependencyWall::Environment(_) => return Html::default(),
+        DependencyWall::Deferred(_) => (
             "deferred",
-            "Deferred prerequisite",
-            format!(
-                "{} is deferred; no agent is offered it until it is woken.",
-                via(task)
-            ),
+            "Deferred",
+            "No agent is offered it until it is woken.",
             "Deferred",
         ),
-        DependencyWall::Parked(task) => (
+        DependencyWall::Parked(_) => (
             "parked",
-            "Parked prerequisite",
-            format!(
-                "{} is unfiled OOPS or Draft work; no agent is offered it until it is filed.",
-                via(task)
-            ),
+            "Parked",
+            "It is unfiled OOPS or Draft work, or filed off the queue; no agent is offered it until it is filed.",
             "Parked",
         ),
-        DependencyWall::Cycle(task) => (
+        DependencyWall::Cycle(_) => (
             "cycle",
             "Dependency cycle",
-            format!(
-                "Task {dependency} leads back to task {task}; no agent can finish the chain until its dependencies change."
-            ),
+            "Its dependencies lead back to itself; no agent can finish the chain until they change.",
             "Cycle",
         ),
-        DependencyWall::Unreachable(task) => (
+        DependencyWall::Unreachable(_) => (
             "unreachable",
-            "Prerequisite cannot complete",
-            format!(
-                "{} was closed without completing, so the dependency must change.",
-                via(task)
-            ),
+            "Closed without completing",
+            "It can never complete, so each dependency on it must change.",
             "Unreachable",
         ),
-        DependencyWall::Environment(task) => (
-            "environment",
-            "Prerequisite needs the operator",
-            format!(
-                "{} needs a trust grant or upgrade only the operator can provide.",
-                via(task)
-            ),
-            "Operator required",
-        ),
-        DependencyWall::Selection(task) => (
+        DependencyWall::Selection(_) => (
             "selection",
-            "Prerequisite awaits selection",
-            format!(
-                "{} is a Design awaiting the operator's exact selection of its outputs, or the closure of each unselected one.",
-                via(task)
-            ),
+            "Awaiting your selection",
+            "This Design's retained candidate waits for your exact selection of its outputs, or the closure of each unselected one. Decide it in the Design's room.",
             "Operator required",
         ),
-        DependencyWall::Passive(task) => (
+        DependencyWall::Passive(_) => (
             "passive",
-            "Prerequisite is a passive Design",
-            format!(
-                "{} is a Design outside every working group; no lane can acquire it until the operator moves it into one.",
-                via(task)
-            ),
+            "Passive Design",
+            "It stands outside every working group; no lane can acquire it until you move it into one.",
             "Operator required",
         ),
     };
