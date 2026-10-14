@@ -74,7 +74,10 @@ and dependencies answer who, what, where, when, and why from live operational
 state. Evidence, blockers, relationships, provenance, activity, and notes
 appear together rather than behind tabs or pagination. Activating a selected
 graph node scrolls and focuses its detail section; activating a related
-external task follows that lead in the same overview. A selection of any size
+external task follows that lead in the same overview. Each detail's Activity
+section seats its observation composer directly above the newest-first
+observations, so a submitted observation appears right beneath the draft that
+wrote it. A selection of any size
 hydrates every section: the app keeps a bounded number of detail reads in
 flight beside its other reads and actions, asks for the rest as those answer,
 and reads a task again after a change or reconnect only while it is selected.
