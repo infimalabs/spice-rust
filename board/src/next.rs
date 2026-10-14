@@ -148,13 +148,31 @@ impl SelectionIndex {
 /// Design.
 const GATHER_PHASE: &str = "gather";
 
-/// Whether a task with `intent` and `flow` is a gather task: no declared
-/// intent and the one `gather` phase. It holds no commit authority, lands
-/// nothing, and is never a preparation output awaiting selection; any other
-/// route under a Design is an ordinary output.
+/// Marks a plan phase the board inserted at the head of a flow to hold a task
+/// for taste review, as opposed to one the author's route named. Only a marked
+/// phase leaves with its hold.
+pub const TASTE_PLAN_TAG: &str = "taste-review:plan-prepended";
+
+/// Whether an authored route with `intent` and `flow` is a gather route: no
+/// declared intent and the one `gather` phase. It holds no commit authority,
+/// lands nothing, and is never a preparation output awaiting selection; any
+/// other route under a Design is an ordinary output.
 #[must_use]
-pub fn gather_task(intent: Option<TaskIntent>, flow: &[wire::Phase]) -> bool {
+pub fn gather_route(intent: Option<TaskIntent>, flow: &[wire::Phase]) -> bool {
     intent.is_none() && matches!(flow, [phase] if phase.as_str() == GATHER_PHASE)
+}
+
+/// Whether a task is a gather task: its authored route, read past a plan
+/// phase a taste hold inserted, is a gather route. A hold therefore never
+/// changes what a task is, only which phase it waits in.
+#[must_use]
+pub fn gather_task(statement: &wire::TaskHead, workflow: &wire::WorkflowHead) -> bool {
+    let held = statement.tags.iter().any(|tag| tag == TASTE_PLAN_TAG);
+    let route = match workflow.flow.as_slice() {
+        [first, authored @ ..] if held && first.as_str() == "plan" => authored,
+        authored => authored,
+    };
+    gather_route(statement.intent, route)
 }
 
 /// The preparation whose selection one live output still lacks: an output its
@@ -173,7 +191,7 @@ pub fn unselected_output_of<'a>(
         && workflow.completion.is_none()
         && statement.authorization.is_none()
         && preparation.construction == statement.born
-        && !gather_task(statement.intent, &workflow.flow))
+        && !gather_task(statement, workflow))
     .then_some(&preparation.parent)
 }
 
@@ -860,7 +878,7 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
         .all(|dependency| completed.settled(dependency))
         && control_satisfied(
             entry.statement(),
-            gather_task(entry.statement().intent, &entry.workflow().flow),
+            gather_task(entry.statement(), entry.workflow()),
             completed,
         )
 }

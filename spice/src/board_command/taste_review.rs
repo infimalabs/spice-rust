@@ -1,12 +1,10 @@
 use std::collections::BTreeSet;
 
+use board::TASTE_PLAN_TAG;
+
 use super::*;
 
 pub(super) const TASTE_REVIEW_TAG: &str = "taste-review:required";
-
-/// Marks a plan phase the board inserted for a taste hold, as opposed to one
-/// the author's flow named. Only a marked phase leaves with its hold.
-pub(super) const TASTE_PLAN_TAG: &str = "taste-review:plan-prepended";
 
 /// Statement tags the board owns; authors never write or see them.
 pub(super) const SYSTEM_TAGS: [&str; 2] = [TASTE_REVIEW_TAG, TASTE_PLAN_TAG];

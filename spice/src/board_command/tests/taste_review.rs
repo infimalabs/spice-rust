@@ -1,6 +1,6 @@
 use super::*;
 
-fn configured_repository(root: &Path, words: &[&str]) -> Repository {
+pub(super) fn configured_repository(root: &Path, words: &[&str]) -> Repository {
     fs::create_dir_all(root.join(".git")).expect("taste-review fixture is a repository");
     let words = words
         .iter()
@@ -17,7 +17,7 @@ fn configured_repository(root: &Path, words: &[&str]) -> Repository {
     Repository::discover(root).expect("taste-review repository resolves")
 }
 
-fn issue_repository<B: Serialize>(
+pub(super) fn issue_repository<B: Serialize>(
     bus: &Bus,
     repository: &Repository,
     epoch: CanonicalUuid,
@@ -78,7 +78,7 @@ fn add_with_repository(
     (handle, outcome)
 }
 
-fn modify_with_repository(
+pub(super) fn modify_with_repository(
     bus: &Bus,
     repository: &Repository,
     epoch: CanonicalUuid,

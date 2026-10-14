@@ -79,10 +79,7 @@ fn require_design(
     design_controller(task_heads(&snapshot, controller)?, controller)?;
     for output in outputs {
         if let Some(heads) = snapshot.task_heads(output)
-            && board::gather_task(
-                heads.statement().body().intent,
-                &heads.workflow().body().flow,
-            )
+            && board::gather_task(heads.statement().body(), heads.workflow().body())
         {
             return Err(refusal(
                 "preparation::gather-output",
@@ -532,10 +529,7 @@ fn output_is_authorizable(
         && heads.workflow().body().completion.is_none()
         && !active_claim(heads)
         && heads.statement().body().authorization.is_none()
-        && !board::gather_task(
-            heads.statement().body().intent,
-            &heads.workflow().body().flow,
-        )
+        && !board::gather_task(heads.statement().body(), heads.workflow().body())
         && heads.statement().body().engagement.is_none()
         && heads
             .statement()
