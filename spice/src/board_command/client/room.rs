@@ -12,6 +12,7 @@ pub(super) fn dispatch_room_client(
         ["room", "start" | "resume"] => client_room_coordinate(repository, contract, matches),
         ["room", "put-aside"] => client_room_put_aside(repository, contract, matches),
         ["room", "leave"] => client_room_leave(repository, contract, matches),
+        ["room", "contribute"] => client_room_contribute(repository, contract, matches),
         ["room", "ack" | "nak" | "answer" | "recover" | "assess"] => {
             client_room_control(repository, contract, matches)
         }
@@ -224,6 +225,55 @@ pub(super) fn client_room_put_aside(
             ],
             serde_json::to_value(wire::intent::RoomPutAside { room })
                 .expect("typed room put-aside encodes"),
+        ))
+    })
+}
+
+/// Contribute one typed record to an open Design's room as the connected
+/// lane, witnessing the Design's statement and workflow as the board reads.
+fn client_room_contribute(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    mutate_task_from_board(repository, contract, matches, |_board, room, heads| {
+        let written = required(matches, "KIND");
+        let kind = written
+            .parse::<wire::rooms::RoomContributionKind>()
+            .map_err(|error| {
+                refusal(
+                    "room::contribution-kind-invalid",
+                    Some(written.clone()),
+                    &error.to_string(),
+                )
+            })?;
+        let sources = matches
+            .get_many::<String>("source")
+            .into_iter()
+            .flatten()
+            .map(|written| {
+                serde_json::from_str::<wire::rooms::RoomSource>(written).map_err(|error| {
+                    refusal(
+                        "room::contribution-source-invalid",
+                        Some(written.clone()),
+                        &format!(
+                            "spell each source as room-source JSON, such as \
+                             {{\"kind\":\"journal\",\"fact\":\"SEQ\"}}: {error}"
+                        ),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((
+            CommandKind::RoomContribute,
+            vec![statement_witness(heads), workflow_witness(heads)],
+            serde_json::to_value(wire::intent::RoomContribute {
+                room,
+                kind,
+                text: required(matches, "TEXT"),
+                sources,
+            })
+            .expect("typed room contribution encodes"),
         ))
     })
 }

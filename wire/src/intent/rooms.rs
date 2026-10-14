@@ -3,8 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::rooms::{
-    QuestionClosure, QuestionResultRef, RoomAuthorityStamp, RoomReceiptDisposition, RoomReceiptRef,
-    RoomRelevanceVerdict, RoomSource, RoomSourceUnavailable,
+    QuestionClosure, QuestionResultRef, RoomAuthorityStamp, RoomContributionKind,
+    RoomReceiptDisposition, RoomReceiptRef, RoomRelevanceVerdict, RoomSource,
+    RoomSourceUnavailable,
 };
 pub use crate::rooms::{WorkingGroupArrange, WorkingGroupMove};
 use crate::{OccupantAddress, SequenceCode, TaskHandle, TaskStamp};
@@ -88,6 +89,33 @@ pub enum RoomListeningDuty {
     Receipt { key: String },
     /// The lane owes the substantive result of a room ASK with this handle.
     Result { key: String },
+}
+
+/// One lane contributes a typed record to an open Design room.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomContribute {
+    /// Current rendered handle of the Design anchor.
+    pub room: TaskHandle,
+    /// What the contribution offers.
+    pub kind: RoomContributionKind,
+    /// The lane's complete contributed text.
+    pub text: String,
+    /// Exact transcript, journal, or retained-artifact sources it cites.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<RoomSource>,
+}
+
+/// The recorded contribution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomContributeAnswer {
+    /// Current rendered Design anchor handle.
+    pub room: TaskHandle,
+    /// Stable native identity of the recorded contribution.
+    pub publication: RoomAuthorityStamp,
+    /// What the contribution offers.
+    pub kind: RoomContributionKind,
 }
 
 /// Read one room's current coordination projection.

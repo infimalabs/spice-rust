@@ -193,6 +193,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::RoomCoordinate
         | CommandKind::RoomPutAside
         | CommandKind::RoomLeave
+        | CommandKind::RoomContribute
         | CommandKind::RoomControl
         | CommandKind::RoomClose
         | CommandKind::TaskAdd
@@ -409,6 +410,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["room", "resume"]
             | ["room", "put-aside"]
             | ["room", "leave"]
+            | ["room", "contribute"]
             | ["room", "inbox"]
             | ["room", "result"]
             | ["room", "ack"]

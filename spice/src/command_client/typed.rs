@@ -55,6 +55,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["room", "start" | "resume"] => CommandKind::RoomCoordinate,
         ["room", "put-aside"] => CommandKind::RoomPutAside,
         ["room", "leave"] => CommandKind::RoomLeave,
+        ["room", "contribute"] => CommandKind::RoomContribute,
         ["room", "ack" | "nak" | "answer" | "recover" | "assess"] => CommandKind::RoomControl,
         ["room", "decline" | "cancel"] => CommandKind::RoomClose,
         ["preparation", "retain"] => CommandKind::CandidateRetain,

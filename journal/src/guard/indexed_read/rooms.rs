@@ -401,7 +401,13 @@ impl JournalRead<'_> {
                     .read::<RoomMessaged>()
                     .map(|body| body.room)
             })
-            .or_else(|| publication.fact.read::<RoomLeft>().map(|body| body.room));
+            .or_else(|| publication.fact.read::<RoomLeft>().map(|body| body.room))
+            .or_else(|| {
+                publication
+                    .fact
+                    .read::<wire::rooms::RoomContributed>()
+                    .map(|body| body.room)
+            });
         if named.as_ref() != Some(room) {
             return Err(GuardError::Invalid(format!(
                 "room publication index for {room} names {named:?}"
@@ -883,6 +889,28 @@ impl JournalRead<'_> {
         after: Option<wire::Seq>,
         budget: FactReadBudget,
     ) -> Result<SelectedFactPage, GuardError> {
+        self.publication_page(room, after, budget, None)
+    }
+
+    /// One bounded page of a room's typed contributions strictly after
+    /// `after`, in journal order, through the current horizon.
+    pub fn room_contributions(
+        &self,
+        room: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+        budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
+        self.publication_page(room, after, budget, Some(wire::FactKind::RoomContributed))
+    }
+
+    /// [`Self::room_publications`] restricted to facts of kind `only`.
+    fn publication_page(
+        &self,
+        room: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+        budget: FactReadBudget,
+        only: Option<wire::FactKind>,
+    ) -> Result<SelectedFactPage, GuardError> {
         let Some(horizon) = self.cursor else {
             return Ok(SelectedFactPage {
                 rows: Vec::new(),
@@ -905,12 +933,19 @@ impl JournalRead<'_> {
                  FROM room_publications AS published \
                  JOIN fact_envelopes AS facts ON facts.seq = published.seq \
                  WHERE published.room = ?1 AND published.seq > ?2 AND published.seq <= ?3 \
+                 AND (?5 IS NULL OR facts.kind = ?5) \
                  ORDER BY published.seq LIMIT ?4",
             )
             .map_err(GuardError::Store)?;
         let probe = probe_limit(budget)?;
         let mut rows = statement
-            .query(params![room.as_str(), after, horizon_sql, probe])
+            .query(params![
+                room.as_str(),
+                after,
+                horizon_sql,
+                probe,
+                only.map(wire::FactKind::as_str)
+            ])
             .map_err(GuardError::Store)?;
         let mut facts: Vec<wire::Envelope<wire::AnyFact>> = Vec::new();
         let mut decoded = 0usize;
@@ -935,6 +970,7 @@ impl JournalRead<'_> {
                     | wire::FactKind::RoomCoordinationStarted
                     | wire::FactKind::RoomPutAside
                     | wire::FactKind::RoomLeft
+                    | wire::FactKind::RoomContributed
             ) {
                 return Err(GuardError::Invalid(format!(
                     "room publication index names {} fact {seq}",
@@ -1044,6 +1080,26 @@ impl JournalRead<'_> {
         room: &wire::TaskStamp,
         after: Option<wire::Seq>,
     ) -> Result<usize, GuardError> {
+        self.publication_count(room, after, None)
+    }
+
+    /// How many typed contributions `room` holds strictly after `after`,
+    /// through the current horizon.
+    pub fn room_contribution_count(
+        &self,
+        room: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+    ) -> Result<usize, GuardError> {
+        self.publication_count(room, after, Some(wire::FactKind::RoomContributed))
+    }
+
+    /// [`Self::room_publication_count`] restricted to facts of kind `only`.
+    fn publication_count(
+        &self,
+        room: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+        only: Option<wire::FactKind>,
+    ) -> Result<usize, GuardError> {
         let Some(horizon) = self.room_horizon()? else {
             return Ok(0);
         };
@@ -1056,9 +1112,16 @@ impl JournalRead<'_> {
         let count = self
             .connection
             .query_row(
-                "SELECT count(*) FROM room_publications \
-                 WHERE room = ?1 AND seq > ?2 AND seq <= ?3",
-                params![room.as_str(), after, horizon],
+                "SELECT count(*) FROM room_publications AS published \
+                 JOIN fact_envelopes AS facts ON facts.seq = published.seq \
+                 WHERE published.room = ?1 AND published.seq > ?2 AND published.seq <= ?3 \
+                 AND (?4 IS NULL OR facts.kind = ?4)",
+                params![
+                    room.as_str(),
+                    after,
+                    horizon,
+                    only.map(wire::FactKind::as_str)
+                ],
                 |row| row.get::<_, i64>(0),
             )
             .map_err(GuardError::Store)?;

@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use wire::rooms::{RoomAuthorityStamp, RoomLeft, RoomMessaged, RoomPublished};
+use wire::rooms::{RoomAuthorityStamp, RoomContributed, RoomLeft, RoomMessaged, RoomPublished};
 use wire::{Actor, CanonicalUuid, Instant, TaskStamp};
 
 pub mod awareness;
@@ -535,6 +535,7 @@ fn fold_publications(
     let mut seen = BTreeMap::<RoomAuthorityStamp, (CanonicalUuid, Instant)>::new();
     for envelope in publications {
         let left = envelope.fact.read::<RoomLeft>();
+        let contributed = envelope.fact.read::<RoomContributed>();
         let Some((anchor, publication)) = envelope
             .fact
             .read::<RoomPublished>()
@@ -547,6 +548,11 @@ fn fold_publications(
             })
             .or_else(|| {
                 left.as_ref()
+                    .map(|body| (body.room.clone(), body.publication.clone()))
+            })
+            .or_else(|| {
+                contributed
+                    .as_ref()
                     .map(|body| (body.room.clone(), body.publication.clone()))
             })
         else {
@@ -562,6 +568,11 @@ fn fold_publications(
         if left.as_ref().is_some_and(|body| body.lane != lane) {
             return Err(RoomProjectionError::InvalidAuthority(format!(
                 "leave {publication} names a lane other than its author {lane}"
+            )));
+        }
+        if contributed.as_ref().is_some_and(|body| body.lane != lane) {
+            return Err(RoomProjectionError::InvalidAuthority(format!(
+                "contribution {publication} names a lane other than its author {lane}"
             )));
         }
         if let Some((known_lane, known_at)) = seen.get(&publication) {

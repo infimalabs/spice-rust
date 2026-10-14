@@ -54,6 +54,8 @@ pub enum CommandKind {
     RoomPutAside,
     /// A lane stops listening to one anchor task's room.
     RoomLeave,
+    /// A lane records one typed problem-space contribution in an open Design.
+    RoomContribute,
     /// Operator ACK, NAK, answer, or recovery of its own room authority.
     RoomControl,
     /// Decline or cancel one pending question by its party or operator override.

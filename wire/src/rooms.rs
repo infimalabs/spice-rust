@@ -12,10 +12,12 @@ use std::str::FromStr;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+mod contribution;
 mod conversation;
 mod coordination;
 mod relevance;
 
+pub use contribution::*;
 pub use conversation::*;
 pub use coordination::*;
 pub use relevance::*;

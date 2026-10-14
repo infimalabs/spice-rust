@@ -877,6 +877,7 @@ fn review_clean(
 
 mod conclude;
 use conclude::{conclude, done_conclusion};
+mod contribution;
 
 #[test]
 fn working_group_moves_organize_designs_without_authorizing_outputs() {

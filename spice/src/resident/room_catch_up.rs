@@ -510,8 +510,14 @@ fn append_room(
         planning.at,
     )
     .map_err(unit_outcome)?;
-    let projections = crate::room_command::project_publications(bus, &paths.tape, publications)
-        .map_err(|detail| store_fault("room::catch-up-publication-unreadable", &detail))?;
+    let artifacts = paths.artifacts();
+    let owners = crate::room_command::SourceOwners {
+        tape: &paths.tape,
+        artifacts: &artifacts,
+    };
+    let projections =
+        crate::room_command::project_publications(bus, owners, &room, publications)
+            .map_err(|detail| store_fault("room::catch-up-publication-unreadable", &detail))?;
     for publication in projections {
         let seq = publication.seq();
         let display = publication.to_string();

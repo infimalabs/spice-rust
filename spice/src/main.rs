@@ -526,6 +526,7 @@ impl NativeInvocation<'_> {
             | ["room", "resume"]
             | ["room", "put-aside"]
             | ["room", "leave"]
+            | ["room", "contribute"]
             | ["room", "ack"]
             | ["room", "nak"]
             | ["room", "answer"]
