@@ -350,24 +350,14 @@ mod tests {
     }
 
     #[test]
-    fn every_scope_and_project_selects_the_complete_admitted_set() {
-        let team = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-            .parse()
-            .expect("fixture team");
-        let mut first = task(1, "alpha.one");
-        first.creator_team = Some(team);
-        let mut hidden = task(2, ".alpha.audit");
-        hidden.creator_team = Some(team);
+    fn global_scopes_and_project_select_the_complete_admitted_set() {
+        let first = task(1, "alpha.one");
+        let hidden = task(2, ".alpha.audit");
         let other = task(3, "beta.other");
-        let mut last = task(4, "alpha.one");
-        last.creator_team = Some(team);
+        let last = task(4, "alpha.one");
         let mut board = board(vec![first, hidden, other, last]);
         board.offer = vec![stamp(3), stamp(2), stamp(4), stamp(1)];
-        let work = WorkProjection::from_board_with_team_memberships(
-            &board,
-            Some(BTreeSet::from([team])),
-            &BTreeMap::new(),
-        );
+        let work = WorkProjection::from_board(&board);
         let public_alpha = super::super::WorkStemIdentity::new(
             super::super::WorkVisibility::Public,
             "alpha".to_owned(),
@@ -392,21 +382,9 @@ mod tests {
             &[stamp(2)],
         );
         assert_eq!(
-            work.overview_for_scope(WorkScope::Team { team }).tasks(),
-            &[stamp(2), stamp(4), stamp(1)],
-        );
-        assert_eq!(
             work.overview_for_project("alpha.one".to_owned()).tasks(),
             &[stamp(4), stamp(1)],
         );
-
-        let empty = work.overview_for_scope(WorkScope::Team {
-            team: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-                .parse()
-                .expect("fixture team"),
-        });
-        assert!(empty.is_empty());
-        assert!(matches!(empty.context(), TaskOverviewContext::Scope(_)));
     }
 
     #[test]

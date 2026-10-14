@@ -135,7 +135,11 @@ fn task_head_rows() -> Vec<StaleRow> {
                 "decision": {
                     "decision": {"controller": "1kKRRsDP", "decision": "1"},
                     "source": {"kind": "journal", "fact": "1"},
-                    "outcome": {"kind": "accepted", "candidate": candidate},
+                    "outcome": {
+                        "kind": "selected",
+                        "candidate": candidate,
+                        "selected_outputs": ["dVsYdDj7d"],
+                    },
                 },
             }),
             [false, false, false],
