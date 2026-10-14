@@ -98,6 +98,7 @@ fn declared_planning_defaults_give_each_purpose_its_flow() {
                 depends: Vec::new(),
                 intent: Some(wire::TaskIntent::Design),
                 claim: false,
+                draft: false,
             },
         );
         assert!(

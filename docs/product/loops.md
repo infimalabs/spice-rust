@@ -143,7 +143,8 @@ flowchart LR
   OOPS grooming. Default reads show it only to the operator and its origin
   thread, and complete operator reads retain it. Its author revises title,
   description, acceptance, intent, flow (`task modify --flow`), dependencies,
-  and project. It never allocates, claims, captures, completes, defers,
+  and project; an edit that would leave a Design any route but its one `design`
+  phase refuses. It never allocates, claims, captures, completes, defers,
   satisfies another task's dependency, or enters team strips and execution
   summaries.
   An operator Draft records `operator:draft` provenance when no `--origin` is
