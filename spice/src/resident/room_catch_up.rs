@@ -249,6 +249,9 @@ impl Planning {
                     heads.lease().map(|head| head.body().clone()),
                     &config.projects,
                 )
+                .map(|entry| {
+                    entry.with_grouped(snapshot.facts().grouped(&heads.statement().body().born))
+                })
                 .map_err(|error| store_fault("room::catch-up-task-invalid", &error.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()?;
