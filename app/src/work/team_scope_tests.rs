@@ -164,6 +164,9 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
     let mut design = task(1, "rooms.design");
     design.creator_team = Some(creator);
     design.statement.body.intent = Some(wire::TaskIntent::Design);
+    let mut design_claim = claim(&design, ClaimDisposition::Active);
+    design_claim.body.lane = member;
+    design.claim = Some(design_claim);
 
     let mut direct_output = task(2, "plan.candidate");
     direct_output.creator_team = Some(creator);
@@ -211,19 +214,23 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
         BTreeSet::from([stamp(4), stamp(5)]),
         "a Plan-controlled task stays execution work and no Design-owned row is duplicated",
     );
-    assert!(
-        borns(&WorkScope::Team { team: executor }).is_empty(),
-        "accountable ownership alone does not dock inactive execution work",
+    let team = WorkScope::Team { team: executor };
+    let strip = projection
+        .scope_strip(&team)
+        .into_iter()
+        .map(|task| task.row().statement.body.born.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        strip,
+        projection.scope_tasks(&team),
+        "a team total selects exactly the tabs its strip shows",
     );
     assert_eq!(
-        projection
-            .team_strip(executor)
-            .into_iter()
-            .map(|task| task.row().statement.body.born.clone())
-            .collect::<Vec<_>>(),
-        [stamp(2)],
-        "the claimant's team rail presents Design-owned work without moving its overview scope",
+        borns(&team),
+        BTreeSet::from([stamp(1), stamp(2)]),
+        "a team holds the Design work its member claims, and accountable ownership alone docks nothing",
     );
+    assert_eq!(projection.scope_counts(&team).open(), strip.len());
     assert_eq!(
         projection.tasks()[1].accountable_owner(),
         Some(&WorkOwner::Design(design_born)),

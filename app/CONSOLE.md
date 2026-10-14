@@ -341,25 +341,26 @@ total opens all current Design-owned work: each Design root and each open task
 directly controlled by a Design. Global membership is the stable namespace;
 active local docking does not remove a task from its global strip. A team total
 opens the overview with exactly the tasks its members are currently working,
-without changing task authority or accountable ownership. Totals keep one
-footprint for every count. Tabs past a total scroll horizontally under edge
-fades and never enter the status row.
+Design work included, without changing task authority or accountable ownership.
+Totals keep one footprint for every count. Tabs past a total scroll
+horizontally under edge fades and never enter the status row.
 
 A team-local task tab appears only while one of that team's lanes actively
-claims it, and wears that lane's accent. A group-local tab appears only while
-its associated Design work has an active claimant, and wears the accent of the
-Design it serves. An accented tab's text is always accent-tinted and its
-background carries a 5% accent tint, 10% on hover. Every horn tab's rails,
-global or local, keep the neutral line color and undim one neutral step on
-hover; no accent paints them. Totals stay neutral, and global strips own their
-other interaction feedback independently. Every count badge is one neutral
-open-task total; see
+claims it, Design work included, and wears that lane's accent. A group-local
+tab appears only while a lane actively claims work associated with one of the
+group's Designs, names that lane, and wears its accent. An accented tab's text
+is always accent-tinted and its background carries a 5% accent tint, 10% on
+hover. Every horn tab's rails, global or local, keep the neutral line color and
+undim one neutral step on hover; no accent paints them. Totals stay neutral, and
+global strips own their other interaction feedback independently. Every count
+badge is one neutral open-task total; see
 [Task counts show one open total](../docs/product/loops.md#the-jitter-contract).
 
 Each global stem tab opens its complete visibility-qualified stem within its
-own partition. A local strip has no stem roll-ups: past its total, each actively
-worked task is its own tab in the projection's deterministic order. Each tab
-opens its exact task, and the local total selects exactly the tabs beside it.
+own partition. A local strip has no stem roll-ups: past its total, a team strip
+gives each actively worked task its own tab in the projection's deterministic
+order, and each opens its exact task. A group strip gives each working lane one
+tab instead. The local total selects exactly the work its tabs stand for.
 Starting, moving, releasing, lapsing, or completing a claim updates local
 docking; it does not change the task's global namespace. Closing any overview
 returns focus to the control that opened it.
@@ -396,8 +397,8 @@ element to a design-side analog:
 | Team toolbar | Group toolbar |
 | --- | --- |
 | Team total: opens the overview with exactly the tasks its members are actively working | Group total: opens the overview with exactly the actively claimed work associated with the group's designs |
-| One tab per actively worked team task | One tab per actively worked task associated with the group's designs |
-| A task handle carries the accent of the lane working it | A task handle carries the accent of the design it serves |
+| One tab per task a member actively claims, including Design work | One tab per lane actively claiming work associated with the group's designs, never a task handle |
+| A task handle carries the accent of the lane working it | A lane tab carries that lane's canonical accent and opens its Chat composer when the lane holds a Chat seat |
 | Presence pips: one per member, by state | Design lights: one per design in its accent, distinguishing open passive, open active, claimed, holding unauthorized outputs, concluded done, concluded collapsed, and deleted, with an accessible label naming the standing; a design whose board row is unavailable invents no standing |
 | Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest room publication or coordination event across the group's designs, with the same age, prefix, accessible label, and live region; its accent and status are the design it landed in |
 

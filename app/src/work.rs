@@ -649,6 +649,10 @@ impl<'a> WorkProjection<'a> {
     }
 
     /// Whether one task belongs to the selected overview scope.
+    ///
+    /// A team holds exactly what its member lanes actively claim, whatever the
+    /// task's accountable owner, so a member-claimed Design shows in both its
+    /// team and Planning while staying out of All open and its stem.
     #[must_use]
     pub fn in_scope(&self, task: &WorkTask<'_>, scope: &WorkScope) -> bool {
         match scope {
@@ -662,9 +666,9 @@ impl<'a> WorkProjection<'a> {
                         .as_ref()
                         .is_none_or(|stem| self.task_stem(task) == stem)
             }
-            WorkScope::Team { team } => {
-                task.working_claimant().is_some() && task.belongs_to_team(*team)
-            }
+            WorkScope::Team { team } => task
+                .working_lane()
+                .is_some_and(|lane| self.member_teams.get(&lane) == Some(team)),
             WorkScope::Group { designs, .. } => {
                 let statement = &task.row.statement.body;
                 task.working_claimant().is_some()
@@ -702,25 +706,6 @@ impl<'a> WorkProjection<'a> {
             );
         }
         strip
-    }
-
-    /// Active task tabs shown on one team's rail.
-    ///
-    /// Presentation follows the claim-bound member rather than accountable
-    /// ownership, so a team still shows a Design or directly controlled Plan
-    /// while one of its members works it. Overview scope partitioning remains
-    /// unchanged.
-    #[must_use]
-    pub fn team_strip<'p>(&'p self, team: wire::CanonicalUuid) -> Vec<&'p WorkTask<'a>> {
-        self.offered
-            .iter()
-            .map(|&index| &self.tasks[index])
-            .filter(|task| {
-                task.working_lane()
-                    .and_then(|lane| self.member_teams.get(&lane))
-                    == Some(&team)
-            })
-            .collect()
     }
 
     /// One tab per lane actively working inside a group scope.
