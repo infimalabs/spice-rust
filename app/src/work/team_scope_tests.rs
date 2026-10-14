@@ -45,7 +45,7 @@ fn team_scope_docks_only_active_member_work_without_changing_ownership() {
     let projection = WorkProjection::from_board_with_team_memberships(
         &board,
         Some(BTreeSet::from([team, other_team])),
-        &BTreeMap::from([(member, team), (other_member, other_team)]),
+        BTreeMap::from([(member, team), (other_member, other_team)]),
     );
     assert_eq!(
         projection.scope_tasks(&scope),
@@ -121,7 +121,7 @@ fn task_home_is_the_active_claimant_team_then_creator_then_last_claimant() {
     let projection = WorkProjection::from_board_with_team_memberships(
         &board,
         Some(BTreeSet::from([team, other_team])),
-        &BTreeMap::from([(member, team), (other_member, other_team)]),
+        BTreeMap::from([(member, team), (other_member, other_team)]),
     );
     let homes = projection
         .tasks()
@@ -192,7 +192,7 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
     let projection = WorkProjection::from_board_with_team_memberships(
         &board,
         Some(BTreeSet::from([creator, executor])),
-        &BTreeMap::from([(member, executor)]),
+        BTreeMap::from([(member, executor)]),
     );
     let borns = |scope: &WorkScope| {
         projection
@@ -216,6 +216,15 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
         "accountable ownership alone does not dock inactive execution work",
     );
     assert_eq!(
+        projection
+            .team_strip(executor)
+            .into_iter()
+            .map(|task| task.row().statement.body.born.clone())
+            .collect::<Vec<_>>(),
+        [stamp(2)],
+        "the claimant's team rail presents Design-owned work without moving its overview scope",
+    );
+    assert_eq!(
         projection.tasks()[1].accountable_owner(),
         Some(&WorkOwner::Design(design_born)),
     );
@@ -230,6 +239,7 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
 #[test]
 fn group_scope_docks_only_active_work_associated_with_its_designs() {
     let design = stamp(1);
+    let second_lane = uuid("22222222-2222-4222-8222-222222222222");
     let group = "dVxJ7j0vj"
         .parse::<wire::rooms::RoomAuthorityStamp>()
         .expect("fixture group");
@@ -248,6 +258,12 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
     let mut active_output = task(2, "rooms.active");
     active_output.statement.body.preparation = Some(preparation());
     activate(&mut active_output);
+    active_output
+        .claim
+        .as_mut()
+        .expect("active output claim")
+        .body
+        .lane = second_lane;
     let mut inactive_output = task(3, "rooms.inactive");
     inactive_output.statement.body.preparation = Some(preparation());
     let mut unrelated = task(4, "rooms.unrelated");
@@ -273,6 +289,18 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
         "association without active work does not dock a group tab, and an unrelated claim does not enter",
     );
     assert_eq!(projection.scope_counts(&scope).open(), 2);
+    assert_eq!(
+        projection
+            .group_worker_strip(&scope)
+            .into_iter()
+            .map(|(lane, task)| (lane, task.row().statement.body.born.clone()))
+            .collect::<Vec<_>>(),
+        [
+            (uuid("11111111-1111-4111-8111-111111111111"), stamp(1),),
+            (second_lane, stamp(2)),
+        ],
+        "the group rail presents each working lane once in active-task strip order",
+    );
     assert_eq!(
         projection
             .scope_tasks(&WorkScope::planning())

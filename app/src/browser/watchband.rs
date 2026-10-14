@@ -165,7 +165,6 @@ pub(super) fn render_team(
         sender,
         drafts,
         open_message_task,
-        select_task,
         navigate,
     });
     if teams.is_empty() {
