@@ -238,7 +238,7 @@ fn render_available(
                 runtime,
                 render.room_controls,
                 render.sender,
-                &statement.born,
+                row,
             )
         });
     html! {

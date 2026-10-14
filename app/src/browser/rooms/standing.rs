@@ -5,6 +5,7 @@
 //! here is a roster of authority, and rendering it mounts no view and wakes
 //! no lane.
 
+use wire::intent::{BoardTask, DesignStanding};
 use wire::rooms::{RoomProgressStanding, RoomRelevanceClass, RoomRelevanceVerdict, RoomSourceView};
 use wire::{Disposition, TaskStamp};
 use yew::prelude::*;
@@ -21,22 +22,38 @@ const MICROS_PER_MILLI: i64 = 1_000;
 
 const NOT_PROGRESS: &str = "Agreement, silence, message count, elapsed time, ACK and ANS never count as progress or approval.";
 
-/// The standing section of one design's menu and of its read view.
-pub(super) fn render_standing(runtime: &AppRuntime, room: &TaskStamp) -> Html {
+/// The standing section of one design's menu and of its read view; `row` is
+/// the Design's current task row, when one is known.
+pub(super) fn render_standing(
+    runtime: &AppRuntime,
+    room: &TaskStamp,
+    row: Option<&BoardTask>,
+) -> Html {
     let projection = runtime.room_projection();
     let participants =
         projection.participants(room, runtime.board(), now_millis() * MICROS_PER_MILLI);
     let coordination = projection.coordination_standing(room);
     let relevance = projection.relevance(room).collect::<Vec<_>>();
-    let settled = matches!(
-        projection.anchor_authority(room, runtime.board()),
-        RoomAnchorAuthority::Settled { .. }
+    let lifecycle = row.and_then(BoardTask::design_standing);
+    let settled = lifecycle.as_ref().map_or_else(
+        || {
+            matches!(
+                projection.anchor_authority(room, runtime.board()),
+                RoomAnchorAuthority::Settled { .. }
+            )
+        },
+        |standing| !standing.is_open(),
     );
     html! {
         <section class="room-standing" data-room-standing="">
             <header><strong>{"Standing"}</strong></header>
+            if let Some(standing) = &lifecycle {
+                <p class="room-standing-lifecycle" data-design-lifecycle={standing.key()}>
+                    {standing.to_string()}
+                </p>
+            }
             <p class="room-standing-next" data-room-next="">
-                {next_action(settled, coordination.as_ref(), &participants)}
+                {next_action(settled, lifecycle.as_ref(), coordination.as_ref(), &participants)}
             </p>
             {coordination.as_ref().map_or_else(Html::default, render_coordination)}
             {render_lanes(runtime, &participants)}
@@ -53,11 +70,16 @@ pub(super) fn render_standing(runtime: &AppRuntime, room: &TaskStamp) -> Html {
 /// The one next useful action the current authority supports.
 fn next_action(
     settled: bool,
+    lifecycle: Option<&DesignStanding>,
     coordination: Option<&CoordinationStanding<'_>>,
     participants: &[RoomParticipant],
 ) -> String {
     if settled {
         return "The anchor is settled; nothing remains to coordinate.".to_owned();
+    }
+    if lifecycle == Some(&DesignStanding::Passive) {
+        return "Move the Design into a working group before coordinating a lane onto it."
+            .to_owned();
     }
     let owed = participants.iter().any(|participant| {
         participant.reasons.iter().any(|reason| {

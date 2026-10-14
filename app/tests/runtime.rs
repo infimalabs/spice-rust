@@ -290,6 +290,7 @@ fn board_task(
         lease: None,
         explicit_release: false,
         grouped: false,
+        collapse_reason: None,
         claim_context: None,
         git_context: None,
         parked_commits: None,

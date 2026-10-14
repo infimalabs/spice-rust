@@ -8,7 +8,9 @@
 
 use std::rc::Rc;
 
-use wire::intent::{RoomCoordinate, RoomCoordinateAction, RoomCoordinationView, RoomPutAside};
+use wire::intent::{
+    DesignStanding, RoomCoordinate, RoomCoordinateAction, RoomCoordinationView, RoomPutAside,
+};
 use wire::{CommandKind, TaskHandle, TaskStamp, Witness};
 use yew::prelude::*;
 
@@ -16,7 +18,7 @@ use super::{input_value, transition_witnesses};
 use crate::AppRuntime;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, RoomCoordinationRequest};
-use crate::runtime::{RoomAnchorAuthority, Seats};
+use crate::runtime::Seats;
 
 /// The fields one Start or Resume reads.
 #[derive(Clone, Default)]
@@ -40,8 +42,8 @@ struct Coordination {
     inputs: Inputs,
 }
 
-/// One unresolved design's coordination controls; absent once its anchor
-/// settles or leaves the board.
+/// One active design's coordination controls. A passive design names how to
+/// activate it instead; a concluded one, or one off the board, shows nothing.
 pub(super) fn coordination_form(
     runtime: &AppRuntime,
     report: &Callback<String>,
@@ -51,21 +53,20 @@ pub(super) fn coordination_form(
     let Some(board) = runtime.board() else {
         return Html::default();
     };
-    if !matches!(
-        runtime
-            .room_projection()
-            .anchor_authority(room, Some(board)),
-        RoomAnchorAuthority::Available(_)
-    ) {
-        return Html::default();
-    }
-    let Some(anchor) = board
-        .tasks
-        .iter()
-        .find(|task| task.statement.body.born == *room)
-    else {
+    let Some(anchor) = board.row(room) else {
         return Html::default();
     };
+    match anchor.design_standing() {
+        Some(DesignStanding::Active) => {}
+        Some(DesignStanding::Passive) => {
+            return html! {
+                <p class="room-notice" data-room-coordination-passive={room.to_string()}>
+                    {"Passive: no lane can claim this Design or be coordinated onto it. Move it into a working group to activate it."}
+                </p>
+            };
+        }
+        _ => return Html::default(),
+    }
     let coordination = Coordination {
         report: report.clone(),
         sender: sender.clone(),

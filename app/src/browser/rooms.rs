@@ -25,6 +25,7 @@ use crate::roster::{Change, Destination};
 use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
 
 mod approval;
+mod conclusion;
 mod console;
 mod coordination;
 mod reading;
@@ -56,6 +57,8 @@ pub(super) struct Controls {
     inbox_notice: UseStateHandle<Option<String>>,
     /// The outcome of the last approval control, shown under its candidate.
     approval_notice: UseStateHandle<Option<(wire::rooms::CandidateRef, String)>>,
+    /// The read view's Design conclusion preview and last outcome.
+    conclusion: UseStateHandle<Option<conclusion::Conclusion>>,
     /// Last authoritative name of each group seen in this page's memory, shown
     /// while room authority reloads so a reconnect does not retitle consoles.
     names: Rc<RefCell<BTreeMap<RoomAuthorityStamp, String>>>,
@@ -88,6 +91,7 @@ pub(super) fn use_controls() -> Controls {
         notice: use_state(|| None),
         inbox_notice: use_state(|| None),
         approval_notice: use_state(|| None),
+        conclusion: use_state(|| None),
         names,
         requested,
         drawn,
@@ -333,7 +337,7 @@ fn render_roster(
             </>
         }
     };
-    let member = |design: &TaskStamp, _grouped: bool| render_design(runtime, tasks, design, read);
+    let member = |design: &TaskStamp, _grouped: bool| render_design(runtime, design, read);
     let revision = partition.revision;
     let submit = {
         let (sender, controls) = (sender.clone(), controls.clone());
@@ -354,28 +358,24 @@ fn render_roster(
 
 /// One design's tile content: its handle, standing and title while the board
 /// carries its task, else its anchor label, and the action reading its room.
-fn render_design(
-    runtime: &AppRuntime,
-    tasks: &[wire::intent::BoardTask],
-    design: &TaskStamp,
-    read: &Callback<TaskStamp>,
-) -> Html {
-    let task = crate::roster::designs(tasks).find(|task| task.statement.body.born == *design);
+fn render_design(runtime: &AppRuntime, design: &TaskStamp, read: &Callback<TaskStamp>) -> Html {
+    let task = runtime.board().and_then(|board| board.row(design));
     let label = task.map_or_else(
         || anchor_label(runtime, design),
         |task| task.statement.body.handle.to_string(),
     );
+    let standing = runtime
+        .room_projection()
+        .design_standing(design, runtime.board());
     let onclick = {
         let (read, design) = (read.clone(), design.clone());
         Callback::from(move |_: MouseEvent| read.emit(design.clone()))
     };
     html! {
-        <div class="room-design">
+        <div class="room-design" data-design-standing={standing.key()}>
             <header>
                 <strong data-roster-handle="">{label.clone()}</strong>
-                if let Some(task) = task {
-                    <span>{format!("{} · {}", task.workflow.body.phase, task.workflow.body.status)}</span>
-                }
+                <span>{standing.label()}</span>
                 <button type="button" aria-label={format!("Read {label}")} {onclick}>{"Read"}</button>
             </header>
             if let Some(task) = task {

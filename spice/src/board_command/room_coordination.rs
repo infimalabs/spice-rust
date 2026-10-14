@@ -435,6 +435,7 @@ fn stage(
         }],
         stop: None,
         rule,
+        design: heads.design_standing(),
         hide: false,
     };
     Ok((write, view, lane))
@@ -556,6 +557,7 @@ pub(crate) fn room_put_aside(
         requests: Vec::new(),
         stop: visible_stop,
         rule: None,
+        design: heads.design_standing(),
         hide: true,
     };
     if let Err(error) = write.command_result(
@@ -1096,6 +1098,7 @@ fn project(
         requests,
         stop,
         rule,
+        design: heads.design_standing(),
         hide,
     })
 }

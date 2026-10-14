@@ -108,13 +108,53 @@ Any Design, open, completed, or closed, opens for reading in its task
 overview: the **Read** action on each design tile in the Spice menu's Working
 groups catalog, a Design-intent task's detail, and a Design permalink all open
 the same view. Below the task's state, its **Design room** section shows the
-room's standing, the [approval control](#approving-a-designs-outputs), its
-preparation authority records, and its full room history newest first, resolved
-through the Design's birth stamp under its current handle, with the permalink
-beside the heading. The view holds no composer, receipt, answer, or
-coordination control. Opening or reading it moves no group, joins,
-acknowledges, authorizes, and wakes nothing, and commits no journal fact;
-acting on a room stays with the group console and the `spice room` commands.
+room's [standing](#design-standing), the
+[conclusion control](#concluding-a-design) while the Design is open, the
+[approval control](#approving-a-designs-outputs), its preparation authority
+records, and its full room history newest first, resolved through the Design's
+birth stamp under its current handle, with the permalink beside the heading.
+Room history and retained candidates stay readable in every standing. The view
+holds no composer, receipt, answer, or coordination control. Opening or reading
+it moves no group, joins, acknowledges, authorizes, and wakes nothing, and
+commits no journal fact; acting on a room stays with the group console and the
+`spice room` commands.
+
+## Design standing
+
+Every read agrees on one standing for a Design, derived from its workflow and
+the working-group partition alone. Board rows, `spice task show`, `spice group
+list`, `spice room status`, and the browser all render it:
+
+- **open, passive**: open and in no working group. No lane can claim it or be
+  coordinated onto it until the operator moves it into a group.
+- **open, active**: open and in a working group, so allocation, capture, and
+  room coordination may reach it.
+- **concluded done**: the operator concluded it done.
+- **concluded collapsed**: the operator collapsed it, with the durable reason
+  that collapse recorded.
+- **deleted**.
+
+A concluded or deleted Design keeps its standing while a saved group still
+holds it: group membership decides activity only for an open Design. The
+command bar's Design rail names how many open Designs each stem holds active
+and passive, and dashes a stem whose open Designs are all passive. In the work
+overview and on dependency cards a passive Design reads **Passive**, waiting on
+the operator.
+
+## Concluding a Design
+
+Only the operator concludes a Design. While it is open and the resident offers
+conclusion, the read view's **Conclusion** section previews either **done** or
+**collapse** with a nonblank reason, stating what the conclusion does: done
+keeps outputs already selected released and is refused while an output still
+owes the operator's selection; collapse keeps every output it constructed
+gated. A blank collapse reason previews nothing and names the refusal. **Submit
+conclusion** sends the previewed conclusion witnessing the Design's statement,
+workflow, and claim heads the preview was drawn from, the same contract as
+`spice task conclude`. The section reports the resident's answer: a refusal,
+such as a live claim or heads that moved since the preview, keeps the preview
+beside it and changes no standing; the standing moves only when the board
+shows the conclusion. Ordinary task and Plan controls are unchanged.
 
 ## Approving a Design's outputs
 
@@ -180,14 +220,17 @@ history, drafts, groups, selected outputs, other browsers, and repository
 authority remain unchanged.
 
 The design menu's **Coordinate** form, beneath the room's standing, offers
-these commands while the anchor is unresolved. A lane address field suggests
-each occupied seat's address with its lane name; Criterion, Contribution, Stop
-when, and an optional Auto-resume limit from 1 through 8 complete Start and
-Resume, and Put aside needs only the room. Each button stays disabled while the
-resident does not offer its command. Before submitting, the browser resolves
-the address against the board's residency and addresses with the resident's
-own rule: an unknown, vacant, or simulated seat refuses in place with the
-resident's reason and explanation, and nothing is written. The submission
+these commands while the Design is open and active. A passive Design shows
+instead that no lane can claim it or be coordinated onto it until it moves
+into a working group, and a concluded or deleted one shows no form. A lane
+address field suggests each occupied seat's address with its lane name;
+Criterion, Contribution, Stop when, and an optional Auto-resume limit from 1
+through 8 complete Start and Resume, and Put aside needs only the room. Each
+button stays disabled while the resident does not offer its command. Before
+submitting, the browser resolves the address against the board's residency
+and addresses with the resident's own rule: an unknown, vacant, or simulated
+seat refuses in place with the resident's reason and explanation, and nothing
+is written. The submission
 witnesses the anchor's statement, workflow, and claim heads and the target
 seat's residency, so a moved anchor or seat refuses with the resident's
 reason. The composer's report names the request key and target, any remaining
@@ -303,16 +346,17 @@ element to a design-side analog:
 | Team total: opens the overview with the team's task set selected | Group total: opens the overview with every open task associated with the group's designs selected |
 | One tab per open task, in availability then offer order | One tab per open task associated with the group's designs, in the same order |
 | A task handle carries the accent of the lane working it | A task handle carries the accent of the design it serves |
-| Presence pips: one per member, by state | Design lights: one per design in its accent, distinguishing open, claimed, in review, holding unauthorized outputs, and settled, with an accessible label naming the standing; a design whose board row is unavailable invents no standing |
+| Presence pips: one per member, by state | Design lights: one per design in its accent, distinguishing open passive, open active, claimed, holding unauthorized outputs, concluded done, concluded collapsed, and deleted, with an accessible label naming the standing; a design whose board row is unavailable invents no standing |
 | Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest room publication or coordination event across the group's designs, with the same age, prefix, accessible label, and live region; its accent and status are the design it landed in |
 
-A design light reads settled once its task is completed, closed, or deleted;
-otherwise it reads holding unauthorized outputs while any output it
-constructed is pending without a selection or the group's engagement, then in
-review in its review phase, then claimed while a lane actively claims it, and
-open otherwise. The group's name closes the status row; this browser's own
-move-left, move-right, and close controls live in the panel's group arrangement
-menu.
+A design light reads its [standing](#design-standing): concluded done,
+concluded collapsed, or deleted once terminal, even while a saved group still
+holds it; open passive outside every group. An open active Design then reads
+holding unauthorized outputs while any output it constructed is pending
+without a selection or the group's engagement, then claimed while a lane
+actively claims it, and open active otherwise. The group's name closes the
+status row; this browser's own move-left, move-right, and close controls live
+in the panel's group arrangement menu.
 
 ## Team composer controls
 

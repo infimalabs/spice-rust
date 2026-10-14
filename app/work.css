@@ -781,6 +781,7 @@
 
 .room-preparation > header,
 .room-approval > header,
+.room-conclusion > header,
 .room-history > header {
   display: flex;
   justify-content: space-between;
@@ -791,6 +792,10 @@
 .room-reading,
 .room-approval,
 .room-history { display: grid; gap: 8px; }
+
+.room-conclusion { display: grid; gap: 6px; font-size: var(--app-type-detail); }
+.room-conclusion :is(button, input) { font: inherit; }
+.room-conclusion p { margin: 0; }
 
 /* Review coverage and output authorization own the accent rail; receipts and
    answers in conversation cards never use it. */
@@ -988,7 +993,8 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
 }
 
 .room-grooming label,
-.room-coordination label {
+.room-coordination label,
+.room-conclusion label {
   display: grid;
   grid-template-columns: minmax(7rem, .45fr) minmax(0, 1fr);
   align-items: center;
@@ -997,7 +1003,8 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
 
 .room-grooming input,
 .room-grooming select,
-.room-coordination input {
+.room-coordination input,
+.room-conclusion input {
   min-width: 0;
 }
 

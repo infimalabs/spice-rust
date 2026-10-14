@@ -208,6 +208,9 @@ struct Indexes {
     duplicate_task_origins: HashSet<journal::crossing::TaskStamp>,
     invalid_creator_teams: HashSet<journal::crossing::TaskStamp>,
     grouped_designs: Arc<HashSet<journal::crossing::TaskStamp>>,
+    /// The reason each Design's collapse recorded, shared until a commit
+    /// records another conclusion.
+    collapse_reasons: Arc<HashMap<journal::crossing::TaskStamp, String>>,
 }
 
 impl Indexes {
@@ -302,6 +305,11 @@ impl Indexes {
                 row.fact.read::<journal::crossing::body::TaskConcluded>()
             {
                 next.retire_task_origin(&concluded.task);
+                if let journal::crossing::body::DesignConclusion::Collapsed { reason } =
+                    concluded.conclusion
+                {
+                    Arc::make_mut(&mut next.collapse_reasons).insert(concluded.task, reason);
+                }
             } else if let Some(won) = row.fact.read::<journal::crossing::body::ClaimWon>() {
                 next.claims.insert(won.actor, (row.seq, won.cell));
             } else if let Some(freed) = row.fact.read::<journal::crossing::body::ClaimFreed>() {
@@ -608,6 +616,12 @@ impl TaskFacts {
     #[must_use]
     pub fn grouped(&self, task: &journal::crossing::TaskStamp) -> bool {
         self.indexes.grouped_designs.contains(task)
+    }
+
+    /// The reason the operator's collapse of Design `task` recorded.
+    #[must_use]
+    pub fn collapse_reason(&self, task: &journal::crossing::TaskStamp) -> Option<&str> {
+        self.indexes.collapse_reasons.get(task).map(String::as_str)
     }
 
     fn retain_allocation_origins(&mut self, frontier: &[journal::TaskHeads]) {

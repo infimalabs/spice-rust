@@ -861,6 +861,13 @@ pub struct BoardTask {
     /// outside every group is passive and no claim path grants it.
     #[serde(default, skip_serializing_if = "is_false")]
     pub grouped: bool,
+    /// The reason recorded when the operator concluded this Design collapsed.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub collapse_reason: Option<String>,
     /// Claim-opening transcript coordinates, without embedded transcript content.
     #[serde(
         default,
@@ -985,6 +992,7 @@ impl BoardTask {
             lease,
             explicit_release: false,
             grouped: false,
+            collapse_reason: None,
             claim_context: None,
             git_context: None,
             parked_commits: None,
@@ -1001,6 +1009,13 @@ impl BoardTask {
     #[must_use]
     pub const fn with_grouped(mut self, grouped: bool) -> Self {
         self.grouped = grouped;
+        self
+    }
+
+    /// Attach the reason the operator's collapse of this Design recorded.
+    #[must_use]
+    pub fn with_collapse_reason(mut self, reason: Option<String>) -> Self {
+        self.collapse_reason = reason;
         self
     }
 
@@ -1037,6 +1052,101 @@ impl BoardTask {
             && self.statement.body.filing.is_filed()
             && self.workflow.body.status == "pending"
             && self.workflow.body.completion.is_none()
+    }
+
+    /// This Design's lifecycle standing; `None` for a task without Design
+    /// intent.
+    #[must_use]
+    pub fn design_standing(&self) -> Option<DesignStanding> {
+        DesignStanding::of(
+            self.statement.body.intent,
+            &self.workflow.body,
+            self.grouped,
+            self.collapse_reason.as_deref(),
+        )
+    }
+}
+
+/// One Design's lifecycle standing. An open Design is passive outside every
+/// working group and active inside one; only the operator concludes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum DesignStanding {
+    /// Open outside every working group: no path grants it a claim.
+    Passive,
+    /// Open inside a working group: lanes may claim or be coordinated onto it.
+    Active,
+    /// The operator concluded it done.
+    Done,
+    /// The operator concluded it collapsed. A retained record concluded
+    /// before collapse recorded a reason carries none.
+    Collapsed {
+        /// Why its premise did not hold.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    /// The operator withdrew it.
+    Deleted,
+}
+
+impl DesignStanding {
+    /// Derive the standing every board, task, group, room, and browser read
+    /// shows from current heads, so terminal settlement outranks any retained
+    /// group membership; `None` for a task without Design intent.
+    #[must_use]
+    pub fn of(
+        intent: Option<crate::TaskIntent>,
+        workflow: &crate::WorkflowHead,
+        grouped: bool,
+        collapse_reason: Option<&str>,
+    ) -> Option<Self> {
+        if intent != Some(crate::TaskIntent::Design) {
+            return None;
+        }
+        Some(match workflow.status.as_str() {
+            "deleted" => Self::Deleted,
+            "completed" if workflow.concluded_positively() => Self::Done,
+            "completed" => Self::Collapsed {
+                reason: collapse_reason.map(str::to_owned),
+            },
+            _ if grouped => Self::Active,
+            _ => Self::Passive,
+        })
+    }
+
+    /// Whether the Design is still open.
+    #[must_use]
+    pub const fn is_open(&self) -> bool {
+        matches!(self, Self::Passive | Self::Active)
+    }
+
+    /// Stable machine key.
+    #[must_use]
+    pub const fn key(&self) -> &'static str {
+        match self {
+            Self::Passive => "passive",
+            Self::Active => "active",
+            Self::Done => "done",
+            Self::Collapsed { .. } => "collapsed",
+            Self::Deleted => "deleted",
+        }
+    }
+}
+
+impl std::fmt::Display for DesignStanding {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Passive => formatter.write_str("open passive (in no working group)"),
+            Self::Active => formatter.write_str("open active (in a working group)"),
+            Self::Done => formatter.write_str("concluded done"),
+            Self::Collapsed {
+                reason: Some(reason),
+            } => write!(formatter, "concluded collapsed: {reason}"),
+            Self::Collapsed { reason: None } => {
+                formatter.write_str("concluded collapsed (no reason recorded)")
+            }
+            Self::Deleted => formatter.write_str("deleted"),
+        }
     }
 }
 

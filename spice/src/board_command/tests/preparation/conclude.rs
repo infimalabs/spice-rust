@@ -1,5 +1,7 @@
 //! Only the operator concludes an unheld open Design, done or collapsed.
 
+use std::collections::BTreeMap;
+
 use super::*;
 
 pub(super) fn done_conclusion() -> body::DesignConclusion {
@@ -270,4 +272,81 @@ fn collapse_records_its_reason_and_gates_every_output_again() {
         "the collapse keeps its stated reason durably"
     );
     clean(&root, bus);
+}
+
+#[test]
+fn terminal_standing_outranks_retained_group_on_board_and_group_reads() {
+    let (root, bus, epoch, _) = fixture("design-conclude-standing", 0);
+    let design = |name| add_controller(&bus, epoch, name, wire::TaskIntent::Design, None);
+    let (collapsed, done, open) = (
+        design("Collapsed grouped design"),
+        design("Done grouped design"),
+        design("Open grouped design"),
+    );
+    for design in [&collapsed, &done, &open] {
+        group_design(&bus, epoch, design);
+    }
+    let reason = "the premise did not hold";
+    assert_committed(conclude(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &collapsed,
+        collapse(reason),
+    ));
+    assert_committed(conclude(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &done,
+        done_conclusion(),
+    ));
+
+    let expected = BTreeMap::from([
+        (
+            born(&collapsed),
+            wire::intent::DesignStanding::Collapsed {
+                reason: Some(reason.to_owned()),
+            },
+        ),
+        (born(&done), wire::intent::DesignStanding::Done),
+        (born(&open), wire::intent::DesignStanding::Active),
+    ]);
+    let board = board(&bus, epoch, Actor::Operator)
+        .tasks
+        .iter()
+        .filter_map(|task| Some((task.statement.body.born.clone(), task.design_standing()?)))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(board, expected, "board rows");
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::WorkingGroupPage(page),
+        ..
+    }) = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::WorkingGroupRead,
+        Vec::new(),
+        &wire::intent::WorkingGroupRead {},
+    )
+    else {
+        panic!("working-group read did not return a page");
+    };
+    let grouped = page
+        .groups
+        .into_iter()
+        .flat_map(|group| group.anchors)
+        .filter_map(|anchor| match anchor {
+            wire::intent::WorkingGroupAnchor::Available { born, design, .. } => {
+                Some((born, design))
+            }
+            wire::intent::WorkingGroupAnchor::Unavailable { .. } => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(grouped, expected, "working-group anchors");
+    clean(&root, bus);
+}
+
+fn born(task: &TaskHandle) -> TaskStamp {
+    task.born().expect("fixture task stamp")
 }

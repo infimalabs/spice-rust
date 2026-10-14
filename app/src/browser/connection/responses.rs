@@ -448,6 +448,11 @@ fn apply_task_mutation_response(
             refresh: true,
             ..apply_callback_reply(session, bytes, "Draft change failed", &respond)?
         },
+        // A landed conclusion re-reads the board so every standing moves.
+        PendingKind::Conclude { respond } => CommandApplication {
+            refresh: true,
+            ..apply_callback_reply(session, bytes, "Conclusion failed", &respond)?
+        },
         _ => unreachable!("read and mutation response partitions are closed"),
     })
 }

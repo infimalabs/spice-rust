@@ -309,7 +309,16 @@ fn render_dependency(dependency: &TaskStamp, wall: DependencyWall<'_>) -> Html {
             "selection",
             "Prerequisite awaits selection",
             format!(
-                "{} is a Design that concludes only once the operator authorizes the exact selection of its outputs or closes each unselected one.",
+                "{} is a Design awaiting the operator's exact selection of its outputs, or the closure of each unselected one.",
+                via(task)
+            ),
+            "Operator required",
+        ),
+        DependencyWall::Passive(task) => (
+            "passive",
+            "Prerequisite is a passive Design",
+            format!(
+                "{} is a Design outside every working group; no lane can acquire it until the operator moves it into one.",
                 via(task)
             ),
             "Operator required",
