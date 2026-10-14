@@ -392,6 +392,11 @@ impl Control {
     pub(in crate::resident) fn handle(&self) -> Handle {
         Handle(self.sender.clone())
     }
+
+    #[cfg(test)]
+    pub(in crate::resident) fn was_interrupted(&self) -> bool {
+        matches!(self.receiver.try_recv(), Ok(Signal::Interrupt))
+    }
 }
 
 impl Handle {
