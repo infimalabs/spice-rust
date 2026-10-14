@@ -280,6 +280,37 @@ impl GlobalWorkRail {
     }
 }
 
+/// Open active and passive Designs among Design-rail tasks: the rail's
+/// pills name both, so a stem of only passive Designs reads as idle.
+#[derive(Clone, Copy, Default)]
+struct DesignSplit {
+    active: usize,
+    passive: usize,
+}
+
+impl DesignSplit {
+    fn of<'p, 'a: 'p>(tasks: impl IntoIterator<Item = &'p crate::work::WorkTask<'a>>) -> Self {
+        let mut split = Self::default();
+        for task in tasks {
+            match task.row().design_standing() {
+                Some(wire::intent::DesignStanding::Active) => split.active += 1,
+                Some(wire::intent::DesignStanding::Passive) => split.passive += 1,
+                _ => {}
+            }
+        }
+        split
+    }
+
+    fn title(self) -> String {
+        format!("; Designs {} active, {} passive", self.active, self.passive)
+    }
+
+    /// Whether every open Design here is passive: no lane can acquire one.
+    const fn idle(self) -> bool {
+        self.active == 0 && self.passive > 0
+    }
+}
+
 fn render_global_work_rail(
     work: Option<&WorkProjection<'_>>,
     navigate: &Callback<navigation::Intent>,
@@ -289,17 +320,26 @@ fn render_global_work_rail(
     let groups = work
         .map(|work| work.stem_task_groups(&scope))
         .unwrap_or_default();
+    let designs = |tasks: &[&crate::work::WorkTask<'_>]| {
+        matches!(rail, GlobalWorkRail::Design).then(|| DesignSplit::of(tasks.iter().copied()))
+    };
     let total = work
         .map(|work| work.scope_counts(&scope))
         .filter(|counts| counts.has_open())
-        .map(|counts| render_aggregate_pill(counts, navigate, rail));
+        .map(|counts| {
+            let all = groups
+                .iter()
+                .flat_map(|group| group.tasks().iter().copied());
+            let split = matches!(rail, GlobalWorkRail::Design).then(|| DesignSplit::of(all));
+            render_aggregate_pill(counts, split, navigate, rail)
+        });
     html! {
         <nav
             class={classes!("app-horn-tabs", rail.class())}
             aria-label={rail.aria_label()}
         >
             {total}
-            {for groups.iter().map(|group| render_stem_pill(group, navigate, rail))}
+            {for groups.iter().map(|group| render_stem_pill(group, designs(group.tasks()), navigate, rail))}
         </nav>
     }
 }
@@ -308,15 +348,17 @@ fn render_global_work_rail(
 /// count, matching every team total.
 fn render_aggregate_pill(
     counts: WorkCounts,
+    designs: Option<DesignSplit>,
     navigate: &Callback<navigation::Intent>,
     rail: GlobalWorkRail,
 ) -> Html {
     let open = counts.open();
     let title = format!(
-        "{}: {open} {}; {}",
+        "{}: {open} {}; {}{}",
         rail.aggregate_title(),
         if open == 1 { "task" } else { "tasks" },
         count_breakdown(counts),
+        designs.map(DesignSplit::title).unwrap_or_default(),
     );
     let focus_key = rail.focus_prefix();
     let scope = rail.scope();
@@ -324,11 +366,18 @@ fn render_aggregate_pill(
     html! {
         <button
             key={focus_key}
-            class="app-horn-tab app-horn-tab--down app-horn-tab--wide"
+            class={classes!(
+                "app-horn-tab",
+                "app-horn-tab--down",
+                "app-horn-tab--wide",
+                designs.is_some_and(DesignSplit::idle).then_some("app-horn-tab--passive"),
+            )}
             type="button"
             title={title.clone()}
             aria-label={title}
             data-work-scope={rail.data_scope()}
+            data-designs-active={designs.map(|split| split.active.to_string())}
+            data-designs-passive={designs.map(|split| split.passive.to_string())}
             data-sidebar-focus-key={focus_key}
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
         >
@@ -340,6 +389,7 @@ fn render_aggregate_pill(
 /// One stem tab opening the exact rail partition its count describes.
 fn render_stem_pill(
     group: &crate::work::StemTaskGroup<'_, '_>,
+    designs: Option<DesignSplit>,
     navigate: &Callback<navigation::Intent>,
     rail: GlobalWorkRail,
 ) -> Html {
@@ -347,17 +397,27 @@ fn render_stem_pill(
     let counts = group.counts();
     let scope = rail.stem_scope(identity.clone());
     let focus_key = format!("{}:{identity}", rail.focus_prefix());
-    let title = format!("{identity}: {}", count_breakdown(counts));
+    let title = format!(
+        "{identity}: {}{}",
+        count_breakdown(counts),
+        designs.map(DesignSplit::title).unwrap_or_default(),
+    );
     let navigate = navigate.clone();
     html! {
         <button
             key={focus_key.clone()}
-            class="app-horn-tab app-horn-tab--down"
+            class={classes!(
+                "app-horn-tab",
+                "app-horn-tab--down",
+                designs.is_some_and(DesignSplit::idle).then_some("app-horn-tab--passive"),
+            )}
             type="button"
             title={title.clone()}
             aria-label={title}
             data-task-stem={identity.stem().to_owned()}
             data-task-visibility={if identity.hidden() { "hidden" } else { "public" }}
+            data-designs-active={designs.map(|split| split.active.to_string())}
+            data-designs-passive={designs.map(|split| split.passive.to_string())}
             data-sidebar-focus-key={focus_key}
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
         >

@@ -403,6 +403,10 @@ pub(in crate::board_command) fn task_show_bounded(
         format!("status {}", workflow.status),
         format!("claim {}", claim_line(task)),
     ];
+    lines.extend(
+        task.design_standing()
+            .map(|standing| format!("standing {standing}")),
+    );
     if let Some(preparation) = &statement.preparation {
         lines.extend([
             format!("preparation {}", stamp_name(board, &preparation.parent)),
@@ -466,21 +470,7 @@ pub(in crate::board_command) fn task_show_bounded(
             lines.push(render_dependency(board, dependency));
         }
     }
-    lines.push("artifacts:".to_owned());
-    if artifacts.is_empty() {
-        lines.push("  -".to_owned());
-    } else {
-        for artifact in artifacts {
-            lines.push(format!(
-                "  {} {} {} {} B {}",
-                artifact.id, artifact.name, artifact.media_type, artifact.bytes, artifact.retention
-            ));
-            lines.push(format!(
-                "     spice task artifact show {} {}",
-                statement.handle, artifact.id
-            ));
-        }
-    }
+    lines.extend(artifact_lines(&statement.handle, artifacts));
     if options.context || options.history {
         lines.extend(bounded_detail_lines(
             board,
@@ -494,6 +484,25 @@ pub(in crate::board_command) fn task_show_bounded(
     lines.extend(phase_guidance_lines(task));
     lines.push(next_command_line(board, task));
     Ok(lines.join("\n"))
+}
+
+/// The `artifacts:` section: each artifact with the command that shows it.
+fn artifact_lines(handle: &wire::TaskHandle, artifacts: &[artifact::Artifact]) -> Vec<String> {
+    if artifacts.is_empty() {
+        return vec!["artifacts:".to_owned(), "  -".to_owned()];
+    }
+    let mut lines = vec!["artifacts:".to_owned()];
+    for artifact in artifacts {
+        lines.push(format!(
+            "  {} {} {} {} B {}",
+            artifact.id, artifact.name, artifact.media_type, artifact.bytes, artifact.retention
+        ));
+        lines.push(format!(
+            "     spice task artifact show {handle} {}",
+            artifact.id
+        ));
+    }
+    lines
 }
 
 fn task_show_context_lines(

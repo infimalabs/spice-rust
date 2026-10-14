@@ -251,6 +251,7 @@ impl TaskProjection<'_> {
             .copied()
             .flatten();
         let grouped = self.facts.grouped(&statement.body.born);
+        let statement_born = statement.body.born.clone();
         let entry = Entry::new(
             statement.body.clone(),
             workflow.body.clone(),
@@ -290,6 +291,11 @@ impl TaskProjection<'_> {
         )
         .with_explicit_release(explicit_release)
         .with_grouped(grouped)
+        .with_collapse_reason(
+            self.facts
+                .collapse_reason(&statement_born)
+                .map(str::to_owned),
+        )
         .with_context(claim_context, git_context, parked_commits);
         Ok((entry, task))
     }

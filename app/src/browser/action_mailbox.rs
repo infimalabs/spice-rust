@@ -244,6 +244,7 @@ impl PendingKind {
             | Self::RoomCoordination { .. }
             | Self::Preparation { .. }
             | Self::Draft { .. }
+            | Self::Conclude { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
             | Self::TrustGrant { .. }
@@ -467,6 +468,20 @@ impl ClientAction {
                 .len()
                 .saturating_add(validation.len())
                 .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>()),
+            Self::Conclude {
+                request, expected, ..
+            } => {
+                let reason = match &request.conclusion {
+                    wire::body::DesignConclusion::Done {} => 0,
+                    wire::body::DesignConclusion::Collapsed { reason } => reason.len(),
+                };
+                request
+                    .task
+                    .as_str()
+                    .len()
+                    .saturating_add(reason)
+                    .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>())
+            }
             Self::Steer {
                 message,
                 attachments,

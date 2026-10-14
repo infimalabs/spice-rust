@@ -114,7 +114,10 @@ pub(crate) enum PendingKind {
         respond: client_action::PreparationResponse,
     },
     Draft {
-        respond: client_action::DraftResponse,
+        respond: client_action::TaskResponse,
+    },
+    Conclude {
+        respond: client_action::TaskResponse,
     },
     Board,
     Lanes {

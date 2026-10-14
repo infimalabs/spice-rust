@@ -70,6 +70,7 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
         lease: None,
         explicit_release: false,
         grouped: false,
+        collapse_reason: None,
         claim_context: None,
         git_context: None,
         parked_commits: None,
@@ -231,6 +232,75 @@ fn lifecycle_precedence_follows_task_status_standings() {
     );
     assert!(projection.tasks[1].environment_blocked);
     assert!(projection.tasks[6].environment_blocked);
+}
+
+#[test]
+fn design_passivity_yields_only_to_possession_and_grouping() {
+    let design = |value| {
+        let mut row = task(value, "alpha.design");
+        row.statement.body.intent = Some(wire::TaskIntent::Design);
+        row
+    };
+    let mut held = design(1);
+    held.claim = Some(claim(&held, ClaimDisposition::Active));
+    let mut lapsed = design(2);
+    lapsed.claim = Some(claim(&lapsed, ClaimDisposition::Lapsed));
+    let mut deferred = design(3);
+    deferred.workflow.body.deferral = Some(
+        "2026-09-24T06:00:00.000Z"
+            .parse()
+            .expect("fixture deferral"),
+    );
+    let mut grouped = design(4);
+    grouped.grouped = true;
+    let mut grouped_lapsed = design(5);
+    grouped_lapsed.grouped = true;
+    grouped_lapsed.claim = Some(claim(&grouped_lapsed, ClaimDisposition::Lapsed));
+    let mut board = board(vec![
+        held,
+        lapsed,
+        deferred,
+        grouped,
+        grouped_lapsed,
+        design(6),
+    ]);
+    board.blocked.insert(stamp(6));
+    let projection = WorkProjection::from_board(&board);
+
+    assert_eq!(
+        projection
+            .tasks
+            .iter()
+            .map(|task| task.availability)
+            .collect::<Vec<_>>(),
+        [
+            WorkAvailability::InFlight,
+            WorkAvailability::Passive,
+            WorkAvailability::Passive,
+            WorkAvailability::Ready,
+            WorkAvailability::Stale,
+            WorkAvailability::Passive,
+        ],
+        "an ungrouped Design waits on the operator whatever else holds it; a grouped one moves"
+    );
+    let counts = projection.counts();
+    assert_eq!([counts.passive(), counts.waiting()], [3, 3]);
+    assert_eq!(
+        projection
+            .scope_strip(&WorkScope::planning())
+            .iter()
+            .map(|task| task.availability)
+            .collect::<Vec<_>>(),
+        [
+            WorkAvailability::InFlight,
+            WorkAvailability::Ready,
+            WorkAvailability::Stale,
+            WorkAvailability::Passive,
+            WorkAvailability::Passive,
+            WorkAvailability::Passive,
+        ],
+        "passive Designs stay on the Design rail after every Design an agent can move"
+    );
 }
 
 #[test]

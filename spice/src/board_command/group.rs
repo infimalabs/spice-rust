@@ -2,8 +2,9 @@ use super::*;
 
 use wire::grouping::{Destination, Group, GroupingError, Partition, Placement, RevisionError};
 use wire::intent::{
-    WorkingGroupAnchor, WorkingGroupArrange, WorkingGroupChange, WorkingGroupChangeStatus,
-    WorkingGroupMove, WorkingGroupPage, WorkingGroupRead, WorkingGroupView,
+    DesignStanding, WorkingGroupAnchor, WorkingGroupArrange, WorkingGroupChange,
+    WorkingGroupChangeStatus, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
+    WorkingGroupView,
 };
 use wire::rooms::{
     RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupMoved,
@@ -17,11 +18,27 @@ pub(super) fn read_working_groups(
     bus: &Bus,
     _request: &WorkingGroupRead,
 ) -> Outcome<CommandAnswer> {
-    match bus.read(|read| group_page(read)) {
-        Ok(Ok((cursor, page))) => Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(cursor),
-            body: CommandAnswer::WorkingGroupPage(page),
-        }),
+    // Collapse reasons come from the task snapshot taken after the journal
+    // read, so every conclusion that read observed carries its reason.
+    let page = bus.read(|read| group_page(read));
+    let snapshot = match bus.task_snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(error) => return store_fault("group::read-unavailable", &error.to_string()),
+    };
+    match page {
+        Ok(Ok((cursor, mut page))) => {
+            for anchor in page.groups.iter_mut().flat_map(|group| &mut group.anchors) {
+                if let WorkingGroupAnchor::Available { born, design, .. } = anchor
+                    && let DesignStanding::Collapsed { reason } = design
+                {
+                    *reason = snapshot.facts().collapse_reason(born).map(str::to_owned);
+                }
+            }
+            Outcome::Reply(Reply {
+                position: ReplyPosition::Snapshot(cursor),
+                body: CommandAnswer::WorkingGroupPage(page),
+            })
+        }
         Ok(Err(outcome)) => outcome,
         Err(error) => store_fault("group::read-unavailable", &error.to_string()),
     }
@@ -76,6 +93,8 @@ fn working_group_view(
                     WorkingGroupAnchor::Available {
                         born: born.clone(),
                         handle: TaskHandle::for_project(&task.body().project, born),
+                        design: DesignStanding::of(task.body().intent, workflow.body(), true, None)
+                            .expect("a Design anchor has a standing"),
                     }
                 }
                 _ => WorkingGroupAnchor::Unavailable { born: born.clone() },

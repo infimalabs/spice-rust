@@ -164,6 +164,15 @@ impl BoardView {
         self.tasks.iter().filter(|task| task.is_active_public())
     }
 
+    /// The row for `task`, pending or retained as a room anchor.
+    #[must_use]
+    pub fn row(&self, task: &wire::TaskStamp) -> Option<&BoardTask> {
+        self.tasks
+            .iter()
+            .chain(&self.room_anchors)
+            .find(|row| row.statement.body.born == *task)
+    }
+
     /// Whether the snapshot's environment satisfies one task's typed requirements.
     #[must_use]
     pub fn environment_satisfies(&self, task: &BoardTask) -> bool {
