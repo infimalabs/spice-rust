@@ -129,6 +129,41 @@ impl Seat {
 }
 
 #[test]
+fn fresh_direction_interrupts_the_host_call_and_enters_steering_once_in_order() {
+    let seat = Seat::new();
+    let control = crate::resident::supervisor::terminal::Control::new();
+    seat.driver
+        .calls
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert("call-1".to_owned(), control.handle());
+
+    seat.kick(&[(ASKED, "published"), (LATER, "published")]);
+
+    assert!(
+        control.was_interrupted(),
+        "unheard direction releases the current host-tool boundary"
+    );
+    let steered = seat.steered();
+    assert_eq!(steered.len(), 1, "{steered:?}");
+    let asked = steered[0].find(ASKED).expect("first key is delivered");
+    let later = steered[0].find(LATER).expect("second key is delivered");
+    assert!(asked < later, "publication order is retained: {steered:?}");
+
+    seat.kick(&[(ASKED, "published"), (LATER, "published")]);
+
+    assert!(
+        !control.was_interrupted(),
+        "an unchanged inbox does not release the call again"
+    );
+    assert_eq!(
+        seat.steered(),
+        steered,
+        "one rendering enters steering once"
+    );
+}
+
+#[test]
 fn an_answer_in_a_running_tool_intent_cancels_the_queued_reminder_before_the_boundary() {
     let seat = Seat::new();
     seat.kick(&[(ASKED, "published")]);
