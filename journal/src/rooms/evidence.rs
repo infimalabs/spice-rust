@@ -1,10 +1,11 @@
 //! Required question evidence.
 //!
 //! A task requires results only through explicit statement edits, so its
-//! required set is a projection only those edits move. Positive completion of
-//! a task and execution authorization of a candidate read required results
-//! against their current state: answered makes a result available for
-//! assessment, and every other state leaves the requirement unsatisfied.
+//! required set is a projection only those edits move. Positive task
+//! completion reads required results against their current state: answered
+//! makes a result available for assessment, and every other state leaves the
+//! requirement unsatisfied. Candidate references may cite review facts, but
+//! neither task evidence nor candidate coverage grants execution authority.
 //! Commit admission and history replay must both use [`fold`], leaving
 //! `task_evidence` an exactly rebuildable and independently verified index.
 
@@ -94,31 +95,6 @@ pub(super) fn require_candidate_evidence(
 ) -> Result<(), Refusal> {
     for result in &candidate.evidence {
         require_asked_in(authority, result, &candidate.candidate.controller)?;
-    }
-    Ok(())
-}
-
-/// Authorization finds every candidate evidence result answered and assessed:
-/// some cited certifying coverage was recorded after the last answer.
-pub(super) fn require_assessed(
-    authority: &impl Authority,
-    candidate: &RetainedCandidate,
-    assessed_at: u64,
-) -> Result<(), Refusal> {
-    let unsatisfied = unsatisfied(authority, &candidate.evidence)?;
-    if !unsatisfied.is_empty() {
-        return unsound(format!(
-            "authorization requires answered candidate evidence: {}",
-            unsatisfied.join(", ")
-        ));
-    }
-    for result in &candidate.evidence {
-        let answered = row(authority, result)?.seq;
-        if answered > assessed_at {
-            return unsound(format!(
-                "candidate evidence {result} was answered after every certifying coverage; record new operator or independent coverage of this candidate, then authorize"
-            ));
-        }
     }
     Ok(())
 }

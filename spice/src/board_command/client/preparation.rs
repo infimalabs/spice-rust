@@ -5,7 +5,7 @@ use serde::de::DeserializeOwned;
 use wire::intent::{BoardAnswer, BoardRead, BoardTask};
 use wire::rooms::{
     CandidateCoverage, CandidateCoverageRecord, CandidateCritique, CandidateCritiqueRecord,
-    CandidateRetain, CoverageAuthority, ExecutionAuthorization, ExecutionAuthorize, OutputAdopt,
+    CandidateRef, CandidateRetain, CoverageAuthority, DecisionOutcome, OutputAdopt,
     PreparationDecide, PreparationDecision, ProposalRef, RetainedCandidate, RoomSource,
 };
 
@@ -64,11 +64,7 @@ const COVERAGE_JSON: JsonOperand<CoverageInput> = JsonOperand::new(
 );
 const DECISION_JSON: JsonOperand<PreparationDecision> = JsonOperand::new(
     "DECISION_JSON",
-    r#"{"decision":{"controller":"dVzdhh8Nx","decision":"1"},"source":{"kind":"journal","fact":"6dth"},"outcome":{"kind":"accepted","candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"}}}"#,
-);
-const AUTHORIZATION_JSON: JsonOperand<ExecutionAuthorization> = JsonOperand::new(
-    "AUTHORIZATION_JSON",
-    r#"{"decision":{"controller":"dVzdhh8Nx","decision":"1"},"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"governed_inputs":[],"selected_outputs":["dVzfwWPSh"],"coverage":[{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"coverage":"1"}]}"#,
+    r#"{"decision":{"controller":"dVzdhh8Nx","decision":"1"},"source":{"kind":"journal","fact":"6dth"},"outcome":{"kind":"selected","candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"selected_outputs":["dVzfwWPSh"]}}"#,
 );
 
 #[derive(Deserialize)]
@@ -89,7 +85,6 @@ pub(super) fn dispatch_client(
         "critique" => client_candidate_critique(repository, contract, matches),
         "cover" => client_candidate_cover(repository, contract, matches),
         "decide" => client_preparation_decide(repository, contract, matches),
-        "authorize" => client_execution_authorize(repository, contract, matches),
         "adopt" => client_output_adopt(repository, contract, matches),
         _ => unreachable!("preparation CLI partition is closed"),
     }
@@ -195,16 +190,48 @@ pub(super) fn client_preparation_decide(
         Ok(decision) => decision,
         Err(outcome) => return outcome,
     };
-    let tasks = vec![decision.decision.controller.clone()];
-    submit_with_tasks(repository, contract, tasks, false, |board| {
-        let proposal = ProposalRef::Decision {
-            decision: decision.decision.clone(),
+    let (candidate, candidate_head) =
+        match retained_candidate(repository, decision.outcome.candidate()) {
+            Ok(candidate) => candidate,
+            Err(outcome) => return outcome,
         };
-        let mut expected = task_witnesses(board)?;
+    let mut tasks = vec![decision.decision.controller.clone()];
+    if let DecisionOutcome::Selected {
+        selected_outputs, ..
+    } = &decision.outcome
+    {
+        tasks.extend(candidate.governed_inputs.iter().cloned());
+        tasks.extend(selected_outputs.iter().cloned());
+    }
+    submit_with_tasks(repository, contract, tasks, true, |board| {
+        let mut expected = transition_witnesses(task(board, &decision.decision.controller)?);
         expected.push(Witness::Proposal {
-            proposal,
+            proposal: ProposalRef::Decision {
+                decision: decision.decision.clone(),
+            },
             head: None,
         });
+        expected.push(Witness::Proposal {
+            proposal: ProposalRef::Candidate {
+                candidate: candidate.candidate.clone(),
+            },
+            head: Some(candidate_head),
+        });
+        if let DecisionOutcome::Selected {
+            selected_outputs, ..
+        } = &decision.outcome
+        {
+            for input in &candidate.governed_inputs {
+                expected.push(statement_witness(task(board, input)?));
+            }
+            for output in selected_outputs {
+                expected.extend(transition_witnesses(task(board, output)?));
+                expected.push(Witness::Authorization {
+                    output: output.clone(),
+                    head: None,
+                });
+            }
+        }
         Ok((
             CommandKind::PreparationDecide,
             expected,
@@ -213,39 +240,45 @@ pub(super) fn client_preparation_decide(
     })
 }
 
-pub(super) fn client_execution_authorize(
+fn retained_candidate(
     repository: &Repository,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    let authorization = match AUTHORIZATION_JSON.argument(matches) {
-        Ok(authorization) => authorization,
-        Err(outcome) => return outcome,
+    candidate: &CandidateRef,
+) -> Result<(RetainedCandidate, Seq), Outcome<CommandAnswer>> {
+    let state = repository
+        .admit_state()
+        .map_err(|error| repository_state_failure(&error))?;
+    let reader = journal::JournalReader::open(state.journal()).map_err(|error| {
+        store_fault(
+            "preparation::journal-unreadable",
+            &format!("cannot inspect candidate {}: {error}", candidate.candidate),
+        )
+    })?;
+    let subject = ProposalRef::Candidate {
+        candidate: candidate.clone(),
     };
-    let tasks = std::iter::once(authorization.candidate.controller.clone())
-        .chain(authorization.governed_inputs.iter().cloned())
-        .chain(authorization.selected_outputs.iter().cloned())
-        .collect::<Vec<_>>();
-    submit_with_tasks(repository, contract, tasks, true, |board| {
-        let mut expected = Vec::new();
-        let controller = task(board, &authorization.candidate.controller)?;
-        expected.extend(transition_witnesses(controller));
-        for input in &authorization.governed_inputs {
-            expected.push(statement_witness(task(board, input)?));
-        }
-        for output in &authorization.selected_outputs {
-            expected.extend(transition_witnesses(task(board, output)?));
-            expected.push(Witness::Authorization {
-                output: output.clone(),
-                head: None,
-            });
-        }
-        Ok((
-            CommandKind::ExecutionAuthorize,
-            expected,
-            ExecutionAuthorize { authorization },
-        ))
-    })
+    let head = reader
+        .read(|read| read.proposal_head(&subject))
+        .map_err(|error| {
+            store_fault(
+                "preparation::authority-unreadable",
+                &format!("cannot inspect candidate {}: {error}", candidate.candidate),
+            )
+        })?
+        .ok_or_else(|| {
+            refusal(
+                "preparation::candidate-missing",
+                Some(candidate.candidate.to_string()),
+                "retain the exact candidate version before deciding it",
+            )
+        })?;
+    let position = head.position();
+    match head.into_body() {
+        journal::ProposalAuthority::Candidate(candidate) => Ok((candidate, position)),
+        _ => Err(store_fault(
+            "preparation::candidate-invalid",
+            "candidate authority decoded as another proposal family",
+        )),
+    }
 }
 
 pub(super) fn client_output_adopt(

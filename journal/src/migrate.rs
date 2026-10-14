@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
+mod decisions;
 mod designs;
 mod fact_bounds;
 mod residual;
@@ -44,8 +45,8 @@ const PREPARED: &str = "prepared";
 /// partition a predecessor lacks, replacing its per-route room receipts and
 /// per-group heads, before the schema identity advances.
 /// Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 22] = [
-    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
+const PREDECESSOR_SCHEMAS: [u32; 23] = [
+    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -310,6 +311,9 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     cross_retired_task_guidance(&transaction)?;
     residual::cross(&transaction, vendor_holds)?;
     residual::cross_steering_rooms(&transaction)?;
+    if version >= ROOM_AUTHORITY_SCHEMA {
+        decisions::cross(&transaction)?;
+    }
     designs::cross(&transaction)?;
     if (ROOM_CONVERSATION_SCHEMA..ROOM_ITEM_SCHEMA).contains(&version) {
         transaction
@@ -1341,8 +1345,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 55, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 56, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 55;
+PRAGMA user_version = 56;
 "#;

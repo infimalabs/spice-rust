@@ -240,8 +240,6 @@ pub(crate) trait Authority {
     fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal>;
     /// Results one task currently requires answered, in canonical order.
     fn evidence(&self, task: &TaskStamp) -> Result<Vec<wire::rooms::QuestionResultRef>, Refusal>;
-    /// Position of one proposal head.
-    fn proposal_seq(&self, subject: &str) -> Result<Option<u64>, Refusal>;
     /// How many question results one requester holds pending.
     fn pending_results(&self, requester: &str) -> Result<usize, Refusal>;
     /// One shadow relevance observation by stable identity.
@@ -537,10 +535,6 @@ impl Authority for History {
                 .filter(|(owner, _)| owner == task.as_str())
                 .map(|(_, result)| result.clone()),
         )
-    }
-
-    fn proposal_seq(&self, subject: &str) -> Result<Option<u64>, Refusal> {
-        Ok(self.projection.proposals.get(subject).map(|row| row.seq))
     }
 
     fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
@@ -1029,17 +1023,12 @@ fn decide(
 ) -> Result<(), Refusal> {
     let controller = &decision.decision.controller;
     require_task(authority, controller, "decision controller")?;
-    match &decision.outcome {
-        DecisionOutcome::Accepted { candidate } | DecisionOutcome::Returned { candidate } => {
-            require_proposal(
-                authority,
-                &ProposalRef::Candidate {
-                    candidate: candidate.clone(),
-                },
-            )?;
-        }
-        DecisionOutcome::Negative { .. } => {}
-    }
+    require_proposal(
+        authority,
+        &ProposalRef::Candidate {
+            candidate: decision.outcome.candidate().clone(),
+        },
+    )?;
     require_source(authority, seq, &decision.source)?;
     let proposal = ProposalRef::Decision {
         decision: decision.decision.clone(),
@@ -1052,25 +1041,34 @@ fn authorize(
     seq: Seq,
     authorization: wire::rooms::ExecutionAuthorization,
 ) -> Result<(), Refusal> {
+    if !authorization.coverage.is_empty() {
+        return unsound("current authorization cannot carry review coverage");
+    }
     let decision_ref = ProposalRef::Decision {
         decision: authorization.decision.clone(),
     };
     let decision: PreparationDecision = wire::decode(&require_proposal(authority, &decision_ref)?)?;
-    match &decision.outcome {
-        DecisionOutcome::Accepted { candidate } if *candidate == authorization.candidate => {}
+    let selected = match &decision.outcome {
+        DecisionOutcome::Selected {
+            candidate,
+            selected_outputs,
+        } if *candidate == authorization.candidate => selected_outputs,
         _ => {
-            return unsound("authorization requires a decision accepting exactly its candidate");
+            return unsound("authorization requires the exact selection recorded by its decision");
         }
-    }
+    };
     let candidate: RetainedCandidate = wire::decode(&require_proposal(
         authority,
         &ProposalRef::Candidate {
             candidate: authorization.candidate.clone(),
         },
     )?)?;
-    let inputs = |tasks: &[TaskStamp]| tasks.iter().cloned().collect::<BTreeSet<_>>();
-    if inputs(&authorization.governed_inputs) != inputs(&candidate.governed_inputs) {
+    let set = |tasks: &[TaskStamp]| tasks.iter().cloned().collect::<BTreeSet<_>>();
+    if set(&authorization.governed_inputs) != set(&candidate.governed_inputs) {
         return unsound("authorization governed inputs differ from the candidate's");
+    }
+    if set(&authorization.selected_outputs) != set(selected) {
+        return unsound("authorization outputs differ from the decision's exact selection");
     }
     if let Some(output) = authorization
         .selected_outputs
@@ -1081,23 +1079,6 @@ fn authorize(
             "selected output {output} is not an output of the candidate"
         ));
     }
-    // The latest certifying coverage is when the candidate was last assessed.
-    let mut assessed = None;
-    for coverage in &authorization.coverage {
-        let proposal = ProposalRef::Coverage {
-            coverage: coverage.clone(),
-        };
-        let coverage: CandidateCoverage = wire::decode(&require_proposal(authority, &proposal)?)?;
-        if !matches!(coverage.authority, CoverageAuthority::SelfReview { .. }) {
-            assessed = assessed.max(authority.proposal_seq(&subject(&proposal)?)?);
-        }
-    }
-    let Some(assessed) = assessed else {
-        return unsound(
-            "authorization requires independent or operator coverage; self-review alone certifies nothing; record operator or independent coverage of this candidate, then authorize",
-        );
-    };
-    evidence::require_assessed(authority, &candidate, assessed)?;
     let decision_key = subject(&decision_ref)?;
     if authority.decision_authorized(&decision_key)? {
         return unsound("decision already authorized a selection");

@@ -508,11 +508,12 @@ owns each rule summarized here.
   lane `task done` refuses it, so its holder checkpoints and runs `task free`.
   Only `task conclude HANDLE --done` or `--collapse REASON` ends an unheld
   Design; `task close` refuses Designs. Each Design output waits, gated, until
-  [execution authorization](invariants/identity.md#work-execution-authorization-is-a-designs-exact-selection)
-  admits the operator's exact accepted selection, which releases those outputs
+  the operator's exact `preparation decide` selection records its immutable
+  decision and execution authorization together, releases only that subset,
   and leaves the Design open. Selection belongs to the operator; the Design's
-  holders do not infer it. Working-group membership grants no authorization.
-  A collapse authorizes nothing and keeps every output gated.
+  holders do not infer it, review coverage never gates it, and working-group
+  membership grants no authorization. A return or collapse request authorizes
+  nothing and keeps every output gated.
 
   A Plan is an ordinary reviewed task constructor. It creates its
   acceptance-bearing executable tasks under itself; those tasks wait for its

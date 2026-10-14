@@ -2,10 +2,9 @@ use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued, CandidateRef,
     CandidateReference, CandidateRetained, CoverageAuthority, CoverageRef, CritiqueRef,
     CritiqueStanding, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorized,
-    NegativeDecision, OutputControlled, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomPublicationContent, RoomPublished, RoomSource,
-    TextRange, TranscriptHunk, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
-    WorkingGroupsArranged,
+    OutputControlled, PreparationDecided, PreparationDecision, ProposalRef, RetainedCandidate,
+    RoomAuthorityStamp, RoomPublicationContent, RoomPublished, RoomSource, TextRange,
+    TranscriptHunk, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
 };
 use wire::{Producer, SequenceCode, TaskPreparation};
 
@@ -435,10 +434,7 @@ impl Preparation {
                 candidate: self.candidate(micros),
                 governed_inputs: inputs,
                 selected_outputs: outputs,
-                coverage: vec![CoverageRef {
-                    candidate: self.candidate(micros),
-                    coverage: SequenceCode::new(1),
-                }],
+                coverage: Vec::new(),
             },
         }
     }
@@ -539,8 +535,9 @@ fn authorized(journal: &mut Journal) -> Preparation {
         journal,
         preparation.decision(
             1,
-            DecisionOutcome::Accepted {
+            DecisionOutcome::Selected {
                 candidate: preparation.candidate(1),
+                selected_outputs: vec![preparation.output.clone()],
             },
         ),
     )
@@ -615,7 +612,7 @@ fn one_write_maintains_the_projection_that_rebuild_reproduces_without_touching_f
     assert!(matches!(
         decision.map(JournalHead::into_body),
         Some(ProposalAuthority::Decision(PreparationDecision {
-            outcome: DecisionOutcome::Accepted { .. },
+            outcome: DecisionOutcome::Selected { .. },
             ..
         }))
     ));

@@ -3,9 +3,8 @@ use super::*;
 use wire::rooms::{
     CandidateCoverage, CandidateCoverageRecord, CandidateCritique, CandidateCritiqueRecord,
     CandidateRef, CandidateReference, CandidateRetain, CoverageAuthority, CoverageRef, CritiqueRef,
-    CritiqueStanding, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorize,
-    NegativeDecision, OutputAdopt, PreparationDecide, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomSource,
+    CritiqueStanding, DecisionOutcome, DecisionRef, OutputAdopt, PreparationDecide,
+    PreparationDecision, ProposalRef, RetainedCandidate, RoomAuthorityStamp, RoomSource,
 };
 
 fn add_plan(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
@@ -92,17 +91,9 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
     let (candidate, source) =
         retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
     record_test_critique(&bus, epoch, &seats, &controller, &candidate, &source);
-    let coverage_refs = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
+    let _coverage = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
     record_test_decisions(&bus, epoch, &controller, &output, &candidate, &source);
-    authorize_test_output(
-        &bus,
-        epoch,
-        &controller,
-        &output,
-        &spare,
-        candidate,
-        &coverage_refs,
-    );
+    authorize_test_output(&bus, epoch, &controller, &output, &spare, candidate);
     assert_eq!(
         open_blocked(&bus, epoch),
         [spare.born().expect("spare output stamp")].into(),
@@ -163,8 +154,9 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
         .filter(|row| row["kind"] == "decision")
         .map(|row| row["decision"]["outcome"]["kind"].as_str())
         .collect::<Vec<_>>();
-    assert!(outcomes.contains(&Some("accepted")), "{outcomes:?}");
-    assert!(outcomes.contains(&Some("negative")), "{outcomes:?}");
+    assert!(outcomes.contains(&Some("selected")), "{outcomes:?}");
+    assert!(outcomes.contains(&Some("returned")), "{outcomes:?}");
+    assert!(outcomes.contains(&Some("collapse")), "{outcomes:?}");
     assert_eq!(
         record("authorization")["authorization"]["selected_outputs"],
         serde_json::json!([output.born().expect("selected output stamp")])
@@ -196,22 +188,14 @@ fn operator_selection_releases_outputs_and_leaves_a_held_design_open() {
     let (candidate, source) =
         retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
     record_test_critique(&bus, epoch, &seats, &controller, &candidate, &source);
-    let coverage_refs = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
+    let _coverage = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
     record_test_decisions(&bus, epoch, &controller, &output, &candidate, &source);
     assert_eq!(
         open_awaiting_selection(&bus, epoch),
         [controller.born().expect("controller stamp")].into()
     );
 
-    authorize_test_output(
-        &bus,
-        epoch,
-        &controller,
-        &output,
-        &spare,
-        candidate,
-        &coverage_refs,
-    );
+    authorize_test_output(&bus, epoch, &controller, &output, &spare, candidate);
 
     let current = board(&bus, epoch, Actor::Operator);
     assert!(
@@ -231,6 +215,68 @@ fn operator_selection_releases_outputs_and_leaves_a_held_design_open() {
         open_awaiting_selection(&bus, epoch),
         [controller.born().expect("controller stamp")].into(),
         "the unselected spare still waits on the operator"
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn later_candidate_versions_release_additional_exact_output_subsets() {
+    let (root, bus, epoch, seats) = fixture("preparation-multi-version-selection", 1);
+    let design = add_controller(
+        &bus,
+        epoch,
+        "Versioned preparation controller",
+        wire::TaskIntent::Design,
+        None,
+    );
+    let first = add_output(&bus, epoch, &design, "First version output");
+    let second = add_output(&bus, epoch, &design, "Later version output");
+    let (initial, _) = retain_candidate_version(
+        &bus,
+        epoch,
+        &seats[0],
+        &design,
+        &[&first, &second],
+        1_760_000_000_000_001,
+    );
+    let first_decision = select_candidate_outputs(&bus, epoch, &design, initial, &[&first], 1);
+    let after_first = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&after_first, &first).statement.body.authorization,
+        Some(first_decision.clone())
+    );
+    assert_eq!(at(&after_first, &second).statement.body.authorization, None);
+
+    let (later, _) = retain_candidate_version(
+        &bus,
+        epoch,
+        &seats[0],
+        &design,
+        &[&second],
+        1_760_000_000_000_002,
+    );
+    let second_decision = select_candidate_outputs(&bus, epoch, &design, later, &[&second], 2);
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&current, &first).statement.body.authorization,
+        Some(first_decision),
+        "a later candidate never revises prior authority"
+    );
+    assert_eq!(
+        at(&current, &second).statement.body.authorization,
+        Some(second_decision)
+    );
+    assert!(
+        !open_awaiting_selection(&bus, epoch).contains(&design.born().expect("Design stamp")),
+        "all direct outputs now carry exact selection authority"
+    );
+    assert_eq!(
+        (
+            at(&current, &design).workflow.body.status.as_str(),
+            at(&current, &design).workflow.body.completion,
+        ),
+        ("pending", None),
+        "selections never conclude the Design"
     );
     clean(&root, bus);
 }
@@ -283,23 +329,40 @@ fn retain_test_candidate(
     output: &TaskHandle,
     spare: &TaskHandle,
 ) -> (CandidateRef, RoomSource) {
-    let current = board(&bus, epoch, Actor::Lane(seats[0].lane));
-    let controller_stamp = controller.born().expect("controller stamp");
-    let output_stamp = output.born().expect("output stamp");
-    let spare_stamp = spare.born().expect("spare stamp");
+    retain_candidate_version(
+        bus,
+        epoch,
+        &seats[0],
+        controller,
+        &[output, spare],
+        1_760_000_000_000_001,
+    )
+}
+
+fn retain_candidate_version(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    controller: &TaskHandle,
+    outputs: &[&TaskHandle],
+    candidate_micros: i64,
+) -> (CandidateRef, RoomSource) {
+    let current = board(bus, epoch, Actor::Lane(seat.lane));
     let candidate = CandidateRef {
-        controller: controller_stamp.clone(),
-        candidate: RoomAuthorityStamp::for_micros(1_760_000_000_000_001)
-            .expect("candidate identity"),
+        controller: controller.born().expect("controller stamp"),
+        candidate: RoomAuthorityStamp::for_micros(candidate_micros).expect("candidate identity"),
     };
     let retained = RetainedCandidate {
         candidate: candidate.clone(),
         governed_inputs: Vec::new(),
-        outputs: vec![output_stamp.clone(), spare_stamp.clone()],
+        outputs: outputs
+            .iter()
+            .map(|output| output.born().expect("output stamp"))
+            .collect(),
         evidence: Vec::new(),
         references: vec![CandidateReference {
             relation: "contract".parse().expect("relation"),
-            source: journal_source(&current, &controller),
+            source: journal_source(&current, controller),
         }],
     };
     let mut expected = vec![Witness::Proposal {
@@ -308,22 +371,21 @@ fn retain_test_candidate(
         },
         head: None,
     }];
-    for task in [&controller, &output, &spare] {
-        expected.push(statement_witness(at(&current, task)));
+    expected.push(statement_witness(at(&current, controller)));
+    for output in outputs {
+        expected.push(statement_witness(at(&current, output)));
     }
     assert_committed(issue(
-        &bus,
+        bus,
         epoch,
-        Actor::Lane(seats[0].lane),
+        Actor::Lane(seat.lane),
         CommandKind::CandidateRetain,
         expected,
         &CandidateRetain {
-            candidate: retained.clone(),
+            candidate: retained,
         },
     ));
-
-    let source = journal_source(&current, &controller);
-    (candidate, source)
+    (candidate, journal_source(&current, controller))
 }
 
 fn record_test_critique(
@@ -445,20 +507,16 @@ fn record_test_decisions(
     for (sequence, outcome) in [
         (
             1,
-            DecisionOutcome::Negative {
-                conclusion: NegativeDecision::NoWork,
+            DecisionOutcome::Collapse {
+                candidate: candidate.clone(),
+                reason: "the premise no longer holds".to_owned(),
             },
         ),
         (
             2,
             DecisionOutcome::Returned {
                 candidate: candidate.clone(),
-            },
-        ),
-        (
-            3,
-            DecisionOutcome::Accepted {
-                candidate: candidate.clone(),
+                reason: "revise the candidate".to_owned(),
             },
         ),
     ] {
@@ -467,20 +525,34 @@ fn record_test_decisions(
             decision: wire::SequenceCode::new(sequence),
         };
         let current = board(&bus, epoch, Actor::Operator);
+        let candidate_subject = ProposalRef::Candidate {
+            candidate: candidate.clone(),
+        };
+        let candidate_head = bus
+            .read({
+                let candidate_subject = candidate_subject.clone();
+                move |read| read.proposal_head(&candidate_subject)
+            })
+            .expect("candidate head reads")
+            .expect("candidate was retained")
+            .position();
+        let mut expected = transition_witnesses(at(&current, &controller));
+        expected.push(Witness::Proposal {
+            proposal: candidate_subject,
+            head: Some(candidate_head),
+        });
+        expected.push(Witness::Proposal {
+            proposal: ProposalRef::Decision {
+                decision: decision.clone(),
+            },
+            head: None,
+        });
         assert_committed(issue(
             &bus,
             epoch,
             Actor::Operator,
             CommandKind::PreparationDecide,
-            vec![
-                statement_witness(at(&current, &controller)),
-                Witness::Proposal {
-                    proposal: ProposalRef::Decision {
-                        decision: decision.clone(),
-                    },
-                    head: None,
-                },
-            ],
+            expected,
             &PreparationDecide {
                 decision: PreparationDecision {
                     decision,
@@ -493,9 +565,74 @@ fn record_test_decisions(
         assert_eq!(
             at(&current, &output).statement.body.authorization,
             None,
-            "a decision alone authorizes nothing"
+            "a non-selection decision authorizes nothing"
         );
     }
+}
+
+fn select_candidate_outputs(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    controller: &TaskHandle,
+    candidate: CandidateRef,
+    outputs: &[&TaskHandle],
+    sequence: u64,
+) -> DecisionRef {
+    let decision = DecisionRef {
+        controller: controller.born().expect("controller stamp"),
+        decision: wire::SequenceCode::new(sequence),
+    };
+    let candidate_subject = ProposalRef::Candidate {
+        candidate: candidate.clone(),
+    };
+    let candidate_head = bus
+        .read({
+            let candidate_subject = candidate_subject.clone();
+            move |read| read.proposal_head(&candidate_subject)
+        })
+        .expect("candidate head reads")
+        .expect("candidate was retained")
+        .position();
+    let current = board(bus, epoch, Actor::Operator);
+    let mut expected = transition_witnesses(at(&current, controller));
+    for output in outputs {
+        expected.extend(transition_witnesses(at(&current, output)));
+        expected.push(Witness::Authorization {
+            output: output.born().expect("output stamp"),
+            head: None,
+        });
+    }
+    expected.push(Witness::Proposal {
+        proposal: candidate_subject,
+        head: Some(candidate_head),
+    });
+    expected.push(Witness::Proposal {
+        proposal: ProposalRef::Decision {
+            decision: decision.clone(),
+        },
+        head: None,
+    });
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::PreparationDecide,
+        expected,
+        &PreparationDecide {
+            decision: PreparationDecision {
+                decision: decision.clone(),
+                source: journal_source(&current, controller),
+                outcome: DecisionOutcome::Selected {
+                    candidate,
+                    selected_outputs: outputs
+                        .iter()
+                        .map(|output| output.born().expect("output stamp"))
+                        .collect(),
+                },
+            },
+        },
+    ));
+    decision
 }
 
 fn authorize_test_output(
@@ -505,78 +642,8 @@ fn authorize_test_output(
     output: &TaskHandle,
     spare: &TaskHandle,
     candidate: CandidateRef,
-    coverage_refs: &[CoverageRef],
 ) {
-    let controller_stamp = controller.born().expect("controller stamp");
-    let output_stamp = output.born().expect("output stamp");
-    let decision = DecisionRef {
-        controller: controller_stamp,
-        decision: wire::SequenceCode::new(3),
-    };
-    let current = board(&bus, epoch, Actor::Operator);
-    let mut expected = transition_witnesses(at(&current, &controller));
-    expected.extend(transition_witnesses(at(&current, &output)));
-    expected.push(Witness::Authorization {
-        output: output_stamp,
-        head: None,
-    });
-    let unrecorded = CoverageRef {
-        candidate: candidate.clone(),
-        coverage: wire::SequenceCode::new(9),
-    };
-    let unsound = issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::ExecutionAuthorize,
-        expected.clone(),
-        &ExecutionAuthorize {
-            authorization: ExecutionAuthorization {
-                decision: decision.clone(),
-                candidate: candidate.clone(),
-                governed_inputs: Vec::new(),
-                selected_outputs: vec![output.born().expect("output stamp")],
-                coverage: vec![unrecorded.clone()],
-            },
-        },
-    );
-    let Outcome::Refusal(refusal) = unsound else {
-        panic!("authorization over unrecorded coverage was admitted: {unsound:?}");
-    };
-    assert_eq!(
-        refusal.reason(),
-        journal::ROOM_AUTHORITY_REFUSED,
-        "an unsound request is not witness movement"
-    );
-    let detail = refusal
-        .diagnostic()
-        .and_then(wire::RefusalDiagnostic::detail)
-        .expect("room authority names the offending subject");
-    let subject = serde_json::to_string(&unrecorded).expect("coverage reference encodes");
-    assert!(
-        detail.contains(&subject),
-        "refusal omitted the unrecorded coverage {subject}: {detail}"
-    );
-    let unchanged = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&unchanged, &output).statement.body.authorization, None);
-    assert_eq!(at(&unchanged, &controller).workflow.body.status, "pending");
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::ExecutionAuthorize,
-        expected,
-        &ExecutionAuthorize {
-            authorization: ExecutionAuthorization {
-                decision: decision.clone(),
-                candidate,
-                governed_inputs: Vec::new(),
-                selected_outputs: vec![output.born().expect("output stamp")],
-                coverage: vec![coverage_refs[1].clone()],
-            },
-        },
-    ));
-
+    let decision = select_candidate_outputs(bus, epoch, controller, candidate, &[output], 3);
     let current = board(&bus, epoch, Actor::Operator);
     assert_eq!(
         at(&current, &output).statement.body.authorization,
@@ -684,7 +751,7 @@ fn assert_controlled_output_refusal(outcome: Outcome<CommandAnswer>, outputs: &[
         .and_then(wire::RefusalDiagnostic::detail)
         .expect("refusal names the authorization or settlement repair");
     assert!(
-        detail.contains("spice preparation authorize")
+        detail.contains("spice preparation decide")
             && detail.contains("close or delete")
             && !detail.contains("working group")
             && !detail.contains("engag"),
@@ -1079,11 +1146,9 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
 
     let (candidate, source) =
         retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
-    let coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
     record_test_decisions(&bus, epoch, &design, &selected, &candidate, &source);
-    authorize_test_output(
-        &bus, epoch, &design, &selected, &sibling, candidate, &coverage,
-    );
+    authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
     assert_eq!(
         open_blocked(&bus, epoch),
         stamps(&[&sibling]),
@@ -1124,11 +1189,9 @@ fn next_work_offers_a_plan_released_task_whose_open_design_is_off_the_frontier()
     let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
     let (candidate, source) =
         retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
-    let coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
     record_test_decisions(&bus, epoch, &design, &selected, &candidate, &source);
-    authorize_test_output(
-        &bus, epoch, &design, &selected, &sibling, candidate, &coverage,
-    );
+    authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
     let planner = Actor::Lane(seats[0].lane);
     claim_task(&bus, epoch, &seats[0], &planner, &selected);
     let task = add_output(&bus, epoch, &selected, "Selected plan task");
@@ -1184,14 +1247,39 @@ fn a_design_refuses_authorization_until_its_pending_dependencies_settle() {
     let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
     let (candidate, source) =
         retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
-    let coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
     record_test_decisions(&bus, epoch, &design, &selected, &candidate, &source);
     let correction = todo_task(&bus, epoch, "PREP-correct01", "Open review correction");
     connect_child(&bus, epoch, &design, &correction);
 
     let current = board(&bus, epoch, Actor::Operator);
+    let candidate_subject = ProposalRef::Candidate {
+        candidate: candidate.clone(),
+    };
+    let candidate_head = bus
+        .read({
+            let candidate_subject = candidate_subject.clone();
+            move |read| read.proposal_head(&candidate_subject)
+        })
+        .expect("candidate head reads")
+        .expect("candidate was retained")
+        .position();
+    let decision = DecisionRef {
+        controller: design.born().expect("design stamp"),
+        decision: wire::SequenceCode::new(3),
+    };
     let mut expected = transition_witnesses(at(&current, &design));
     expected.extend(transition_witnesses(at(&current, &selected)));
+    expected.push(Witness::Proposal {
+        proposal: candidate_subject,
+        head: Some(candidate_head),
+    });
+    expected.push(Witness::Proposal {
+        proposal: ProposalRef::Decision {
+            decision: decision.clone(),
+        },
+        head: None,
+    });
     expected.push(Witness::Authorization {
         output: selected.born().expect("output stamp"),
         head: None,
@@ -1200,18 +1288,16 @@ fn a_design_refuses_authorization_until_its_pending_dependencies_settle() {
         &bus,
         epoch,
         Actor::Operator,
-        CommandKind::ExecutionAuthorize,
+        CommandKind::PreparationDecide,
         expected,
-        &ExecutionAuthorize {
-            authorization: ExecutionAuthorization {
-                decision: DecisionRef {
-                    controller: design.born().expect("design stamp"),
-                    decision: wire::SequenceCode::new(3),
+        &PreparationDecide {
+            decision: PreparationDecision {
+                decision,
+                source: source.clone(),
+                outcome: DecisionOutcome::Selected {
+                    candidate: candidate.clone(),
+                    selected_outputs: vec![selected.born().expect("output stamp")],
                 },
-                candidate: candidate.clone(),
-                governed_inputs: Vec::new(),
-                selected_outputs: vec![selected.born().expect("output stamp")],
-                coverage: vec![coverage[1].clone()],
             },
         },
     );
@@ -1226,8 +1312,6 @@ fn a_design_refuses_authorization_until_its_pending_dependencies_settle() {
 
     let fixer = Actor::Lane(seats[1].lane);
     claim_and_complete_task(&bus, epoch, &seats[1], &fixer, &correction);
-    authorize_test_output(
-        &bus, epoch, &design, &selected, &sibling, candidate, &coverage,
-    );
+    authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
     clean(&root, bus);
 }

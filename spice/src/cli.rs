@@ -182,7 +182,6 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::CandidateCritiqueRecord
         | CommandKind::CandidateCoverageRecord
         | CommandKind::PreparationDecide
-        | CommandKind::ExecutionAuthorize
         | CommandKind::OutputAdopt
         | CommandKind::GlobalSettingsRead
         | CommandKind::GlobalSettingsSet
@@ -430,7 +429,6 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["preparation", "critique"]
             | ["preparation", "cover"]
             | ["preparation", "decide"]
-            | ["preparation", "authorize"]
             | ["preparation", "adopt"]
             | ["task", "list"]
             | ["task", "status"]

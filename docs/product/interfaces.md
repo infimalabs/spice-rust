@@ -64,11 +64,11 @@ commands mean; this section fixes their operand bodies and bounds.
 
 ### Preparation command bodies
 
-`preparation retain`, `critique`, `cover`, `decide`, and `authorize` each take
-one canonical JSON object. Unknown fields refuse, nothing is lenient, and a
-malformed body refuses with `preparation::argument-invalid`, giving the parse
-detail and a complete body that command accepts. `preparation adopt` takes two
-task handles instead.
+`preparation retain`, `critique`, `cover`, and `decide` each take one canonical
+JSON object. Unknown fields refuse, nothing is lenient, and a malformed body
+refuses with `preparation::argument-invalid`, giving the parse detail and a
+complete body that command accepts. `preparation adopt` takes two task handles
+instead.
 
 - **Values.** A task is its bare nine-character birth stamp, without the
   project prefix (`dVzdhh8Nx` for `REPOSIT-dVzdhh8Nx`). A candidate is
@@ -82,8 +82,8 @@ task handles instead.
 - **`retain CANDIDATE_JSON`.** `candidate`, `governed_inputs` (tasks the
   candidate assumes), `outputs` (at least one gated output), `references`
   (at least one `{"relation": NAME, "source": SOURCE}`), and optional
-  `evidence` (question results that coverage must later assess). Inputs and
-  outputs are unique and disjoint.
+  `evidence` (question results retained with the candidate). Inputs and outputs
+  are unique and disjoint.
 - **`critique CRITIQUE_JSON`.** `critique` (`{"candidate": …, "critique":
   SEQUENCE}`), `category`, `source`, and `standing` (`clean` or
   `material-finding`).
@@ -91,12 +91,11 @@ task handles instead.
   SEQUENCE}`), nonempty unique `scopes`, and `source`. The command attributes
   the reviewer authority itself.
 - **`decide DECISION_JSON`.** `decision` (`{"controller": STAMP, "decision":
-  SEQUENCE}`), `source`, and `outcome`: `{"kind": "accepted"|"returned",
-  "candidate": …}` under the same controller, or `{"kind": "negative",
-  "conclusion": "rejected"|"no-work"}`.
-- **`authorize AUTHORIZATION_JSON`.** `decision`, `candidate` under the same
-  controller, `governed_inputs`, nonempty `selected_outputs`, and nonempty
-  `coverage` naming coverage of that candidate, all as unique sets.
+  SEQUENCE}`), `source`, and one outcome over an exact candidate under that
+  controller: `{"kind": "selected", "candidate": …, "selected_outputs": […]}`,
+  `{"kind": "returned", "candidate": …, "reason": TEXT}`, or
+  `{"kind": "collapse", "candidate": …, "reason": TEXT}`. A selected subset is
+  nonempty and unique; return and collapse-request reasons are nonblank.
 
 ### Limits and their repairs
 
@@ -123,9 +122,9 @@ task handles instead.
 | Late answer | the immutable deadline | `room::deadline-passed`: close with `spice room cancel RESULT --clause TEXT --override` |
 | Answer or close by a non-party | stored parties only | `room::not-respondent` or `room::override-required`, naming the `--override` command |
 | Required evidence | each result answered | `task::evidence-unsatisfied`: ask again, or the operator replaces or waives it |
-| Positive Design conclusion with gated outputs | none unauthorized | `preparation::controlled-outputs-pending`: authorize the exact selection, or close or delete each unselected output; until then the allocator holds the final-phase Design for the operator and starts no lane for it |
-| Candidate or authorization controller | a Design | `preparation::controller-not-design`: a Plan's outputs follow its positive review |
-| Authorizing Design dependencies | none pending, including review corrections | `preparation::controller-blocked`: settle the dependency first, so a finding keeps the Design pending |
+| Positive Design conclusion with gated outputs | none unselected | `preparation::controlled-outputs-pending`: select the exact subset with `preparation decide`, or close or delete each unselected output; until then the allocator holds the final-phase Design for the operator and starts no lane for it |
+| Candidate or decision controller | an open Design | `preparation::controller-not-design` or `preparation::controller-concluded`: a Plan's outputs follow its positive review |
+| Selecting Design outputs | no pending Design dependency, including review corrections | `preparation::controller-blocked`: settle the dependency first, so a finding keeps the Design pending |
 
 ## Bounded reads
 

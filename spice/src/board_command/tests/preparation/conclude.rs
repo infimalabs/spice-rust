@@ -224,17 +224,9 @@ fn collapse_records_its_reason_and_gates_every_output_again() {
     let spare = add_output(&bus, epoch, &design, "Unselected collapsed output");
     let (candidate, source) = retain_test_candidate(&bus, epoch, &seats, &design, &output, &spare);
     record_test_critique(&bus, epoch, &seats, &design, &candidate, &source);
-    let coverage_refs = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
     record_test_decisions(&bus, epoch, &design, &output, &candidate, &source);
-    authorize_test_output(
-        &bus,
-        epoch,
-        &design,
-        &output,
-        &spare,
-        candidate,
-        &coverage_refs,
-    );
+    authorize_test_output(&bus, epoch, &design, &output, &spare, candidate);
     let output_stamp = output.born().expect("output stamp");
     assert!(!open_blocked(&bus, epoch).contains(&output_stamp));
 

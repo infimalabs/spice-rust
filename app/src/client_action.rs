@@ -49,21 +49,12 @@ pub(crate) enum RoomCoordinationRequest {
     },
 }
 
-/// One operator decision over a retained candidate, the operator's own review
-/// coverage of one, or one exact execution authorization following an
-/// accepted decision, with the heads it was drawn from.
+/// One review-evidence record over a retained candidate, with the heads the
+/// browser drew it from.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum PreparationRequest {
-    Decide {
-        request: wire::rooms::PreparationDecide,
-        expected: Vec<wire::Witness>,
-    },
     Cover {
         request: wire::rooms::CandidateCoverageRecord,
-        expected: Vec<wire::Witness>,
-    },
-    Authorize {
-        request: wire::rooms::ExecutionAuthorize,
         expected: Vec<wire::Witness>,
     },
 }
@@ -125,7 +116,7 @@ pub(crate) enum ClientAction {
         request: RoomCoordinationRequest,
         respond: RoomCoordinationResponse,
     },
-    /// Decide a Design's retained candidate or authorize its selected outputs.
+    /// Decide a Design's retained candidate or record review evidence over it.
     Preparation {
         request: PreparationRequest,
         respond: PreparationResponse,

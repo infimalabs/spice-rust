@@ -278,18 +278,6 @@ impl Authority for Stored<'_> {
         super::evidence::parse(keys)
     }
 
-    fn proposal_seq(&self, subject: &str) -> Result<Option<u64>, Refusal> {
-        Ok(self
-            .connection
-            .query_row(
-                "SELECT head_seq FROM proposal_heads WHERE subject = ?1",
-                [subject],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?
-            .map(unsql))
-    }
-
     fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
         conversation::stored_pending_results(self.connection, requester)
     }
