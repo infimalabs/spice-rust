@@ -175,8 +175,8 @@ whose omission names the exact continuation.
   the Design's notes. A Design stays open: `spice task done` refuses it, so
   checkpoint and run `spice task free HANDLE`; only the operator concludes it
   with `spice task conclude`. Design outputs wait for the operator's exact
-  execution authorization: leave selection and `spice preparation authorize
-  AUTHORIZATION_JSON` to the operator. `--depends` never removes that gate;
+  selection: leave `spice preparation decide DECISION_JSON` to the operator.
+  `--depends` never removes that gate;
   never add a reciprocal controller-to-output edge. Origin creates no
   dependency; closure, deletion, a finding, or a working-group move releases or
   authorizes nothing. A Design outside every working group is passive and
