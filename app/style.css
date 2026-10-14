@@ -571,7 +571,7 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   overscroll-behavior: contain;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .app-sidebar-layer:not([data-sidebar-state="open"]) :is(.app-sidebar-backdrop, .app-sidebar-surface) { opacity: 0; }
+  .app-sidebar-layer:not([data-sidebar-state="open"]) :is(.app-sidebar-backdrop, .app-sidebar-surface, .app-spice-sidebar-readouts) { opacity: 0; }
 }
 /* Global TURBO stands beside the Spice button; the weekly percentage stacks
    above the button outside this box. */
@@ -584,6 +584,11 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   grid-template-columns: auto var(--app-header-control);
   align-items: center;
   gap: 10px;
+}
+.app-spice-sidebar-readouts {
+  display: grid;
+  place-items: center;
+  transition: var(--app-side-view-fade);
 }
 .app-sidebar-layer[data-sidebar-anchored] .app-sidebar-header {
   padding-inline-end: calc(var(--app-spice-anchor-inset-inline) + 2 * var(--app-header-control) + 30px);
