@@ -22,9 +22,6 @@ pub(crate) struct RoomPostAction {
     pub(crate) room: TaskHandle,
     pub(crate) head: wire::Seq,
     pub(crate) text: String,
-    pub(crate) grooming: Option<wire::rooms::OopsGrooming>,
-    /// Current statement heads aligned with `grooming.reports`.
-    pub(crate) report_heads: Vec<wire::Seq>,
     pub(crate) respond: RoomPostResponse,
 }
 

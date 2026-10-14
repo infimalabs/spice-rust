@@ -614,20 +614,7 @@ fn group_change_bytes(change: &crate::client_action::GroupChange) -> usize {
 }
 
 fn room_post_bytes(post: &crate::client_action::RoomPostAction) -> usize {
-    post.room
-        .as_str()
-        .len()
-        .saturating_add(post.text.len())
-        .saturating_add(post.grooming.as_ref().map_or(0, |grooming| {
-            grooming.reports.iter().fold(
-                grooming
-                    .cause
-                    .len()
-                    .saturating_add(grooming.exceptions.len())
-                    .saturating_add(grooming.uncertainty.len()),
-                |bytes, report| bytes.saturating_add(report.as_str().len()),
-            )
-        }))
+    post.room.as_str().len().saturating_add(post.text.len())
 }
 
 fn room_control_bytes(request: &crate::client_action::RoomControlRequest) -> usize {
