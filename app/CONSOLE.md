@@ -183,12 +183,14 @@ there is no coverage-record prerequisite, Accept stage, post-Accept checkbox,
 or separate Authorize action. Coverage remains readable evidence.
 
 The first click marks that exact version pending before the socket write, so a
-double activation cannot submit twice. A successful reply reports only that
-the write landed: standing, selected outputs, and conclusion continue to come
-from committed room and board authority. A stale candidate, moved head, live
-claim, concluded Design, foreign output, or mismatched version refusal stays
-beside the unchanged choice and reason and requires a fresh preview. Passive
-versus active working-group standing changes no operator decision authority.
+double activation cannot submit twice. While it is pending, every other
+proposal version's decision controls stay disabled; its exact reply settles
+before another version can replace the draft. A successful reply reports only
+that the write landed: standing, selected outputs, and conclusion continue to
+come from committed room and board authority. A stale candidate, moved head,
+live claim, concluded Design, foreign output, or mismatched version refusal
+stays beside the unchanged choice and reason and requires a fresh preview.
+Passive versus active working-group standing changes no operator decision authority.
 Native radio, checkbox, text, and button controls preserve keyboard order in
 normal and narrow layouts.
 

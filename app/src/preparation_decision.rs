@@ -60,6 +60,54 @@ pub struct DecisionDraft {
     notice: Option<DraftNotice>,
 }
 
+/// The page's one active decision draft.
+///
+/// A submitted draft owns the slot until its exact response settles. Edits
+/// targeting another candidate during that interval are ignored rather than
+/// replacing the pending state and losing its eventual refusal.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DecisionComposer {
+    draft: Option<DecisionDraft>,
+}
+
+impl DecisionComposer {
+    #[must_use]
+    pub fn draft(&self, candidate: &CandidateRef) -> Option<&DecisionDraft> {
+        self.draft
+            .as_ref()
+            .filter(|draft| draft.candidate() == candidate)
+    }
+
+    #[must_use]
+    pub fn is_pending(&self) -> bool {
+        self.draft.as_ref().is_some_and(DecisionDraft::is_pending)
+    }
+
+    /// Apply one edit to its exact candidate without displacing an in-flight
+    /// draft belonging to another candidate.
+    pub fn apply(
+        &mut self,
+        candidate: CandidateRef,
+        settles: bool,
+        change: impl FnOnce(&mut DecisionDraft),
+    ) {
+        let names = self
+            .draft
+            .as_ref()
+            .is_some_and(|draft| draft.candidate() == &candidate);
+        if (settles && !names) || (self.is_pending() && !names) {
+            return;
+        }
+        let mut draft = self
+            .draft
+            .take()
+            .filter(|draft| draft.candidate() == &candidate)
+            .unwrap_or_else(|| DecisionDraft::new(candidate));
+        change(&mut draft);
+        self.draft = Some(draft);
+    }
+}
+
 impl DecisionDraft {
     #[must_use]
     pub const fn new(candidate: CandidateRef) -> Self {

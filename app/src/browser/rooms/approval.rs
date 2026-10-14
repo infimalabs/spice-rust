@@ -19,16 +19,17 @@ use crate::AppRuntime;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, PreparationRequest};
 use crate::preparation_decision::{
-    DecisionChoice, DecisionDraft, DraftNotice, DraftPhase, Submission,
+    DecisionChoice, DecisionComposer, DecisionDraft, DraftNotice, DraftPhase, Submission,
 };
 use crate::runtime::{PreparationProjection, RoomPositioned};
 
 type DraftChange = Rc<dyn Fn(&mut DecisionDraft)>;
 type DraftCommand = Box<dyn Fn()>;
 
-/// This page's one decision draft, keyed by exact candidate version.
+/// This page's one decision draft. A pending version keeps the slot until its
+/// exact response settles.
 #[derive(Clone, Default, PartialEq)]
-pub(super) struct Composer(Option<DecisionDraft>);
+pub(super) struct Composer(DecisionComposer);
 
 /// One edit to one version. A late response cannot settle another version.
 pub(super) struct ComposerEdit {
@@ -41,20 +42,9 @@ impl Reducible for Composer {
     type Action = ComposerEdit;
 
     fn reduce(self: Rc<Self>, action: ComposerEdit) -> Rc<Self> {
-        let names = |this: &Self| {
-            this.0
-                .as_ref()
-                .is_some_and(|draft| *draft.candidate() == action.candidate)
-        };
-        if action.settles && !names(&self) {
-            return self;
-        }
-        let mut draft = Rc::unwrap_or_clone(self)
-            .0
-            .filter(|draft| *draft.candidate() == action.candidate)
-            .unwrap_or_else(|| DecisionDraft::new(action.candidate));
-        (action.change)(&mut draft);
-        Rc::new(Self(Some(draft)))
+        let mut composer = Rc::unwrap_or_clone(self).0;
+        composer.apply(action.candidate, action.settles, action.change);
+        Rc::new(Self(composer))
     }
 }
 
@@ -156,13 +146,9 @@ pub(super) fn render_approval(
 fn render_candidate(context: &Context<'_>, positioned: &RoomPositioned<RetainedCandidate>) -> Html {
     let candidate = &positioned.value;
     let empty = DecisionDraft::new(candidate.candidate.clone());
-    let draft = context
-        .controls
-        .decision
-        .0
-        .as_ref()
-        .filter(|draft| *draft.candidate() == candidate.candidate)
-        .unwrap_or(&empty);
+    let composer = &context.controls.decision.0;
+    let draft = composer.draft(&candidate.candidate).unwrap_or(&empty);
+    let locked = composer.is_pending();
     let standing = standing(context.preparation, &candidate.candidate);
     let coverage = context
         .preparation
@@ -213,12 +199,17 @@ fn render_candidate(context: &Context<'_>, positioned: &RoomPositioned<RetainedC
             {render_coverage(context.runtime, &coverage)}
             <ul class="room-approval-outputs" aria-label="Proposed outputs">
                 {for candidate.outputs.iter().map(|output| {
-                    render_output(context, output, draft, interactive, pending, &edit)
+                    render_output(context, output, draft, interactive, locked, &edit)
                 })}
             </ul>
             {render_decision_history(&decisions, &authorizations)}
             if interactive {
-                {render_controls(context, positioned, draft, &edit)}
+                {render_controls(context, positioned, draft, locked, &edit)}
+                if locked && !pending {
+                    <p class="room-notice" role="status">
+                        {"Another proposal decision is pending; wait for it to settle before editing this version."}
+                    </p>
+                }
             } else if context.controller.is_none() {
                 <p class="room-notice">{"This Design is concluded; its proposal history is read-only."}</p>
             }
@@ -375,7 +366,7 @@ fn render_output(
     output: &TaskStamp,
     draft: &DecisionDraft,
     interactive: bool,
-    pending: bool,
+    locked: bool,
     edit: &impl Fn(DraftChange) -> DraftCommand,
 ) -> Html {
     let choose = {
@@ -391,7 +382,7 @@ fn render_output(
                         type="checkbox"
                         aria-label={format!("Select unavailable output {output}")}
                         checked={draft.selected(output)}
-                        disabled={pending}
+                        disabled={locked}
                         onchange={Callback::from(move |_: Event| choose())}
                     />
                 }
@@ -412,7 +403,7 @@ fn render_output(
                     <input
                         type="checkbox"
                         checked={draft.selected(output)}
-                        disabled={pending}
+                        disabled={locked}
                         onchange={Callback::from(move |_: Event| choose())}
                     />
                 }
@@ -486,10 +477,10 @@ fn render_controls(
     context: &Context<'_>,
     positioned: &RoomPositioned<RetainedCandidate>,
     draft: &DecisionDraft,
+    locked: bool,
     edit: &impl Fn(DraftChange) -> DraftCommand,
 ) -> Html {
     let candidate = &positioned.value;
-    let pending = draft.is_pending();
     let choose = |choice| edit(Rc::new(move |draft| draft.set_choice(choice)));
     let selected = choose(DecisionChoice::Selected);
     let returned = choose(DecisionChoice::Returned);
@@ -541,7 +532,7 @@ fn render_controls(
     };
     html! {
         <div class="room-decision" data-proposal-decision={candidate.candidate.candidate.to_string()}>
-            <fieldset class="room-decision-choices" disabled={pending}>
+            <fieldset class="room-decision-choices" disabled={locked}>
                 <legend>{"Decision"}</legend>
                 <label>
                     <input
@@ -578,7 +569,7 @@ fn render_controls(
                         type="text"
                         value={draft.reason().to_owned()}
                         oninput={reason}
-                        disabled={pending}
+                        disabled={locked}
                         placeholder={if draft.choice() == DecisionChoice::Returned {
                             "What another proposal must change"
                         } else {
@@ -591,7 +582,7 @@ fn render_controls(
                 <button
                     type="button"
                     onclick={Callback::from(move |_: MouseEvent| preview())}
-                    disabled={pending}
+                    disabled={locked}
                 >
                     {"Preview decision"}
                 </button>
@@ -666,9 +657,12 @@ fn submit(
     );
     let (candidate, submission) = (candidate.clone(), submission.clone());
     Callback::from(move |_: MouseEvent| {
-        if !deciding.borrow_mut().insert(candidate.clone()) {
+        let mut in_flight = deciding.borrow_mut();
+        if !in_flight.is_empty() {
             return;
         }
+        in_flight.insert(candidate.clone());
+        drop(in_flight);
         composer.dispatch(ComposerEdit {
             candidate: candidate.clone(),
             settles: false,

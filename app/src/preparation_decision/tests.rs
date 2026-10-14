@@ -4,7 +4,7 @@ use wire::rooms::{
 };
 use wire::{Seq, SequenceCode, Witness};
 
-use super::{DecisionChoice, DecisionDraft, DraftNotice, DraftPhase};
+use super::{DecisionChoice, DecisionComposer, DecisionDraft, DraftNotice, DraftPhase};
 use crate::work::tests::{stamp, task};
 
 fn design() -> BoardTask {
@@ -236,4 +236,64 @@ fn stale_or_incomplete_render_data_refuses_without_silently_narrowing_the_choice
         &board(),
     );
     assert_eq!(refusal(&draft), "preparation::design-not-open");
+}
+
+#[test]
+fn a_pending_version_keeps_the_composer_until_its_exact_response_settles() {
+    let first = candidate_ref();
+    let second = CandidateRef {
+        controller: stamp(1),
+        candidate: "dVsYdDj7m".parse().expect("second candidate"),
+    };
+    let candidate = candidate();
+    let tasks = board();
+    let mut composer = DecisionComposer::default();
+    composer.apply(first.clone(), false, |draft| {
+        draft.set_choice(DecisionChoice::Returned);
+        draft.set_reason("revise the premise".to_owned());
+        draft.preview(
+            &design(),
+            Seq::new(50).expect("fixture position"),
+            &candidate,
+            SequenceCode::new(1),
+            &tasks,
+        );
+        assert!(draft.begin_submit().is_some());
+    });
+    assert!(composer.is_pending());
+
+    composer.apply(second.clone(), false, |draft| {
+        draft.set_choice(DecisionChoice::Returned);
+    });
+    assert!(
+        composer.draft(&second).is_none(),
+        "another version cannot displace a pending decision"
+    );
+    assert!(
+        composer
+            .draft(&first)
+            .is_some_and(DecisionDraft::is_pending),
+        "the submitted version stays visibly pending"
+    );
+
+    composer.apply(first.clone(), true, |draft| {
+        draft.settle(Err("preparation::stale: proposal moved".to_owned()));
+    });
+    let first_draft = composer
+        .draft(&first)
+        .expect("first version remains selected");
+    assert_eq!(refusal(first_draft), "preparation::stale");
+    assert_eq!(first_draft.choice(), DecisionChoice::Returned);
+    assert_eq!(first_draft.reason(), "revise the premise");
+
+    composer.apply(second.clone(), false, |draft| {
+        draft.set_choice(DecisionChoice::Returned);
+    });
+    assert_eq!(
+        composer
+            .draft(&second)
+            .expect("second version edits after settlement")
+            .choice(),
+        DecisionChoice::Returned
+    );
 }
