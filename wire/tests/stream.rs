@@ -46,6 +46,28 @@ fn prose_message() -> AgentMessage {
 }
 
 #[test]
+fn retained_send_annotations_decode_as_msg_without_a_kind_field() {
+    let retained = br#"{
+        "start":0,
+        "end":4,
+        "from":"018f82d4-6f59-7d06-92e3-bce9131163d8",
+        "sender":"018f82d4-6f59-7d06-92e3-bce9131163d9",
+        "recipients":[],
+        "operator":true,
+        "contexts":[]
+    }"#;
+    let send: wire::MessageSend = wire::decode(retained).expect("retained MSG annotation decodes");
+
+    assert_eq!(send.kind, wire::MessageSendKind::Msg);
+    assert!(send.result.is_none());
+    assert!(send.is_valid_for("> hi"));
+    let canonical = wire::encode(&send).expect("current MSG annotation encodes");
+    let canonical = String::from_utf8(canonical).expect("wire JSON is UTF-8");
+    assert!(!canonical.contains("\"kind\""), "{canonical}");
+    assert!(!canonical.contains("\"result\""), "{canonical}");
+}
+
+#[test]
 fn stream_requests_are_strict_current_generation_documents() {
     let epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
     let request = StreamRequest::Subscribe {

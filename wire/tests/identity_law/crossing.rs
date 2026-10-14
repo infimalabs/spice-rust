@@ -975,6 +975,8 @@ fn send_sample(first_id: CanonicalUuid, second_id: CanonicalUuid) -> wire::Messa
         }],
         operator: false,
         contexts: Vec::new(),
+        kind: wire::MessageSendKind::Msg,
+        result: None,
     }
 }
 

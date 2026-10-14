@@ -104,14 +104,14 @@ pub fn valid_message_directives(text: &str, directives: &[MessageDirective]) -> 
             .all(|pair| pair[0].end <= pair[1].start)
 }
 
-/// One authored MSG packet the resident presents in its author's card as an
-/// outgoing quote of the packet's body.
+/// One authored MSG, ASK, or ANS packet the resident presents in its author's
+/// card as an outgoing quote of the packet's body.
 ///
 /// The range covers the rendered quote block exactly. The packet's header
 /// does not survive presentation; this annotation carries what it said:
-/// the exact occupant that wrote it, every occupant its addresses name in
-/// header order, whether it names the operator, and every distinct room
-/// context in header order.
+/// packet kind, the exact occupant that wrote it, every occupant its addresses
+/// name in header order, whether it names the operator, and every distinct
+/// room context in header order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageSend {
@@ -131,9 +131,15 @@ pub struct MessageSend {
     /// Every distinct task/room context, in first header order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub contexts: Vec<crate::TaskHandle>,
+    /// Authenticated protocol kind. Absence on retained annotations means MSG.
+    #[serde(default, skip_serializing_if = "MessageSendKind::is_msg")]
+    pub kind: MessageSendKind,
+    /// Result an ANS packet names. Other packet kinds carry no result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<crate::rooms::QuestionResultRef>,
 }
 
-/// One occupant an MSG header addressed.
+/// One occupant addressed by a packet header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageRecipient {
@@ -145,17 +151,50 @@ pub struct MessageRecipient {
     pub occupant: crate::CanonicalUuid,
 }
 
+/// Authenticated kind of an authored packet presented as an outgoing quote.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageSendKind {
+    /// Ordinary one-way message.
+    #[default]
+    Msg,
+    /// Question opening a result with one audience.
+    Ask,
+    /// Answer to one named result.
+    Ans,
+}
+
+impl MessageSendKind {
+    /// Whether this is the retained/default MSG spelling.
+    #[must_use]
+    pub const fn is_msg(&self) -> bool {
+        matches!(self, Self::Msg)
+    }
+}
+
 impl MessageSend {
-    /// Whether this send names a non-empty UTF-8 range and at least one
-    /// destination.
+    /// Whether this send names an exact non-empty UTF-8 range and a valid
+    /// destination/result shape for its authenticated packet kind.
     #[must_use]
     pub fn is_valid_for(&self, text: &str) -> bool {
         let (Ok(start), Ok(end)) = (usize::try_from(self.start), usize::try_from(self.end)) else {
             return false;
         };
+        let audiences = self.recipients.len() + usize::from(self.operator);
+        let route_is_valid = match self.kind {
+            MessageSendKind::Msg => {
+                self.result.is_none() && (audiences > 0 || !self.contexts.is_empty())
+            }
+            MessageSendKind::Ask => {
+                self.result.is_none() && audiences == 1 && self.contexts.len() <= 1
+            }
+            MessageSendKind::Ans => {
+                self.result.is_some() && audiences == 0 && self.contexts.len() <= 1
+            }
+        };
         start < end
             && text.get(start..end).is_some()
-            && (!self.recipients.is_empty() || self.operator || !self.contexts.is_empty())
+            && route_is_valid
             && self
                 .recipients
                 .iter()

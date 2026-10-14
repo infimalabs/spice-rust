@@ -74,6 +74,8 @@ fn an_addressed_packet_presents_its_body_as_one_outgoing_quote_in_header_order()
     );
     assert_eq!((send.from, send.sender), (lane(), author()));
     assert_eq!(send.recipients, vec![second, first]);
+    assert_eq!(send.kind, wire::MessageSendKind::Msg);
+    assert!(send.result.is_none());
 }
 
 #[test]
@@ -111,6 +113,40 @@ fn contextual_packets_present_room_only_and_directed_destinations() {
             .parse::<wire::TaskHandle>()
             .expect("fixture task parses")]
     );
+}
+
+#[test]
+fn msg_ask_and_ans_packets_present_typed_in_source_order() {
+    let [_, addressed] = reviewers();
+    let presented = present(
+        concat!(
+            "MSG 6Jv5: One-way context.\n",
+            "ASK 6Jv5#ROOMS-dVrD255Kf: Can you review this?\n",
+            "ANS 1kKRRsDR3#ROOMS-dVrD255Kf: Reviewed.",
+        ),
+        &proved(&[addressed]),
+        authored(),
+    );
+
+    assert_eq!(
+        presented.text,
+        "> One-way context.\n\n> Can you review this?\n\n> Reviewed."
+    );
+    let [message, question, answer] = presented.sends.as_slice() else {
+        panic!("all three packets present: {:?}", presented.sends)
+    };
+    assert_eq!(message.kind, wire::MessageSendKind::Msg);
+    assert_eq!(question.kind, wire::MessageSendKind::Ask);
+    assert_eq!(question.recipients, [addressed]);
+    assert!(question.result.is_none());
+    assert_eq!(answer.kind, wire::MessageSendKind::Ans);
+    assert!(answer.recipients.is_empty());
+    assert!(!answer.operator);
+    assert_eq!(
+        answer.result.as_ref().map(ToString::to_string).as_deref(),
+        Some("1kKRRsDR3"),
+    );
+    assert_eq!(question.contexts, answer.contexts);
 }
 
 #[test]
@@ -169,17 +205,40 @@ fn a_packet_and_a_following_acknowledgement_present_as_separate_quotes() {
 
 #[test]
 fn a_packet_without_proved_recipients_or_an_authoring_occupant_stays_literal() {
-    let text = "MSG 6Jv5 6K26: Please check the parser.";
     let [first, _] = reviewers();
-
-    for (ledger, event) in [
-        // One unproved address withholds the whole packet's presentation.
-        (proved(&[first]), authored()),
-        // A tool caption names no authoring occupant and never sends.
-        (proved(&reviewers()), event()),
+    for text in [
+        "MSG 6Jv5 6K26: Please check the parser.",
+        "ASK 6Jv5#ROOMS-dVrD255Kf: Can you check the parser?",
     ] {
-        let presented = present(text, &ledger, event);
-        assert_eq!(presented.text, text);
-        assert!(presented.sends.is_empty());
+        for (ledger, event) in [
+            // One unproved address withholds the whole packet's presentation.
+            (proved(&[first]), authored()),
+            // A tool caption names no authoring occupant and never sends.
+            (proved(&reviewers()), event()),
+        ] {
+            let presented = present(text, &ledger, event);
+            assert_eq!(presented.text, text);
+            assert!(presented.sends.is_empty());
+        }
     }
+}
+
+#[test]
+fn every_authored_packet_kind_requests_its_presentation_ledger() {
+    for text in [
+        "ASK operator#ROOMS-dVrD255Kf: Can you review this?",
+        "ANS 1kKRRsDR3#ROOMS-dVrD255Kf: Reviewed.",
+    ] {
+        let (packets, addresses) = crate::resident::message_surface::packet_destinations([text]);
+        assert!(packets, "{text}");
+        assert!(addresses.is_empty(), "{text}");
+    }
+
+    let (packets, addresses) =
+        crate::resident::message_surface::packet_destinations(["MSG 6Jv5: One-way."]);
+    assert!(packets);
+    assert_eq!(
+        addresses,
+        ["6Jv5".parse().expect("fixture address parses")].into()
+    );
 }

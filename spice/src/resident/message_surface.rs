@@ -567,8 +567,8 @@ pub(super) fn steering_ledger(
             .filter_map(listen::Event::assistant_text)
     };
     let acknowledges = authored().any(steer::has_acknowledgement);
-    let (messages, addresses) = message_destinations(authored());
-    if !acknowledges && !messages {
+    let (packets, addresses) = packet_destinations(authored());
+    if !acknowledges && !packets {
         return Ok(None);
     }
     let reader = bus.reader();
@@ -583,12 +583,12 @@ pub(super) fn steering_ledger(
     Ok(Some(ledger))
 }
 
-/// Whether `texts` hold a placed, well-formed MSG and every occupant address
-/// those messages name.
-fn message_destinations<'a>(
+/// Whether `texts` hold a placed, well-formed packet and every occupant address
+/// those packets name.
+fn packet_destinations<'a>(
     texts: impl IntoIterator<Item = &'a str>,
 ) -> (bool, BTreeSet<wire::OccupantAddress>) {
-    let mut messages = false;
+    let mut packets = false;
     let mut addresses = BTreeSet::new();
     for publication in texts
         .into_iter()
@@ -600,13 +600,10 @@ fn message_destinations<'a>(
         .flat_map(steer::ack::scan::scan_messages)
         .filter_map(|message| message.publication.ok())
     {
-        if !matches!(&publication.request, steer::ack::scan::Request::Msg { .. }) {
-            continue;
-        }
-        messages = true;
+        packets = true;
         addresses.extend(publication.addresses());
     }
-    (messages, addresses)
+    (packets, addresses)
 }
 
 fn message_addresses<'a>(
@@ -707,7 +704,7 @@ pub(crate) fn quote_agent_prose(
 }
 
 /// The journal context one card's presentation reads: the steering directives
-/// its acknowledgement headers name and the occupant births its MSG
+/// its acknowledgement headers name and the occupant births its packet
 /// addresses name.
 #[derive(Clone, Debug, Default)]
 pub(super) struct PresentationDirectives {
@@ -1027,21 +1024,23 @@ fn hydrate_sends(
     }
     let sender = event
         .author
-        .ok_or_else(|| "presented MSG packet names no authoring occupant".to_owned())?;
+        .ok_or_else(|| "presented packet names no authoring occupant".to_owned())?;
     presented
         .sends
         .iter()
         .map(|send| {
             Ok(wire::MessageSend {
                 start: u32::try_from(send.range.start)
-                    .map_err(|_| "MSG quote start exceeds the wire range".to_owned())?,
+                    .map_err(|_| "packet quote start exceeds the wire range".to_owned())?,
                 end: u32::try_from(send.range.end)
-                    .map_err(|_| "MSG quote end exceeds the wire range".to_owned())?,
+                    .map_err(|_| "packet quote end exceeds the wire range".to_owned())?,
                 from: event.lane,
                 sender,
                 recipients: send.recipients.clone(),
                 operator: send.operator,
                 contexts: send.contexts.clone(),
+                kind: send.kind,
+                result: send.result.clone(),
             })
         })
         .collect()

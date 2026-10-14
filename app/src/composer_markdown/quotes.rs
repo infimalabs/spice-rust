@@ -289,10 +289,10 @@ fn historical_agent<'a>(
         .or_else(|| lane_member_agent(agents, lane))
 }
 
-/// The lead of an MSG the card's author sent: its exact authoring occupant,
-/// an outgoing arrow, then every addressed occupant and the operator. A quoted
-/// peer context uses the same direction lead with its own recorded destination;
-/// badges never change either side's attribution.
+/// The lead of a packet the card's author sent: its kind when not MSG, exact
+/// authoring occupant, an outgoing arrow, then every addressed occupant and
+/// the operator. A quoted peer context uses the same direction lead with its
+/// own recorded destination; badges never change either side's attribution.
 pub(super) fn send_signoff_html(send: &wire::MessageSend, agents: &super::QuoteAgents) -> String {
     let (sender, state) = occupant_agent(agents, send.from, send.sender)
         .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
@@ -324,7 +324,39 @@ pub(super) fn send_signoff_html(send: &wire::MessageSend, agents: &super::QuoteA
             None,
         ));
     }
-    packet_signoff_html("", &sender, &recipients, "outgoing")
+    packet_signoff_html(&send_kind_html(send), &sender, &recipients, "outgoing")
+}
+
+fn send_kind_html(send: &wire::MessageSend) -> String {
+    match send.kind {
+        wire::MessageSendKind::Msg => String::new(),
+        wire::MessageSendKind::Ask => super::acknowledgement_pill_html_with_attributes(
+            "ask",
+            "question",
+            "Question",
+            "ASK",
+            " data-message-packet=\"ask\"",
+        ),
+        wire::MessageSendKind::Ans => {
+            let result = send
+                .result
+                .as_ref()
+                .map(wire::rooms::QuestionResultRef::as_str);
+            let text = result.map_or_else(|| "ANS".to_owned(), |result| format!("ANS {result}"));
+            let attribute = result.map_or_else(
+                || " data-message-packet=\"ans\"".to_owned(),
+                |result| {
+                    format!(
+                        " data-message-packet=\"ans\" data-message-result=\"{}\"",
+                        super::escape_html_attribute(result),
+                    )
+                },
+            );
+            super::acknowledgement_pill_html_with_attributes(
+                "ans", "answer", "Answer", &text, &attribute,
+            )
+        }
+    }
 }
 
 fn push_recipient_separator(recipients: &mut String) {
@@ -333,8 +365,8 @@ fn push_recipient_separator(recipients: &mut String) {
     }
 }
 
-/// Task/room contexts the MSG recorded, mounted after the quoted body's final
-/// word as the same task chips ordinary authored prose uses.
+/// Task/room contexts the packet recorded, mounted after the quoted body's
+/// final word as the same task chips ordinary authored prose uses.
 pub(super) fn send_contexts_html(send: &wire::MessageSend) -> String {
     send.contexts
         .iter()
@@ -342,8 +374,8 @@ pub(super) fn send_contexts_html(send: &wire::MessageSend) -> String {
         .collect()
 }
 
-/// The accent slot of the occupant that sent one MSG, which its quote's rail
-/// wears as any quote wears its speaker's.
+/// The accent slot of the occupant that sent one packet, which its quote's
+/// rail wears as any quote wears its speaker's.
 pub(super) fn send_accent(send: &wire::MessageSend, agents: &super::QuoteAgents) -> Option<usize> {
     occupant_agent(agents, send.from, send.sender).map(|(agent, _)| agent.accent)
 }
