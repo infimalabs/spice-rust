@@ -304,18 +304,20 @@ cancellation, a changed revision, or a removed source sends nothing.
 
 ## Lane menu
 
-Each Chat lane's menu button swaps that lane's composer for its seat panel. The
-panel leads with what the agent needs from the operator — consent requests
-to Allow or Deny in place, held tasks iced, blocked, or in review, a lease near
-expiry, and direction left waiting — then the Wake, Drain, Remove, Renew, and
-next-launch model, effort, and fast-mode commands and their refusals. Renew
-submits at once; Drain and Remove confirm first. Effort and fast mode show the
-running value beside the next launch, and the fast-mode status names which
-level enables it; fast mode follows [the lane
-loop](../docs/product/loops.md#l-lane--the-place). Presence, lease age, current task, latest
-activity, waiting direction, the lane identity, occupant, session, and worktree
-follow, beside **Create new team** and **Leave all teams**. The button, Escape,
-or a click elsewhere in the team restores the composer.
+Each Chat lane's compact menu button uses a smaller three-bar glyph than the
+team menu, matching its smaller control without shrinking the pointer target.
+It swaps that lane's composer for its seat panel. The panel leads with what the
+agent needs from the operator — consent requests to Allow or Deny in place,
+held tasks iced, blocked, or in review, a lease near expiry, and direction left
+waiting — then the Wake, Drain, Remove, Renew, and next-launch model, effort,
+and fast-mode commands and their refusals. Renew submits at once; Drain and
+Remove confirm first. Effort and fast mode show the running value beside the
+next launch, and the fast-mode status names which level enables it; fast mode
+follows [the lane loop](../docs/product/loops.md#l-lane--the-place). Presence,
+lease age, current task, latest activity, waiting direction, the lane identity,
+occupant, session, and worktree follow, beside **Create new team** and **Leave
+all teams**. The button, Escape, or a click elsewhere in the team restores the
+composer.
 
 ## Composer images
 
