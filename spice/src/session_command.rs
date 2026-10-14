@@ -206,11 +206,10 @@ fn resume_page(authorities: Option<&authority::RecallAuthorities>) -> String {
     const UNREAD: &str = "unread; `spice session briefing` reads it";
     let claim = authorities.map_or_else(
         || UNREAD.to_owned(),
-        |read| {
-            read.held_work.own_claim.as_ref().map_or_else(
-                || "none".to_owned(),
-                |claim| format!("`{}` in phase `{}`", claim.handle, claim.phase),
-            )
+        |read| match (&read.held_work.own_claim, &read.held_work.own_claim_unread) {
+            (Some(claim), _) => format!("`{}` in phase `{}`", claim.handle, claim.phase),
+            (None, Some(refusal)) => format!("unknown, not none: {refusal}"),
+            (None, None) => "none".to_owned(),
         },
     );
     let pending = authorities
@@ -877,6 +876,7 @@ mod tests {
             thread: Some("handed-off".to_owned()),
             lane: Some(id(2).to_string()),
             own_claim: None,
+            own_claim_unread: None,
             peer_claims: None,
             renewed_from: Some("handed-off".to_owned()),
             address: None,
@@ -889,5 +889,33 @@ mod tests {
         assert_eq!(renewal_notice(BriefingMoment::Refresh, &held), None);
         held.renewed_from = None;
         assert_eq!(renewal_notice(BriefingMoment::Startup, &held), None);
+    }
+
+    #[test]
+    fn a_resumed_seat_reports_no_claim_only_after_a_successful_claim_read() {
+        let read = |unread: Option<&str>| authority::RecallAuthorities {
+            asks: Some(Vec::new()),
+            held_work: model::HeldWorkView {
+                thread: None,
+                lane: None,
+                own_claim: None,
+                own_claim_unread: unread.map(str::to_owned),
+                peer_claims: None,
+                renewed_from: None,
+                address: None,
+            },
+            posture: None,
+            peers: Vec::new(),
+            directions: Vec::new(),
+            board: None,
+            repository: None,
+            unknowns: Vec::new(),
+        };
+        let refusal = "board entry is invalid: fixture refusal";
+        let unknown = resume_page(Some(&read(Some(refusal))));
+        assert!(unknown.contains(refusal), "{unknown}");
+        assert!(!unknown.contains("held claim: none"), "{unknown}");
+        let known = resume_page(Some(&read(None)));
+        assert!(known.contains("held claim: none"), "{known}");
     }
 }

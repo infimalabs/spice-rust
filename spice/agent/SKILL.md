@@ -27,7 +27,8 @@ needs none. Each cut row names the command that reads the rest. A
 read the same ground.
 
 A resumed seat keeps its context and instead receives a short `# Seat resumed`
-notice naming the held claim and pending key count; continue from context.
+notice naming the held claim, or why possession is unknown (unknown never means
+none), and the pending key count; continue from context.
 `spice session briefing` (`--json` for typed rows) refreshes the page,
 `spice task status` reads the board, and `spice task next` asks for work.
 

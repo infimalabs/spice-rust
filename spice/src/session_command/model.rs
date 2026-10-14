@@ -405,6 +405,10 @@ pub(crate) struct HeldWorkView {
     pub(crate) thread: Option<String>,
     pub(crate) lane: Option<String>,
     pub(crate) own_claim: Option<HeldClaimView>,
+    /// Why this lane's claim could not be read. While set, `own_claim` is
+    /// unknown rather than absent; only a successful claim read clears it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) own_claim_unread: Option<String>,
     pub(crate) peer_claims: Option<usize>,
     /// Predecessor thread a handoff-pending renewal hands this lane's fresh
     /// successor, read from the durable renewal record.
