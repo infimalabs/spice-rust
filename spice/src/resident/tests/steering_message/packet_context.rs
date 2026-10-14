@@ -3,6 +3,8 @@
 //! packet's body without the header its recipient read. Any other directive
 //! stays literal, whatever its words spell.
 
+use std::collections::BTreeMap;
+
 use super::*;
 
 impl Lanes {
@@ -118,6 +120,56 @@ fn a_direction_spelling_a_packet_header_stays_literal() {
     assert_eq!(context.packet, None);
     assert_eq!(context.result, None);
     assert!(words.contains(&spelled), "{words}");
+    lanes.finish();
+}
+
+/// Every directive one publication opened presents that publication, and a
+/// direction created just before it presents none, in any batch key order.
+#[test]
+fn a_fanout_presents_its_publication_whatever_the_batch_order() {
+    let lanes = Lanes::new("packet-fanout");
+    let room = lanes.room("dVrD244Jd");
+    let plain = lanes.direct(FIRST, 40, "keep the tree green");
+    let (first, second) = (lanes.address(FIRST), lanes.address(SECOND));
+    lanes
+        .say(
+            SENDER,
+            &format!("MSG {first} {second} #{room}: hold the merge"),
+        )
+        .expect("the MSG publishes");
+    let fanout = [
+        lanes.held(FIRST, "hold the merge"),
+        lanes.held(SECOND, "hold the merge"),
+    ];
+    let presented = |keys: Vec<String>| {
+        lanes
+            .bus
+            .reader()
+            .steering_presentations(keys)
+            .expect("the batch reads")
+            .into_iter()
+            .map(|row| {
+                let opened = row.publication().map(|opened| opened.operation().clone());
+                (row.head().body().key.clone(), opened)
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let expected = BTreeMap::from([
+        (plain.clone(), None),
+        (
+            fanout[0].clone(),
+            Some(wire::rooms::RoomPublicationKind::Msg {}),
+        ),
+        (
+            fanout[1].clone(),
+            Some(wire::rooms::RoomPublicationKind::Msg {}),
+        ),
+    ]);
+
+    let ascending = vec![plain.clone(), fanout[0].clone(), fanout[1].clone()];
+    assert_eq!(presented(ascending), expected);
+    let descending = vec![fanout[1].clone(), fanout[0].clone(), plain];
+    assert_eq!(presented(descending), expected);
     lanes.finish();
 }
 

@@ -41,7 +41,8 @@ mod runtime {
     mod error;
     pub use error::{BusError, BusReadError, BusVerifyError};
     mod rooms;
-    mod steering_publication;
+    mod steering_presentation;
+    pub use steering_presentation::{SteeringPresentation, SteeringPublication};
 
     /// One successful journal transaction, constructable only by the bus
     /// writer after durability.
@@ -175,78 +176,6 @@ mod runtime {
         cursor: Option<journal::crossing::Seq>,
         trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
-    }
-
-    /// One exact steering head with the immutable facts that created and most
-    /// recently transitioned it, and the room publication that opened it.
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct SteeringPresentation {
-        head: JournalHead<journal::crossing::SteeringHead>,
-        created: journal::crossing::Envelope<journal::crossing::AnyFact>,
-        current: journal::crossing::Envelope<journal::crossing::AnyFact>,
-        publication: Option<journal::crossing::Envelope<journal::crossing::AnyFact>>,
-    }
-
-    impl SteeringPresentation {
-        /// Read one key's presentation context from an already-admitted snapshot.
-        pub fn read(
-            read: &journal::JournalRead<'_>,
-            key: &str,
-        ) -> Result<Option<Self>, GuardError> {
-            let Some(head) = read.steering_key(key)? else {
-                return Ok(None);
-            };
-            let fact = |position| {
-                read.fact_page(
-                    journal::FactPageStart::At(position),
-                    position,
-                    journal::FactReadBudget::new(1, journal::MAX_RETAINED_FACT_PAGE_BYTES)
-                        .expect("one steering context fact is a repository budget"),
-                )?
-                .rows
-                .into_iter()
-                .next()
-                .ok_or_else(|| {
-                    GuardError::Invalid(format!(
-                        "steering key {key} has no context fact at {position}"
-                    ))
-                })
-            };
-            let created = fact(head.body().created)?;
-            let current = fact(head.position())?;
-            let publication = steering_publication::opening_publication(read, head.body())?;
-            Ok(Some(Self {
-                head,
-                created,
-                current,
-                publication,
-            }))
-        }
-
-        #[must_use]
-        pub const fn head(&self) -> &JournalHead<journal::crossing::SteeringHead> {
-            &self.head
-        }
-
-        #[must_use]
-        pub const fn created(&self) -> &journal::crossing::Envelope<journal::crossing::AnyFact> {
-            &self.created
-        }
-
-        #[must_use]
-        pub const fn current(&self) -> &journal::crossing::Envelope<journal::crossing::AnyFact> {
-            &self.current
-        }
-
-        /// The `room::posted` or `room::conversed` fact whose `directed` list
-        /// names this directive: the MSG, ASK, or ANS this directive delivers.
-        /// Absent on every directive no room publication opened.
-        #[must_use]
-        pub const fn publication(
-            &self,
-        ) -> Option<&journal::crossing::Envelope<journal::crossing::AnyFact>> {
-            self.publication.as_ref()
-        }
     }
 
     impl AppHeads {
@@ -1329,11 +1258,7 @@ mod runtime {
                 keys.len()
             )));
         }
-        journal.read(move |read| {
-            keys.iter()
-                .filter_map(|key| SteeringPresentation::read(read, key).transpose())
-                .collect()
-        })
+        journal.read(move |read| SteeringPresentation::read_batch(read, &keys))
     }
 
     fn answer_commit(
@@ -1456,7 +1381,7 @@ pub use runtime::{
     AddressProof, AddressRefusal, AllocationFault, AllocationRead, AllocationWork, AppHeads,
     BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CommitOutcome,
     CommitSubscriber, DependencyStanding, JournalCommit, JournalTransaction,
-    MAX_STEERING_PRESENTATION_KEYS, OccupantBirth, SteeringPresentation, SteeringSnapshot,
-    TaskFacts, TaskOrigin, TaskSnapshot, TranscriptSession, TranscriptSessions, context_opening,
-    journal_seat_addresses,
+    MAX_STEERING_PRESENTATION_KEYS, OccupantBirth, SteeringPresentation, SteeringPublication,
+    SteeringSnapshot, TaskFacts, TaskOrigin, TaskSnapshot, TranscriptSession, TranscriptSessions,
+    context_opening, journal_seat_addresses,
 };

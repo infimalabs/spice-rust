@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Parser, Tag, TagEnd};
 
@@ -168,12 +169,12 @@ fn present_with(store: &impl QuoteStore, text: &str, depth: u8) -> Vec<QuotePres
         .map(|quote| {
             match resolve_source(store, &quote.target, depth).and_then(|source| {
                 let (text, packet, result, addressee) = match source.packet {
-                    Some(SteeringPacket {
-                        kind,
-                        result,
-                        body,
-                        addressee,
-                    }) => (body.unwrap_or(source.text), Some(kind), result, addressee),
+                    Some(packet) => (
+                        packet.body().map_or(source.text, str::to_owned),
+                        Some(packet.kind),
+                        packet.result,
+                        packet.addressee,
+                    ),
                     None => (source.text, None, None, None),
                 };
                 let quotes = present_with(
@@ -215,12 +216,22 @@ pub struct SteeringPacket {
     pub kind: wire::MessageSendKind,
     /// Result an ANS answers.
     pub result: Option<wire::rooms::QuestionResultRef>,
-    /// An operator post's authenticated body, without the header its
-    /// recipient's directive spells.
-    pub body: Option<String>,
     /// Lane the packet's directive was delivered to; a room post addresses
     /// its room and names none.
     pub addressee: Option<CanonicalUuid>,
+    /// The opening publication every directive of one fanout shares.
+    publication: Option<Arc<bus::SteeringPublication>>,
+}
+
+impl SteeringPacket {
+    /// An operator post's authenticated body, without the header its
+    /// recipient's directive spells.
+    #[must_use]
+    pub fn body(&self) -> Option<&str> {
+        self.publication
+            .as_deref()
+            .and_then(bus::SteeringPublication::text)
+    }
 }
 
 /// The packet whose room publication opened `row`'s directive.
@@ -238,34 +249,34 @@ pub fn steering_packet(row: &bus::SteeringPresentation) -> Option<SteeringPacket
         return peer.then_some(SteeringPacket {
             kind: wire::MessageSendKind::Msg,
             result: None,
-            body: None,
             addressee,
+            publication: None,
         });
     };
-    if let Some(posted) = publication.fact.read::<wire::rooms::RoomPosted>() {
-        return Some(room_packet(posted.operation, Some(posted.text), addressee));
-    }
-    let conversed = publication.fact.read::<wire::rooms::RoomConversed>()?;
-    Some(room_packet(conversed.operation, None, addressee))
+    Some(room_packet(
+        publication.operation(),
+        addressee,
+        Some(Arc::clone(publication)),
+    ))
 }
 
 fn room_packet(
-    operation: wire::rooms::RoomPublicationKind,
-    body: Option<String>,
+    operation: &wire::rooms::RoomPublicationKind,
     addressee: Option<CanonicalUuid>,
+    publication: Option<Arc<bus::SteeringPublication>>,
 ) -> SteeringPacket {
     let (kind, result) = match operation {
         wire::rooms::RoomPublicationKind::Msg {} => (wire::MessageSendKind::Msg, None),
         wire::rooms::RoomPublicationKind::Ask { .. } => (wire::MessageSendKind::Ask, None),
         wire::rooms::RoomPublicationKind::Ans { result, .. } => {
-            (wire::MessageSendKind::Ans, Some(result))
+            (wire::MessageSendKind::Ans, Some(result.clone()))
         }
     };
     SteeringPacket {
         kind,
         result,
-        body,
         addressee,
+        publication,
     }
 }
 
@@ -445,10 +456,8 @@ impl QuoteStore for ResidentStore<'_> {
             packet,
         };
         if let Some(posted) = envelope.fact.read::<wire::rooms::RoomPosted>() {
-            return Ok(authored(
-                posted.text,
-                Some(room_packet(posted.operation, None, None)),
-            ));
+            let packet = room_packet(&posted.operation, None, None);
+            return Ok(authored(posted.text, Some(packet)));
         }
         if let Some(published) = envelope.fact.read::<wire::rooms::RoomPublished>()
             && let wire::rooms::RoomPublicationContent::Authored { text } = published.content

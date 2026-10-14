@@ -807,9 +807,11 @@ impl PresentationDirectives {
                 key: key.to_string(),
                 digest: wire::QuoteTarget::text_digest(&head.text),
             };
-            let mut packet = spice::quote::steering_packet(row);
-            let body = packet.as_mut().and_then(|packet| packet.body.take());
-            let text = body.as_deref().unwrap_or(&head.text);
+            let packet = spice::quote::steering_packet(row);
+            let text = packet
+                .as_ref()
+                .and_then(spice::quote::SteeringPacket::body)
+                .unwrap_or(&head.text);
             directives.insert(
                 key,
                 PresentationDirective {
