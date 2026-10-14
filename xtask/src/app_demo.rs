@@ -2,16 +2,21 @@
 
 use std::fmt;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 use wire::{DemoAnswer, Digest, Fault, Outcome, Refusal};
 
 static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+const READY_POLL: Duration = Duration::from_millis(20);
+const READY_CONNECT: Duration = Duration::from_millis(100);
 
 /// Build the current worktree's native Spice and run an isolated demo using
 /// exactly that worktree's staged app generation.
@@ -146,30 +151,196 @@ fn run_demo(
     // waiting parent so its disposable root is removed after the child exits.
     let _signals = Signals::new([SIGHUP, SIGINT, SIGTERM])
         .map_err(|error| fail(format!("app-demo signal handling unavailable: {error}")))?;
+    let discovery = demo_discovery(root)?;
     let mut command = Command::new(executable);
     command
         .current_dir(root)
         .arg("demo")
         .arg("--reuse")
         .arg(root)
-        .arg("--json");
+        .arg("--json")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     if open {
         command.arg("--open");
     }
-    let completed = command
-        .output()
-        .map_err(|error| fail(format!("app-demo resident did not start: {error}")))?;
-    report_demo_answer(child_answer("resident", completed)?, output)
+    let mut child = DemoChild::spawn(&mut command)?;
+    let announced = match wait_for_endpoint(&mut child, &discovery) {
+        Ok(endpoint) => endpoint,
+        Err(error) => {
+            child.stop();
+            return Err(error);
+        }
+    };
+    if let Some(endpoint) = announced.as_deref()
+        && let Err(error) = announce_endpoint(endpoint, output)
+    {
+        child.stop();
+        return Err(error);
+    }
+    let completed = child.finish()?;
+    report_demo_answer(
+        child_answer("resident", completed)?,
+        announced.as_deref(),
+        output,
+    )
 }
 
-fn report_demo_answer(answer: DemoAnswer, output: &mut impl Write) -> Result<(), AppDemoError> {
+struct DemoChild {
+    child: Child,
+    stdout: JoinHandle<io::Result<Vec<u8>>>,
+    stderr: JoinHandle<io::Result<Vec<u8>>>,
+}
+
+impl DemoChild {
+    fn spawn(command: &mut Command) -> Result<Self, AppDemoError> {
+        let mut child = command
+            .spawn()
+            .map_err(|error| fail(format!("app-demo resident did not start: {error}")))?;
+        let stdout = child
+            .stdout
+            .take()
+            .expect("the app-demo resident's stdout is piped");
+        let stderr = child
+            .stderr
+            .take()
+            .expect("the app-demo resident's stderr is piped");
+        Ok(Self {
+            child,
+            stdout: drain(stdout),
+            stderr: drain(stderr),
+        })
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    fn stop(mut self) {
+        let _ = self.child.kill();
+        let _ = self.finish();
+    }
+
+    fn finish(mut self) -> Result<Output, AppDemoError> {
+        let status = match self.child.wait() {
+            Ok(status) => status,
+            Err(error) => {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                return Err(fail(format!("app-demo resident wait failed: {error}")));
+            }
+        };
+        Ok(Output {
+            status,
+            stdout: drained("standard output", self.stdout)?,
+            stderr: drained("standard error", self.stderr)?,
+        })
+    }
+}
+
+fn drain(mut source: impl Read + Send + 'static) -> JoinHandle<io::Result<Vec<u8>>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        source.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    })
+}
+
+fn drained(stream: &str, worker: JoinHandle<io::Result<Vec<u8>>>) -> Result<Vec<u8>, AppDemoError> {
+    worker
+        .join()
+        .map_err(|_| fail(format!("app-demo resident {stream} reader panicked")))?
+        .map_err(|error| fail(format!("app-demo resident {stream} read failed: {error}")))
+}
+
+fn demo_discovery(root: &Path) -> Result<PathBuf, AppDemoError> {
+    let repository = spice::repository::Repository::discover(root)
+        .map_err(|error| fail(format!("app-demo root unavailable: {error}")))?;
+    repository
+        .admit_state()
+        .map(|state| state.serve().to_path_buf())
+        .map_err(|error| fail(format!("app-demo state unavailable: {error}")))
+}
+
+fn wait_for_endpoint(
+    child: &mut DemoChild,
+    discovery: &Path,
+) -> Result<Option<String>, AppDemoError> {
+    loop {
+        if let Some(endpoint) = accepting_endpoint(discovery)? {
+            return Ok(Some(endpoint));
+        }
+        if child
+            .try_wait()
+            .map_err(|error| fail(format!("app-demo resident status unavailable: {error}")))?
+            .is_some()
+        {
+            return Ok(None);
+        }
+        std::thread::sleep(READY_POLL);
+    }
+}
+
+fn accepting_endpoint(discovery: &Path) -> Result<Option<String>, AppDemoError> {
+    let bytes = match fs::read(discovery) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(fail(format!(
+                "app-demo discovery unavailable at {}: {error}",
+                discovery.display()
+            )));
+        }
+    };
+    let discovery: spice::serve::Discovery = wire::decode(&bytes)
+        .map_err(|error| fail(format!("app-demo discovery invalid: {error}")))?;
+    let authority = discovery.endpoint.strip_prefix("http://").ok_or_else(|| {
+        fail(format!(
+            "app-demo endpoint is not HTTP: {}",
+            discovery.endpoint
+        ))
+    })?;
+    let address: SocketAddr = authority
+        .parse()
+        .map_err(|error| fail(format!("app-demo endpoint is invalid: {error}")))?;
+    match TcpStream::connect_timeout(&address, READY_CONNECT) {
+        Ok(_) => Ok(Some(discovery.endpoint)),
+        Err(_) => Ok(None),
+    }
+}
+
+fn announce_endpoint(endpoint: &str, output: &mut impl Write) -> Result<(), AppDemoError> {
+    writeln!(output, "[app-demo] endpoint={endpoint}")
+        .and_then(|()| output.flush())
+        .map_err(|error| fail(format!("app-demo output failed: {error}")))
+}
+
+fn report_demo_answer(
+    answer: DemoAnswer,
+    announced: Option<&str>,
+    output: &mut impl Write,
+) -> Result<(), AppDemoError> {
+    let pending = match (announced, answer.endpoint.as_deref()) {
+        (Some(announced), Some(completed)) if announced == completed => None,
+        (Some(announced), Some(completed)) => {
+            return Err(fail(format!(
+                "app-demo endpoint moved after readiness: announced {announced}, completed {completed}"
+            )));
+        }
+        (Some(announced), None) => {
+            return Err(fail(format!(
+                "app-demo endpoint disappeared after readiness: {announced}"
+            )));
+        }
+        (None, endpoint) => endpoint,
+    };
     writeln!(
         output,
         "[app-demo] transcript={} mode={}",
         answer.transcript, answer.mode
     )
     .map_err(|error| fail(format!("app-demo output failed: {error}")))?;
-    if let Some(endpoint) = answer.endpoint {
+    if let Some(endpoint) = pending {
         writeln!(output, "[app-demo] endpoint={endpoint}")
             .map_err(|error| fail(format!("app-demo output failed: {error}")))?;
     }
@@ -398,7 +569,7 @@ mod tests {
         };
         let mut output = Vec::new();
 
-        report_demo_answer(answer, &mut output).unwrap();
+        report_demo_answer(answer, None, &mut output).unwrap();
 
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("http://127.0.0.1:43123"));
@@ -406,6 +577,56 @@ mod tests {
         for command_fragment in ["launch_command", "remove_command", "--reuse", "rm -rf"] {
             assert!(!output.contains(command_fragment), "{output}");
         }
+    }
+
+    #[derive(Default)]
+    struct FlushCapture {
+        bytes: Vec<u8>,
+        visible: usize,
+        flushes: usize,
+    }
+
+    impl Write for FlushCapture {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.visible = self.bytes.len();
+            self.flushes += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn live_endpoint_is_flushed_once_before_the_final_receipt() {
+        let endpoint = "http://127.0.0.1:43123";
+        let answer = DemoAnswer {
+            root: "/tmp/disposable-demo".to_owned(),
+            transcript: "/tmp/disposable-demo/transcript.jsonl".to_owned(),
+            mode: "app".to_owned(),
+            lifecycle: "interrupted-preserved".to_owned(),
+            endpoint: Some(endpoint.to_owned()),
+            launch_command: "unused".to_owned(),
+            remove_command: "unused".to_owned(),
+        };
+        let mut output = FlushCapture::default();
+
+        announce_endpoint(endpoint, &mut output).unwrap();
+        assert_eq!(
+            std::str::from_utf8(&output.bytes[..output.visible]).unwrap(),
+            "[app-demo] endpoint=http://127.0.0.1:43123\n"
+        );
+        report_demo_answer(answer, Some(endpoint), &mut output).unwrap();
+
+        let output_text = String::from_utf8(output.bytes).unwrap();
+        assert_eq!(output_text.matches("[app-demo] endpoint=").count(), 1);
+        assert!(
+            output_text.find("[app-demo] endpoint=").unwrap()
+                < output_text.find("[app-demo] transcript=").unwrap()
+        );
+        assert_eq!(output.flushes, 2);
     }
 
     #[test]

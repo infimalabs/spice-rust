@@ -4,9 +4,10 @@
 //! status. Its standard error, and its standard output unless that output is
 //! the command's product, reach only one complete capture retained by digest
 //! below the Git common directory; delivered product output is copied there
-//! too. A person sees a heartbeat naming Cargo's current step, one completion
-//! line with counts and timing, and on failure a bounded tail with truncation
-//! facts and an exact inspection command. `--verbose` adds bounded live lines.
+//! too. A person sees a heartbeat naming Cargo's current step or a live demo's
+//! serving phase, one completion line with counts and timing, and on failure a
+//! bounded tail with truncation facts and an exact inspection command.
+//! `--verbose` adds bounded live lines.
 
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -22,6 +23,7 @@ use wire::{Digest, Domain};
 use crate::gate_command::output::{Elapsed, Progress, TAIL_BYTES, TAIL_LINES, clip, prune};
 
 const CAPTURE_DIRECTORY: [&str; 2] = [".spice-rs", "cargo-output"];
+const APP_DEMO_READY: &str = "[app-demo] endpoint=";
 
 /// Where progress and the completion report are written.
 pub(super) type Sink = Arc<Mutex<dyn Write + Send>>;
@@ -311,6 +313,10 @@ impl Tally {
     fn observe(&mut self, line: &str) {
         self.lines += 1;
         let trimmed = line.trim_start();
+        if let Some(endpoint) = trimmed.strip_prefix(APP_DEMO_READY) {
+            self.phase = clip(&format!("app-demo serving {endpoint}"), PHASE_CHARS);
+            return;
+        }
         if let Some(result) = trimmed.strip_prefix("test result: ") {
             self.suites += 1;
             for part in result.split([';', '.']) {
@@ -652,5 +658,24 @@ fn sanitize(text: &str) -> String {
 fn emit(sink: &Sink, text: &str) {
     if let Ok(mut sink) = sink.lock() {
         let _ = writeln!(sink, "{text}").and_then(|()| sink.flush());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_demo_readiness_replaces_the_completed_build_phase() {
+        let mut tally = Tally::default();
+        tally.observe("    Finished `dev` profile in 1.2s");
+        assert!(tally.phase.starts_with("Finished "));
+
+        tally.observe("[app-demo] endpoint=http://127.0.0.1:43123");
+
+        assert_eq!(tally.phase, "app-demo serving http://127.0.0.1:43123");
+        assert!(!tally.phase.contains("Finished"));
+        assert!(!tally.phase.contains("build"));
+        assert!(!tally.phase.contains("cargo"));
     }
 }
