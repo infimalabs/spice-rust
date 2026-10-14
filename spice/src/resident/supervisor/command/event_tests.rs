@@ -1,10 +1,14 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use listen::{Dialect, Locus};
+use vendor::omp::{JobCall, JobOp};
 
 use super::super::terminal::job::Ending;
 use super::super::terminal::{Control, Event as JobEvent, Job, Jobs, Terminal};
-use super::Driver;
+use super::{Driver, Work};
 
 /// The occupant's input, as the driver writes it.
 #[derive(Clone, Default)]
@@ -44,6 +48,17 @@ impl Sink {
                     notice["message"].as_str()?.to_owned(),
                 ))
             })
+            .collect()
+    }
+
+    /// Every frame written, in order.
+    fn frames(&self) -> Vec<serde_json::Value> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).expect("a frame"))
             .collect()
     }
 }
@@ -182,4 +197,69 @@ fn a_seated_lane_hears_each_event_once_in_order_while_the_job_runs() {
     assert_eq!(notices[..printed.len()], expected[..]);
     assert_eq!(notices.len(), printed.len() + 1);
     assert_eq!(notices[printed.len()].0, ending_purpose(&job));
+}
+
+#[test]
+fn a_blocked_wait_is_restated_after_another_call_settles_until_its_own_answer() {
+    let scratch = Scratch::new("restated-wait");
+    let (jobs, terminal) = terminal(&scratch);
+    let job = jobs.record_for_tests("serve", false, Some(600_000));
+    let sink = Sink::default();
+    let seated = seat(&sink, &terminal);
+    let settled = |id: &str| {
+        let record = serde_json::json!({
+            "type": "message_end",
+            "message": {
+                "role": "toolResult",
+                "toolCallId": id,
+                "toolName": "edit",
+                "content": [{"type": "text", "text": "patched"}],
+                "isError": false,
+            },
+        })
+        .to_string();
+        listen::decode(
+            Dialect::Omp,
+            record.as_bytes(),
+            Locus::new(1, 0, record.len() as u64),
+        )
+        .expect("matching locus")
+    };
+    let waiter = {
+        let (seated, terminal) = (Arc::clone(&seated), terminal.clone());
+        let call = Work::Job(JobCall {
+            op: JobOp::Wait,
+            id: Some(job.id().to_owned()),
+            timeout: Duration::from_secs(30),
+        });
+        std::thread::spawn(move || seated.resolve(&terminal, "wait-1", &call, &Control::new()))
+    };
+    let armed = std::time::Instant::now();
+    while sink.frames().is_empty() {
+        assert!(
+            armed.elapsed() < Duration::from_secs(5),
+            "the wait reports when it arms"
+        );
+        std::thread::yield_now();
+    }
+
+    seated.observe(&settled("edit-1"));
+    job.end_for_tests(Ending::Exited { code: 0 });
+    waiter.join().expect("the wait answers when its job ends");
+    seated.observe(&settled("edit-2"));
+
+    let frames = sink.frames();
+    let calls: Vec<_> = frames
+        .iter()
+        .map(|frame| (frame["type"].as_str(), frame["id"].as_str()))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            (Some("host_tool_update"), Some("wait-1")),
+            (Some("host_tool_update"), Some("wait-1")),
+            (Some("host_tool_result"), Some("wait-1")),
+        ]
+    );
+    assert_eq!(frames[1]["partialResult"], frames[0]["partialResult"]);
 }

@@ -106,6 +106,9 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     terminal: Option<Terminal>,
     /// The calls being answered now, by the host tool call each answers.
     calls: Mutex<HashMap<String, Handle>>,
+    /// The latest progress each in-flight job wait reported, by its call:
+    /// see [`waits`].
+    waits: Mutex<HashMap<String, String>>,
     /// The `spice://` server and the host URI requests it is answering now.
     uris: uri::Uris,
     /// Correlated live retunes awaiting an OMP response.
@@ -321,6 +324,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             asks: Mutex::new(HashMap::new()),
             terminal,
             calls: Mutex::new(HashMap::new()),
+            waits: Mutex::new(HashMap::new()),
             uris: uri::Uris::new(uri_server),
             retunes: Mutex::new(HashMap::new()),
             registration: registration::Registration::default(),
@@ -787,6 +791,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         if let Some(withdrawn) = context.and_then(|context| context.withdrawn.as_deref()) {
             self.cancel(withdrawn);
         }
+        self.restate_waits(decoded);
         let replied = decoded.events().iter().any(|event| {
             matches!(event, Event::Prose(prose)
                 if prose.role == ProseRole::Assistant && !prose.text.trim().is_empty())
@@ -919,16 +924,11 @@ impl<W: Write + Send + 'static> Driver<W> {
                 Run::Backgrounded(report, job) => (report, Some(job)),
             },
             Work::Job(call) => {
-                // A sibling tool can finish after this wait starts. Without a
-                // later partial frame, that result remains the newest lane
-                // activity and omp can detach its working loader while this
-                // call is still blocked.
-                let mut progress = |report: &Report| {
-                    let _updated = self.write(&vendor::omp::host_tool_update(id, &report.output));
-                };
+                let mut progress = |report: &Report| self.report_wait(id, report);
                 (terminal.job(call, control, &mut progress), None)
             }
         };
+        self.end_wait(id);
         self.calls
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -1468,3 +1468,4 @@ mod steering_tests;
 #[cfg(test)]
 mod tests;
 mod uri;
+mod waits;
