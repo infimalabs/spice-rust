@@ -63,7 +63,9 @@ pub(in crate::board_command) fn claim_plan(
         allocation,
     )?;
     let selected = claim_selection(&snapshot, command, possession)?.clone();
-    if matches!(possession, Possession::Capture | Possession::Recover) {
+    // Named capture may possess a planning deliverable, but only recovery
+    // binds recovered implementation, so only recovery refuses one here.
+    if possession == Possession::Recover {
         planning::admit_capture(&selected)?;
     }
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
@@ -780,11 +782,14 @@ pub(in crate::board_command) fn claim_git_boundary(
     let lane = task_repository(snapshot, command, resident)?;
     let parked = task_parked_commits(snapshot, selected.born());
     let result = match possession {
-        Possession::Capture if parked.is_none() => spice::task_git::prepare_explicit_claim(&lane)
-            .map(|prepared| ClaimGit {
+        // Capture adopts loose commits only into implementation; a planning
+        // deliverable takes the allocator's clean boundary instead.
+        Possession::Capture if parked.is_none() && !planning::planning_deliverable(selected) => {
+            spice::task_git::prepare_explicit_claim(&lane).map(|prepared| ClaimGit {
                 boundary: prepared.boundary.clone(),
                 prepared: Some(prepared),
-            }),
+            })
+        }
         Possession::Steal => {
             spice::task_git::prepare_explicit_claim(&lane).map(|prepared| ClaimGit {
                 boundary: prepared.boundary.clone(),

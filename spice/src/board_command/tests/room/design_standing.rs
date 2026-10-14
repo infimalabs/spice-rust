@@ -137,7 +137,7 @@ fn only_a_grouped_design_is_offered_or_claimed() {
     group_design(&bus, epoch, &task);
     assert_eq!(offered(&bus, epoch, &seats[0]), Some(born(&task)));
     let lane = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &lane, &task);
+    assert_committed(win_named(&bus, epoch, &seats[0], &task, "capture"));
     assert_eq!(active_holder(&bus, epoch, &task), Some(lane));
     clean(&root, bus);
 }
@@ -282,6 +282,19 @@ fn leaving_every_group_withdraws_coordination_and_refuses_new_coordination() {
     assert_eq!(
         refused(&win_named(&bus, epoch, &seats[0], &task, "capture")),
         "claim::design-passive"
+    );
+
+    // Back in a group, the directed lane acquires the Design through the
+    // capture its coordination direction names.
+    group_design(&bus, epoch, &task);
+    assert_committed(coordinate(
+        &bus,
+        &coordinate_command(&bus, epoch, &task, &seats[0], RoomCoordinateAction::Resume),
+    ));
+    assert_committed(win_named(&bus, epoch, &seats[0], &task, "capture"));
+    assert_eq!(
+        active_holder(&bus, epoch, &task),
+        Some(Actor::Lane(seats[0].lane))
     );
     clean(&root, bus);
 }
