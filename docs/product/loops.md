@@ -488,12 +488,14 @@ owns each rule summarized here.
   contribution is problem-space record, never a decision: it changes no task,
   claim, group, candidate, or authorization, and a concluded Design accepts
   none.
-- **Design awareness.** A lane whose current task matches an open Design's
+- **Design awareness.** A lane whose claimed task matches a passive Design's
   terms hears one private
-  [background notice](invariants/identity.md#identity-a-design-notice-is-background-awareness-once-per-claim)
+  [background invitation](invariants/identity.md#identity-a-passive-design-invitation-is-background-information-once-per-occupant)
   naming the Design's handle, title, and one-line pitch and how to read its
-  room or contribute. Being told is not listening, and `spice room awareness
-  HANDLE` shows the operator who was told and on which terms.
+  room, contribute, or leave. Each occupant hears it once; contributing or
+  leaving ends the lane's invitations to that Design. Being invited is not
+  listening, grants no claim, and owes no acknowledgment, and `spice room
+  awareness HANDLE` shows the operator who was invited and on which terms.
 - **Preparation.** `task plan` declares a Plan with a `plan,review` flow and
   `task design` declares a Design with its one open `design` phase; active Plan
   and Design claims refuse implementation commits. A Design plans Plans; a

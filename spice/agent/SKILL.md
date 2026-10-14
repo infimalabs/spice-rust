@@ -40,9 +40,9 @@ follow its authority action without ACK/NAK.
 - A lapse names a task this lane held and the expiry that passed: stop that
   task, treat its unpublished commits as loose, and read `spice task show
   HANDLE` before asking the allocator for work.
-- An open Design matching your claimed task names the matched terms, its pitch,
-  and how to read its room or contribute. It makes the lane no listener and
-  creates no duty.
+- A passive Design invitation matching your claimed task names the matched
+  terms, its pitch, and how to read its room, contribute, or leave. It is
+  information only: no claim, listening, or duty.
 - A claimed-task generation reminder requires `spice task reclaim`.
 
 A current operator direction answerable without commands takes precedence. Do
