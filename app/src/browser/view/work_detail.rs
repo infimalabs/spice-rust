@@ -302,7 +302,8 @@ fn render_available(
     }
 }
 
-/// The task's observations and the composer that appends to them.
+/// The task's observations, newest first, beneath the composer that appends
+/// to them, so a submitted observation lands directly under its draft.
 fn render_activity(
     render: &WorkDetailRender<'_, '_>,
     answer: &wire::intent::TaskDetailAnswer,
@@ -318,6 +319,15 @@ fn render_activity(
                 answer.closure.as_ref(),
                 |actor| actor_name(actor, render.lanes),
                 |task| selection_has(render.selection, task),
+            )}
+            {task_detail::render_note_composer(
+                format!("work-detail-note-{}", statement.born),
+                statement.handle.as_str(),
+                &statement.born,
+                render.can_note,
+                task_detail::closure(render.can_close, &answer.task).as_ref(),
+                &render.notes.shown(&statement.born),
+                &render.submit_note,
             )}
             if answer.notes.is_empty() {
                 <p class="muted">{"No observations have been recorded."}</p>
@@ -336,15 +346,6 @@ fn render_activity(
                     })}
                 </ol>
             }
-            {task_detail::render_note_composer(
-                format!("work-detail-note-{}", statement.born),
-                statement.handle.as_str(),
-                &statement.born,
-                render.can_note,
-                task_detail::closure(render.can_close, &answer.task).as_ref(),
-                &render.notes.shown(&statement.born),
-                &render.submit_note,
-            )}
         </section>
     }
 }
