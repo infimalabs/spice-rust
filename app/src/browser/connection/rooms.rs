@@ -178,8 +178,8 @@ pub(super) async fn send_room_coordination(
     }
 }
 
-/// Record one decision or one execution authorization under the heads the
-/// approval control was drawn from.
+/// Record one decision, coverage statement, or execution authorization under
+/// the heads the approval control was drawn from.
 pub(super) async fn send_preparation(
     principal: &Principal,
     writer: &mut SocketWriter,
@@ -198,6 +198,18 @@ pub(super) async fn send_preparation(
                 actions,
                 pending,
                 CommandKind::PreparationDecide,
+                expected.clone(),
+                request.clone(),
+            )
+            .await
+        }
+        crate::client_action::PreparationRequest::Cover { request, expected } => {
+            send_typed(
+                principal,
+                writer,
+                actions,
+                pending,
+                CommandKind::CandidateCoverageRecord,
                 expected.clone(),
                 request.clone(),
             )

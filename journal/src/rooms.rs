@@ -1067,7 +1067,7 @@ fn authorize(
     }
     let Some(assessed) = assessed else {
         return unsound(
-            "authorization requires independent or operator coverage; self-review alone certifies nothing",
+            "authorization requires independent or operator coverage; self-review alone certifies nothing; record operator or independent coverage of this candidate, then authorize",
         );
     };
     evidence::require_assessed(authority, &candidate, assessed)?;

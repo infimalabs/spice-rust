@@ -48,13 +48,17 @@ pub(crate) enum RoomCoordinationRequest {
     },
 }
 
-/// One operator decision over a retained candidate, or one exact execution
-/// authorization following an accepted decision, with the heads it was drawn
-/// from.
+/// One operator decision over a retained candidate, the operator's own review
+/// coverage of one, or one exact execution authorization following an
+/// accepted decision, with the heads it was drawn from.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum PreparationRequest {
     Decide {
         request: wire::rooms::PreparationDecide,
+        expected: Vec<wire::Witness>,
+    },
+    Cover {
+        request: wire::rooms::CandidateCoverageRecord,
         expected: Vec<wire::Witness>,
     },
     Authorize {
