@@ -79,7 +79,6 @@ pub(super) fn render(
             reachable: postable.available,
             attached: postable.attached,
             broadcast: false,
-            waking: false,
         })
         .collect::<Vec<_>>();
     let ready = postables.iter().any(|postable| postable.available);

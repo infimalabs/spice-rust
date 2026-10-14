@@ -19,15 +19,12 @@ pub(in crate::browser) struct SendSlot {
     /// The attribute selector naming this composer's `.team-agent` section.
     pub section: String,
     pub accent: usize,
-    /// A press can deliver this composer, waking its lane if it must.
+    /// A press can deliver this composer to the lane.
     pub reachable: bool,
     /// A quote or image is drafted, which sends without any text.
     pub attached: bool,
     /// A keyboard broadcast from this team fans out to this member.
     pub broadcast: bool,
-    /// The member is still vacant while a wake this browser sent for one of
-    /// its submissions awaits residency or refusal.
-    pub waking: bool,
 }
 
 #[derive(Properties, PartialEq)]
@@ -107,16 +104,8 @@ pub(in crate::browser) fn controls_frame(props: &FrameProps) -> Html {
             },
         );
     }
-    // Drafting or a wake in flight keeps the controls lit; only the absence of
-    // both lets a dormant team step back. Enabling SEND stays with drafting.
-    let waking = props
-        .slots
-        .iter()
-        .filter(|slot| slot.waking)
-        .map(|slot| slot.accent)
-        .collect::<Vec<_>>();
     let stepped_back = props.dormant && !drafting.typed;
-    let idle = stepped_back && waking.is_empty();
+    let idle = stepped_back;
     // A send that is refused outright reaches no one, so it lights nothing.
     let lit = if props.ready {
         drafting.lit.clone()
@@ -136,25 +125,21 @@ pub(in crate::browser) fn controls_frame(props: &FrameProps) -> Html {
         // rather than style attributes; broadcast previews select their
         // own rim without changing drafting state on modifier presses.
         let send = send.clone();
-        use_effect_with(
-            (lit.clone(), broadcast, waking.clone()),
-            move |(lit, broadcast, waking)| {
-                if let Some(button) = send.cast::<web_sys::HtmlElement>() {
-                    let style = button.style();
-                    for (property, accents) in [
-                        ("--team-send-recipient-rim", lit),
-                        ("--team-send-broadcast-rim", broadcast),
-                        ("--team-send-waking-rim", waking),
-                    ] {
-                        let _ = if accents.is_empty() {
-                            style.remove_property(property).map(drop)
-                        } else {
-                            style.set_property(property, &recipient_rim(accents))
-                        };
-                    }
+        use_effect_with((lit.clone(), broadcast), move |(lit, broadcast)| {
+            if let Some(button) = send.cast::<web_sys::HtmlElement>() {
+                let style = button.style();
+                for (property, accents) in [
+                    ("--team-send-recipient-rim", lit),
+                    ("--team-send-broadcast-rim", broadcast),
+                ] {
+                    let _ = if accents.is_empty() {
+                        style.remove_property(property).map(drop)
+                    } else {
+                        style.set_property(property, &recipient_rim(accents))
+                    };
                 }
-            },
-        );
+            }
+        });
     }
     html! {
         <aside
@@ -174,7 +159,6 @@ pub(in crate::browser) fn controls_frame(props: &FrameProps) -> Html {
                 recipients: lit.len(),
                 broadcast_recipients: broadcast_count,
                 members: props.slots.len(),
-                waking: waking.len(),
                 verb: props.verb,
                 noun: props.noun,
             })}
@@ -188,7 +172,6 @@ struct SendButton {
     recipients: usize,
     broadcast_recipients: usize,
     members: usize,
-    waking: usize,
     verb: &'static str,
     noun: &'static str,
 }
@@ -200,16 +183,13 @@ fn send_button(button: SendButton) -> Html {
         recipients,
         broadcast_recipients,
         members,
-        waking,
         verb,
         noun,
     } = button;
-    let title = match (recipients, waking) {
-        (0, 0) => verb.to_owned(),
-        (0, 1) => "Waking 1 agent".to_owned(),
-        (0, count) => format!("Waking {count} agents"),
-        (1, _) => format!("{verb} to 1 {noun}"),
-        (count, _) => format!("{verb} to {count} {noun}s"),
+    let title = match recipients {
+        0 => verb.to_owned(),
+        1 => format!("{verb} to 1 {noun}"),
+        count => format!("{verb} to {count} {noun}s"),
     };
     let full_send = members > 1 && recipients == members;
     let full_broadcast = members > 1 && broadcast_recipients == members;
@@ -249,7 +229,6 @@ fn send_button(button: SendButton) -> Html {
             data-broadcast-recipient-count={broadcast_recipients.to_string()}
             data-full-send={full_send.to_string()}
             data-full-broadcast={full_broadcast.to_string()}
-            data-waking={(waking != 0).to_string()}
             {disabled}
             {title}
             onpointerdown={touch_down}

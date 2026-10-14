@@ -3,11 +3,12 @@
 //!
 //! The surface keeps the last admitted runtime on screen while its connection
 //! is down and while a restarted resident hydrates, so the runtime's offers
-//! alone describe a resident that may no longer exist. Every submission is
-//! witnessed by the occupant and epoch the runtime remembers, and the resident
-//! refuses a witness it never seated, so a draft admitted while offline is a
-//! draft queued to be refused. Only an online connection turns an offer into
-//! authority, and every path that submits a draft asks here.
+//! alone describe a resident that may no longer exist.
+//! Every submission is witnessed by the residency epoch the runtime remembers
+//! and, for an occupied seat, its occupant. The resident refuses a witness it
+//! never published, so a draft admitted while offline is a draft queued to be
+//! refused. Only an online connection turns an offer into authority, and every
+//! path that submits a draft asks here.
 
 use wire::{CanonicalUuid, CommandKind};
 
@@ -19,48 +20,40 @@ pub enum SubmissionTarget {
         occupant: CanonicalUuid,
         epoch: CanonicalUuid,
     },
-    /// Wake the vacant seat and hand it the draft once it is seated.
-    Wake,
+    /// Publish to the vacant seat under the current residency generation.
+    Vacant { epoch: CanonicalUuid },
 }
 
 /// What the session may currently do with a composer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SubmissionAuthority {
-    /// A seated occupant may be steered.
+    /// An occupied or vacant reachable seat may be steered.
     pub send: bool,
-    /// A vacant bound seat may be woken and then steered.
-    pub wake: bool,
 }
 
 impl SubmissionAuthority {
     /// Nothing may be submitted.
-    pub const NONE: Self = Self {
-        send: false,
-        wake: false,
-    };
+    pub const NONE: Self = Self { send: false };
 
     /// Derive from the connection state and the runtime's offers.
     ///
     /// `online` is the surface's connection being `Online`: the socket is
     /// admitted and the runtime it published is the one the resident is
-    /// serving now. A wake is a send that first seats an occupant, so it
-    /// needs the send offer as well as the lane offers it exercises.
+    /// serving now. Both occupied and vacant seats use the same durable
+    /// steering command.
     #[must_use]
     pub fn derive(online: bool, offers: impl Fn(CommandKind) -> bool) -> Self {
-        let send = online && offers(CommandKind::SteerSend);
         Self {
-            send,
-            wake: send && offers(CommandKind::LaneState) && offers(CommandKind::LaneRead),
+            send: online && offers(CommandKind::SteerSend),
         }
     }
 
     /// Where one member's draft goes, or nowhere.
     ///
-    /// A seated member is steered when sending is authorised; a vacant member
-    /// is woken when waking is and the resident can seat it, which a seat that
-    /// was never started always can.
-    /// A member the authority cannot reach has no target, and a draft with no
-    /// target stays in its composer.
+    /// A seated member is steered when sending is authorised; a vacant,
+    /// wakeable member receives durable steering under the current residency
+    /// generation. A member the authority cannot reach has no target, and a
+    /// draft with no target stays in its composer.
     #[must_use]
     pub fn target(
         self,
@@ -72,7 +65,7 @@ impl SubmissionAuthority {
             Some(occupant) => self
                 .send
                 .then_some(SubmissionTarget::Resident { occupant, epoch }),
-            None => (self.wake && wakeable).then_some(SubmissionTarget::Wake),
+            None => (self.send && wakeable).then_some(SubmissionTarget::Vacant { epoch }),
         }
     }
 }
@@ -109,13 +102,7 @@ mod tests {
     #[test]
     fn an_online_connection_turns_the_offers_into_authority() {
         let online = SubmissionAuthority::derive(true, OPERATOR);
-        assert_eq!(
-            online,
-            SubmissionAuthority {
-                send: true,
-                wake: true
-            }
-        );
+        assert_eq!(online, SubmissionAuthority { send: true });
         assert_eq!(
             online.target(Some(occupant()), false, epoch()),
             Some(SubmissionTarget::Resident {
@@ -125,29 +112,25 @@ mod tests {
         );
         assert_eq!(
             online.target(None, true, epoch()),
-            Some(SubmissionTarget::Wake)
+            Some(SubmissionTarget::Vacant { epoch: epoch() })
         );
         assert_eq!(
             online.target(None, false, epoch()),
             None,
-            "a started seat without a session cannot wake"
+            "a started seat without a session cannot receive steering"
         );
     }
 
     #[test]
-    fn a_wake_needs_the_send_offer_and_both_lane_offers() {
+    fn a_vacant_send_needs_only_the_steering_offer() {
         let no_send = SubmissionAuthority::derive(true, |kind| kind != CommandKind::SteerSend);
         assert_eq!(no_send, SubmissionAuthority::NONE);
-        let no_state = SubmissionAuthority::derive(true, |kind| kind != CommandKind::LaneState);
-        assert_eq!(
-            no_state,
-            SubmissionAuthority {
-                send: true,
-                wake: false
-            }
-        );
-        assert_eq!(no_state.target(None, true, epoch()), None);
-        let no_read = SubmissionAuthority::derive(true, |kind| kind != CommandKind::LaneRead);
-        assert!(!no_read.wake);
+        for omitted in [CommandKind::LaneState, CommandKind::LaneRead] {
+            let authority = SubmissionAuthority::derive(true, |kind| kind != omitted);
+            assert_eq!(
+                authority.target(None, true, epoch()),
+                Some(SubmissionTarget::Vacant { epoch: epoch() })
+            );
+        }
     }
 }

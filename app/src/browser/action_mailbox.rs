@@ -249,7 +249,6 @@ impl PendingKind {
             | Self::LaneRenewal { .. }
             | Self::MemberLane { .. }
             | Self::LaneRetune { .. }
-            | Self::WakeSubmission { .. }
             | Self::TeamConfigure { .. }
             | Self::TeamArrange
             | Self::Steer
@@ -1251,7 +1250,13 @@ mod tests {
         let (queue, _wakes) = ActionQueue::new();
         let pending = id(41);
         queue
-            .reserve_pending(pending, PendingKind::Lanes { wakes: Vec::new() }, 1)
+            .reserve_pending(
+                pending,
+                PendingKind::Lanes {
+                    rebases: Vec::new(),
+                },
+                1,
+            )
             .expect("older lane read reserves");
 
         let mut stale = crate::Stale::default();

@@ -1182,28 +1182,6 @@ async fn drain_submissions(
     actions: &ActionQueue,
     submissions: &SubmissionHandle,
 ) -> Result<(), String> {
-    let ready_wakes = submissions.queue.borrow().ready_wakes();
-    for submission in ready_wakes {
-        send_typed(
-            principal,
-            writer,
-            actions,
-            PendingKind::WakeSubmission {
-                lane: submission.lane,
-                submission: submission.id,
-            },
-            CommandKind::LaneState,
-            vec![],
-            LaneState {
-                lane: submission.lane,
-                action: LaneAction::Wake,
-                worktree: None,
-            },
-        )
-        .await?;
-        submissions.queue.borrow_mut().wake_sent(submission.id)?;
-        submissions.publish();
-    }
     let ready = submissions.queue.borrow().ready();
     for submission in ready {
         let (occupant, epoch) = submission.residency().ok_or_else(|| {
@@ -1220,7 +1198,7 @@ async fn drain_submissions(
         };
         let expected = vec![Witness::Residency {
             lane: submission.lane,
-            occupant: Some(occupant),
+            occupant,
             epoch,
         }];
         send_typed_as(

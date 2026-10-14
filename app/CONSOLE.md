@@ -336,15 +336,15 @@ hotspot. In front, a frosted
 glass face transmits that field and collects light in irregular catches along
 its curved perimeter: brighter low on the left, a fainter answer high on the
 right, as the sliders are lit. Every lit presentation keeps both layers:
-hover, keyboard focus, contact, disabled, waking, recipient, `FULL SEND` and
-command states change only the field's intensity, the face's pressure, and
-their own typed rims, which stay separate layers above the glass.
+hover, keyboard focus, contact, disabled, recipient, `FULL SEND` and command
+states change only the field's intensity, the face's pressure, and their own
+typed rims, which stay separate layers above the glass.
 
-A team is idle when no member is starting or running, nothing is drafted, and
-no wake is in flight. Its controls then carry no light: the emitter goes dark
-and SEND rests as the same flush glass as TURBO and the menu, and the sliders
-keep their stop's accent but drop the lit thumb's glass catches and halo. Any
-member starting or running, a draft, or a wake relights the panel live.
+A team is idle when no member is starting or running and nothing is drafted.
+Its controls then carry no light: the emitter goes dark and SEND rests as the
+same flush glass as TURBO and the menu, and the sliders keep their stop's accent
+but drop the lit thumb's glass catches and halo. Any member starting or running,
+or a draft, relights the panel live.
 
 SEND's rim is lit in the actual recipients' accents: one continuous rim for one
 recipient, separated arcs for several. Its title names the recipient count.
@@ -354,13 +354,13 @@ vacant member adds nothing. The rim is paint on the one button, never
 per-recipient hit targets. A running team with nothing drafted shows no rim; an
 idle team with no agents or drafts disables SEND while the sliders stay usable.
 
-A press that wakes a vacant member keeps the panel lit from submission until
-the woken lane binds residency, so draft-to-online has no dark interval. Until
-then SEND is disabled unless more content is drafted, titles itself `Waking N
-agents`, and breathes a rim in the waking members' accents, steady under
-reduced motion. A refused, faulted, or unproven wake clears that indication as
-it restores the draft. The indication reflects only this browser's own wake
-submissions.
+A reachable vacant member uses the same durable steering submission as an
+occupied member. Its residency witness names no occupant and carries the
+current generation; after the directive commits, the resident launches or
+resumes the lane. There is no intermediate browser-owned wake state or second
+command. Later submissions for that lane wait for a causally newer lane
+snapshot before reusing either a vacant or occupied witness. A refusal restores
+the draft through the ordinary submission path.
 
 In a multi-member team, SEND becomes a `FULL SEND` lockup, in the same box and
 accessible name, exactly when the submission reaches every member. An active

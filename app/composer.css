@@ -464,17 +464,7 @@
 }
 .team-composer .team-composer-controls[data-idle="true"] > .team-slider { --team-slider-light-shadow: 0 0 0 0 transparent; --team-slider-thumb-face: var(--team-control-face); --team-slider-thumb-shadow: var(--team-control-rest); }
 .team-composer .team-composer-controls[data-idle="true"] > .team-slider::after { backdrop-filter: none; -webkit-backdrop-filter: none; }
-/* A wake in flight keeps the panel lit; until residency or a refusal settles it,
-   SEND's rim breathes in the waking members' accents. Drafted recipients keep
-   their steady rim, and an undrafted SEND stays disabled while it waits. */
-.team-composer .team-send[data-waking="true"][data-lit="false"]::after {
-  background: var(--team-send-waking-rim, transparent);
-  animation: team-send-waking 1.6s var(--app-ease-standard) infinite alternate;
-}
-.team-composer .team-send[data-waking="true"]:disabled { cursor: progress; }
-@keyframes team-send-waking { from { opacity: .3; } to { opacity: .85; } }
 @media (prefers-reduced-motion: reduce) {
-  .team-composer .team-send[data-waking="true"][data-lit="false"]::after { animation: none; opacity: .6; }
   .team-composer .team-composer-controls::after { transition: none; }
 }
 /* Each surface clips its controls' outer right shadow. Mirror that same
