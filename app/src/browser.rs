@@ -707,6 +707,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
     use_mosaic_root_scroll();
     watchband::use_team_arrangement_focus(&state.team_controls, true);
     watchband::use_command_modifier_preview();
+    watchband::use_composer_reading_focus();
     watchband::use_team_fleet_right_edge(
         state.team_fleet.clone(),
         teamed_lane_count(&state.surface),

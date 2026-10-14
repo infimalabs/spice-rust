@@ -377,6 +377,13 @@ collapsed draft. The fleet opens at its canonical right edge and holds it
 through resizes only while the operator leaves it there; once they scroll to
 another team, a keyboard, rotation, or arriving team keeps their place.
 
+A team's member strip paints canonical member zero at its right edge, beside
+the controls, so its document order runs right to left. Tab and Shift+Tab
+instead read as a person does: across one team's member composers left to
+right, each member's own heading and fields in order, then the team's
+controls, then the next team the same way. Everywhere else, and inside an
+open modal dialog, the browser's own order holds.
+
 Each member heading resolves from that lane's newest eligible authored prose.
 When a history page has none, header demand continues to a newly exposed older
 frontier but never reissues the same frontier without fresh viewport demand.

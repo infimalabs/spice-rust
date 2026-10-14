@@ -45,6 +45,8 @@ mod composer_drafts;
 #[cfg(any(target_arch = "wasm32", test))]
 mod composer_markdown;
 #[cfg(any(target_arch = "wasm32", test))]
+mod composer_reading_order;
+#[cfg(any(target_arch = "wasm32", test))]
 mod composer_submissions;
 #[cfg(any(target_arch = "wasm32", test))]
 mod image_annotation;
