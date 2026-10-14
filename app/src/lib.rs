@@ -49,6 +49,8 @@ mod composer_submissions;
 #[cfg(any(target_arch = "wasm32", test))]
 mod image_annotation;
 #[cfg(any(target_arch = "wasm32", test))]
+mod image_navigation;
+#[cfg(any(target_arch = "wasm32", test))]
 mod mermaid_geometry;
 #[cfg(any(target_arch = "wasm32", test))]
 mod mermaid_label;

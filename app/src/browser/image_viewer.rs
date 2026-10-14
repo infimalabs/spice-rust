@@ -17,6 +17,7 @@ mod actions;
 mod editor;
 
 use super::watchband::{ComposerAction, ComposerDrafts};
+use crate::image_navigation::{self, Direction};
 
 #[derive(Clone, PartialEq)]
 struct DraftTarget {
@@ -92,6 +93,83 @@ impl Reducible for Viewing {
         }
     }
 }
+const LANE_CARD_SELECTOR: &str = ".mosaic-message-card[data-agent-lane][data-mosaic-card-key]";
+const IMAGE_BUTTON_SELECTOR: &str = "button[data-image-preview]:not([disabled])";
+
+fn open_change(opener: web_sys::Element) -> Option<Change> {
+    let image = opener
+        .query_selector("img")
+        .ok()
+        .flatten()?
+        .dyn_into::<web_sys::HtmlImageElement>()
+        .ok()?;
+    Some(Change::Open {
+        source: image.src().into(),
+        alt: image.alt().into(),
+        name: opener
+            .get_attribute("data-image-name")
+            .unwrap_or_default()
+            .into(),
+        draft: opener.get_attribute("data-image-lane").and_then(|lane| {
+            Some(DraftTarget {
+                lane,
+                quote: opener.get_attribute("data-image-quote"),
+                id: opener.get_attribute("data-image-id")?.parse().ok()?,
+            })
+        }),
+        opener,
+    })
+}
+
+fn element_at(nodes: &web_sys::NodeList, index: usize) -> Option<web_sys::Element> {
+    nodes
+        .item(u32::try_from(index).ok()?)?
+        .dyn_into::<web_sys::Element>()
+        .ok()
+}
+
+fn lane_media_count(cards: &web_sys::NodeList, index: usize, lane: &str) -> usize {
+    let Some(card) = element_at(cards, index)
+        .filter(|card| card.get_attribute("data-agent-lane").as_deref() == Some(lane))
+    else {
+        return 0;
+    };
+    card.query_selector_all(IMAGE_BUTTON_SELECTOR)
+        .map_or(0, |images| images.length() as usize)
+}
+
+/// The next lane image in time. Cards are newest first in the DOM while each
+/// card's images, including a crystallized run, are oldest first.
+fn adjacent_lane_media(
+    opener: &web_sys::Element,
+    direction: Direction,
+) -> Option<web_sys::Element> {
+    let card = opener.closest(LANE_CARD_SELECTOR).ok().flatten()?;
+    let lane = card.get_attribute("data-agent-lane")?;
+    let plane = card.closest(".lane-mosaic-plane").ok().flatten()?;
+    let cards = plane.query_selector_all(LANE_CARD_SELECTOR).ok()?;
+    let card_count = cards.length() as usize;
+    let current_card = (0..card_count)
+        .find(|index| element_at(&cards, *index).is_some_and(|candidate| candidate == card))?;
+    let images = card.query_selector_all(IMAGE_BUTTON_SELECTOR).ok()?;
+    let image_count = images.length() as usize;
+    let current_image = (0..image_count)
+        .find(|index| element_at(&images, *index).is_some_and(|candidate| candidate == *opener))?;
+    let (target_card, target_image) = image_navigation::adjacent_position(
+        card_count,
+        current_card,
+        current_image,
+        direction,
+        |index| lane_media_count(&cards, index, &lane),
+    )?;
+    element_at(&cards, target_card)
+        .and_then(|card| card.query_selector_all(IMAGE_BUTTON_SELECTOR).ok())
+        .and_then(|images| element_at(&images, target_image))
+}
+
+fn lane_navigation_available(opener: &web_sys::Element) -> bool {
+    opener.closest(LANE_CARD_SELECTOR).ok().flatten().is_some()
+}
 
 #[derive(Properties, PartialEq)]
 pub(super) struct ProviderProps {
@@ -116,31 +194,11 @@ pub(super) fn provider(props: &ProviderProps) -> Html {
             else {
                 return;
             };
-            let Some(image) = opener
-                .query_selector("img")
-                .ok()
-                .flatten()
-                .and_then(|image| image.dyn_into::<web_sys::HtmlImageElement>().ok())
-            else {
+            let Some(change) = open_change(opener) else {
                 return;
             };
             event.prevent_default();
-            viewing.dispatch(Change::Open {
-                source: image.src().into(),
-                alt: image.alt().into(),
-                name: opener
-                    .get_attribute("data-image-name")
-                    .unwrap_or_default()
-                    .into(),
-                draft: opener.get_attribute("data-image-lane").and_then(|lane| {
-                    Some(DraftTarget {
-                        lane,
-                        quote: opener.get_attribute("data-image-quote"),
-                        id: opener.get_attribute("data-image-id")?.parse().ok()?,
-                    })
-                }),
-                opener,
-            });
+            viewing.dispatch(change);
         });
         document
             .add_event_listener_with_callback("click", opened.as_ref().unchecked_ref())
@@ -246,6 +304,38 @@ fn use_annotation_apply(
         },
     )
 }
+#[hook]
+fn use_lane_navigation(
+    props: &ViewerProps,
+    editing: UseStateHandle<bool>,
+) -> (bool, Callback<KeyboardEvent>) {
+    let opener = props.selection.opener.clone();
+    let available = lane_navigation_available(&opener);
+    let navigate = use_callback(
+        (opener, props.viewing.clone(), editing),
+        |event: KeyboardEvent, (opener, viewing, editing)| {
+            if **editing
+                || event.is_composing()
+                || event.alt_key()
+                || event.ctrl_key()
+                || event.meta_key()
+            {
+                return;
+            }
+            let direction = match event.key().as_str() {
+                "ArrowLeft" => Direction::Older,
+                "ArrowRight" => Direction::Newer,
+                _ => return,
+            };
+            event.prevent_default();
+            event.stop_propagation();
+            if let Some(change) = adjacent_lane_media(opener, direction).and_then(open_change) {
+                viewing.dispatch(change);
+            }
+        },
+    );
+    (available, navigate)
+}
 
 #[function_component(Viewer)]
 fn viewer(props: &ViewerProps) -> Html {
@@ -311,6 +401,7 @@ fn viewer(props: &ViewerProps) -> Html {
             dialog.close();
         }
     });
+    let (lane_navigation, navigate) = use_lane_navigation(props, editing.clone());
     use_effect_with(
         (
             host.clone(),
@@ -344,7 +435,18 @@ fn viewer(props: &ViewerProps) -> Html {
         }
     });
     html! {
-        <dialog ref={host} class="image-lightbox app-modal" aria-label="Full-size image">
+        <dialog
+            ref={host}
+            class="image-lightbox app-modal"
+            aria-label="Full-size image"
+            aria-describedby={lane_navigation.then_some("image-lightbox-navigation-help")}
+            onkeydown={navigate}
+        >
+            if lane_navigation {
+                <span id="image-lightbox-navigation-help" class="visually-hidden">
+                    {"Use Left Arrow for the previous older image in this lane and Right Arrow for the next newer image."}
+                </span>
+            }
             if *editing && let Some(image) = image {
                 <editor::Editor {image} onapply={apply} oncancel={cancel} {ondirty} />
             } else {
