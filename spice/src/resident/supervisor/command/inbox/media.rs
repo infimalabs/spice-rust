@@ -38,14 +38,13 @@ const STATE_BYTES: u64 = 1 << 20;
 #[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct State {
-    /// The context anchor this occupant was last seen seated at; absent until
-    /// the resident first names it the lane's occupant.
+    /// The context anchor this occupant last projected under; absent only
+    /// before its first projection.
     compaction: Option<u64>,
     /// Everything shown since that anchor was first seen.
     retained: Vec<Record>,
     /// What was shown during the generation before it, which the compaction
     /// opening this one may have replayed into the current context.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     prior: Vec<Record>,
 }
 
@@ -107,6 +106,14 @@ pub(super) fn project(
     state: &Path,
     inbox: &wire::intent::LaneInbox,
 ) -> Result<Projected, Refusal> {
+    if inbox.occupant != Some(occupant) {
+        return Err(Refusal::Stale(match inbox.occupant {
+            Some(current) => {
+                format!("lane {lane} is seated by occupant {current}, not {occupant}")
+            }
+            None => format!("lane {lane} seats no occupant, not {occupant}"),
+        }));
+    }
     let mut shown = match crate::resident::supervisor::read_json::<State>(state, STATE_BYTES) {
         Ok(shown) => shown,
         Err(error) if error.kind() == io::ErrorKind::NotFound => State::default(),
@@ -116,41 +123,41 @@ pub(super) fn project(
             )));
         }
     };
-    if inbox.occupant != Some(occupant) {
-        return Err(Refusal::Stale(match inbox.occupant {
-            Some(current) => {
-                format!("lane {lane} is seated by occupant {current}, not {occupant}")
-            }
-            None => format!("lane {lane} does not authorize occupant {occupant}"),
-        }));
+    let anchor = inbox.compaction.ok_or_else(|| {
+        Refusal::Failed(format!(
+            "lane {lane} seats occupant {occupant} without a context anchor"
+        ))
+    })?;
+    if let Some(seen) = shown.compaction.filter(|seen| anchor < *seen) {
+        return Err(Refusal::Failed(format!(
+            "lane {lane} context anchor {anchor} precedes anchor {seen} occupant {occupant} already projected under"
+        )));
     }
     let (projected, desired) =
         media_projection::publish(lane, occupant, &inbox.pending, root).map_err(Refusal::Failed)?;
-    if let Some(anchor) = inbox.compaction {
-        match shown.compaction {
-            None => media_projection::retire_other_occupants(root, lane, occupant)
-                .map_err(Refusal::Failed)?,
-            Some(seen) if anchor > seen => {
-                let ended = std::mem::take(&mut shown.retained);
-                media_projection::retire(
-                    root,
-                    lane,
-                    occupant,
-                    shown
-                        .prior
-                        .iter()
-                        .filter(|record| !ended.contains(record) && !desired.contains(record)),
-                )
-                .map_err(Refusal::Failed)?;
-                shown.prior = ended
-                    .into_iter()
-                    .filter(|record| !desired.contains(record))
-                    .collect();
-            }
-            Some(_) => {}
+    match shown.compaction {
+        None => media_projection::retire_other_occupants(root, lane, occupant)
+            .map_err(Refusal::Failed)?,
+        Some(seen) if anchor > seen => {
+            let ended = std::mem::take(&mut shown.retained);
+            media_projection::retire(
+                root,
+                lane,
+                occupant,
+                shown
+                    .prior
+                    .iter()
+                    .filter(|record| !ended.contains(record) && !desired.contains(record)),
+            )
+            .map_err(Refusal::Failed)?;
+            shown.prior = ended
+                .into_iter()
+                .filter(|record| !desired.contains(record))
+                .collect();
         }
-        shown.compaction = Some(shown.compaction.map_or(anchor, |seen| seen.max(anchor)));
+        Some(_) => {}
     }
+    shown.compaction = Some(anchor);
     for record in desired {
         if !shown.retained.contains(&record) {
             shown.retained.push(record);
@@ -255,6 +262,8 @@ mod tests {
             fs::symlink_metadata(&earlier).is_err(),
             "the seated successor retires its predecessor's media",
         );
+        // Staleness outranks whatever the predecessor's own state holds.
+        fs::write(fixture.state(PREDECESSOR), b"{}").expect("predecessor state rewrites");
 
         for answer in [
             inbox(Some(SUCCESSOR), Some(20), &[FIRST, SECOND]),
@@ -273,39 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unseated_predecessor_cannot_republish_after_its_successor_takes_the_lane() {
-        let fixture = Fixture::new();
-        let earlier = only_path(
-            &fixture
-                .read(PREDECESSOR, &inbox(Some(PREDECESSOR), None, &[FIRST]))
-                .expect("the exact incoming predecessor receives its media"),
-        );
-        let shown = only_path(
-            &fixture
-                .read(SUCCESSOR, &inbox(Some(SUCCESSOR), Some(20), &[SECOND]))
-                .expect("the successor's media projects"),
-        );
-        assert!(fs::symlink_metadata(&earlier).is_err());
-
-        assert!(matches!(
-            fixture.read(
-                PREDECESSOR,
-                &inbox(Some(SUCCESSOR), Some(20), &[FIRST, SECOND]),
-            ),
-            Err(Refusal::Stale(_)),
-        ));
-        assert_eq!(
-            fs::read(&shown).expect("successor media stays readable"),
-            PNG_BYTES,
-        );
-        assert!(
-            fs::symlink_metadata(fixture.occupant_tree(PREDECESSOR)).is_err(),
-            "the stale null-anchor reader cannot recreate its tree",
-        );
-    }
-
-    #[test]
-    fn a_new_occupant_keeps_what_it_received_before_seating_through_ack_and_rereads() {
+    fn a_new_occupant_projects_nothing_before_its_start_anchor_and_keeps_its_media_through_ack() {
         let fixture = Fixture::new();
         let predecessor = only_path(
             &fixture
@@ -313,43 +290,41 @@ mod tests {
                 .expect("the predecessor's media projects"),
         );
 
-        for unauthorized in [
+        // The successor's supervisor reads before the resident commits its
+        // start: the lane still names its predecessor, or nobody.
+        for unseated in [
             inbox(Some(PREDECESSOR), Some(10), &[FIRST]),
             inbox(None, None, &[FIRST]),
         ] {
             assert!(matches!(
-                fixture.read(SUCCESSOR, &unauthorized),
+                fixture.read(SUCCESSOR, &unseated),
                 Err(Refusal::Stale(_)),
             ));
         }
-        let incoming = inbox(Some(SUCCESSOR), None, &[FIRST]);
-        for _ in 0..2 {
-            let received = only_path(
-                &fixture
-                    .read(SUCCESSOR, &incoming)
-                    .expect("the exact incoming occupant receives its media"),
-            );
-            assert_eq!(
-                fs::read(&received).expect("received media reads"),
-                PNG_BYTES,
-            );
-            assert_eq!(
-                fs::read(&predecessor).expect("nothing retires before seating"),
-                PNG_BYTES,
-            );
-        }
-        let received = only_path(
-            &fixture
-                .read(SUCCESSOR, &incoming)
-                .expect("the exact incoming occupant rereads its media"),
+        assert!(
+            fs::symlink_metadata(fixture.occupant_tree(SUCCESSOR)).is_err(),
+            "an unseated read publishes nothing",
+        );
+        assert!(
+            fs::symlink_metadata(fixture.state(SUCCESSOR)).is_err(),
+            "an unseated read records no projection state",
+        );
+        assert_eq!(
+            fs::read(&predecessor).expect("nothing retires before seating"),
+            PNG_BYTES,
         );
 
-        // The start anchor lands after the occupant answered: the directive
-        // has left pending, and every reread keeps what it was shown.
+        // The read the start commit kicks delivers the directive, and every
+        // reread after its acknowledgment keeps what it was shown.
+        let received = only_path(
+            &fixture
+                .read(SUCCESSOR, &inbox(Some(SUCCESSOR), Some(953_349), &[FIRST]))
+                .expect("the started occupant receives its media"),
+        );
         for _ in 0..2 {
             fixture
                 .read(SUCCESSOR, &inbox(Some(SUCCESSOR), Some(953_349), &[]))
-                .expect("the seated occupant reads");
+                .expect("the seated occupant rereads");
             assert_eq!(
                 fs::read(&received).expect("acknowledged media stays readable"),
                 PNG_BYTES,
@@ -358,6 +333,57 @@ mod tests {
         assert!(
             fs::symlink_metadata(&predecessor).is_err(),
             "the successor's first seated read retires its predecessor's media",
+        );
+    }
+
+    #[test]
+    fn an_unusable_anchor_or_state_refuses_before_publishing() {
+        let fixture = Fixture::new();
+        let shown = only_path(
+            &fixture
+                .read(SUCCESSOR, &inbox(Some(SUCCESSOR), Some(30), &[FIRST]))
+                .expect("the seated occupant's media projects"),
+        );
+        let recorded = fs::read(fixture.state(SUCCESSOR)).expect("projection state records");
+
+        for unusable in [
+            inbox(Some(SUCCESSOR), Some(10), &[SECOND]),
+            inbox(Some(SUCCESSOR), None, &[SECOND]),
+        ] {
+            assert!(matches!(
+                fixture.read(SUCCESSOR, &unusable),
+                Err(Refusal::Failed(_)),
+            ));
+        }
+        assert_eq!(
+            fs::read(fixture.state(SUCCESSOR)).expect("projection state reads"),
+            recorded,
+            "a refused read leaves the projection state unchanged",
+        );
+        assert_eq!(
+            fs::read_dir(fixture.occupant_tree(SUCCESSOR))
+                .expect("the occupant tree lists")
+                .count(),
+            1,
+            "a refused read publishes no other directive",
+        );
+        assert_eq!(fs::read(&shown).expect("shown media reads"), PNG_BYTES);
+
+        fs::write(
+            fixture.state(SUCCESSOR),
+            br#"{"compaction":30,"retained":[]}"#,
+        )
+        .expect("a state without its prior generation writes");
+        assert!(matches!(
+            fixture.read(SUCCESSOR, &inbox(Some(SUCCESSOR), Some(30), &[SECOND])),
+            Err(Refusal::Failed(_)),
+        ));
+        assert_eq!(
+            fs::read_dir(fixture.occupant_tree(SUCCESSOR))
+                .expect("the occupant tree lists")
+                .count(),
+            1,
+            "a state missing a field publishes nothing",
         );
     }
 

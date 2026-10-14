@@ -5,7 +5,7 @@ use wire::{Actor, Producer};
 use super::*;
 
 #[test]
-fn going_dark_commits_a_launch_still_proving_its_session() {
+fn a_settled_launch_commits_before_dark_and_then_kicks_its_lane_inbox() {
     let fixture = LaunchFixture::new();
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
@@ -37,6 +37,17 @@ fn going_dark_commits_a_launch_still_proving_its_session() {
         &startup.config,
         &reads,
     );
+    let door_path = crate::resident::supervisor::command::kick_path(&fixture.paths, fixture.lane);
+    let _ = std::fs::remove_file(&door_path);
+    let door = std::os::unix::net::UnixDatagram::bind(&door_path).expect("the lane's door binds");
+    door.set_nonblocking(true).expect("a door that never waits");
+    let kicked = || {
+        let mut kick = [0u8; 1024];
+        door.recv(&mut kick).ok().map(|length| {
+            serde_json::from_slice::<crate::resident::supervisor::command::Kick>(&kick[..length])
+                .expect("a kick")
+        })
+    };
     let mut seats = Seats::new();
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -54,6 +65,7 @@ fn going_dark_commits_a_launch_still_proving_its_session() {
                 "the wake is still proving its session"
             );
             assert_eq!(lane_row(&bus, &fixture).occupant, None);
+            assert_eq!(kicked(), None, "nothing kicks a lane before its start");
 
             settle_before_dark(
                 &command_surface,
@@ -67,6 +79,12 @@ fn going_dark_commits_a_launch_still_proving_its_session() {
 
             assert!(!launches.in_flight());
             assert!(seats.occupied(fixture.lane));
+            assert_eq!(
+                kicked(),
+                Some(crate::resident::supervisor::command::Kick::Inbox),
+                "the committed start kicks the lane's inbox",
+            );
+            assert_eq!(kicked(), None, "one start kicks once");
         });
     let occupant = lane_row(&bus, &fixture)
         .occupant
@@ -83,6 +101,8 @@ fn going_dark_commits_a_launch_still_proving_its_session() {
         "the next generation adopts the occupant from its committed row"
     );
     crate::resident::steering::remove_lane_surface(&fixture.paths, fixture.lane);
+    drop(door);
+    let _ = std::fs::remove_file(&door_path);
     drop(command_surface);
     drop(reads);
     bus.verify().expect("dark settlement authority verifies");

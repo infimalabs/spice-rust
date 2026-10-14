@@ -6,7 +6,6 @@ use std::fs;
 
 use bus::Bus;
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite, PendingFact};
-use lane::occupant::Seats;
 use steer::Outcome as ScanOutcome;
 use wire::body::TranscriptLocus;
 use wire::intent::{
@@ -540,11 +539,10 @@ pub(super) fn lane_capability(lane: &wire::LaneResidency) -> CommandResult<Canon
     }
 }
 
-pub(super) fn inbox_with_seats(
+pub(super) fn inbox(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    seats: &Seats,
     command: &wire::AdmittedCommand,
     request: &wire::intent::SteerInbox,
 ) -> Outcome<CommandAnswer> {
@@ -586,12 +584,7 @@ pub(super) fn inbox_with_seats(
         if selected.is_some_and(|selected| selected != lane.lane) {
             continue;
         }
-        let durable_occupant = lane.occupant;
-        let occupant = seats
-            .occupant(lane.lane)
-            .map(lane::occupant::Occupant::occupant)
-            .or(durable_occupant);
-        let compaction = match occupant.filter(|occupant| Some(*occupant) == durable_occupant) {
+        let compaction = match lane.occupant {
             Some(occupant) => {
                 match super::taste_surface::context_anchor(
                     snapshot.authority.facts(),
@@ -628,7 +621,7 @@ pub(super) fn inbox_with_seats(
             .collect();
         lanes.push(LaneInbox {
             lane: lane.lane,
-            occupant,
+            occupant: lane.occupant,
             compaction,
             pending,
             retired: recent,
@@ -648,17 +641,6 @@ pub(super) fn inbox_with_seats(
         position: ReplyPosition::Snapshot(snapshot.position),
         body: CommandAnswer::Inbox(InboxAnswer { epoch, lanes }),
     })
-}
-
-#[cfg(test)]
-pub(super) fn inbox(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    command: &wire::AdmittedCommand,
-    request: &wire::intent::SteerInbox,
-) -> Outcome<CommandAnswer> {
-    inbox_with_seats(bus, paths, epoch, &Seats::new(), command, request)
 }
 
 /// Resolve one quote target exactly as delivery and the app do.

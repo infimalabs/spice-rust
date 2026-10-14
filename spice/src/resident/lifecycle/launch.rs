@@ -37,6 +37,7 @@ pub(super) fn pending_launch(
 }
 
 impl Runtime {
+    /// Settle one automatic launch, answering the lane it seated and started.
     #[allow(
         clippy::too_many_arguments,
         reason = "one completion settles the lifecycle authority that admitted its launch"
@@ -51,7 +52,7 @@ impl Runtime {
         diagnostic: &mut dyn std::io::Write,
         pending: PendingLaunch,
         launched: CommandResult<super::super::supervisor::Launch>,
-    ) -> CommandResult<()> {
+    ) -> CommandResult<Option<CanonicalUuid>> {
         self.launching.remove(&pending.lane);
         let result =
             lane_surface::finish_automatic_wake(bus, paths, epoch, seats, pending.wake, launched);
@@ -75,7 +76,7 @@ impl Runtime {
                     pending.trigger.as_str(),
                     pending.lane
                 );
-                Ok(())
+                Ok(Some(pending.lane))
             }
             Ok(Attempted::DeadLettered(parked)) => {
                 self.backoff.release(pending.lane);
@@ -90,7 +91,7 @@ impl Runtime {
                         directive.requeue,
                     );
                 }
-                Ok(())
+                Ok(None)
             }
             Ok(Attempted::Launching(_)) => {
                 unreachable!("one launch completion cannot begin another launch")
@@ -104,7 +105,7 @@ impl Runtime {
                     now,
                     diagnostic,
                 )?;
-                Ok(())
+                Ok(None)
             }
             Err(Outcome::Fault(fault)) => Err(Outcome::Fault(fault)),
             Err(Outcome::Reply(_)) => {
