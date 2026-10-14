@@ -204,15 +204,17 @@ satisfaction, completion, team strips, and execution summaries until the same
 `spice task file` transition admits it.
 
 The Spice view's **Drafts** section follows the operator panel. It lists each
-open Draft the operator can read and offers a form that records a new one. A
-new Draft needs a title and an admitted public project, and takes an optional
-Plan or Design intent, description, and acceptance. Recording one opens it in
-task detail, which shows an editor beside the Draft's contract. **Save Draft**
-writes only the fields that changed, including project, intent, and flow.
-**File** validates the Draft as a complete ordinary Task, Plan, or Design. A
-refusal names the field or filing option to repair and leaves the Draft
-unchanged. Success replaces the Draft with its Filed task, which the allocator
-can offer at once.
+open Draft the operator can read, then keeps the Task/Plan/Design creator behind
+one compact **New Draft** disclosure. Opening it reveals every creation field;
+closing it returns focus to the same summary without changing any entered
+values. A new Draft needs a title and an admitted public project, and takes an
+optional Plan or Design intent, description, and acceptance. Recording one
+opens it in task detail, which shows the full editor beside the Draft's
+contract. **Save Draft** writes only the fields that changed, including
+project, intent, and flow. **File** validates the Draft as a complete ordinary
+Task, Plan, or Design. A refusal names the field or filing option to repair and
+leaves the Draft unchanged. Success replaces the Draft with its Filed task,
+which the allocator can offer at once.
 
 ## Resident topology in the global menu
 

@@ -1001,12 +1001,61 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
   min-width: 0;
 }
 
+.draft-create {
+  overflow: hidden;
+  border: var(--app-control-edge);
+  border-radius: var(--app-radius-control);
+  background: var(--control-surface-soft);
+}
+
+.draft-create-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 5px 8px;
+  color: var(--ink);
+  font: 700 var(--app-type-sm)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  list-style: none;
+  cursor: pointer;
+}
+
+.draft-create-summary::-webkit-details-marker { display: none; }
+.draft-create-summary:hover { background: var(--control); }
+.draft-create-summary:focus-visible {
+  outline: var(--app-focus-ring-width) solid var(--focus);
+  outline-offset: -2px;
+}
+.draft-create-summary small {
+  overflow: hidden;
+  color: var(--muted);
+  font: var(--app-type-fact)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.draft-create-summary::after {
+  content: "+";
+  width: 1em;
+  color: var(--muted);
+  font-size: var(--app-type-copy);
+  text-align: center;
+}
+.draft-create[open] > .draft-create-summary::after { content: "−"; }
+
 .draft-form {
   display: grid;
   gap: 6px;
   padding: 8px;
   border-radius: var(--app-radius-control);
   background: var(--control-surface-soft);
+}
+
+.draft-form-create {
+  grid-template-columns: minmax(0, 1fr) minmax(7.5rem, .42fr);
+  border-top: var(--app-control-edge);
+  border-radius: 0;
+  background: transparent;
 }
 
 .draft-form label {
@@ -1016,12 +1065,23 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
   gap: 6px;
 }
 
+.draft-form-create label {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--app-type-fact);
+}
+
+.draft-form-create :is(.draft-field-title, .draft-actions) { grid-column: 1 / -1; }
+
 .draft-form input,
 .draft-form select,
 .draft-form textarea {
   min-width: 0;
   font: inherit;
 }
+.draft-form textarea { resize: vertical; }
 
 .draft-actions {
   display: flex;
@@ -1045,14 +1105,12 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
 .app-sheet-section .draft-list {
   display: grid;
   gap: 4px;
-  margin: 0 0 8px;
+  margin: 0 0 2px;
   padding: 0;
   list-style: none;
 }
 
-.app-sheet-section .draft-list > li + li {
-  margin-top: 0;
-}
+.app-sheet-section .draft-list > li + li { margin-top: 0; }
 
 .draft-list button {
   display: flex;
@@ -1077,9 +1135,12 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
 }
 
 @media (max-width: 560px) {
-  .draft-form label {
+  .draft-form label,
+  .draft-form-create {
     grid-template-columns: minmax(0, 1fr);
   }
+  .draft-form-create :is(.draft-field-title, .draft-actions) { grid-column: 1; }
+  .draft-create-summary small { display: none; }
 }
 
 .room-composer {
