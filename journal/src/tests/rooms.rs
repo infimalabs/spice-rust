@@ -1129,3 +1129,54 @@ fn transcript_links_stay_within_the_accounted_generation_and_extent() {
     journal.reindex().expect("accounted links rebuild");
     assert_eq!(projection(&journal), expected);
 }
+
+#[test]
+fn newest_decisions_page_backward_strictly_before_the_cursor() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = Preparation::new(&mut journal);
+    commit(
+        &mut journal,
+        preparation.retained(1, vec![preparation.output.clone()]),
+    )
+    .expect("candidate retained");
+    for sequence in 1..=5 {
+        let returned = DecisionOutcome::Returned {
+            candidate: preparation.candidate(1),
+            reason: format!("reason {sequence}"),
+        };
+        commit(&mut journal, preparation.decision(sequence, returned)).expect("return recorded");
+        commit(&mut journal, preparation.coverage(1, sequence)).expect("coverage between returns");
+    }
+    let budget = crate::FactReadBudget::new(2, crate::FactReadBudget::RETAINED.decoded_bytes())
+        .expect("budget");
+    let page = |before| {
+        let page = journal
+            .read(|read| read.newest_preparation_decisions(&preparation.controller, before, budget))
+            .expect("decisions read");
+        let codes: Vec<u64> = page
+            .rows
+            .iter()
+            .map(|row| {
+                row.fact
+                    .read::<PreparationDecided>()
+                    .expect("only decision facts")
+                    .decision
+                    .decision
+                    .decision
+                    .get()
+            })
+            .collect();
+        (codes, page.continuation)
+    };
+
+    let (newest, cursor) = page(None);
+    assert_eq!(newest, [5, 4], "newest first, the page bounded");
+    let (older, cursor) = page(cursor);
+    assert_eq!(older, [3, 2], "the cursor is exclusive");
+    let (oldest, cursor) = page(cursor);
+    assert_eq!(
+        (oldest, cursor),
+        (vec![1], None),
+        "the first decision ends the record"
+    );
+}
