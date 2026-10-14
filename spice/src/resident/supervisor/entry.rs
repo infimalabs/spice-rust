@@ -5,7 +5,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::Path;
 
-use super::command::inbox;
+use super::command::{current, inbox};
 use super::terminal::job;
 
 /// Dispatch a hidden entry before normal CLI parsing.
@@ -13,6 +13,9 @@ pub(crate) fn entry(arguments: impl IntoIterator<Item = OsString>) -> Option<i32
     let mut arguments = arguments.into_iter();
     let _executable = arguments.next()?;
     let role = arguments.next()?;
+    if let Some(code) = current::entry(&role, &mut arguments) {
+        return Some(code);
+    }
     if role == OsStr::new(inbox::ENTRY) {
         let (Some(lane), Some(projection), None) =
             (arguments.next(), arguments.next(), arguments.next())

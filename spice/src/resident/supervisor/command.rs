@@ -252,40 +252,29 @@ pub(in crate::resident) struct ClaimLapseNotice {
 }
 
 impl<W: Write + Send + 'static> Driver<W> {
-    /// Own a child's stdin, authenticated resident discovery, the occupant's
-    /// supervisor `state` path, lane identity, and the terminal its commands
-    /// run in.
+    /// Own a child's stdin, the occupant's supervisor state path, lane
+    /// identity, and the terminal its commands run in.
     ///
     /// # Errors
     ///
-    /// Returns the error naming why the installed executable is unknown.
+    /// Returns the error naming why this supervisor cannot launch reads
+    /// through its executable's currently installed image.
     pub(in crate::resident::supervisor) fn new(
         stdin: W,
-        discovery: impl Into<PathBuf>,
         state: &Path,
         lane: CanonicalUuid,
         worktree: PathBuf,
         terminal: Option<Terminal>,
     ) -> io::Result<Arc<Self>> {
         let inbox = inbox::Reader::new(state, lane, &worktree)?;
-        let discovery = discovery.into();
-        let environment = crate::session_environment().rooted(worktree.clone());
-        let occupant = uri::occupant_environment(terminal.as_ref(), &environment);
-        let uri_server = uri::resident_server(discovery, lane, worktree, occupant);
+        let sessions = current::Sessions::new(lane, worktree.clone())?;
+        let uri_server = current::resource_server(lane, worktree, terminal.clone())?;
+        let briefing = Arc::clone(&sessions);
         Ok(Self::with_server(
             stdin,
             move || inbox.read(),
-            {
-                let environment = environment.clone();
-                move || {
-                    Some(crate::session_command::lane_briefing(
-                        &environment,
-                        lane,
-                        None,
-                    ))
-                }
-            },
-            move || crate::session_command::lane_resume_notice(&environment, lane, None),
+            move || briefing.briefing(),
+            move || sessions.resume(),
             uri_server,
             steer::Key::for_identity(lane),
             terminal,
@@ -1419,6 +1408,7 @@ impl Drop for KickDoor {
 #[cfg(test)]
 mod admission_tests;
 mod answered;
+pub(in crate::resident::supervisor) mod current;
 #[cfg(test)]
 mod event_tests;
 pub(in crate::resident::supervisor) mod inbox;

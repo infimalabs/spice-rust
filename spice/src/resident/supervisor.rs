@@ -616,7 +616,6 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
         .map(|opening| {
             let driver = command::Driver::new(
                 running.take_stdin()?,
-                paths.serve.clone(),
                 &request.state,
                 request.lane,
                 repository.worktree_root().to_path_buf(),

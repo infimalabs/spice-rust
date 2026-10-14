@@ -31,16 +31,6 @@ impl Uris {
     }
 }
 
-/// The session state a read answers under: the identity and home the
-/// occupant's terminal carries, as its own command would see them, else the
-/// resident's.
-pub(super) fn occupant_environment(
-    terminal: Option<&super::Terminal>,
-    resident: &crate::session_command::Environment,
-) -> crate::session_command::Environment {
-    terminal.map_or_else(|| resident.clone(), super::Terminal::session_environment)
-}
-
 /// Serve `spice://` URLs as `lane`, whose checkout is `worktree` and whose
 /// occupant's session state is `environment`, resolving quote targets, CLI
 /// reads, and task text writes through the resident.

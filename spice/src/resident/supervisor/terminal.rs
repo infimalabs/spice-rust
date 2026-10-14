@@ -113,18 +113,15 @@ impl Terminal {
         self
     }
 
-    /// The session state the occupant's own commands see.
-    pub(in crate::resident) fn session_environment(&self) -> crate::session_command::Environment {
-        let entries = self.environment.entries();
-        crate::session_environment_from(
-            |name| {
-                entries
-                    .iter()
-                    .find(|(key, _)| key == name)
-                    .map(|(_, value)| value.clone())
-            },
-            Some(self.cwd.clone()),
-        )
+    /// Apply the occupant's exact command environment to an internal helper.
+    pub(in crate::resident::supervisor) fn configure_process(
+        &self,
+        command: &mut std::process::Command,
+    ) {
+        command
+            .current_dir(&self.cwd)
+            .env_clear()
+            .envs(self.environment.entries().iter().cloned());
     }
 
     /// The foreground window for one command: the threshold, or the deadline
