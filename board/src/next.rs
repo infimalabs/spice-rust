@@ -74,6 +74,39 @@ impl ResolvedTasks {
     fn design(&self, task: &TaskStamp) -> Option<bool> {
         self.designs.get(task).copied()
     }
+
+    /// Whether this statement remains Design-side speculative work rather than
+    /// execution the allocator may expose in an agent-facing summary.
+    ///
+    /// A Design itself stays on its operator-facing planning surface. An output
+    /// controlled by a Design stays there until an exact authorization selects
+    /// it; authorization is the authority boundary that turns it into ordinary
+    /// executable work.
+    #[must_use]
+    pub fn speculative_design_work(&self, statement: &wire::TaskHead) -> bool {
+        is_speculative_design_work(
+            statement,
+            statement
+                .preparation
+                .as_ref()
+                .is_some_and(|preparation| self.design(&preparation.controller) == Some(true)),
+        )
+    }
+}
+
+/// Classify one statement after its caller resolves whether its controller is
+/// a Design. Kept independent of `Entry` so bounded journal glances and full
+/// allocator projections apply the same authority boundary.
+#[must_use]
+pub fn is_speculative_design_work(statement: &wire::TaskHead, controller_is_design: bool) -> bool {
+    statement.intent == Some(TaskIntent::Design)
+        || (controller_is_design
+            && statement.preparation.as_ref().is_some_and(|preparation| {
+                !statement
+                    .authorization
+                    .as_ref()
+                    .is_some_and(|authorization| authorization.controller == preparation.controller)
+            }))
 }
 
 /// Reusable task-graph evidence for repeated allocation decisions over one

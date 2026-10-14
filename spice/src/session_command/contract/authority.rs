@@ -87,6 +87,8 @@ fn task_added(
     title: &str,
     project: &str,
     phase: &str,
+    intent: Option<wire::TaskIntent>,
+    preparation: Option<wire::TaskPreparation>,
 ) {
     let workflow = workflow(phase);
     let title = title.to_owned();
@@ -94,8 +96,8 @@ fn task_added(
     let fact = write
         .fact(
             body::TaskAdded {
-                preparation: None,
-                intent: None,
+                preparation: preparation.clone(),
+                intent,
                 task: task.clone(),
                 title: title.clone(),
                 description: None,
@@ -116,11 +118,11 @@ fn task_added(
         .expect("task fact builds");
     let statement_task = task.clone();
     write.task_head(fact, move |position| wire::TaskHead {
-        preparation: None,
+        preparation,
         authorization: None,
         engagement: None,
         evidence: Vec::new(),
-        intent: None,
+        intent,
         born: statement_task,
         queue_origin: position,
         title,
@@ -135,6 +137,44 @@ fn task_added(
         revision: position,
     });
     write.workflow_head(task, fact, move |_| workflow);
+}
+
+fn seed_board_glance_tasks(write: &mut JournalWrite, origin: &Origin) {
+    task_added(
+        write,
+        origin.clone(),
+        stamp("SESSION-ready"),
+        "Ordinary unclaimed work",
+        SESSION_PROJECT,
+        "todo",
+        None,
+        None,
+    );
+    let design = stamp("SESSION-design");
+    task_added(
+        write,
+        origin.clone(),
+        design.clone(),
+        "Speculative Design",
+        SESSION_PROJECT,
+        "design",
+        Some(wire::TaskIntent::Design),
+        None,
+    );
+    task_added(
+        write,
+        origin.clone(),
+        stamp("SESSION-output"),
+        "Unauthorized candidate",
+        SESSION_PROJECT,
+        "todo",
+        None,
+        Some(wire::TaskPreparation {
+            parent: design.clone(),
+            controller: design,
+            construction: stamp("SESSION-output"),
+        }),
+    );
 }
 
 fn seed_recall_authority(path: &Path, thread: &str) {
@@ -176,6 +216,8 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         "Compose Rust briefings",
         SESSION_PROJECT,
         "review",
+        None,
+        None,
     );
     task_added(
         &mut write,
@@ -184,7 +226,10 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         "Peer active claim",
         SESSION_PROJECT,
         "todo",
+        None,
+        None,
     );
+    seed_board_glance_tasks(&mut write, &origin);
     let steering = body::SteerSent {
         from: None,
         room: None,
@@ -251,6 +296,33 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         instant(40),
         instant(50),
     );
+}
+
+#[test]
+fn briefing_board_counts_execution_without_hiding_designs_from_storage() {
+    let scratch = Scratch::new("briefing-execution-board");
+    let authority = authority_path(scratch.path());
+    seed_recall_authority(&authority, &uuid(0xaa).to_string());
+    let journal = Journal::open(&authority).expect("fixture journal reopens");
+
+    let glance = journal
+        .read(crate::session_command::glance::board)
+        .expect("board glance reads");
+    assert_eq!(glance.unclaimed, vec![("todo".to_owned(), 1)]);
+    let retained = journal
+        .read(|read| {
+            Ok((
+                read.task_head(&stamp("SESSION-design"))?.is_some(),
+                read.task_head(&stamp("SESSION-output"))?.is_some(),
+            ))
+        })
+        .expect("complete task heads read");
+    assert_eq!(
+        retained,
+        (true, true),
+        "dedicated reads retain the planning rows omitted from the briefing"
+    );
+    scratch.remove();
 }
 
 fn seed_retired_peer_steering(path: &Path) {

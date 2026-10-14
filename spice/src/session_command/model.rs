@@ -372,12 +372,14 @@ pub(crate) struct RetiredDirectionView {
     pub(crate) text: ClippedText,
 }
 
-/// Shared work no actor holds, by phase; peers' own work stays a count in
-/// held work, since another agent's task is not this agent's business.
+/// Shared execution work no actor holds, by phase; peers' own work stays a
+/// count in held work, since another agent's task is not this agent's business.
+/// Design roots and candidates still awaiting Design authorization remain on
+/// their planning surfaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BoardGlanceView {
-    /// Pending unclaimed tasks per phase, in phase-name order.
+    /// Pending unclaimed execution tasks per phase, in phase-name order.
     pub(crate) unclaimed: Vec<(String, usize)>,
     /// Whether the scan stopped at its page ceiling before the whole board.
     pub(crate) partial: bool,

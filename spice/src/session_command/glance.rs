@@ -25,12 +25,14 @@ const DIRTY_ROWS: usize = 24;
 /// Newest commits the working-state glance keeps.
 const COMMIT_ROWS: usize = 8;
 
-/// Pending public work no actor holds, counted by phase.
+/// Pending public execution work no actor holds, counted by phase.
 ///
-/// Hidden projects (a leading `.`, such as parked oops rows) are not shared
-/// work and are not counted.
+/// Hidden projects (a leading `.`, such as parked oops rows), Design roots,
+/// and unauthorized outputs controlled by a Design stay on their dedicated
+/// operator-facing surfaces rather than being presented as a lane's next work.
 pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardError> {
     let mut unclaimed = BTreeMap::<String, usize>::new();
+    let mut controller_designs = BTreeMap::<wire::TaskStamp, bool>::new();
     let mut after = None;
     let mut partial = true;
     for _ in 0..BOARD_PAGES {
@@ -41,7 +43,11 @@ pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardErro
             let held = heads
                 .claim()
                 .is_some_and(|claim| claim.body().disposition == ClaimDisposition::Active);
-            if held || workflow.status != "pending" || statement.project.starts_with('.') {
+            if held
+                || workflow.status != "pending"
+                || statement.project.starts_with('.')
+                || speculative_design_work(read, statement, &mut controller_designs)?
+            {
                 continue;
             }
             *unclaimed
@@ -60,6 +66,35 @@ pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardErro
         unclaimed: unclaimed.into_iter().collect(),
         partial,
     })
+}
+
+/// Resolve only the immediate controller a prepared statement names. The
+/// journal lookup is primary-key bounded; ordinary rows need no extra read.
+fn speculative_design_work(
+    read: &JournalRead<'_>,
+    statement: &wire::TaskHead,
+    controller_designs: &mut BTreeMap<wire::TaskStamp, bool>,
+) -> Result<bool, GuardError> {
+    if statement.intent == Some(wire::TaskIntent::Design) {
+        return Ok(true);
+    }
+    let controller_is_design = if let Some(preparation) = &statement.preparation {
+        if let Some(known) = controller_designs.get(&preparation.controller) {
+            *known
+        } else {
+            let design = read
+                .task_head(&preparation.controller)?
+                .is_some_and(|head| head.body().intent == Some(wire::TaskIntent::Design));
+            controller_designs.insert(preparation.controller.clone(), design);
+            design
+        }
+    } else {
+        false
+    };
+    Ok(board::is_speculative_design_work(
+        statement,
+        controller_is_design,
+    ))
 }
 
 /// The newest directions this lane retired, as context rather than authority.

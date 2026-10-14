@@ -884,7 +884,8 @@ pub struct NextWorkTask {
     pub lease: Option<Positioned<crate::LeaseHead>>,
 }
 
-/// Exact pending-board classification when the allocator has no candidate.
+/// Exact pending execution-board classification when the allocator has no
+/// candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NextWorkCounts {
@@ -892,9 +893,6 @@ pub struct NextWorkCounts {
     pub stale: usize,
     pub blocked: usize,
     pub waiting: usize,
-    /// Designs that can conclude only through the operator's selection.
-    #[serde(default)]
-    pub selection: usize,
     pub oops: usize,
 }
 

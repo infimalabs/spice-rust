@@ -25,12 +25,12 @@ pub(crate) struct ParkedCounts {
     pub(crate) stale: usize,
     pub(crate) blocked: usize,
     pub(crate) waiting: usize,
-    pub(crate) selection: usize,
     pub(crate) oops: usize,
 }
 
 impl ParkedCounts {
-    /// Measure the parked rows among the actor-routed pending rows.
+    /// Measure parked rows among already authority-filtered, actor-routed
+    /// pending execution rows.
     ///
     /// Blocked asks the board which prerequisites are satisfied so the same
     /// row cannot count ready and blocked at once; parked `.oops` rows are
@@ -62,11 +62,15 @@ impl ParkedCounts {
                 .iter()
                 .filter(|entry| entry.workflow().deferral.is_some())
                 .count(),
-            selection: rows
+            oops: entries
                 .iter()
-                .filter(|entry| board::awaits_selection(entry, satisfied))
+                .filter(|entry| {
+                    entry.project().visibility().hidden_stem() == Some("oops")
+                        && entry.workflow().status == "pending"
+                        && entry.workflow().completion.is_none()
+                        && !satisfied.speculative_design_work(entry.statement())
+                })
                 .count(),
-            oops: Self::oops(entries),
         }
     }
 
@@ -97,11 +101,6 @@ impl ParkedCounts {
                 self.waiting,
                 "waiting",
                 "deferred until their scheduled time",
-            ),
-            (
-                self.selection,
-                "selection",
-                "Designs awaiting the operator's selection of their outputs",
             ),
             (self.oops, "oops", "parked on the deferred triage board"),
         ]
@@ -202,7 +201,6 @@ impl DrainReadout {
                 stale: board.stale,
                 blocked: board.blocked,
                 waiting: board.waiting,
-                selection: board.selection,
                 oops: board.oops,
             },
             team,

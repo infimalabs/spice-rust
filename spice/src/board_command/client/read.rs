@@ -1181,8 +1181,13 @@ pub(in crate::board_command) fn task_status(
     // The parked split is shared with the empty-drain readout so the two
     // surfaces cannot disagree on a count.
     let satisfied = board::resolved_tasks(&entries);
-    let parked = ParkedCounts::measure(&entries, &satisfied, &rows);
-    let review = rows
+    let execution_rows = rows
+        .iter()
+        .copied()
+        .filter(|entry| !satisfied.speculative_design_work(entry.statement()))
+        .collect::<Vec<_>>();
+    let parked = ParkedCounts::measure(&entries, &satisfied, &execution_rows);
+    let review = execution_rows
         .iter()
         .copied()
         .filter(|entry| {
@@ -1191,8 +1196,8 @@ pub(in crate::board_command) fn task_status(
                 && !board::awaits_selection(entry, &satisfied)
         })
         .count();
-    let status = environment_status(&rows, &environment);
-    let ready = rows
+    let status = environment_status(&execution_rows, &environment);
+    let ready = execution_rows
         .iter()
         .copied()
         .filter(|entry| {
@@ -1204,7 +1209,7 @@ pub(in crate::board_command) fn task_status(
         "claim {claim}\ntaste-review {taste_review}\nactor {}\nfilter {}\n\
          public task project depth {}..{} dotted segments\n\
          active {active}\nready {ready}\n\
-         review {review}\nblocked {blocked}\nwaiting {waiting}\nselection {selection}\n\
+         review {review}\nblocked {blocked}\nwaiting {waiting}\n\
          environment journal-schema required={} observed={} \
          trust-grant required={} \
          appliance-version after={} observed={} \
@@ -1224,7 +1229,6 @@ pub(in crate::board_command) fn task_status(
         active = parked.active,
         blocked = parked.blocked,
         waiting = parked.waiting,
-        selection = parked.selection,
         stale = parked.stale,
         oops = parked.oops,
     ))
