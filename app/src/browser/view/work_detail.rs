@@ -34,18 +34,14 @@ pub(super) struct WorkDetailRender<'a, 'work> {
 pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
     let focus_task = focus_task_callback();
     let count = render.selection.tasks().len();
-    let blockers = super::work_blockers::BlockerPresentation::new(
-        render.work,
-        render.selection,
-        render.runtime,
-    );
+    let blockers = super::work_blockers::BlockerPresentation::new(render.work, render.selection);
     let body = html! {
         <div
             class="work-overview"
             data-task-count={count.to_string()}
             data-task-stamps={render.selection.tasks().iter().map(ToString::to_string).collect::<Vec<_>>().join(" ")}
         >
-            {blockers.render_rail(render.blocker_review, render.blocker_review_button_ref)}
+            {blockers.render_rail(render.blocker_review, render.blocker_review_button_ref, render.navigate)}
             {work_map::render(work_map::WorkMapRender {
                 selection: render.selection,
                 state: render.map,
@@ -96,6 +92,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
         render.runtime,
         render.blocker_review,
         render.blocker_review_close_ref,
+        render.navigate,
         render
             .runtime
             .is_some_and(|runtime| runtime.offers(wire::CommandKind::TrustGrant)),

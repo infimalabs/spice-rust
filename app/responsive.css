@@ -92,7 +92,10 @@
     grid-template-columns: 1.75rem minmax(0, 1fr);
     block-size: 7rem;
   }
-  .work-blocker-review-open { grid-column: 1 / -1; width: 100%; }
+  .work-blocker-rail-actions { grid-column: 1 / -1; }
+  .work-blocker-rail-actions > button { flex: 1; }
+  .work-blocker-task > header { grid-template-columns: 1fr; }
+  .work-blocker-task-open { grid-column: 1; grid-row: auto; margin-top: 8px; }
   .work-blocker-card { grid-template-columns: 1fr; }
   .work-blocker-card > button { width: 100%; }
 }

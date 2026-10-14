@@ -53,7 +53,7 @@ fn only_chains_agents_cannot_move_are_walls() {
         work.tasks()[index]
             .dependencies()
             .iter()
-            .map(|dependency| walls.wall(index, dependency))
+            .map(|dependency| walls.wall(index, dependency).map(|(_, wall)| wall))
             .collect::<Vec<_>>()
     };
 

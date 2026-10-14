@@ -34,15 +34,15 @@ pub enum DependencyWall<'a> {
 ///
 /// A task's verdict holds regardless of the path that reached it: a cycle
 /// found below a task always runs back through that task.
-pub struct DependencyWalls<'p, 'a> {
+pub(super) struct DependencyWalls<'p, 'a> {
     work: &'p WorkProjection<'a>,
-    verdicts: Vec<Option<Option<DependencyWall<'a>>>>,
+    verdicts: Vec<Option<Option<(usize, DependencyWall<'a>)>>>,
     on_path: Vec<bool>,
 }
 
 impl<'p, 'a> DependencyWalls<'p, 'a> {
     #[must_use]
-    pub fn new(work: &'p WorkProjection<'a>) -> Self {
+    pub(super) fn new(work: &'p WorkProjection<'a>) -> Self {
         let tasks = work.tasks().len();
         Self {
             work,
@@ -51,26 +51,30 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
         }
     }
 
-    /// The wall behind one dependency of task `dependent`, or none when the
-    /// dependency is satisfied or agent work will move it.
-    pub fn wall(
+    /// The wall behind one dependency of task `dependent` with the projection
+    /// index of the task where it stands, or none when the dependency is
+    /// satisfied or agent work will move it.
+    pub(super) fn wall(
         &mut self,
         dependent: usize,
         dependency: &WorkDependency<'a>,
-    ) -> Option<DependencyWall<'a>> {
+    ) -> Option<(usize, DependencyWall<'a>)> {
         self.on_path[dependent] = true;
         let wall = self.dependency(dependency);
         self.on_path[dependent] = false;
         wall
     }
 
-    fn dependency(&mut self, dependency: &WorkDependency<'a>) -> Option<DependencyWall<'a>> {
+    fn dependency(
+        &mut self,
+        dependency: &WorkDependency<'a>,
+    ) -> Option<(usize, DependencyWall<'a>)> {
         if dependency.satisfied() {
             return None;
         }
         let task = dependency.task()?;
         if self.on_path[task] {
-            return Some(DependencyWall::Cycle(dependency.born()));
+            return Some((task, DependencyWall::Cycle(dependency.born())));
         }
         if let Some(verdict) = self.verdicts[task] {
             return verdict;
@@ -80,25 +84,23 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
         verdict
     }
 
-    fn task(&mut self, index: usize) -> Option<DependencyWall<'a>> {
+    fn task(&mut self, index: usize) -> Option<(usize, DependencyWall<'a>)> {
         let work = self.work;
         let task = &work.tasks()[index];
         let born = &task.row().statement.body.born;
-        match task.availability() {
+        let wall = match task.availability() {
             WorkAvailability::InFlight
             | WorkAvailability::Ready
             | WorkAvailability::Review
-            | WorkAvailability::Stale => None,
-            WorkAvailability::Held => Some(DependencyWall::Environment(born)),
-            WorkAvailability::Selection => Some(DependencyWall::Selection(born)),
-            WorkAvailability::Passive => Some(DependencyWall::Passive(born)),
-            WorkAvailability::Deferred => Some(DependencyWall::Deferred(born)),
-            WorkAvailability::Parked | WorkAvailability::Draft => {
-                Some(DependencyWall::Parked(born))
-            }
-            WorkAvailability::Terminal => Some(DependencyWall::Unreachable(born)),
+            | WorkAvailability::Stale => return None,
+            WorkAvailability::Held => DependencyWall::Environment(born),
+            WorkAvailability::Selection => DependencyWall::Selection(born),
+            WorkAvailability::Passive => DependencyWall::Passive(born),
+            WorkAvailability::Deferred => DependencyWall::Deferred(born),
+            WorkAvailability::Parked | WorkAvailability::Draft => DependencyWall::Parked(born),
+            WorkAvailability::Terminal => DependencyWall::Unreachable(born),
             WorkAvailability::Blocked if task.environment_blocked() => {
-                Some(DependencyWall::Environment(born))
+                DependencyWall::Environment(born)
             }
             WorkAvailability::Blocked => {
                 self.on_path[index] = true;
@@ -107,9 +109,10 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
                     .iter()
                     .find_map(|dependency| self.dependency(dependency));
                 self.on_path[index] = false;
-                wall
+                return wall;
             }
-        }
+        };
+        Some((index, wall))
     }
 }
 
