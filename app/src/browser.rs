@@ -44,6 +44,7 @@ mod clock;
 mod connection;
 mod diagnostics;
 mod draft_handoff;
+mod drafts;
 mod image_media;
 mod image_viewer;
 mod mermaid;
@@ -397,6 +398,7 @@ struct AppState {
     team_drag: watchband::TeamDragState,
     sidebar: sidebar::Controls,
     room_controls: rooms::Controls,
+    draft_controls: drafts::Controls,
     task_detail: task_detail::Controls,
     work_map: UseStateHandle<view::WorkMapState>,
     speech_status: UseStateHandle<SpeechStatus>,
@@ -492,6 +494,7 @@ impl AppState {
                 unsafe_intent: self.unsafe_intent,
                 sender: &self.sender,
                 room_controls: &self.room_controls,
+                draft_controls: &self.draft_controls,
                 agents: &self.agents,
                 sidebar_content: &self.sidebar.content,
                 sidebar_presented: *self.sidebar.presented,
@@ -554,7 +557,6 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let composer_drag = use_composer_drag(&surface);
     let composer_slots = watchband::use_composer_slots();
     let team_drag = use_team_drag(&surface);
-    let room_controls = rooms::use_controls();
     let navigate = navigation::intent_callback(local_selection.clone(), surface.clone());
     let requested_content = if *spice_sidebar_open {
         Some(sidebar::Content::Spice)
@@ -631,7 +633,8 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
             composer_drag,
             composer_slots,
             team_drag,
-            room_controls,
+            room_controls: rooms::use_controls(),
+            draft_controls: drafts::use_controls(),
             sidebar,
             task_detail,
             work_map,

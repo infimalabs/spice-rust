@@ -102,6 +102,7 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
             flow: Some("design".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     let output = stamp("DRAIN-output01");
@@ -131,6 +132,7 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
             flow: None,
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     let prerequisite = todo_task(&bus, epoch, "DRAIN-first002", "Executable prerequisite");

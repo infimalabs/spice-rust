@@ -17,6 +17,7 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub runtime: Option<&'a AppRuntime>,
     pub room_controls: &'a super::super::rooms::Controls,
     pub sender: &'a SenderHandle,
+    pub draft_controls: &'a super::super::drafts::Controls,
     pub can_note: bool,
     pub can_close: bool,
     pub blocker_review: &'a UseStateHandle<bool>,
@@ -262,6 +263,12 @@ fn render_available(
                 <h3>{"Contract"}</h3>
                 {task_detail::render_contract(statement, |task| selection_has(render.selection, task), true)}
             </section>
+            {super::super::drafts::render_editor(
+                render.runtime,
+                render.draft_controls,
+                render.sender,
+                projected.map_or(row, |task| task.row()),
+            )}
             {task_detail::render_media(&answer.media)}
             <section class="app-sheet-section">
                 <h3>{"State"}</h3>

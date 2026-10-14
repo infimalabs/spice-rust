@@ -52,6 +52,9 @@ judged over terminal evidence the browser never receives, so an unauthorized
 controlled output reads Blocked exactly when `task next` skips it. A row in a
 typed OOPS filing state reads **Parked**: its public project remains visible,
 but the allocator never offers it until the operator files it as ordinary work.
+A **Draft** row is prospective work its author is still editing. It counts in
+no standing, and nothing offers it until `spice task file` turns it into Filed
+work.
 
 The graph region holds one fixed footprint whatever the diagram's shape. A
 truncated typed read states how many relationships lie outside it in the map

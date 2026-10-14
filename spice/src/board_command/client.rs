@@ -141,8 +141,8 @@ pub(super) use read::*;
 mod settle;
 use settle::{client_settle, dispatch_settlement};
 mod drain;
-pub(super) use drain::actor_rows;
 pub(crate) use drain::{DrainReadout, ParkedCounts, TaskNext};
+pub(super) use drain::{actor_drafts, actor_rows};
 mod recovery;
 #[cfg(test)]
 pub(super) use recovery::{RecoveryBoardState, recovery_board_state, recovery_preflight};
@@ -874,17 +874,19 @@ fn client_modify(
         let priority = matches.get_one::<String>("priority").cloned();
         let project = matches.get_one::<String>("project").cloned();
         let intent = intent_edit(matches)?;
+        let flow = matches.get_one::<String>("flow").cloned();
         if title.is_none()
             && description.is_none()
             && acceptance.is_empty()
             && priority.is_none()
             && project.is_none()
             && intent.is_none()
+            && flow.is_none()
         {
             return Err(refusal(
                 "task::edit-empty",
                 None,
-                "name at least one of --title, --description, --acceptance, --priority, --project, --intent, or --clear-intent",
+                "name at least one of --title, --description, --acceptance, --priority, --project, --intent, --clear-intent, or a Draft's --flow",
             ));
         }
         // Law::EDIT names the statement head alone. A workflow witness here is
@@ -904,6 +906,7 @@ fn client_modify(
                 requirements: None,
                 priority,
                 project,
+                flow,
             })
             .expect("typed intent encodes"),
         ))

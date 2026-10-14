@@ -109,6 +109,7 @@ fn an_operator_closure_completes_from_any_phase_and_releases_its_dependents() {
             flow: Some("todo".to_owned()),
             depends: vec![blocker.clone()],
             claim: false,
+            draft: false,
         },
     ));
 

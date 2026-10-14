@@ -12,6 +12,7 @@ pub(crate) type RoomControlResponse =
 pub(crate) type RoomCoordinationResponse =
     std::rc::Rc<dyn Fn(Result<wire::intent::RoomCoordinationView, String>)>;
 pub(crate) type PreparationResponse = std::rc::Rc<dyn Fn(Result<wire::intent::TextAnswer, String>)>;
+pub(crate) type DraftResponse = std::rc::Rc<dyn Fn(Result<wire::intent::TaskAnswer, String>)>;
 
 /// One complete room publication request retained by the bounded action mailbox.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
@@ -67,6 +68,24 @@ pub(crate) enum PreparationRequest {
     },
 }
 
+/// One operator Draft creation, revision, or filing, with the heads it was
+/// drawn from.
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+pub(crate) enum DraftRequest {
+    Create {
+        request: wire::intent::TaskAdd,
+        expected: Vec<wire::Witness>,
+    },
+    Edit {
+        request: wire::intent::TaskEdit,
+        expected: Vec<wire::Witness>,
+    },
+    File {
+        request: wire::intent::TaskFile,
+        expected: Vec<wire::Witness>,
+    },
+}
+
 /// What one working-group change asks the authority for.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum GroupChange {
@@ -110,6 +129,11 @@ pub(crate) enum ClientAction {
     Preparation {
         request: PreparationRequest,
         respond: PreparationResponse,
+    },
+    /// Create, revise, or file one operator Draft.
+    Draft {
+        request: DraftRequest,
+        respond: DraftResponse,
     },
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,

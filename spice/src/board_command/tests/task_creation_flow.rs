@@ -17,6 +17,7 @@ fn dependent_add(dependencies: Vec<TaskHandle>, flow: Option<&str>) -> TaskAdd {
         flow: flow.map(str::to_owned),
         depends: dependencies,
         claim: false,
+        draft: false,
     }
 }
 
@@ -157,6 +158,7 @@ fn create_and_claim_is_one_transaction_and_active_claim_refusal_is_zero_write() 
         flow: Some("todo,review".to_owned()),
         depends: Vec::new(),
         claim: true,
+        draft: false,
     };
     let expected = vec![
         Witness::Absence { task: born },
@@ -449,6 +451,7 @@ fn an_ambient_plan_releases_its_output_on_positive_completion_without_selection(
         intent: Some(wire::TaskIntentEdit::Set {
             intent: wire::TaskIntent::Plan,
         }),
+        flow: None,
     };
     assert!(matches!(
         correct(&bus, epoch, Actor::Operator, &declare),

@@ -49,7 +49,7 @@ pub(in crate::board_command) fn task_wake(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    if task_entry(&snapshot.entries, &wake.task).is_some_and(is_oops) {
+    if task_entry(&snapshot.entries, &wake.task).is_some_and(Entry::is_oops) {
         return refusal(
             "task::file-required",
             Some(wake.task.to_string()),
@@ -69,7 +69,7 @@ pub(in crate::board_command) fn task_wake(
     )
 }
 
-/// File one parked OOPS row into ordinary work.
+/// File one parked OOPS row or unfiled Draft into ordinary work.
 pub(in crate::board_command) fn task_file(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -88,7 +88,7 @@ pub(in crate::board_command) fn task_file(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    file_oops(bus, command, &snapshot, file, repository, projects)
+    file_unfiled(bus, command, &snapshot, file, repository, projects)
 }
 
 fn validate_filing_entry(
@@ -106,18 +106,18 @@ fn validate_filing_entry(
             "read the board again and retry with the current target statement witness",
         ));
     }
-    if !is_oops(entry) {
+    if entry.is_filed() {
         return Err(refusal(
             "task::filing-refused",
             Some(format!("{} project={}", entry.handle(), entry.project())),
-            "use task file only for a row whose filing standing is OOPS",
+            "use task file only for a row whose filing standing is OOPS or Draft",
         ));
     }
     if entry.workflow().completion.is_some() {
         return Err(refusal(
             "task::settled",
             Some(entry.handle().to_string()),
-            "file only pending OOPS work",
+            "file only pending OOPS or Draft work",
         ));
     }
     Ok(())
@@ -230,6 +230,84 @@ fn filing_preparation(
     }))
 }
 
+/// What filing a Draft adds beyond its standing change: the taste review its
+/// prose earned and the prerequisite workflows the transaction relies on.
+#[derive(Default)]
+struct DraftFiling {
+    taste_review: Option<TasteReview>,
+    dependency_witnesses: Vec<Witness>,
+}
+
+/// Validate a Draft as the complete ordinary task it becomes when filed.
+///
+/// The statement and workflow are the filed rows on success. Every refusal
+/// names the Draft field or filing option that must be repaired, and nothing
+/// is written.
+fn draft_filing(
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    repository: Option<&Repository>,
+    file: &TaskFile,
+    statement: &mut TaskHead,
+    workflow: &mut WorkflowHead,
+) -> Result<DraftFiling, Outcome<CommandAnswer>> {
+    if let Some(named) = &file.preparation {
+        if file.claim {
+            return Err(refusal(
+                "task::filing-claim-controlled",
+                Some(file.task.to_string()),
+                "file controlled work without --claim; selected authorization must precede native capture",
+            ));
+        }
+        let parent = task_heads(&snapshot.answer, named)?;
+        planning::bind_preparation(command, parent, statement)?;
+    }
+    validate_acceptance(&statement.acceptance)?;
+    let mut dependency_witnesses = Vec::with_capacity(statement.dependencies.len());
+    for born in &statement.dependencies {
+        let Some(heads) = snapshot
+            .answer
+            .tasks
+            .iter()
+            .find(|heads| &heads.statement.body.born == born)
+        else {
+            return Err(refusal(
+                "task::draft-dependency-missing",
+                Some(format!("{} dependency={born}", file.task)),
+                &format!(
+                    "remove the missing prerequisite with spice task depends {} HANDLE --remove",
+                    file.task,
+                ),
+            ));
+        };
+        if !heads.statement.body.filing.is_filed() {
+            return Err(refusal(
+                "task::dependency-unfiled",
+                Some(heads.statement.body.handle.to_string()),
+                "file every OOPS or Draft prerequisite first with spice task file HANDLE",
+            ));
+        }
+        dependency_witnesses.push(workflow_witness(heads));
+    }
+    let review = task_taste_review(
+        repository,
+        snapshot,
+        command.actor(),
+        &statement.title,
+        statement.description.as_deref(),
+        &statement.acceptance,
+    )?;
+    let taste_review = review.filter(TasteReview::required);
+    if taste_review.is_some() {
+        hold_for_taste(&mut workflow.flow, &mut statement.tags);
+        workflow.phase = workflow.flow[0].clone();
+    }
+    Ok(DraftFiling {
+        taste_review,
+        dependency_witnesses,
+    })
+}
+
 fn append_filing(
     write: &mut JournalWrite,
     command: &wire::AdmittedCommand,
@@ -237,6 +315,7 @@ fn append_filing(
     post: &Entry,
     workflow: WorkflowHead,
     statement: TaskHead,
+    taste_review: Option<&TasteReview>,
     atomic_claim: Option<AtomicClaim>,
 ) -> Result<Option<spice::task_git::ClaimPreparation>, Outcome<CommandAnswer>> {
     let filed = write
@@ -248,8 +327,13 @@ fn append_filing(
             FactCause::Root,
         )
         .map_err(|error| store_fault("task::filing-build", &error.to_string()))?;
-    let statement_fact = if let Some(preparation) = statement.preparation.clone() {
-        write
+    if let Some(review) = taste_review {
+        append_taste_review_audit(write, entry.born(), review, FactCause::Pending(filed))?;
+    }
+    // A Draft's preparation binds as the ordinary output association `task
+    // add --preparation` writes; only OOPS grooming records batch control.
+    let statement_fact = match statement.preparation.clone() {
+        Some(preparation) if entry.is_oops() => write
             .fact(
                 OutputControlled {
                     output: entry.born().clone(),
@@ -257,9 +341,8 @@ fn append_filing(
                 },
                 FactCause::Pending(filed),
             )
-            .map_err(|error| store_fault("task::filing-control-build", &error.to_string()))?
-    } else {
-        filed
+            .map_err(|error| store_fault("task::filing-control-build", &error.to_string()))?,
+        _ => filed,
     };
     write.workflow_head(entry.born().clone(), filed, move |_| workflow);
     write.task_head(statement_fact, move |position| TaskHead {
@@ -273,7 +356,7 @@ fn append_filing(
 }
 
 /// Public project a filing lands in: the explicit admitted destination or the
-/// OOPS row's current public owner.
+/// unfiled row's current public owner.
 fn filing_destination(
     entry: &Entry,
     requested: Option<&str>,
@@ -290,7 +373,7 @@ fn filing_destination(
         })
 }
 
-fn file_oops(
+fn file_unfiled(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     snapshot: &ValidatedSnapshot,
@@ -308,10 +391,6 @@ fn file_oops(
     if let Err(outcome) = validate_filing_entry(entry, command) {
         return outcome;
     }
-    let preparation = match filing_preparation(snapshot, command, entry, file) {
-        Ok(preparation) => preparation,
-        Err(outcome) => return outcome,
-    };
     let project = match filing_destination(entry, file.into.as_deref(), projects) {
         Ok(project) => project,
         Err(outcome) => return outcome,
@@ -319,9 +398,27 @@ fn file_oops(
     let mut statement = entry.statement().clone();
     statement.project = project.as_str().to_owned();
     statement.filing = wire::TaskFiling::Filed;
-    statement.preparation = preparation;
     let mut workflow = entry.workflow().clone();
     workflow.deferral = None;
+    let draft = if entry.is_draft() {
+        match draft_filing(
+            snapshot,
+            command,
+            repository,
+            file,
+            &mut statement,
+            &mut workflow,
+        ) {
+            Ok(draft) => draft,
+            Err(outcome) => return outcome,
+        }
+    } else {
+        match filing_preparation(snapshot, command, entry, file) {
+            Ok(preparation) => statement.preparation = preparation,
+            Err(outcome) => return outcome,
+        }
+        DraftFiling::default()
+    };
     let post = match Entry::new(
         statement.clone(),
         workflow.clone(),
@@ -334,7 +431,7 @@ fn file_oops(
             return refusal(
                 "task::filing-refused",
                 Some(error.to_string()),
-                "file the parked row into a valid public project",
+                "file the row into a valid public project with a valid flow and dependencies",
             );
         }
     };
@@ -352,6 +449,7 @@ fn file_oops(
         Ok(write) => write,
         Err(outcome) => return outcome,
     };
+    guard(&mut write, draft.dependency_witnesses);
     let prepared_claim_git = match append_filing(
         &mut write,
         command,
@@ -359,6 +457,7 @@ fn file_oops(
         &post,
         workflow,
         statement,
+        draft.taste_review.as_ref(),
         atomic_claim,
     ) {
         Ok(prepared) => prepared,
@@ -435,6 +534,16 @@ fn deferral_transition(
             "task::settled",
             Some(task.to_string()),
             "defer or wake only pending work",
+        ));
+    }
+    if entry.is_draft() {
+        return Err(refusal(
+            "task::draft-unfiled",
+            Some(filing_state(entry)),
+            &format!(
+                "file the Draft with spice task file {} before deferring or waking it",
+                entry.handle(),
+            ),
         ));
     }
     let releases_claim = deferral.is_some()

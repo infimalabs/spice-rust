@@ -89,6 +89,7 @@ pub(super) fn client_add(
         flow: matches.get_one::<String>("flow").cloned(),
         depends,
         claim: claim || recover,
+        draft: matches.get_flag("draft"),
     };
     if recover {
         client_add_recovery(repository, contract, body)
@@ -225,6 +226,7 @@ fn capture_new_task(
             flow: None,
             depends: Vec::new(),
             claim: true,
+            draft: false,
         },
     ) {
         Outcome::Reply(Reply {
@@ -357,6 +359,10 @@ pub(in crate::board_command) fn append_preparation_witnesses(
     add: &TaskAdd,
     expected: &mut Vec<Witness>,
 ) -> Result<(), Outcome<CommandAnswer>> {
+    if add.draft {
+        // A Draft binds preparation only when it is filed.
+        return Ok(());
+    }
     if let Some(heads) = planning::preparation_parent(board, add)? {
         expected.push(statement_witness(heads));
         expected.push(workflow_witness(heads));

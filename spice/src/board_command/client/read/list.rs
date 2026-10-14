@@ -249,16 +249,19 @@ fn list_scope_matches(board: &BoardAnswer, task: &BoardTask, options: &TaskListO
     options.all || actor_route_matches(board, task)
 }
 
-/// Whether the actor may read the row by default: every filed public row, plus
-/// hidden or OOPS rows created on the actor's own origin thread.
+/// Whether the actor may read the row by default: every filed public row,
+/// every Draft for the operator, plus hidden, OOPS, or Draft rows created on
+/// the actor's own origin thread.
 ///
 /// Deliberately wider than allocation scope while keeping foreign parked
-/// evidence out of default detailed reads.
+/// evidence and other threads' Drafts out of default detailed reads.
 pub(in crate::board_command::client) fn actor_route_matches(
     board: &BoardAnswer,
     task: &BoardTask,
 ) -> bool {
-    (!task.visibility.is_hidden() && !task.statement.body.filing.is_oops())
+    let filing = task.statement.body.filing;
+    (!task.visibility.is_hidden() && filing.is_filed())
+        || (filing.is_draft() && board.principal == wire::Actor::Operator)
         || task.origin_thread == board.actor_route.origin_thread
 }
 

@@ -700,7 +700,7 @@ fn downstream_weights(graph: &RankingGraph) -> Vec<usize> {
 fn unsettled_public(entry: &Entry) -> bool {
     let workflow = entry.workflow();
     !entry.project().visibility().is_hidden()
-        && !entry.is_oops()
+        && entry.is_filed()
         && workflow.status == "pending"
         && workflow.completion.is_none()
 }
@@ -768,7 +768,7 @@ pub fn is_released_by(entry: &Entry, actor: &Actor) -> bool {
 /// alone, so possession is the only thing either caller states for itself.
 fn workable(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
     !entry.project().visibility().is_hidden()
-        && !entry.is_oops()
+        && entry.is_filed()
         && operational(entry, actor, completed)
 }
 
@@ -965,7 +965,7 @@ pub fn stealable_entry(
     environment: &wire::Environment,
 ) -> bool {
     !entry.project().visibility().is_hidden()
-        && !entry.is_oops()
+        && entry.is_filed()
         && operational_without_assignment(entry, satisfied)
         && environment_satisfied(entry, environment)
 }

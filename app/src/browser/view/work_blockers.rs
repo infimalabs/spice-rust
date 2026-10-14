@@ -274,7 +274,7 @@ fn render_dependency(dependency: &TaskStamp, wall: DependencyWall<'_>) -> Html {
             "parked",
             "Parked prerequisite",
             format!(
-                "{} is OOPS work; no agent is offered it until the operator files it.",
+                "{} is unfiled OOPS or Draft work; no agent is offered it until it is filed.",
                 via(task)
             ),
             "Parked",

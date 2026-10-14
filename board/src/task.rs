@@ -536,6 +536,18 @@ impl Entry {
         self.statement.filing.is_oops()
     }
 
+    /// Whether this row is an unfiled draft.
+    #[must_use]
+    pub const fn is_draft(&self) -> bool {
+        self.statement.filing.is_draft()
+    }
+
+    /// Whether this row is ordinary filed work.
+    #[must_use]
+    pub const fn is_filed(&self) -> bool {
+        self.statement.filing.is_filed()
+    }
+
     /// Current public handle derived from project and birth stamp.
     #[must_use]
     pub const fn handle(&self) -> &TaskHandle {

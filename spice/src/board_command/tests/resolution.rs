@@ -262,6 +262,7 @@ pub(super) fn complete_review_with_finding(
                     flow: Some("todo".to_owned()),
                     depends: Vec::new(),
                     claim: false,
+                    draft: false,
                 },
             }],
             followup: Vec::new(),
@@ -521,6 +522,7 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
                     flow: None,
                     depends: Vec::new(),
                     claim: false,
+                    draft: false,
                 },
             }],
             followup: vec![linked.clone()],
@@ -720,6 +722,7 @@ fn unclean_review_blocks_downstream_until_correction_and_later_clean_review() {
                     flow: Some("todo".to_owned()),
                     depends: Vec::new(),
                     claim: false,
+                    draft: false,
                 },
             }],
             followup: Vec::new(),
@@ -983,6 +986,7 @@ fn add_raw_task(
             flow: flow.map(str::to_owned),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     task

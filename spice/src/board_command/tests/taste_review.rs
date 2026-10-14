@@ -72,6 +72,7 @@ fn add_with_repository(
             flow: None,
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     );
     (handle, outcome)
@@ -103,6 +104,7 @@ fn modify_with_repository(
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     )
 }
@@ -242,6 +244,7 @@ fn compound_capture_taste_review_refuses_before_creating_task_or_claim() {
             flow: None,
             depends: Vec::new(),
             claim: true,
+            draft: false,
         },
     );
     assert!(
@@ -360,6 +363,7 @@ fn clearing_a_hold_withdraws_only_the_plan_phase_the_hold_inserted() {
             flow: Some("plan,todo".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     let held = board(&bus, epoch, Actor::Operator);
@@ -598,6 +602,7 @@ fn clearing_an_authored_plan_retains_its_active_claim() {
             flow: Some("plan,todo".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     claim_held(&bus, epoch, seat, &task);

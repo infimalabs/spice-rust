@@ -773,6 +773,7 @@ fn a_moved_witness_refuses_before_any_allocator_comparison_is_reached() {
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     ));
 

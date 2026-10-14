@@ -40,6 +40,7 @@ fn add_design(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
             depends: Vec::new(),
             intent: Some(wire::TaskIntent::Design),
             claim: false,
+            draft: false,
         },
     ));
     task
@@ -93,7 +94,7 @@ fn assert_oops_refusal(outcome: Outcome<CommandAnswer>, offenders: &[(&TaskHandl
     let Outcome::Refusal(refusal) = outcome else {
         panic!("oops dependency must refuse: {outcome:?}");
     };
-    assert_eq!(refusal.reason(), "task::dependency-oops-refused");
+    assert_eq!(refusal.reason(), "task::dependency-unfiled");
     let detail = refusal.explanation();
     for (handle, claim) in offenders {
         assert!(
@@ -295,6 +296,7 @@ fn task_add_oops_dependency_refuses(
                 flow: Some("todo".to_owned()),
                 depends: vec![forged_oops],
                 claim: false,
+                draft: false,
             },
         ),
         &[(unclaimed_oops, "claim=none")],
@@ -455,6 +457,7 @@ fn stale_filing_after_edit(
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     ));
     let edited = board(bus, epoch, lane.clone());
@@ -553,6 +556,7 @@ fn task_file_is_the_only_unclaimed_oops_filing_exit() {
             requirements: None,
             priority: None,
             project: Some("board.test".to_owned()),
+            flow: None,
         },
     );
     assert!(matches!(

@@ -72,6 +72,7 @@ fn plan_claim_allows_board_team_but_classifies_repository_work_as_forbidden() {
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     ));
     let edited = board(&bus, epoch, lane.clone());
@@ -267,6 +268,7 @@ fn prepare_plan_advance_competitor(
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     ));
     let sibling = add(
@@ -294,6 +296,7 @@ fn prepare_plan_advance_competitor(
             requirements: None,
             priority: Some("critical".to_owned()),
             project: None,
+            flow: None,
         },
     ));
     sibling
@@ -442,6 +445,7 @@ fn selected_plan_reads_gate_completion_with_current_reverse_child_heads() {
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     ));
     let done = TaskDone {

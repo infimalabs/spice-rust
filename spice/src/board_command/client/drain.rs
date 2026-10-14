@@ -116,25 +116,36 @@ impl ParkedCounts {
     }
 }
 
-/// The pending rows the actor route admits, which is what task status counts.
+/// The pending filed or parked rows the actor route admits, which is what
+/// task status counts. Drafts are not work and are counted apart.
 pub(in crate::board_command) fn actor_rows<'a>(
     board: &BoardAnswer,
     entries: &'a [Entry],
 ) -> Vec<&'a Entry> {
+    actor_pending(board, entries)
+        .filter(|entry| !entry.is_draft())
+        .collect()
+}
+
+/// Pending Drafts the actor route admits by default.
+pub(in crate::board_command) fn actor_drafts(board: &BoardAnswer, entries: &[Entry]) -> usize {
+    actor_pending(board, entries)
+        .filter(|entry| entry.is_draft())
+        .count()
+}
+
+fn actor_pending<'a>(board: &BoardAnswer, entries: &'a [Entry]) -> impl Iterator<Item = &'a Entry> {
     let routed = board
         .tasks
         .iter()
         .filter(|task| actor_route_matches(board, task))
         .map(|task| task.statement.body.handle.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    entries
-        .iter()
-        .filter(|entry| {
-            routed.contains(entry.handle())
-                && entry.workflow().status == "pending"
-                && entry.workflow().completion.is_none()
-        })
-        .collect()
+    entries.iter().filter(move |entry| {
+        routed.contains(entry.handle())
+            && entry.workflow().status == "pending"
+            && entry.workflow().completion.is_none()
+    })
 }
 
 /// What one team policy lets the allocator hand this lane on its own.

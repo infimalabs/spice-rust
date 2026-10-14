@@ -503,6 +503,7 @@ fn oops_grooming_records_source_preserving_negative_triage_without_mutating_repo
             depends: Vec::new(),
             intent: Some(wire::TaskIntent::Design),
             claim: false,
+            draft: false,
         },
     ));
     let report_stamp = stamp("room-oops-report");

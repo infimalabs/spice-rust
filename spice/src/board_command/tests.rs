@@ -248,6 +248,7 @@ fn add_born(bus: &Bus, epoch: CanonicalUuid, born: wire::TaskStamp, title: &str)
             flow: Some("todo".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     task
@@ -1089,6 +1090,9 @@ mod oops_filing;
 // Filing without rehoming keeps an OOPS row's public project; explicit
 // rehoming and atomic refusals share one seam.
 mod oops_filing_destination;
+// Drafts are prospective work outside every execution rail until the same
+// explicit file transition admits them as ordinary work.
+mod draft_filing;
 
 // Statement correction and its refusals are one bounded scenario seam, so
 // this file stays inside the structural review bound as it grows.

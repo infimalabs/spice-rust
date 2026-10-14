@@ -28,6 +28,7 @@ fn add_declared(
             depends: Vec::new(),
             claim: false,
             intent,
+            draft: false,
         },
     ));
     handle
@@ -44,6 +45,7 @@ fn edit(task: &TaskHandle) -> TaskEdit {
         project: None,
         intent: None,
         evidence: None,
+        flow: None,
     }
 }
 

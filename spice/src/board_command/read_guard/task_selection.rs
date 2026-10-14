@@ -407,7 +407,8 @@ fn history_query_matches(heads: &journal::TaskHeads, query: &str) -> bool {
             .as_deref()
             .is_some_and(|description| contains_case_insensitive(description, query))
         || contains_case_insensitive(
-            wire::TaskHandle::for_project(&statement.project, &statement.born).as_str(),
+            wire::TaskHandle::for_filing(&statement.project, &statement.born, statement.filing)
+                .as_str(),
             query,
         )
 }

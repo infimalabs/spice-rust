@@ -23,11 +23,13 @@ impl<'a> HiddenInventory<'a> {
     }
 }
 
-/// Active filed public routes, parked OOPS evidence, and hidden system rows.
+/// Active filed public routes, parked OOPS evidence, unfiled Drafts, and
+/// hidden system rows.
 #[derive(Clone, Debug)]
 pub struct Inventory<'a> {
     public: Vec<&'a Entry>,
     oops: Vec<&'a Entry>,
+    drafts: Vec<&'a Entry>,
     hidden: BTreeMap<&'a str, Vec<&'a Entry>>,
 }
 
@@ -37,6 +39,7 @@ impl<'a> Inventory<'a> {
     pub fn new(entries: &'a [Entry]) -> Self {
         let mut public = Vec::new();
         let mut oops = Vec::new();
+        let mut drafts = Vec::new();
         let mut hidden = BTreeMap::<&str, Vec<&Entry>>::new();
         for entry in entries {
             if entry.workflow().status != "pending" || entry.workflow().completion.is_some() {
@@ -44,6 +47,8 @@ impl<'a> Inventory<'a> {
             }
             if entry.is_oops() {
                 oops.push(entry);
+            } else if entry.is_draft() {
+                drafts.push(entry);
             } else if let Some(stem) = entry.project().visibility().hidden_stem() {
                 hidden.entry(stem).or_default().push(entry);
             } else {
@@ -53,6 +58,7 @@ impl<'a> Inventory<'a> {
         Self {
             public,
             oops,
+            drafts,
             hidden,
         }
     }
@@ -67,6 +73,12 @@ impl<'a> Inventory<'a> {
     #[must_use]
     pub fn oops(&self) -> &[&'a Entry] {
         &self.oops
+    }
+
+    /// Every unfiled Draft, independent of its public owner project.
+    #[must_use]
+    pub fn drafts(&self) -> &[&'a Entry] {
+        &self.drafts
     }
 
     /// Hidden rows grouped beneath their first segment, never a public route.

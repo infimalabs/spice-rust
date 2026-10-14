@@ -48,6 +48,7 @@ fn appliance_requirement_holds_a_task_until_a_later_appliance_runs() {
             flow: Some("todo".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     let blocked = board(&bus, epoch, actor.clone());
@@ -309,6 +310,7 @@ fn add_blocked_requirement(
             flow: Some("todo".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     let blocked = board(bus, epoch, actor.clone());

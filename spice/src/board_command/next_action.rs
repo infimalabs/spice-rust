@@ -8,6 +8,7 @@ pub(super) enum NextTransition {
     Done,
     Free,
     Wake,
+    File,
     Next,
     Inert,
 }
@@ -19,6 +20,7 @@ impl NextTransition {
             Self::Done => Some("spice task done".into()),
             Self::Free => Some(format!("spice task free {task}").into_boxed_str()),
             Self::Wake => Some(format!("spice task wake {task}").into_boxed_str()),
+            Self::File => Some(format!("spice task file {task}").into_boxed_str()),
             Self::Next => Some("spice task next".into()),
             Self::Settled | Self::Inert => None,
         }
@@ -69,6 +71,10 @@ pub(super) fn accepted_transition(
     if entry.workflow().status == "completed" || entry.workflow().completion.is_some() {
         return allocator_continuation(principal, residency, entries, entry, environment)
             .unwrap_or(NextTransition::Settled);
+    }
+
+    if entry.is_draft() {
+        return NextTransition::File;
     }
 
     if principal_can_progress(principal, residency, entries, entry) {

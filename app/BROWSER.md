@@ -193,6 +193,27 @@ controller is named, and its card continues to show authorization pending until
 an accepted candidate receives separate selected authorization. A concluded
 Design accepts no later grooming; start a new Design room for a later batch.
 
+## Drafts
+
+A task's filing state is one of three standings. **Filed** work is ordinary
+board work. An **OOPS** report asserts unexpected behavior, stays parked for
+grooming, and is filed through `spice task file`. A **Draft** is prospective
+work its author is still shaping. It asserts nothing, never joins OOPS
+grooming, and stays outside allocation, claims, capture, dependency
+satisfaction, completion, team strips, and execution summaries until the same
+`spice task file` transition admits it.
+
+The Spice view's **Drafts** section follows the operator panel. It lists each
+open Draft the operator can read and offers a form that records a new one. A
+new Draft needs a title and an admitted public project, and takes an optional
+Plan or Design intent, description, and acceptance. Recording one opens it in
+task detail, which shows an editor beside the Draft's contract. **Save Draft**
+writes only the fields that changed, including project, intent, and flow.
+**File** validates the Draft as a complete ordinary Task, Plan, or Design. A
+refusal names the field or filing option to repair and leaves the Draft
+unchanged. Success replaces the Draft with its Filed task, which the allocator
+can offer at once.
+
 ## Resident topology in the global menu
 
 The Spice view leads with connection state, the inspectable version stack, and

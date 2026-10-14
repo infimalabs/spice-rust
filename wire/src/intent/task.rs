@@ -74,13 +74,16 @@ pub struct TaskAdd {
     /// Whether creation must atomically place the caller's lane in possession.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub claim: bool,
+    /// Record editable Draft content instead of filed work.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub draft: bool,
 }
 
-/// Add one task through the fixed server-owned `.oops` route.
+/// Add one task in typed OOPS filing state.
 ///
-/// The route owns the hidden root, flow, and dependency policy. A caller may
-/// recommend only a public project, which the route parks beneath `.oops`, so
-/// this DTO cannot become generic hidden-project creation.
+/// The route owns the flow and dependency policy. A caller names only the
+/// public owner project, or lets one active public claim supply it, so this
+/// DTO cannot become generic task creation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskOopsAdd {
@@ -95,8 +98,8 @@ pub struct TaskOopsAdd {
         deserialize_with = "crate::optional::present"
     )]
     pub origin: Option<Origin>,
-    /// Public project a bare `task wake` promotes the row into while that
-    /// project still passes manual admission.
+    /// Public owner project; omission uses the caller's one active public
+    /// claim project.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -190,6 +193,13 @@ pub struct TaskEdit {
         deserialize_with = "crate::optional::present"
     )]
     pub project: Option<String>,
+    /// Replacement phase route; only an unfiled Draft's route moves.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub flow: Option<String>,
 }
 
 /// One explicit environmental-requirement mutation.
@@ -297,11 +307,11 @@ pub struct TaskWake {
     pub claim: bool,
 }
 
-/// File one parked OOPS row as ordinary work.
+/// File one parked OOPS row or unfiled Draft as ordinary work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskFile {
-    /// OOPS task being filed.
+    /// OOPS or Draft task being filed.
     pub task: TaskHandle,
     /// Public project receiving the filed task; omission keeps its owner.
     #[serde(

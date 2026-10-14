@@ -352,6 +352,7 @@ fn requirement_edits_bind_statement_and_claim_witnesses_to_the_same_task() {
         requirements: Some(wire::intent::TaskRequirementsEdit::Clear {}),
         priority: None,
         project: None,
+        flow: None,
     };
     let command = |expected| Command {
         v: WireVersion::CURRENT,

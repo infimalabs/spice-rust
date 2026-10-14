@@ -89,6 +89,7 @@ pub(in crate::board_command) fn taste_proposal_add(
         flow: Some("todo,review".to_owned()),
         depends: expected_depends,
         claim: false,
+        draft: false,
     };
     let origin =
         match resolve_creation_origin(normalized.origin.as_ref(), command.actor(), &snapshot, None)

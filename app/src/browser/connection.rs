@@ -928,6 +928,11 @@ async fn dispatch_action(
                 .await
                 .map(Some)
         }
+        ClientAction::Draft { request, respond } => {
+            send_draft(principal, writer, actions, request, respond)
+                .await
+                .map(Some)
+        }
         ClientAction::DrainSubmissions => {
             drain_submissions(principal, writer, actions, submissions)
                 .await
@@ -1464,8 +1469,10 @@ async fn send_stream_request(
         .map_err(websocket_error)
 }
 
+mod drafts;
 mod refresh;
 mod responses;
 mod rooms;
+use drafts::send_draft;
 use refresh::{send_after_frame, send_refresh};
 use responses::handle_incoming;

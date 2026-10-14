@@ -39,6 +39,7 @@ fn add_controller(
             flow: flow.map(str::to_owned),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     task
@@ -802,6 +803,7 @@ fn add_prepared(
             flow: intent.map(|_| "review".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     TaskHandle::for_project("board.test", &born)

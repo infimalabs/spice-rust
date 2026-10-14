@@ -38,6 +38,7 @@ fn environment_movement_refuses_planned_claim(rule: &str, expected: &str) {
             )),
             priority: None,
             project: None,
+            flow: None,
         },
     ));
     grant_trust(&bus, &digest);

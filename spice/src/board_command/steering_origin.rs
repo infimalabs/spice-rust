@@ -39,7 +39,11 @@ pub(super) fn steering_origins(
             origins
                 .entry(key.to_owned())
                 .or_default()
-                .push(TaskHandle::for_project(&statement.project, &statement.born));
+                .push(TaskHandle::for_filing(
+                    &statement.project,
+                    &statement.born,
+                    statement.filing,
+                ));
         }
     }
     for handles in origins.values_mut() {

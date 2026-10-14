@@ -99,6 +99,7 @@ fn add_and_claim_causal_parent(
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     let lane = Actor::Lane(seat.lane);
@@ -178,6 +179,7 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     );
     let Outcome::Refusal(ref refusal) = refused else {
@@ -224,6 +226,7 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     );
     let self_origin_text = self_origin.to_string();
@@ -278,6 +281,7 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
             flow: Some("todo,review".to_owned()),
             depends: vec![dependency.clone()],
             claim: false,
+            draft: false,
         },
     ));
     let causal = task_origin(&parent.born().expect("parent handle carries a birth stamp"))
@@ -314,6 +318,7 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     ));
     assert_eq!(
@@ -441,6 +446,7 @@ fn add_task_noted_under_a_second_ask(
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     // A note written under another directive carries that directive's key.
@@ -626,6 +632,7 @@ fn add_separate_steering_task(bus: &Bus, epoch: CanonicalUuid) -> (wire::TaskSta
             flow: None,
             depends: Vec::new(),
             claim: false,
+            draft: false,
         },
     ));
     (born, task)

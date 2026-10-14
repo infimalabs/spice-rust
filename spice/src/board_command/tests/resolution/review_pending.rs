@@ -220,6 +220,7 @@ fn finding_command_replays_once_and_allocator_selects_its_correction() {
                 flow: Some("todo".to_owned()),
                 depends: Vec::new(),
                 claim: false,
+                draft: false,
             },
         }],
         followup: Vec::new(),
@@ -288,6 +289,7 @@ fn correction_add(title: &str, flow: Option<&str>) -> TaskAdd {
         flow: flow.map(str::to_owned),
         depends: Vec::new(),
         claim: false,
+        draft: false,
     }
 }
 
@@ -370,6 +372,7 @@ fn repeated_finding_reuses_one_completed_correction_without_a_duplicate_edge() {
                     flow: Some("todo".to_owned()),
                     depends: Vec::new(),
                     claim: false,
+                    draft: false,
                 },
             }],
             followup: Vec::new(),

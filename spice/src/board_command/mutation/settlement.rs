@@ -358,6 +358,16 @@ fn admitted_entry<'a>(
         }
         _ => {}
     }
+    if entry.is_draft() && matches!(settlement, Settlement::Close(_)) {
+        return Err(refusal(
+            "task::draft-unfiled",
+            Some(filing_state(entry)),
+            &format!(
+                "file the Draft with spice task file {handle}, or withdraw it with spice task delete {handle}",
+                handle = entry.handle(),
+            ),
+        ));
+    }
     if let Some(claim) = entry
         .claim()
         .filter(|claim| claim.disposition == ClaimDisposition::Active)

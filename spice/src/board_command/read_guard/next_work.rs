@@ -270,7 +270,7 @@ fn dry_counts(
             .count(),
     };
     for entry in visible.filter(|entry| {
-        !entry.is_oops()
+        entry.is_filed()
             && entry.workflow().status == "pending"
             && entry.workflow().completion.is_none()
             && !satisfied.speculative_design_work(entry.statement())
@@ -297,7 +297,7 @@ fn actor_route_matches_entry(
     origin_thread: &str,
     route: &wire::intent::BoardActorRoute,
 ) -> bool {
-    (!entry.project().visibility().is_hidden() && !entry.is_oops())
+    (!entry.project().visibility().is_hidden() && entry.is_filed())
         || origin_thread == route.origin_thread
 }
 

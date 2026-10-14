@@ -654,6 +654,16 @@ fn named_claim_selection<'a>(
                 "capture into one current pending task",
             )
         })?;
+    if entry.is_draft() {
+        return Err(refusal(
+            "task::draft-unfiled",
+            Some(filing_state(entry)),
+            &format!(
+                "file and claim the Draft with spice task file {} --claim",
+                entry.handle(),
+            ),
+        ));
+    }
     let environment = snapshot.answer.environment();
     let satisfied = board::resolved_tasks(&snapshot.entries);
     let (admitted, reason, remedy) = match possession {

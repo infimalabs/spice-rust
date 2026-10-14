@@ -94,6 +94,7 @@ fn rehoming_rerenders_the_handle_without_migrating_identity() {
             requirements: None,
             priority: None,
             project: Some("board.beta".to_owned()),
+            flow: None,
         },
     )) else {
         panic!("task edit answers with a task status");
@@ -201,6 +202,7 @@ fn a_correction_publishes_a_new_revision_and_names_each_editor() {
                 requirements: None,
                 priority: None,
                 project: None,
+                flow: None,
             },
         )),
         "edited"
@@ -223,6 +225,7 @@ fn a_correction_publishes_a_new_revision_and_names_each_editor() {
                 requirements: None,
                 priority: None,
                 project: None,
+                flow: None,
             },
         )),
         "edited"
@@ -306,6 +309,7 @@ fn a_live_claimed_correction_moves_neither_claim_nor_lease() {
                 requirements: None,
                 priority: Some("high".to_owned()),
                 project: Some("board.identity".to_owned()),
+                flow: None,
             },
         )),
         "edited",
@@ -353,6 +357,7 @@ fn a_settled_task_refuses_a_correction() {
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     );
     assert!(
@@ -400,6 +405,7 @@ fn a_correction_naming_no_field_is_refused() {
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     );
     assert!(
@@ -449,6 +455,7 @@ fn a_correction_to_an_unknown_task_is_refused() {
             requirements: None,
             priority: None,
             project: None,
+            flow: None,
         },
     );
     assert!(
@@ -473,6 +480,7 @@ fn only(task: &TaskHandle) -> TaskEdit {
         requirements: None,
         priority: None,
         project: None,
+        flow: None,
     }
 }
 

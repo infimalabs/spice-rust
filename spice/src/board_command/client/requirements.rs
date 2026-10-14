@@ -123,6 +123,7 @@ pub(super) fn client_require(
                     requirements: None,
                     priority: None,
                     project: None,
+                    flow: None,
                 })
                 .expect("typed intent encodes"),
             ));
@@ -164,6 +165,7 @@ pub(super) fn client_require(
                 requirements: Some(requirements),
                 priority: None,
                 project: None,
+                flow: None,
             })
             .expect("typed intent encodes"),
         ))
