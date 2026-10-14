@@ -34,6 +34,12 @@
      upper global tabs and lower team tabs. Their equal tab heights cancel. */
   --app-spice-anchor-inset-block: calc((var(--app-commandbar-block-size) + var(--app-status-line-band) - var(--app-header-control)) / 2);
   --app-spice-anchor-inset-inline: calc((var(--app-team-control-inline-size) - var(--app-header-control)) / 2 + env(safe-area-inset-right, 0px));
+  /* The open Spice view's settings row stands off the view's end by this inset
+     and ends with the theme selector. The anchor spans from its own inset to
+     the selector's start, so TURBO's start meets the selector's start. */
+  --app-spice-settings-inset-inline: 22px;
+  --app-theme-selector-inline-size: 88px;
+  --app-spice-anchor-inline-size: calc(var(--app-spice-settings-inset-inline) + var(--app-theme-selector-inline-size) - var(--app-spice-anchor-inset-inline));
   /* Between stream lanes, and between task tabs, global or team-local. */
   --mosaic-gap: 9px;
 }

@@ -66,10 +66,10 @@
 }
 @media (max-width: 560px) {
   .app-sidebar { width: 100vw; }
+  .shell { --app-spice-settings-inset-inline: 14px; }
   .app-sidebar-header,
   .app-sheet-header,
   .app-sheet-body,
-  .app-spice-sidebar-content > .app-sheet-section,
   .work-blocker-rail,
   .work-blocker-review-body,
   .work-overview-map,
