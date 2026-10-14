@@ -324,8 +324,9 @@ fn room_card(
     }
 }
 
-/// What a design composer's post does: it records and asks no lane.
-const POST_CUE: &str = "Posts are recorded in this room for its listeners; they ask no lane for anything. To ask a lane, use Coordinate in this design's menu.";
+/// What a design composer's post does, exposed through its accessible label:
+/// it records in this room and asks no lane.
+const POST_GUARANTEE: &str = "Posts are recorded in this room for its listeners and ask no lane for anything. To ask a lane, use Coordinate in this design's menu.";
 
 /// One open design's composer: its heading and menu, the textarea posting to
 /// exactly that design's room, and the quote shards drafted beneath it.
@@ -384,7 +385,7 @@ fn render_design_composer(
         let requested = render.controls.requested.clone();
         Callback::from(move |()| *requested.borrow_mut() = None)
     };
-    let placeholder = format!("Post to {}", channel.label);
+    let placeholder = design_composer_placeholder(render.runtime, channel);
     let draft_unsafe = !drawn.is_empty() || !draft.quotes.is_empty();
     let textarea_id = primary_textarea_id(&key);
     html! {
@@ -408,13 +409,12 @@ fn render_design_composer(
                     data-draft-unsafe={draft_unsafe.to_string()}
                 >
                     {render_design_heading(render, channel)}
-                    <p class="composer-shard-cue" data-room-post-cue="">{POST_CUE}</p>
                     <ComposerTextarea
                         key={drawn.clone()}
                         id={textarea_id.clone()}
                         lane={key.clone()}
                         drafts={render.drafts.dispatcher()}
-                        label={format!("Message for design {}", channel.label)}
+                        label={format!("Message for design {}. {POST_GUARANTEE}", channel.label)}
                         body={drawn.clone()}
                         placeholder={placeholder.clone()}
                         rows="4"
@@ -429,6 +429,64 @@ fn render_design_composer(
                 {render_quote_shards(&key, &draft, None, None, render.drafts, onkeydown, &placeholder)}
             </div>
         </section>
+    }
+}
+
+/// The Design's current board and room facts, laid out like a lane composer's
+/// back. The placeholder is recomputed from the current projections each render.
+fn design_composer_placeholder(runtime: &AppRuntime, channel: &Channel) -> String {
+    let projection = runtime.room_projection();
+    let board = runtime.board();
+    let row = board.and_then(|board| board.row(&channel.stamp));
+    let title = row.map_or_else(
+        || channel.label.clone(),
+        |row| crate::composer_markdown::inline::plain_text(&row.presentation_title),
+    );
+    let phase = row.map_or_else(
+        || "phase unavailable".to_owned(),
+        |row| row.workflow.body.phase.to_string(),
+    );
+    let claimant = row
+        .and_then(|row| row.claim.as_ref())
+        .filter(|claim| claim.body.disposition == wire::head::ClaimDisposition::Active)
+        .map_or_else(
+            || "unclaimed".to_owned(),
+            |claim| {
+                format!(
+                    "claimed by {}",
+                    super::conversation::lane_label(runtime, claim.body.lane)
+                )
+            },
+        );
+    let standing = projection.design_standing(&channel.stamp, board).label();
+    let posts = projection.room(&channel.stamp).map_or(0, |room| {
+        room.events()
+            .values()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    RoomEventKind::Posted
+                        | RoomEventKind::Published(RoomPublicationContent::Authored { .. })
+                )
+            })
+            .count()
+    });
+    let associated = board.map_or(0, |board| {
+        crate::runtime::prepared_open_count(board, &channel.stamp)
+    });
+    format!(
+        "{title}, {}\n{standing}, {phase}, {claimant}\n{posts} {}, {associated} {}",
+        channel.label,
+        count_label(posts, "room post"),
+        count_label(associated, "open associated task"),
+    )
+}
+
+fn count_label(count: usize, singular: &str) -> String {
+    if count == 1 {
+        singular.to_owned()
+    } else {
+        format!("{singular}s")
     }
 }
 

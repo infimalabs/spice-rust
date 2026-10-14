@@ -981,3 +981,23 @@ pub fn associated(statement: &wire::intent::BoardStatement, room: &TaskStamp) ->
                 || preparation.construction == *room
         })
 }
+
+/// Open prepared work that names this Design in any direct preparation role.
+#[must_use]
+pub fn prepared_open_count(board: &super::BoardView, design: &TaskStamp) -> usize {
+    board
+        .tasks
+        .iter()
+        .filter(|task| {
+            task.statement
+                .body
+                .preparation
+                .as_ref()
+                .is_some_and(|preparation| {
+                    preparation.parent == *design
+                        || preparation.controller == *design
+                        || preparation.construction == *design
+                })
+        })
+        .count()
+}
