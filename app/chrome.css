@@ -5,7 +5,7 @@
   min-height: var(--app-commandbar-block-size);
   gap: 7px;
   padding-block: var(--app-commandbar-block-pad);
-  padding-inline: calc(8px + env(safe-area-inset-left, 0px)) var(--app-commandbar-inset-end);
+  padding-inline: var(--app-commandbar-inset-start) var(--app-commandbar-inset-end);
   background: var(--page);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -18,9 +18,11 @@
   --app-header-control: var(--app-round-control-size);
   --app-team-control-inline-size: 80px;
   --app-shell-edge-inline: 10px;
+  --app-shell-edge-start: calc(var(--app-shell-edge-inline) + env(safe-area-inset-left, 0px));
   --app-shell-edge-end: calc(var(--app-shell-edge-inline) + env(safe-area-inset-right, 0px));
   --app-commandbar-inline-pad: 18px;
-  --app-commandbar-inset-end: calc(var(--app-commandbar-inline-pad) + env(safe-area-inset-right, 0px));
+  --app-commandbar-inset-start: var(--app-shell-edge-start);
+  --app-commandbar-inset-end: var(--app-shell-edge-end);
   /* The trigger clears the hanging global tabs and the rising team tabs by
      two message-rail widths each. Centered between them, its clearance is the
      block pad plus half the status band, less one tab height. */
@@ -70,9 +72,12 @@ body:has(.shell),
 
 /* The global execution and Design work rails hang mirrored horn tabs from the
    command bar's top edge. The material itself is shared in style.css with
-   team-local work tabs. */
+   team-local work tabs. Both rails span the command bar grid, including its
+   nominal launcher column: the launcher is absolutely positioned and clears
+   the tabs vertically, while a one-column rail would strand the Design tabs
+   inward from the browser edge. */
 :is(.app-global-work-tabs, .app-design-work-tabs) {
-  grid-area: 1 / 1;
+  grid-area: 1 / 1 / 2 / -1;
   align-self: start;
   margin-block-start: calc(-1 * var(--app-commandbar-block-pad));
 }

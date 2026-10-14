@@ -234,12 +234,14 @@ empty fleet reserves no pips and invents no status.
 
 The command bar has two mirrored global strips and each team has one local
 strip. Every strip uses the same horned-tab construction and leads with a
-badge-only total. The left global total opens all current execution work. The
-right global total opens all current Design-owned work: each Design root and
-each open task directly controlled by a Design. A team total opens the overview
-with that team's complete current execution set selected without changing the
-durable location. Totals keep one footprint for every count. Tabs past a total
-scroll horizontally under edge fades and never enter the status row.
+badge-only total. The global strips keep equal, small browser-edge insets,
+including the platform safe area: execution at the left and Design at the
+right. The left global total opens all current execution work. The right global
+total opens all current Design-owned work: each Design root and each open task
+directly controlled by a Design. A team total opens the overview with that
+team's complete current execution set selected without changing the durable
+location. Totals keep one footprint for every count. Tabs past a total scroll
+horizontally under edge fades and never enter the status row.
 
 Task tabs are neutral. Only a handle a lane is working carries that lane's
 accent, beside the lane's name in its text; hover and keyboard focus stay
