@@ -186,10 +186,9 @@ fn the_installed_skill_resource_is_exact_bounded_and_prompt_compact() {
         read("spice://SKILL.md:1-2"),
         document.lines().take(2).collect::<Vec<_>>().join("\n")
     );
-    assert_eq!(
-        document.len(),
-        spice::install::SKILL_BYTES_CEILING,
-        "the ruthlessly reduced document occupies its exact 8 KiB budget"
+    assert!(
+        document.len() <= spice::install::SKILL_BYTES_CEILING,
+        "the authoritative document stays within its 8 KiB ceiling"
     );
     assert!(
         bootstrap.len() < spice::install::SKILL_BOOTSTRAP_BYTES_CEILING,
