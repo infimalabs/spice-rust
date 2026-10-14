@@ -117,7 +117,7 @@ impl Authority {
     }
 }
 
-const NEUTRAL: &str = "[$spice](</skill/SKILL.md>)";
+const NEUTRAL: &str = "[$spice](<spice://SKILL.md>)";
 
 #[test]
 fn a_resumed_seat_is_told_the_authority_current_at_delivery_once() {

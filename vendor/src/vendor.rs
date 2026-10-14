@@ -176,11 +176,11 @@ impl Vendor {
         path.file_name().is_some_and(|name| name == self.name)
     }
 
-    /// The neutral start prompt, containing a skill invocation and no operator
-    /// prose.
+    /// Neutral first turn requiring the authoritative skill resource and
+    /// carrying no operator prose.
     #[must_use]
-    pub fn neutral_launch_prompt(&self, skill: &Path) -> String {
-        format!("[$spice](<{}>)", skill.display())
+    pub fn neutral_launch_prompt(&self, skill_resource: &str) -> String {
+        format!("[$spice](<{skill_resource}>)")
     }
 }
 

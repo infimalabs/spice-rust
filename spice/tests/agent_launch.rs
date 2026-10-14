@@ -8,6 +8,7 @@ use vendor::{Effort, Resume, SessionId};
 use wire::{CanonicalUuid, Name};
 
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c7";
+const SYSTEM_PROMPT_BYTES_CEILING: usize = 2_048;
 
 fn root(document: &str) -> Root {
     let deserializer = toml::Deserializer::parse(document).expect("launch fixture TOML parses");
@@ -22,8 +23,8 @@ fn inputs(vendor: &str, environment: Environment, resume: Resume) -> Inputs {
     Inputs {
         worktree: PathBuf::from("/work/tree"),
         vendor: vendor.parse::<Name>().expect("fixture vendor name"),
-        prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
-        skill: "skill".to_owned(),
+        prompt: "[$spice](<spice://SKILL.md>)".to_owned(),
+        bootstrap: spice::install::skill_bootstrap().to_owned(),
         environment,
         lane: lane(),
         resume,
@@ -93,6 +94,16 @@ effort = "max"
         environment_value(plan.environment(), SPICE_RS_LANE),
         Some(LANE)
     );
+    assert_eq!(launch.bootstrap, spice::install::skill_bootstrap());
+    let system_prompt = vendor::omp::system_prompt(launch);
+    let turn_prompt = vendor::omp::turn_prompt(launch);
+    assert!(
+        system_prompt.len() < SYSTEM_PROMPT_BYTES_CEILING,
+        "the command-line system card stays compact"
+    );
+    assert!(!system_prompt.contains(spice::install::skill_document()));
+    assert!(turn_prompt.contains(spice::install::SKILL_RESOURCE));
+    assert!(!turn_prompt.contains(spice::install::skill_document()));
 }
 
 #[test]

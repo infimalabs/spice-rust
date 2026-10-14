@@ -1,13 +1,15 @@
-//! The `spice://` resources a lane's omp reads board, task, session, and
-//! steering state through, and the task texts it replaces by writing.
+//! The `spice://` resources a lane's omp reads installed skill, board, task,
+//! session, and steering state through, and the task texts it replaces by
+//! writing.
 //!
-//! Every first read URL names one existing CLI read: [`Request::parse`] maps it
-//! onto that read's arguments, and [`Seat::serve`] runs the read in process as
-//! the lane, so authority, scoping, and refusals are the CLI's. Native graph
-//! continuations page retained validated text; other reads use the CLI's pages.
-//! Every withheld page names its continuation URL, and a collection ends with
-//! its child URLs. A trailing line selector is honored or refused. Reading
-//! commits nothing and acknowledges nothing, so
+//! [`crate::install::SKILL_RESOURCE`] is this executable's authoritative
+//! skill. Every other first read URL names one existing CLI read:
+//! [`Request::parse`] maps it onto that read's arguments, and [`Seat::serve`]
+//! runs the read in process as the lane, so authority, scoping, and refusals
+//! are the CLI's. Native graph continuations page retained validated text;
+//! other reads use the CLI's pages. Every withheld page names its continuation
+//! URL, and a collection ends with its child URLs. A trailing line selector is
+//! honored or refused. Reading commits nothing and acknowledges nothing, so
 //! omp may read as often as its tools ask.
 //!
 //! A task's description and acceptance also take a write: the whole new text,
@@ -37,6 +39,7 @@ pub(crate) const SCHEME: &str = "spice://";
 /// The root index: every resource shape and the CLI read it answers with.
 const INDEX: &str = "\
 spice:// resources: views of spice CLI reads; a task's description and acceptance also take a write, other acts stay spice commands
+spice://SKILL.md  complete authoritative agent skill from the current installed release; takes line selectors but no query
 spice://board  task status
 spice://board/graph/VIEW  board graph VIEW (origin, dependencies, review, workflow, claims), live work by default [?all&limit=N&max-bytes=N&max-text=N&at=BORN&after=CURSOR]; all includes settled history; after resumes a snapshot while held by this seat's bounded cache
 spice://task  task list [?all | ?project=PROJECT] [&status=STATUS] [&limit=N&max-bytes=N&max-text=N&after=HANDLE]
@@ -64,6 +67,7 @@ spice://session/context/SESSION?lane=UUID&vendor=NAME&stream=NAME&source=UUID&me
 spice://quote/v1/...  a quoted message and its recorded author
 Query values percent-encode reserved bytes, ':' as %3A; a key marked ... repeats. A trailing :N, :N-M, :N+K, :-N, or comma list selects lines; :raw is the text itself.
 resources:
+  spice://SKILL.md
   spice://board
   spice://task
   spice://inbox
@@ -90,6 +94,8 @@ pub(crate) struct Request {
 #[derive(Debug, PartialEq, Eq)]
 enum Resource {
     Index,
+    /// Complete authoritative skill compiled into this installed release.
+    Skill,
     /// A quote target, as the URL spelled it without its selector.
     Quote(String),
     Read(Query),
@@ -627,6 +633,17 @@ impl Request {
                     selector,
                 });
             }
+            ["SKILL.md"] if query.is_empty() => {
+                return Ok(Self {
+                    resource: Resource::Skill,
+                    selector,
+                });
+            }
+            ["SKILL.md"] => {
+                return Err(format!(
+                    "{url} takes no query; use a trailing line selector to bound the read"
+                ));
+            }
             ["quote", ..] => {
                 return Ok(Self {
                     resource: Resource::Quote(format!("{SCHEME}{rest}")),
@@ -1039,6 +1056,7 @@ impl Seat {
         }
         let document = match &request.resource {
             Resource::Index => INDEX.to_owned(),
+            Resource::Skill => spice::install::skill_document().to_owned(),
             Resource::Quote(target) => read_quote(target)?,
             Resource::Read(query) => {
                 let repository = repository()?;

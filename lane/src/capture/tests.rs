@@ -35,7 +35,7 @@ impl Fixture {
         let launch = Launch {
             cwd: root.clone(),
             prompt: "start".to_owned(),
-            skill: "skill".to_owned(),
+            bootstrap: "skill".to_owned(),
             model: "fixture".to_owned(),
             effort: Effort::XHigh,
             fast_mode: Some(false),

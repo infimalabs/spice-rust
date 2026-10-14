@@ -110,14 +110,15 @@ pub struct Launch {
     /// Worktree the agent runs in and steers for; the process door takes it
     /// as the working directory.
     pub cwd: PathBuf,
-    /// The neutral start prompt; operator prose never rides it.
+    /// Neutral start prompt requiring the installed skill resource; operator
+    /// prose never rides it.
     pub prompt: String,
-    /// The spice skill the agent follows, in full.
+    /// Short authoritative bootstrap requiring the skill resource read.
     ///
-    /// It rides the appended system prompt, which a compaction never
-    /// summarizes, so the agent holds the skill from a session's first message
-    /// through every compaction instead of being asked to read a file.
-    pub skill: String,
+    /// It rides the appended system prompt, which compaction never summarizes.
+    /// The full skill remains owned by the installed Spice resource instead of
+    /// being copied into every launch.
+    pub bootstrap: String,
     /// Model name, already resolved to a concrete spelling.
     pub model: String,
     /// How hard the agent is asked to think.

@@ -21,8 +21,8 @@ const STEERING_TOKEN: &str = "1kJHh5bb";
 /// Width of the title slot omp rewrites in place at the top of a session file.
 const TITLE_SLOT_BYTES: usize = 256;
 const MODEL: &str = "claude-opus-5";
-/// Stands in for the skill's instructions, which ride the system prompt whole.
-const SKILL: &str = "Answer steering with ACK before any tool.";
+/// Stands in for the compact installed-skill resource bootstrap.
+const BOOTSTRAP: &str = "Read `spice://SKILL.md` before any tool.";
 /// Where the lane wrote this occupant's compaction threshold.
 const CONFIG_OVERLAY: &str = "/supervisors/lane/occupant/omp.yml";
 /// Where the lane wrote this occupant's steering extension.
@@ -32,7 +32,7 @@ fn fixture(resume: Resume) -> Launch {
     Launch {
         cwd: "/worktree".into(),
         prompt: "start".to_owned(),
-        skill: SKILL.to_owned(),
+        bootstrap: BOOTSTRAP.to_owned(),
         model: MODEL.to_owned(),
         effort: Effort::XHigh,
         fast_mode: Some(false),
@@ -155,7 +155,7 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
                 "type": "set_host_uri_schemes",
                 "schemes": [{
                     "scheme": "spice",
-                    "description": "Spice board, task, artifact, and quote reads, and task description or acceptance writes; spice:// is the index",
+                    "description": "Spice installed skill, board, task, artifact, and quote reads, and task description or acceptance writes; spice:// is the index",
                     "writable": true,
                 }],
             }),
@@ -607,18 +607,18 @@ fn roster(record: &vendor::Record) -> Option<&OsStr> {
 }
 
 #[test]
-fn the_skill_rides_the_system_prompt_and_the_turn_prompt_only_names_it() {
+fn the_resource_bootstrap_rides_the_system_prompt_and_the_turn_stays_compact() {
     let launch = fixture(Resume::Fresh);
     let system_prompt = omp::system_prompt(&launch);
-    assert!(system_prompt.contains(SKILL));
+    assert!(system_prompt.contains(BOOTSTRAP));
     assert!(system_prompt.contains(&format!("<{STEERING_TOKEN}>")));
 
-    // Every turn re-anchors on the key and names the skill without paying for
-    // its whole text again.
+    // Every turn re-anchors on the key and requires the resource read without
+    // copying even the bootstrap again.
     let turn_prompt = omp::turn_prompt(&launch);
     assert!(turn_prompt.contains("\n\nstart\n\n"));
     assert!(turn_prompt.contains(&format!("<{STEERING_TOKEN}>")));
-    assert!(!turn_prompt.contains(SKILL));
+    assert!(!turn_prompt.contains(BOOTSTRAP));
 
     let mut anonymous = launch.clone();
     anonymous.steering_key = None;
