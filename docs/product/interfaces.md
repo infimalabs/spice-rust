@@ -150,6 +150,9 @@ commit are different jobs.
 isolated seeded root, with no model call and no mutation of the caller's
 repository. Nothing opens on the operator's display without an explicit
 `--open`.
+The seed's primary task is held by Ava through the same claim authority as live
+work, so its team task strip, lane ownership accents, roster, task overview, and
+board reads all describe one shared team-owned row.
 
 Interrupting a running demo stops its resident and preserves the root, and
 every demo reply prints that root's `spice demo --reuse ROOT` launch command,

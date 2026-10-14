@@ -176,7 +176,6 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_parent_state() {
         .iter()
         .map(|envelope| envelope.fact.kind())
         .collect::<Vec<_>>();
-    assert_eq!(kinds[0], wire::FactKind::TaskAdded);
     assert_eq!(
         kinds
             .iter()
@@ -184,7 +183,6 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_parent_state() {
             .count(),
         CANNED_TRANSCRIPT.len()
     );
-    assert_eq!(kinds.last(), Some(&wire::FactKind::LaneStarted));
     assert_eq!(
         kinds
             .iter()
@@ -211,9 +209,16 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_parent_state() {
                 })
         }));
     }
-    for pair in facts.facts()[..=CANNED_TRANSCRIPT.len()].windows(2) {
-        assert_eq!(pair[1].cause, Some(pair[0].seq));
-    }
+    let claim = facts
+        .facts()
+        .iter()
+        .find_map(|envelope| envelope.fact.read::<body::ClaimWon>())
+        .expect("Ava's demo claim is retained");
+    assert_eq!(claim.task, DEMO_STAMP.parse().expect("demo task stamp"));
+    assert_eq!(claim.actor, Actor::Lane(uuid(DEMO_LANE)));
+    assert_eq!(claim.lane, uuid(DEMO_LANE));
+    assert_eq!(claim.occupant, uuid(DEMO_OCCUPANT));
+    assert_eq!(claim.epoch, uuid(DEMO_EPOCH));
 
     let reopened = reopen_environment(&root, executable).expect("complete seed reopens");
     assert_eq!(reopened.root, environment.root);
@@ -974,6 +979,13 @@ fn assert_board(board: &BoardAnswer) {
         .expect("demo task is visible");
     assert_eq!(task.presentation_title(), DEMO_TITLE);
     assert_eq!(task.statement.body.project, DEMO_PROJECT);
+    assert_eq!(task.creator_team, None);
+    let claim = task.claim.as_ref().expect("Ava holds the demo task");
+    assert_eq!(claim.body.actor, Actor::Lane(uuid(DEMO_LANE)));
+    assert_eq!(claim.body.lane, uuid(DEMO_LANE));
+    assert_eq!(claim.body.occupant, uuid(DEMO_OCCUPANT));
+    assert_eq!(claim.body.disposition, wire::ClaimDisposition::Active);
+    assert!(task.lease.is_some(), "Ava's active claim carries its lease");
 }
 
 fn assert_lanes(lanes: &LaneAnswer) {
