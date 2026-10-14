@@ -210,10 +210,8 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
         <div class="app-spice-sidebar-content">
             {spice_sidebar::render_global_settings(
                 render.connection,
-                runtime,
                 (**render.identity).as_ref(),
                 (**render.app_update).as_ref(),
-                render.sender,
             )}
             {spice_sidebar::render_operator(
                 runtime,
@@ -229,7 +227,7 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
     };
     let anchor = html! {
         <div class="app-spice-sidebar-anchor">
-            {spice_sidebar::render_theme_selector()}
+            {spice_sidebar::render_global_turbo(runtime, render.sender)}
             {spice_sidebar::render_capacity(runtime)}
             {chrome::render_spice_button(chrome::SpiceButton {
                 connection: render.connection,

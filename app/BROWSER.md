@@ -240,8 +240,9 @@ can offer at once.
 ## Resident topology in the global menu
 
 The Spice view leads with connection state, the inspectable version stack, and
-global TURBO. An available app generation turns the version into the explicit
-reload control. A superseded app generation keeps running until its session
+the theme selector; global TURBO stands beside the Spice button in its header.
+An available app generation turns the version into the explicit reload
+control. A superseded app generation keeps running until its session
 fails against the resident serving the replacement; that failure reloads the
 tab into the served generation once per generation, unless a composer draft or
 unsettled submission would be lost, in which case the tab stays and reconnects

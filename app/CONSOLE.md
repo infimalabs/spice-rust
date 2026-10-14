@@ -415,8 +415,8 @@ in the panel's group arrangement menu.
 Beside the drafts, one control panel holds team TURBO, the team arrangement
 menu, the speech and allocation sliders, and SEND, with fixed geometry. The
 arrangement menu opens swap and join beside the panel and stays disabled,
-naming why, when no other team exists. Team TURBO and Settings global TURBO are
-separately admitted controls.
+naming why, when no other team exists. Team TURBO and the Spice view's global
+TURBO are separately admitted controls.
 
 The speech slider reads Quiet / Speak / Narrate and the allocation slider Steer
 / Drive / Drain; Up/Right raise and Down/Left lower on every engine. A speech

@@ -39,8 +39,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The first row keeps resident state and product identity beside the global
-   TURBO control, with no heading or diagnostic identifiers consuming space. */
+/* The first row keeps resident state and product identity beside the theme
+   selector, with no heading or diagnostic identifiers consuming space. */
 .app-spice-sidebar-content > .app-spice-settings {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -126,8 +126,6 @@
   border-radius: var(--app-radius-compact);
   background: var(--control-surface-soft);
 }
-/* The theme selector shares the header anchor with the Spice button. */
-.app-theme-selector { flex: 0 0 auto; }
 .app-theme-icon {
   width: 15px;
   height: 15px;
