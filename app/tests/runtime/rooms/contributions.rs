@@ -44,7 +44,15 @@ fn contributed(
 }
 
 fn contribution_runtime(session: &Session, snapshot: &[serde_json::Value]) -> AppRuntime {
-    let accepted = acceptance(session, "operator", EPOCH);
+    contribution_runtime_as(session, "operator", snapshot)
+}
+
+fn contribution_runtime_as(
+    session: &Session,
+    actor: &str,
+    snapshot: &[serde_json::Value],
+) -> AppRuntime {
+    let accepted = acceptance(session, actor, EPOCH);
     let mut runtime = AppRuntime::new(&accepted);
     let horizon = snapshot.len() as u64;
     runtime.apply_stream(&operator_facts(session, horizon));
@@ -333,6 +341,43 @@ fn shown_designs_resolve_each_cited_contributions_sources_once() {
         Some(&ContributionSources::Failed(
             "room::contribution-missing".to_owned()
         ))
+    );
+}
+
+/// The lane session that holds the contribution form resolves its shown
+/// Design's sources too, so a lane's cited source settles to a link or a typed
+/// unavailability instead of resolving forever.
+#[test]
+fn a_lane_session_resolves_its_shown_designs_contribution_sources() {
+    let session = session(LANE_CAPABILITY, EPOCH);
+    let [first, ..] = stamps();
+    let snapshot = [contributed(
+        1,
+        &first,
+        LANE,
+        RoomContributionKind::Evidence,
+        vec![journal(1), artifact()],
+    )];
+    let mut runtime = contribution_runtime_as(&session, &format!("lane:{LANE}"), &snapshot);
+    assert!(!runtime.principal().is_operator());
+    assert!(runtime.offers(CommandKind::RoomContributionSources));
+
+    runtime.show_task_details([room()]);
+    assert_eq!(
+        runtime.take_contribution_source_reads(8),
+        vec![(room(), first.clone())]
+    );
+    let views = vec![
+        RoomSourceView::Available { source: journal(1) },
+        RoomSourceView::Unavailable {
+            source: artifact(),
+            unavailable: RoomSourceUnavailable::Missing {},
+        },
+    ];
+    runtime.apply_contribution_sources(&first, &sources_reply(&session, &first, views.clone()));
+    assert_eq!(
+        runtime.contribution_sources(&first),
+        Some(&ContributionSources::Read(views))
     );
 }
 

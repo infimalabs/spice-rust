@@ -152,9 +152,10 @@ preparation section.
 A Design's read view groups its [typed contributions](CONSOLE.md#design-contributions)
 by kind above the room history, which keeps them in journal order among the
 conversation. Each cited source's availability comes from the
-`room::contribution-sources` read, which the app issues once per cited
-contribution of a shown Design, at most eight in flight, and again after a
-reconnect; it resolves through the same resident path as `spice room history`.
+`room::contribution-sources` read, which any authenticated session may issue
+and the app issues once per cited contribution of a shown Design, at most
+eight in flight, and again after a reconnect; it resolves through the same
+resident path as `spice room history`.
 A lane session submits through the guarded `room::contribute` command from the
 Design view's form, and its sidebar lists the lane's Design invitations from
 the room snapshot's `room::noticed` records.
