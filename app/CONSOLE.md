@@ -322,8 +322,9 @@ no send and lights no recipients. Reduced motion removes slider travel, never a
 state distinction.
 
 SEND is one optical system of two layers. Behind it, an emitter spreads an
-even diffuse field across the whole disc that softens into the panel just
-beyond the glass, with no drawn ring and no center hotspot. In front, a frosted
+even diffuse field across the whole disc, ending at the glass's edge: no light
+reaches the panel outside SEND, and there is no drawn ring and no center
+hotspot. In front, a frosted
 glass face transmits that field and collects light in irregular catches along
 its curved perimeter: brighter low on the left, a fainter answer high on the
 right, as the sliders are lit. Every lit presentation keeps both layers:
