@@ -43,11 +43,16 @@ pub(super) fn requires_construction(
                 .all(|phase| matches!(phase.as_str(), "plan" | "review")))
 }
 
-pub(super) fn admit_capture(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
-    if entry.statement().intent.is_some()
+/// Whether `entry` delivers planning rather than implementation: loose
+/// commits and recovered work never become part of one.
+pub(super) fn planning_deliverable(entry: &Entry) -> bool {
+    entry.statement().intent.is_some()
         || requires_construction(entry.statement().intent, &entry.workflow().flow)
         || entry.workflow().phase.as_str() == "design"
-    {
+}
+
+pub(super) fn admit_capture(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
+    if planning_deliverable(entry) {
         return Err(refusal(
             "task::capture-planning",
             Some(entry.handle().to_string()),
