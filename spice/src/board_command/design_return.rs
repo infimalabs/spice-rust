@@ -116,28 +116,32 @@ pub(crate) fn record_return(bus: &Bus, owed: &ReturnOwed) -> Result<(), Outcome<
     }
 }
 
-/// `design`'s newest return decision and its position, if any.
+/// `design`'s newest return decision and its position, if any, read
+/// newest-first so the work stops at that return instead of walking the
+/// Design's whole decision history.
 fn newest_return(
     bus: &Bus,
     design: &TaskStamp,
 ) -> Result<Option<(Seq, PreparationDecision)>, Outcome<CommandAnswer>> {
     let design = design.clone();
     bus.read(move |read| {
-        let mut newest = None;
-        let mut after = None;
+        let mut before = None;
         loop {
-            let page =
-                read.preparation_decisions(&design, after, journal::FactReadBudget::RETAINED)?;
+            let page = read.newest_preparation_decisions(
+                &design,
+                before,
+                journal::FactReadBudget::RETAINED,
+            )?;
             for envelope in page.rows {
                 if let Some(decided) = envelope.fact.read::<PreparationDecided>()
                     && matches!(decided.decision.outcome, DecisionOutcome::Returned { .. })
                 {
-                    newest = Some((envelope.seq, decided.decision));
+                    return Ok(Some((envelope.seq, decided.decision)));
                 }
             }
             match page.continuation {
-                Some(continuation) => after = Some(continuation),
-                None => return Ok(newest),
+                Some(continuation) => before = Some(continuation),
+                None => return Ok(None),
             }
         }
     })
