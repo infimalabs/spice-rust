@@ -157,6 +157,19 @@ pub enum QuotePresentation {
         /// Quote links found in `text`, in source order.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         quotes: Vec<QuotePresentation>,
+        /// Protocol kind of the room publication that opened a quoted
+        /// directive, when an MSG, ASK, or ANS delivered it. `text` is then
+        /// that packet's authenticated body, without the header its recipient
+        /// read.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        packet: Option<crate::MessageSendKind>,
+        /// Result an ANS packet answers. Other packet kinds carry none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<crate::rooms::QuestionResultRef>,
+        /// Lane a quoted packet's directive was delivered to, attributed as
+        /// its addressee. A room post addresses its room and names none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        addressee: Option<CanonicalUuid>,
     },
     /// Resolution refused without fabricating presentation data.
     Unavailable {

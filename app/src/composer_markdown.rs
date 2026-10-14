@@ -658,9 +658,33 @@ fn directive_attribution(
         controls_target: target.clone(),
         signoff: quotes::directive_signoff_html(context, &target, quote_agents, quote_sources),
         disposition: String::new(),
-        badge: context.badge.map_or_else(String::new, directive_badge_html),
+        badge: directive_badges_html(context),
         task_tail: quotes::task_tail_html(&target),
     }
+}
+
+/// The quoted directive's classification, then the kind of the MSG, ASK, or
+/// ANS packet that delivered it, in the card head's own pill group.
+fn directive_badges_html(context: &MessageDirective) -> String {
+    let mut badges = context.badge.map_or_else(String::new, directive_badge_html);
+    badges.push_str(&packet_group_html(context.packet, context.result.as_ref()));
+    badges
+}
+
+/// The pill group naming the MSG, ASK, or ANS packet that delivered a quoted
+/// directive; empty when no packet delivered it or an MSG wears none.
+fn packet_group_html(
+    packet: Option<wire::MessageSendKind>,
+    result: Option<&wire::rooms::QuestionResultRef>,
+) -> String {
+    let pill = packet.map_or_else(String::new, |kind| quotes::packet_kind_html(kind, result));
+    if pill.is_empty() {
+        return pill;
+    }
+    format!(
+        "<span class=\"message-classification-group\" role=\"group\" \
+         aria-label=\"Packet kind\">{pill}</span>"
+    )
 }
 
 /// The quoted directive's own kind, where its source marker once stood.

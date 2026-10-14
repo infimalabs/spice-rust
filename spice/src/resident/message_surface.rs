@@ -653,7 +653,7 @@ fn present_steering_acknowledgements(
     let broadcasts = answered_broadcasts(text, steering, event);
     let classifications = hydrate_message_classifications(&presented, broadcasts)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
-    let directive_contexts = hydrate_directive_contexts(&presented, steering)
+    let directive_contexts = hydrate_directive_contexts(&presented, steering, event)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
     let sends = hydrate_sends(&presented, event)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
@@ -673,34 +673,50 @@ pub(crate) fn quote_agent_prose(
     ordinal: u32,
     prose: &listen::Prose,
 ) -> Result<String, String> {
-    let keys = steering_keys([prose.text.as_str()]);
-    if keys.is_empty() {
-        return Ok(prose.text.clone());
-    }
-    let rows = load_steering_presentations(reader, &keys).map_err(|error| format!("{error:?}"))?;
-    let directives = PresentationDirectives::from_presentations(&rows)?;
     let serve::stream::MessagePresentation {
         mut text,
         directive_contexts,
         ..
-    } = present_steering_acknowledgements(
-        &prose.text,
-        Some(&directives),
-        PresentationEvent {
-            lane,
-            author: None,
-            source: Some(source),
-            locus: prose.locus,
-            ordinal,
-        },
-    )
-    .map_err(|error| format!("{error:?}"))?;
+    } = present_acknowledged_prose(reader, lane, None, source, ordinal, prose)?;
     for context in directive_contexts.iter().rev() {
         let start = usize::try_from(context.start).expect("wire directive start always fits usize");
         let end = usize::try_from(context.end).expect("wire directive end always fits usize");
         text.replace_range(start..end, &context.quote_target.markdown());
     }
     Ok(text)
+}
+
+/// Present one lane's settled prose against the journal steering its
+/// acknowledgement headers name, as its card shows it. `author` is the
+/// occupant whose transcript wrote it, when the presenter knows it.
+pub(super) fn present_acknowledged_prose(
+    reader: &bus::BusReader,
+    lane: CanonicalUuid,
+    author: Option<CanonicalUuid>,
+    source: CanonicalUuid,
+    ordinal: u32,
+    prose: &listen::Prose,
+) -> Result<serve::stream::MessagePresentation, String> {
+    let keys = steering_keys([prose.text.as_str()]);
+    if keys.is_empty() {
+        return Ok(serve::stream::MessagePresentation::plain(
+            prose.text.clone(),
+        ));
+    }
+    let rows = load_steering_presentations(reader, &keys).map_err(|error| format!("{error:?}"))?;
+    let directives = PresentationDirectives::from_presentations(&rows)?;
+    present_steering_acknowledgements(
+        &prose.text,
+        Some(&directives),
+        PresentationEvent {
+            lane,
+            author,
+            source: Some(source),
+            locus: prose.locus,
+            ordinal,
+        },
+    )
+    .map_err(|error| format!("{error:?}"))
 }
 
 /// The journal context one card's presentation reads: the steering directives
@@ -728,6 +744,9 @@ struct PresentationDirective {
     /// Exact occupant that authored the directive as an MSG packet.
     sender: Option<CanonicalUuid>,
     recipient: Option<wire::MessageDestination>,
+    /// The packet whose room publication opened this directive; its body
+    /// already stands in `text`.
+    packet: Option<spice::quote::SteeringPacket>,
     /// Journal instant at which the directive's creating fact was committed.
     published: wire::Instant,
     retirement: Option<wire::body::TranscriptLocus>,
@@ -788,11 +807,14 @@ impl PresentationDirectives {
                 key: key.to_string(),
                 digest: wire::QuoteTarget::text_digest(&head.text),
             };
+            let mut packet = spice::quote::steering_packet(row);
+            let body = packet.as_mut().and_then(|packet| packet.body.take());
+            let text = body.as_deref().unwrap_or(&head.text);
             directives.insert(
                 key,
                 PresentationDirective {
                     lane: head.lane,
-                    text: wire::media::with_media_payloads(&head.text, &head.attachments)
+                    text: wire::media::with_media_payloads(text, &head.attachments)
                         .map_err(|error| error.to_string())?
                         .into_owned(),
                     authored: true,
@@ -819,6 +841,7 @@ impl PresentationDirectives {
                             occupant: message.occupant,
                         },
                     ),
+                    packet,
                     published: row.created().at,
                 },
             );
@@ -985,9 +1008,13 @@ fn hydrate_message_classifications(
     }
     Ok(classifications)
 }
+/// An operator MSG, ASK, or ANS names no occupant of its own, so the context
+/// addresses the occupant whose transcript acknowledges it in this card, when
+/// that occupant sits on the lane the directive addressed.
 fn hydrate_directive_contexts(
     presented: &Presentation,
     directives: &PresentationDirectives,
+    event: PresentationEvent,
 ) -> Result<Vec<wire::MessageDirective>, String> {
     presented
         .contexts
@@ -1009,7 +1036,22 @@ fn hydrate_directive_contexts(
                 authored: directive.published,
                 badge: directive.badge(),
                 sender: directive.sender,
-                recipient: directive.recipient,
+                recipient: directive.recipient.or_else(|| {
+                    let operator_packet = directive.packet.is_some()
+                        && matches!(directive.actor, wire::Actor::Operator)
+                        && directive.lane == event.lane;
+                    event.author.filter(|_| operator_packet).map(|occupant| {
+                        wire::MessageDestination {
+                            lane: directive.lane,
+                            occupant,
+                        }
+                    })
+                }),
+                packet: directive.packet.as_ref().map(|packet| packet.kind),
+                result: directive
+                    .packet
+                    .as_ref()
+                    .and_then(|packet| packet.result.clone()),
             })
         })
         .collect()

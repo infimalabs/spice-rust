@@ -402,6 +402,17 @@ whether its lane is vacant or reseated, still reads under them as a historical
 attribution. A lane absent from the roster reads as unavailable, or as the
 recipient's address, never as raw identifiers.
 
+A directive that an MSG, ASK, or ANS delivered, quoted as the context an
+acknowledgment answers, shows the packet body without its header. ASK and ANS
+wear their authored-send pills after the source, ANS with the result it
+answers; MSG wears none, as an authored MSG does. The opening room publication
+proves the kind; any other directive stays literal, whatever its words spell.
+An operator packet names the occupant whose acknowledgment the card presents
+as its destination. A quote link to such a directive presents the same way:
+its card shows the packet body, the same pills, and the lane the directive was
+delivered to after the arrow. A quote's head keeps the card head's type scale
+and name color.
+
 Each quote layer ends with one task target after its speaker's last word,
 filled with origin-task badges; it repeats on no other hunk, and Play never
 reads it. An isolated task-handle chip's hover title is its surrounding

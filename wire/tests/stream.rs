@@ -68,6 +68,43 @@ fn retained_send_annotations_decode_as_msg_without_a_kind_field() {
 }
 
 #[test]
+fn a_directive_destination_belongs_to_a_peer_sender_or_an_operator_packet() {
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163d8");
+    let occupant = uuid("018f82d4-6f59-7d06-92e3-bce9131163d9");
+    let directive = |actor, sender, packet| wire::MessageDirective {
+        start: 0,
+        end: 4,
+        quote_target: wire::QuoteTarget::Steering {
+            key: "amberfern".to_owned(),
+            digest: wire::QuoteTarget::text_digest("ship"),
+        },
+        actor,
+        authored: "2030-04-12T18:44:08.000Z".parse().expect("fixture instant"),
+        badge: None,
+        sender,
+        recipient: Some(wire::MessageDestination { lane, occupant }),
+        packet,
+        result: None,
+    };
+    let msg = Some(wire::MessageSendKind::Msg);
+
+    assert!(directive(Actor::Lane(lane), Some(occupant), msg).is_valid_for("> hi"));
+    assert!(directive(Actor::Operator, None, msg).is_valid_for("> hi"));
+    assert!(
+        !directive(Actor::Operator, None, None).is_valid_for("> hi"),
+        "plain operator direction names no destination"
+    );
+    assert!(
+        !directive(Actor::Lane(lane), None, msg).is_valid_for("> hi"),
+        "a peer destination needs its exact sender"
+    );
+    assert!(
+        !directive(Actor::Spice, None, msg).is_valid_for("> hi"),
+        "only operator and peer packets have a destination"
+    );
+}
+
+#[test]
 fn stream_requests_are_strict_current_generation_documents() {
     let epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
     let request = StreamRequest::Subscribe {

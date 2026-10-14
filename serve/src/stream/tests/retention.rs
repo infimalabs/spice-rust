@@ -678,6 +678,9 @@ fn quote_presentations_are_complete_on_bootstrap_and_history_and_refresh_from_au
                 },
                 disposition: Some(*disposition.lock().expect("disposition lock")),
                 quotes: Vec::new(),
+                packet: None,
+                result: None,
+                addressee: None,
             }]
         }
     });

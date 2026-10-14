@@ -472,6 +472,7 @@ mod tests {
                     actor: wire::Actor::Operator,
                     sender: None,
                     recipient: None,
+                    packet: None,
                     published: published(),
                     lane: lane(),
                     text,
