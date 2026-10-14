@@ -116,8 +116,9 @@ name continuations.
   --history`. Fix directly only tiny deterministic mechanical low-risk issues
   within ownership and requiring no decision; commit separately, then clean.
   Otherwise record a finding and all corrections via `--then "title=... |
-  project=..."` (`flow=todo` mechanical, `flow=todo,review` material) or
-  `--followup`. Findings release review pending later clean review.
+  project=..."` (no `flow=`: each is a todo-only attempt the reviewed task's
+  re-review checks) or `--followup`. Findings release review pending later
+  clean review.
 - If a claim moves worktrees, stop and return to allocation. Surface loose
   commits by handle; never capture work another lane holds. Record appliance
   friction with `spice task oops TEXT --origin ORIGIN`.
