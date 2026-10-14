@@ -659,7 +659,14 @@ fn seed_journal(state: &spice::repository::StatePaths, root: &Path) -> DemoResul
     seed_lanes(&mut journal, root)?;
     let task: wire::TaskHandle = DEMO_TASK.parse().expect("demo task handle is valid");
     let previous = seed_task(&mut journal, &task)?;
-    seed_claim(&mut journal, &task)?;
+    let born = task.born().expect("demo task carries a canonical stamp");
+    seed_claim(
+        &mut journal,
+        &born,
+        &["todo"],
+        DEMO_LANES[0],
+        CANNED_TRANSCRIPT[0].0,
+    )?;
     seed_turns(&mut journal, &task, previous)?;
     seed_oops_group(&mut journal)?;
     journal
@@ -741,14 +748,22 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
     Ok(journal.apply(write).map_err(commit_failure)?.last())
 }
 
-/// Give the seeded lane the same canonical claim authority a real allocation
+/// Give a seeded lane the same canonical claim authority a real allocation
 /// writes, so every consumer derives team ownership from production evidence.
-fn seed_claim(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoResult<()> {
-    let born = task.born().expect("demo task carries a canonical stamp");
-    let phase: wire::Phase = "todo".parse().expect("demo phase is valid");
+fn seed_claim(
+    journal: &mut journal::Journal,
+    born: &wire::TaskStamp,
+    flow: &[&str],
+    lane: DemoLane,
+    at: &str,
+) -> DemoResult<()> {
+    let flow = flow
+        .iter()
+        .map(|phase| phase.parse().expect("demo phase is valid"))
+        .collect::<Vec<wire::Phase>>();
     let workflow = WorkflowHead {
-        flow: vec![phase.clone()],
-        phase,
+        phase: flow[0].clone(),
+        flow,
         status: "pending".to_owned(),
         review: "unassigned".to_owned(),
         assignment: None,
@@ -756,11 +771,11 @@ fn seed_claim(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRe
         completion: None,
         generation: 0,
     };
-    let actor = Actor::Lane(uuid(DEMO_LANE));
-    let at = instant(CANNED_TRANSCRIPT[0].0);
+    let actor = Actor::Lane(uuid(lane.lane));
+    let at = instant(at);
     let mut write = JournalWrite::new(
         actor.clone(),
-        format!("task:{DEMO_STAMP}")
+        format!("task:{born}")
             .parse()
             .expect("demo task origin is valid"),
         at,
@@ -769,12 +784,12 @@ fn seed_claim(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRe
     board::allocate::mint(
         &mut write,
         board::allocate::Mint {
-            task: &born,
+            task: born,
             actor: &actor,
             workflow: &workflow,
             project: DEMO_PROJECT,
-            lane: uuid(DEMO_LANE),
-            occupant: uuid(DEMO_OCCUPANT),
+            lane: uuid(lane.lane),
+            occupant: uuid(lane.occupant),
             epoch: uuid(DEMO_EPOCH),
             at,
             expiry: instant(DEMO_CLAIM_EXPIRY),
@@ -834,7 +849,7 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
                     revision: 1,
                     groups: vec![wire::rooms::WorkingGroup {
                         group,
-                        anchors: vec![batch],
+                        anchors: vec![batch.clone()],
                     }],
                 },
             },
@@ -842,7 +857,14 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
         )
         .map_err(build_failure)?;
     journal.apply(write).map_err(commit_failure)?;
-    Ok(())
+    // A second lane works the group's Design, so the group's rail has a lane.
+    seed_claim(
+        journal,
+        &batch,
+        &["design", "review"],
+        DEMO_LANES[1],
+        "2026-07-11T05:07:00.000000Z",
+    )
 }
 
 fn seed_grooming_task(

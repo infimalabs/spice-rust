@@ -133,6 +133,7 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
             key={view.group.to_string()}
             class="team-surface group-surface"
             data-group={view.group.to_string()}
+            data-base-flavor="final"
             data-team-weight={watchband::team_visual_weight(channels.len()).to_string()}
             onclick={panel::dismissal(render.controls, &view.group)}
         >

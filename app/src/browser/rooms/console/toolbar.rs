@@ -63,7 +63,8 @@ fn scope(view: &GroupView, channels: &[Channel]) -> WorkScope {
     }
 }
 
-/// The fixed total and active-agent scroller.
+/// The fixed total and active-agent scroller. Like the Design globals, the
+/// total closes the rail and the agents stack toward the start beside it.
 fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Channel]) -> Html {
     let workers = render
         .work
@@ -81,7 +82,7 @@ fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Chann
     }
 }
 
-/// The leading tab: a badge counting every active task the rail shows, opening
+/// The closing tab: a badge counting every active task the rail shows, opening
 /// the overview with exactly that current selection.
 fn render_total(
     render: &GroupRender<'_, '_>,

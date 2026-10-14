@@ -141,10 +141,15 @@ Design tabs share the global execution tabs' structure and interactions, with
 their count before the stem and their whole surface bound to the palette's
 final accent rather than its first. This uses the object-level base-flavor
 contract: an unselected object is an exact identity over the existing
-green-flavored roles, while a selected object rebuilds control, ink, muted,
-line, ground, and focus roles from one arbitrary base color and achromatic
-anchors. Accent slots are convenient inputs to that contract, not its boundary;
-no old green is tinted underneath the selected base. In the
+green-flavored roles, while a selected object rebuilds panel, control, ink,
+muted, line, ground, and focus roles from one arbitrary base color and the
+page's achromatic anchors, then binds its subtree's primitive neutrals and
+accent to them. Everything the subtree derives from those primitives follows,
+so relationships among its objects hold under any base. Lane and Design accent
+slots stay the page's. Accent slots are convenient inputs to that contract, not
+its boundary; no old green is tinted underneath the selected base. An open
+working group's console takes the palette's final accent as its whole base
+without wearing that slot. In the
 work overview and on dependency cards a passive Design reads **Passive**,
 waiting on the operator.
 
