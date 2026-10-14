@@ -42,6 +42,7 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// the journal still lists it. A reminder names a standing key only when
     /// its telling changed since the last delivery, by arriving or by climbing
     /// the resend ladder, or when a queued reminder already names it: another
+    /// key arriving or retiring says nothing new about it. An inbox with no
     /// such key prunes the queued reminder to what is still owed.
     ///
     /// Nothing is written while the first turn is held: omp would run the
