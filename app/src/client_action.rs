@@ -51,12 +51,11 @@ pub(crate) enum RoomCoordinationRequest {
     },
 }
 
-/// One review-evidence record over a retained candidate, with the heads the
-/// browser drew it from.
+/// One exact proposal decision with the heads its preview observed.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum PreparationRequest {
-    Cover {
-        request: wire::rooms::CandidateCoverageRecord,
+    Decide {
+        request: wire::rooms::PreparationDecide,
         expected: Vec<wire::Witness>,
     },
 }

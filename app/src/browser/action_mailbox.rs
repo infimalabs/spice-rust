@@ -673,13 +673,26 @@ fn room_coordination_bytes(request: &crate::client_action::RoomCoordinationReque
 
 fn preparation_bytes(request: &crate::client_action::PreparationRequest) -> usize {
     match request {
-        crate::client_action::PreparationRequest::Cover { request, .. } => request
-            .coverage
-            .coverage
-            .candidate
-            .controller
-            .as_str()
-            .len(),
+        crate::client_action::PreparationRequest::Decide { request, expected } => {
+            let outcome = match &request.decision.outcome {
+                wire::rooms::DecisionOutcome::Selected {
+                    selected_outputs, ..
+                } => selected_outputs
+                    .iter()
+                    .map(|output| output.as_str().len())
+                    .sum(),
+                wire::rooms::DecisionOutcome::Returned { reason, .. }
+                | wire::rooms::DecisionOutcome::Collapse { reason, .. } => reason.len(),
+            };
+            request
+                .decision
+                .decision
+                .controller
+                .as_str()
+                .len()
+                .saturating_add(outcome)
+                .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>())
+        }
     }
 }
 

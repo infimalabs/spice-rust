@@ -178,8 +178,7 @@ pub(super) async fn send_room_coordination(
     }
 }
 
-/// Record one coverage statement under the heads the approval control was
-/// drawn from.
+/// Submit one exact proposal decision under the heads its preview observed.
 pub(super) async fn send_preparation(
     principal: &Principal,
     writer: &mut SocketWriter,
@@ -191,13 +190,13 @@ pub(super) async fn send_preparation(
         respond: respond.clone(),
     };
     match request {
-        crate::client_action::PreparationRequest::Cover { request, expected } => {
+        crate::client_action::PreparationRequest::Decide { request, expected } => {
             send_typed(
                 principal,
                 writer,
                 actions,
                 pending,
-                CommandKind::CandidateCoverageRecord,
+                CommandKind::PreparationDecide,
                 expected.clone(),
                 request.clone(),
             )

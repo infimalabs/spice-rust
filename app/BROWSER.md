@@ -146,8 +146,8 @@ declined, expired, or cancelled), and a question's substantive result
 (pending against its deadline and the requester's pending-result capacity,
 answered, declined, cancelled, or timed out). ACK settles only a receipt; an
 answer is its own ANS card whose return carries a separate receipt. None of
-these is styled as review coverage or output authorization, which stay in the
-preparation section.
+these is styled as review evidence or output authorization, which stay on
+their exact proposal version and in immutable preparation authority.
 
 A Design's read view groups its [typed contributions](CONSOLE.md#design-contributions)
 by kind above the room history, which keeps them in journal order among the
@@ -159,6 +159,13 @@ resident path as `spice room history`.
 A lane session submits through the guarded `room::contribute` command from the
 Design view's form, and its sidebar lists the lane's Design invitations from
 the room snapshot's `room::noticed` records.
+
+The same read view lists every immutable proposal version. An operator uses
+native radios, output checkboxes, and a reason field to preview then submit one
+exact Select, Return, or Collapse decision. Selection and authorization are
+one command; the UI has no review-coverage prerequisite or later authorization
+stage. While a command is pending the version cannot submit again, and only
+committed room and board authority changes its standing.
 
 The operator's inbox sits in the Spice sidebar directly beneath their avatar,
 name, and email and above Jobs, not in the shared Working groups catalog. Its
