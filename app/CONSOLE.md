@@ -126,17 +126,28 @@ open board task, **Accept** and **Return** record the operator's next decision
 on that candidate, citing the candidate's retaining fact as its basis. A
 returned candidate authorizes nothing.
 
+Authorization requires current coverage from the operator or an independent
+lane; the candidate author's self-review certifies nothing alone. Until the
+candidate is authorized, **Record my review** records the operator's own
+coverage of that exact candidate, citing its retaining fact and covering its
+outputs and their acceptance, the same record `spice preparation cover` writes.
+Recording again is how stale coverage is renewed after candidate evidence is
+answered.
+
 Once a decision accepts the candidate, each of its outputs on the board gets an
 unchecked box. **Authorize selected** records one execution authorization of
 exactly the checked outputs under that decision, the candidate's governed
 inputs, and every coverage recorded over it; it completes the Design, and only
 those outputs become eligible. Unchecked outputs stay pending and ineligible.
-With nothing checked the control submits nothing. Each command witnesses the
-Design, input, and output heads the view was drawn from, and the resident
-alone judges admissibility: its answer, or a refusal such as missing coverage,
-a moved board, an output outside the candidate, or a controller that is not an
-open Design, appears under the candidate and records nothing. This is the same
-contract as `spice preparation decide` and `spice preparation authorize`.
+While the view can already see a refusal, no certifying coverage or a pending
+dependency of the Design, the control is disabled and the section states the
+reason and the act that clears it. With nothing checked the control submits
+nothing. Each command witnesses the Design, input, and output heads the view
+was drawn from, and the resident alone judges admissibility: its answer, or a
+refusal such as stale coverage, a moved board, an output outside the
+candidate, or a controller that is not an open Design, appears under the
+candidate and records nothing. This is the same contract as
+`spice preparation decide`, `cover`, and `authorize`.
 
 ## Preparation authority
 

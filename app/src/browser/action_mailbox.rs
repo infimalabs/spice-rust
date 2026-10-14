@@ -632,6 +632,13 @@ fn preparation_bytes(request: &crate::client_action::PreparationRequest) -> usiz
         crate::client_action::PreparationRequest::Decide { request, .. } => {
             request.decision.decision.controller.as_str().len()
         }
+        crate::client_action::PreparationRequest::Cover { request, .. } => request
+            .coverage
+            .coverage
+            .candidate
+            .controller
+            .as_str()
+            .len(),
         crate::client_action::PreparationRequest::Authorize { request, .. } => {
             let authorization = &request.authorization;
             authorization

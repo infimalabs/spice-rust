@@ -116,7 +116,7 @@ pub(super) fn require_assessed(
         let answered = row(authority, result)?.seq;
         if answered > assessed_at {
             return unsound(format!(
-                "candidate evidence {result} was answered after every certifying coverage"
+                "candidate evidence {result} was answered after every certifying coverage; record new operator or independent coverage of this candidate, then authorize"
             ));
         }
     }

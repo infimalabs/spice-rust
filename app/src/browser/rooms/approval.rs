@@ -1,20 +1,23 @@
 //! A Design's approval control. For each retained candidate the operator
-//! records an accepted or returned decision, then authorizes an explicit
-//! selection of an accepted candidate's outputs under the candidate's governed
-//! inputs and every coverage recorded over it. No output is selected by
-//! default, a returned decision authorizes nothing, and the resident alone
-//! judges admissibility: its answer or refusal renders under the candidate.
+//! records an accepted or returned decision, records their own review
+//! coverage of the candidate when no independent or operator review exists,
+//! then authorizes an explicit selection of an accepted candidate's outputs
+//! under the candidate's governed inputs and every coverage recorded over it.
+//! No output is selected by default, a returned decision authorizes nothing,
+//! an action the panel already knows the authority would refuse is disabled
+//! with its reason, and the resident alone judges admissibility: its answer
+//! or refusal renders under the candidate.
 
 use std::rc::Rc;
 
 use web_sys::HtmlInputElement;
 use wire::intent::{BoardTask, TextAnswer};
 use wire::rooms::{
-    CandidateCoverage, CandidateRef, CoverageAuthority, CoverageRef, DecisionOutcome, DecisionRef,
-    ExecutionAuthorization, ExecutionAuthorize, PreparationDecide, PreparationDecision,
-    ProposalRef, RetainedCandidate, RoomSource,
+    CandidateCoverage, CandidateCoverageRecord, CandidateRef, CoverageAuthority, CoverageRef,
+    DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorize, PreparationDecide,
+    PreparationDecision, ProposalRef, RetainedCandidate, RoomSource,
 };
-use wire::{CommandKind, SequenceCode, TaskStamp, Witness};
+use wire::{CommandKind, Name, SequenceCode, TaskStamp, Witness};
 use yew::prelude::*;
 
 use super::{Controls, conversation::lane_label, statement_witness, transition_witnesses};
@@ -102,6 +105,11 @@ struct Approval {
     /// Governed input statement heads, or why one cannot be witnessed.
     inputs: Result<Vec<Witness>, String>,
     coverage: Vec<CoverageRef>,
+    /// The identity the operator's next coverage of this candidate takes.
+    next_coverage: CoverageRef,
+    /// Why an authorization would be refused, as far as this render can
+    /// see: no certifying coverage, or a pending dependency of the Design.
+    blocked: Option<String>,
     outputs: Vec<Selectable>,
 }
 
@@ -137,7 +145,7 @@ pub(super) fn render_approval(
                 <span>{candidates.len()}</span>
             </header>
             <p class="room-notice">
-                {"Accept or return a retained candidate, then authorize exactly the outputs you select. Unselected outputs stay pending and ineligible."}
+                {"Accept or return a retained candidate, record your review of it unless an operator or independent review already covers it, then authorize exactly the outputs you select. Authorizing concludes the Design; outputs you leave unselected stay pending and ineligible."}
             </p>
             {for candidates.into_iter().map(|positioned| render_candidate(&context, positioned))}
         </section>
@@ -174,6 +182,23 @@ fn render_candidate(context: &Context<'_>, positioned: &RoomPositioned<RetainedC
             })
         })
         .collect::<Vec<_>>();
+    let certified = coverage
+        .iter()
+        .any(|coverage| !matches!(coverage.authority, CoverageAuthority::SelfReview { .. }));
+    let next_coverage = CoverageRef {
+        candidate: candidate.candidate.clone(),
+        coverage: SequenceCode::new(
+            context
+                .preparation
+                .coverage
+                .keys()
+                .filter(|coverage| coverage.candidate == candidate.candidate)
+                .map(|coverage| coverage.coverage.get())
+                .max()
+                .unwrap_or(0)
+                .saturating_add(1),
+        ),
+    };
     let approval = context.controller.map(|controller| Approval {
         report: context
             .controls
@@ -196,6 +221,8 @@ fn render_candidate(context: &Context<'_>, positioned: &RoomPositioned<RetainedC
             })
             .collect(),
         coverage: coverage.iter().map(|coverage| coverage.coverage.clone()).collect(),
+        next_coverage,
+        blocked: authorization_blocker(context, controller, certified),
         outputs,
     });
     let notice = context
@@ -298,6 +325,7 @@ fn render_output(context: &Context<'_>, approval: Option<&Approval>, output: &Ta
 
 fn render_actions(runtime: &AppRuntime, standing: &Standing<'_>, approval: &Approval) -> Html {
     let decides = runtime.offers(CommandKind::PreparationDecide);
+    let covers = runtime.offers(CommandKind::CandidateCoverageRecord);
     let authorizes = runtime.offers(CommandKind::ExecutionAuthorize);
     let accept = html! {
         <button type="button" disabled={!decides} onclick={approval.decide(true)}>{"Accept"}</button>
@@ -305,24 +333,79 @@ fn render_actions(runtime: &AppRuntime, standing: &Standing<'_>, approval: &Appr
     let ret = html! {
         <button type="button" disabled={!decides} onclick={approval.decide(false)}>{"Return"}</button>
     };
+    // Recording a review is always the act that satisfies a coverage refusal,
+    // missing or stale alike, so it stays offered until authorization.
+    let review = html! {
+        <button
+            type="button"
+            disabled={!covers}
+            onclick={approval.review()}
+            data-approval-review=""
+        >
+            {"Record my review"}
+        </button>
+    };
     let actions = match standing {
         Standing::Authorized(_) => return Html::default(),
-        Standing::Undecided => html! { <>{accept}{ret}</> },
-        Standing::Returned => accept,
+        Standing::Undecided => html! { <>{accept}{ret}{review}</> },
+        Standing::Returned => html! { <>{accept}{review}</> },
         Standing::Accepted(decision) => html! {
             <>
                 <button
                     type="button"
-                    disabled={!authorizes}
+                    disabled={!authorizes || approval.blocked.is_some()}
+                    title={approval.blocked.clone()}
                     onclick={approval.authorize((*decision).clone())}
+                    data-approval-authorize=""
                 >
                     {"Authorize selected"}
                 </button>
+                {review}
                 {ret}
             </>
         },
     };
-    html! { <div class="room-inline-actions">{actions}</div> }
+    html! {
+        <>
+            <div class="room-inline-actions">{actions}</div>
+            if let Some(blocked) = &approval.blocked {
+                <p class="room-notice" data-approval-blocked="">{blocked.clone()}</p>
+            }
+        </>
+    }
+}
+
+/// Why the authority would refuse an authorization of this candidate, as far
+/// as the board and preparation authority this render read can tell.
+fn authorization_blocker(
+    context: &Context<'_>,
+    controller: &BoardTask,
+    certified: bool,
+) -> Option<String> {
+    if !certified {
+        return Some(
+            "Authorizing needs a review of this candidate by you or an independent lane; its author's self-review certifies nothing. Record my review cites this candidate's retained record and covers its outputs and their acceptance."
+                .to_owned(),
+        );
+    }
+    let pending = controller
+        .statement
+        .body
+        .dependencies
+        .iter()
+        .filter(|dependency| {
+            context
+                .task(dependency)
+                .is_some_and(|task| task.workflow.body.completion.is_none())
+        })
+        .map(|dependency| handle(context, dependency))
+        .collect::<Vec<_>>();
+    (!pending.is_empty()).then(|| {
+        format!(
+            "Authorizing waits until this Design's dependencies complete: {}.",
+            pending.join(", ")
+        )
+    })
 }
 
 /// The candidate's current standing: an authorization of it, else its latest
@@ -413,6 +496,45 @@ impl Approval {
         })
     }
 
+    /// Record the operator's own review of this exact candidate, citing the
+    /// candidate's retaining fact and covering its outputs and acceptance.
+    fn review(&self) -> Callback<MouseEvent> {
+        let approval = self.clone();
+        Callback::from(move |_: MouseEvent| {
+            let coverage = approval.next_coverage.clone();
+            let expected = vec![
+                approval.statement.clone(),
+                Witness::Proposal {
+                    proposal: ProposalRef::Coverage {
+                        coverage: coverage.clone(),
+                    },
+                    head: None,
+                },
+            ];
+            let scopes = ["outputs", "acceptance"]
+                .into_iter()
+                .map(|scope| {
+                    scope
+                        .parse::<Name>()
+                        .expect("fixed coverage scope is a name")
+                })
+                .collect();
+            approval.send(PreparationRequest::Cover {
+                request: CandidateCoverageRecord {
+                    coverage: CandidateCoverage {
+                        coverage,
+                        authority: CoverageAuthority::Operator {},
+                        scopes,
+                        source: RoomSource::Journal {
+                            fact: approval.basis,
+                        },
+                    },
+                },
+                expected,
+            });
+        })
+    }
+
     /// Authorize exactly the checked outputs under `decision`.
     fn authorize(&self, decision: DecisionRef) -> Callback<MouseEvent> {
         let approval = self.clone();
@@ -425,9 +547,12 @@ impl Approval {
     }
 
     /// The authorization the checked outputs describe, or why nothing is
-    /// submitted: no output checked, or a governed input the board does not
-    /// carry and so cannot be witnessed.
+    /// submitted: a refusal the panel can already see, no output checked, or
+    /// a governed input the board does not carry and so cannot be witnessed.
     fn authorization(&self, decision: &DecisionRef) -> Result<PreparationRequest, String> {
+        if let Some(blocked) = &self.blocked {
+            return Err(blocked.clone());
+        }
         let selected = self
             .outputs
             .iter()
