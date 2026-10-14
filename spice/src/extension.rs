@@ -573,8 +573,8 @@ mod tests {
         assert_eq!(session.session.as_str(), "fixture-session");
         assert_eq!(session.locus, locus);
         assert_eq!(
-            fixture.neutral_launch_prompt(std::path::Path::new("skill.md")),
-            "[$spice](<skill.md>)"
+            fixture.neutral_launch_prompt(crate::install::SKILL_RESOURCE),
+            "[$spice](<spice://SKILL.md>)"
         );
         assert_eq!(
             fixture

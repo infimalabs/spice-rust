@@ -146,7 +146,7 @@ fn a_served_seat_reads_each_quoted_served_read_as_its_url_and_nothing_else() {
 }
 
 #[test]
-fn the_root_and_quote_targets_are_not_cli_reads() {
+fn the_root_skill_and_quote_targets_are_not_cli_reads() {
     assert_eq!(
         Request::parse("spice://")
             .expect("the root is the index")
@@ -154,11 +154,50 @@ fn the_root_and_quote_targets_are_not_cli_reads() {
         Resource::Index
     );
     assert_eq!(
+        Request::parse(spice::install::SKILL_RESOURCE)
+            .expect("the installed skill is static")
+            .resource,
+        Resource::Skill
+    );
+    assert_eq!(
         Request::parse("spice://quote/v1/steer/1kQnrzNZ/00:2-3")
             .expect("a quote target with a selector")
             .resource,
         Resource::Quote("spice://quote/v1/steer/1kQnrzNZ/00".to_owned())
     );
+}
+
+#[test]
+fn the_installed_skill_resource_is_exact_bounded_and_prompt_compact() {
+    let seat = super::Seat {
+        worktree: "/".into(),
+        lane: wire::CanonicalUuid::new(uuid::Uuid::from_u128(7)),
+        environment: crate::session_environment().rooted("/".into()),
+        graphs: Default::default(),
+    };
+    let read = |url: &str| {
+        seat.serve(url, Access::Read, |_| panic!("no quote is read"))
+            .expect("the static skill serves")
+    };
+    let document = spice::install::skill_document();
+    let bootstrap = spice::install::skill_bootstrap();
+    assert_eq!(read(spice::install::SKILL_RESOURCE), document);
+    assert_eq!(
+        read("spice://SKILL.md:1-2"),
+        document.lines().take(2).collect::<Vec<_>>().join("\n")
+    );
+    assert_eq!(
+        document.len(),
+        spice::install::SKILL_BYTES_CEILING,
+        "the ruthlessly reduced document occupies its exact 8 KiB budget"
+    );
+    assert!(
+        bootstrap.len() < spice::install::SKILL_BOOTSTRAP_BYTES_CEILING,
+        "the bootstrap stays below its separate 1 KiB budget"
+    );
+    assert!(bootstrap.contains(spice::install::SKILL_RESOURCE));
+    assert!(!bootstrap.contains(document));
+    refusal("spice://SKILL.md?release=current");
 }
 
 #[test]
@@ -365,6 +404,7 @@ fn only_a_whole_task_text_takes_a_write_and_only_a_write_takes_a_digest() {
     let serve = |url: &str, access| seat.serve(url, access, |_| panic!("no quote is read"));
     for url in [
         "spice://".to_owned(),
+        spice::install::SKILL_RESOURCE.to_owned(),
         "spice://board".to_owned(),
         format!("spice://task/{HANDLE}"),
         format!("spice://task/{HANDLE}/context"),

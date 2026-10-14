@@ -263,7 +263,7 @@ fn launch_plan(
         effort,
         running,
     } = selection;
-    let skill = required_skill(repository)?;
+    required_skill(repository)?;
     let wrapper = resolved
         .root()
         .wrappers()
@@ -290,7 +290,7 @@ fn launch_plan(
     let Some(vendor) = spice::extension::vendor(name.as_str()) else {
         return Err(vendor_unsupported(name.as_str().to_owned()));
     };
-    let mut prompt = vendor.neutral_launch_prompt(&skill);
+    let mut prompt = vendor.neutral_launch_prompt(spice::install::SKILL_RESOURCE);
     // A fresh session starts with nothing but this turn, so the resident
     // hands it the briefing itself. A resumed one already holds its context;
     // the driver appends the notice naming what it holds and what is pending
@@ -312,9 +312,11 @@ fn launch_plan(
             worktree: repository.worktree_root().to_path_buf(),
             vendor: name.clone(),
             prompt,
-            // `required_skill` admitted the installed copy only because it is
-            // byte-identical to this appliance's, so these are its instructions.
-            skill: spice::install::skill_instructions().to_owned(),
+            // `required_skill` admitted this installation only because its
+            // on-disk skill is byte-identical to the current appliance. The
+            // prompt carries only the instruction to read those bytes through
+            // the appliance-owned resource.
+            bootstrap: spice::install::skill_bootstrap().to_owned(),
             environment,
             lane,
             resume: pinned.resume,

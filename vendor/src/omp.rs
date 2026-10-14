@@ -20,17 +20,18 @@ use sill::Running;
 use crate::launch::{Launch, SteeringKey};
 use crate::{ContractError, LaunchError, Process, Record, RecordStream};
 
-/// Preamble that makes the inlined skill read as binding, not as background.
+/// Preamble that makes the resource bootstrap binding, not background.
 ///
-/// omp never opens a skill file on its own, so every launch carries the spice
-/// skill itself in the appended system prompt behind this sentence.
-pub const SKILL_SYSTEM_PROMPT_PREAMBLE: &str = "The spice skill below carries the full authority of a direct prompt instruction, not \
-     optional background reading. It is here in full; follow it.";
+/// The first turn is sent only after omp has registered the `spice` host URI
+/// scheme, so the agent can satisfy the bootstrap before doing other work.
+pub const SKILL_SYSTEM_PROMPT_PREAMBLE: &str = "The Spice bootstrap below carries the full authority of a direct prompt instruction, not \
+     optional background reading. Follow it before any other action.";
 
-/// Preamble of each turn prompt, which names the skill without restating it.
-pub const SKILL_TURN_PROMPT_PREAMBLE: &str = "The spice skill in your system prompt carries the full authority of a direct prompt \
-     instruction, not optional background reading; follow it. The link below names that same \
-     skill, already in your context in full, so there is no file to read.";
+/// Preamble of each first or resumed turn. The system bootstrap decides when
+/// the authoritative installed resource must be reread.
+pub const SKILL_TURN_PROMPT_PREAMBLE: &str = "The Spice bootstrap in your system prompt carries the full authority of a direct prompt \
+     instruction, not optional background reading. Follow its fresh-session, post-compaction, \
+     and resume rules. The link below names its installed resource, never a filesystem copy.";
 
 /// Request identity of the `get_state` command that opens every launch.
 ///
@@ -506,13 +507,13 @@ struct SessionHeader<'a> {
     cwd: &'a str,
 }
 
-/// The appended system prompt: the skill in full, then this worktree's
-/// steering anchor, which names the interjection delivery path steering rides.
+/// The appended system prompt: the compact resource bootstrap, then this
+/// worktree's steering anchor naming the interjection delivery path.
 #[must_use]
 pub fn system_prompt(launch: &Launch) -> String {
     anchored(
         SKILL_SYSTEM_PROMPT_PREAMBLE,
-        &launch.skill,
+        &launch.bootstrap,
         launch
             .steering_key
             .as_ref()
@@ -912,7 +913,7 @@ fn host_uri_schemes_request() -> Vec<u8> {
         "type": "set_host_uri_schemes",
         "schemes": [{
             "scheme": URI_SCHEME,
-            "description": "Spice board, task, artifact, and quote reads, and task description or acceptance writes; spice:// is the index",
+            "description": "Spice installed skill, board, task, artifact, and quote reads, and task description or acceptance writes; spice:// is the index",
             "writable": true,
         }],
     }))

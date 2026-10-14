@@ -22,11 +22,12 @@ pub struct Inputs {
     pub worktree: PathBuf,
     /// Selected lane vendor.
     pub vendor: Name,
-    /// Neutral skill prompt with no operator prose.
+    /// Neutral skill-resource prompt with no operator prose.
     pub prompt: String,
-    /// The verified skill's instructions, carried whole in the system prompt
-    /// that survives compaction.
-    pub skill: String,
+    /// Short authoritative bootstrap carried in the system prompt across
+    /// compaction; it requires the agent to read the installed skill resource
+    /// before acting.
+    pub bootstrap: String,
     /// Explicit child environment admitted by the resident rim.
     pub environment: Environment,
     /// Durable lane identity. Also the seed for this launch's steering key,
@@ -150,7 +151,7 @@ fn compose_with_registry(
         launch: vendor::Launch {
             cwd: inputs.worktree,
             prompt: inputs.prompt,
-            skill: inputs.skill,
+            bootstrap: inputs.bootstrap,
             model: inputs.model.unwrap_or_else(|| configured.model.to_owned()),
             effort: inputs.effort.unwrap_or(configured.effort),
             fast_mode: configured.fast_mode.map(|_| inputs.fast_mode),
@@ -251,8 +252,8 @@ mod tests {
             Inputs {
                 worktree: PathBuf::from("/work/tree"),
                 vendor: "fixture".parse().expect("fixture vendor name"),
-                prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
-                skill: "skill".to_owned(),
+                prompt: "[$spice](<spice://SKILL.md>)".to_owned(),
+                bootstrap: crate::install::skill_bootstrap().to_owned(),
                 environment: Environment::empty(),
                 lane: LANE.parse().expect("fixture lane"),
                 resume: vendor::Resume::Fresh,
@@ -280,8 +281,8 @@ mod tests {
         let inputs = |model: Option<&str>, effort| Inputs {
             worktree: PathBuf::from("/work/tree"),
             vendor: "fixture".parse().expect("fixture vendor name"),
-            prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
-            skill: "skill".to_owned(),
+            prompt: "[$spice](<spice://SKILL.md>)".to_owned(),
+            bootstrap: crate::install::skill_bootstrap().to_owned(),
             environment: Environment::empty(),
             lane: LANE.parse().expect("fixture lane"),
             resume: vendor::Resume::Fresh,

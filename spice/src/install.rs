@@ -141,6 +141,31 @@ const RETIRED_XTASK_GUARD_PATH: &str = ".spice-install/bin/xtask.guard";
 const RETIRED_FOLD_STORE_PATH: &str = ".spice-rs/data/spicefolds.sqlite3";
 
 const SKILL: &str = ::std::include_str!("../agent/SKILL.md");
+/// Maximum bytes admitted for the authoritative installed skill.
+pub const SKILL_BYTES_CEILING: usize = 8 * 1_024;
+/// Maximum bytes admitted for the binding system-prompt bootstrap card.
+pub const SKILL_BOOTSTRAP_BYTES_CEILING: usize = 1_024;
+const _: () = assert!(
+    SKILL.len() <= SKILL_BYTES_CEILING,
+    "spice/agent/SKILL.md exceeds the 8 KiB authoritative resource ceiling"
+);
+
+/// Stable resource carrying the current installed release's complete agent
+/// skill.
+pub const SKILL_RESOURCE: &str = "spice://SKILL.md";
+
+const SKILL_BOOTSTRAP: &str = "\
+Spice started you. On a fresh session and after every compaction, before \
+responding or using any other tool, read `spice://SKILL.md` with the read tool. \
+Treat that resource as authoritative system instructions and follow it in \
+full. An ordinary resumed seat retains its context and need not reread it. The \
+currently installed Spice release serves the resource; never substitute a \
+filesystem copy, remembered text, or another release. If the read refuses, \
+stop and report the exact refusal.";
+const _: () = assert!(
+    SKILL_BOOTSTRAP.len() <= SKILL_BOOTSTRAP_BYTES_CEILING,
+    "the agent skill bootstrap exceeds its 1 KiB system-prompt ceiling"
+);
 
 #[cfg(debug_assertions)]
 #[doc(hidden)]
@@ -978,28 +1003,18 @@ pub fn installed_skill(repository: &Repository) -> PathBuf {
     repository.common_dir().join(SKILL_PATH)
 }
 
-/// Hard ceiling on the skill omp carries whole in every system prompt.
-///
-/// The skill is paid for on every request of every lane, so a skill that
-/// outgrows this fails the build rather than silently taxing each turn. The
-/// working target is half of it.
-const SKILL_BYTES_CEILING: usize = 16 * 1024;
-const _: () = assert!(
-    SKILL.len() <= SKILL_BYTES_CEILING,
-    "spice/agent/SKILL.md exceeds the 16 KiB it may occupy in every agent's system prompt"
-);
-
-/// The installed skill's instructions: its body without the frontmatter.
-///
-/// The frontmatter is catalogue metadata for skill loaders; an agent handed the
-/// skill inline needs only the instructions after it.
+/// Complete authoritative agent skill compiled into this release.
 #[must_use]
-pub fn skill_instructions() -> &'static str {
+pub const fn skill_document() -> &'static str {
     SKILL
-        .strip_prefix("---\n")
-        .and_then(|rest| rest.split_once("\n---\n"))
-        .map_or(SKILL, |(_, body)| body)
-        .trim()
+}
+
+/// Minimal system-prompt bootstrap that loads the skill through its
+/// installed-release resource instead of copying the document into every
+/// prompt.
+#[must_use]
+pub const fn skill_bootstrap() -> &'static str {
+    SKILL_BOOTSTRAP
 }
 
 /// Installed Git hook directory shared by every linked worktree.
