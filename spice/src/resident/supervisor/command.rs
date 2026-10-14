@@ -3,14 +3,15 @@
 //!
 //! A vendor launched over a command stream reads nothing from its arguments
 //! after start. The supervisor owns the pipe: it writes the opening request,
-//! obtains the current authenticated steering inbox from the resident when
-//! kicked, answers dialogs, and drops the pipe once the admitted prompt has
-//! settled so the child drains and exits on its own. A drain interrupts the
-//! turn over the same pipe before any signal is sent. A confirm dialog becomes one
-//! consent request the resident decides; a call on the lane's shell runs in
-//! the lane's own terminal and answers with what the command said; a read of
-//! a `spice://` URL answers with the resource it names; every other dialog is
-//! declined, since nobody at the lane can compose a choice or text for it.
+//! reads the current authenticated steering inbox through the installed
+//! executable when kicked, answers dialogs, and drops the pipe once the
+//! admitted prompt has settled so the child drains and exits on its own. A
+//! drain interrupts the turn over the same pipe before any signal is sent. A
+//! confirm dialog becomes one consent request the resident decides; a call on
+//! the lane's shell runs in the lane's own terminal and answers with what the
+//! command said; a read of a `spice://` URL answers with the resource it
+//! names; every other dialog is declined, since nobody at the lane can compose
+//! a choice or text for it.
 //!
 //! Steering never waits on a command: unheard direction arriving while a
 //! command runs interrupts the call, which answers with what the command said
@@ -251,42 +252,29 @@ pub(in crate::resident) struct ClaimLapseNotice {
 }
 
 impl<W: Write + Send + 'static> Driver<W> {
-    /// Own a child's stdin, authenticated resident discovery, lane identity,
-    /// steering media root, and the terminal its commands run in.
-    pub(in crate::resident) fn new(
+    /// Own a child's stdin, authenticated resident discovery, the occupant's
+    /// supervisor `state` path, lane identity, and the terminal its commands
+    /// run in.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error naming why the installed executable is unknown.
+    pub(in crate::resident::supervisor) fn new(
         stdin: W,
         discovery: impl Into<PathBuf>,
-        steering_media: PathBuf,
+        state: &Path,
         lane: CanonicalUuid,
         worktree: PathBuf,
         terminal: Option<Terminal>,
-    ) -> Arc<Self> {
+    ) -> io::Result<Arc<Self>> {
+        let inbox = inbox::Reader::new(state, lane, &worktree)?;
         let discovery = discovery.into();
         let environment = crate::session_environment().rooted(worktree.clone());
         let occupant = uri::occupant_environment(terminal.as_ref(), &environment);
-        let uri_server = uri::resident_server(discovery.clone(), lane, worktree, occupant);
-        let projector = media::Projector::new(steering_media, lane);
-        Self::with_server(
+        let uri_server = uri::resident_server(discovery, lane, worktree, occupant);
+        Ok(Self::with_server(
             stdin,
-            move || {
-                let inbox = crate::command_client::read_lane_inbox(&discovery, lane).ok()?;
-                let lane_inbox = inbox.lanes.iter().find(|row| row.lane == lane)?;
-                // Direction outranks its pictures: a projection failure still
-                // delivers the text and references, and says why on stderr.
-                let projected = projector.project(lane_inbox).unwrap_or_else(|error| {
-                    eprintln!("spice supervisor: steering media projection failed: {error}");
-                    media::Projected::new()
-                });
-                let seal = steer::Key::for_identity(lane);
-                Some(
-                    steer::inbox::render_pending(
-                        &seal,
-                        &lane_inbox.pending,
-                        |directive, ordinal| projected.get(&(directive, ordinal)).cloned(),
-                    )
-                    .into_bytes(),
-                )
-            },
+            move || inbox.read(),
             {
                 let environment = environment.clone();
                 move || {
@@ -301,7 +289,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             uri_server,
             steer::Key::for_identity(lane),
             terminal,
-        )
+        ))
     }
 
     fn with_server(
@@ -1433,7 +1421,7 @@ mod admission_tests;
 mod answered;
 #[cfg(test)]
 mod event_tests;
-mod media;
+pub(in crate::resident::supervisor) mod inbox;
 mod registration;
 pub(in crate::resident) use registration::FirstTurn;
 pub(in crate::resident) mod renewal;

@@ -8,9 +8,10 @@ use super::Driver;
 const ASKED: &str = "1kJK6M0V";
 const LATER: &str = "1kJK6N3R";
 
-/// The resident's inbox answer, as the test moves it.
+/// The resident's inbox answer, as the test moves it; `None` while no
+/// resident this seat can speak with answers.
 #[derive(Clone, Default)]
-struct Journal(Arc<Mutex<String>>);
+struct Journal(Arc<Mutex<Option<String>>>);
 
 impl Journal {
     fn list(&self, directives: &[(&str, &str)]) {
@@ -26,7 +27,11 @@ impl Journal {
             }
             rendered.push_str("</1kJK6Q0b>\n");
         }
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = rendered;
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(rendered);
+    }
+
+    fn unreachable(&self) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
 }
 
@@ -42,14 +47,12 @@ impl Seat {
         let driver = Driver::with_readers(
             Vec::new(),
             move || {
-                Some(
-                    inbox
-                        .0
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .clone()
-                        .into_bytes(),
-                )
+                inbox
+                    .0
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone()
+                    .map(String::into_bytes)
             },
             || None,
             |_| Err("unread".to_owned()),
@@ -246,4 +249,23 @@ fn a_compaction_replays_only_what_is_still_unanswered() {
         "{replay}"
     );
     assert!(!replay.contains(ASKED), "{replay}");
+}
+
+#[test]
+fn direction_unread_while_the_resident_is_unreachable_is_steered_once_when_it_answers() {
+    let seat = Seat::new();
+    seat.kick(&[(ASKED, "published")]);
+    seat.journal.unreachable();
+    seat.driver.deliver_inbox();
+
+    // The resident answers again with a later direction and a climbed ladder.
+    seat.kick(&[(ASKED, "reminded"), (LATER, "published")]);
+    let steered = seat.steered();
+    assert_eq!(steered.len(), 2, "{steered:?}");
+    assert!(steered[1].contains(LATER) && !steered[1].contains(ASKED));
+
+    seat.journal.unreachable();
+    seat.driver.deliver_inbox();
+    seat.kick(&[(ASKED, "reminded"), (LATER, "published")]);
+    assert_eq!(seat.steered().len(), 2, "nothing is steered twice");
 }
