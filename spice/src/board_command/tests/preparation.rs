@@ -1132,6 +1132,59 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
 }
 
 #[test]
+fn next_work_offers_a_plan_released_task_whose_open_design_is_off_the_frontier() {
+    let (root, bus, epoch, seats) = fixture("preparation-design-next-nested", 2);
+    let design = add_controller(&bus, epoch, "Nested design", wire::TaskIntent::Design, None);
+    let selected = add_plan_output(&bus, epoch, &design, "Selected plan");
+    let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
+    let (candidate, source) =
+        retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
+    let coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
+    record_test_decisions(&bus, epoch, &design, &selected, &candidate, &source);
+    authorize_test_output(
+        &bus, epoch, &design, &selected, &sibling, candidate, &coverage,
+    );
+    let planner = Actor::Lane(seats[0].lane);
+    claim_task(&bus, epoch, &seats[0], &planner, &selected);
+    let task = add_output(&bus, epoch, &selected, "Selected plan task");
+    assert_committed(review_clean(&bus, epoch, &seats[0], &selected));
+    // With the sibling gone and the open Design held, no frontier row names
+    // the Design as its parent; only the task's controller link reaches it.
+    let visible = board(&bus, epoch, Actor::Operator);
+    let heads = at(&visible, &sibling);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDelete,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ],
+        &TaskDelete {
+            task: sibling,
+            reason: "unselected".to_owned(),
+            force_claimed: false,
+        },
+    ));
+    claim_task(&bus, epoch, &seats[0], &planner, &design);
+
+    let worker = Actor::Lane(seats[1].lane);
+    let Some(NextWorkState::Candidate { task: offered }) =
+        next_board(&bus, epoch, worker.clone()).next
+    else {
+        panic!("the allocator must offer the Plan-released task")
+    };
+    assert_eq!(
+        offered.statement.body.born,
+        task.born().expect("task stamp")
+    );
+    claim_task(&bus, epoch, &seats[1], &worker, &task);
+    clean(&root, bus);
+}
+
+#[test]
 fn a_design_refuses_authorization_until_its_pending_dependencies_settle() {
     let (root, bus, epoch, seats) = fixture("preparation-design-blocked", 2);
     let design = add_controller(

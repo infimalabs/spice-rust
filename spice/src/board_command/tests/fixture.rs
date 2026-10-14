@@ -266,6 +266,25 @@ pub(super) fn board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> BoardAnswe
     *answer
 }
 
+/// The allocator's next-work answer for `actor`, as `spice task next` reads it.
+pub(super) fn next_board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> BoardAnswer {
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Board(answer),
+        ..
+    }) = issue(
+        bus,
+        epoch,
+        actor,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Next,
+    )
+    else {
+        panic!("next-work read does not return a board answer")
+    };
+    *answer
+}
+
 /// The rows an Open read reports blocked, after proving they are exactly the
 /// open rows the allocator's own gate holds back on the complete board.
 pub(super) fn open_blocked(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStamp> {

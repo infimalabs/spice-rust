@@ -2,24 +2,6 @@ use super::*;
 
 use wire::intent::TeamLife;
 
-fn next_board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> BoardAnswer {
-    let Outcome::Reply(Reply {
-        body: CommandAnswer::Board(answer),
-        ..
-    }) = issue(
-        bus,
-        epoch,
-        actor,
-        CommandKind::BoardRead,
-        Vec::new(),
-        &BoardRead::Next,
-    )
-    else {
-        panic!("next-work read does not return a board answer")
-    };
-    *answer
-}
-
 fn seed_parked_board(seats: &[Seat], bus: &Bus, epoch: CanonicalUuid) {
     let held = todo_task(bus, epoch, "DRAIN-held0001", "Held by a peer");
     claim_task(bus, epoch, &seats[1], &Actor::Lane(seats[1].lane), &held);
