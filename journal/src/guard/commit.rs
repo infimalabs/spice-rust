@@ -72,6 +72,7 @@ impl Journal {
             .map_err(room_refusal)?;
         crate::rooms::require_coordination_writes(&transaction, proposed())
             .map_err(room_refusal)?;
+        crate::rooms::require_return_deliveries(&transaction, proposed()).map_err(room_refusal)?;
         crate::rooms::require_open_controllers(&transaction, proposed()).map_err(room_refusal)?;
         apply_heads(
             &transaction,

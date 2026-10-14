@@ -40,7 +40,7 @@ fn live_changes_use_exact_requests_and_only_matching_provider_responses_apply() 
     driver.observe(&decoded(
         br#"{"id":"live-effort","type":"response","command":"set_thinking_level","success":true}"#,
     ));
-    let mut bytes = [0u8; RETUNE_REPLY_BYTES];
+    let mut bytes = [0u8; CALLBACK_REPLY_BYTES];
     let length = socket
         .recv(&mut bytes)
         .expect("the matching response answers");
@@ -138,7 +138,7 @@ fn fast_mode_requests_name_the_disposition_and_a_failed_response_refuses() {
     driver.observe(&decoded(
         br#"{"id":"live-fast","type":"response","command":"set_fast_mode","success":false,"error":"Fast mode is unavailable for the current model."}"#,
     ));
-    let mut bytes = [0u8; RETUNE_REPLY_BYTES];
+    let mut bytes = [0u8; CALLBACK_REPLY_BYTES];
     let length = socket
         .recv(&mut bytes)
         .expect("the failed fast-mode response answers");

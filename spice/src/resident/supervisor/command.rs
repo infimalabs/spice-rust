@@ -38,7 +38,7 @@ use steering::{InboxDelivery, ReasoningReminder};
 /// Bytes one kick datagram may carry, including private occupant-scoped notices.
 pub(in crate::resident) const KICK_BYTES: usize = 1024;
 const ROOM_CATCH_UP_PURPOSE: &str = "room-catch-up";
-const RETUNE_REPLY_BYTES: usize = 4096;
+const CALLBACK_REPLY_BYTES: usize = 4096;
 const RETUNE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// One child's command stream and what has already been said on it.
@@ -195,8 +195,14 @@ pub(in crate::resident) enum Kick {
     TaskGeneration(TaskGenerationNotice),
     /// A task the resident proactively assigned to this exact occupant.
     TaskAssignment(TaskAssignmentNotice),
-    /// A private background notice for this exact occupant.
+    /// A private best-effort background notice for this exact occupant.
     Background(crate::resident::design_input::BackgroundNotice),
+    /// A private background notice whose exact occupant must confirm enqueue.
+    BackgroundConfirmed {
+        notice: crate::resident::design_input::BackgroundNotice,
+        request: String,
+        reply: PathBuf,
+    },
     /// A claim this lane held lapsed; addressed to the lane's current occupant.
     ClaimLapse(ClaimLapseNotice),
     /// An MSG packet this exact occupant authored missed some or every address.
@@ -1169,6 +1175,21 @@ pub(in crate::resident) fn background_notice(
     send(paths, lane, &Kick::Background(notice));
 }
 
+/// Queue one keyless background notice for the exact occupant and wait until
+/// that supervisor confirms its driver accepted the notice.
+///
+/// # Errors
+///
+/// Returns an I/O error when no matching supervisor receives the request, its
+/// callback cannot be read, or its answer names another request.
+pub(in crate::resident) fn confirmed_background_notice(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    notice: crate::resident::design_input::BackgroundNotice,
+) -> io::Result<bool> {
+    confirmed_background::send(paths, lane, notice)
+}
+
 /// Privately tell the lane that held a lapsed claim, at its current occupant.
 pub(in crate::resident) fn claim_lapse(
     paths: &RuntimePaths,
@@ -1232,7 +1253,7 @@ pub(in crate::resident) fn retune(
             reply: reply.clone(),
         };
         let result = send_to(&kick_path(paths, lane), &kick).and_then(|()| {
-            let mut bytes = [0u8; RETUNE_REPLY_BYTES];
+            let mut bytes = [0u8; CALLBACK_REPLY_BYTES];
             let length = socket.recv(&mut bytes)?;
             let answer: RetuneReply = serde_json::from_slice(&bytes[..length])
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -1270,6 +1291,14 @@ fn answer_retune(reply: &Path, answer: RetuneReply) {
     }
     #[cfg(not(unix))]
     let _ = (reply, answer);
+}
+
+fn background_accepted<W: Write + Send + 'static>(
+    driver: &Driver<W>,
+    occupant: CanonicalUuid,
+    notice: &crate::resident::design_input::BackgroundNotice,
+) -> bool {
+    notice.occupant == occupant && driver.background(&notice.purpose, &notice.text).is_ok()
 }
 
 /// Interrupt the driver listening at `door`, if one does.
@@ -1360,6 +1389,14 @@ pub(in crate::resident) fn listen_for_kicks(
                             let _ = driver.background(&notice.purpose, &notice.text);
                         }
                         Ok(Kick::Background(_)) => {}
+                        Ok(Kick::BackgroundConfirmed {
+                            notice,
+                            request,
+                            reply,
+                        }) => {
+                            let accepted = background_accepted(&driver, occupant, &notice);
+                            confirmed_background::answer(&reply, request, accepted);
+                        }
                         Ok(Kick::ClaimLapse(notice)) if notice.occupant == occupant => {
                             driver.deliver_claim_lapse(&notice);
                         }
@@ -1408,6 +1445,7 @@ impl Drop for KickDoor {
 #[cfg(test)]
 mod admission_tests;
 mod answered;
+mod confirmed_background;
 pub(in crate::resident::supervisor) mod current;
 #[cfg(test)]
 mod event_tests;

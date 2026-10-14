@@ -1,11 +1,12 @@
 //! Resident Design notice and return delivery records: background notices
 //! that carry no room, task, steering, or claim authority.
 
+use rusqlite::{Connection, OptionalExtension};
 use wire::rooms::{
     DESIGN_NOTICE_TERMS, DecisionOutcome, DesignNoticed, DesignReturnDelivered,
     PreparationDecision, ProposalRef,
 };
-use wire::{Actor, AnyFact};
+use wire::{Actor, AnyFact, ClaimDisposition, ClaimHead};
 
 use super::{Authority, Refusal, require_task, subject, unsound};
 
@@ -20,6 +21,44 @@ pub(super) fn fold(
     }
     fact.read::<DesignNoticed>()
         .map(|body| notice(authority, actor, &body))
+}
+
+/// Every return-delivery record still names the exact active claim it served.
+///
+/// The room fold proves the decision. This commit-wide check runs against the
+/// current claim head in the same immediate transaction, immediately before
+/// task heads can move.
+pub(crate) fn require_deliveries<'a>(
+    connection: &Connection,
+    facts: impl IntoIterator<Item = &'a AnyFact>,
+) -> Result<(), Refusal> {
+    for body in facts
+        .into_iter()
+        .filter_map(|fact| fact.read::<DesignReturnDelivered>())
+    {
+        let design = &body.decision.controller;
+        let claim = connection
+            .query_row(
+                "SELECT body FROM claim_heads WHERE stamp = ?1",
+                [design.as_str()],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()?
+            .map(|body| wire::decode::<ClaimHead>(&body))
+            .transpose()?;
+        if claim.is_some_and(|claim| {
+            claim.disposition == ClaimDisposition::Active
+                && claim.claimed.get() == body.claim.get()
+                && claim.actor == Actor::Lane(body.lane)
+        }) {
+            continue;
+        }
+        return unsound(format!(
+            "return delivery for {design} names no active claim won at {} by lane {}",
+            body.claim, body.lane
+        ));
+    }
+    Ok(())
 }
 
 /// A delivered return names a recorded return decision of its Design.

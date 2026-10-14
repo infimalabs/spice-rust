@@ -231,3 +231,100 @@ fn failed_landed_evidence_write_preserves_and_retries_the_exact_page() {
     assert_eq!(sink.answered(2)[1]["message"], replacement.text);
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
+
+#[cfg(unix)]
+fn confirmed_background_round_trip<W: Write + Send + 'static>(
+    driver: Arc<Driver<W>>,
+    occupant: CanonicalUuid,
+    notice: crate::resident::design_input::BackgroundNotice,
+) -> io::Result<bool> {
+    let identity = crate::resident::new_uuid();
+    let door = Path::new("/tmp").join(format!("spice-background-test-{identity}.sock"));
+    let _ = fs::remove_file(&door);
+    let socket = std::os::unix::net::UnixDatagram::bind(&door)?;
+    let responder = std::thread::spawn(move || {
+        let mut bytes = [0u8; KICK_BYTES];
+        let length = socket.recv(&mut bytes).expect("background kick arrives");
+        let Kick::BackgroundConfirmed {
+            notice,
+            request,
+            reply,
+        } = serde_json::from_slice(&bytes[..length]).expect("background kick decodes")
+        else {
+            panic!("confirmed delivery sends a confirmed background kick");
+        };
+        let accepted = background_accepted(&driver, occupant, &notice);
+        confirmed_background::answer(&reply, request, accepted);
+    });
+    let result = confirmed_background::send_to_door(&door, Path::new("/tmp"), notice);
+    responder.join().expect("background responder joins");
+    fs::remove_file(door).expect("background kick door cleans up");
+    result
+}
+
+#[derive(Clone, Copy)]
+struct RefusingSink;
+
+impl Write for RefusingSink {
+    fn write(&mut self, _bytes: &[u8]) -> io::Result<usize> {
+        Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "fixture refuses the aside",
+        ))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn confirmed_background_delivery_requires_the_exact_occupant_and_a_successful_write() {
+    let occupant = crate::resident::new_uuid();
+    let notice = crate::resident::design_input::BackgroundNotice {
+        occupant,
+        purpose: "design-return:DESIGN-1".to_owned(),
+        text: "returned input".to_owned(),
+    };
+    let sink = Sink::default();
+    assert!(
+        confirmed_background_round_trip(driver(&sink), occupant, notice.clone())
+            .expect("matching delivery answers"),
+        "the exact occupant confirms a successful enqueue"
+    );
+    assert_eq!(sink.answered(1)[0]["message"], notice.text);
+
+    assert!(
+        !confirmed_background_round_trip(
+            driver(&Sink::default()),
+            crate::resident::new_uuid(),
+            notice.clone(),
+        )
+        .expect("mismatched delivery answers"),
+        "another occupant refuses the notice"
+    );
+
+    let refusing = Driver::with_readers(
+        RefusingSink,
+        || None,
+        || None,
+        |_| Err("no reads here".to_owned()),
+        steer::Key::for_identity(crate::resident::new_uuid()),
+        None,
+    );
+    assert!(
+        !confirmed_background_round_trip(refusing, occupant, notice.clone())
+            .expect("failed write answers"),
+        "a failed driver write refuses consumption"
+    );
+
+    let missing = Path::new("/tmp").join(format!(
+        "spice-background-missing-{}.sock",
+        crate::resident::new_uuid()
+    ));
+    assert!(
+        confirmed_background::send_to_door(&missing, Path::new("/tmp"), notice).is_err(),
+        "a missing supervisor door is a transport failure"
+    );
+}
