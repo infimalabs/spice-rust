@@ -342,10 +342,11 @@ fn render_team_total(
     }
 }
 
-/// One task-detail tab in the team strip.
+/// One task-detail tab in the team strip, in the accent of the lane working it.
 fn render_team_task_handle(task: &crate::work::WorkTask<'_>, render: &FleetRender<'_, '_>) -> Html {
     let statement = &task.row().statement.body;
     let availability = task.availability();
+    let owner_accent = task.working_claimant_accent(render.runtime.lanes());
     let handle_label = format!(
         "Open {}: {}, {}",
         statement.handle,
@@ -371,6 +372,7 @@ fn render_team_task_handle(task: &crate::work::WorkTask<'_>, render: &FleetRende
             title={handle_label.clone()}
             aria-label={handle_label}
             data-availability={availability.key()}
+            data-accent={owner_accent.map(|accent| accent.to_string())}
             data-sidebar-focus-key={focus_key}
             onclick={open_task}
         >{statement.handle.to_string()}</button>

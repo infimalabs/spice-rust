@@ -528,6 +528,20 @@ pub const fn accent(members: usize, position: usize) -> usize {
     position % ACCENTS
 }
 
+/// Resolve the accent slot currently dealt to one independently steerable lane.
+///
+/// Agent color follows canonical team position, so every surface that names a
+/// lane uses the same right-edge palette deal.
+#[must_use]
+pub fn lane_accent(lanes: &[LaneRow], lane: CanonicalUuid) -> Option<usize> {
+    lanes.iter().find_map(|team| {
+        team.members
+            .iter()
+            .position(|member| member.lane == lane)
+            .map(|position| accent(team.members.len(), position))
+    })
+}
+
 /// The part of a worktree path that names one lane rather than the fleet.
 ///
 /// Lanes of one fleet are siblings in a single parent directory, so a path cut

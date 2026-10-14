@@ -74,7 +74,7 @@ fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Chann
             if !tasks.is_empty() {
                 {render_total(render, view, channels, &tasks)}
                 <nav class="app-horn-tabs team-tasks" aria-label="Open tasks associated with this group's designs">
-                    {for tasks.iter().copied().map(|task| render_handle(render, task))}
+                    {for tasks.iter().copied().map(|task| render_handle(render, channels, task))}
                 </nav>
             }
         </div>
@@ -123,10 +123,14 @@ fn render_total(
     }
 }
 
-/// One neutral task-detail target in the group strip.
-fn render_handle(render: &GroupRender<'_, '_>, task: &WorkTask<'_>) -> Html {
+/// One task-detail target in the accent of the Design it serves.
+fn render_handle(render: &GroupRender<'_, '_>, channels: &[Channel], task: &WorkTask<'_>) -> Html {
     let statement = &task.row().statement.body;
     let availability = task.availability();
+    let accent = channels
+        .iter()
+        .find(|channel| crate::runtime::associated(statement, &channel.stamp))
+        .map(|channel| channel.accent);
     let label = format!(
         "Open {}: {}, {}",
         statement.handle,
@@ -151,6 +155,7 @@ fn render_handle(render: &GroupRender<'_, '_>, task: &WorkTask<'_>) -> Html {
             title={label.clone()}
             aria-label={label}
             data-availability={availability.key()}
+            data-accent={accent.map(|accent| accent.to_string())}
             data-sidebar-focus-key={format!("group-task:{}", statement.born)}
             onclick={open_task}
         >{statement.handle.to_string()}</button>
