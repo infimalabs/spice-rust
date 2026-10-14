@@ -87,11 +87,7 @@ fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_bac
         &mut diagnostic,
     )
     .expect("first backlog restores");
-    let accepted = wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-    };
+    let accepted = operator_session(epoch);
     let request = wire::StreamRequest::Subscribe {
         v: wire::WireVersion::CURRENT,
         id: test_uuid(8),
@@ -199,11 +195,7 @@ fn each_resident_generation_restores_durable_prose_before_app_subscription() {
             String::from_utf8_lossy(&diagnostic),
         );
 
-        let accepted = wire::Accepted {
-            wire: wire::WireVersion::CURRENT,
-            actor: Actor::Operator,
-            epoch,
-        };
+        let accepted = operator_session(epoch);
         let request = wire::StreamRequest::Subscribe {
             v: wire::WireVersion::CURRENT,
             id: test_uuid(8),
@@ -295,11 +287,7 @@ fn startup_fills_the_visible_floor_across_a_sparse_tool_horizon() {
         String::from_utf8_lossy(&diagnostic),
     );
 
-    let accepted = wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-    };
+    let accepted = operator_session(epoch);
     let generation = message_snapshot(&source, &accepted, epoch, test_uuid(53));
     let prose = generation
         .messages
@@ -435,11 +423,7 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
     )
     .expect("appended backlog resumes");
 
-    let accepted = wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-    };
+    let accepted = operator_session(epoch);
     let request = wire::StreamRequest::Subscribe {
         v: wire::WireVersion::CURRENT,
         id: test_uuid(18),
@@ -510,11 +494,7 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
     .expect("initial backlog restores");
     assert!(diagnostic.is_empty());
 
-    let accepted = wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-    };
+    let accepted = operator_session(epoch);
     let (_, frames) = source
         .begin(
             &accepted,
@@ -757,11 +737,7 @@ fn an_intent_only_acknowledgement_publishes_live_with_its_quoted_directive() {
     )
     .expect("the intent card publishes live");
 
-    let accepted = wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-    };
+    let accepted = operator_session(epoch);
     let request = wire::StreamRequest::Subscribe {
         v: wire::WireVersion::CURRENT,
         id: test_uuid(45),
@@ -852,6 +828,15 @@ fn restore_mixed_acknowledgement_message(
     assert_mixed_acknowledgement_message(&source, epoch, request, expected, acknowledgement);
 }
 
+fn operator_session(epoch: CanonicalUuid) -> wire::Accepted {
+    wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+        release: "1.2.3".parse().expect("fixture release"),
+    }
+}
+
 fn assert_mixed_acknowledgement_message(
     source: &serve::stream::Source,
     epoch: CanonicalUuid,
@@ -859,11 +844,7 @@ fn assert_mixed_acknowledgement_message(
     expected: &str,
     acknowledgement: wire::MessageAcknowledgement,
 ) {
-    let accepted = wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-    };
+    let accepted = operator_session(epoch);
     let request = wire::StreamRequest::Subscribe {
         v: wire::WireVersion::CURRENT,
         id: request,

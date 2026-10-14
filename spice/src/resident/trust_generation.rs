@@ -1187,6 +1187,7 @@ fn admitted_trust_command_as(
         wire: wire::WireVersion::CURRENT,
         actor,
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("fixture trust command admits")
 }

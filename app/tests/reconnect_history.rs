@@ -17,7 +17,10 @@ fn seq(value: u64) -> Seq {
 
 fn acceptance(session: &Session) -> app::Admitted<wire::Accepted> {
     session
-        .admit_accepted(format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}"}}"#).as_bytes())
+        .admit_accepted(
+            format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}","release":"1.2.3"}}"#)
+                .as_bytes(),
+        )
         .expect("acceptance is admitted")
 }
 

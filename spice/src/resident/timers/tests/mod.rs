@@ -1305,6 +1305,7 @@ fn capture_lapsed_task(
         wire: WireVersion::CURRENT,
         actor: Actor::Lane(fixture.authority.lane),
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("capture command admits");
     let capture = crate::board_command::dispatch_with_repository(

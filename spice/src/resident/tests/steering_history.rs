@@ -103,6 +103,7 @@ impl Directions {
             wire: wire::WireVersion::CURRENT,
             actor,
             epoch: self.epoch,
+            release: "1.2.3".parse().expect("fixture release"),
         })
     }
 

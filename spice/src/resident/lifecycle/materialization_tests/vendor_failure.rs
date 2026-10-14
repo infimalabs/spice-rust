@@ -168,6 +168,7 @@ fn recalled_hold(fixture: &VendorExitFixture) -> Option<wire::intent::LaneHold> 
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch: epoch(),
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("operator recall admits");
     let wire::Outcome::Reply(reply) = crate::resident::lane_surface::recall(

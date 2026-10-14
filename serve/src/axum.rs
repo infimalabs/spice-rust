@@ -128,8 +128,9 @@ impl Capabilities {
         &self,
         hello: &wire::Hello,
         epoch: wire::CanonicalUuid,
+        release: &wire::manifest::ProductVersion,
     ) -> Result<wire::Accepted, OpeningError> {
-        self.admit_session(hello, epoch)
+        self.admit_session(hello, epoch, release)
             .map(|admission| admission.accepted)
     }
 
@@ -138,6 +139,7 @@ impl Capabilities {
         &self,
         hello: &wire::Hello,
         epoch: wire::CanonicalUuid,
+        release: &wire::manifest::ProductVersion,
     ) -> Result<CapabilityAdmission, OpeningError> {
         hello.admit(epoch).map_err(|rejected| match rejected {
             wire::Rejected::Wire(refusal) => OpeningError::Refused(refusal),
@@ -168,6 +170,7 @@ impl Capabilities {
                 wire: wire::WireVersion::CURRENT,
                 actor,
                 epoch,
+                release: release.clone(),
             },
             retired,
         })

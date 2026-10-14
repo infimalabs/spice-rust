@@ -170,6 +170,7 @@ fn answer_one_opening(
                 wire: wire::WireVersion::CURRENT,
                 actor: Actor::Operator,
                 epoch: hello.epoch,
+                release: "1.2.3".parse().expect("fixture release"),
             })
             .expect("peer acceptance encodes")
             .into(),
@@ -405,17 +406,27 @@ fn discovery_fifo_substitution_is_nonblocking_and_refused_from_the_descriptor() 
     drop(anchor);
 }
 
+fn accepted(epoch: CanonicalUuid, release: &str) -> wire::Accepted {
+    wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: wire::Actor::Operator,
+        epoch,
+        release: release.parse().expect("fixture release"),
+    }
+}
+
 #[test]
 fn response_binds_identity_epoch_position_and_answer_shape() {
     let mapped = mapped();
     let epoch = uuid(5);
+    let session = accepted(epoch, spice::version::product().as_str());
     let bytes = response(mapped.id, epoch, committed(), state_body());
     let outcome = decode_response(
         &bytes,
         &COMMAND_CONTRACT,
         mapped.id,
         mapped.kind,
-        epoch,
+        &session,
         uuid(6),
     );
     assert!(matches!(
@@ -434,7 +445,7 @@ fn response_binds_identity_epoch_position_and_answer_shape() {
         &COMMAND_CONTRACT,
         uuid(7),
         mapped.kind,
-        epoch,
+        &session,
         uuid(6),
     );
     let Outcome::Fault(fault) = replay else {
@@ -453,7 +464,7 @@ fn response_binds_identity_epoch_position_and_answer_shape() {
         &COMMAND_CONTRACT,
         mapped.id,
         mapped.kind,
-        epoch,
+        &session,
         uuid(6),
     ) else {
         panic!("snapshot cannot answer a mutating contract");
@@ -471,12 +482,71 @@ fn response_binds_identity_epoch_position_and_answer_shape() {
         &COMMAND_CONTRACT,
         mapped.id,
         mapped.kind,
-        epoch,
+        &session,
         uuid(6),
     ) else {
         panic!("wrong answer shape must fault");
     };
     assert_eq!(fault.reason, "command::answer-binding");
+    assert!(!fault.detail.contains("release"));
+}
+
+/// An answer from another release refuses without being read, and names both
+/// releases with the side that must move: an older resident restarts on the
+/// client's release, while an older client gives way to the resident's.
+#[test]
+fn foreign_release_answer_names_both_releases_and_the_side_that_moves() {
+    let mapped = mapped();
+    let epoch = uuid(5);
+    let foreign = response(
+        mapped.id,
+        epoch,
+        committed(),
+        serde_json::json!({ "from": "seated" }),
+    );
+    let Outcome::Fault(fault) = decode_response(
+        &foreign,
+        &COMMAND_CONTRACT,
+        mapped.id,
+        mapped.kind,
+        &accepted(epoch, "999999.0.0"),
+        uuid(6),
+    ) else {
+        panic!("a foreign answer must fault");
+    };
+    assert_eq!(fault.reason, "command::answer-binding");
+    assert!(fault.detail.contains(spice::version::product().as_str()));
+    assert!(fault.detail.contains("installed with release 999999.0.0"));
+
+    let release =
+        |text: &str| -> wire::manifest::ProductVersion { text.parse().expect("fixture release") };
+    let Outcome::Fault(newer_client) =
+        crate::command_client::answer_binding_fault(&release("2.0.0"), &release("1.4.0"))
+    else {
+        panic!("an older resident's foreign answer faults");
+    };
+    assert!(newer_client.detail.contains("resident release 1.4.0"));
+    assert!(
+        newer_client
+            .detail
+            .contains("restart the resident on release 2.0.0")
+    );
+    let Outcome::Fault(older_client) = crate::command_client::answer_binding_fault(
+        &release("1.4.0-alpha.dW0a"),
+        &release("1.4.0-alpha.dW0b"),
+    ) else {
+        panic!("a newer resident's foreign answer faults");
+    };
+    assert!(
+        older_client
+            .detail
+            .contains("client release 1.4.0-alpha.dW0a")
+    );
+    assert!(
+        older_client
+            .detail
+            .contains("installed with release 1.4.0-alpha.dW0b")
+    );
 }
 
 #[test]
@@ -513,7 +583,7 @@ fn remote_outcomes_cannot_echo_the_discovery_capability() {
         &COMMAND_CONTRACT,
         mapped.id,
         mapped.kind,
-        discovery.epoch,
+        &accepted(discovery.epoch, spice::version::product().as_str()),
         capability,
     ) else {
         panic!("response capability echo must fault");

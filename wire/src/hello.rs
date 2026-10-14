@@ -242,6 +242,9 @@ pub struct Accepted {
     pub actor: Actor,
     /// Resident generation this session addresses.
     pub epoch: CanonicalUuid,
+    /// Product release the resident runs, so a client can name which side of
+    /// a protocol cutover must move when the two do not speak one registry.
+    pub release: crate::manifest::ProductVersion,
 }
 
 /// Why an opening did not begin a session.

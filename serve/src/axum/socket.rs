@@ -838,17 +838,22 @@ async fn open_session(
         Message::Close(_) | Message::Ping(_) | Message::Pong(_) => return None,
     };
     match wire::decode::<wire::Hello>(&bytes) {
-        Ok(hello) => match state.capabilities.admit_session(&hello, state.epoch) {
-            Ok(admission) => Some((admission.accepted, hello.capability, admission.retired)),
-            Err(OpeningError::Refused(refusal)) => {
-                send_encoded(socket, &refusal).await;
-                None
+        Ok(hello) => {
+            match state
+                .capabilities
+                .admit_session(&hello, state.epoch, &state.version.product)
+            {
+                Ok(admission) => Some((admission.accepted, hello.capability, admission.retired)),
+                Err(OpeningError::Refused(refusal)) => {
+                    send_encoded(socket, &refusal).await;
+                    None
+                }
+                Err(OpeningError::Fault(fault)) => {
+                    send_encoded(socket, &fault).await;
+                    None
+                }
             }
-            Err(OpeningError::Fault(fault)) => {
-                send_encoded(socket, &fault).await;
-                None
-            }
-        },
+        }
         Err(error) => {
             send_encoded(
                 socket,

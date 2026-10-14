@@ -354,6 +354,7 @@ fn command(
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch: fixture.epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("operator renewal command admits")
 }
@@ -371,6 +372,7 @@ fn wake_command(fixture: &LaunchFixture, id: u64, request: &LaneState) -> wire::
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch: fixture.epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("operator wake command admits")
 }

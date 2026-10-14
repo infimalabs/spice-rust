@@ -85,6 +85,7 @@ fn send(
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("operator send admits");
     let mut effects = CommandEffects::default();
@@ -129,6 +130,7 @@ fn read_inbox(
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("operator inbox admits");
     let Outcome::Reply(Reply {

@@ -75,6 +75,7 @@ fn intent_edits_bind_their_statement_witness_to_the_edited_task() {
         wire: WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     };
     let edit = wire::intent::TaskEdit {
         task,

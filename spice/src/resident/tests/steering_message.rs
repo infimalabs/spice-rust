@@ -188,6 +188,7 @@ impl Lanes {
                 wire: wire::WireVersion::CURRENT,
                 actor: Actor::Operator,
                 epoch: self.epoch,
+                release: "1.2.3".parse().expect("fixture release"),
             })
             .expect("operator send admits"),
             &wire::intent::SteerSend {
@@ -311,6 +312,7 @@ impl Lanes {
             wire: wire::WireVersion::CURRENT,
             actor: Actor::Lane(test_uuid(lane)),
             epoch: self.epoch,
+            release: "1.2.3".parse().expect("fixture release"),
         })
         .expect("inbox admits");
         let Outcome::Reply(Reply {
@@ -562,6 +564,7 @@ impl Lanes {
             wire: wire::WireVersion::CURRENT,
             actor: Actor::Operator,
             epoch: self.epoch,
+            release: "1.2.3".parse().expect("fixture release"),
         })
         .expect("operator recovery admits");
         steering::recover(

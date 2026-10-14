@@ -23,6 +23,7 @@ fn archived_identity_cannot_replay_or_commit_as_a_new_live_command() {
         wire: WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch: uuid(EPOCH),
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("different current command admits");
     assert_eq!(

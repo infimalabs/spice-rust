@@ -62,6 +62,12 @@ The resident runs in the foreground of its owning process. `spice up` may detach
 that process, `spice down` owns semantic shutdown, and an operating-system
 service manager may own restart policy.
 
+A session's acceptance names the release the resident runs. A client that
+receives an answer its command registry cannot bind refuses it unread with
+`command::answer-binding`; when the two releases differ, the refusal names both
+and the side that must move: an older resident restarts on the client's
+release, and an older client gives way to the resident's installed `spice`.
+
 Owners: [`journal/src/guard.rs`](../../journal/src/guard.rs),
 [`spice/src/session_command/authority.rs`](../../spice/src/session_command/authority.rs),
 and [`spice/src/resident/lifecycle.rs`](../../spice/src/resident/lifecycle.rs).

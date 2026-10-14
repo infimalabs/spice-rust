@@ -347,6 +347,7 @@ fn a_lane_principal_cannot_close_a_task() {
         wire: WireVersion::CURRENT,
         actor: Actor::Lane(uuid(2)),
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     });
     let Err(wire::CommandRejection::Refusal(refusal)) = rejected else {
         panic!("a lane principal is refused before the door reads the board");

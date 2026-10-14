@@ -83,6 +83,7 @@ fn admitted_lane_seat(
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("operator lane seat command admits")
 }

@@ -767,16 +767,19 @@ fn cover_command_frames() {
                 wire: WireVersion(1),
                 actor: Actor::Operator,
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+                release: "1.2.3".parse().expect("fixture release"),
             },
             Accepted {
                 wire: WireVersion(1),
                 actor: Actor::Spice,
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+                release: "1.2.3".parse().expect("fixture release"),
             },
             Accepted {
                 wire: WireVersion(1),
                 actor: Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163c4")),
                 epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+                release: "1.2.3".parse().expect("fixture release"),
             },
         ],
     );

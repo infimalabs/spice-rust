@@ -64,7 +64,10 @@ fn session(capability: &str, epoch: &str) -> Session {
 
 fn acceptance(session: &Session, actor: &str, epoch: &str) -> app::Admitted<wire::Accepted> {
     session
-        .admit_accepted(format!(r#"{{"wire":1,"actor":"{actor}","epoch":"{epoch}"}}"#).as_bytes())
+        .admit_accepted(
+            format!(r#"{{"wire":1,"actor":"{actor}","epoch":"{epoch}","release":"1.2.3"}}"#)
+                .as_bytes(),
+        )
         .expect("acceptance is admitted")
 }
 

@@ -340,6 +340,7 @@ fn requirement_edits_bind_statement_and_claim_witnesses_to_the_same_task() {
         wire: WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     };
     let edit = wire::intent::TaskEdit {
         intent: None,

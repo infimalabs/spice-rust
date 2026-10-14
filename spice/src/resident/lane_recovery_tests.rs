@@ -1019,6 +1019,7 @@ fn admitted(fixture: &Fixture, request: &LaneState) -> wire::AdmittedCommand {
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch: fixture.new_epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("operator lane intent admits")
 }

@@ -693,6 +693,7 @@ fn lapse_replay(
             wire: WireVersion::CURRENT,
             actor: Actor::Lane(uuid(20)),
             epoch: uuid(22),
+            release: "1.2.3".parse().expect("fixture release"),
         },
     )
     .expect("the lapse request admits under its law");

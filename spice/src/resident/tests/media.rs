@@ -69,6 +69,7 @@ fn direct_steer_send_refuses_unjournalable_content_before_mutation() {
             wire: wire::WireVersion::CURRENT,
             actor: Actor::Operator,
             epoch,
+            release: "1.2.3".parse().expect("fixture release"),
         })
         .expect("resident content admission remains authoritative");
         let mut effects = CommandEffects::default();

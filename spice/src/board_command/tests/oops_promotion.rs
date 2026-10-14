@@ -366,6 +366,7 @@ fn assert_unwitnessed_promotion_refuses(
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     });
     assert!(matches!(
         rejected,
@@ -411,6 +412,7 @@ fn assert_unrelated_promotion_witness_refuses(
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     });
     let Err(wire::CommandRejection::Refusal(refusal)) = rejected else {
         panic!("promotion carrying only unrelated statement authority must refuse");

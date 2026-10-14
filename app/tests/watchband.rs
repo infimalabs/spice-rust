@@ -54,7 +54,10 @@ fn spell(delta: i64) -> String {
 fn app_runtime() -> (Session, AppRuntime) {
     let session = Session::open(uuid(OCCUPANT), uuid(EPOCH));
     let accepted = session
-        .admit_accepted(format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}"}}"#).as_bytes())
+        .admit_accepted(
+            format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}","release":"1.2.3"}}"#)
+                .as_bytes(),
+        )
         .expect("acceptance is admitted");
     let runtime = AppRuntime::new(&accepted);
     (session, runtime)
