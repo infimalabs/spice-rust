@@ -5,8 +5,8 @@ use serde::Serialize;
 use crate::QuoteResolution;
 use crate::command::CommandKind;
 use crate::rooms::{
-    CandidateCoverageRecord, CandidateCritiqueRecord, CandidateRetain, ExecutionAuthorize,
-    OutputAdopt, PreparationDecide, RoomPost, RoomPostAnswer,
+    CandidateCoverageRecord, CandidateCritiqueRecord, CandidateRetain, OutputAdopt,
+    PreparationDecide, RoomPost, RoomPostAnswer,
 };
 
 use super::{
@@ -78,8 +78,6 @@ pub enum BodyShape {
     CandidateCoverageRecord,
     /// [`PreparationDecide`]
     PreparationDecide,
-    /// [`ExecutionAuthorize`]
-    ExecutionAuthorize,
     /// [`OutputAdopt`]
     OutputAdopt,
     /// [`GlobalSettingsRead`]
@@ -607,7 +605,6 @@ impl CommandKind {
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::PreparationDecide
-            | Self::ExecutionAuthorize
             | Self::OutputAdopt
             | Self::BoardRead
             | Self::ReportRead
@@ -694,7 +691,6 @@ impl CommandKind {
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::PreparationDecide
-            | Self::ExecutionAuthorize
             | Self::OutputAdopt => self.preparation_binding(),
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
@@ -749,7 +745,6 @@ impl CommandKind {
             Self::CandidateCritiqueRecord => Binding::of(B::CandidateCritiqueRecord, A::Text),
             Self::CandidateCoverageRecord => Binding::of(B::CandidateCoverageRecord, A::Text),
             Self::PreparationDecide => Binding::of(B::PreparationDecide, A::Text),
-            Self::ExecutionAuthorize => Binding::of(B::ExecutionAuthorize, A::Text),
             Self::OutputAdopt => Binding::of(B::OutputAdopt, A::Text),
             _ => panic!("preparation command binding partition is closed"),
         }
@@ -884,8 +879,6 @@ pub enum Intent {
     CandidateCoverageRecord(CandidateCoverageRecord),
     /// [`BodyShape::PreparationDecide`]
     PreparationDecide(PreparationDecide),
-    /// [`BodyShape::ExecutionAuthorize`]
-    ExecutionAuthorize(ExecutionAuthorize),
     /// [`BodyShape::OutputAdopt`]
     OutputAdopt(OutputAdopt),
     /// [`BodyShape::GlobalSettingsRead`]
@@ -1014,7 +1007,6 @@ impl Intent {
             | Self::CandidateCritiqueRecord(_)
             | Self::CandidateCoverageRecord(_)
             | Self::PreparationDecide(_)
-            | Self::ExecutionAuthorize(_)
             | Self::OutputAdopt(_)
             | Self::BoardRead(_)
             | Self::ReportRead(_)
@@ -1090,7 +1082,6 @@ impl Intent {
             | Self::CandidateCritiqueRecord(_)
             | Self::CandidateCoverageRecord(_)
             | Self::PreparationDecide(_)
-            | Self::ExecutionAuthorize(_)
             | Self::OutputAdopt(_) => self.preparation_shape(),
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
@@ -1134,7 +1125,6 @@ impl Intent {
             Self::CandidateCritiqueRecord(_) => BodyShape::CandidateCritiqueRecord,
             Self::CandidateCoverageRecord(_) => BodyShape::CandidateCoverageRecord,
             Self::PreparationDecide(_) => BodyShape::PreparationDecide,
-            Self::ExecutionAuthorize(_) => BodyShape::ExecutionAuthorize,
             Self::OutputAdopt(_) => BodyShape::OutputAdopt,
             _ => panic!("preparation intent shape partition is closed"),
         }
@@ -1235,7 +1225,6 @@ impl BodyShape {
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
                 | Self::PreparationDecide
-                | Self::ExecutionAuthorize
                 | Self::OutputAdopt
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
@@ -1287,7 +1276,6 @@ impl BodyShape {
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
                 | Self::PreparationDecide
-                | Self::ExecutionAuthorize
                 | Self::OutputAdopt
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
@@ -1329,7 +1317,6 @@ impl BodyShape {
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::PreparationDecide
-            | Self::ExecutionAuthorize
             | Self::OutputAdopt => return self.decode_preparation_body(bytes),
             _ => return self.decode_task_statement_body(bytes),
         })
@@ -1355,7 +1342,6 @@ impl BodyShape {
             Self::CandidateCritiqueRecord => Intent::CandidateCritiqueRecord(crate::decode(bytes)?),
             Self::CandidateCoverageRecord => Intent::CandidateCoverageRecord(crate::decode(bytes)?),
             Self::PreparationDecide => Intent::PreparationDecide(crate::decode(bytes)?),
-            Self::ExecutionAuthorize => Intent::ExecutionAuthorize(crate::decode(bytes)?),
             Self::OutputAdopt => Intent::OutputAdopt(crate::decode(bytes)?),
             _ => unreachable!("preparation body partition is closed"),
         })

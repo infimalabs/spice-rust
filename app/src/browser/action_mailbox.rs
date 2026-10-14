@@ -628,9 +628,6 @@ fn room_coordination_bytes(request: &crate::client_action::RoomCoordinationReque
 
 fn preparation_bytes(request: &crate::client_action::PreparationRequest) -> usize {
     match request {
-        crate::client_action::PreparationRequest::Decide { request, .. } => {
-            request.decision.decision.controller.as_str().len()
-        }
         crate::client_action::PreparationRequest::Cover { request, .. } => request
             .coverage
             .coverage
@@ -638,17 +635,6 @@ fn preparation_bytes(request: &crate::client_action::PreparationRequest) -> usiz
             .controller
             .as_str()
             .len(),
-        crate::client_action::PreparationRequest::Authorize { request, .. } => {
-            let authorization = &request.authorization;
-            authorization
-                .governed_inputs
-                .iter()
-                .chain(&authorization.selected_outputs)
-                .fold(
-                    authorization.candidate.controller.as_str().len(),
-                    |bytes, task| bytes.saturating_add(task.as_str().len()),
-                )
-        }
     }
 }
 

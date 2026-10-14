@@ -339,9 +339,9 @@ vocabulary! {
     CandidateCritiqued = "proposal::critiqued" by CommandDoor;
     /// One source-backed coverage statement over an exact candidate was recorded.
     CandidateCovered = "proposal::covered" by CommandDoor;
-    /// The operator decided a controlling task's preparation.
+    /// The operator decided one exact candidate; selection authorizes its subset.
     PreparationDecided = "proposal::decided" by CommandDoor;
-    /// An accepted decision made its exact selected outputs eligible.
+    /// A selected decision made its exact selected outputs eligible.
     ExecutionAuthorized = "proposal::authorized" by CommandDoor;
 
     /// The exact normalized plan digest landed at its witnessed board barrier.

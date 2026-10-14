@@ -737,7 +737,7 @@ pub struct BoardStatement {
         deserialize_with = "crate::optional::present"
     )]
     pub preparation: Option<crate::TaskPreparation>,
-    /// Accepted decision whose execution authorization selected this output.
+    /// Selected decision whose execution authorization released this output.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

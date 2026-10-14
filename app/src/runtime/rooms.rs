@@ -242,7 +242,7 @@ pub struct PreparationProjection {
     pub coverage: BTreeMap<authority::CoverageRef, RoomPositioned<authority::CandidateCoverage>>,
     /// Decisions by stable decision identity.
     pub decisions: BTreeMap<authority::DecisionRef, RoomPositioned<authority::PreparationDecision>>,
-    /// Positive authorizations by their accepted decision identity.
+    /// Positive authorizations by their selected decision identity.
     pub authorizations:
         BTreeMap<authority::DecisionRef, RoomPositioned<authority::ExecutionAuthorization>>,
 }

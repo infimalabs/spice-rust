@@ -353,10 +353,18 @@ impl Law {
         optional: &[WitnessKind::Task],
         authority: Authority::Connected,
     };
-    /// Operator-owned proposal disposition at its immutable subject.
-    pub const PROPOSAL_DECISION: Self = Self {
+    /// Exact operator disposition of one immutable candidate. Every decision
+    /// witnesses its absent decision head and exact candidate head; selection
+    /// additionally witnesses the Design, governed inputs, chosen outputs,
+    /// claim absence, and prior authorization absence.
+    pub const PREPARATION_DECIDE: Self = Self {
         required: &[WitnessKind::Proposal],
-        optional: &[WitnessKind::Task],
+        optional: &[
+            WitnessKind::Task,
+            WitnessKind::Workflow,
+            WitnessKind::Claim,
+            WitnessKind::Authorization,
+        ],
         authority: Authority::Operator,
     };
     /// Exact unauthorized output heads plus the controller and output task heads.
@@ -559,8 +567,7 @@ impl CommandKind {
             Self::CandidateRetain
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord => Law::PROPOSAL_RECORD,
-            Self::PreparationDecide => Law::PROPOSAL_DECISION,
-            Self::ExecutionAuthorize => Law::AUTHORIZE,
+            Self::PreparationDecide => Law::PREPARATION_DECIDE,
             Self::OutputAdopt => Law::ADOPT,
             _ => self.task_law(),
         }

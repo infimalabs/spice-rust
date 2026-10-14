@@ -509,7 +509,12 @@ pub(super) fn rewrite_facts(
     Ok(())
 }
 
-fn retained(table: &'static str, row: String, release: &'static str, detail: String) -> OpenError {
+pub(super) fn retained(
+    table: &'static str,
+    row: String,
+    release: &'static str,
+    detail: String,
+) -> OpenError {
     MigrationError::RetainedRow {
         table,
         row,

@@ -71,10 +71,8 @@ pub enum CommandKind {
     CandidateCritiqueRecord,
     /// Record one source-backed review coverage statement.
     CandidateCoverageRecord,
-    /// Record one operator decision over preparation authority.
+    /// Record one exact operator disposition; selection also authorizes its subset.
     PreparationDecide,
-    /// Complete preparation and authorize an exact selected output set.
-    ExecutionAuthorize,
     /// Adopt pending existing work under preparation control.
     OutputAdopt,
     /// Read durable global app settings.

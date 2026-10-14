@@ -51,7 +51,6 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::CandidateCritiqueRecord
         | CommandKind::CandidateCoverageRecord
         | CommandKind::PreparationDecide
-        | CommandKind::ExecutionAuthorize
         | CommandKind::OutputAdopt
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd

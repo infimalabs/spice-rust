@@ -756,8 +756,8 @@ pub struct RetainedCandidate {
     pub outputs: Vec<TaskStamp>,
     /// Exact source links, with open relation names for later evidence families.
     pub references: Vec<CandidateReference>,
-    /// Question results, asked in the controller's room, that must be
-    /// answered and then assessed by certifying coverage before authorization.
+    /// Question results, asked in the controller's room, retained as explicit
+    /// candidate evidence without granting or gating selection authority.
     pub evidence: Vec<QuestionResultRef>,
 }
 
@@ -961,26 +961,43 @@ pub struct CandidateCovered {
     pub coverage: CandidateCoverage,
 }
 
-/// Negative conclusion that deliberately authorizes no output.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum NegativeDecision {
-    /// Candidate or approach was rejected on the retained basis.
-    Rejected,
-    /// Investigation concluded that no execution work is justified.
-    NoWork,
-}
-
-/// Operator decision over preparation authority.
+/// Exact operator disposition of one immutable retained candidate version.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DecisionOutcome {
-    /// Candidate is accepted for a separate exact execution authorization.
-    Accepted { candidate: CandidateRef },
-    /// Candidate returns for further preparation and remains unauthorized.
-    Returned { candidate: CandidateRef },
-    /// Preparation concludes negatively without a candidate or authorization.
-    Negative { conclusion: NegativeDecision },
+    /// Authorize exactly this nonempty subset of the candidate's outputs.
+    Selected {
+        /// Exact retained candidate version being selected.
+        candidate: CandidateRef,
+        /// Unique output subset this decision releases.
+        selected_outputs: Vec<TaskStamp>,
+    },
+    /// Return this candidate version for further preparation.
+    Returned {
+        /// Exact retained candidate version being returned.
+        candidate: CandidateRef,
+        /// Nonempty operator reason for returning it.
+        reason: String,
+    },
+    /// Ask the Design conclusion authority to collapse this candidate's premise.
+    Collapse {
+        /// Exact retained candidate version whose premise did not hold.
+        candidate: CandidateRef,
+        /// Nonempty operator reason for collapsing it.
+        reason: String,
+    },
+}
+
+impl DecisionOutcome {
+    /// Exact retained candidate version this decision addresses.
+    #[must_use]
+    pub fn candidate(&self) -> &CandidateRef {
+        match self {
+            Self::Selected { candidate, .. }
+            | Self::Returned { candidate, .. }
+            | Self::Collapse { candidate, .. } => candidate,
+        }
+    }
 }
 
 /// One source-backed operator decision under a controlling task.
@@ -991,7 +1008,7 @@ pub struct PreparationDecision {
     pub decision: DecisionRef,
     /// Exact authority owning the decision basis.
     pub source: RoomSource,
-    /// Accepted, returned, or negative/no-work outcome.
+    /// Selection, return, or collapse request over one exact candidate version.
     pub outcome: DecisionOutcome,
 }
 
@@ -1007,14 +1024,21 @@ impl TryFrom<PreparationDecisionWire> for PreparationDecision {
     type Error = &'static str;
 
     fn try_from(value: PreparationDecisionWire) -> Result<Self, Self::Error> {
-        let candidate = match &value.outcome {
-            DecisionOutcome::Accepted { candidate } | DecisionOutcome::Returned { candidate } => {
-                Some(candidate)
-            }
-            DecisionOutcome::Negative { .. } => None,
-        };
-        if candidate.is_some_and(|candidate| candidate.controller != value.decision.controller) {
+        if value.outcome.candidate().controller != value.decision.controller {
             return Err("decision and candidate must share one controlling task");
+        }
+        match &value.outcome {
+            DecisionOutcome::Selected {
+                selected_outputs, ..
+            } if selected_outputs.is_empty() || !all_unique(selected_outputs) => {
+                return Err("a selection must name a nonempty unique output set");
+            }
+            DecisionOutcome::Returned { reason, .. } | DecisionOutcome::Collapse { reason, .. }
+                if reason.trim().is_empty() =>
+            {
+                return Err("a return or collapse decision requires a nonempty reason");
+            }
+            _ => {}
         }
         Ok(Self {
             decision: value.decision,
@@ -1050,22 +1074,23 @@ pub struct PreparationDecided {
     pub decision: PreparationDecision,
 }
 
-/// Exact selected execution authority following an accepted decision.
+/// Exact selected execution authority created by its operator decision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     try_from = "ExecutionAuthorizationWire",
     into = "ExecutionAuthorizationWire"
 )]
 pub struct ExecutionAuthorization {
-    /// Accepted operator decision authorizing this exact selection.
+    /// Operator decision that selected this exact output subset.
     pub decision: DecisionRef,
     /// Exact retained candidate selected by that decision.
     pub candidate: CandidateRef,
-    /// Candidate input tasks governed by this authorization.
+    /// Candidate input tasks witnessed by this authorization.
     pub governed_inputs: Vec<TaskStamp>,
     /// Exact nonempty output set made eligible; no later output inherits it.
     pub selected_outputs: Vec<TaskStamp>,
-    /// Exact current coverage statements supporting the selection.
+    /// Retained predecessor coverage citations. Current selections leave this
+    /// empty because coverage is evidence, never authorization.
     pub coverage: Vec<CoverageRef>,
 }
 
@@ -1076,6 +1101,7 @@ struct ExecutionAuthorizationWire {
     candidate: CandidateRef,
     governed_inputs: Vec<TaskStamp>,
     selected_outputs: Vec<TaskStamp>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     coverage: Vec<CoverageRef>,
 }
 
@@ -1093,15 +1119,12 @@ impl TryFrom<ExecutionAuthorizationWire> for ExecutionAuthorization {
         {
             return Err("authorization inputs, outputs, and coverage must be exact unique sets");
         }
-        if value.coverage.is_empty() {
-            return Err("positive authorization requires explicit current coverage");
-        }
         if value
             .coverage
             .iter()
             .any(|coverage| coverage.candidate != value.candidate)
         {
-            return Err("authorization coverage must assess the selected candidate");
+            return Err("retained authorization coverage must assess its candidate");
         }
         if value
             .selected_outputs
@@ -1130,15 +1153,6 @@ impl From<ExecutionAuthorization> for ExecutionAuthorizationWire {
             coverage: value.coverage,
         }
     }
-}
-
-/// Command body atomically completing accepted preparation and authorizing its
-/// exact selected outputs.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ExecutionAuthorize {
-    /// Exact authority to admit with final preparation completion.
-    pub authorization: ExecutionAuthorization,
 }
 
 /// Immutable fact body recording exact selected execution authorization.
@@ -1342,7 +1356,7 @@ mod tests {
     }
 
     #[test]
-    fn candidates_and_authorization_retain_exact_referential_sets() {
+    fn candidates_decisions_and_authorization_retain_exact_referential_sets() {
         let candidate_ref = candidate();
         let candidate_value = serde_json::json!({
             "candidate": candidate_ref,
@@ -1353,16 +1367,23 @@ mod tests {
         let retained: RetainedCandidate = serde_json::from_value(candidate_value.clone()).unwrap();
         assert_eq!(serde_json::to_value(retained).unwrap(), candidate_value);
 
-        let coverage = CoverageRef {
-            candidate: candidate(),
-            coverage: SequenceCode::new(3),
-        };
+        let decision_value = serde_json::json!({
+            "decision": {"controller": "1kKRRsDR0", "decision": "4"},
+            "source": {"kind": "journal", "fact": "3"},
+            "outcome": {
+                "kind": "selected",
+                "candidate": candidate(),
+                "selected_outputs": ["1kKRRsDR3"]
+            }
+        });
+        let decision: PreparationDecision = serde_json::from_value(decision_value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decision).unwrap(), decision_value);
+
         let authorization_value = serde_json::json!({
             "decision": {"controller": "1kKRRsDR0", "decision": "4"},
             "candidate": candidate(),
             "governed_inputs": ["1kKRRsDR2"],
-            "selected_outputs": ["1kKRRsDR3"],
-            "coverage": [coverage]
+            "selected_outputs": ["1kKRRsDR3"]
         });
         let authorization: ExecutionAuthorization =
             serde_json::from_value(authorization_value.clone()).unwrap();
@@ -1371,25 +1392,30 @@ mod tests {
             authorization_value
         );
 
-        let mut mismatched = authorization_value;
-        mismatched["coverage"][0]["candidate"]["candidate"] = serde_json::json!("1kKRRsDR5");
-        assert!(serde_json::from_value::<ExecutionAuthorization>(mismatched).is_err());
+        let mut empty = decision_value;
+        empty["outcome"]["selected_outputs"] = serde_json::json!([]);
+        assert!(serde_json::from_value::<PreparationDecision>(empty).is_err());
     }
 
     #[test]
-    fn negative_decisions_carry_basis_but_no_execution_authorization() {
+    fn collapse_decisions_name_an_exact_candidate_and_reason() {
         let value = serde_json::json!({
             "decision": {"controller": "1kKRRsDR0", "decision": "5"},
             "source": {"kind": "journal", "fact": "6"},
-            "outcome": {"kind": "negative", "conclusion": "no-work"}
+            "outcome": {
+                "kind": "collapse",
+                "candidate": candidate(),
+                "reason": "the premise no longer holds"
+            }
         });
         let decision: PreparationDecision = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(serde_json::to_value(&decision).unwrap(), value);
         assert!(matches!(
             decision.outcome,
-            DecisionOutcome::Negative {
-                conclusion: NegativeDecision::NoWork
-            }
+            DecisionOutcome::Collapse {
+                candidate: selected_candidate,
+                reason
+            } if selected_candidate == candidate() && reason == "the premise no longer holds"
         ));
     }
 

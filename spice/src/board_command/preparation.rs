@@ -1,8 +1,9 @@
 use super::*;
 use wire::rooms::{
     CandidateCoverageRecord, CandidateCovered, CandidateCritiqueRecord, CandidateCritiqued,
-    CandidateRetain, CandidateRetained, CoverageAuthority, ExecutionAuthorize, ExecutionAuthorized,
-    OutputAdopt, OutputControlled, PreparationDecide, PreparationDecided, ProposalRef,
+    CandidateRetain, CandidateRetained, CoverageAuthority, DecisionOutcome, ExecutionAuthorization,
+    ExecutionAuthorized, OutputAdopt, OutputControlled, PreparationDecide, PreparationDecided,
+    ProposalRef, RetainedCandidate,
 };
 pub(super) fn dispatch_preparation(
     bus: &Bus,
@@ -18,9 +19,6 @@ pub(super) fn dispatch_preparation(
         }
         wire::intent::Intent::PreparationDecide(decision) => {
             decide_preparation(bus, command, decision)
-        }
-        wire::intent::Intent::ExecutionAuthorize(authorization) => {
-            authorize_execution(bus, command, authorization)
         }
         wire::intent::Intent::OutputAdopt(adopt) => adopt_output(bus, command, adopt),
         _ => return None,
@@ -58,8 +56,9 @@ pub(super) fn require_no_pending_controlled_outputs(
         "preparation::controlled-outputs-pending",
         Some(outputs.join(", ")),
         &format!(
-            "authorize the exact accepted selection of {} with `spice preparation authorize \
-             AUTHORIZATION_JSON`, or close or delete each unselected output before concluding it",
+            "select each intended output of {} in an exact candidate decision with `spice \
+             preparation decide DECISION_JSON`, or close or delete every unselected output before \
+             concluding it",
             controller.handle()
         ),
     ))
@@ -88,12 +87,10 @@ fn design_controller(
     ))
 }
 
-/// Admit an authorization's controller: a witnessed, open Design with no
-/// unsettled dependency. Selection releases outputs and leaves the Design
-/// open, so a lane holding it keeps its claim.
+/// Admit a decision's controller as a witnessed, open Design. Decisions leave
+/// the Design open, so a lane holding it keeps its claim.
 fn require_open_design(
     command: &wire::AdmittedCommand,
-    snapshot: &bus::TaskSnapshot,
     heads: &journal::TaskHeads,
     controller: &TaskStamp,
 ) -> Result<(), Outcome<CommandAnswer>> {
@@ -103,15 +100,22 @@ fn require_open_design(
         return Err(refusal(
             "preparation::controller-not-open",
             Some(controller.to_string()),
-            "authorize while the Design is open",
+            "decide while the Design is open",
         ));
     }
-    for dependency in &heads.statement().body().dependencies {
+    Ok(())
+}
+
+fn require_unblocked_selection(
+    snapshot: &bus::TaskSnapshot,
+    controller: &journal::TaskHeads,
+) -> Result<(), Outcome<CommandAnswer>> {
+    for dependency in &controller.statement().body().dependencies {
         if task_heads(snapshot, dependency)?.workflow().body().status == "pending" {
             return Err(refusal(
                 "preparation::controller-blocked",
                 Some(dependency.to_string()),
-                "settle the Design's pending dependencies before authorizing its outputs",
+                "settle the Design's pending dependencies before selecting its outputs",
             ));
         }
     }
@@ -296,121 +300,263 @@ pub(super) fn decide_preparation(
     command: &wire::AdmittedCommand,
     request_body: &PreparationDecide,
 ) -> Outcome<CommandAnswer> {
+    let decision = &request_body.decision;
     let subject = ProposalRef::Decision {
-        decision: request_body.decision.decision.clone(),
+        decision: decision.decision.clone(),
     };
     if let Err(outcome) = require_proposal_absence(command, &subject) {
         return outcome;
     }
-    record(
-        bus,
-        command,
-        request_body,
-        &request_body.decision.decision.controller,
-        PreparationDecided {
-            decision: request_body.decision.clone(),
-        },
-        Vec::new(),
-        format!(
-            "recorded decision {}",
-            request_body.decision.decision.decision
-        ),
-    )
-}
-
-pub(super) fn authorize_execution(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    request_body: &ExecutionAuthorize,
-) -> Outcome<CommandAnswer> {
-    let authorization = &request_body.authorization;
+    let candidate_ref = decision.outcome.candidate();
+    let candidate = match retained_candidate(bus, command, candidate_ref) {
+        Ok(candidate) => candidate,
+        Err(outcome) => return outcome,
+    };
     let snapshot = match bus.task_snapshot() {
         Ok(snapshot) => snapshot,
         Err(error) => return store_fault("preparation::heads-unreadable", &error.to_string()),
     };
-    let controller = match task_heads(&snapshot, &authorization.candidate.controller) {
+    let controller = match task_heads(&snapshot, &candidate_ref.controller) {
         Ok(heads) => heads,
         Err(outcome) => return outcome,
     };
-    if let Err(outcome) = require_open_design(
-        command,
-        &snapshot,
-        controller,
-        &authorization.candidate.controller,
-    ) {
+    if let Err(outcome) = require_open_design(command, controller, &candidate_ref.controller) {
         return outcome;
     }
-    let mut outputs = Vec::with_capacity(authorization.selected_outputs.len());
-    for output in &authorization.selected_outputs {
-        let heads = match task_heads(&snapshot, output) {
-            Ok(heads) => heads,
+    let (selected_heads, authorization) = match &decision.outcome {
+        DecisionOutcome::Selected {
+            selected_outputs, ..
+        } => match prepare_selection(
+            &snapshot,
+            command,
+            controller,
+            decision,
+            &candidate,
+            selected_outputs,
+        ) {
+            Ok(selection) => (selection.0, Some(selection.1)),
             Err(outcome) => return outcome,
-        };
-        if let Err(outcome) = require_transition_witnesses(command, heads) {
-            return outcome;
-        }
-        let absence = Witness::Authorization {
+        },
+        DecisionOutcome::Returned { .. } | DecisionOutcome::Collapse { .. } => (Vec::new(), None),
+    };
+    commit_decision(
+        bus,
+        command,
+        request_body,
+        candidate,
+        selected_heads,
+        authorization,
+    )
+}
+
+fn retained_candidate(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    candidate: &wire::rooms::CandidateRef,
+) -> Result<RetainedCandidate, Outcome<CommandAnswer>> {
+    let subject = ProposalRef::Candidate {
+        candidate: candidate.clone(),
+    };
+    let read_subject = subject.clone();
+    let head = bus
+        .read(move |read| read.proposal_head(&read_subject))
+        .map_err(|error| store_fault("preparation::authority-unreadable", &error.to_string()))?
+        .ok_or_else(|| {
+            refusal(
+                "preparation::candidate-missing",
+                Some(candidate.candidate.to_string()),
+                "retain the exact candidate version before deciding it",
+            )
+        })?;
+    require_witness(
+        command,
+        &Witness::Proposal {
+            proposal: subject,
+            head: Some(head.position()),
+        },
+    )?;
+    match head.into_body() {
+        journal::ProposalAuthority::Candidate(candidate) => Ok(candidate),
+        _ => Err(store_fault(
+            "preparation::candidate-invalid",
+            "candidate authority decoded as another proposal family",
+        )),
+    }
+}
+
+fn prepare_selection(
+    snapshot: &bus::TaskSnapshot,
+    command: &wire::AdmittedCommand,
+    controller: &journal::TaskHeads,
+    decision: &wire::rooms::PreparationDecision,
+    candidate: &RetainedCandidate,
+    selected_outputs: &[TaskStamp],
+) -> Result<(Vec<TaskHead>, ExecutionAuthorization), Outcome<CommandAnswer>> {
+    require_unblocked_selection(snapshot, controller)?;
+    require_input_witnesses(snapshot, command, candidate)?;
+    let outputs = selected_output_heads(
+        snapshot,
+        command,
+        &candidate.candidate,
+        candidate,
+        selected_outputs,
+    )?;
+    let authorization = ExecutionAuthorization {
+        decision: decision.decision.clone(),
+        candidate: candidate.candidate.clone(),
+        governed_inputs: candidate.governed_inputs.clone(),
+        selected_outputs: selected_outputs.to_vec(),
+        coverage: Vec::new(),
+    };
+    Ok((outputs, authorization))
+}
+
+fn require_input_witnesses(
+    snapshot: &bus::TaskSnapshot,
+    command: &wire::AdmittedCommand,
+    candidate: &RetainedCandidate,
+) -> Result<(), Outcome<CommandAnswer>> {
+    for input in &candidate.governed_inputs {
+        let heads = task_heads(snapshot, input)?;
+        require_witness(
+            command,
+            &Witness::Task {
+                task: input.clone(),
+                head: heads.statement().position(),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn selected_output_heads(
+    snapshot: &bus::TaskSnapshot,
+    command: &wire::AdmittedCommand,
+    candidate_ref: &wire::rooms::CandidateRef,
+    candidate: &RetainedCandidate,
+    selected_outputs: &[TaskStamp],
+) -> Result<Vec<TaskHead>, Outcome<CommandAnswer>> {
+    if let Some(output) = selected_outputs
+        .iter()
+        .find(|output| !candidate.outputs.contains(output))
+    {
+        return Err(refusal(
+            "preparation::selection-foreign-output",
+            Some(output.to_string()),
+            "select only outputs named by the exact retained candidate version",
+        ));
+    }
+    selected_outputs
+        .iter()
+        .map(|output| selected_output_head(snapshot, command, candidate_ref, output))
+        .collect()
+}
+
+fn selected_output_head(
+    snapshot: &bus::TaskSnapshot,
+    command: &wire::AdmittedCommand,
+    candidate: &wire::rooms::CandidateRef,
+    output: &TaskStamp,
+) -> Result<TaskHead, Outcome<CommandAnswer>> {
+    let heads = task_heads(snapshot, output)?;
+    require_transition_witnesses(command, heads)?;
+    require_witness(
+        command,
+        &Witness::Authorization {
             output: output.clone(),
             head: None,
-        };
-        if let Err(outcome) = require_witness(command, &absence) {
-            return outcome;
-        }
-        if heads.workflow().body().status != "pending"
-            || heads.workflow().body().completion.is_some()
-            || active_claim(heads)
-            || heads.statement().body().authorization.is_some()
-            || heads.statement().body().engagement.is_some()
-            || heads
-                .statement()
-                .body()
-                .preparation
-                .as_ref()
-                .is_none_or(|preparation| {
-                    preparation.parent != authorization.candidate.controller
-                        || preparation.construction != *output
-                })
-        {
-            return refusal(
-                "preparation::output-not-authorizable",
-                Some(output.to_string()),
-                "select a pending, unclaimed, unauthorized output this Design constructed",
-            );
-        }
-        outputs.push(heads.statement().body().clone());
+        },
+    )?;
+    if !output_is_authorizable(heads, candidate, output) {
+        return Err(refusal(
+            "preparation::output-not-authorizable",
+            Some(output.to_string()),
+            "select a pending, unclaimed, unauthorized output this Design constructed",
+        ));
     }
+    Ok(heads.statement().body().clone())
+}
+
+fn output_is_authorizable(
+    heads: &journal::TaskHeads,
+    candidate: &wire::rooms::CandidateRef,
+    output: &TaskStamp,
+) -> bool {
+    heads.workflow().body().status == "pending"
+        && heads.workflow().body().completion.is_none()
+        && !active_claim(heads)
+        && heads.statement().body().authorization.is_none()
+        && heads.statement().body().engagement.is_none()
+        && heads
+            .statement()
+            .body()
+            .preparation
+            .as_ref()
+            .is_some_and(|preparation| {
+                preparation.parent == candidate.controller && preparation.construction == *output
+            })
+}
+
+fn commit_decision(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    request_body: &PreparationDecide,
+    candidate: RetainedCandidate,
+    outputs: Vec<TaskHead>,
+    authorization: Option<ExecutionAuthorization>,
+) -> Outcome<CommandAnswer> {
+    let decision = &request_body.decision;
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(&authorization.candidate.controller) {
+    let origin = match task_origin(&decision.decision.controller) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
-    let fact = match write.fact(
-        ExecutionAuthorized {
-            authorization: authorization.clone(),
+    let decided = match write.fact(
+        PreparationDecided {
+            decision: decision.clone(),
         },
         FactCause::Root,
     ) {
         Ok(fact) => fact,
-        Err(error) => return store_fault("preparation::authorization-invalid", &error.to_string()),
+        Err(error) => return store_fault("preparation::decision-invalid", &error.to_string()),
     };
-    for output in outputs {
-        let decision = authorization.decision.clone();
-        write.task_head(fact, move |revision| TaskHead {
-            authorization: Some(decision),
-            revision,
-            ..output
-        });
+    if let Some(authorization) = authorization {
+        let authorized = match write.fact(
+            ExecutionAuthorized {
+                authorization: authorization.clone(),
+            },
+            FactCause::Pending(decided),
+        ) {
+            Ok(fact) => fact,
+            Err(error) => {
+                return store_fault("preparation::authorization-invalid", &error.to_string());
+            }
+        };
+        for output in outputs {
+            let decision = authorization.decision.clone();
+            write.task_head(authorized, move |revision| TaskHead {
+                authorization: Some(decision),
+                revision,
+                ..output
+            });
+        }
     }
+    let action = match &decision.outcome {
+        DecisionOutcome::Selected {
+            selected_outputs, ..
+        } => format!("selected {} output(s)", selected_outputs.len()),
+        DecisionOutcome::Returned { .. } => "returned the candidate".to_owned(),
+        DecisionOutcome::Collapse { .. } => "recorded the candidate's collapse request".to_owned(),
+    };
     let answer = TextAnswer {
         text: format!(
-            "authorized {} output(s) through decision {}",
-            authorization.selected_outputs.len(),
-            authorization.decision.decision
+            "{action} through decision {} of candidate {}",
+            decision.decision.decision, candidate.candidate.candidate
         ),
     };
     if let Err(error) = write.command_result(
@@ -418,10 +564,7 @@ pub(super) fn authorize_execution(
         command.epoch(),
         answer.clone(),
     ) {
-        return store_fault(
-            "preparation::authorization-receipt-invalid",
-            &error.to_string(),
-        );
+        return store_fault("preparation::decision-receipt-invalid", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Text(answer))
 }
