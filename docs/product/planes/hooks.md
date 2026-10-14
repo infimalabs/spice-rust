@@ -59,8 +59,10 @@ current work.
 
 A [service](../invariants/lifecycle.md#lifecycle-services-belong-to-one-claim-win)
 never ends on its own and never keeps a lane idle; `job wait` answers at once
-with its output so far. Every seat start names the lane's kept commands that
-still run, marking services, so a forgotten service surfaces to the next seat.
+with its output so far. A task-associated service follows its exact claim win;
+an unanchored service stops with the occupant turn that launched it. Every seat
+start names the lane's kept commands that still run, marking services, so a
+forgotten task service surfaces to the next seat.
 
 A job's ending is told once. An answer that reports how a job ended records it
 as heard, so no completion notice follows and no successor repeats it. The

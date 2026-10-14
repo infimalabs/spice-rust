@@ -184,16 +184,22 @@ Mutation replies are outside this contract: they stay complete and concise.
 The occupant's `job` tool reads the same contract. Its default `list` is every
 job still owed to the lane — running, or ended and not yet heard — the set the
 seat shows as Kept jobs; delivered jobs are read only through `history`, newest
-first, with an exact continuation. `wait` passively observes a finite job and
-leaves it running. An occupant holding a claim may end its turn while a
-deadline-bounded job runs; the lane stays vacant until that job ends or emits
-an event, then wakes a successor that still holds the claim. A service never
-ends on its own and never keeps a lane idle: it runs while its claim is active
-or until `stop`, and its readiness is read from its logs or served surface,
-never by waiting on its process. Every seat start lists the kept commands
-still running, and says nothing when none run. The lane read lists each kept
-job with its kind — `command` when deadline-bounded, `service`, or `watch` for
-a command with `events` — and its standing, `running` or `unheard`.
+first, with an exact continuation. Every job records the exact ambient task
+held at launch, or no task when the turn is unclaimed. A task overview lists
+only jobs carrying one of its selected task identities.
+
+`wait` passively observes a finite job and leaves it running. An occupant
+holding a claim may end its turn while a deadline-bounded job runs; the lane
+stays vacant until that job ends or emits an event, then wakes a successor that
+still holds the claim. A service never ends on its own and never keeps a lane
+idle. A service launched while a task is held runs while that exact claim win
+remains active or until `stop`, surviving occupant succession within the claim.
+A service launched by an unclaimed turn belongs to that turn instead and is
+stopped when the turn exits. Service readiness is read from logs or the served
+surface, never by waiting on its process. Every seat start lists the kept
+commands still running, and says nothing when none run. The lane read lists
+each kept job with its kind — `command` when deadline-bounded, `service`, or
+`watch` for a command with `events` — and its standing, `running` or `unheard`.
 
 A shell call with `events` is answered at once with the job's id; each stdout
 line becomes a background notice to the seated occupant, in order and exactly

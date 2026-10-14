@@ -7,7 +7,7 @@ use crate::runtime::{LaneMember, LaneRow};
 /// Rows shown before the existing Work table becomes scrollable.
 const KEPT_JOBS_VISIBLE: usize = 5;
 
-pub(super) fn render(lanes: &[LaneRow]) -> Html {
+pub(super) fn render(lanes: &[LaneRow], tasks: &[wire::TaskStamp]) -> Html {
     let mut jobs = lanes
         .iter()
         .flat_map(|team| {
@@ -15,11 +15,15 @@ pub(super) fn render(lanes: &[LaneRow]) -> Html {
                 .iter()
                 .enumerate()
                 .flat_map(move |(position, member)| {
-                    member.jobs.iter().map(move |job| ResidentJob {
-                        member,
-                        accent: crate::watchband::accent(team.members.len(), position),
-                        job,
-                    })
+                    member
+                        .jobs
+                        .iter()
+                        .filter(move |job| crate::watchband::job_matches_tasks(job, tasks))
+                        .map(move |job| ResidentJob {
+                            member,
+                            accent: crate::watchband::accent(team.members.len(), position),
+                            job,
+                        })
                 })
         })
         .collect::<Vec<_>>();

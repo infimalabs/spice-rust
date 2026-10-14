@@ -29,6 +29,7 @@ mod tests;
 
 pub(in crate::resident) use job::{
     Control, Event, Handle, Job, Jobs, ServiceAuthority, reconcile_services,
+    reconcile_turn_services,
 };
 use job::{Ended, Ending, Observed, Tail};
 
@@ -182,22 +183,20 @@ impl Terminal {
     }
 
     fn run_command(&self, call: &ShellCall, control: &Control) -> Run {
-        let service = if matches!(call.lifetime, Lifetime::Service) {
-            let Some(authority) = &self.service_authority else {
-                return Run::Ended(Report::refused(
-                    "service launch requires an active task claim",
-                ));
-            };
-            match authority.admit() {
-                Ok(service) => Some(service),
+        let service = matches!(call.lifetime, Lifetime::Service);
+        let (task, service) = match &self.service_authority {
+            Some(authority) => match authority.admit_job(service) {
+                Ok(association) => association,
                 Err(error) => {
-                    return Run::Ended(Report::refused(&format!(
-                        "service launch refused: {error}"
-                    )));
+                    return Run::Ended(Report::refused(&format!("job launch refused: {error}")));
                 }
+            },
+            None if service => {
+                return Run::Ended(Report::refused(
+                    "service launch requires an active occupant turn",
+                ));
             }
-        } else {
-            None
+            None => (None, None),
         };
         let (argv, diagnostic) = self.argv(call);
         let started = self.jobs.start(
@@ -206,6 +205,7 @@ impl Terminal {
             &self.cwd,
             &self.environment,
             call.lifetime.deadline(),
+            task,
             service,
             &call.notices,
             call.events,
@@ -416,6 +416,7 @@ pub(in crate::resident) fn unheard(jobs: &Jobs) -> Vec<LaneJob> {
         .map(|job| LaneJob {
             id: job.id().to_owned(),
             command: job.command().to_owned(),
+            task: job.task().cloned(),
             kind: if job.events() {
                 LaneJobKind::Watch
             } else if job.timeout().is_none() {

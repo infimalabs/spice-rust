@@ -1,4 +1,4 @@
-//! Long-lived service claim authority.
+//! Long-lived service task and turn authority.
 
 use std::io::{self, ErrorKind};
 use std::path::PathBuf;
@@ -31,30 +31,52 @@ impl ServiceClaim {
                     && claim.lane == self.lane
             })
     }
+
+    #[cfg(test)]
+    pub(super) fn for_tests(task: TaskStamp, lane: CanonicalUuid, occupant: CanonicalUuid) -> Self {
+        Self {
+            task,
+            claimed: Seq::new(1).expect("fixture claim position"),
+            phase: "implementation".to_owned(),
+            lane,
+            occupant,
+        }
+    }
 }
 
-/// One initially admitted claim, retained until its durable request is
+/// The lifetime owner of one unbounded command.
+pub(super) enum ServiceOwner {
+    /// The exact active claim survives occupant succession.
+    Task(ServiceClaim),
+    /// An unclaimed launch survives only its current occupant turn.
+    Turn(CanonicalUuid),
+}
+
+/// One initially admitted owner, retained until its durable request is
 /// published and the same authority can validate it again.
 pub(in crate::resident) struct ServiceAdmission<'a> {
-    pub(super) claim: ServiceClaim,
+    pub(super) owner: ServiceOwner,
     authority: &'a ServiceAuthority,
 }
 
 impl ServiceAdmission<'_> {
     pub(super) fn validate(&self) -> io::Result<()> {
-        self.authority
-            .owns(&self.claim)?
-            .then_some(())
-            .ok_or_else(|| {
-                io::Error::new(
-                    ErrorKind::PermissionDenied,
-                    "the service task claim ended during launch",
-                )
-            })
+        let owned = match &self.owner {
+            ServiceOwner::Task(claim) => self.authority.owns(claim)?,
+            ServiceOwner::Turn(turn) => {
+                *turn == self.authority.occupant && self.authority.seated()?
+            }
+        };
+        owned.then_some(()).ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::PermissionDenied,
+                "the service owner ended during launch",
+            )
+        })
     }
 }
 
-/// Read-only task authority available to a detached occupant's terminal.
+/// Read-only task and turn authority available to a detached occupant's terminal.
 #[derive(Clone, Debug)]
 pub(in crate::resident) struct ServiceAuthority {
     journal: PathBuf,
@@ -75,14 +97,24 @@ impl ServiceAuthority {
         }
     }
 
-    pub(in crate::resident) fn admit(&self) -> io::Result<ServiceAdmission<'_>> {
-        Ok(ServiceAdmission {
-            claim: self.claim()?,
+    /// Capture one job's ambient task and, for a service, its lifetime owner
+    /// at the same authority read.
+    pub(in crate::resident) fn admit_job(
+        &self,
+        service: bool,
+    ) -> io::Result<(Option<TaskStamp>, Option<ServiceAdmission<'_>>)> {
+        let (task, claim) = self.claim(service)?;
+        let admission = service.then(|| ServiceAdmission {
+            owner: claim.map_or(ServiceOwner::Turn(self.occupant), ServiceOwner::Task),
             authority: self,
-        })
+        });
+        Ok((task, admission))
     }
 
-    fn claim(&self) -> io::Result<ServiceClaim> {
+    /// The current occupant's active task and, only when needed for a service,
+    /// its exact claim. Being seated is required even when there is no claim:
+    /// only a live turn can launch.
+    fn claim(&self, service: bool) -> io::Result<(Option<TaskStamp>, Option<ServiceClaim>)> {
         let reader = JournalReader::open(&self.journal).map_err(io::Error::other)?;
         reader
             .read_with(|read| {
@@ -100,18 +132,15 @@ impl ServiceAuthority {
                 if !seated {
                     return Err(io::Error::new(
                         ErrorKind::PermissionDenied,
-                        "the service caller is not the lane's current occupant",
+                        "the job caller is not the lane's current occupant",
                     ));
                 }
-                let heads = read
+                let Some(heads) = read
                     .active_claim_for_actor(&Actor::Lane(self.lane))
                     .map_err(io::Error::other)?
-                    .ok_or_else(|| {
-                        io::Error::new(
-                            ErrorKind::PermissionDenied,
-                            "service launch requires an active task claim",
-                        )
-                    })?;
+                else {
+                    return Ok((None, None));
+                };
                 let claim = heads
                     .claim()
                     .expect("an active claim lookup returns a claim head")
@@ -122,13 +151,32 @@ impl ServiceAuthority {
                         "the active task claim belongs to another lane occupant",
                     ));
                 }
-                Ok(ServiceClaim {
-                    task: heads.statement().body().born.clone(),
+                let task = heads.statement().body().born.clone();
+                let service_claim = service.then(|| ServiceClaim {
+                    task: task.clone(),
                     claimed: claim.claimed,
                     phase: heads.workflow().body().phase.to_string(),
                     lane: self.lane,
                     occupant: self.occupant,
-                })
+                });
+                Ok((Some(task), service_claim))
+            })
+            .map_err(io::Error::other)
+    }
+
+    fn seated(&self) -> io::Result<bool> {
+        let reader = JournalReader::open(&self.journal).map_err(io::Error::other)?;
+        reader
+            .read_with(|read| {
+                Ok::<bool, io::Error>(
+                    read.residency_head()
+                        .map_err(io::Error::other)?
+                        .is_some_and(|head| {
+                            head.body().lanes.iter().any(|row| {
+                                row.lane == self.lane && row.occupant == Some(self.occupant)
+                            })
+                        }),
+                )
             })
             .map_err(io::Error::other)
     }

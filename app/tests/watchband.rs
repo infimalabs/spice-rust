@@ -3,10 +3,10 @@ use app::runtime::{AppRuntime, LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop, UNKNOWN_AGENT_LABEL,
     accent, arrangement, badge, elapsed_label, elapsed_label_deadline_millis,
-    first_nonquoted_prose, history_frontier_request_due, jobs_kept, latest_lane_prose, leaf,
-    member_presence, one_line, remaining_label, remaining_label_deadline_millis, reported_tasks,
-    short, standing_title, standings, task_mentions, team_jobs, teams, ticker_chunks, ticker_line,
-    topology, truncate,
+    first_nonquoted_prose, history_frontier_request_due, job_matches_tasks, jobs_kept,
+    latest_lane_prose, leaf, member_presence, one_line, remaining_label,
+    remaining_label_deadline_millis, reported_tasks, short, standing_title, standings,
+    task_mentions, team_jobs, teams, ticker_chunks, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::head::TEAM_MEMBER_LIMIT;
@@ -664,12 +664,14 @@ fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution(
         wire::intent::LaneJob {
             id: "6ZbQk3mPx".to_owned(),
             command: "cargo test".to_owned(),
+            task: None,
             kind: wire::intent::LaneJobKind::Command,
             standing: wire::intent::LaneJobStanding::Running,
         },
         wire::intent::LaneJob {
             id: "6ZbQk3mPy".to_owned(),
             command: "cargo doc".to_owned(),
+            task: None,
             kind: wire::intent::LaneJobKind::Service,
             standing: wire::intent::LaneJobStanding::Unheard,
         },
@@ -687,6 +689,32 @@ fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution(
         Some("waiting on 1 job (1 running)")
     );
     assert_eq!(jobs_kept(&[]), None);
+}
+
+#[test]
+fn a_task_view_keeps_only_jobs_associated_with_its_selected_tasks() {
+    let selected = wire::TaskStamp::for_micros(10).expect("fixture task");
+    let other = wire::TaskStamp::for_micros(20).expect("fixture task");
+    let job = |task| wire::intent::LaneJob {
+        id: "6ZbQk3mPx".to_owned(),
+        command: "cargo test".to_owned(),
+        task,
+        kind: wire::intent::LaneJobKind::Command,
+        standing: wire::intent::LaneJobStanding::Running,
+    };
+
+    assert!(job_matches_tasks(
+        &job(Some(selected.clone())),
+        std::slice::from_ref(&selected),
+    ));
+    assert!(!job_matches_tasks(
+        &job(Some(other)),
+        std::slice::from_ref(&selected),
+    ));
+    assert!(!job_matches_tasks(
+        &job(None),
+        std::slice::from_ref(&selected),
+    ));
 }
 
 #[test]
@@ -708,6 +736,7 @@ fn team_jobs_interleave_members_by_start_and_keep_row_identity_across_standing()
     let job = |offset: i64, command: &str, standing| wire::intent::LaneJob {
         id: key(offset),
         command: command.to_owned(),
+        task: None,
         kind: wire::intent::LaneJobKind::Command,
         standing,
     };

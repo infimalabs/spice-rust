@@ -170,6 +170,7 @@ impl Jobs {
                     events: false,
                 },
                 None,
+                None,
                 |path, _, _, _| {
                     directory = Some(path.to_path_buf());
                     outcome

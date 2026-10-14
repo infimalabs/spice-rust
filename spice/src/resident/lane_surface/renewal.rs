@@ -408,7 +408,8 @@ pub(super) fn prepare(
     super::super::consent_surface::commit_lapse(bus, runtime.reads, renewal.lane)
 }
 
-/// Project current renewal intent to the exact running occupants privately.
+/// Project current renewal intent to the exact running occupants privately,
+/// and end services owned by occupant turns no longer resident.
 ///
 /// Reconciliation starts no process and creates no steering message.
 pub(in crate::resident) fn reconcile(
@@ -417,6 +418,13 @@ pub(in crate::resident) fn reconcile(
     epoch: CanonicalUuid,
 ) -> CommandResult<()> {
     let observed = current_residency(bus, epoch)?;
+    super::super::supervisor::terminal::reconcile_turn_services(paths, |lane, occupant| {
+        observed
+            .body()
+            .lanes
+            .iter()
+            .any(|row| row.lane == lane && row.occupant == Some(occupant))
+    });
     for row in &observed.body().lanes {
         let Some(occupant) = row.occupant else {
             continue;
