@@ -470,6 +470,68 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn a_session_waiting_for_a_slot_still_delivers_the_answer_the_resident_awaits() {
+    let app = TestApp::new();
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, mut control) = Server::bind_with_capacity(
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+        generation(&app, capabilities),
+        None,
+        1,
+    )
+    .await
+    .expect("binds");
+    let mut observed = server.state.admission_observed.subscribe();
+    let address = server.local_addr().expect("local address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+    let (mut pipelining, _) = authenticate(address, operator(), epoch()).await;
+    let (mut sibling, _) = authenticate(address, operator(), epoch()).await;
+    let seated = wire::ResidentState::Seated;
+
+    let answered_id = identity(0xf0);
+    send_change(&mut pipelining, answered_id, epoch(), seated).await;
+    wait_for_admission(&mut observed, AdmissionObservation::Queued(answered_id)).await;
+    let answered = control.recv().await.expect("first request");
+    let sibling_id = identity(0xf1);
+    send_change(&mut sibling, sibling_id, epoch(), seated).await;
+    wait_for_admission(&mut observed, AdmissionObservation::Queued(sibling_id)).await;
+    let waiting_id = identity(0xf2);
+    send_change(&mut pipelining, waiting_id, epoch(), seated).await;
+    wait_for_admission(&mut observed, AdmissionObservation::Reserving(waiting_id)).await;
+
+    let receipt = answered
+        .respond(state_reply(seated))
+        .expect("pipelining client waits");
+    timeout(ASSERTION_DEADLINE, receipt.wait())
+        .await
+        .expect("a session waiting for a slot still writes its earlier answer");
+    assert_eq!(response(&mut pipelining).await.id, answered_id);
+    for (id, socket) in [(sibling_id, &mut sibling), (waiting_id, &mut pipelining)] {
+        let request = control.recv().await.expect("queued request");
+        assert_eq!(request.command().id(), id);
+        request
+            .respond(state_reply(seated))
+            .expect("client waits")
+            .wait()
+            .await;
+        assert_eq!(response(socket).await.id, id);
+    }
+
+    shutdown.send(()).expect("server stops");
+    timeout(ASSERTION_DEADLINE, server_task)
+        .await
+        .expect("server stops before deadline")
+        .expect("server task")
+        .expect("server stops");
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn a_saturated_ordinary_class_cannot_block_an_authenticated_demand() {
     let app = TestApp::new();
     let capabilities = Capabilities::default();
