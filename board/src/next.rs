@@ -78,35 +78,20 @@ impl ResolvedTasks {
     /// Whether this statement remains Design-side speculative work rather than
     /// execution the allocator may expose in an agent-facing summary.
     ///
-    /// A Design itself stays on its operator-facing planning surface. An output
-    /// controlled by a Design stays there until an exact authorization selects
-    /// it; authorization is the authority boundary that turns it into ordinary
-    /// executable work.
+    /// A Design itself stays on its operator-facing planning surface. Work
+    /// controlled by a Design stays there until the same control predicate used
+    /// by allocation releases it. This includes ordinary outputs of an
+    /// authorized Plan once both that Plan and its Design conclude positively.
     #[must_use]
     pub fn speculative_design_work(&self, statement: &wire::TaskHead) -> bool {
-        is_speculative_design_work(
-            statement,
-            statement
-                .preparation
-                .as_ref()
-                .is_some_and(|preparation| self.design(&preparation.controller) == Some(true)),
-        )
+        if statement.intent == Some(TaskIntent::Design) {
+            return true;
+        }
+        statement.preparation.as_ref().is_some_and(|preparation| {
+            self.design(&preparation.controller) == Some(true)
+                && !control_satisfied(statement, self)
+        })
     }
-}
-
-/// Classify one statement after its caller resolves whether its controller is
-/// a Design. Kept independent of `Entry` so bounded journal glances and full
-/// allocator projections apply the same authority boundary.
-#[must_use]
-pub fn is_speculative_design_work(statement: &wire::TaskHead, controller_is_design: bool) -> bool {
-    statement.intent == Some(TaskIntent::Design)
-        || (controller_is_design
-            && statement.preparation.as_ref().is_some_and(|preparation| {
-                !statement
-                    .authorization
-                    .as_ref()
-                    .is_some_and(|authorization| authorization.controller == preparation.controller)
-            }))
 }
 
 /// Reusable task-graph evidence for repeated allocation decisions over one
@@ -828,7 +813,7 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
         .dependencies
         .iter()
         .all(|dependency| completed.settled(dependency))
-        && control_satisfied(entry, completed)
+        && control_satisfied(entry.statement(), completed)
 }
 
 /// A constructed output waits for its preparation and controller to conclude
@@ -838,12 +823,11 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
 /// are unsupported evidence and never participate in eligibility. A
 /// preparation a Plan constructs runs alongside it. An unknown preparation
 /// leaves the output gated.
-fn control_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
-    let statement = entry.statement();
+fn control_satisfied(statement: &wire::TaskHead, completed: &ResolvedTasks) -> bool {
     let Some(preparation) = &statement.preparation else {
         return true;
     };
-    if preparation.construction != *entry.born() {
+    if preparation.construction != statement.born {
         return true;
     }
     let concluded =

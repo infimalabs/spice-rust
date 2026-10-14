@@ -1198,7 +1198,7 @@ fn a_design_output_is_eligible_only_under_that_designs_selection() {
 
 #[test]
 fn speculative_design_work_ends_at_exact_execution_authorization() {
-    let design = planning("BOARD-design", wire::TaskIntent::Design, Standing::Open);
+    let design = planning("BOARD-design", wire::TaskIntent::Design, Standing::Positive);
     let plan = planning("BOARD-plan", wire::TaskIntent::Plan, Standing::Open);
     let resolved = board::resolved_tasks(&[design.clone(), plan.clone()]);
     let speculative = constructed("BOARD-design", "BOARD-design", None, None, Vec::new());
@@ -1217,6 +1217,13 @@ fn speculative_design_work_ends_at_exact_execution_authorization() {
         Vec::new(),
     );
     let plan_output = constructed("BOARD-plan", "BOARD-plan", None, None, Vec::new());
+    let nested_output = constructed(
+        "BOARD-plan",
+        "BOARD-design",
+        None,
+        None,
+        vec![stamp("BOARD-plan"), stamp("BOARD-design")],
+    );
 
     assert!(resolved.speculative_design_work(design.statement()));
     assert!(resolved.speculative_design_work(speculative.statement()));
@@ -1225,6 +1232,21 @@ fn speculative_design_work_ends_at_exact_execution_authorization() {
     assert!(!resolved.speculative_design_work(plan.statement()));
     assert!(!resolved.speculative_design_work(plan_output.statement()));
     assert!(!resolved.speculative_design_work(entry("BOARD-ordinary").statement()));
+    assert!(resolved.speculative_design_work(nested_output.statement()));
+
+    let released = board::resolved_tasks(&[
+        design.clone(),
+        planning("BOARD-plan", wire::TaskIntent::Plan, Standing::Positive),
+    ]);
+    assert!(!released.speculative_design_work(nested_output.statement()));
+    assert!(
+        first_eligible(&[
+            nested_output,
+            design,
+            planning("BOARD-plan", wire::TaskIntent::Plan, Standing::Positive),
+        ]),
+        "the summary boundary releases a nested output exactly when allocation does"
+    );
 }
 
 #[test]

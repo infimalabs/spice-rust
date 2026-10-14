@@ -31,10 +31,9 @@ pub use inventory::{HiddenInventory, Inventory};
 pub use next::{
     ResolvedTasks, Selection, SelectionIndex, awaits_selection, blocked_handoff_until,
     capturable_entry, dependencies_satisfied, eligible_entry, environment_satisfied,
-    is_independent_handoff, is_released_by, is_speculative_design_work, offer_order,
-    offer_order_at, resolved_tasks, select, select_at, select_with_index_at, select_with_satisfied,
-    select_with_satisfied_at, selectable_entry, selectable_entry_at, stealable_entry,
-    unselected_output_of,
+    is_independent_handoff, is_released_by, offer_order, offer_order_at, resolved_tasks, select,
+    select_at, select_with_index_at, select_with_satisfied, select_with_satisfied_at,
+    selectable_entry, selectable_entry_at, stealable_entry, unselected_output_of,
 };
 pub use overlap::{ClaimOverlap, claim_overlaps};
 pub use phase::{HANDOFF_SECONDS, PhaseRefusal, Transition, TransitionKind};

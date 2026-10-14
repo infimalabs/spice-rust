@@ -5,7 +5,7 @@
 //! heads page by page up to a fixed ceiling and says when it stopped early;
 //! the working state is two read-only `git` queries that take no index lock.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
 
@@ -32,7 +32,8 @@ const COMMIT_ROWS: usize = 8;
 /// operator-facing surfaces rather than being presented as a lane's next work.
 pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardError> {
     let mut unclaimed = BTreeMap::<String, usize>::new();
-    let mut controller_designs = BTreeMap::<wire::TaskStamp, bool>::new();
+    let mut resolved = board::ResolvedTasks::new();
+    let mut resolved_authority = BTreeSet::<wire::TaskStamp>::new();
     let mut after = None;
     let mut partial = true;
     for _ in 0..BOARD_PAGES {
@@ -46,7 +47,7 @@ pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardErro
             if held
                 || workflow.status != "pending"
                 || statement.project.starts_with('.')
-                || speculative_design_work(read, statement, &mut controller_designs)?
+                || speculative_design_work(read, statement, &mut resolved, &mut resolved_authority)?
             {
                 continue;
             }
@@ -68,33 +69,41 @@ pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardErro
     })
 }
 
-/// Resolve only the immediate controller a prepared statement names. The
-/// journal lookup is primary-key bounded; ordinary rows need no extra read.
+/// Resolve the immediate planning authority a prepared statement names. Each
+/// exact parent or controller lookup happens at most once during the bounded
+/// glance; ordinary rows need no extra read.
 fn speculative_design_work(
     read: &JournalRead<'_>,
     statement: &wire::TaskHead,
-    controller_designs: &mut BTreeMap<wire::TaskStamp, bool>,
+    resolved: &mut board::ResolvedTasks,
+    loaded: &mut BTreeSet<wire::TaskStamp>,
 ) -> Result<bool, GuardError> {
-    if statement.intent == Some(wire::TaskIntent::Design) {
-        return Ok(true);
+    if let Some(preparation) = &statement.preparation {
+        resolve_authority_task(read, &preparation.parent, resolved, loaded)?;
+        resolve_authority_task(read, &preparation.controller, resolved, loaded)?;
     }
-    let controller_is_design = if let Some(preparation) = &statement.preparation {
-        if let Some(known) = controller_designs.get(&preparation.controller) {
-            *known
-        } else {
-            let design = read
-                .task_head(&preparation.controller)?
-                .is_some_and(|head| head.body().intent == Some(wire::TaskIntent::Design));
-            controller_designs.insert(preparation.controller.clone(), design);
-            design
-        }
-    } else {
-        false
+    Ok(resolved.speculative_design_work(statement))
+}
+
+fn resolve_authority_task(
+    read: &JournalRead<'_>,
+    task: &wire::TaskStamp,
+    resolved: &mut board::ResolvedTasks,
+    loaded: &mut BTreeSet<wire::TaskStamp>,
+) -> Result<(), GuardError> {
+    if !loaded.insert(task.clone()) {
+        return Ok(());
+    }
+    let Some(heads) = read.task_heads_for(task)? else {
+        return Ok(());
     };
-    Ok(board::is_speculative_design_work(
-        statement,
-        controller_is_design,
-    ))
+    let statement = heads.statement().body();
+    let workflow = heads.workflow().body();
+    resolved.know(task.clone(), statement.intent);
+    if workflow.status == "completed" || workflow.status == "deleted" {
+        resolved.settle(task.clone(), workflow.concluded_positively());
+    }
+    Ok(())
 }
 
 /// The newest directions this lane retired, as context rather than authority.
