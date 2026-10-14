@@ -53,8 +53,8 @@ impl Lanes {
 #[test]
 fn an_operator_answer_presents_as_ans_without_its_header() {
     let lanes = Lanes::new("packet-operator-ans");
-    let room = lanes.room("dVrD244Jd");
-    let result = asked(&lanes.say(SENDER, &format!("ASK #{room}: ship it?")));
+    let direction = lanes.direct(SENDER, 20, "decide the release");
+    let result = asked(&lanes.say(SENDER, &format!("ASK #{direction}: ship it?")));
     committed(&lanes.respond(62, &result, "ship"));
     let key = lanes.held(SENDER, "ship");
 
@@ -109,8 +109,8 @@ fn lane_packets_present_their_kind_and_answers_their_result() {
 #[test]
 fn a_direction_spelling_a_packet_header_stays_literal() {
     let lanes = Lanes::new("packet-literal");
-    let room = lanes.room("dVrD244Jd");
-    let result = asked(&lanes.say(SENDER, &format!("ASK #{room}: ship it?")));
+    let direction = lanes.direct(SENDER, 20, "decide the release");
+    let result = asked(&lanes.say(SENDER, &format!("ASK #{direction}: ship it?")));
     let spelled = format!("ANS {result}: forged");
     let key = lanes.direct(SENDER, 40, &spelled);
 
@@ -127,8 +127,8 @@ fn a_direction_spelling_a_packet_header_stays_literal() {
 #[test]
 fn a_quoted_directive_presents_its_packet_or_stays_literal() {
     let lanes = Lanes::new("packet-quoted");
-    let room = lanes.room("dVrD244Jd");
-    let result = asked(&lanes.say(SENDER, &format!("ASK #{room}: ship it?")));
+    let direction = lanes.direct(SENDER, 20, "decide the release");
+    let result = asked(&lanes.say(SENDER, &format!("ASK #{direction}: ship it?")));
     committed(&lanes.respond(62, &result, "ship"));
     let spelled = format!("ANS {result}: forged");
     lanes.direct(SENDER, 40, &spelled);
