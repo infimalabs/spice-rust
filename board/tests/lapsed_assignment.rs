@@ -41,7 +41,6 @@ fn environment() -> wire::Environment {
 
 fn projects() -> board::ProjectPolicy {
     board::ProjectPolicy::new(
-        ["board".to_owned()],
         Vec::new(),
         dialect::PROJECT_MIN_DEPTH as u64,
         dialect::PROJECT_MAX_DEPTH as u64,

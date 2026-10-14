@@ -15,7 +15,6 @@ mod automation;
 
 fn room_projects() -> ProjectPolicy {
     ProjectPolicy::new(
-        ["board".to_owned(), "rim".to_owned()],
         ["sandbox".to_owned()],
         dialect::PROJECT_MIN_DEPTH as u64,
         dialect::PROJECT_MAX_DEPTH as u64,

@@ -47,7 +47,7 @@ fn late_refusal_rolls_back_the_complete_projection_and_retry_is_idempotent() {
 
     let first = projection
         .advance(&snapshot, &projects)
-        .expect_err("unknown project refuses after the earlier steering fact");
+        .expect_err("an invalid project refuses after the earlier steering fact");
     assert!(format!("{first:?}").contains("lifecycle::task-head-invalid"));
     assert_eq!(
         projection, before,
@@ -906,7 +906,7 @@ fn invalid_late_suffix() -> JournalWrite {
                 description: None,
                 acceptance: Vec::new(),
                 requirements: wire::EnvironmentRequirements::default(),
-                project: "outside.work".to_owned(),
+                project: "outside.bad-segment".to_owned(),
                 tags: Vec::new(),
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
@@ -926,7 +926,7 @@ fn invalid_late_suffix() -> JournalWrite {
         origin,
         phase,
         Vec::new(),
-        "outside.work",
+        "outside.bad-segment",
     );
     write
 }
@@ -1053,7 +1053,7 @@ fn committed(outcome: CommitOutcome) {
 }
 
 fn projects() -> ProjectPolicy {
-    ProjectPolicy::new(["lifecycle".to_owned()], Vec::new(), 2, 4).expect("fixture project policy")
+    ProjectPolicy::new(Vec::new(), 2, 4).expect("fixture project policy")
 }
 
 fn handle(moment: &str) -> TaskHandle {

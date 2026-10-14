@@ -327,13 +327,11 @@ fn board_response_with_requirements(
         cursor: seq(4),
         principal: wire::Actor::Operator,
         project_policy: wire::intent::BoardProjectPolicy {
-            public_stems: vec!["app".to_owned(), "board".to_owned()],
             public_min_depth: 2,
             public_max_depth: 3,
         },
         actor_route: wire::intent::BoardActorRoute {
             actor: "operator".to_owned(),
-            project: "agent.operator.task".to_owned(),
             origin_thread: "operator".to_owned(),
         },
         tasks: vec![

@@ -32,7 +32,7 @@ Start with [value](value.md) and [loops](loops.md), then use the
 - **What does this word mean?** [Ontology](model/failures.md#ontology).
 - **Why does the interface feel like this?** [The jitter contract](loops.md#the-jitter-contract).
 - **What does a room do, and what does it never do?** [The room loop](loops.md#l-room--conversation-at-a-task),
-  its [limits](loops.md#limits-and-their-repairs), and its [non-capabilities](loops.md#deliberate-non-capabilities).
+  its [limits](interfaces.md#limits-and-their-repairs), and its [non-capabilities](loops.md#deliberate-non-capabilities).
 - **How does an agent recover its own past?** [Session forensics](planes/session.md#session-forensics).
 - **What cannot be taken back?** [Reversal is a claim about identity](planes/distribution.md#reversal-is-a-claim-about-identity).
 

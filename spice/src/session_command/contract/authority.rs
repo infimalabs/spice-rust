@@ -22,7 +22,7 @@ fn fake_repository(root: &Path) {
     fs::create_dir(root.join(".git")).expect("fixture git directory is created");
     fs::write(
         root.join("spice-rust.toml"),
-        "[tasks]\nstems = [\"spice\"]\nproject_min_depth = 2\nproject_max_depth = 3\n",
+        "[tasks]\nproject_min_depth = 2\nproject_max_depth = 3\n",
     )
     .expect("fixture tracked task policy is written");
 }

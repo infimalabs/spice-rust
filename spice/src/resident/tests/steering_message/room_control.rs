@@ -116,8 +116,8 @@ impl Lanes {
                 }
             }
             ["room", path @ ("relevance" | "awareness")] => {
-                let projects = board::ProjectPolicy::new(["steer".to_owned()], Vec::new(), 2, 3)
-                    .expect("fixture project policy");
+                let projects =
+                    board::ProjectPolicy::new(Vec::new(), 2, 3).expect("fixture project policy");
                 if *path == "relevance" {
                     match crate::room_command::relevance::answer(
                         &journal,

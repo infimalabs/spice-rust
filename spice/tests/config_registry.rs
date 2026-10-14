@@ -14,7 +14,6 @@ release = ["tool", "release"]
 spice = "appliance"
 
 [tasks]
-stems = ["app", "board"]
 hidden_stems = ["oops", "sandbox", "sandbox"]
 project_min_depth = 2
 project_max_depth = 3
@@ -257,7 +256,6 @@ fn root_is_exactly_the_eighteen_typed_domains() {
     );
     assert!(root.proof().container().is_some());
     assert!(root.proof().runner().is_some());
-    assert_eq!(root.tasks().stems(), ["app", "board"]);
     assert_eq!(
         root.tasks().hidden_stems(),
         ["oops", "maxim_proposal", "sandbox"]
@@ -316,8 +314,6 @@ fn root_is_exactly_the_eighteen_typed_domains() {
 #[test]
 fn shared_metadata_directly_refuses_invalid_names_depths_and_children() {
     for (document, expected) in [
-        ("[tasks]\nstems = [\"\"]\n", "nonempty"),
-        ("[tasks]\nstems = [\"app\", \"app\"]\n", "unique"),
         ("[policy]\nenv_names = [\"\"]\n", "nonempty"),
         (
             "[policy]\nenv_names = [\"FIXTURE_PROOF\", \"FIXTURE_PROOF\"]\n",
@@ -480,7 +476,6 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "commands.<name>",
     "wrappers.spice",
     "rtk.executable",
-    "tasks.stems",
     "tasks.hidden_stems",
     "tasks.project_min_depth",
     "tasks.project_max_depth",

@@ -69,7 +69,6 @@ fn select<'a>(
 
 fn projects() -> board::ProjectPolicy {
     board::ProjectPolicy::new(
-        ["board".to_owned(), "agent".to_owned()],
         Vec::new(),
         dialect::PROJECT_MIN_DEPTH as u64,
         dialect::PROJECT_MAX_DEPTH as u64,
@@ -234,7 +233,6 @@ fn statement_views_preserve_project_family_handle_and_dependency_heads() {
     assert_eq!(entry.project().as_str(), "board.kernel");
     assert_eq!(entry.family().as_str(), "KERNEL");
     let projects = board::ProjectPolicy::new(
-        ["board".to_owned(), "agent".to_owned()],
         Vec::new(),
         dialect::PROJECT_MIN_DEPTH as u64,
         dialect::PROJECT_MAX_DEPTH as u64,
@@ -492,9 +490,8 @@ fn live_graphs_exclude_settled_history_but_name_direct_dependencies() {
 }
 
 #[test]
-fn project_policy_admits_only_resolved_hidden_roots_without_broadening_public_law() {
+fn project_policy_admits_only_resolved_hidden_roots() {
     let projects = board::ProjectPolicy::new(
-        ["board".to_owned()],
         [
             "sandbox".to_owned(),
             "oops".to_owned(),
@@ -573,8 +570,19 @@ fn project_policy_admits_only_resolved_hidden_roots_without_broadening_public_la
             Err(board::ProjectError::HiddenSpelling(_))
         ));
     }
+}
 
-    for public in ["board.work", "board.deep_work.unit2"] {
+#[test]
+fn project_policy_admits_any_public_root_within_the_depth_bounds() {
+    let projects =
+        board::ProjectPolicy::new(Vec::<String>::new(), 2, 3).expect("public fixture policy");
+    // Every root shares one public law: spelling and both depth bounds decide.
+    for public in [
+        "board.work",
+        "board.deep_work.unit2",
+        "foreign.work",
+        "foreign.deep_work.unit2",
+    ] {
         let admitted = projects.admit(public).expect("current public project");
         assert!(!admitted.visibility().is_hidden());
         assert_eq!(
@@ -584,22 +592,34 @@ fn project_policy_admits_only_resolved_hidden_roots_without_broadening_public_la
             admitted,
         );
     }
-    for refused in ["board", "board.one.two.three", "board.bad-stem"] {
-        assert!(projects.admit(refused).is_err(), "{refused}");
+    for (shallow, deep) in [
+        ("board", "board.one.two.three"),
+        ("foreign", "foreign.one.two.three"),
+    ] {
+        for refused in [shallow, deep] {
+            assert!(
+                matches!(
+                    projects.admit_manual_creation(refused),
+                    Err(board::ProjectError::PublicDepth { .. })
+                ),
+                "{refused}"
+            );
+        }
     }
-    assert!(matches!(
-        board::ProjectPolicy::new(["board".to_owned()], ["board".to_owned()], 2, 3),
-        Err(board::ProjectPolicyError::HiddenPublicCollision {
-            index: Some(0),
-            stem,
-        }) if stem == "board"
-    ));
+    for malformed in ["board.bad-stem", "Foreign.work", "foreign..work"] {
+        assert!(
+            matches!(
+                projects.admit_manual_creation(malformed),
+                Err(board::ProjectError::PublicSpelling(_))
+            ),
+            "{malformed}"
+        );
+    }
 }
 
 #[test]
 fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
-    let projects = board::ProjectPolicy::new(["board".to_owned()], ["sandbox".to_owned()], 2, 3)
-        .expect("fixture policy");
+    let projects = board::ProjectPolicy::new(["sandbox".to_owned()], 2, 3).expect("fixture policy");
     let admitted = |name: &str, project: &str, critical: bool| {
         let mut head = statement(name);
         head.project = project.to_owned();
@@ -857,8 +877,7 @@ fn trust_grant_transition_changes_every_allocator_admission_without_rewriting_th
 
 #[test]
 fn policy_snapshot_retains_hidden_rows_as_explicit_evidence() {
-    let projects =
-        board::ProjectPolicy::new(["board".to_owned()], Vec::new(), 2, 3).expect("fixture policy");
+    let projects = board::ProjectPolicy::new(Vec::new(), 2, 3).expect("fixture policy");
     let mut hidden = statement("BOARD-hidden");
     hidden.project = ".oops.correctness".to_owned();
     let journal = journal_with_heads(hidden, workflow("todo"));

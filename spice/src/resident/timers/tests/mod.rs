@@ -1396,7 +1396,6 @@ fn start_timers(projects: ProjectPolicy) -> CommandResult<Runtime> {
 
 fn projects() -> ProjectPolicy {
     ProjectPolicy::new(
-        ["timer".to_owned()],
         Vec::new(),
         dialect::PROJECT_MIN_DEPTH as u64,
         dialect::PROJECT_MAX_DEPTH as u64,

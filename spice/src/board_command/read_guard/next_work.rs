@@ -80,7 +80,6 @@ pub(super) fn read_next_work(
                 &entries,
                 &satisfied,
                 &origin_threads,
-                projects,
                 &actor_route(&principal, residency.body())?,
             ),
             team: subscription.policy,
@@ -100,7 +99,6 @@ pub(super) fn read_next_work(
         cursor,
         principal: principal.clone(),
         project_policy: BoardProjectPolicy {
-            public_stems: projects.public_stems().iter().cloned().collect(),
             public_min_depth: projects.public_min_depth(),
             public_max_depth: projects.public_max_depth(),
         },
@@ -243,13 +241,12 @@ fn dry_counts(
     entries: &[Entry],
     satisfied: &board::ResolvedTasks,
     origin_threads: &[String],
-    projects: &ProjectPolicy,
     route: &wire::intent::BoardActorRoute,
 ) -> NextWorkCounts {
     let visible = entries
         .iter()
         .zip(origin_threads)
-        .filter(|(entry, origin)| actor_route_matches_entry(entry, origin, projects, route))
+        .filter(|(entry, origin)| actor_route_matches_entry(entry, origin, route))
         .map(|(entry, _)| entry);
     let mut counts = NextWorkCounts {
         active: 0,
@@ -286,28 +283,14 @@ fn dry_counts(
     counts
 }
 
+/// The default read route: every public row, plus rows created on the
+/// principal's own origin thread.
 fn actor_route_matches_entry(
     entry: &Entry,
     origin_thread: &str,
-    projects: &ProjectPolicy,
     route: &wire::intent::BoardActorRoute,
 ) -> bool {
-    if entry.project().as_str() == route.project {
-        return true;
-    }
-    if !entry.project().visibility().is_hidden()
-        && projects.public_stems().iter().any(|stem| {
-            entry.project().as_str() == stem
-                || entry
-                    .project()
-                    .as_str()
-                    .strip_prefix(stem)
-                    .is_some_and(|suffix| suffix.starts_with('.'))
-        })
-    {
-        return true;
-    }
-    origin_thread == route.origin_thread
+    !entry.project().visibility().is_hidden() || origin_thread == route.origin_thread
 }
 
 fn task_origin_thread(

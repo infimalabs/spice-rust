@@ -56,8 +56,7 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
         completion: None,
         generation: 0,
     };
-    let projects =
-        ProjectPolicy::new(["board".to_owned()], Vec::new(), 2, 8).expect("fixture project policy");
+    let projects = ProjectPolicy::new(Vec::new(), 2, 8).expect("fixture project policy");
     Entry::new(statement, workflow, None, None, &projects).expect("fixture entry is valid")
 }
 

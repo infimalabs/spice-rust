@@ -41,7 +41,6 @@ pub(super) fn lapse_claim(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &T
         .expiry;
     let request = board::lapse::Request {
         projects: ProjectPolicy::new(
-            ["board".to_owned(), "rim".to_owned()],
             ["sandbox".to_owned()],
             dialect::PROJECT_MIN_DEPTH as u64,
             dialect::PROJECT_MAX_DEPTH as u64,
@@ -203,7 +202,6 @@ pub(super) fn issue_with_allocation<B: Serialize>(
 ) -> Outcome<CommandAnswer> {
     let command = fixture_command(epoch, actor, kind, expected, body);
     let projects = ProjectPolicy::new(
-        ["board".to_owned(), "rim".to_owned()],
         ["sandbox".to_owned()],
         dialect::PROJECT_MIN_DEPTH as u64,
         dialect::PROJECT_MAX_DEPTH as u64,

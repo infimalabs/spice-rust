@@ -384,8 +384,7 @@ pub fn migrate_predecessor_tasks(
     } = input::parse(input)?;
     let tasks = TaskMetadata::migrated(configured_hidden.clone()).map_err(|error| {
         let index = match error {
-            board::ProjectPolicyError::HiddenStem { index, .. }
-            | board::ProjectPolicyError::HiddenPublicCollision { index, .. } => index,
+            board::ProjectPolicyError::HiddenStem { index, .. } => index,
             board::ProjectPolicyError::Depth { .. } => None,
         };
         let source = index.map_or_else(

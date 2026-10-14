@@ -203,8 +203,8 @@ impl MountLoadError {
     ///
     /// A generated built-in still owns syntax and domain errors in unrelated
     /// configuration. Mount collisions, structured `commands.*` issues, and
-    /// task-project stem issues that shape public routing must instead refuse
-    /// before that built-in dispatches.
+    /// hidden task-project stem issues that shape system routing must instead
+    /// refuse before that built-in dispatches.
     #[must_use]
     pub fn affects_mounts(&self) -> bool {
         match self {
@@ -216,8 +216,6 @@ impl MountLoadError {
                         let path = path.to_string();
                         path == "commands"
                             || path.starts_with("commands.")
-                            || path == "tasks.stems"
-                            || path.starts_with("tasks.stems[")
                             || path == "tasks.hidden_stems"
                             || path.starts_with("tasks.hidden_stems[")
                     })

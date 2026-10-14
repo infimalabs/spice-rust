@@ -176,11 +176,9 @@ fn team_scoped_schema_and_duplicate_refusals_retain_known_identity() {
 }
 
 #[test]
-fn hidden_stems_use_current_indexed_validation_and_public_conflicts() {
+fn hidden_stems_use_current_indexed_validation() {
     for (stems, index, expected) in [
         (json!(["sandbox", "bad-stem"]), 1, "must match"),
-        (json!(["task"]), 0, "conflicts with public stem"),
-        (json!(["serve"]), 0, "conflicts with public stem"),
         (json!(["sandbox", 4]), 1, "expected a string"),
     ] {
         let error = migrate(json!({

@@ -317,13 +317,6 @@ configuration_registry! {
         class: MachineLocal,
         flag: None,
     }
-    fixed "tasks.stems" {
-        kind: StringList,
-        builtin: Some(Builtin::Strings(&[])),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
     fixed "tasks.hidden_stems" {
         kind: StringList,
         builtin: Some(Builtin::Strings(&board::BUILTIN_HIDDEN_STEMS)),

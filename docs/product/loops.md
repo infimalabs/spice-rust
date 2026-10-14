@@ -121,9 +121,14 @@ flowchart LR
   and session trailers; first-parent history records mutating landings, not
   every transition.
 - `task add`, `task plan`, and `task design` share one manual-project
-  admission. A refused project names the captured policy's complete public stem
-  set and dotted depth range, so the author can repair it without probing.
-  Hidden roots remain reserved for their typed system routes.
+  admission: any `[0-9a-z_]+` root within the configured dotted depth range, so
+  authors name their own domains; no configured root list exists. A refused
+  project names that spelling and depth range, so the author can repair it
+  without probing. Default reads (`task list`, `task status`, dry `task next`
+  counts) cover every public project plus the reader's own origin-thread rows,
+  so an authored root is never invisible to a lane that may be allocated it.
+  Hidden roots remain reserved for their typed system routes and stay out of
+  other actors' default reads.
 - `task oops` parks a row in plan through the hidden `.oops` filing filter; only an explicit
   `task wake` promotes it, and every destination passes manual admission.
 
@@ -500,76 +505,9 @@ Every read — `spice room history|inbox|result|relevance|status`,
 `spice preparation show`, `spice group list`, and their `spice://` resources —
 joins, acknowledges, delivers, settles, and wakes nothing.
 
-### Preparation command bodies
-
-`preparation retain`, `critique`, `cover`, `decide`, and `authorize` each take
-one canonical JSON object. Unknown fields refuse, nothing is lenient, and a
-malformed body refuses with `preparation::argument-invalid`, giving the parse
-detail and a complete body that command accepts. `preparation adopt` takes two
-task handles instead.
-
-- **Values.** A task is its bare nine-character birth stamp, without the
-  project prefix (`dVzdhh8Nx` for `REPOSIT-dVzdhh8Nx`). A candidate is
-  `{"controller": STAMP, "candidate": STAMP}`: the controlling Design's stamp
-  and a new nine-character native stamp naming the candidate under that
-  controller. Critique, coverage, and decision identities are native base-52
-  sequences (`"1"`, `"2"`, …), new within their candidate or, for a decision,
-  within its controller. A source is
-  `{"kind": "journal", "fact": POSITION}` (a position `preparation show`
-  prints), `{"kind": "artifact", "digest": HEX}`, or a transcript hunk.
-- **`retain CANDIDATE_JSON`.** `candidate`, `governed_inputs` (tasks the
-  candidate assumes), `outputs` (at least one gated output), `references`
-  (at least one `{"relation": NAME, "source": SOURCE}`), and optional
-  `evidence` (question results that coverage must later assess). Inputs and
-  outputs are unique and disjoint.
-- **`critique CRITIQUE_JSON`.** `critique` (`{"candidate": …, "critique":
-  SEQUENCE}`), `category`, `source`, and `standing` (`clean` or
-  `material-finding`).
-- **`cover COVERAGE_JSON`.** `coverage` (`{"candidate": …, "coverage":
-  SEQUENCE}`), nonempty unique `scopes`, and `source`. The command attributes
-  the reviewer authority itself.
-- **`decide DECISION_JSON`.** `decision` (`{"controller": STAMP, "decision":
-  SEQUENCE}`), `source`, and `outcome`: `{"kind": "accepted"|"returned",
-  "candidate": …}` under the same controller, or `{"kind": "negative",
-  "conclusion": "rejected"|"no-work"}`.
-- **`authorize AUTHORIZATION_JSON`.** `decision`, `candidate` under the same
-  controller, `governed_inputs`, nonempty `selected_outputs`, and nonempty
-  `coverage` naming coverage of that candidate, all as unique sets.
-
-### Limits and their repairs
-
-| Bound | Value | Refusal and repair |
-| --- | --- | --- |
-| Designs per working group | 6, as lanes per team | `group::design-limit`: move one out or choose another group |
-| Group membership | Design tasks only | `group::design-only`: choose a Design or declare its Design intent |
-| Partition revision | the one read | `group::partition-moved`: read the groups and retry |
-| Automated resumes per rule | 1 through 8 | `room::auto-resume-out-of-range` |
-| Scoped request field | 2048 bytes | `room::coordination-scope-too-large` |
-| Live coordination per room | one request | `room::coordination-live`: retire or put aside the unanswered request |
-| Activity-only attention | one day | aging drops the reason, never history or duties |
-| Route fanout per publication | 32 | the packet refuses whole |
-| Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an operator answer refuses `room::answer-too-large` |
-| Pending question results per requester | 128 | further ASKs refuse; MSG, controls, and other requesters still admit |
-| Relevance sources per observation | 8 | an observation never cites more |
-| Reports per OOPS grooming record | 100 parked reports, in an open Design room | `room::oops-batch-too-large`; `room::oops-batch-not-open`: groom under a Design room |
-| Post to a settled room | an unresolved anchor only | `room::anchor-settled`, naming the standing: a completed, closed, or deleted anchor's room stays readable, and its open receipts and results still settle |
-| Late answer | the immutable deadline | `room::deadline-passed`: close with `spice room cancel RESULT --clause TEXT --override` |
-| Answer or close by a non-party | stored parties only | `room::not-respondent` or `room::override-required`, naming the `--override` command |
-| Required evidence | each result answered | `task::evidence-unsatisfied`: ask again, or the operator replaces or waives it |
-| Positive Design conclusion with gated outputs | none unauthorized | `preparation::controlled-outputs-pending`: authorize the exact selection, or close or delete each unselected output; until then the allocator holds the final-phase Design for the operator and starts no lane for it |
-| Candidate or authorization controller | a Design | `preparation::controller-not-design`: a Plan's outputs follow its positive review |
-| Authorizing Design dependencies | none pending, including review corrections | `preparation::controller-blocked`: settle the dependency first, so a finding keeps the Design pending |
-
-### Rollout boundary
-
-All four rollout stages are integrated: native hardening (the plan/design
-commit deny-list, retained planning duties, and renewal continuity); the first
-room loop (publication, reads, catch-up, the shared group partition, and
-preparation records); operator receipt symmetry with correlated ASK/ANS; and
-shadow relevance, explained invitations, and the operator-bounded resume rule.
-Transitions remain explicit operator and agent actions. The one automated
-transition runs the manual Resume's own operation, and final execution
-authorization stays operator-owned.
+Preparation command bodies and the room and preparation limits, with their
+refusals and repairs, are
+[interface contracts](interfaces.md#room-and-preparation-commands).
 
 ### Deliberate non-capabilities
 

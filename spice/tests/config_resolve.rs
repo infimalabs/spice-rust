@@ -165,7 +165,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert!(missing.root().policy().test_engines().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 53);
+    assert_eq!(missing.provenance().len(), 52);
     assert!(
         missing
             .provenance()
@@ -270,7 +270,7 @@ fn speech_configuration_refuses_retired_or_malformed_settings() {
 #[test]
 fn current_metadata_resolves_and_removed_spellings_refuse() {
     let tracked = concat!(
-        "[tasks]\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
+        "[tasks]\nhidden_stems = ['sandbox']\n",
         "[policy]\nenv_names = ['FIXTURE_INBOX']\n",
         "[taste.polling]\nwords = ['polling']\nmessage = 'use events'\n",
     );
@@ -278,7 +278,6 @@ fn current_metadata_resolves_and_removed_spellings_refuse() {
 
     let current = resolve(documents(Some(tracked), Some(local)))
         .expect("current resolution admits typed shared metadata");
-    assert_eq!(current.root().tasks().stems(), ["rim"]);
     assert_eq!(
         current.root().tasks().hidden_stems(),
         ["oops", "maxim_proposal", "sandbox"]
@@ -305,6 +304,7 @@ fn current_metadata_resolves_and_removed_spellings_refuse() {
 
     for (document, path) in [
         ("[tasks]\nbase_stems = ['task']\n", "tasks.base_stems"),
+        ("[tasks]\nstems = ['rim']\n", "tasks.stems"),
         (
             "[policy]\npredecessor_only = ['removed']\n",
             "policy.predecessor_only",
@@ -390,7 +390,6 @@ fn shared_metadata_is_tracked_only_and_enforces_names_and_depths() {
         Some(
             r#"
 [tasks]
-stems = ["app", "board"]
 hidden_stems = ["sandbox", "oops", "sandbox"]
 project_min_depth = 2
 project_max_depth = 3
@@ -403,7 +402,6 @@ env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     ))
     .expect("shared tracked metadata resolves");
 
-    assert_eq!(resolved.root().tasks().stems(), ["app", "board"]);
     assert_eq!(
         resolved.root().tasks().hidden_stems(),
         ["oops", "maxim_proposal", "sandbox"]
@@ -415,7 +413,6 @@ env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
         ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     );
     for path in [
-        "tasks.stems",
         "tasks.hidden_stems",
         "tasks.project_min_depth",
         "tasks.project_max_depth",
@@ -432,7 +429,6 @@ env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
         Some(
             r#"
 [tasks]
-stems = ["", "app", "app"]
 project_min_depth = 4
 project_max_depth = 3
 
@@ -443,7 +439,6 @@ env_names = ["FIXTURE_INBOX", "FIXTURE_INBOX"]
         Some(
             r#"
 [tasks]
-stems = ["local"]
 project_min_depth = 1
 project_max_depth = 2
 
@@ -455,7 +450,6 @@ env_names = ["LOCAL_NAME"]
     .expect_err("invalid and local shared metadata refuses");
 
     for (source, kind, path) in [
-        (ConfigSource::Tracked, IssueKind::Malformed, "tasks.stems"),
         (
             ConfigSource::Tracked,
             IssueKind::Malformed,
@@ -466,7 +460,6 @@ env_names = ["LOCAL_NAME"]
             IssueKind::Malformed,
             "policy.env_names",
         ),
-        (ConfigSource::Local, IssueKind::Policy, "tasks.stems"),
         (
             ConfigSource::Local,
             IssueKind::Policy,
@@ -494,7 +487,7 @@ env_names = ["LOCAL_NAME"]
 }
 
 #[test]
-fn hidden_stems_refuse_each_malformed_or_public_colliding_value_at_its_index() {
+fn hidden_stems_refuse_each_malformed_value_at_its_index() {
     for (document, index, expected) in [
         ("[tasks]\nhidden_stems = ['']\n", 0, "must match"),
         ("[tasks]\nhidden_stems = ['.oops']\n", 0, "must match"),
@@ -505,16 +498,6 @@ fn hidden_stems_refuse_each_malformed_or_public_colliding_value_at_its_index() {
             "[tasks]\nhidden_stems = ['sandbox', 'bad-stem']\n",
             1,
             "must match",
-        ),
-        (
-            "[tasks]\nstems = ['rim']\nhidden_stems = ['rim']\n",
-            0,
-            "conflicts with public stem",
-        ),
-        (
-            "[tasks]\nhidden_stems = ['task']\n",
-            0,
-            "conflicts with public stem",
         ),
     ] {
         let error = resolve(documents(Some(document), None))
@@ -675,7 +658,6 @@ enabled = false
 scopes = { paths = ["src/**"], extensions = [".rs"], vendors = ["omp"], models = ["gpt-current"], phases = ["pre-commit-success"] }
 
 [tasks]
-stems = ["app", "board"]
 hidden_stems = ["sandbox"]
 project_min_depth = 2
 project_max_depth = 3

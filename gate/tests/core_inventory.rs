@@ -18,7 +18,7 @@ fn configuration_key_admission_names_the_unknown_active_layer_key() {
         "spice-rust.toml",
         &policy_document(concat!(
             "[tasks]\n",
-            "stems = ['rim']\n",
+            "hidden_stems = ['sandbox']\n",
             "strms = ['misspelled']\n",
         )),
     );

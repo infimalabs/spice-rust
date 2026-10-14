@@ -882,13 +882,6 @@ fn invalid_pre_commit_policy(value: &Value) -> Option<(ConcretePath, String)> {
 
 fn invalid_hidden_stem(value: &Value) -> Option<(usize, String)> {
     let tasks = value.get("tasks")?.as_table()?;
-    let public = tasks
-        .get("stems")
-        .and_then(Value::as_array)?
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
     let hidden = tasks
         .get("hidden_stems")
         .and_then(Value::as_array)?
@@ -896,12 +889,9 @@ fn invalid_hidden_stem(value: &Value) -> Option<(usize, String)> {
         .filter_map(Value::as_str)
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    let error = board::ProjectPolicy::new(public, hidden, 1, 1).err()?;
+    let error = board::ProjectPolicy::new(hidden, 1, 1).err()?;
     match &error {
         board::ProjectPolicyError::HiddenStem {
-            index: Some(index), ..
-        }
-        | board::ProjectPolicyError::HiddenPublicCollision {
             index: Some(index), ..
         } => Some((*index, error.to_string())),
         _ => None,

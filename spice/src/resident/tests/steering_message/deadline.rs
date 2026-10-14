@@ -18,7 +18,6 @@ impl Lanes {
     pub(super) fn timers(&self) -> Runtime {
         let mut timers = Runtime::start(
             ProjectPolicy::new(
-                ["timer".to_owned()],
                 Vec::new(),
                 dialect::PROJECT_MIN_DEPTH as u64,
                 dialect::PROJECT_MAX_DEPTH as u64,

@@ -249,26 +249,16 @@ fn list_scope_matches(board: &BoardAnswer, task: &BoardTask, options: &TaskListO
     options.all || actor_route_matches(board, task)
 }
 
-/// Whether the actor may *read* the row.
+/// Whether the actor may *read* the row by default: every public row, plus
+/// rows created on the actor's own origin thread.
 ///
-/// Stem scoped, not subscription scoped, and deliberately wider than the
-/// allocation scope in `board::next::selectable`, which states the rule and
-/// why the two must stay apart.
+/// Deliberately wider than the allocation scope in `board::next::selectable`,
+/// which states the rule and why the two must stay apart.
 pub(in crate::board_command::client) fn actor_route_matches(
     board: &BoardAnswer,
     task: &BoardTask,
 ) -> bool {
-    let statement = &task.statement.body;
-    statement.project == board.actor_route.project
-        || task.origin_thread == board.actor_route.origin_thread
-        || (!task.visibility.is_hidden()
-            && board.project_policy.public_stems.iter().any(|stem| {
-                statement.project == *stem
-                    || statement
-                        .project
-                        .strip_prefix(stem)
-                        .is_some_and(|suffix| suffix.starts_with('.'))
-            }))
+    !task.visibility.is_hidden() || task.origin_thread == board.actor_route.origin_thread
 }
 
 fn list_status_matches(task: &BoardTask, options: &TaskListOptions) -> bool {

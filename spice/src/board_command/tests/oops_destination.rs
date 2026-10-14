@@ -1,16 +1,15 @@
 use super::*;
 
 const RECOMMENDED: &str = "board.cli";
-const STALE: &str = "rim.cli";
+const STALE: &str = "rim.ops.cli";
 const EXPLICIT: &str = "rim.edge";
 const DERIVED: &str = "task.oops";
 
-fn policy(public: &[&str]) -> ProjectPolicy {
+fn policy(max_depth: usize) -> ProjectPolicy {
     ProjectPolicy::new(
-        public.iter().map(|stem| (*stem).to_owned()),
         ["sandbox".to_owned()],
         dialect::PROJECT_MIN_DEPTH as u64,
-        dialect::PROJECT_MAX_DEPTH as u64,
+        max_depth as u64,
     )
     .expect("oops destination test project policy")
 }
@@ -120,7 +119,7 @@ fn assert_refused_without_facts(
 #[test]
 fn bare_wake_lands_in_the_recommendation_or_the_derived_task_project() {
     let (root, bus, epoch, _seats) = fixture("oops-destination-bare", 1);
-    let current = policy(&["board", "rim"]);
+    let current = policy(dialect::PROJECT_MAX_DEPTH);
     let (hinted, hinted_parked) = parked(&bus, epoch, "OOPS-hinted01", Some(RECOMMENDED));
     let (stale, _) = parked(&bus, epoch, "OOPS-stale001", Some(STALE));
     let (missing, missing_parked) = parked(&bus, epoch, "OOPS-missing1", None);
@@ -135,7 +134,9 @@ fn bare_wake_lands_in_the_recommendation_or_the_derived_task_project() {
         promoted_project(&bus, epoch, wake(&bus, epoch, &hinted, None, &current)),
         RECOMMENDED
     );
-    let narrowed = policy(&["board"]);
+    // A recommendation deeper than the current bound no longer passes manual
+    // admission, so the wake derives its project instead.
+    let narrowed = policy(dialect::PROJECT_MIN_DEPTH);
     assert_eq!(
         promoted_project(&bus, epoch, wake(&bus, epoch, &stale, None, &narrowed)),
         DERIVED
@@ -150,9 +151,9 @@ fn bare_wake_lands_in_the_recommendation_or_the_derived_task_project() {
 #[test]
 fn explicit_into_wins_and_every_refused_destination_writes_nothing() {
     let (root, bus, epoch, _seats) = fixture("oops-destination-explicit", 1);
-    let current = policy(&["board", "rim"]);
+    let current = policy(dialect::PROJECT_MAX_DEPTH);
     let facts = fact_count(&bus);
-    for refused in ["board", "nowhere.cli"] {
+    for refused in ["board", "nowhere.one.two.three"] {
         let outcome = file(&bus, epoch, &format!("OOPS-{refused}"), Some(refused));
         assert_refused_without_facts(&bus, outcome, "task::oops-project-refused", facts);
     }
@@ -160,7 +161,7 @@ fn explicit_into_wins_and_every_refused_destination_writes_nothing() {
     let (overridden, _) = parked(&bus, epoch, "OOPS-override", Some(RECOMMENDED));
     let (kept, kept_parked) = parked(&bus, epoch, "OOPS-keptpark", Some(RECOMMENDED));
     let facts = fact_count(&bus);
-    for refused in [".sandbox.cli", "board", "nowhere.cli"] {
+    for refused in [".sandbox.cli", "board", "nowhere.one.two.three"] {
         let outcome = wake(&bus, epoch, &kept, Some(refused), &current);
         assert_refused_without_facts(&bus, outcome, "task::promotion-project-refused", facts);
     }
