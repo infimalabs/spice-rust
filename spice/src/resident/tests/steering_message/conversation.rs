@@ -3,7 +3,7 @@
 //! operator route opens an explicit pending item.
 
 use steer::ack::scan::Verb;
-use steering::{BareOperator, Conversed, Published, Unpublished};
+use steering::{Conversed, Published, Unpublished};
 use wire::rooms::{
     QuestionResultHead, QuestionResultRecord, QuestionResultRef, QuestionResultState,
     RoomConversed, RoomDestination, RoomReceiptRef,
@@ -92,7 +92,6 @@ fn an_answer_returns_and_retires_its_question_once() {
                 verb: Verb::Ask,
                 operator: false,
                 result: Some(result.clone()),
-                bare_operator: None,
             }),
             held_room: false,
         })
@@ -131,7 +130,6 @@ fn an_answer_returns_and_retires_its_question_once() {
                 verb: Verb::Ans,
                 operator: false,
                 result: Some(result.clone()),
-                bare_operator: None,
             }),
             held_room: false,
         })
@@ -261,15 +259,16 @@ fn a_nak_of_the_live_ask_declines_its_result() {
     lanes.finish();
 }
 
-/// An operator route opens one pending operator item and wakes no lane; an
+/// A task concern opens one pending operator item and wakes no lane; an
 /// operator-routed MSG still reaches its seated lane routes.
 #[test]
-fn operator_routes_open_pending_items() {
+fn operator_concerns_open_pending_items() {
     let lanes = Lanes::new("conv-operator");
     let room = lanes.room("dVrD244Jd");
+    let born = room.born().expect("fixture handle carries its birth");
     let first = lanes.address(FIRST);
 
-    let asking = lanes.say(SENDER, &format!("ASK operator#{room}: ship it?"));
+    let asking = lanes.say(SENDER, &format!("ASK #{room}: ship it?"));
     let result = asked(&asking);
     let Ok(Published::Sent {
         lanes: reached,
@@ -284,8 +283,9 @@ fn operator_routes_open_pending_items() {
         lanes.question(&result).0.respondent(),
         &RoomDestination::Operator {}
     );
+    assert_eq!(lanes.question(&result).0.context(), Some(&born));
 
-    let telling = lanes.say(SENDER, &format!("MSG operator {first}: shipped"));
+    let telling = lanes.say(SENDER, &format!("MSG #{room} {first}: shipped"));
     assert!(
         matches!(
             &telling,
@@ -319,30 +319,21 @@ fn operator_routes_open_pending_items() {
 }
 
 /// `#KEY` routes to the operator about a direction the operator sent this
-/// lane; another lane's direction, a peer message's key, an unknown key, or an
-/// occupant asked about a direction publishes nothing. A bare `operator`
-/// route is admitted and its author hears the contextual selector it could
-/// have named.
+/// lane; another lane's direction, a peer message's key, an unknown key, an
+/// occupant asked about a direction, or the context-free legacy spelling
+/// publishes nothing.
 #[test]
-fn an_operator_route_names_the_direction_it_concerns() {
+fn an_operator_concern_names_the_direction_it_points_at() {
     let lanes = Lanes::new("conv-direction");
     let (sender, first) = (lanes.address(SENDER), lanes.address(FIRST));
-    let bare = |outcome: &Result<Published, Unpublished>| match outcome {
-        Ok(Published::Sent {
-            conversed:
-                Some(Conversed {
-                    operator: true,
-                    bare_operator,
-                    ..
-                }),
-            ..
-        }) => bare_operator.clone(),
-        other => panic!("the operator route opened an item: {other:?}"),
+    let bare = lanes.say(SENDER, "MSG operator: status");
+    let Err(Unpublished::Refused { reason, detail }) = &bare else {
+        panic!("the context-free legacy spelling refuses: {bare:?}");
     };
-    assert_eq!(
-        bare(&lanes.say(SENDER, "MSG operator: status")),
-        Some(BareOperator { instead: None })
-    );
+    assert_eq!(reason, "msg::concern-missing");
+    assert!(detail.contains("#KEY"), "{detail}");
+    assert!(detail.contains("#TASK"), "{detail}");
+    assert!(!detail.contains("operator#"), "{detail}");
 
     let own = lanes.direct(SENDER, 60, "which first");
     let theirs = lanes.direct(FIRST, 62, "hold the merge");
@@ -362,15 +353,15 @@ fn an_operator_route_names_the_direction_it_concerns() {
         (format!("#{peer}"), "msg::direction-not-operator"),
         ("#dVwg6Zqlf".to_owned(), "msg::direction-unknown"),
         (format!("{first}#{own}"), "msg::direction-audience"),
+        ("operator".to_owned(), "msg::concern-missing"),
     ] {
         let outcome = lanes.say(SENDER, &format!("MSG {selector}: about it"));
         assert_eq!(refused(&outcome), reason, "{selector}");
     }
-    assert_eq!(lanes.conversations().len(), 1);
+    assert!(lanes.conversations().is_empty());
 
     let asking = lanes.say(SENDER, &format!("ASK #{own}: which first?"));
     let result = asked(&asking);
-    assert_eq!(bare(&asking), None);
     assert_eq!(
         lanes.question(&result).0.respondent(),
         &RoomDestination::Operator {}
@@ -381,14 +372,7 @@ fn an_operator_route_names_the_direction_it_concerns() {
         .flat_map(|record| record.routes)
         .map(|route| route.direction)
         .collect::<Vec<_>>();
-    assert_eq!(directions, [None, Some(own.clone())]);
-
-    assert_eq!(
-        bare(&lanes.say(SENDER, "MSG operator: status again")),
-        Some(BareOperator {
-            instead: Some(format!("#{own}"))
-        })
-    );
+    assert_eq!(directions, [Some(own)]);
     lanes.finish();
 }
 
@@ -399,7 +383,7 @@ fn an_operator_route_names_the_direction_it_concerns() {
 fn an_operator_item_body_reads_back_from_its_authoring_transcript() {
     let lanes = Lanes::new("conv-operator-text");
     let room = lanes.room("dVrD244Jd");
-    let asking = lanes.say(SENDER, &format!("ASK operator#{room}: ship it?"));
+    let asking = lanes.say(SENDER, &format!("ASK #{room}: ship it?"));
     asked(&asking);
     let [asked] = lanes
         .conversations()

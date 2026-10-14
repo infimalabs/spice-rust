@@ -153,15 +153,15 @@ The operator's inbox sits in the Spice sidebar directly beneath their avatar,
 name, and email and above Jobs, not in the shared Working groups catalog. Its
 heading reads `<initials>'s inbox` (for example, "CA's inbox") once Git
 identity supplies initials, and "Your inbox" until then; an identity refresh
-retitles the same surface in place. It catalogs every open operator item, such
-as the one a lane's operator route opens. Each item first names what it
-concerns, most contextual first: the operator direction a lane's `#KEY` named,
-by key and the text the operator sent; else the task `operator#TASK` named;
-else that a bare `operator`, the last resort, named nothing. Then it shows its
-publication's full body. A lane's body stays in its transcript, so the app
-reads it once, with the concerned direction's text, through the operator-only
-`room::conversation-text` read, which projects the same text
-`spice://room/inbox` prints; the transcript echo stands in while
+retitles the same surface in place. It catalogs every open operator item each
+lane addressed by pointing at a concern the operator already sees. A `#KEY`
+item names that operator direction by key and the text the operator sent; a
+`#TASK` item names that task or room. Retained pre-cutover items that named no
+concern remain visible as unnamed, but current packets cannot create another.
+Then the card shows its publication's full body. A lane's body stays in its
+transcript, so the app reads it once, with the concerned direction's text,
+through the operator-only `room::conversation-text` read, which projects the
+same text `spice://room/inbox` prints; the transcript echo stands in while
 that read runs. An ASK item leads with the answer it owes: **Answer** sends the
 reply back to the requesting lane as an ANS and settles the receipt, and
 **Decline** refuses the question. Its receipt row is separate: ACK only marks

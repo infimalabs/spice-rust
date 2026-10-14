@@ -79,12 +79,12 @@ fn an_addressed_packet_presents_its_body_as_one_outgoing_quote_in_header_order()
 }
 
 #[test]
-fn contextual_packets_present_room_only_and_directed_destinations() {
+fn contextual_packets_present_operator_and_directed_destinations() {
     let [_, addressed] = reviewers();
     let presented = present(
         concat!(
             "MSG #ROOMS-dVrD244Jd: Record this in the room.\n",
-            "MSG 6Jv5#ROOMS-dVrD255Kf operator: Send this too.",
+            "MSG 6Jv5#ROOMS-dVrD255Kf #ROOMS-dVrD255Kf: Send this too.",
         ),
         &proved(&[addressed]),
         authored(),
@@ -94,13 +94,13 @@ fn contextual_packets_present_room_only_and_directed_destinations() {
         presented.text,
         "> Record this in the room.\n\n> Send this too."
     );
-    let [room_only, directed] = presented.sends.as_slice() else {
+    let [operator_only, directed] = presented.sends.as_slice() else {
         panic!("both contextual packets present: {:?}", presented.sends)
     };
-    assert!(room_only.recipients.is_empty());
-    assert!(!room_only.operator);
+    assert!(operator_only.recipients.is_empty());
+    assert!(operator_only.operator);
     assert_eq!(
-        room_only.contexts,
+        operator_only.contexts,
         ["ROOMS-dVrD244Jd"
             .parse::<wire::TaskHandle>()
             .expect("fixture task parses")]
@@ -226,7 +226,7 @@ fn a_packet_without_proved_recipients_or_an_authoring_occupant_stays_literal() {
 #[test]
 fn every_authored_packet_kind_requests_its_presentation_ledger() {
     for text in [
-        "ASK operator#ROOMS-dVrD255Kf: Can you review this?",
+        "ASK #ROOMS-dVrD255Kf: Can you review this?",
         "ANS 1kKRRsDR3#ROOMS-dVrD255Kf: Reviewed.",
     ] {
         let (packets, addresses) = crate::resident::message_surface::packet_destinations([text]);

@@ -1268,6 +1268,19 @@ fn conversation_heads_rebuild_from_facts() {
     room.time_out(&timed, minute(30))
         .expect("the result times out");
     room.lapse(item(31), minute(31)).expect("the item lapses");
+    Write::lane(&asked, minute(32))
+        .record(RoomConversed {
+            expires: minute(40),
+            ..conversed(
+                32,
+                &asked,
+                RoomPublicationKind::Msg {},
+                vec![route(RoomDestination::Operator {}, None)],
+                Vec::new(),
+            )
+        })
+        .apply(&mut room.journal)
+        .expect("a retained unnamed operator route remains readable");
     let derived = projection(&room.journal);
     let facts = fact_bytes(&room.journal);
 
