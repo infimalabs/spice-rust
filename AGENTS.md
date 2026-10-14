@@ -56,6 +56,16 @@ Prove a change by reproducing the failure and exercising the actual changed
 path. When that proof requires a process or another slow external surface, use a
 throwaway script or smoke check and do not retain it in the permanent suite.
 
+## Browser verification
+
+Run non-interactive browser checks through Playwright, never by launching
+Chrome, Safari, or Firefox executables directly, even with a headless flag.
+Headless mode can hide browser content without suppressing native operating
+system dialogs; on macOS, a direct launch can still show Keychain authorization.
+For app checks, use the repository-owned `launchAppBrowser` helper documented in
+[`app/BROWSER.md`](app/BROWSER.md), pass it Playwright's `chromium`, keep its
+headless default, and close the returned session in `finally`.
+
 ## Rust source organization
 
 Use ordinary Rust modules all the way down when organizing handwritten source:
