@@ -48,7 +48,6 @@ pub(in crate::browser) struct GroupRender<'a, 'w> {
     pub(in crate::browser) sender: &'a SenderHandle,
     pub(in crate::browser) drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub(in crate::browser) open_message_task: &'a Callback<(TaskStamp, web_sys::Element)>,
-    pub(in crate::browser) select_task: &'a Callback<TaskStamp>,
     pub(in crate::browser) navigate: &'a Callback<crate::browser::navigation::Intent>,
 }
 

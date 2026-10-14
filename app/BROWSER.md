@@ -118,10 +118,11 @@ placeholders.
 The tab rail lists each lane that holds an active claim on an open task
 associated with any of the group's designs: the design itself, or a task
 whose preparation parent, controller, or construction is that design. A lane
-enters and leaves the rail exactly as a task enters and leaves a team's rail,
-as board facts change, and its task handles follow it in the accent of the
-design each serves. Activating a lane opens its composer in Chat, whose team
-plane holds its history; a lane with no Chat seat stays a plain label.
+enters and leaves the rail exactly as a task enters and leaves a team's rail
+as board facts change, appears once in its canonical team accent, and replaces
+the associated task handle. Activating an admitted lane opens its composer in
+Chat, whose team plane holds its history; a lane with no Chat seat stays a
+plain label.
 
 A design's composer posts the guarded native room-post command to exactly that
 design's room on **Post** or Control/Command+Enter. Quoting an operator-authored

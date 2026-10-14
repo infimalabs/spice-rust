@@ -1,5 +1,5 @@
 //! A working group's toolbar, the team toolbar's twin read from Designs: an
-//! open-task total and one tab per task associated with the group's
+//! open-task total and one tab per agent currently working in the group's
 //! Designs, one standing light per Design, and a ticker of the newest room
 //! event across them. Only the name is the group's own; this browser's
 //! placement of the console lives in the panel's arrangement menu, where a
@@ -63,18 +63,18 @@ fn scope(view: &GroupView, channels: &[Channel]) -> WorkScope {
     }
 }
 
-/// The fixed total and active-task scroller.
+/// The fixed total and active-agent scroller.
 fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Channel]) -> Html {
-    let tasks = render
+    let workers = render
         .work
-        .map(|work| work.scope_strip(&scope(view, channels)))
+        .map(|work| work.group_worker_strip(&scope(view, channels)))
         .unwrap_or_default();
     html! {
         <div class="team-task-rail">
-            if !tasks.is_empty() {
-                {render_total(render, view, channels, &tasks)}
-                <nav class="app-horn-tabs team-tasks" aria-label="Tasks currently worked in this group's designs">
-                    {for tasks.iter().copied().map(|task| render_handle(render, channels, task))}
+            if !workers.is_empty() {
+                {render_total(render, view, channels, &workers)}
+                <nav class="app-horn-tabs team-tasks" aria-label="Agents currently working in this group's designs">
+                    {for workers.into_iter().map(|(lane, _)| render_worker(render, lane))}
                 </nav>
             }
         </div>
@@ -87,11 +87,11 @@ fn render_total(
     render: &GroupRender<'_, '_>,
     view: &GroupView,
     channels: &[Channel],
-    tasks: &[&WorkTask<'_>],
+    workers: &[(wire::CanonicalUuid, &WorkTask<'_>)],
 ) -> Html {
-    let counts = tasks
+    let counts = workers
         .iter()
-        .map(|task| task.availability())
+        .map(|(_, task)| task.availability())
         .collect::<WorkCounts>();
     let open = counts.open();
     let title = format!(
@@ -123,42 +123,47 @@ fn render_total(
     }
 }
 
-/// One task-detail target in the accent of the Design it serves.
-fn render_handle(render: &GroupRender<'_, '_>, channels: &[Channel], task: &WorkTask<'_>) -> Html {
-    let statement = &task.row().statement.body;
-    let availability = task.availability();
-    let accent = channels
-        .iter()
-        .find(|channel| crate::runtime::associated(statement, &channel.stamp))
-        .map(|channel| channel.accent);
-    let label = format!(
-        "Open {}: {}, {}",
-        statement.handle,
-        crate::composer_markdown::inline::plain_text(task.row().presentation_title()),
-        availability.key(),
-    );
-    let open_task = {
-        let select = render.select_task.clone();
-        let born = statement.born.clone();
-        Callback::from(move |_| select.emit(born.clone()))
-    };
-    html! {
-        <button
-            key={statement.born.to_string()}
-            class={classes!(
-                "app-horn-tab",
-                "app-horn-tab--up",
-                "app-horn-tab__handle",
-                (!availability.moving()).then_some("dormant"),
-            )}
-            type="button"
-            title={label.clone()}
-            aria-label={label}
-            data-availability={availability.key()}
-            data-accent={accent.map(|accent| accent.to_string())}
-            data-sidebar-focus-key={format!("group-task:{}", statement.born)}
-            onclick={open_task}
-        >{statement.handle.to_string()}</button>
+/// One agent tab in that lane's canonical accent. A currently admitted Chat
+/// member links to its composer; a lane absent from Chat stays a plain label.
+fn render_worker(render: &GroupRender<'_, '_>, lane: wire::CanonicalUuid) -> Html {
+    let lanes = render.runtime.lanes();
+    let member = lanes.and_then(|lanes| lanes.member(lane));
+    let label = crate::work::owner_label(&wire::Actor::Lane(lane), member);
+    let accent = lanes.and_then(|lanes| watchband::lane_accent(&lanes.lanes, lane));
+    let attributes = classes!("app-horn-tab", "app-horn-tab--up", "app-horn-tab__handle");
+    let focus_key = format!("group-lane:{lane}");
+    let lane_text = lane.to_string();
+    let href = lanes
+        .and_then(|lanes| lanes.chat_target_for_lane(lane))
+        .map(|(_, member)| {
+            crate::view::card_href(&super::super::super::watchband::primary_textarea_id(
+                &member.to_string(),
+            ))
+        });
+    if let Some(href) = href {
+        html! {
+            <a
+                key={lane_text.clone()}
+                class={attributes}
+                title={format!("Open {label} in Chat")}
+                aria-label={format!("Open {label} in Chat")}
+                data-lane={lane_text}
+                data-accent={accent.map(|accent| accent.to_string())}
+                data-sidebar-focus-key={focus_key}
+                {href}
+            >{label}</a>
+        }
+    } else {
+        html! {
+            <span
+                key={lane_text.clone()}
+                class={attributes}
+                title={label.clone()}
+                data-lane={lane_text}
+                data-accent={accent.map(|accent| accent.to_string())}
+                data-sidebar-focus-key={focus_key}
+            >{label}</span>
+        }
     }
 }
 

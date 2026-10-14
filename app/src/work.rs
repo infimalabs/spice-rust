@@ -461,16 +461,29 @@ impl<'a> WorkTask<'a> {
             .map(|claim| &claim.body.actor)
     }
 
-    /// The canonical member accent for the lane currently working this task.
+    /// The independently steerable lane bound to this task's current claim.
     ///
-    /// Operator claims and lanes outside the admitted roster have no member
-    /// accent. `working_claimant` excludes stale and terminal claim evidence.
+    /// Terminal rows can retain stale active-claim evidence, so lifecycle must
+    /// agree before the claim's lane is presented as current work.
+    #[must_use]
+    pub fn working_lane(&self) -> Option<wire::CanonicalUuid> {
+        if self.availability != WorkAvailability::InFlight {
+            return None;
+        }
+        self.row
+            .claim
+            .as_ref()
+            .filter(|claim| claim.body.disposition == ClaimDisposition::Active)
+            .map(|claim| claim.body.lane)
+    }
+
+    /// The canonical member accent for the lane bound to this task's current claim.
+    ///
+    /// Lanes outside the admitted roster have no member accent.
+    /// [`Self::working_lane`] excludes stale and terminal claim evidence.
     #[must_use]
     pub fn working_claimant_accent(&self, lanes: Option<&LaneView>) -> Option<usize> {
-        let Actor::Lane(lane) = self.working_claimant()? else {
-            return None;
-        };
-        watchband::lane_accent(&lanes?.lanes, *lane)
+        watchband::lane_accent(&lanes?.lanes, self.working_lane()?)
     }
 
     /// The actor that owns this task: its active claimant, else its assignee.
@@ -572,6 +585,8 @@ pub struct WorkProjection<'a> {
     /// Current roster team identities, absent until the lane topology loads.
     /// A team route settles unavailable only when a loaded roster lacks it.
     teams: Option<BTreeSet<wire::CanonicalUuid>>,
+    /// Current independently steerable member to team placement.
+    member_teams: BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
 }
 
 impl<'a> WorkProjection<'a> {
@@ -689,6 +704,47 @@ impl<'a> WorkProjection<'a> {
         strip
     }
 
+    /// Active task tabs shown on one team's rail.
+    ///
+    /// Presentation follows the claim-bound member rather than accountable
+    /// ownership, so a team still shows a Design or directly controlled Plan
+    /// while one of its members works it. Overview scope partitioning remains
+    /// unchanged.
+    #[must_use]
+    pub fn team_strip<'p>(&'p self, team: wire::CanonicalUuid) -> Vec<&'p WorkTask<'a>> {
+        self.offered
+            .iter()
+            .map(|&index| &self.tasks[index])
+            .filter(|task| {
+                task.working_lane()
+                    .and_then(|lane| self.member_teams.get(&lane))
+                    == Some(&team)
+            })
+            .collect()
+    }
+
+    /// One tab per lane actively working inside a group scope.
+    ///
+    /// Tasks retain strip order. A malformed snapshot that binds several
+    /// active tasks to one lane still presents that lane once, with its first
+    /// task retaining that lane's ordering and lifecycle count.
+    #[must_use]
+    pub fn group_worker_strip<'p>(
+        &'p self,
+        scope: &WorkScope,
+    ) -> Vec<(wire::CanonicalUuid, &'p WorkTask<'a>)> {
+        let mut workers = Vec::new();
+        for task in self.scope_strip(scope) {
+            let Some(lane) = task.working_lane() else {
+                continue;
+            };
+            if !workers.iter().any(|(existing, _)| *existing == lane) {
+                workers.push((lane, task));
+            }
+        }
+        workers
+    }
+
     /// One scope's open task strip, grouped by visibility-qualified stem.
     ///
     /// Groups follow their first task in [`Self::scope_strip`] order and
@@ -717,7 +773,7 @@ impl<'a> WorkProjection<'a> {
     #[must_use]
     pub fn from_board_and_lanes(board: &'a BoardView, lanes: Option<&LaneView>) -> Self {
         let Some(lanes) = lanes else {
-            return Self::from_board_with_team_memberships(board, None, &BTreeMap::new());
+            return Self::from_board_with_team_memberships(board, None, BTreeMap::new());
         };
         let mut teams = BTreeSet::new();
         let mut member_teams = BTreeMap::new();
@@ -727,13 +783,13 @@ impl<'a> WorkProjection<'a> {
                 member_teams.insert(member.lane, team.lane);
             }
         }
-        Self::from_board_with_team_memberships(board, Some(teams), &member_teams)
+        Self::from_board_with_team_memberships(board, Some(teams), member_teams)
     }
 
     fn from_board_with_team_memberships(
         board: &'a BoardView,
         teams: Option<BTreeSet<wire::CanonicalUuid>>,
-        member_teams: &BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
+        member_teams: BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
     ) -> Self {
         let by_born = board
             .tasks
@@ -809,7 +865,7 @@ impl<'a> WorkProjection<'a> {
             .enumerate()
             .map(|(index, row)| {
                 let dependencies = work_dependencies(row, board, &by_born);
-                let owner = accountable_owner(row, board, &by_born, teams.as_ref(), member_teams);
+                let owner = accountable_owner(row, board, &by_born, teams.as_ref(), &member_teams);
                 let dependents = dependent_indexes[index]
                     .iter()
                     .copied()
@@ -838,6 +894,7 @@ impl<'a> WorkProjection<'a> {
             stems,
             offered,
             teams,
+            member_teams,
         }
     }
 }
