@@ -65,7 +65,6 @@ pub(super) fn publish_conversation(
         operation(packet, asserted, targets.len(), &mut minted_micros, expires)?;
     let routes = conversation_routes(bus, packet, &targets, &identities)?;
     let opens_item = opens_item(answer.as_ref(), &routes);
-    let bare_operator = bare_operator(bus, view, packet.lane, &routes)?;
     let record = RoomRecord {
         hunk: (!rooms.is_empty()).then(|| hunk.clone()),
         rooms,
@@ -106,6 +105,7 @@ pub(super) fn publish_conversation(
     }
     admit_send_envelope(&proposal).map_err(unpublished)?;
     commit(bus, proposal).map_err(|outcome| unpublished(typed_outcome(outcome)))?;
+    let held_room = names_held_task(&record.rooms, view, packet.lane);
     Ok(Published::Sent {
         lanes: targets
             .iter()
@@ -123,9 +123,8 @@ pub(super) fn publish_conversation(
             verb: verb(&packet.request),
             operator: opens_item,
             result,
-            bare_operator,
         }),
-        held_room: false,
+        held_room,
     })
 }
 
@@ -220,48 +219,6 @@ fn opens_item(answer: Option<&Answerable>, routes: &[RoomRoute]) -> bool {
     }
 }
 
-/// The contextual selector a bare `operator` route could have named: the
-/// lane's latest operator direction, else its active claim's task; `None`
-/// when no operator route is bare.
-fn bare_operator(
-    bus: &Bus,
-    view: &bus::TaskSnapshot,
-    lane: CanonicalUuid,
-    routes: &[RoomRoute],
-) -> Result<Option<BareOperator>, Unpublished> {
-    let bare = RoomRoute {
-        destination: RoomDestination::Operator {},
-        context: None,
-        direction: None,
-    };
-    if !routes.contains(&bare) {
-        return Ok(None);
-    }
-    let direction = bus
-        .read(move |read| read.latest_operator_direction(lane))
-        .map_err(|error| {
-            Unpublished::Failed(typed_store_fault(
-                "steer::room-unreadable",
-                &error.to_string(),
-            ))
-        })?;
-    let instead = match direction {
-        Some(head) => Some(format!("#{}", head.body().key)),
-        None => view.tasks().iter().find_map(|task| {
-            let claim = task.claim()?.body();
-            (claim.lane == lane && claim.disposition == wire::ClaimDisposition::Active).then(|| {
-                let statement = task.statement().body();
-                format!(
-                    "{}#{}",
-                    steer::ack::scan::message::OPERATOR,
-                    TaskHandle::for_project(&statement.project, &statement.born)
-                )
-            })
-        }),
-    };
-    Ok(Some(BareOperator { instead }))
-}
-
 fn verb(request: &Request) -> Verb {
     match request {
         Request::Msg { .. } => Verb::Msg,
@@ -283,10 +240,11 @@ pub(super) fn conversation_stamp(
     })
 }
 
-/// The routes a conversation record freezes: the operator, each admitted lane
-/// with its own context, and each room-only route, in header order. A lane
-/// route is admitted when it delivers to a seat or queues for a vacant lane;
-/// an operator route about a direction names one the operator sent this lane.
+/// The routes a conversation record freezes: the operator concern, each
+/// admitted lane route with its own context, and their task contexts in header
+/// order. A lane route is admitted when it delivers to a seat or queues for a
+/// vacant lane; an operator route about a direction names one the operator sent
+/// this lane.
 fn conversation_routes(
     bus: &Bus,
     packet: &Packet<'_>,
@@ -298,8 +256,8 @@ fn conversation_routes(
     for route in packet.request_routes() {
         let context = context_room(route.context.as_ref());
         let destination = match route.audience {
-            Some(Audience::Operator) => RoomDestination::Operator {},
-            Some(Audience::Occupant(_)) => {
+            Audience::OperatorConcern => RoomDestination::Operator {},
+            Audience::Occupant(_) => {
                 let directive = directed.next().copied();
                 match targets
                     .iter()
@@ -308,20 +266,6 @@ fn conversation_routes(
                     Some(target) => RoomDestination::Lane { lane: target.lane },
                     None => continue,
                 }
-            }
-            None => {
-                let task = context.ok_or_else(|| {
-                    Unpublished::Failed(typed_protocol_fault(
-                        "msg::route-empty",
-                        "a room-only route names no task",
-                    ))
-                })?;
-                routes.push(RoomRoute {
-                    destination: RoomDestination::Task { task },
-                    context: None,
-                    direction: None,
-                });
-                continue;
             }
         };
         let direction = route

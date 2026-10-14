@@ -223,7 +223,7 @@ fn the_operator_answers_only_its_own_pending_questions() {
     let lanes = Lanes::new("control-answer");
     let room = lanes.room("dVrD244Jd");
     let first = lanes.address(FIRST);
-    let mine = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: ship it?")));
+    let mine = asked(&lanes.say(SENDER, &format!("ASK #{room}: ship it?")));
     let theirs = asked(&lanes.say(SENDER, &format!("ASK {first}#{room}: deploy?")));
 
     assert_eq!(
@@ -309,7 +309,7 @@ fn closures_bind_to_stored_parties_and_attribute_overrides() {
     let room = lanes.room("dVrD244Jd");
     let first = lanes.address(FIRST);
     let lane_asked = asked(&lanes.say(SENDER, &format!("ASK {first}#{room}: deploy?")));
-    let operator_asked = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: ship?")));
+    let operator_asked = asked(&lanes.say(SENDER, &format!("ASK #{room}: ship?")));
 
     let declined = QuestionClosure::Declined;
     let cancelled = QuestionClosure::Cancelled;
@@ -381,10 +381,10 @@ fn operator_items_page_and_settle_exactly() {
     let lanes = Lanes::new("control-items");
     let room = lanes.room("dVrD244Jd");
     lanes
-        .say(SENDER, &format!("MSG operator#{room}: shipped"))
+        .say(SENDER, &format!("MSG #{room}: shipped"))
         .expect("the MSG publishes");
-    let first = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: and then?")));
-    let second = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: anything else?")));
+    let first = asked(&lanes.say(SENDER, &format!("ASK #{room}: and then?")));
+    let second = asked(&lanes.say(SENDER, &format!("ASK #{room}: anything else?")));
 
     let items = lanes.inbox_items(&["--limit", "1"]);
     assert_eq!(
@@ -452,10 +452,10 @@ fn open_room_duties_still_settle_after_the_anchor_settles() {
     let lanes = Lanes::new("control-settled-anchor");
     let room = lanes.room("dVrD244Jd");
     lanes
-        .say(SENDER, &format!("MSG operator#{room}: shipped"))
+        .say(SENDER, &format!("MSG #{room}: shipped"))
         .expect("the MSG publishes");
-    let answered = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: ship it?")));
-    let declined = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: and then?")));
+    let answered = asked(&lanes.say(SENDER, &format!("ASK #{room}: ship it?")));
+    let declined = asked(&lanes.say(SENDER, &format!("ASK #{room}: and then?")));
     let items = lanes.inbox_items(&[]);
     let told = RoomReceiptRef::new(items[0].0.parse().expect("item key"));
     lanes.close_room(&room);
@@ -495,7 +495,7 @@ fn open_room_duties_still_settle_after_the_anchor_settles() {
 fn lapsed_items_recover_and_timed_out_results_stay_terminal() {
     let lanes = Lanes::new("control-lapse");
     let room = lanes.room("dVrD244Jd");
-    let result = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: ship it?")));
+    let result = asked(&lanes.say(SENDER, &format!("ASK #{room}: ship it?")));
     let item = item_of(&result);
     let recover = |id| lanes.operate(id, RoomControl::Recover { item: item.clone() });
     let mut timers = lanes.timers();
@@ -560,11 +560,12 @@ fn lapsed_items_recover_and_timed_out_results_stay_terminal() {
 fn settled_room_questions_are_observed_once_and_assessed_by_the_operator() {
     let lanes = Lanes::new("control-relevance");
     let room = lanes.room("dVrD244Jd");
+    let other = lanes.room("dVrD245Kc");
     let first = lanes.address(FIRST);
-    let answered = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: ship it?")));
+    let answered = asked(&lanes.say(SENDER, &format!("ASK #{room}: ship it?")));
     let declined = asked(&lanes.say(SENDER, &format!("ASK {first}#{room}: deploy?")));
-    let roomless = asked(&lanes.say(SENDER, "ASK operator: lunch?"));
-    let pending = asked(&lanes.say(SENDER, &format!("ASK operator#{room}: and then?")));
+    let other_room = asked(&lanes.say(SENDER, &format!("ASK #{other}: lunch?")));
+    let pending = asked(&lanes.say(SENDER, &format!("ASK #{room}: and then?")));
     committed(&lanes.respond(90, &answered, "agreed"));
     committed(&lanes.close(
         91,
@@ -573,7 +574,7 @@ fn settled_room_questions_are_observed_once_and_assessed_by_the_operator() {
         QuestionClosure::Declined,
         false,
     ));
-    committed(&lanes.respond(92, &roomless, "soup"));
+    committed(&lanes.respond(92, &other_room, "soup"));
 
     let directives = (lanes.pending(SENDER).len(), lanes.pending(FIRST).len());
     let mut diagnostic = Vec::new();

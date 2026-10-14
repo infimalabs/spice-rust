@@ -232,7 +232,7 @@ pub(super) fn render_inbox(
                     ItemConcern::Task(task) => {
                         (format!("About {}", super::anchor_label(runtime, &task)), None)
                     }
-                    ItemConcern::Unnamed => ("No direction or task named".to_owned(), None),
+                    ItemConcern::Unnamed => ("Retained item · no recorded concern".to_owned(), None),
                 };
                 let result = entry.result.map_or_else(Html::default, |result| {
                     question_result(

@@ -1,12 +1,12 @@
 //! Authored `MSG`, `ASK`, and `ANS` publication packets.
 //!
 //! ```text
-//! selector = audience[#context] | #context | #KEY
-//! audience = agent-code | operator
+//! selector = occupant[#task] | #task | #KEY
+//! occupant = agent-code
 //!
 //! MSG selector+: body
-//! ASK audience[#context] | #KEY: body
-//! ANS KEY[#context]: body
+//! ASK selector: body
+//! ANS RESULT[#task]: body
 //! ```
 //!
 //! Every verb shares the authored-context rules of acknowledgment headers: the
@@ -14,15 +14,16 @@
 //! exclusions decide whether the marker speaks at all. None retires anything;
 //! each body is the source hunk its packet owns.
 //!
-//! An audience is an [`OccupantAddress`] or the literal `operator`, which no
-//! vowel-free address can spell. A `#` qualifier with a hyphen names the
-//! [`TaskHandle`] whose room context the selector carries; one without names
-//! the steering [`Key`] of the operator direction the packet concerns, so
-//! `#KEY` and `operator#KEY` both route to the operator about that direction.
-//! A selector owns its qualifier; an unqualified route borrows no context from
-//! its neighbors. ASK names exactly one audience. ANS names the public result
-//! handle of the question it answers; its optional qualifier asserts that
-//! question's stored context and never retargets it.
+//! An explicit audience is one [`OccupantAddress`]. A pointer-only selector
+//! reaches the operator through the concern it names: a `#` qualifier with a
+//! hyphen names the [`TaskHandle`] whose room receives the packet, while one
+//! without names the steering [`Key`] of an operator direction to this lane.
+//! The context-free legacy spelling `operator` is recognized only so it can
+//! refuse visibly with pointer guidance. A selector owns its qualifier; an
+//! unqualified route borrows no context from its neighbors. ASK names exactly
+//! one selector. ANS names the public result handle of the question it answers;
+//! its optional qualifier asserts that question's stored context and never
+//! retargets it.
 //!
 //! A body begins after the header's colon and runs to the next placed ACK,
 //! NAK, MSG, ASK, or ANS header or to the end of the scanned prose, with
@@ -43,8 +44,8 @@ use crate::Key;
 /// Every word an authored publication packet leads with.
 pub const MARKERS: [&str; 3] = [Verb::Msg.marker(), Verb::Ask.marker(), Verb::Ans.marker()];
 
-/// The audience spelling that names the operator.
-pub const OPERATOR: &str = "operator";
+/// Context-free legacy spelling recognized only to produce a visible refusal.
+const UNSCOPED_OPERATOR: &str = "operator";
 
 /// The byte that opens a selector's task context.
 const CONTEXT: u8 = b'#';
@@ -132,44 +133,44 @@ impl Publication {
         }
     }
 
-    /// Every occupant the packet directs attention to, in source order.
+    /// Every explicitly addressed occupant, in source order.
     pub fn addresses(&self) -> impl Iterator<Item = OccupantAddress> + '_ {
         self.routes()
             .iter()
             .filter_map(|route| match route.audience {
-                Some(Audience::Occupant(address)) => Some(address),
-                Some(Audience::Operator) | None => None,
+                Audience::Occupant(address) => Some(address),
+                Audience::OperatorConcern => None,
             })
     }
 }
 
-/// Who one selector directs attention to.
+/// Where one selector directs attention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Audience {
     /// One exact occupant, by its address.
     Occupant(OccupantAddress),
-    /// The operator.
-    Operator,
+    /// The operator, reached only through this route's direction or task.
+    OperatorConcern,
 }
 
 impl std::fmt::Display for Audience {
-    /// The audience as a header spells it.
+    /// Human-readable destination used by duplicate-route refusals.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Occupant(address) => address.fmt(formatter),
-            Self::Operator => formatter.write_str(OPERATOR),
+            Self::OperatorConcern => formatter.write_str("operator concern"),
         }
     }
 }
 
-/// One selector: an audience, a task context, or an audience in a context.
+/// One selector: an occupant, a concern pointer, or an occupant in a task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
-    /// Audience the route directs attention to; absent on a room-only route.
-    pub audience: Option<Audience>,
+    /// Explicit occupant, or the operator inferred from a concern pointer.
+    pub audience: Audience,
     /// Task whose room context the route carries; absent on a direct route.
     pub context: Option<TaskHandle>,
-    /// Operator direction an operator route concerns.
+    /// Operator direction an operator concern names.
     pub direction: Option<Key>,
     /// Byte range of the whole selector.
     pub span: Range<usize>,
@@ -192,17 +193,16 @@ pub enum MessageRefusal {
         /// Selectors the header named.
         count: usize,
     },
-    /// A selector's audience spells neither an occupant address nor the
-    /// operator.
+    /// A selector's explicit recipient is not an occupant address.
     Recipient {
-        /// Byte range of the audience.
+        /// Byte range of the recipient.
         span: Range<usize>,
-        /// Why the audience is not an address.
+        /// Why the recipient is not an address.
         error: OccupantAddressError,
     },
-    /// An ASK selector names no audience.
-    Audience {
-        /// Byte range of the selector.
+    /// A legacy context-free operator spelling names no reachable concern.
+    Concern {
+        /// Byte range of the spelling.
         span: Range<usize>,
     },
     /// An ANS selector does not spell a result handle.
@@ -224,18 +224,11 @@ pub enum MessageRefusal {
         /// Byte range of the selector.
         span: Range<usize>,
     },
-    /// An audience is named more than once.
+    /// A destination is named more than once.
     Repeated {
-        /// The repeated audience.
+        /// The repeated destination.
         audience: Audience,
         /// Byte range of its later naming.
-        span: Range<usize>,
-    },
-    /// A room-only route names a task another room-only route already names.
-    RepeatedContext {
-        /// The later spelling of the repeated task.
-        context: TaskHandle,
-        /// Byte range of the later selector.
         span: Range<usize>,
     },
     /// Nothing but whitespace lies between the colon and the next boundary.
@@ -253,12 +246,11 @@ impl MessageRefusal {
             } => "ans::selector-count",
             Self::Selectors { .. } => "ask::selector-count",
             Self::Recipient { .. } => "msg::recipient-malformed",
-            Self::Audience { .. } => "ask::audience-missing",
+            Self::Concern { .. } => "msg::concern-missing",
             Self::Result { .. } => "ans::result-malformed",
             Self::Context { .. } => "msg::context-malformed",
             Self::DirectionAudience { .. } => "msg::direction-audience",
             Self::Repeated { .. } => "msg::recipient-repeated",
-            Self::RepeatedContext { .. } => "msg::context-repeated",
             Self::EmptyBody => "msg::body-empty",
         }
     }
@@ -321,7 +313,9 @@ pub(super) fn header_after(prose: &str, verb: Verb, marker_end: usize) -> Option
         let lead = &prose[lead];
         let lead_spells = match verb {
             Verb::Ans => lead.parse::<RoomAuthorityStamp>().is_ok(),
-            Verb::Msg | Verb::Ask => lead == OPERATOR || lead.parse::<OccupantAddress>().is_ok(),
+            Verb::Msg | Verb::Ask => {
+                lead == UNSCOPED_OPERATOR || lead.parse::<OccupantAddress>().is_ok()
+            }
         };
         lead_spells
             || context.is_some_and(|context| {
@@ -383,11 +377,9 @@ fn publication(
             let &[(start, end)] = header.tokens.as_slice() else {
                 return Err(selectors(header));
             };
-            let route = route(prose, start, end)?;
-            if route.audience.is_none() {
-                return Err(MessageRefusal::Audience { span: start..end });
+            Request::Ask {
+                route: route(prose, start, end)?,
             }
-            Request::Ask { route }
         }
         Verb::Ans => {
             let &[(start, end)] = header.tokens.as_slice() else {
@@ -429,23 +421,14 @@ fn routes(prose: &str, tokens: &[(usize, usize)]) -> Result<Vec<Route>, MessageR
     let mut routes: Vec<Route> = Vec::with_capacity(tokens.len());
     for &(start, end) in tokens {
         let route = route(prose, start, end)?;
-        if let Some(audience) = route.audience
-            && routes.iter().any(|known| known.audience == Some(audience))
-        {
+        if routes.iter().any(|known| known.audience == route.audience) {
+            let span = match route.audience {
+                Audience::Occupant(_) => split(prose, start, end).0,
+                Audience::OperatorConcern => route.span.clone(),
+            };
             return Err(MessageRefusal::Repeated {
-                audience,
-                span: split(prose, start, end).0,
-            });
-        }
-        if route.audience.is_none()
-            && let Some(context) = &route.context
-            && routes
-                .iter()
-                .any(|known| known.audience.is_none() && same_task(known.context.as_ref(), context))
-        {
-            return Err(MessageRefusal::RepeatedContext {
-                context: context.clone(),
-                span: route.span,
+                audience: route.audience,
+                span,
             });
         }
         routes.push(route);
@@ -453,35 +436,37 @@ fn routes(prose: &str, tokens: &[(usize, usize)]) -> Result<Vec<Route>, MessageR
     Ok(routes)
 }
 
-/// Judge one selector: its audience, if written, then its qualifier.
+/// Judge one selector: its occupant, if written, then its concern or context.
 fn route(prose: &str, start: usize, end: usize) -> Result<Route, MessageRefusal> {
-    let (audience, context) = split(prose, start, end);
-    let mut audience = match &prose[audience.clone()] {
+    let (recipient, qualifier) = split(prose, start, end);
+    let recipient = match &prose[recipient.clone()] {
         "" => None,
-        OPERATOR => Some(Audience::Operator),
+        UNSCOPED_OPERATOR => {
+            return Err(MessageRefusal::Concern { span: recipient });
+        }
         written => Some(Audience::Occupant(written.parse().map_err(|error| {
             MessageRefusal::Recipient {
-                span: audience,
+                span: recipient,
                 error,
             }
         })?)),
     };
-    let direction = context
+    let direction = qualifier
         .as_ref()
         .filter(|span| !prose[(*span).clone()].contains('-'))
         .and_then(|span| prose[span.clone()].parse::<Key>().ok());
-    if direction.is_some() {
-        if matches!(audience, Some(Audience::Occupant(_))) {
-            return Err(MessageRefusal::DirectionAudience { span: start..end });
-        }
-        audience = Some(Audience::Operator);
+    if direction.is_some() && recipient.is_some() {
+        return Err(MessageRefusal::DirectionAudience { span: start..end });
     }
+    let context = match direction {
+        Some(_) => None,
+        None => qualifier
+            .map(|span| task_context(prose, span))
+            .transpose()?,
+    };
     Ok(Route {
-        audience,
-        context: match direction {
-            Some(_) => None,
-            None => context.map(|span| task_context(prose, span)).transpose()?,
-        },
+        audience: recipient.unwrap_or(Audience::OperatorConcern),
+        context,
         direction,
         span: start..end,
     })
@@ -491,11 +476,6 @@ fn task_context(prose: &str, span: Range<usize>) -> Result<TaskHandle, MessageRe
     prose[span.clone()]
         .parse::<TaskHandle>()
         .map_err(|error| MessageRefusal::Context { span, error })
-}
-
-/// Whether two spellings name one task: a renamed handle keeps its birth stamp.
-fn same_task(known: Option<&TaskHandle>, context: &TaskHandle) -> bool {
-    known.is_some_and(|known| known.born().ok() == context.born().ok())
 }
 
 /// Where a body preceding the header at `start` ends.

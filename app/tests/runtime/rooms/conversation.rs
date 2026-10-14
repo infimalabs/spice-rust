@@ -637,11 +637,10 @@ fn operator_route(
     }]
 }
 
-/// Each operator item concerns, most contextual first, the operator direction
-/// its lane's `#KEY` named, with that direction's text once the resident reads
-/// it, else the task `operator#TASK` named, else nothing.
+/// Current operator items concern a direction or task; a retained pre-cutover
+/// route with neither still replays and presents as unnamed.
 #[test]
-fn operator_items_concern_their_direction_else_their_task() {
+fn operator_items_concern_their_direction_or_task_and_retain_legacy_unnamed() {
     const MSG_PACKET: &str = "dVsYdDj7v";
     const MSG: &str = "dVsYdDj7w";
     const BARE_PACKET: &str = "dVsYdDj7x";

@@ -50,7 +50,7 @@ mod conversation;
 mod notice;
 
 use conversation::{conversation_stamp, publish_conversation};
-pub(in crate::resident) use notice::{BareOperator, MessageRecordedNotice, MessageRefusalNotice};
+pub(in crate::resident) use notice::{MessageRecordedNotice, MessageRefusalNotice};
 use notice::{refusal_detail, report};
 
 /// Residency views one packet may resolve against before it gives up on a
@@ -138,8 +138,6 @@ pub(in crate::resident) struct Conversed {
     pub(in crate::resident) operator: bool,
     /// The question result an ASK opened or an ANS answered.
     pub(in crate::resident) result: Option<QuestionResultRef>,
-    /// A bare `operator` route and what it could have named instead.
-    pub(in crate::resident) bare_operator: Option<BareOperator>,
 }
 
 /// Why one packet published nothing.
@@ -529,7 +527,7 @@ pub(in crate::resident) fn publish_packet(
         Request::Msg { routes }
             if routes
                 .iter()
-                .all(|route| route.audience != Some(Audience::Operator)) =>
+                .all(|route| route.audience != Audience::OperatorConcern) =>
         {
             publish_message(bus, epoch, config, packet, routes, view)
         }
@@ -638,8 +636,8 @@ fn occupant_routes(routes: &[Route]) -> Vec<Directed> {
     routes
         .iter()
         .filter_map(|route| match route.audience {
-            Some(Audience::Occupant(address)) => Some((address, route.context.clone())),
-            Some(Audience::Operator) | None => None,
+            Audience::Occupant(address) => Some((address, route.context.clone())),
+            Audience::OperatorConcern => None,
         })
         .collect()
 }

@@ -231,10 +231,10 @@ impl Lanes {
     }
 }
 
-/// `#R` records the packet's exact bytes in R and tells only the author;
+/// `#R` records the packet's exact bytes in R and opens an operator item;
 /// `A#R` also opens a room-bound delivery for A, queued while A's proved lane
-/// is vacant; a packet with no seated route still records in R; equal text at
-/// another locus records again; a reread writes nothing.
+/// is vacant; equal text at another locus records again; a reread writes
+/// nothing.
 #[test]
 fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     let lanes = Lanes::new("msg-room");
@@ -250,23 +250,28 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
     lanes.account(SENDER);
 
     let (outcomes, diagnostics) = lanes.hear(SENDER, test_uuid(SENDER + 1));
-    let recorded = |lanes: &[u8], queued: &[wire::OccupantAddress], unreached: &[String]| {
-        Ok(steering::Published::Sent {
-            lanes: lanes.iter().map(|lane| test_uuid(*lane)).collect(),
-            queued: queued.to_vec(),
-            unreached: unreached.to_vec(),
-            rooms: vec![room.clone()],
-            conversed: None,
-            held_room: false,
-        })
-    };
+    let recorded =
+        |lanes: &[u8], queued: &[wire::OccupantAddress], unreached: &[String], operator: bool| {
+            Ok(steering::Published::Sent {
+                lanes: lanes.iter().map(|lane| test_uuid(*lane)).collect(),
+                queued: queued.to_vec(),
+                unreached: unreached.to_vec(),
+                rooms: vec![room.clone()],
+                conversed: operator.then_some(steering::Conversed {
+                    verb: steer::ack::scan::Verb::Msg,
+                    operator: true,
+                    result: None,
+                }),
+                held_room: false,
+            })
+        };
     assert_eq!(
         outcomes,
         [
-            recorded(&[], &[], &[]),
-            recorded(&[FIRST], &[second], &[]),
-            recorded(&[], &[], &[]),
-            recorded(&[], &[second], &[]),
+            recorded(&[], &[], &[], true),
+            recorded(&[FIRST], &[second], &[], false),
+            recorded(&[], &[], &[], true),
+            recorded(&[], &[second], &[], false),
         ],
         "{diagnostics}"
     );
@@ -800,10 +805,10 @@ fn append_room_publication(lanes: &Lanes, room: &wire::TaskHandle) -> bus::Journ
 fn an_unknown_context_refuses_every_route() {
     let lanes = Lanes::new("msg-room-unknown");
     let room = lanes.room("dVrD244Jd");
-    let first = lanes.address(FIRST);
+    let (first, second) = (lanes.address(FIRST), lanes.address(SECOND));
     lanes.author(
         SENDER,
-        &format!("MSG {first} #{room} #ROOMS-dVs4wZ9Q3: lost"),
+        &format!("MSG {first}#{room} {second}#ROOMS-dVs4wZ9Q3: lost"),
     );
     lanes.account(SENDER);
 
@@ -818,13 +823,13 @@ fn an_unknown_context_refuses_every_route() {
     assert!(lanes.messages().is_empty());
     assert!(lanes.rooms().is_empty());
     assert!(lanes.pending(FIRST).is_empty());
+    assert!(lanes.pending(SECOND).is_empty());
     lanes.finish();
 }
 
-/// A packet naming the task its author's lane holds, alone or qualifying an
-/// address, is marked for the no-header guidance and publishes exactly as
-/// any room packet does; a packet naming only a room the lane does not hold,
-/// or no room, keeps the plain notice.
+/// A packet pointing at the task its author's lane holds, or qualifying an
+/// address with it, is marked for the no-header guidance and otherwise
+/// publishes normally; another task concern or no room keeps the plain notice.
 #[test]
 fn a_packet_naming_the_authors_held_task_earns_the_no_header_guidance() {
     let lanes = Lanes::new("msg-room-held");
@@ -835,7 +840,6 @@ fn a_packet_naming_the_authors_held_task_earns_the_no_header_guidance() {
         format!("MSG #{held}: status"),
         format!("MSG #{other}: status"),
         format!("MSG {first}#{held}: status"),
-        format!("MSG #{held} #{other}: status"),
         format!("MSG {first}: status"),
     ] {
         lanes.author(SENDER, &packet);
@@ -850,10 +854,10 @@ fn a_packet_naming_the_authors_held_task_earns_the_no_header_guidance() {
             refused => panic!("every packet publishes: {refused:?}\n{diagnostics}"),
         })
         .collect::<Vec<_>>();
-    assert_eq!(marked, [true, false, true, true, false], "{diagnostics}");
+    assert_eq!(marked, [true, false, true, false], "{diagnostics}");
     assert_eq!(
         lanes.rooms().len(),
-        5,
+        3,
         "each named room records its packet regardless of guidance"
     );
     assert_eq!(
@@ -870,8 +874,7 @@ fn a_packet_naming_the_authors_held_task_earns_the_no_header_guidance() {
         column: 1,
         rooms: vec![held.to_string()],
         queued: Vec::new(),
-        operator: false,
-        bare_operator: None,
+        operator: true,
         asked: None,
         answered: None,
         reached: 0,

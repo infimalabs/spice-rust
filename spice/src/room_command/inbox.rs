@@ -1,10 +1,10 @@
 //! `spice room inbox`: open operator items in key order.
 //!
 //! Each item is the receipt the operator owes one publication, pending or
-//! lapsed, shown with what it concerns, most contextual first: the operator
-//! direction a lane's `#KEY` named, else the task `operator#TASK` named, else
-//! nothing a bare `operator` named. Its text comes from its owning source and,
-//! for an ASK, its question result. Items page whole in key order; a page
+//! lapsed, shown with what it concerns: the operator direction a lane's `#KEY`
+//! named or the task its `#TASK` named. Retained pre-cutover routes with no
+//! concern remain readable as unnamed. Its text comes from its owning source
+//! and, for an ASK, its question result. Items page whole in key order; a page
 //! that withholds any continues at the first withheld item. Reading settles
 //! nothing.
 
@@ -55,9 +55,9 @@ pub(crate) struct InboxItem {
 enum Concern {
     /// The operator direction a lane's `#KEY` named.
     Direction(RoomConcernedDirection),
-    /// The task `operator#TASK` named.
+    /// The task a lane's `#TASK` named.
     Task { task: RoomAnchor },
-    /// Nothing: a bare `operator` route.
+    /// A retained pre-cutover operator route with no concern.
     Unnamed,
 }
 
