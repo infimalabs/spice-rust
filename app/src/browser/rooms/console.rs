@@ -21,8 +21,7 @@ use wire::{QuoteTarget, TaskStamp};
 use yew::prelude::*;
 
 use super::{
-    ComposerFocus, Controls, anchor_label, oops_grooming_form, render_event, render_preparation,
-    room_post_notice,
+    ComposerFocus, Controls, anchor_label, render_event, render_preparation, room_post_notice,
 };
 use crate::AppRuntime;
 use crate::browser::clock::Age;
@@ -529,9 +528,8 @@ fn newest_words(runtime: &AppRuntime, design: &TaskStamp) -> Option<(RoomAuthori
 }
 
 /// A design's menu carries what its room holds besides conversation: its
-/// standing, the coordination that asks a lane for a contribution, its
-/// preparation authority and, for an OOPS batch, the grooming form. Its group
-/// rail mirrors an agent's team rail.
+/// standing, the coordination that asks a lane for a contribution, and its
+/// preparation authority. Its group rail mirrors an agent's team rail.
 fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
     let label = format!("Menu for {}", channel.label);
     html! {
@@ -558,7 +556,6 @@ fn render_design_menu(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
                 {super::standing::render_standing(render.runtime, &channel.stamp, render.runtime.board().and_then(|board| board.row(&channel.stamp)))}
                 {super::coordination::coordination_form(render.runtime, &toast(render), render.sender, &channel.stamp)}
                 {render_preparation(render.runtime, &channel.stamp)}
-                {oops_grooming_form(render.runtime, &toast(render), render.sender, &channel.stamp)}
             </div>
         </details>
     }
@@ -727,8 +724,6 @@ fn design_post(
                 room,
                 head,
                 text: prepared.message.trim().to_owned(),
-                grooming: None,
-                report_heads: Vec::new(),
                 respond: Rc::new(landed),
             }),
         ) {

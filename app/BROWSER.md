@@ -134,8 +134,8 @@ exactly the posted text and shards; a refusal keeps everything and shows in
 the composer toast. The design's menu carries its
 [standing](CONSOLE.md#design-standing), the
 [coordination controls](CONSOLE.md#room-coordination) that ask a seated lane
-for a contribution or put the room aside while the Design is active, its
-preparation authority and, for an open OOPS batch, the grooming form below.
+for a contribution or put the room aside while the Design is active, and its
+preparation authority.
 
 Operator posts and lane MSG, ASK, and ANS publications share one card family:
 sender → destinations, verb, and text. A lane's own bytes come from its
@@ -201,24 +201,18 @@ restored only while nothing else holds focus. Incoming cards, receipts,
 conclusions, lane changes, and late hydration never mount, close, reorder, or
 focus a console.
 
-An open, pending Design also exposes bounded OOPS grooming. Each record
-names the exact OOPS reports it considered, one of `duplicate`, `no-work`,
-`deferred-for-later`, `covered`, or `proposed-work`, its evidenced cause, and
-any exceptions or uncertainty. Recording changes no report workflow;
-`deferred-for-later` has no wake time. A proposed report is filed through
-`spice task file REPORT --preparation DESIGN`, which atomically changes its
-filing state and makes it a controlled, unauthorized output. Dispositions are
-evidence, not authority: filing neither requires nor follows from a
-`proposed-work` record. Filing with `--claim` is refused when a preparation
-controller is named, and its card continues to show authorization pending until
-an accepted candidate receives separate selected authorization. A concluded
-Design accepts no later grooming; start a new Design room for a later batch.
+A Design room's recorded OOPS grooming, made through `spice room post DESIGN
+--report REPORT...`, renders in its history and group plane with the reports it
+considered, each report's standing, its disposition, evidenced cause, and any
+exceptions or uncertainty. The browser records no grooming: a Design's menu
+carries no grooming form, and an OOPS report leaves parking only through
+filing.
 
 ## Drafts and OOPS
 
 A task's filing state is one of three standings. **Filed** work is ordinary
-board work. An **OOPS** report asserts unexpected behavior, stays parked for
-grooming, and is filed through `spice task file` or its task detail's **File**.
+board work. An **OOPS** report asserts unexpected behavior and stays parked
+until it is filed through `spice task file` or its task detail's **File**.
 A **Draft** is prospective work its author is still shaping. It asserts
 nothing, never joins OOPS grooming, and stays outside allocation, claims,
 capture, dependency satisfaction, completion, team strips, and execution

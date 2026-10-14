@@ -47,6 +47,7 @@ pub(super) async fn send_group_change(
     }
 }
 
+/// Post operator text to one room under the anchor head its composer read.
 pub(super) async fn send_room_post(
     principal: &Principal,
     writer: &mut SocketWriter,
@@ -57,29 +58,14 @@ pub(super) async fn send_room_post(
         room,
         head,
         text,
-        grooming,
-        report_heads,
         respond,
     } = post;
-    let mut expected = vec![Witness::Task {
+    let expected = vec![Witness::Task {
         task: room
             .born()
             .map_err(|error| format!("room anchor is invalid: {error}"))?,
         head: *head,
     }];
-    if let Some(grooming) = grooming {
-        if grooming.reports.len() != report_heads.len() {
-            return Err("OOPS report witnesses do not match the selected sources".into());
-        }
-        expected.extend(
-            grooming
-                .reports
-                .iter()
-                .cloned()
-                .zip(report_heads.iter().copied())
-                .map(|(task, head)| Witness::Task { task, head }),
-        );
-    }
     send_typed(
         principal,
         writer,
@@ -92,7 +78,7 @@ pub(super) async fn send_room_post(
         wire::rooms::RoomPost {
             room: room.clone(),
             text: text.to_owned(),
-            grooming: grooming.clone(),
+            grooming: None,
         },
     )
     .await
