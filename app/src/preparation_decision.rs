@@ -6,7 +6,7 @@
 //! only reports that the write landed; proposal standing moves when the
 //! committed decision and authorization arrive through the room projection.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use wire::intent::{BoardTask, TextAnswer};
 use wire::rooms::{
@@ -60,51 +60,53 @@ pub struct DecisionDraft {
     notice: Option<DraftNotice>,
 }
 
-/// The page's one active decision draft.
+/// Browser-local decision drafts keyed by exact candidate version.
 ///
-/// A submitted draft owns the slot until its exact response settles. Edits
-/// targeting another candidate during that interval are ignored rather than
-/// replacing the pending state and losing its eventual refusal.
+/// Settled drafts remain beside their versions while the operator compares or
+/// edits another proposal. At most one draft owns the pending slot, and only
+/// that exact candidate's response may settle it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DecisionComposer {
-    draft: Option<DecisionDraft>,
+    drafts: BTreeMap<CandidateRef, DecisionDraft>,
+    pending: Option<CandidateRef>,
 }
 
 impl DecisionComposer {
     #[must_use]
     pub fn draft(&self, candidate: &CandidateRef) -> Option<&DecisionDraft> {
-        self.draft
-            .as_ref()
-            .filter(|draft| draft.candidate() == candidate)
+        self.drafts.get(candidate)
     }
 
     #[must_use]
-    pub fn is_pending(&self) -> bool {
-        self.draft.as_ref().is_some_and(DecisionDraft::is_pending)
+    pub const fn is_pending(&self) -> bool {
+        self.pending.is_some()
     }
 
-    /// Apply one edit to its exact candidate without displacing an in-flight
-    /// draft belonging to another candidate.
+    /// Apply one edit to its exact candidate without displacing the one
+    /// in-flight draft.
     pub fn apply(
         &mut self,
         candidate: CandidateRef,
         settles: bool,
         change: impl FnOnce(&mut DecisionDraft),
     ) {
-        let names = self
-            .draft
-            .as_ref()
-            .is_some_and(|draft| draft.candidate() == &candidate);
-        if (settles && !names) || (self.is_pending() && !names) {
+        let owns_pending = self.pending.as_ref() == Some(&candidate);
+        if (settles && !owns_pending) || (self.pending.is_some() && !owns_pending) {
             return;
         }
-        let mut draft = self
-            .draft
-            .take()
-            .filter(|draft| draft.candidate() == &candidate)
-            .unwrap_or_else(|| DecisionDraft::new(candidate));
-        change(&mut draft);
-        self.draft = Some(draft);
+        let draft = match self.drafts.entry(candidate) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let candidate = entry.key().clone();
+                entry.insert(DecisionDraft::new(candidate))
+            }
+        };
+        change(draft);
+        if draft.is_pending() && self.pending.is_none() {
+            self.pending = Some(draft.candidate().clone());
+        } else if owns_pending && !draft.is_pending() {
+            self.pending = None;
+        }
     }
 }
 

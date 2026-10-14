@@ -26,8 +26,8 @@ use crate::runtime::{PreparationProjection, RoomPositioned};
 type DraftChange = Rc<dyn Fn(&mut DecisionDraft)>;
 type DraftCommand = Box<dyn Fn()>;
 
-/// This page's one decision draft. A pending version keeps the slot until its
-/// exact response settles.
+/// This page's exact-version decision drafts. One pending version globally
+/// locks submission until its response settles.
 #[derive(Clone, Default, PartialEq)]
 pub(super) struct Composer(DecisionComposer);
 
