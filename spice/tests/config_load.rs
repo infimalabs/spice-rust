@@ -100,7 +100,7 @@ fn repository_loader_reads_current_tracked_and_local_intent_without_mutation() {
         load_repository(&repository, &[]).expect("repository loader admits current typed metadata");
     assert_eq!(
         resolved.root().tasks().hidden_stems(),
-        ["oops", "maxim_proposal", "sandbox"]
+        ["maxim_proposal", "sandbox"]
     );
     assert!(resolved.root().policy().env_names().is_empty());
     assert_eq!(resolved.root().taste().bag().tastes().len(), 1);

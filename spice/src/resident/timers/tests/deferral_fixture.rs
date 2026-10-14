@@ -8,6 +8,7 @@ pub(super) fn seed_timer_task(
     bus: &Bus,
     task: &TaskHandle,
     project: &str,
+    filing: wire::TaskFiling,
     deferral: Option<Instant>,
     dependencies: Vec<wire::TaskStamp>,
 ) {
@@ -29,6 +30,7 @@ pub(super) fn seed_timer_task(
                 acceptance: Vec::new(),
                 requirements: wire::EnvironmentRequirements::default(),
                 project: project.to_owned(),
+                filing,
                 tags: Vec::new(),
                 depends: dependencies.clone(),
                 flow: vec![phase.clone()],
@@ -56,6 +58,7 @@ pub(super) fn seed_timer_task(
     let statement_stamp = stamp.clone();
     let statement_phase = phase.clone();
     let statement_project = project.to_owned();
+    let statement_filing = filing;
     write.task_head(added, move |position| TaskHead {
         preparation: None,
         authorization: None,
@@ -69,6 +72,7 @@ pub(super) fn seed_timer_task(
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
         project: statement_project,
+        filing: statement_filing,
         tags: Vec::new(),
         dependencies,
         provenance: origin,

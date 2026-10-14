@@ -358,6 +358,7 @@ pub enum TaskLifecycleKind {
     Reviewed,
     Deferred,
     Woken,
+    Filed,
     Deleted,
 }
 
@@ -521,6 +522,7 @@ pub enum TaskTimelineEvent {
     },
     Deferred {},
     Woken {},
+    Filed {},
     Deleted {},
     /// The lane won possession.
     Claimed {},
@@ -709,6 +711,9 @@ pub struct BoardStatement {
     pub requirements: crate::EnvironmentRequirements,
     /// Scheduler project grouping.
     pub project: String,
+    /// Filing standing, independent of project identity and visibility.
+    #[serde(default, skip_serializing_if = "crate::TaskFiling::is_filed")]
+    pub filing: crate::TaskFiling,
     /// Authored task labels.
     pub tags: Vec<String>,
     /// Tasks that must complete first.
@@ -755,13 +760,18 @@ pub struct BoardStatement {
 impl From<&crate::TaskHead> for BoardStatement {
     fn from(statement: &crate::TaskHead) -> Self {
         Self {
-            handle: crate::TaskHandle::for_project(&statement.project, &statement.born),
+            handle: crate::TaskHandle::for_filing(
+                &statement.project,
+                &statement.born,
+                statement.filing,
+            ),
             born: statement.born.clone(),
             queue_origin: statement.queue_origin,
             description: statement.description.clone(),
             acceptance: statement.acceptance.clone(),
             requirements: statement.requirements.clone(),
             project: statement.project.clone(),
+            filing: statement.filing,
             tags: statement.tags.clone(),
             dependencies: statement.dependencies.clone(),
             intent: statement.intent,
@@ -792,6 +802,7 @@ impl BoardStatement {
             acceptance: self.acceptance.clone(),
             requirements: self.requirements.clone(),
             project: self.project.clone(),
+            filing: self.filing,
             tags: self.tags.clone(),
             dependencies: self.dependencies.clone(),
             intent: self.intent,
@@ -1002,10 +1013,11 @@ impl BoardTask {
         &self.presentation_title
     }
 
-    /// Whether this row belongs to pending public work inventory.
+    /// Whether this filed row belongs to pending public work inventory.
     #[must_use]
     pub fn is_active_public(&self) -> bool {
         !self.visibility.is_hidden()
+            && self.statement.body.filing.is_filed()
             && self.workflow.body.status == "pending"
             && self.workflow.body.completion.is_none()
     }

@@ -16,6 +16,7 @@ pub const REPORT_FACT_KINDS: &[FactKind] = &[
     FactKind::TaskAssigned,
     FactKind::TaskDeferred,
     FactKind::TaskWoken,
+    FactKind::TaskFiled,
     FactKind::TaskEdited,
     FactKind::TaskDeleted,
     FactKind::TaskClosed,

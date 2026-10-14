@@ -91,6 +91,65 @@ fn writable_open_drops_task_edit_notices_and_spells_implicit_fast_flags_once() {
     assert_eq!(reopened.migration(), None);
     assert_eq!(residual_rows(&reopened), canonical);
 }
+#[test]
+fn writable_open_moves_hidden_oops_projects_into_explicit_filing_state() {
+    for (name, retained, public) in [
+        ("nested", ".oops.board.cli", "board.cli"),
+        ("bare", ".oops", "task.oops"),
+    ] {
+        let scratch = Scratch::new();
+        let path = scratch.path().join(format!("retained-oops-{name}.sqlite3"));
+        let journal = authority_file_fixture(&path);
+        journal
+            .connection
+            .execute(
+                "UPDATE fact_envelopes
+                 SET envelope = CAST(json_set(
+                     CAST(envelope AS TEXT), '$.fact.project', ?1
+                 ) AS BLOB)
+                 WHERE kind = 'task::added'",
+                [retained],
+            )
+            .expect("retained OOPS fact is planted");
+        journal
+            .connection
+            .execute(
+                "UPDATE task_heads
+                 SET body = CAST(json_set(
+                     CAST(body AS TEXT), '$.project', ?1
+                 ) AS BLOB)",
+                [retained],
+            )
+            .expect("retained OOPS head is planted");
+        restore_predecessor(&journal, SCHEMA_VERSION - 1);
+        drop(journal);
+
+        let crossed = Journal::open(&path).expect("retained OOPS authority crosses");
+        let head = crossed
+            .connection
+            .query_row(
+                "SELECT json_extract(CAST(body AS TEXT), '$.project'),
+                        json_extract(CAST(body AS TEXT), '$.filing')
+                 FROM task_heads",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .expect("crossed OOPS head reads");
+        let fact = crossed
+            .connection
+            .query_row(
+                "SELECT json_extract(CAST(envelope AS TEXT), '$.fact.project'),
+                        json_extract(CAST(envelope AS TEXT), '$.fact.filing')
+                 FROM fact_envelopes WHERE kind = 'task::added'",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .expect("crossed OOPS fact reads");
+        assert_eq!(head, (public.to_owned(), "oops".to_owned()));
+        assert_eq!(fact, head);
+        crossed.verify().expect("crossed OOPS authority verifies");
+    }
+}
 
 type RetainedPlant = fn(&Journal) -> String;
 type RetainedCase = (&'static str, &'static str, &'static str, RetainedPlant);

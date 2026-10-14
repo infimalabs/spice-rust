@@ -881,14 +881,25 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "wake"],
-        "task wake HANDLE [--into PROJECT] [--preparation HANDLE] [--claim]",
+        "task wake HANDLE [--claim]",
         OperatorOrLane,
         Command,
-        [TaskWoken, TaskEdited, OutputControlled, ClaimWon],
+        [TaskWoken, ClaimWon],
         [Resident, Toolful],
         TASK_GIT_TOOLS,
         Reply,
         "board::task_wake"
+    ),
+    row!(
+        ["task", "file"],
+        "task file HANDLE [--into PROJECT] [--preparation HANDLE] [--claim]",
+        OperatorOrLane,
+        Command,
+        [TaskFiled, OutputControlled, ClaimWon],
+        [Resident, Toolful],
+        TASK_GIT_TOOLS,
+        Reply,
+        "board::task_file"
     ),
     row!(
         ["task", "free"],

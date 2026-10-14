@@ -676,6 +676,7 @@ mod tests {
                     acceptance: Vec::new(),
                     requirements: EnvironmentRequirements::EMPTY,
                     project: "canvas.work".to_owned(),
+                    filing: wire::TaskFiling::Filed,
                     tags: Vec::new(),
                     dependencies: dependencies.iter().map(|value| stamp(*value)).collect(),
                     provenance: "ack:direction".parse().expect("fixture origin"),

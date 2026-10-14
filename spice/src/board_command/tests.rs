@@ -1083,12 +1083,12 @@ mod closing_boundary;
 mod hidden;
 use hidden::*;
 
-// Parked `.oops` rows have one deliberate exit: exact capture may hold one
-// for triage, and atomic wake promotion moves it into public work.
-mod oops_promotion;
-// Bare wake resolves a parked row's public destination from the project it
-// recommends, so the precedence and its atomic refusals are one seam.
-mod oops_destination;
+// Typed OOPS rows have one deliberate exit: exact capture may hold one for
+// triage, and atomic filing moves it into allocator-visible work.
+mod oops_filing;
+// Filing without rehoming keeps an OOPS row's public project; explicit
+// rehoming and atomic refusals share one seam.
+mod oops_filing_destination;
 
 // Statement correction and its refusals are one bounded scenario seam, so
 // this file stays inside the structural review bound as it grows.

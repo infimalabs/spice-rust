@@ -30,8 +30,7 @@ pub(in crate::board_command) fn task_defer(
     )
 }
 
-/// Wake deferred work, or promote a parked `.oops` row into an admitted
-/// project and, when named, under one preparation controller.
+/// Wake one ordinary filed task whose deferral is currently set.
 pub(in crate::board_command) fn task_wake(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -50,9 +49,12 @@ pub(in crate::board_command) fn task_wake(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let parked = task_entry(&snapshot.entries, &wake.task).is_some_and(is_oops);
-    if wake.into.is_some() || wake.preparation.is_some() || parked {
-        return promote_oops(bus, command, &snapshot, wake, repository, projects);
+    if task_entry(&snapshot.entries, &wake.task).is_some_and(is_oops) {
+        return refusal(
+            "task::file-required",
+            Some(wake.task.to_string()),
+            "use `spice task file HANDLE` to move OOPS evidence into filed work",
+        );
     }
     change_deferral(
         bus,
@@ -67,7 +69,29 @@ pub(in crate::board_command) fn task_wake(
     )
 }
 
-fn validate_promotion_entry(
+/// File one parked OOPS row into ordinary work.
+pub(in crate::board_command) fn task_file(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    file: &TaskFile,
+    repository: Option<&Repository>,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Outcome<CommandAnswer> {
+    let snapshot = match validated_working_snapshot(
+        bus,
+        command.actor().clone(),
+        std::slice::from_ref(&file.task),
+        projects,
+        allocation,
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    file_oops(bus, command, &snapshot, file, repository, projects)
+}
+
+fn validate_filing_entry(
     entry: &Entry,
     command: &wire::AdmittedCommand,
 ) -> Result<(), Outcome<CommandAnswer>> {
@@ -77,42 +101,42 @@ fn validate_promotion_entry(
     };
     if !command.expected().contains(&current_statement) {
         return Err(refusal(
-            "task::promotion-statement-witness-moved",
+            "task::filing-statement-witness-moved",
             Some(format!("{} current={current_statement:?}", entry.handle())),
             "read the board again and retry with the current target statement witness",
         ));
     }
     if !is_oops(entry) {
         return Err(refusal(
-            "task::promotion-refused",
+            "task::filing-refused",
             Some(format!("{} project={}", entry.handle(), entry.project())),
-            "use --into only to promote a task currently parked in .oops",
+            "use task file only for a row whose filing standing is OOPS",
         ));
     }
     if entry.workflow().completion.is_some() {
         return Err(refusal(
             "task::settled",
             Some(entry.handle().to_string()),
-            "promote only pending .oops work",
+            "file only pending OOPS work",
         ));
     }
     Ok(())
 }
 
-fn promotion_preparation(
+fn filing_preparation(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     output: &Entry,
-    wake: &TaskWake,
+    file: &TaskFile,
 ) -> Result<Option<wire::TaskPreparation>, Outcome<CommandAnswer>> {
-    let Some(named) = &wake.preparation else {
+    let Some(named) = &file.preparation else {
         return Ok(None);
     };
-    if wake.claim {
+    if file.claim {
         return Err(refusal(
-            "task::promotion-claim-controlled",
+            "task::filing-claim-controlled",
             Some(output.handle().to_string()),
-            "promote controlled OOPS work without --claim; selected authorization must precede native capture",
+            "file controlled OOPS work without --claim; selected authorization must precede native capture",
         ));
     }
     if output.statement().preparation.is_some()
@@ -120,9 +144,9 @@ fn promotion_preparation(
         || output.statement().intent.is_some()
     {
         return Err(refusal(
-            "task::promotion-output-ineligible",
+            "task::filing-output-ineligible",
             Some(output.handle().to_string()),
-            "control only an ordinary parked report that has no preparation or authorization authority",
+            "control only an ordinary OOPS report that has no preparation or authorization authority",
         ));
     }
     let controller_stamp = named.born().map_err(|error| {
@@ -136,7 +160,7 @@ fn promotion_preparation(
         return Err(refusal(
             "preparation::controller-cycle",
             Some(named.to_string()),
-            "the promoted report cannot control itself",
+            "the filed report cannot control itself",
         ));
     }
     let Some(controller) = snapshot
@@ -175,7 +199,7 @@ fn promotion_preparation(
             return Err(refusal(
                 "preparation::witness-missing",
                 Some(format!("{witness:?}")),
-                "read the current controller authority and retry the exact promotion",
+                "read the current controller authority and retry the exact filing",
             ));
         }
     }
@@ -206,7 +230,7 @@ fn promotion_preparation(
     }))
 }
 
-fn append_promotion(
+fn append_filing(
     write: &mut JournalWrite,
     command: &wire::AdmittedCommand,
     entry: &Entry,
@@ -215,31 +239,15 @@ fn append_promotion(
     statement: TaskHead,
     atomic_claim: Option<AtomicClaim>,
 ) -> Result<Option<spice::task_git::ClaimPreparation>, Outcome<CommandAnswer>> {
-    let woken = write
+    let filed = write
         .fact(
-            body::TaskWoken {
+            body::TaskFiled {
                 task: entry.born().clone(),
+                project: statement.project.clone(),
             },
             FactCause::Root,
         )
-        .map_err(|error| store_fault("task::promotion-wake-build", &error.to_string()))?;
-    let revision = u32::try_from(entry.statement().revision.get())
-        .unwrap_or(u32::MAX)
-        .saturating_add(1);
-    let dependencies = (statement.dependencies != entry.statement().dependencies)
-        .then(|| statement.dependencies.clone());
-    let edited = write
-        .fact(
-            body::TaskEdited {
-                intent: None,
-                evidence: None,
-                task: entry.born().clone(),
-                revision,
-                dependencies,
-            },
-            FactCause::Pending(woken),
-        )
-        .map_err(|error| store_fault("task::promotion-edit-build", &error.to_string()))?;
+        .map_err(|error| store_fault("task::filing-build", &error.to_string()))?;
     let statement_fact = if let Some(preparation) = statement.preparation.clone() {
         write
             .fact(
@@ -247,13 +255,13 @@ fn append_promotion(
                     output: entry.born().clone(),
                     preparation,
                 },
-                FactCause::Pending(edited),
+                FactCause::Pending(filed),
             )
-            .map_err(|error| store_fault("task::promotion-control-build", &error.to_string()))?
+            .map_err(|error| store_fault("task::filing-control-build", &error.to_string()))?
     } else {
-        edited
+        filed
     };
-    write.workflow_head(entry.born().clone(), woken, move |_| workflow);
+    write.workflow_head(entry.born().clone(), filed, move |_| workflow);
     write.task_head(statement_fact, move |position| TaskHead {
         revision: position,
         ..statement
@@ -264,54 +272,53 @@ fn append_promotion(
     }
 }
 
-/// The public project a promotion lands in: the explicit destination, which
-/// must pass manual admission, or else the parked row's own resolution.
-fn promotion_destination(
+/// Public project a filing lands in: the explicit admitted destination or the
+/// OOPS row's current public owner.
+fn filing_destination(
     entry: &Entry,
     requested: Option<&str>,
     projects: &ProjectPolicy,
 ) -> Result<board::Project, Outcome<CommandAnswer>> {
-    let admitted = match requested {
-        Some(requested) => projects.admit_manual_creation(requested),
-        None => projects.oops_promotion(entry.project()),
-    };
-    admitted.map_err(|error| {
-        refusal(
-            "task::promotion-project-refused",
-            Some(error.to_string()),
-            "name a public project this board admits for manual filing",
-        )
-    })
+    projects
+        .admit_manual_creation(requested.unwrap_or_else(|| entry.project().as_str()))
+        .map_err(|error| {
+            refusal(
+                "task::filing-project-refused",
+                Some(error.to_string()),
+                "name a public project this board admits for filing",
+            )
+        })
 }
 
-fn promote_oops(
+fn file_oops(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     snapshot: &ValidatedSnapshot,
-    wake: &TaskWake,
+    file: &TaskFile,
     repository: Option<&Repository>,
     projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
-    let Some(entry) = task_entry(&snapshot.entries, &wake.task) else {
+    let Some(entry) = task_entry(&snapshot.entries, &file.task) else {
         return refusal(
             "task::unknown",
-            Some(wake.task.to_string()),
+            Some(file.task.to_string()),
             "read board and name one current task handle",
         );
     };
-    if let Err(outcome) = validate_promotion_entry(entry, command) {
+    if let Err(outcome) = validate_filing_entry(entry, command) {
         return outcome;
     }
-    let preparation = match promotion_preparation(snapshot, command, entry, wake) {
+    let preparation = match filing_preparation(snapshot, command, entry, file) {
         Ok(preparation) => preparation,
         Err(outcome) => return outcome,
     };
-    let project = match promotion_destination(entry, wake.into.as_deref(), projects) {
+    let project = match filing_destination(entry, file.into.as_deref(), projects) {
         Ok(project) => project,
         Err(outcome) => return outcome,
     };
     let mut statement = entry.statement().clone();
     statement.project = project.as_str().to_owned();
+    statement.filing = wire::TaskFiling::Filed;
     statement.preparation = preparation;
     let mut workflow = entry.workflow().clone();
     workflow.deferral = None;
@@ -325,14 +332,14 @@ fn promote_oops(
         Ok(post) => post,
         Err(error) => {
             return refusal(
-                "task::promotion-refused",
+                "task::filing-refused",
                 Some(error.to_string()),
-                "promote the parked row into a valid public project",
+                "file the parked row into a valid public project",
             );
         }
     };
     let atomic_claim =
-        match prepare_mutation_claim(bus, command, repository, &snapshot, &post, wake.claim) {
+        match prepare_mutation_claim(bus, command, repository, snapshot, &post, file.claim) {
             Ok(claim) => claim,
             Err(outcome) => return outcome,
         };
@@ -340,12 +347,12 @@ fn promote_oops(
     let next = claim_answer
         .as_ref()
         .and_then(|claim| claim.next.clone())
-        .or_else(|| next_action(&snapshot, &post));
-    let mut write = match prepare_mutation_write(command, entry, &snapshot, atomic_claim.as_ref()) {
+        .or_else(|| next_action(snapshot, &post));
+    let mut write = match prepare_mutation_write(command, entry, snapshot, atomic_claim.as_ref()) {
         Ok(write) => write,
         Err(outcome) => return outcome,
     };
-    let prepared_claim_git = match append_promotion(
+    let prepared_claim_git = match append_filing(
         &mut write,
         command,
         entry,
@@ -359,13 +366,13 @@ fn promote_oops(
     };
     let answer = wire::intent::TaskAnswer {
         task: post.handle().clone(),
-        status: "promoted".to_owned(),
+        status: "filed".to_owned(),
         completion: None,
         claim: claim_answer,
         next,
     };
     if let Err(error) = write.command_result(
-        request(command, wake.clone()),
+        request(command, file.clone()),
         command.epoch(),
         answer.clone(),
     ) {
@@ -374,7 +381,7 @@ fn promote_oops(
                 return task_git_outcome(rollback);
             }
         }
-        return store_fault("task::promotion-receipt", &error.to_string());
+        return store_fault("task::filing-receipt", &error.to_string());
     }
     let body = CommandAnswer::Task(answer);
     if let Some(prepared) = prepared_claim_git {

@@ -779,6 +779,7 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
         (&["task", "note"][..], CommandKind::TaskNote),
         (&["task", "defer"][..], CommandKind::TaskDefer),
         (&["task", "wake"][..], CommandKind::TaskWake),
+        (&["task", "file"][..], CommandKind::TaskFile),
         (&["task", "free"][..], CommandKind::ClaimFree),
         (&["task", "oops"][..], CommandKind::TaskOopsAdd),
         (&["task", "depends"][..], CommandKind::TaskDepends),

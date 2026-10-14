@@ -506,7 +506,7 @@ fn oops_grooming_records_source_preserving_negative_triage_without_mutating_repo
         },
     ));
     let report_stamp = stamp("room-oops-report");
-    let report = TaskHandle::for_project(".oops", &report_stamp);
+    let report = TaskHandle::for_filing("board.test", &report_stamp, wire::TaskFiling::Oops);
     assert_committed(issue(
         &bus,
         epoch,
@@ -519,7 +519,7 @@ fn oops_grooming_records_source_preserving_negative_triage_without_mutating_repo
             title: "Observed friction".to_owned(),
             description: "Evidence retained by the report".to_owned(),
             origin: Some("fixture:oops-source".parse().expect("fixture origin")),
-            project: None,
+            project: Some("board.test".to_owned()),
         },
     ));
     let before = board(&bus, epoch, Actor::Operator);
@@ -588,10 +588,8 @@ fn oops_grooming_records_source_preserving_negative_triage_without_mutating_repo
     let retained = at(&after, &report);
     assert_eq!(retained.statement, statement);
     assert_eq!(retained.workflow, workflow);
-    assert!(matches!(
-        retained.visibility,
-        wire::intent::ProjectVisibility::Hidden { .. }
-    ));
+    assert_eq!(retained.visibility, wire::intent::ProjectVisibility::Public);
+    assert!(retained.statement.body.filing.is_oops());
 }
 
 #[test]

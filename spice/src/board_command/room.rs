@@ -185,7 +185,7 @@ fn validate_oops_grooming(
         return Err(refusal(
             "room::oops-proposal-ambiguous",
             Some(anchor.handle().to_string()),
-            "record proposed-work against exactly one original report before controlled promotion",
+            "record proposed-work against exactly one original report before controlled filing",
         ));
     }
     let mut seen = Vec::with_capacity(grooming.reports.len());
@@ -209,7 +209,7 @@ fn validate_oops_grooming(
             return Err(refusal(
                 "room::oops-report-not-parked",
                 Some(entry.handle().to_string()),
-                "groom only pending reports still held by the server-owned .oops filing filter",
+                "groom only pending reports still held by typed OOPS filing state",
             ));
         }
         let witness = Witness::Task {

@@ -5,8 +5,8 @@ use std::thread::{self, ThreadId};
 use bus::{Bus, CommitOutcome};
 use journal::crossing::{
     Actor, CanonicalUuid, ClaimCell, ClaimDisposition, ClaimHead, Command, CommandKind, Digest,
-    EnvironmentRequirements, Origin, Phase, Producer, Seq, TaskHandle, TaskHead, TrustHead,
-    TrustState, WireVersion, Witness, WorkflowHead, body, intent,
+    EnvironmentRequirements, Origin, Phase, Producer, Seq, TaskFiling, TaskHandle, TaskHead,
+    TrustHead, TrustState, WireVersion, Witness, WorkflowHead, body, intent,
 };
 use journal::{FactCause, GuardError, Journal, JournalGuard, JournalWrite};
 
@@ -991,6 +991,7 @@ fn retained_added(
         acceptance: Vec::new(),
         requirements: EnvironmentRequirements::default(),
         project: "bus".to_owned(),
+        filing: TaskFiling::Filed,
         tags: Vec::new(),
         depends: Vec::new(),
         flow: vec![phase.clone()],
@@ -1016,6 +1017,7 @@ fn retained_task_head(task: journal::crossing::TaskStamp, index: usize, seq: Seq
         acceptance: Vec::new(),
         requirements: EnvironmentRequirements::default(),
         project: "bus".to_owned(),
+        filing: TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: "task:BUS-a1".parse().expect("fleet origin"),
@@ -1055,6 +1057,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
                 acceptance: vec!["The journal commits atomically".to_owned()],
                 requirements: EnvironmentRequirements::default(),
                 project: "bus".to_owned(),
+                filing: TaskFiling::Filed,
                 tags: vec!["journal".to_owned()],
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
@@ -1083,6 +1086,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
         acceptance: vec!["The journal commits atomically".to_owned()],
         requirements: EnvironmentRequirements::default(),
         project: "bus".to_owned(),
+        filing: TaskFiling::Filed,
         tags: vec!["journal".to_owned()],
         dependencies: Vec::new(),
         provenance: origin_for_head,

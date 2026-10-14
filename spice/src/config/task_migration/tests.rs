@@ -31,9 +31,9 @@ fn accepted_export_preserves_migrated_task_data() {
 
     assert_eq!(
         report.tasks().hidden_stems(),
-        ["oops", "maxim_proposal", "sandbox", "audit"]
+        ["maxim_proposal", "sandbox", "oops", "audit"]
     );
-    assert_eq!(report.provenance().len(), 9);
+    assert_eq!(report.provenance().len(), 8);
 }
 
 #[test]

@@ -190,6 +190,31 @@ pub struct TaskPreparation {
     pub construction: TaskStamp,
 }
 
+/// Whether a task is filed allocator work or parked unexpected-behavior evidence.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskFiling {
+    /// Ordinary work admitted to its workflow and allocator.
+    #[default]
+    Filed,
+    /// Evidence awaiting explicit triage and filing.
+    Oops,
+}
+
+impl TaskFiling {
+    /// Whether this task participates in ordinary filed work.
+    #[must_use]
+    pub const fn is_filed(&self) -> bool {
+        matches!(self, Self::Filed)
+    }
+
+    /// Whether this task is parked as OOPS evidence.
+    #[must_use]
+    pub const fn is_oops(&self) -> bool {
+        matches!(self, Self::Oops)
+    }
+}
+
 /// One current task statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -219,6 +244,9 @@ pub struct TaskHead {
     pub requirements: crate::EnvironmentRequirements,
     /// Scheduler project grouping.
     pub project: String,
+    /// Filing standing, independent of project identity and visibility.
+    #[serde(default, skip_serializing_if = "TaskFiling::is_filed")]
+    pub filing: TaskFiling,
     /// Authored task labels.
     pub tags: Vec<String>,
     /// Tasks that must complete first.

@@ -48,6 +48,7 @@ impl CommandKind {
         Self::TaskNote,
         Self::TaskDefer,
         Self::TaskWake,
+        Self::TaskFile,
         Self::TaskDepends,
         Self::TaskPhase,
         Self::TaskDone,
@@ -138,6 +139,7 @@ impl CommandKind {
             | Self::TaskNote
             | Self::TaskDefer
             | Self::TaskWake
+            | Self::TaskFile
             | Self::TaskDepends
             | Self::TaskPhase
             | Self::TaskDone
@@ -226,6 +228,7 @@ impl CommandKind {
             Self::TaskNote => "task::note",
             Self::TaskDefer => "task::defer",
             Self::TaskWake => "task::wake",
+            Self::TaskFile => "task::file",
             Self::TaskDepends => "task::depends",
             Self::TaskPhase => "task::phase",
             Self::TaskDone => "task::done",

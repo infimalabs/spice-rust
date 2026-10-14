@@ -85,7 +85,7 @@ pub enum CommandKind {
     VendorCatalog,
     /// Add one task as direct intent.
     TaskAdd,
-    /// Add one task through the fixed server-owned `.oops` route.
+    /// Add one task in typed OOPS filing state.
     TaskOopsAdd,
     /// File one mined taste candidate through the fixed hidden proposal route.
     TasteProposalAdd,
@@ -101,6 +101,8 @@ pub enum CommandKind {
     TaskDefer,
     /// Clear the current deferral.
     TaskWake,
+    /// Move one parked OOPS row into ordinary filed work.
+    TaskFile,
     /// Add or remove dependency edges between existing tasks.
     TaskDepends,
     /// Advance the claimed phase.

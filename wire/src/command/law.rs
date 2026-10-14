@@ -219,11 +219,22 @@ impl Law {
         ],
         authority: Authority::Connected,
     };
-    /// Exact workflow and defer disposition, plus the statement head when a
-    /// parked wake promotes the task. A controlled promotion also witnesses
-    /// the pending controller's statement, workflow, and absent claim.
+    /// Exact workflow and defer disposition for ordinary deferred work.
     /// Atomic claim additionally carries capture eligibility and residency.
     pub const WAKE: Self = Self {
+        required: &[WitnessKind::Workflow, WitnessKind::Deferral],
+        optional: &[
+            WitnessKind::Claim,
+            WitnessKind::Eligibility,
+            WitnessKind::Residency,
+        ],
+        authority: Authority::Connected,
+    };
+    /// Exact workflow, defer disposition, and statement for typed OOPS work.
+    /// Controlled filing also witnesses the pending controller's statement,
+    /// workflow, and absent claim. Atomic claim additionally carries capture
+    /// eligibility and residency.
+    pub const FILE: Self = Self {
         required: &[WitnessKind::Workflow, WitnessKind::Deferral],
         optional: &[
             WitnessKind::Task,
@@ -551,6 +562,12 @@ impl CommandKind {
             Self::PreparationDecide => Law::PROPOSAL_DECISION,
             Self::ExecutionAuthorize => Law::AUTHORIZE,
             Self::OutputAdopt => Law::ADOPT,
+            _ => self.task_law(),
+        }
+    }
+
+    const fn task_law(self) -> Law {
+        match self {
             Self::TaskAdd => Law::TASK_ADD,
             Self::TaskOopsAdd | Self::TasteProposalAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
@@ -559,6 +576,7 @@ impl CommandKind {
             Self::TaskNote => Law::NOTE,
             Self::TaskDefer => Law::DEFER,
             Self::TaskWake => Law::WAKE,
+            Self::TaskFile => Law::FILE,
             Self::TaskDepends => Law::DEPENDS,
             Self::TaskPhase | Self::TaskDone => Law::PROGRESS,
             Self::TaskReview => Law::REVIEW,
@@ -582,26 +600,32 @@ impl CommandKind {
             ];
         }
         if let (Self::TaskWake, Intent::TaskWake(wake)) = (self, body) {
-            return match (wake.into.is_some(), wake.claim) {
-                (true, true) => &[
+            return if wake.claim {
+                &[
+                    WitnessKind::Workflow,
+                    WitnessKind::Deferral,
+                    WitnessKind::Eligibility,
+                    WitnessKind::Residency,
+                ]
+            } else {
+                Law::WAKE.required
+            };
+        }
+        if let (Self::TaskFile, Intent::TaskFile(file)) = (self, body) {
+            return if file.claim {
+                &[
                     WitnessKind::Workflow,
                     WitnessKind::Deferral,
                     WitnessKind::Task,
                     WitnessKind::Eligibility,
                     WitnessKind::Residency,
-                ],
-                (true, false) => &[
+                ]
+            } else {
+                &[
                     WitnessKind::Workflow,
                     WitnessKind::Deferral,
                     WitnessKind::Task,
-                ],
-                (false, true) => &[
-                    WitnessKind::Workflow,
-                    WitnessKind::Deferral,
-                    WitnessKind::Eligibility,
-                    WitnessKind::Residency,
-                ],
-                (false, false) => Law::WAKE.required,
+                ]
             };
         }
         if matches!(
@@ -626,10 +650,8 @@ impl CommandKind {
                 });
             }
         }
-        if let (Self::TaskWake, Intent::TaskWake(wake)) = (self, body)
-            && (wake.into.is_some() || wake.preparation.is_some())
-        {
-            let target = wake.task.born().ok();
+        if let (Self::TaskFile, Intent::TaskFile(file)) = (self, body) {
+            let target = file.task.born().ok();
             let target_is_witnessed = expected.iter().any(|witness| {
                 matches!(
                     (witness, target.as_ref()),
@@ -640,7 +662,7 @@ impl CommandKind {
                 return Err(LawError::SubjectMismatch {
                     command: self,
                     kind: WitnessKind::Task,
-                    target: wake.task.to_string(),
+                    target: file.task.to_string(),
                 });
             }
         }

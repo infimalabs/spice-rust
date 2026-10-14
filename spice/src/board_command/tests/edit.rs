@@ -749,7 +749,10 @@ fn a_correction_cannot_move_a_task_onto_a_hidden_route() {
     let filed = board(&bus, epoch, Actor::Operator);
     let before = at(&filed, &task).statement.clone();
 
-    for destination in [".oops", ".sandbox.secret"] {
+    for (destination, reason) in [
+        (".oops", "task::edit-project-refused"),
+        (".sandbox.secret", "task::project-system-reserved"),
+    ] {
         let outcome = correct(
             &bus,
             epoch,
@@ -762,8 +765,7 @@ fn a_correction_cannot_move_a_task_onto_a_hidden_route() {
         assert!(
             matches!(
                 outcome,
-                Outcome::Refusal(ref refusal)
-                    if refusal.reason() == "task::project-system-reserved"
+                Outcome::Refusal(ref refusal) if refusal.reason() == reason
             ),
             "{destination} was not refused by name: {outcome:?}"
         );

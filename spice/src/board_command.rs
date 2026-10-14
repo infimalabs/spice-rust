@@ -12,7 +12,7 @@ use wire::intent::{
     BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead, BoardTask, ClaimRenew,
     ClaimWin, CommandAnswer, DocApply, DocLedger, NextWorkCounts, NextWorkState, NextWorkTask,
     Positioned, ReviewFollowup, TASK_HISTORY_PAGE_LIMIT_MAX, TASK_HISTORY_QUERY_BYTES_MAX, TaskAdd,
-    TaskClose, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskHistoryCursor,
+    TaskClose, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskFile, TaskHistoryCursor,
     TaskHistoryPage, TaskNote, TaskOopsAdd, TaskRef, TaskReview, TaskWake, TasteProposalAdd,
     TextAnswer,
 };

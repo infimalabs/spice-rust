@@ -39,6 +39,7 @@ fn entries() -> Vec<board::Entry> {
                 acceptance: Vec::new(),
                 requirements: Default::default(),
                 project: "board.graph".to_owned(),
+                filing: wire::TaskFiling::Filed,
                 tags: Vec::new(),
                 dependencies: if index > 1 {
                     vec![wire::TaskStamp::for_micros(index - 1).expect("dependency")]

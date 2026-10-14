@@ -108,6 +108,7 @@ fn statement(name: &str) -> TaskHead {
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
         project: "board.kernel".to_owned(),
+        filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: format!("task:{born}").parse::<Origin>().expect("origin"),
@@ -204,6 +205,7 @@ fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journa
                 acceptance: statement.acceptance.clone(),
                 requirements: statement.requirements.clone(),
                 project: statement.project.clone(),
+                filing: statement.filing,
                 tags: statement.tags.clone(),
                 depends: statement.dependencies.clone(),
                 flow: workflow.flow.clone(),
@@ -238,7 +240,7 @@ fn statement_views_preserve_project_family_handle_and_dependency_heads() {
         dialect::PROJECT_MAX_DEPTH as u64,
     )
     .expect("fixture project policy");
-    assert!(projects.admit(".oops.workflow").is_ok());
+    assert!(projects.admit(".maxim_proposal.workflow").is_ok());
     assert!(
         projects
             .admit("agent.019fbbde510575a3a76a722afde1e407.task")
@@ -491,24 +493,11 @@ fn live_graphs_exclude_settled_history_but_name_direct_dependencies() {
 
 #[test]
 fn project_policy_admits_only_resolved_hidden_roots() {
-    let projects = board::ProjectPolicy::new(
-        [
-            "sandbox".to_owned(),
-            "oops".to_owned(),
-            "sandbox".to_owned(),
-        ],
-        2,
-        3,
-    )
-    .expect("hidden additions resolve");
-    assert_eq!(
-        projects.hidden_stems(),
-        ["oops", "maxim_proposal", "sandbox"]
-    );
+    let projects = board::ProjectPolicy::new(["sandbox".to_owned(), "sandbox".to_owned()], 2, 3)
+        .expect("hidden additions resolve");
+    assert_eq!(projects.hidden_stems(), ["maxim_proposal", "sandbox"]);
 
     for (project, stem) in [
-        (".oops", "oops"),
-        (".oops.correctness", "oops"),
         (".maxim_proposal", "maxim_proposal"),
         (".maxim_proposal.theme_2", "maxim_proposal"),
         (".sandbox.deep.audit_1", "sandbox"),
@@ -522,15 +511,6 @@ fn project_policy_admits_only_resolved_hidden_roots() {
         ));
     }
     for (route, expected) in [
-        (board::SystemTaskRoute::oops(None), ".oops"),
-        (
-            board::SystemTaskRoute::oops(Some(
-                &projects
-                    .admit_manual_creation("board.cli")
-                    .expect("recommended public project"),
-            )),
-            ".oops.board.cli",
-        ),
         (
             board::SystemTaskRoute::proposal(["theme_2".to_owned()]),
             ".maxim_proposal.theme_2",
@@ -551,7 +531,7 @@ fn project_policy_admits_only_resolved_hidden_roots() {
             expected,
         );
     }
-    for stem in ["oops", "maxim_proposal"] {
+    for stem in ["maxim_proposal"] {
         assert!(matches!(
             projects.admit_system_creation(&board::SystemTaskRoute::configured(
                 stem,
@@ -564,7 +544,13 @@ fn project_policy_admits_only_resolved_hidden_roots() {
         projects.admit(".unknown.work"),
         Err(board::ProjectError::UnknownHiddenStem(stem)) if stem == "unknown"
     ));
-    for malformed in [".", ".oops.", ".oops..work", ".oops.bad-stem", ".oops.Bad"] {
+    for malformed in [
+        ".",
+        ".sandbox.",
+        ".sandbox..work",
+        ".sandbox.bad-stem",
+        ".sandbox.Bad",
+    ] {
         assert!(matches!(
             projects.admit(malformed),
             Err(board::ProjectError::HiddenSpelling(_))
@@ -629,7 +615,13 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
         Entry::new(head, workflow("todo"), None, None, &projects).expect("fixture entry")
     };
     let public = admitted("BOARD-public", "board.visibility", false);
-    let hidden_oops = admitted("BOARD-oops", ".oops.correctness", true);
+    let hidden_oops = {
+        let mut head = statement("BOARD-oops");
+        head.project = "board.correctness".to_owned();
+        head.filing = wire::TaskFiling::Oops;
+        head.tags.push("priority:critical".to_owned());
+        Entry::new(head, workflow("todo"), None, None, &projects).expect("OOPS fixture entry")
+    };
     let hidden_maxim = admitted("BOARD-maxim", ".maxim_proposal.theme_2", true);
     let hidden_sandbox = admitted("BOARD-sandbox", ".sandbox.audit", true);
     let entries = vec![hidden_sandbox, hidden_oops, public, hidden_maxim];
@@ -658,16 +650,14 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
     let inventory = board::Inventory::new(&entries);
     assert_eq!(inventory.public().len(), 1);
     assert_eq!(inventory.public()[0].handle(), &public_handle);
+    assert_eq!(inventory.oops().len(), 1);
+    assert_eq!(inventory.oops()[0].handle(), entries[1].handle());
     assert_eq!(
         inventory
             .hidden()
             .map(|group| (group.stem().to_owned(), group.entries().len()))
             .collect::<Vec<_>>(),
-        vec![
-            ("maxim_proposal".to_owned(), 1),
-            ("oops".to_owned(), 1),
-            ("sandbox".to_owned(), 1),
-        ]
+        vec![("maxim_proposal".to_owned(), 1), ("sandbox".to_owned(), 1),]
     );
 }
 
@@ -876,18 +866,23 @@ fn trust_grant_transition_changes_every_allocator_admission_without_rewriting_th
 }
 
 #[test]
-fn policy_snapshot_retains_hidden_rows_as_explicit_evidence() {
+fn policy_snapshot_retains_oops_rows_as_explicit_evidence() {
     let projects = board::ProjectPolicy::new(Vec::new(), 2, 3).expect("fixture policy");
-    let mut hidden = statement("BOARD-hidden");
-    hidden.project = ".oops.correctness".to_owned();
-    let journal = journal_with_heads(hidden, workflow("todo"));
+    let mut oops = statement("BOARD-hidden");
+    oops.project = "board.correctness".to_owned();
+    oops.filing = wire::TaskFiling::Oops;
+    let journal = journal_with_heads(oops, workflow("todo"));
     let snapshot = snapshot_for(&journal, &projects, &stamp("BOARD-hidden"))
-        .expect("hidden evidence remains in the snapshot");
+        .expect("OOPS evidence remains in the snapshot");
 
     assert_eq!(snapshot.entries().len(), 1);
     let entry = &snapshot.entries()[0];
-    assert_eq!(entry.project().as_str(), ".oops.correctness");
-    assert_eq!(entry.project().visibility().hidden_stem(), Some("oops"));
+    assert_eq!(entry.project().as_str(), "board.correctness");
+    assert!(entry.statement().filing.is_oops());
+    assert_eq!(
+        entry.project().visibility(),
+        &wire::intent::ProjectVisibility::Public
+    );
 }
 
 #[test]

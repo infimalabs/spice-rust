@@ -2,7 +2,7 @@ use super::*;
 
 fn add_parked(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
     let born = stamp(name);
-    let task = TaskHandle::for_project(".oops", &born);
+    let task = TaskHandle::for_filing("board.test", &born, wire::TaskFiling::Oops);
     assert_committed(issue(
         bus,
         epoch,
@@ -12,8 +12,8 @@ fn add_parked(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
         &TaskOopsAdd {
             title: format!("Triage {name}"),
             description: format!("Evidence for {name}"),
-            origin: Some("fixture:oops-promotion".parse().expect("fixture origin")),
-            project: None,
+            origin: Some("fixture:oops-filing".parse().expect("fixture origin")),
+            project: Some("board.test".to_owned()),
         },
     ));
     task
@@ -103,8 +103,8 @@ fn assert_oops_refusal(outcome: Outcome<CommandAnswer>, offenders: &[(&TaskHandl
         assert!(detail.contains(claim), "refusal omitted {claim}: {detail}",);
     }
     assert!(
-        detail.contains("project=.oops"),
-        "refusal omitted authoritative parked state: {detail}",
+        detail.contains("filing=oops"),
+        "refusal omitted authoritative OOPS state: {detail}",
     );
     assert!(
         detail.contains("status=pending"),
@@ -291,7 +291,7 @@ fn task_add_oops_dependency_refuses(
                 description: None,
                 acceptance: Vec::new(),
                 requirements: wire::EnvironmentRequirements::default(),
-                origin: Some("fixture:oops-promotion".parse().expect("fixture origin")),
+                origin: Some("fixture:oops-filing".parse().expect("fixture origin")),
                 flow: Some("todo".to_owned()),
                 depends: vec![forged_oops],
                 claim: false,
@@ -341,7 +341,7 @@ fn public_dependency_commits(
     );
 }
 
-fn assert_unwitnessed_promotion_refuses(
+fn assert_unwitnessed_filing_refuses(
     bus: &Bus,
     epoch: CanonicalUuid,
     parked: &TaskHandle,
@@ -352,15 +352,15 @@ fn assert_unwitnessed_promotion_refuses(
         v: wire::WireVersion::CURRENT,
         id: uuid(9_001),
         epoch,
-        kind: CommandKind::TaskWake,
+        kind: CommandKind::TaskFile,
         expected: vec![workflow_witness(heads), deferral_witness(heads)],
-        body: serde_json::to_value(TaskWake {
+        body: serde_json::to_value(TaskFile {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
             preparation: None,
             claim: false,
         })
-        .expect("promotion body encodes"),
+        .expect("filing body encodes"),
     }
     .admit(&wire::Accepted {
         wire: wire::WireVersion::CURRENT,
@@ -376,11 +376,11 @@ fn assert_unwitnessed_promotion_refuses(
     assert_eq!(
         fact_count(bus),
         facts,
-        "unwitnessed promotion reached a fact write",
+        "unwitnessed filing reached a fact write",
     );
 }
 
-fn assert_unrelated_promotion_witness_refuses(
+fn assert_unrelated_filing_witness_refuses(
     bus: &Bus,
     epoch: CanonicalUuid,
     parked: &TaskHandle,
@@ -393,20 +393,20 @@ fn assert_unrelated_promotion_witness_refuses(
         v: wire::WireVersion::CURRENT,
         id: uuid(9_002),
         epoch,
-        kind: CommandKind::TaskWake,
+        kind: CommandKind::TaskFile,
         expected: vec![
             workflow_witness(heads),
             deferral_witness(heads),
             unrelated_statement.clone(),
             unrelated_statement,
         ],
-        body: serde_json::to_value(TaskWake {
+        body: serde_json::to_value(TaskFile {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
             preparation: None,
             claim: false,
         })
-        .expect("promotion body encodes"),
+        .expect("filing body encodes"),
     }
     .admit(&wire::Accepted {
         wire: wire::WireVersion::CURRENT,
@@ -415,7 +415,7 @@ fn assert_unrelated_promotion_witness_refuses(
         release: "1.2.3".parse().expect("fixture release"),
     });
     let Err(wire::CommandRejection::Refusal(refusal)) = rejected else {
-        panic!("promotion carrying only unrelated statement authority must refuse");
+        panic!("filing carrying only unrelated statement authority must refuse");
     };
     assert_eq!(refusal.reason(), "command::witness-law");
     assert!(
@@ -431,7 +431,7 @@ fn assert_unrelated_promotion_witness_refuses(
     );
 }
 
-fn stale_promotion_after_edit(
+fn stale_filing_after_edit(
     bus: &Bus,
     epoch: CanonicalUuid,
     lane: &Actor,
@@ -450,7 +450,7 @@ fn stale_promotion_after_edit(
             evidence: None,
             task: parked.clone(),
             title: None,
-            description: Some("Edited during promotion capture".to_owned()),
+            description: Some("Edited during filing capture".to_owned()),
             acceptance: Vec::new(),
             requirements: None,
             priority: None,
@@ -464,13 +464,13 @@ fn stale_promotion_after_edit(
         bus,
         epoch,
         lane.clone(),
-        CommandKind::TaskWake,
+        CommandKind::TaskFile,
         vec![
             workflow_witness(edited_heads),
             deferral_witness(edited_heads),
             stale_statement,
         ],
-        &TaskWake {
+        &TaskFile {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
             preparation: None,
@@ -480,9 +480,9 @@ fn stale_promotion_after_edit(
     assert!(matches!(
         stale,
         Outcome::Refusal(ref refusal)
-            if refusal.reason() == "task::promotion-statement-witness-moved"
+            if refusal.reason() == "task::filing-statement-witness-moved"
     ));
-    assert_eq!(fact_count(bus), facts, "stale promotion overwrote an edit");
+    assert_eq!(fact_count(bus), facts, "stale filing overwrote an edit");
     edited
 }
 
@@ -510,7 +510,7 @@ fn assert_claimed_oops_cannot_finish(
     );
     assert!(matches!(
         refused,
-        Outcome::Refusal(ref refusal) if refusal.reason() == "task::promotion-required"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "task::filing-required"
     ));
     assert_eq!(
         fact_count(bus),
@@ -520,9 +520,9 @@ fn assert_claimed_oops_cannot_finish(
 }
 
 #[test]
-fn wake_is_the_only_unclaimed_oops_project_exit() {
-    let (root, bus, epoch, _seats) = fixture("oops-unclaimed-promotion", 1);
-    let parked = add_parked(&bus, epoch, "OOPS-promote01");
+fn task_file_is_the_only_unclaimed_oops_filing_exit() {
+    let (root, bus, epoch, _seats) = fixture("oops-unclaimed-filing", 1);
+    let parked = add_parked(&bus, epoch, "OOPS-file0001");
     let unrelated = add(
         &bus,
         epoch,
@@ -535,8 +535,8 @@ fn wake_is_the_only_unclaimed_oops_project_exit() {
     let heads = at(&visible, &parked);
     let unrelated_heads = at(&visible, &unrelated);
     let facts = fact_count(&bus);
-    assert_unwitnessed_promotion_refuses(&bus, epoch, &parked, heads, facts);
-    assert_unrelated_promotion_witness_refuses(&bus, epoch, &parked, heads, unrelated_heads, facts);
+    assert_unwitnessed_filing_refuses(&bus, epoch, &parked, heads, facts);
+    assert_unrelated_filing_witness_refuses(&bus, epoch, &parked, heads, unrelated_heads, facts);
     let bypass = issue(
         &bus,
         epoch,
@@ -557,7 +557,7 @@ fn wake_is_the_only_unclaimed_oops_project_exit() {
     );
     assert!(matches!(
         bypass,
-        Outcome::Refusal(ref refusal) if refusal.reason() == "task::promotion-required"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "task::filing-required"
     ));
     assert_eq!(fact_count(&bus), facts, "project edit bypass wrote facts");
 
@@ -565,7 +565,7 @@ fn wake_is_the_only_unclaimed_oops_project_exit() {
         &bus,
         epoch,
         Actor::Operator,
-        CommandKind::TaskWake,
+        CommandKind::TaskFile,
         vec![
             workflow_witness(heads),
             deferral_witness(heads),
@@ -573,24 +573,24 @@ fn wake_is_the_only_unclaimed_oops_project_exit() {
             statement_witness(heads),
             statement_witness(unrelated_heads),
         ],
-        &TaskWake {
+        &TaskFile {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
             preparation: None,
             claim: false,
         },
     )) else {
-        panic!("promotion returned another answer shape");
+        panic!("filing returned another answer shape");
     };
-    let promoted = TaskHandle::for_project(
+    let filed = TaskHandle::for_project(
         "board.test",
         &parked.born().expect("fixture handle carries a birth stamp"),
     );
-    assert_eq!(answer.task, promoted);
-    assert_eq!(answer.status, "promoted");
-    assert_eq!(fact_count(&bus), facts + 2, "promotion fact set drifted");
+    assert_eq!(answer.task, filed);
+    assert_eq!(answer.status, "filed");
+    assert_eq!(fact_count(&bus), facts + 1, "filing fact set drifted");
     let after = board(&bus, epoch, Actor::Operator);
-    let heads = at(&after, &promoted);
+    let heads = at(&after, &filed);
     assert_eq!(heads.statement.body.project, "board.test");
     assert!(!heads.visibility.is_hidden());
     assert!(heads.claim.is_none());
@@ -607,14 +607,14 @@ fn wake_is_the_only_unclaimed_oops_project_exit() {
         &bus,
         epoch,
         Actor::Operator,
-        CommandKind::TaskWake,
+        CommandKind::TaskFile,
         vec![
             workflow_witness(heads),
             deferral_witness(heads),
             statement_witness(heads),
         ],
-        &TaskWake {
-            task: promoted,
+        &TaskFile {
+            task: filed,
             into: Some("board.identity".to_owned()),
             preparation: None,
             claim: false,
@@ -622,15 +622,15 @@ fn wake_is_the_only_unclaimed_oops_project_exit() {
     );
     assert!(matches!(
         public_into,
-        Outcome::Refusal(ref refusal) if refusal.reason() == "task::promotion-refused"
+        Outcome::Refusal(ref refusal) if refusal.reason() == "task::filing-refused"
     ));
     assert_eq!(fact_count(&bus), facts, "public --into refusal wrote facts");
     clean(&root, bus);
 }
 
 #[test]
-fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
-    let (root, bus, epoch, seats) = fixture("oops-claimed-promotion", 1);
+fn claimed_oops_must_be_filed_before_done_and_keeps_its_exact_claim_and_lease() {
+    let (root, bus, epoch, seats) = fixture("oops-claimed-filing", 1);
     let parked = add_parked(&bus, epoch, "OOPS-held0001");
     let child = add_project_with_acceptance(
         &bus,
@@ -649,7 +649,7 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
     let lease = held_heads.lease.clone().expect("triage capture lease");
     assert_claimed_oops_cannot_finish(&bus, epoch, &lane, &parked, &held, &seats[0]);
 
-    let edited = stale_promotion_after_edit(&bus, epoch, &lane, &parked, held_heads);
+    let edited = stale_filing_after_edit(&bus, epoch, &lane, &parked, held_heads);
     let edited_heads = at(&edited, &parked);
     let child_heads = at(&edited, &child);
     let facts = fact_count(&bus);
@@ -658,7 +658,7 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
         &bus,
         epoch,
         lane.clone(),
-        CommandKind::TaskWake,
+        CommandKind::TaskFile,
         vec![
             workflow_witness(edited_heads),
             deferral_witness(edited_heads),
@@ -666,32 +666,32 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
             statement_witness(edited_heads),
             statement_witness(child_heads),
         ],
-        &TaskWake {
+        &TaskFile {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
             preparation: None,
             claim: false,
         },
     )) else {
-        panic!("promotion returned another answer shape");
+        panic!("filing returned another answer shape");
     };
-    let promoted = answer.task;
+    let filed = answer.task;
     assert_eq!(
         fact_count(&bus),
-        facts + 2,
-        "claimed promotion fact set drifted"
+        facts + 1,
+        "claimed filing fact set drifted"
     );
     let public = board(&bus, epoch, lane.clone());
-    let promoted_heads = at(&public, &promoted);
-    assert_holder_kept(promoted_heads, &claim.body);
-    assert_eq!(promoted_heads.lease.as_ref(), Some(&lease));
+    let filed_heads = at(&public, &filed);
+    assert_holder_kept(filed_heads, &claim.body);
+    assert_eq!(filed_heads.lease.as_ref(), Some(&lease));
     assert_eq!(
-        promoted_heads.statement.body.born,
+        filed_heads.statement.body.born,
         edited_heads.statement.body.born
     );
     assert_eq!(
-        promoted_heads.statement.body.description.as_deref(),
-        Some("Edited during promotion capture"),
+        filed_heads.statement.body.description.as_deref(),
+        Some("Edited during filing capture"),
     );
 
     assert_committed(issue(
@@ -699,15 +699,15 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
         epoch,
         lane.clone(),
         CommandKind::TaskDepends,
-        dependency_witnesses(&public, &promoted, std::slice::from_ref(&child)),
+        dependency_witnesses(&public, &filed, std::slice::from_ref(&child)),
         &TaskDepends {
-            task: promoted.clone(),
+            task: filed.clone(),
             after: vec![child],
             remove: false,
         },
     ));
     let connected = board(&bus, epoch, lane.clone());
-    let connected_heads = at(&connected, &promoted);
+    let connected_heads = at(&connected, &filed);
     assert_committed(issue(
         &bus,
         epoch,
@@ -722,13 +722,13 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
         )
         .expect("promoted plan has guarded progress witnesses"),
         &TaskDone {
-            task: promoted.clone(),
+            task: filed.clone(),
             validation: "public dependency captures the implementation contract".to_owned(),
             operation: Some(completion_operation()),
         },
     ));
     assert_eq!(
-        at(&board(&bus, epoch, Actor::Operator), &promoted)
+        at(&board(&bus, epoch, Actor::Operator), &filed)
             .workflow
             .body
             .phase
@@ -739,8 +739,8 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
 }
 
 #[test]
-fn parked_report_promotion_atomically_becomes_controlled_and_unauthorized() {
-    let (root, bus, epoch, _seats) = fixture("oops-controlled-promotion", 0);
+fn filing_oops_report_atomically_becomes_controlled_and_unauthorized() {
+    let (root, bus, epoch, _seats) = fixture("oops-controlled-filing", 0);
     let controller = add_design(&bus, epoch, "OOPS-batch001");
     let parked = add_parked(&bus, epoch, "OOPS-report01");
     let current = board(&bus, epoch, Actor::Operator);
@@ -750,7 +750,7 @@ fn parked_report_promotion_atomically_becomes_controlled_and_unauthorized() {
         &bus,
         epoch,
         Actor::Operator,
-        CommandKind::TaskWake,
+        CommandKind::TaskFile,
         vec![
             statement_witness(report),
             workflow_witness(report),
@@ -759,7 +759,7 @@ fn parked_report_promotion_atomically_becomes_controlled_and_unauthorized() {
             workflow_witness(design),
             claim_witness(design),
         ],
-        &TaskWake {
+        &TaskFile {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
             preparation: Some(controller.clone()),
@@ -767,18 +767,18 @@ fn parked_report_promotion_atomically_becomes_controlled_and_unauthorized() {
         },
     ));
 
-    let promoted = TaskHandle::for_project(
+    let filed = TaskHandle::for_project(
         "board.test",
         &parked.born().expect("fixture report has a birth stamp"),
     );
     let visible = board(&bus, epoch, Actor::Operator);
-    let output = at(&visible, &promoted);
+    let output = at(&visible, &filed);
     let preparation = output
         .statement
         .body
         .preparation
         .as_ref()
-        .expect("promotion records controlling preparation");
+        .expect("filing records controlling preparation");
     assert_eq!(
         preparation.parent,
         controller
@@ -805,14 +805,14 @@ fn parked_report_promotion_atomically_becomes_controlled_and_unauthorized() {
                 .filter(|body| body.output == output.statement.body.born)
                 .map(|body| (envelope.seq, body))
         })
-        .expect("promotion writes its control fact");
+        .expect("filing writes its control fact");
     assert_eq!(control.0, output.statement.position);
     assert_eq!(control.1.preparation, *preparation);
     clean(&root, bus);
 }
 
 #[test]
-fn grooming_and_controlled_wake_preflight_reads_every_named_parked_report() {
+fn grooming_and_controlled_filing_preflight_reads_every_named_oops_report() {
     let (root, bus, epoch, _seats) = fixture("oops-named-preflight", 0);
     let batch = add_design(&bus, epoch, "OOPS-batch002");
     let first = add_parked(&bus, epoch, "OOPS-report02");
@@ -837,7 +837,7 @@ fn grooming_and_controlled_wake_preflight_reads_every_named_parked_report() {
     let wake = [
         "spice",
         "task",
-        "wake",
+        "file",
         &first_name,
         "--preparation",
         &batch_name,

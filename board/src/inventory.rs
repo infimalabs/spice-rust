@@ -23,10 +23,11 @@ impl<'a> HiddenInventory<'a> {
     }
 }
 
-/// Active public routes and hidden evidence projected without reparsing project text.
+/// Active filed public routes, parked OOPS evidence, and hidden system rows.
 #[derive(Clone, Debug)]
 pub struct Inventory<'a> {
     public: Vec<&'a Entry>,
+    oops: Vec<&'a Entry>,
     hidden: BTreeMap<&'a str, Vec<&'a Entry>>,
 }
 
@@ -35,24 +36,37 @@ impl<'a> Inventory<'a> {
     #[must_use]
     pub fn new(entries: &'a [Entry]) -> Self {
         let mut public = Vec::new();
+        let mut oops = Vec::new();
         let mut hidden = BTreeMap::<&str, Vec<&Entry>>::new();
         for entry in entries {
             if entry.workflow().status != "pending" || entry.workflow().completion.is_some() {
                 continue;
             }
-            if let Some(stem) = entry.project().visibility().hidden_stem() {
+            if entry.is_oops() {
+                oops.push(entry);
+            } else if let Some(stem) = entry.project().visibility().hidden_stem() {
                 hidden.entry(stem).or_default().push(entry);
             } else {
                 public.push(entry);
             }
         }
-        Self { public, hidden }
+        Self {
+            public,
+            oops,
+            hidden,
+        }
     }
 
     /// Every ordinary route, excluding all hidden roots and descendants.
     #[must_use]
     pub fn public(&self) -> &[&'a Entry] {
         &self.public
+    }
+
+    /// Every parked OOPS row, independent of its public owner project.
+    #[must_use]
+    pub fn oops(&self) -> &[&'a Entry] {
+        &self.oops
     }
 
     /// Hidden rows grouped beneath their first segment, never a public route.

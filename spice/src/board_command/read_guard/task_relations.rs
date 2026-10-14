@@ -530,6 +530,10 @@ fn lifecycle_event(
             envelope.fact.read::<body::TaskWoken>()?.task,
             TaskLifecycleKind::Woken,
         ),
+        wire::FactKind::TaskFiled => (
+            envelope.fact.read::<body::TaskFiled>()?.task,
+            TaskLifecycleKind::Filed,
+        ),
         wire::FactKind::TaskDeleted => (
             envelope.fact.read::<body::TaskDeleted>()?.task,
             TaskLifecycleKind::Deleted,

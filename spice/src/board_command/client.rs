@@ -72,6 +72,7 @@ fn dispatch_client(
         ["task", "note"] => client_note(repository, contract, matches),
         ["task", "defer"] => client_defer(repository, contract, matches),
         ["task", "wake"] => client_wake(repository, contract, matches),
+        ["task", "file"] => client_file(repository, contract, matches),
         ["task", "free"] => client_free(repository, contract, matches),
         ["task", "depends"] => client_depends(repository, contract, matches),
         ["task", "modify"] => client_modify(repository, contract, matches),
@@ -654,6 +655,33 @@ fn client_wake(
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
     mutate_task_from_board(repository, contract, matches, |board, task, heads| {
+        let claim = matches.get_flag("claim");
+        let mut expected = vec![workflow_witness(heads), deferral_witness(heads)];
+        if claim {
+            let (lane, occupant) = actor_seat(board)?;
+            expected.push(Witness::Eligibility {
+                rule: "capture".parse().expect("capture is a wire name"),
+            });
+            expected.push(residency_witness(board, lane, occupant));
+        }
+        let body = TaskWake {
+            task: task.clone(),
+            claim,
+        };
+        Ok((
+            CommandKind::TaskWake,
+            expected,
+            serde_json::to_value(body).expect("typed intent encodes"),
+        ))
+    })
+}
+
+fn client_file(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    mutate_task_from_board(repository, contract, matches, |board, task, heads| {
         let into = matches.get_one::<String>("into").cloned();
         let claim = matches.get_flag("claim");
         let preparation = matches
@@ -675,18 +703,16 @@ fn client_wake(
             .transpose()?;
         if claim && preparation.is_some() {
             return Err(refusal(
-                "task::promotion-claim-controlled",
+                "task::filing-claim-controlled",
                 Some(task.to_string()),
-                "promote controlled OOPS work without --claim; selected authorization must precede native capture",
+                "file controlled OOPS work without --claim; selected authorization must precede native capture",
             ));
         }
-        let mut expected = vec![workflow_witness(heads), deferral_witness(heads)];
-        if into.is_some()
-            || preparation.is_some()
-            || wire::is_oops_project(&heads.statement.body.project)
-        {
-            expected.push(statement_witness(heads));
-        }
+        let mut expected = vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            deferral_witness(heads),
+        ];
         if let Some((_, controller)) = &preparation {
             expected.extend([
                 statement_witness(controller),
@@ -701,14 +727,14 @@ fn client_wake(
             });
             expected.push(residency_witness(board, lane, occupant));
         }
-        let body = TaskWake {
+        let body = wire::intent::TaskFile {
             task: task.clone(),
             into,
             preparation: preparation.map(|(handle, _)| handle),
             claim,
         };
         Ok((
-            CommandKind::TaskWake,
+            CommandKind::TaskFile,
             expected,
             serde_json::to_value(body).expect("typed intent encodes"),
         ))
@@ -1381,6 +1407,9 @@ pub(crate) fn dispatch_with_repository(
         }
         wire::intent::Intent::TaskWake(wake) => {
             task_wake(bus, command, wake, repository, projects, allocation)
+        }
+        wire::intent::Intent::TaskFile(file) => {
+            task_file(bus, command, file, repository, projects, allocation)
         }
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimFree => {
             claim_free(bus, command, task, repository, projects, allocation)

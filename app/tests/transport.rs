@@ -45,7 +45,7 @@ fn next_session() -> Session {
 /// The principal receipt that scopes browser state and every admitted frame.
 fn accepted(session: &Session, epoch: &str) -> Admitted<Accepted> {
     let bytes = format!(
-        r#"{{ "wire": 1, "actor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2", "epoch": "{epoch}" }}"#
+        r#"{{ "wire": 1, "actor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2", "epoch": "{epoch}", "release": "1.2.3" }}"#
     );
     session
         .admit_accepted(bytes.as_bytes())
@@ -57,7 +57,7 @@ fn an_accepted_frame_cannot_echo_the_session_capability() {
     let bytes = format!(
         concat!(
             r#"{{ "wire": 1, "actor": "lane:018f82d4-6f59-7d06-92e3-bce9131163c2", "#,
-            r#""epoch": "{EPOCH}", "capability": "{CAPABILITY}" }}"#,
+            r#""epoch": "{EPOCH}", "release": "1.2.3", "capability": "{CAPABILITY}" }}"#,
         ),
         EPOCH = EPOCH,
         CAPABILITY = CAPABILITY,

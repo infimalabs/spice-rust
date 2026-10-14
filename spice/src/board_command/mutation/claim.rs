@@ -177,7 +177,7 @@ pub(super) fn prepare_capture_claim(
         ));
     };
     let captures_work = claim_rule == CAPTURE_WORK_RULE;
-    // Every caller (add, wake, promotion) shares this door, so adopting loose
+    // Every caller (add, wake, filing) shares this door, so adopting loose
     // commits or retained recovery into a planning deliverable refuses here
     // before any claim, binding, or fact.
     if captures_work || claim_rule == "recover" {

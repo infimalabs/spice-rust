@@ -872,6 +872,7 @@ fn task_head() -> TaskHead {
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
         project: "journal".to_owned(),
+        filing: wire::TaskFiling::Filed,
         tags: vec!["journal".to_owned()],
         dependencies: Vec::new(),
         provenance: "task:1kKRRsDP".parse().expect("provenance"),

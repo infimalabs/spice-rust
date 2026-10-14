@@ -157,8 +157,6 @@ fn claimed_wake_cannot_adopt_implementation_into_a_planning_deliverable() {
             ],
             &TaskWake {
                 task: task.clone(),
-                into: None,
-                preparation: None,
                 claim: true,
             },
         )

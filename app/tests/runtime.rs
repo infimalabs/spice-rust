@@ -228,6 +228,7 @@ fn board_task(
     _id: &str,
     title: &str,
     project: &str,
+    filing: wire::TaskFiling,
     provenance: Option<&str>,
     requirements: wire::EnvironmentRequirements,
 ) -> wire::intent::BoardTask {
@@ -252,13 +253,14 @@ fn board_task(
                 authorization: None,
                 engagement: None,
                 evidence: Vec::new(),
-                handle: wire::TaskHandle::for_project(project, &born),
+                handle: wire::TaskHandle::for_filing(project, &born, filing),
                 born: born.clone(),
                 queue_origin: seq(1),
                 description: None,
                 acceptance: Vec::new(),
                 requirements,
                 project: project.to_owned(),
+                filing,
                 tags: Vec::new(),
                 dependencies: Vec::new(),
                 provenance: provenance
@@ -339,10 +341,11 @@ fn board_response_with_requirements(
         },
         tasks: vec![
             board_task(
-                "HIDDEN-oops1",
+                "OOPS-oops1",
                 REQUEST,
                 hidden_title,
-                ".oops.correctness",
+                "app.correctness",
+                wire::TaskFiling::Oops,
                 None,
                 wire::EnvironmentRequirements::default(),
             ),
@@ -351,6 +354,7 @@ fn board_response_with_requirements(
                 NEXT_CAPABILITY,
                 "Visible allocator work",
                 "board.visibility",
+                wire::TaskFiling::Filed,
                 Some("ack:1kQwPZtK"),
                 requirements,
             ),
@@ -1177,7 +1181,7 @@ fn team_ticker_prose_leads_with_the_first_authored_line_after_borrowed_quotes() 
 }
 
 #[test]
-fn browser_state_retains_hidden_rows_with_their_authored_prose() {
+fn browser_state_retains_oops_rows_with_their_authored_prose_and_public_project() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = AppRuntime::new(&accepted);
@@ -1192,17 +1196,22 @@ fn browser_state_retains_hidden_rows_with_their_authored_prose() {
 
     let board = runtime.board().expect("board response is retained");
     assert_eq!(board.schema, 1);
-    let hidden = &board.tasks[0];
-    assert_eq!(hidden.presentation_title(), title);
+    let oops = &board.tasks[0];
+    assert_eq!(oops.presentation_title(), title);
     assert_eq!(
-        hidden.statement.body.handle,
-        wire::TaskHandle::for_project(".oops.correctness", &fixture_stamp("HIDDEN-oops1"))
+        oops.statement.body.handle,
+        wire::TaskHandle::for_filing(
+            "app.correctness",
+            &fixture_stamp("OOPS-oops1"),
+            wire::TaskFiling::Oops,
+        )
     );
-    assert_eq!(hidden.statement.body.project, ".oops.correctness");
-    assert_eq!(hidden.visibility.hidden_stem(), Some("oops"));
-    assert_eq!(hidden.workflow.body.status, "pending");
-    let hidden_json = serde_json::to_value(hidden).expect("browser row serializes");
-    assert_eq!(hidden_json["presentation_title"], title);
+    assert_eq!(oops.statement.body.project, "app.correctness");
+    assert_eq!(oops.statement.body.filing, wire::TaskFiling::Oops);
+    assert!(!oops.visibility.is_hidden());
+    assert_eq!(oops.workflow.body.status, "pending");
+    let oops_json = serde_json::to_value(oops).expect("browser row serializes");
+    assert_eq!(oops_json["presentation_title"], title);
     assert_eq!(
         board.tasks[1].presentation_title(),
         "Visible allocator work"

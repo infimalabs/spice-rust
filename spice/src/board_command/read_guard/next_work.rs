@@ -256,7 +256,7 @@ fn dry_counts(
         oops: entries
             .iter()
             .filter(|entry| {
-                entry.project().visibility().hidden_stem() == Some("oops")
+                entry.is_oops()
                     && entry.workflow().status == "pending"
                     && entry.workflow().completion.is_none()
                     && !satisfied.speculative_design_work(entry.statement())
@@ -264,7 +264,8 @@ fn dry_counts(
             .count(),
     };
     for entry in visible.filter(|entry| {
-        entry.workflow().status == "pending"
+        !entry.is_oops()
+            && entry.workflow().status == "pending"
             && entry.workflow().completion.is_none()
             && !satisfied.speculative_design_work(entry.statement())
     }) {
@@ -283,14 +284,15 @@ fn dry_counts(
     counts
 }
 
-/// The default read route: every public row, plus rows created on the
+/// The default read route: every filed public row, plus rows created on the
 /// principal's own origin thread.
 fn actor_route_matches_entry(
     entry: &Entry,
     origin_thread: &str,
     route: &wire::intent::BoardActorRoute,
 ) -> bool {
-    !entry.project().visibility().is_hidden() || origin_thread == route.origin_thread
+    (!entry.project().visibility().is_hidden() && !entry.is_oops())
+        || origin_thread == route.origin_thread
 }
 
 fn task_origin_thread(

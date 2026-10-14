@@ -400,7 +400,7 @@ fn startup_surface_captures_configured_hidden_project_policy_once() {
     let startup = load_startup_surface(&repository).expect("startup policy resolves");
     assert_eq!(
         startup.config.projects.hidden_stems(),
-        ["oops", "maxim_proposal", "sandbox"]
+        ["maxim_proposal", "sandbox"]
     );
     assert_eq!(
         startup

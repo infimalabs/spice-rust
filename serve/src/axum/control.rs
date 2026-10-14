@@ -62,6 +62,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::TaskNote
         | CommandKind::TaskDefer
         | CommandKind::TaskWake
+        | CommandKind::TaskFile
         | CommandKind::TaskDepends
         | CommandKind::TaskPhase
         | CommandKind::TaskDone

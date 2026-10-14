@@ -255,10 +255,10 @@ fn corrected_project(
 ) -> Result<String, Outcome<CommandAnswer>> {
     if is_oops(entry) {
         return Err(refusal(
-            "task::promotion-required",
+            "task::filing-required",
             Some(oops_state(entry)),
             &format!(
-                "promote the parked row with spice task wake {} --into {requested}",
+                "file the OOPS row with spice task file {} --into {requested}",
                 entry.handle(),
             ),
         ));

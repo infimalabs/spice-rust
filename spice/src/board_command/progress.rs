@@ -105,10 +105,10 @@ pub(super) fn task_done(
     }
     if is_oops(entry) {
         return refusal(
-            "task::promotion-required",
+            "task::filing-required",
             Some(oops_state(entry)),
             &format!(
-                "promote with spice task wake {} [--into PUBLIC_PROJECT], add required public dependencies, then complete it",
+                "file with spice task file {} [--into PUBLIC_PROJECT], add required public dependencies, then complete it",
                 entry.handle(),
             ),
         );
@@ -1390,6 +1390,7 @@ fn add_doc_task(
                 acceptance: spec.acceptance.clone(),
                 requirements: wire::EnvironmentRequirements::default(),
                 project: spec.project.clone(),
+                filing: wire::TaskFiling::Filed,
                 tags: spec.tags.clone(),
                 depends: spec.dependencies.clone(),
                 flow: spec.flow.clone(),
@@ -1416,6 +1417,7 @@ fn add_doc_task(
         acceptance: spec.acceptance,
         requirements: wire::EnvironmentRequirements::default(),
         project: spec.project,
+        filing: wire::TaskFiling::Filed,
         tags: spec.tags,
         dependencies: spec.dependencies,
         provenance: statement_origin,

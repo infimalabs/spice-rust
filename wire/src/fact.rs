@@ -264,6 +264,8 @@ vocabulary! {
     TaskDeferred = "task::deferred" by CommandDoor;
     /// A task's deferral cleared.
     TaskWoken = "task::woken" by CommandDoor;
+    /// A parked OOPS row entered ordinary filed work.
+    TaskFiled = "task::filed" by CommandDoor;
     /// An unsettled task statement changed.
     TaskEdited = "task::edited" by CommandDoor;
     /// A task was withdrawn from the board with a recorded reason.
@@ -557,6 +559,7 @@ impl FactKind {
             | Self::TaskAssigned
             | Self::TaskDeferred
             | Self::TaskWoken
+            | Self::TaskFiled
             | Self::TaskEdited
             | Self::TaskDeleted
             | Self::TaskClosed
@@ -770,6 +773,7 @@ impl AnyFact {
             Decoded::TaskNoted(body) => (Some(&body.task), &[]),
             Decoded::TaskDeferred(body) => (Some(&body.task), &[]),
             Decoded::TaskWoken(body) => (Some(&body.task), &[]),
+            Decoded::TaskFiled(body) => (Some(&body.task), &[]),
             Decoded::TaskEdited(body) => (Some(&body.task), &[]),
             Decoded::TaskDeleted(body) => (Some(&body.task), &[]),
             Decoded::TaskClosed(body) => (Some(&body.task), &[]),

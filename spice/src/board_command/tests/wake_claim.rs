@@ -2,7 +2,7 @@ use super::*;
 
 fn add_parked(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
     let born = stamp(name);
-    let task = TaskHandle::for_project(".oops", &born);
+    let task = TaskHandle::for_filing("board.test", &born, wire::TaskFiling::Oops);
     assert_committed(issue(
         bus,
         epoch,
@@ -13,21 +13,21 @@ fn add_parked(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
             title: format!("Triage {name}"),
             description: format!("Evidence for {name}"),
             origin: Some("fixture:wake-claim".parse().expect("fixture origin")),
-            project: None,
+            project: Some("board.test".to_owned()),
         },
     ));
     task
 }
 
-fn claim_wake_expected(
+fn claim_transition_expected(
     answer: &BoardAnswer,
     task: &TaskHandle,
     seat: &Seat,
-    promotion: bool,
+    filing: bool,
 ) -> Vec<Witness> {
     let heads = at(answer, task);
     let mut expected = vec![workflow_witness(heads), deferral_witness(heads)];
-    if promotion {
+    if filing {
         expected.push(statement_witness(heads));
     }
     expected.push(Witness::Eligibility {
@@ -72,8 +72,6 @@ fn fact_count(bus: &Bus) -> usize {
 fn wake(task: &TaskHandle, claim: bool) -> TaskWake {
     TaskWake {
         task: task.clone(),
-        into: None,
-        preparation: None,
         claim,
     }
 }
@@ -116,7 +114,7 @@ fn deferred_wake_claims_in_one_transaction_and_an_existing_claim_refuses_without
         epoch,
         actor.clone(),
         CommandKind::TaskWake,
-        claim_wake_expected(&deferred, &task, seat, false),
+        claim_transition_expected(&deferred, &task, seat, false),
         &wake(&task, true),
     )
     else {
@@ -170,7 +168,7 @@ fn deferred_wake_claims_in_one_transaction_and_an_existing_claim_refuses_without
         epoch,
         actor.clone(),
         CommandKind::TaskWake,
-        claim_wake_expected(&deferred, &second, seat, false),
+        claim_transition_expected(&deferred, &second, seat, false),
         &wake(&second, true),
     );
     assert!(
@@ -262,8 +260,6 @@ fn self_defer_releases_the_claim_but_peer_defer_leaves_it_held() {
         vec![workflow_witness(heads), deferral_witness(heads)],
         &TaskWake {
             task: task.clone(),
-            into: None,
-            preparation: None,
             claim: false,
         },
     ));
@@ -296,33 +292,13 @@ fn self_defer_releases_the_claim_but_peer_defer_leaves_it_held() {
 }
 
 #[test]
-fn parked_oops_wake_promotes_and_claims_in_one_transaction() {
-    let (root, bus, epoch, seats) = fixture("wake-promote-claim", 1);
+fn parked_oops_files_and_claims_in_one_transaction() {
+    let (root, bus, epoch, seats) = fixture("oops-file-claim", 1);
     let seat = &seats[0];
     let actor = Actor::Lane(seat.lane);
     authorize_lane_creation(&bus, epoch, seat);
     let parked = add_parked(&bus, epoch, "WAKE-oops0001");
     let visible = board(&bus, epoch, actor.clone());
-    let facts = fact_count(&bus);
-    let unwitnessed = issue(
-        &bus,
-        epoch,
-        actor.clone(),
-        CommandKind::TaskWake,
-        claim_wake_expected(&visible, &parked, seat, false),
-        &TaskWake {
-            task: parked.clone(),
-            into: None,
-            preparation: None,
-            claim: true,
-        },
-    );
-    assert!(
-        matches!(&unwitnessed, Outcome::Refusal(refusal)
-            if refusal.reason() == "task::promotion-statement-witness-moved"),
-        "parked claim wake must witness the statement it promotes: {unwitnessed:?}",
-    );
-    assert_eq!(fact_count(&bus), facts, "unwitnessed promotion wrote facts");
 
     let Outcome::Reply(Reply {
         position: ReplyPosition::Committed(range),
@@ -331,9 +307,9 @@ fn parked_oops_wake_promotes_and_claims_in_one_transaction() {
         &bus,
         epoch,
         actor.clone(),
-        CommandKind::TaskWake,
-        claim_wake_expected(&visible, &parked, seat, true),
-        &TaskWake {
+        CommandKind::TaskFile,
+        claim_transition_expected(&visible, &parked, seat, true),
+        &TaskFile {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
             preparation: None,
@@ -341,17 +317,17 @@ fn parked_oops_wake_promotes_and_claims_in_one_transaction() {
         },
     )
     else {
-        panic!("promote-and-claim did not commit")
+        panic!("file-and-claim did not commit")
     };
-    let promoted = TaskHandle::for_project(
+    let filed = TaskHandle::for_project(
         "board.test",
         &parked.born().expect("fixture handle carries a birth stamp"),
     );
-    assert_eq!(answer.task, promoted);
+    assert_eq!(answer.task, filed);
     let held = answer
         .claim
-        .expect("wake --into --claim returns its held claim");
-    assert_eq!(held.task, promoted);
+        .expect("task file --claim returns its held claim");
+    assert_eq!(held.task, filed);
     assert_eq!(held.holder, Some(actor.clone()));
     let committed = bus
         .fact_snapshot()
@@ -361,14 +337,13 @@ fn parked_oops_wake_promotes_and_claims_in_one_transaction() {
         .filter(|fact| fact.seq >= range.first && fact.seq <= range.last)
         .map(|fact| fact.fact.kind())
         .collect::<Vec<_>>();
-    assert!(committed.contains(&wire::FactKind::TaskWoken));
-    assert!(committed.contains(&wire::FactKind::TaskEdited));
+    assert!(committed.contains(&wire::FactKind::TaskFiled));
     assert!(committed.contains(&wire::FactKind::ClaimWon));
     let current = board(&bus, epoch, actor.clone());
-    let heads = at(&current, &promoted);
+    let heads = at(&current, &filed);
     assert_eq!(heads.statement.body.project, "board.test");
     assert_eq!(heads.workflow.body.deferral, None);
-    let claim = heads.claim.as_ref().expect("promoted task is held");
+    let claim = heads.claim.as_ref().expect("filed task is held");
     assert_eq!(claim.body.actor, actor);
     assert_eq!(claim.body.disposition, ClaimDisposition::Active);
     clean(&root, bus);
@@ -396,13 +371,8 @@ fn settled_task_refuses_wake_claim_without_side_effects() {
         epoch,
         actor,
         CommandKind::TaskWake,
-        claim_wake_expected(&completed, &task, seat, false),
-        &TaskWake {
-            task,
-            into: None,
-            preparation: None,
-            claim: true,
-        },
+        claim_transition_expected(&completed, &task, seat, false),
+        &TaskWake { task, claim: true },
     );
     assert!(
         matches!(refused, Outcome::Refusal(ref refusal)

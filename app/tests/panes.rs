@@ -82,7 +82,8 @@ struct Note {
 
 /// The resident's acceptance naming `actor`, as bytes off the socket.
 fn accepted_bytes(actor: &str, epoch: &str) -> Vec<u8> {
-    format!(r#"{{ "wire": 1, "actor": "{actor}", "epoch": "{epoch}" }}"#).into_bytes()
+    format!(r#"{{ "wire": 1, "actor": "{actor}", "epoch": "{epoch}", "release": "1.2.3" }}"#)
+        .into_bytes()
 }
 
 /// The resident's admitted principal receipt for one capability-scoped session.

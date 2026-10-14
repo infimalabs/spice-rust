@@ -76,6 +76,7 @@ fn statement(name: &str) -> TaskHead {
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
         project: "board.kernel".to_owned(),
+        filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: "task:BOARD-root".parse::<Origin>().expect("origin"),
@@ -112,6 +113,7 @@ fn peer_entry(
 ) -> Entry {
     let mut head = statement(name);
     head.project = row_project.to_owned();
+    head.filing = wire::TaskFiling::Oops;
     let claim = ClaimHead {
         actor,
         fact: seq(2),
@@ -146,7 +148,7 @@ fn peer_spread_reads_the_whole_board_cell_and_never_excludes_crowded_work() {
     let peer = peer_entry(
         "BOARD-peer1",
         other.clone(),
-        ".oops.correctness",
+        "board.correctness",
         "board.alpha",
         "todo",
     );
@@ -164,7 +166,7 @@ fn peer_spread_reads_the_whole_board_cell_and_never_excludes_crowded_work() {
         "selection exposes the project-sensitive rendering of the durable stamp",
     );
 
-    let second_peer = peer_entry("BOARD-peer2", other, ".oops.workflow", "board.beta", "todo");
+    let second_peer = peer_entry("BOARD-peer2", other, "board.workflow", "board.beta", "todo");
     let all_crowded = [crowded, open, entries[2].clone(), second_peer];
     let selected = board::select(
         &all_crowded,
@@ -190,7 +192,7 @@ fn peer_spread_precedes_movement_inside_the_shared_cell_vocabulary() {
     let peer = peer_entry(
         "BOARD-peer1",
         Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e499")),
-        ".oops.correctness",
+        "board.correctness",
         "board.alpha",
         "todo",
     );
@@ -298,7 +300,7 @@ fn offer_order_is_select_repeated_over_the_work_not_yet_offered() {
     let peer = peer_entry(
         "BOARD-peer1",
         other,
-        ".oops.correctness",
+        "board.correctness",
         "board.alpha",
         "todo",
     );

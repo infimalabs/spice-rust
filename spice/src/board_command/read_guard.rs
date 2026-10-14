@@ -240,7 +240,11 @@ impl TaskProjection<'_> {
             self.claim_contexts,
         )?;
         let git_context = self.git_contexts.get(&statement.body.born).cloned();
-        let handle = TaskHandle::for_project(&statement.body.project, &statement.body.born);
+        let handle = TaskHandle::for_filing(
+            &statement.body.project,
+            &statement.body.born,
+            statement.body.filing,
+        );
         let creator_team = self
             .creator_teams
             .get(&statement.body.born)

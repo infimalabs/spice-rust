@@ -236,19 +236,6 @@ mod task_stamp_tests {
     }
 }
 
-/// Hidden root of the parked `.oops` route.
-pub const OOPS_STEM: &str = "oops";
-
-/// Whether a project spelling is parked under the `.oops` root, whatever
-/// public project it recommends beneath that root.
-#[must_use]
-pub fn is_oops_project(project: &str) -> bool {
-    project
-        .strip_prefix('.')
-        .and_then(|hidden| hidden.split('.').next())
-        == Some(OOPS_STEM)
-}
-
 /// A task handle such as `SPICE-dRyDYZqJJ`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TaskHandle(String);
@@ -265,14 +252,11 @@ impl TaskHandle {
         &self.0
     }
 
-    /// Render the current public name from a project and sole birth stamp.
-    ///
-    /// A parked `.oops` row keeps the `OOPS` family while it carries a public
-    /// recommendation beneath that root; promotion renames it.
+    /// Render a task name from its public project and filing standing.
     #[must_use]
-    pub fn for_project(project: &str, born: &TaskStamp) -> Self {
-        let source = if is_oops_project(project) {
-            OOPS_STEM
+    pub fn for_filing(project: &str, born: &TaskStamp, filing: crate::TaskFiling) -> Self {
+        let source = if filing.is_oops() {
+            "oops"
         } else {
             project.rsplit('.').next().unwrap_or(project)
         };
@@ -284,6 +268,12 @@ impl TaskHandle {
             .collect::<String>();
         let stem = if stem.is_empty() { "TASK" } else { &stem };
         Self(format!("{stem}-{born}"))
+    }
+
+    /// Render an ordinary filed task name from its public project.
+    #[must_use]
+    pub fn for_project(project: &str, born: &TaskStamp) -> Self {
+        Self::for_filing(project, born, crate::TaskFiling::Filed)
     }
 
     /// Recover the birth stamp carried by a rendered handle.

@@ -162,30 +162,31 @@ fn wake(
         v: WireVersion::CURRENT,
         id: uuid(5),
         epoch: uuid(1),
-        kind: CommandKind::TaskWake,
+        kind: if into.is_some() {
+            CommandKind::TaskFile
+        } else {
+            CommandKind::TaskWake
+        },
         expected,
         body,
     }
 }
 
 #[test]
-fn wake_promotion_requires_statement_authority_but_plain_wake_does_not() {
+fn filing_requires_statement_authority_but_plain_wake_does_not() {
     let target: wire::TaskStamp = "0000000B".parse().expect("target task stamp");
     let unrelated: wire::TaskStamp = "0000000C".parse().expect("unrelated task stamp");
     let Err(CommandRejection::Refusal(refusal)) =
         wake(Some("board.test"), false, &[]).admit(&accepted(Actor::Operator))
     else {
-        panic!("promotion without a task witness must refuse");
+        panic!("filing without a task witness must refuse");
     };
     assert_eq!(refusal.reason(), "command::witness-law");
 
     let plain = wake(None, false, &[])
         .admit(&accepted(Actor::Operator))
         .expect("plain wake retains workflow and deferral authority");
-    assert!(matches!(
-        plain.body(),
-        Intent::TaskWake(wire::intent::TaskWake { into: None, .. })
-    ));
+    assert!(matches!(plain.body(), Intent::TaskWake(_)));
 
     let Err(CommandRejection::Refusal(refusal)) = wake(
         Some("board.test"),
@@ -228,11 +229,7 @@ fn wake_claim_requires_capture_authority_and_decodes_the_atomic_request() {
         .expect("wake claim with capture authority admits");
     assert!(matches!(
         admitted.body(),
-        Intent::TaskWake(wire::intent::TaskWake {
-            into: None,
-            claim: true,
-            ..
-        })
+        Intent::TaskWake(wire::intent::TaskWake { claim: true, .. })
     ));
 }
 

@@ -547,6 +547,7 @@ impl NativeInvocation<'_> {
             | ["task", "note"]
             | ["task", "defer"]
             | ["task", "wake"]
+            | ["task", "file"]
             | ["task", "free"]
             | ["task", "oops"]
             | ["task", "depends"]

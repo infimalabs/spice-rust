@@ -43,6 +43,7 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
                 acceptance: Vec::new(),
                 requirements: wire::EnvironmentRequirements::EMPTY,
                 project: project.to_owned(),
+                filing: wire::TaskFiling::Filed,
                 tags: Vec::new(),
                 dependencies: Vec::new(),
                 provenance: format!("task:{born}").parse().expect("fixture origin"),
