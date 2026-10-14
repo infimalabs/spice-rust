@@ -119,6 +119,7 @@ impl Settlement<'_> {
         write: &mut JournalWrite,
         entry: &Entry,
         claimed: Option<Actor>,
+        cause: FactCause,
     ) -> Result<PendingFact, Outcome<CommandAnswer>> {
         let task = entry.born().clone();
         let built = match self {
@@ -128,7 +129,7 @@ impl Settlement<'_> {
                     reason: delete.reason.clone(),
                     claimed,
                 },
-                FactCause::Root,
+                cause,
             ),
             Self::Close(close) => write.fact(
                 body::TaskClosed {
@@ -137,14 +138,14 @@ impl Settlement<'_> {
                     phase: entry.workflow().phase.clone(),
                     claimed,
                 },
-                FactCause::Root,
+                cause,
             ),
             Self::Conclude(conclude) => write.fact(
                 body::TaskConcluded {
                     task,
                     conclusion: conclude.conclusion.clone(),
                 },
-                FactCause::Root,
+                cause,
             ),
         };
         built.map_err(|error| {
@@ -232,6 +233,40 @@ pub(in crate::board_command) fn task_conclude(
     )
 }
 
+/// Stage a collapse decision's conclusion of `design` into the decision's own
+/// `write`, through the same admission and heads as `task conclude --collapse`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the decision's write, cause, and instant join the conclusion's own inputs"
+)]
+pub(in crate::board_command) fn stage_collapse(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    design: TaskHandle,
+    reason: String,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    write: &mut JournalWrite,
+    cause: PendingFact,
+    at: Instant,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let conclude = TaskConclude {
+        task: design,
+        conclusion: body::DesignConclusion::Collapsed { reason },
+    };
+    let settlement = Settlement::Conclude(&conclude);
+    let snapshot = validated_working_snapshot(
+        bus,
+        command.actor().clone(),
+        std::slice::from_ref(settlement.handle()),
+        projects,
+        allocation,
+    )?;
+    let entry = admitted_entry(&snapshot, settlement)?;
+    let cause = FactCause::Pending(cause);
+    stage(write, entry, settlement, cause, at, projects).map(drop)
+}
+
 fn settle(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -258,10 +293,6 @@ fn settle(
     {
         return outcome;
     }
-    let claimed = entry
-        .claim()
-        .filter(|claim| claim.disposition == ClaimDisposition::Active)
-        .map(|claim| claim.actor.clone());
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
@@ -270,14 +301,41 @@ fn settle(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    let post = projected_settled_entry(entry, settlement, at, claimed.is_some(), projects);
-    let next = next_action(&snapshot, &post);
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
-    let settled = match settlement.fact(&mut write, entry, claimed.clone()) {
-        Ok(fact) => fact,
+    let post = match stage(&mut write, entry, settlement, FactCause::Root, at, projects) {
+        Ok(post) => post,
         Err(outcome) => return outcome,
     };
+    let answer = wire::intent::TaskAnswer {
+        task: entry.handle().clone(),
+        status: settlement.status().to_owned(),
+        completion: None,
+        claim: None,
+        next: next_action(&snapshot, &post),
+    };
+    if let Err(outcome) = settlement.receipt(&mut write, command, answer.clone()) {
+        return outcome;
+    }
+    committed(bus, write, CommandAnswer::Task(answer))
+}
+
+/// Stage the settlement fact and the settled workflow, and free a forced
+/// claim, returning the settled entry.
+fn stage(
+    write: &mut JournalWrite,
+    entry: &Entry,
+    settlement: Settlement<'_>,
+    cause: FactCause,
+    at: Instant,
+    projects: &ProjectPolicy,
+) -> Result<Entry, Outcome<CommandAnswer>> {
+    let claimed = entry
+        .claim()
+        .filter(|claim| claim.disposition == ClaimDisposition::Active)
+        .map(|claim| claim.actor.clone());
+    let post = projected_settled_entry(entry, settlement, at, claimed.is_some(), projects);
+    let settled = settlement.fact(write, entry, claimed.clone(), cause)?;
     let workflow = post.workflow().clone();
     write.workflow_head(entry.born().clone(), settled, move |_| workflow);
     if claimed.is_some() {
@@ -290,17 +348,7 @@ fn settle(
             ..claim
         });
     }
-    let answer = wire::intent::TaskAnswer {
-        task: entry.handle().clone(),
-        status: settlement.status().to_owned(),
-        completion: None,
-        claim: None,
-        next,
-    };
-    if let Err(outcome) = settlement.receipt(&mut write, command, answer.clone()) {
-        return outcome;
-    }
-    committed(bus, write, CommandAnswer::Task(answer))
+    Ok(post)
 }
 
 /// The named, unsettled entry, refusing empty text, a settlement that does not

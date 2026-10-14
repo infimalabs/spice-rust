@@ -13,13 +13,15 @@
 //! renders as unavailable with its reason. Publications page whole in journal
 //! order through [`Page`]; a page that withholds any continues at the first
 //! withheld publication, and a shown page also groups its contributions by
-//! kind. `--contributions` pages only contributions. Reading writes nothing.
+//! kind. `--contributions` pages only contributions. Every read also lists the
+//! anchor's operator decisions in decision order. Reading writes nothing.
 
 pub(crate) mod awareness;
 mod conversation;
 pub(crate) mod inbox;
 pub(crate) mod relevance;
 pub(crate) mod result;
+mod sections;
 mod sources;
 
 pub(crate) use sources::{RoomSources, SourceOwners};
@@ -59,20 +61,16 @@ pub(crate) enum RoomHistory {
         page: Bounded<Publication>,
         /// The page's contributions by kind, each in journal order.
         #[serde(skip_serializing_if = "Vec::is_empty")]
-        contributions: Vec<ContributionGroup>,
+        contributions: Vec<sections::ContributionGroup>,
+        /// The anchor's operator decisions, in decision order.
+        #[serde(skip_serializing_if = "sections::Decisions::is_empty")]
+        decisions: sections::Decisions,
     },
     Exported {
         room: TaskHandle,
         anchor: TaskStamp,
         export: Export,
     },
-}
-
-/// The shown contributions of one kind, in journal order.
-#[derive(Debug, Serialize)]
-pub(crate) struct ContributionGroup {
-    kind: RoomContributionKind,
-    publications: Vec<RoomAuthorityStamp>,
 }
 
 /// One publication as its owning authorities state it.
@@ -289,7 +287,8 @@ fn history(
     let body = match page.admit(rows, recorded.population)? {
         Paged::Shown(page) => RoomHistory::Shown {
             room: recorded.room,
-            contributions: group(&page.rows),
+            contributions: sections::group(&page.rows),
+            decisions: recorded.decisions,
             anchor,
             page,
         },
@@ -309,24 +308,6 @@ enum Selection {
     Publications,
     /// Only typed contributions.
     Contributions,
-}
-
-/// `rows`' contributions grouped by kind in [`RoomContributionKind::ALL`]
-/// order, each group in journal order.
-fn group(rows: &[Publication]) -> Vec<ContributionGroup> {
-    RoomContributionKind::ALL
-        .into_iter()
-        .filter_map(|kind| {
-            let publications: Vec<_> = rows
-                .iter()
-                .filter(|row| {
-                    matches!(&row.content, Content::Contribution { kind: shown, .. } if *shown == kind)
-                })
-                .map(|row| row.publication.clone())
-                .collect();
-            (!publications.is_empty()).then_some(ContributionGroup { kind, publications })
-        })
-        .collect()
 }
 
 /// Project one room's admitted envelopes through the same source-backed
@@ -361,6 +342,8 @@ struct Recorded {
     population: usize,
     /// The first of them, at most one page and the record it withholds.
     rows: Vec<Row>,
+    /// The anchor's decisions in decision order.
+    decisions: sections::Decisions,
 }
 
 /// One publication as the journal records it, before its source is read.
@@ -456,6 +439,7 @@ fn recorded(
         room,
         population,
         rows,
+        decisions: sections::decisions(read, anchor)?,
     })
 }
 
@@ -851,17 +835,16 @@ impl fmt::Display for RoomHistory {
                 anchor,
                 page,
                 contributions,
+                decisions,
             } => {
                 write!(formatter, "room {room} anchor {anchor}")?;
                 for publication in &page.rows {
                     write!(formatter, "\n{publication}")?;
                 }
                 for group in contributions {
-                    write!(formatter, "\n{}:", group.kind)?;
-                    for publication in &group.publications {
-                        write!(formatter, " {publication}")?;
-                    }
+                    write!(formatter, "{group}")?;
                 }
+                write!(formatter, "{decisions}")?;
                 match &page.omission {
                     Some(omission) => write!(formatter, "\n{omission}"),
                     None => Ok(()),

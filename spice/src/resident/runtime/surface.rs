@@ -1283,7 +1283,7 @@ fn accept_commit_turn(
         )?,
     }
     if changes.as_ref().is_none_or(|changes| changes.authority) {
-        design_awareness::reconcile(
+        design_input::reconcile(
             bus,
             command_surface.paths,
             command_surface.config,

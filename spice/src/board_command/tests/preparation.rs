@@ -156,7 +156,6 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
         .collect::<Vec<_>>();
     assert!(outcomes.contains(&Some("selected")), "{outcomes:?}");
     assert!(outcomes.contains(&Some("returned")), "{outcomes:?}");
-    assert!(outcomes.contains(&Some("collapse")), "{outcomes:?}");
     assert_eq!(
         record("authorization")["authorization"]["selected_outputs"],
         serde_json::json!([output.born().expect("selected output stamp")])
@@ -503,70 +502,76 @@ fn record_test_decisions(
     candidate: &CandidateRef,
     source: &RoomSource,
 ) {
-    let controller_stamp = controller.born().expect("controller stamp");
-    for (sequence, outcome) in [
-        (
-            1,
-            DecisionOutcome::Collapse {
-                candidate: candidate.clone(),
-                reason: "the premise no longer holds".to_owned(),
-            },
-        ),
-        (
-            2,
-            DecisionOutcome::Returned {
-                candidate: candidate.clone(),
-                reason: "revise the candidate".to_owned(),
-            },
-        ),
-    ] {
-        let decision = DecisionRef {
-            controller: controller_stamp.clone(),
-            decision: wire::SequenceCode::new(sequence),
-        };
-        let current = board(&bus, epoch, Actor::Operator);
-        let candidate_subject = ProposalRef::Candidate {
+    for (sequence, reason) in [(1, "name the premise first"), (2, "revise the candidate")] {
+        let outcome = DecisionOutcome::Returned {
             candidate: candidate.clone(),
+            reason: reason.to_owned(),
         };
-        let candidate_head = bus
-            .read({
-                let candidate_subject = candidate_subject.clone();
-                move |read| read.proposal_head(&candidate_subject)
-            })
-            .expect("candidate head reads")
-            .expect("candidate was retained")
-            .position();
-        let mut expected = transition_witnesses(at(&current, &controller));
-        expected.push(Witness::Proposal {
-            proposal: candidate_subject,
-            head: Some(candidate_head),
-        });
-        expected.push(Witness::Proposal {
-            proposal: ProposalRef::Decision {
-                decision: decision.clone(),
-            },
-            head: None,
-        });
-        assert_committed(issue(
-            &bus,
-            epoch,
-            Actor::Operator,
-            CommandKind::PreparationDecide,
-            expected,
-            &PreparationDecide {
-                decision: PreparationDecision {
-                    decision,
-                    source: source.clone(),
-                    outcome,
-                },
-            },
-        ));
+        assert_committed(decide(bus, epoch, controller, sequence, source, outcome));
         let current = board(&bus, epoch, Actor::Operator);
         assert_eq!(
             at(&current, &output).statement.body.authorization,
             None,
             "a non-selection decision authorizes nothing"
         );
+    }
+}
+
+/// Issue one operator decision that authorizes nothing, witnessed as the
+/// decide client witnesses it.
+fn decide(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    controller: &TaskHandle,
+    sequence: u64,
+    source: &RoomSource,
+    outcome: DecisionOutcome,
+) -> Outcome<CommandAnswer> {
+    let decision = DecisionRef {
+        controller: controller.born().expect("controller stamp"),
+        decision: wire::SequenceCode::new(sequence),
+    };
+    let current = board(bus, epoch, Actor::Operator);
+    let mut expected = transition_witnesses(at(&current, controller));
+    expected.push(candidate_witness(bus, outcome.candidate()));
+    expected.push(Witness::Proposal {
+        proposal: ProposalRef::Decision {
+            decision: decision.clone(),
+        },
+        head: None,
+    });
+    issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::PreparationDecide,
+        expected,
+        &PreparationDecide {
+            decision: PreparationDecision {
+                decision,
+                source: source.clone(),
+                outcome,
+            },
+        },
+    )
+}
+
+/// `candidate`'s current head as a decision witnesses it.
+fn candidate_witness(bus: &Bus, candidate: &CandidateRef) -> Witness {
+    let proposal = ProposalRef::Candidate {
+        candidate: candidate.clone(),
+    };
+    let head = bus
+        .read({
+            let proposal = proposal.clone();
+            move |read| read.proposal_head(&proposal)
+        })
+        .expect("candidate head reads")
+        .expect("candidate was retained")
+        .position();
+    Witness::Proposal {
+        proposal,
+        head: Some(head),
     }
 }
 
@@ -582,17 +587,6 @@ fn select_candidate_outputs(
         controller: controller.born().expect("controller stamp"),
         decision: wire::SequenceCode::new(sequence),
     };
-    let candidate_subject = ProposalRef::Candidate {
-        candidate: candidate.clone(),
-    };
-    let candidate_head = bus
-        .read({
-            let candidate_subject = candidate_subject.clone();
-            move |read| read.proposal_head(&candidate_subject)
-        })
-        .expect("candidate head reads")
-        .expect("candidate was retained")
-        .position();
     let current = board(bus, epoch, Actor::Operator);
     let mut expected = transition_witnesses(at(&current, controller));
     for output in outputs {
@@ -602,10 +596,7 @@ fn select_candidate_outputs(
             head: None,
         });
     }
-    expected.push(Witness::Proposal {
-        proposal: candidate_subject,
-        head: Some(candidate_head),
-    });
+    expected.push(candidate_witness(bus, &candidate));
     expected.push(Witness::Proposal {
         proposal: ProposalRef::Decision {
             decision: decision.clone(),
@@ -929,6 +920,7 @@ fn review_clean(
 mod conclude;
 use conclude::{conclude, done_conclusion};
 mod contribution;
+mod returned;
 
 #[test]
 fn working_group_moves_organize_designs_without_authorizing_outputs() {
@@ -1253,27 +1245,13 @@ fn a_design_refuses_authorization_until_its_pending_dependencies_settle() {
     connect_child(&bus, epoch, &design, &correction);
 
     let current = board(&bus, epoch, Actor::Operator);
-    let candidate_subject = ProposalRef::Candidate {
-        candidate: candidate.clone(),
-    };
-    let candidate_head = bus
-        .read({
-            let candidate_subject = candidate_subject.clone();
-            move |read| read.proposal_head(&candidate_subject)
-        })
-        .expect("candidate head reads")
-        .expect("candidate was retained")
-        .position();
     let decision = DecisionRef {
         controller: design.born().expect("design stamp"),
         decision: wire::SequenceCode::new(3),
     };
     let mut expected = transition_witnesses(at(&current, &design));
     expected.extend(transition_witnesses(at(&current, &selected)));
-    expected.push(Witness::Proposal {
-        proposal: candidate_subject,
-        head: Some(candidate_head),
-    });
+    expected.push(candidate_witness(&bus, &candidate));
     expected.push(Witness::Proposal {
         proposal: ProposalRef::Decision {
             decision: decision.clone(),

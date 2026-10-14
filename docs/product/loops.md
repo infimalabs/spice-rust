@@ -506,14 +506,17 @@ owns each rule summarized here.
   A Design
   [stays open until the operator concludes it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
   lane `task done` refuses it, so its holder checkpoints and runs `task free`.
-  Only `task conclude HANDLE --done` or `--collapse REASON` ends an unheld
-  Design; `task close` refuses Designs. Each Design output waits, gated, until
+  Only `task conclude HANDLE --done` or `--collapse REASON`, or a collapse
+  decision staging that same conclusion, ends an unheld Design; `task close`
+  refuses Designs. Each Design output waits, gated, until
   the operator's exact `preparation decide` selection records its immutable
   decision and execution authorization together, releases only that subset,
   and leaves the Design open. Selection belongs to the operator; the Design's
   holders do not infer it, review coverage never gates it, and working-group
-  membership grants no authorization. A return or collapse request authorizes
-  nothing and keeps every output gated.
+  membership grants no authorization. A return or collapse authorizes nothing
+  and keeps every output gated. A Design's newest return is
+  [told once to its active holder](invariants/identity.md#identity-a-designs-newest-return-is-told-once-to-its-active-holder)
+  as its next input, and `room history` lists every decision.
 
   A Plan is an ordinary reviewed task constructor. It creates its
   acceptance-bearing executable tasks under itself; those tasks wait for its

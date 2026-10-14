@@ -317,14 +317,17 @@ pub(in crate::resident) fn changes(
     .map_err(|error| store_fault("room::catch-up-changes-unreadable", &error.to_string()))
 }
 
+/// Whether `fact` can change what a lane listens to or what its claimed
+/// Design is owed; a decision names its Design only through its candidate.
 fn changes_task_attention(fact: &AnyFact) -> bool {
-    fact.task_subject().is_some()
+    (fact.task_subject().is_some()
         && !matches!(
             fact.kind(),
             wire::FactKind::TaskNoted
                 | wire::FactKind::ClaimRenewed
                 | wire::FactKind::ClaimLeaseWarned
-        )
+        ))
+        || fact.kind() == wire::FactKind::PreparationDecided
 }
 
 fn extend_steering_rooms(rooms: &mut BTreeSet<TaskStamp>, head: &SteeringHead) {
