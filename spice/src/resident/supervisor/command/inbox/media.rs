@@ -1,13 +1,27 @@
-//! Private local projections of the steering media an occupant is told about.
+//! Private local projections of the steering media one exact occupant is told
+//! about.
 //!
 //! An interjection names each attachment by reference; the occupant can only
-//! look at the bytes through a readable file. A path stays readable while this
-//! occupant's compaction generation lasts, and a new occupant retires what its
-//! predecessor saw.
+//! look at the bytes through a readable file. Each occupant publishes into its
+//! own tree under the lane, so no read for one occupant can publish over or
+//! remove a path another occupant was shown.
 //!
 //! Every inbox read runs in its own process, so what this occupant has been
-//! shown lives in a state file beside its supervisor state. A missing file is
-//! a new occupant.
+//! shown lives in a state file beside its supervisor state, and that state
+//! path is the read's occupant identity. A missing file is an occupant nothing
+//! was read for yet.
+//!
+//! A supervisor reads before the resident seats its occupant, and replays its
+//! inbox into a compacted context before the resident records that
+//! compaction's anchor. So:
+//! - Until this occupant is first seen seated, a read publishes into its tree
+//!   and retires nothing.
+//! - Its first seated read retires every other occupant's tree, once.
+//! - Each later context anchor retires what the occupant was shown before the
+//!   generation that just ended, and keeps everything shown since, since the
+//!   replay into the new context ran under the old anchor.
+//! - Once seen seated, a read finding the lane vacant or seated by another
+//!   occupant refuses before it touches any file.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -24,49 +38,141 @@ const STATE_BYTES: u64 = 1 << 20;
 #[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct State {
+    /// The context anchor this occupant was last seen seated at; absent until
+    /// the resident first names it the lane's occupant.
     compaction: Option<u64>,
+    /// Everything shown since that anchor was first seen.
     retained: Vec<Record>,
+    /// What was shown during the generation before it, which the compaction
+    /// opening this one may have replayed into the current context.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    prior: Vec<Record>,
 }
 
 /// Encoded projection lines keyed by directive and attachment ordinal.
 pub(super) type Projected = BTreeMap<(CanonicalUuid, u8), String>;
 
-/// Publish every pending attachment under `root` and name where each one is
-/// readable, carrying what this occupant was shown in the file at `state`.
+/// Why a read projected nothing.
+#[derive(Debug)]
+pub(super) enum Refusal {
+    /// This occupant no longer holds the lane; the read must not answer.
+    Stale(String),
+    /// The media could not be projected; the text still stands.
+    Failed(String),
+}
+
+/// The occupant whose projection state `state` is: exactly
+/// `<supervisors>/<lane>/<occupant>/<file>` beneath an existing occupant
+/// directory.
+pub(super) fn occupant(
+    supervisors: &Path,
+    lane: CanonicalUuid,
+    state: &Path,
+    file: &str,
+) -> Result<CanonicalUuid, String> {
+    let malformed = || {
+        format!(
+            "projection state {} is not an occupant's state beneath lane {lane}",
+            state.display(),
+        )
+    };
+    let occupant = state
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.parse::<CanonicalUuid>().ok())
+        .ok_or_else(malformed)?;
+    let directory = supervisors
+        .join(lane.to_string())
+        .join(occupant.to_string());
+    if state != directory.join(file) {
+        return Err(malformed());
+    }
+    match std::fs::symlink_metadata(&directory) {
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(occupant),
+        Ok(_) => Err(malformed()),
+        Err(error) => Err(format!(
+            "occupant {occupant} has no supervisor state: {error}"
+        )),
+    }
+}
+
+/// Publish every pending attachment into `occupant`'s tree under `root` and
+/// name where each one is readable, carrying what this occupant was shown in
+/// the file at `state`.
 pub(super) fn project(
     root: &Path,
     lane: CanonicalUuid,
+    occupant: CanonicalUuid,
     state: &Path,
     inbox: &wire::intent::LaneInbox,
-) -> Result<Projected, String> {
+) -> Result<Projected, Refusal> {
     let mut shown = match crate::resident::supervisor::read_json::<State>(state, STATE_BYTES) {
         Ok(shown) => shown,
         Err(error) if error.kind() == io::ErrorKind::NotFound => State::default(),
-        Err(error) => return Err(format!("steering media state is unreadable: {error}")),
-    };
-    let generation_changed = match shown.compaction {
-        None => {
-            media_projection::retire_lane(root, lane)?;
-            false
+        Err(error) => {
+            return Err(Refusal::Failed(format!(
+                "steering media state is unreadable: {error}"
+            )));
         }
-        Some(seen) => inbox.compaction.is_some_and(|current| current > seen),
     };
-    let projected = media_projection::reconcile(
-        lane,
-        &inbox.pending,
-        &mut shown.retained,
-        root,
-        generation_changed,
-    )?;
-    shown.compaction = Some(inbox.compaction.max(shown.compaction).unwrap_or_default());
-    crate::resident::supervisor::publish_json(state, &shown)
-        .map_err(|error| format!("steering media state was not recorded: {error}"))?;
+    let seated = inbox.occupant == Some(occupant);
+    if !seated && shown.compaction.is_some() {
+        return Err(Refusal::Stale(match inbox.occupant {
+            Some(current) => {
+                format!("lane {lane} is seated by occupant {current}, not {occupant}")
+            }
+            None => format!("lane {lane} no longer seats occupant {occupant}"),
+        }));
+    }
+    let (projected, desired) =
+        media_projection::publish(lane, occupant, &inbox.pending, root).map_err(Refusal::Failed)?;
+    if seated {
+        let anchor = inbox.compaction.ok_or_else(|| {
+            Refusal::Failed(format!(
+                "lane {lane} seats occupant {occupant} without a context anchor"
+            ))
+        })?;
+        match shown.compaction {
+            None => media_projection::retire_other_occupants(root, lane, occupant)
+                .map_err(Refusal::Failed)?,
+            Some(seen) if anchor > seen => {
+                let ended = std::mem::take(&mut shown.retained);
+                media_projection::retire(
+                    root,
+                    lane,
+                    occupant,
+                    shown
+                        .prior
+                        .iter()
+                        .filter(|record| !ended.contains(record) && !desired.contains(record)),
+                )
+                .map_err(Refusal::Failed)?;
+                shown.prior = ended
+                    .into_iter()
+                    .filter(|record| !desired.contains(record))
+                    .collect();
+            }
+            Some(_) => {}
+        }
+        shown.compaction = Some(shown.compaction.map_or(anchor, |seen| seen.max(anchor)));
+    }
+    for record in desired {
+        if !shown.retained.contains(&record) {
+            shown.retained.push(record);
+        }
+    }
+    crate::resident::supervisor::publish_json(state, &shown).map_err(|error| {
+        Refusal::Failed(format!("steering media state was not recorded: {error}"))
+    })?;
     projected
         .values()
         .flatten()
         .map(|projection: &Projection| {
-            let encoded = String::from_utf8(projection.encoded()?)
-                .map_err(|_| "an encoded media projection is UTF-8 JSON".to_owned())?;
+            let encoded = String::from_utf8(projection.encoded().map_err(Refusal::Failed)?)
+                .map_err(|_| {
+                    Refusal::Failed("an encoded media projection is UTF-8 JSON".to_owned())
+                })?;
             let reference = projection.reference();
             Ok(((reference.directive(), reference.ordinal()), encoded))
         })
@@ -78,20 +184,26 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    use super::super::PROJECTION_STATE;
     use super::*;
 
     const LANE: &str = "0a2f5b6c-1d3e-4f50-8a91-b2c3d4e5f607";
+    const PREDECESSOR: &str = "3d5b8e9f-4061-4273-9d24-e5f607182930";
+    const SUCCESSOR: &str = "4e6c9fa0-5172-4384-8e35-f60718293a41";
+    const FIRST: &str = "1b3f6c7d-2e4f-4051-9b02-c3d4e5f60718";
+    const SECOND: &str = "2c4a7d8e-3f50-4162-8c13-d4e5f6071829";
     const PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgo=";
+    const PNG_BYTES: &[u8] = b"\x89PNG\r\n\x1a\n";
 
     #[test]
     fn an_interjected_attachment_names_a_private_file_holding_its_exact_bytes() {
-        let root = scratch();
-        let lane: CanonicalUuid = LANE.parse().expect("fixture lane");
-        let inbox = inbox(lane, 3, "1b3f6c7d-2e4f-4051-9b02-c3d4e5f60718");
-        let projected = project(&root, lane, &root.join("occupant.json"), &inbox)
+        let fixture = Fixture::new();
+        let inbox = inbox(Some(SUCCESSOR), Some(40), &[FIRST]);
+        let projected = fixture
+            .read(SUCCESSOR, &inbox)
             .expect("pending media projects");
         let rendered = steer::inbox::render_pending(
-            &steer::Key::for_identity(lane),
+            &steer::Key::for_identity(fixture.lane),
             &inbox.pending,
             |directive, ordinal| projected.get(&(directive, ordinal)).cloned(),
         );
@@ -100,127 +212,275 @@ mod tests {
             .lines()
             .position(|line| line.starts_with("media-reference="))
             .expect("the interjection names the attachment");
-        let projection = rendered
+        let projection: serde_json::Value = rendered
             .lines()
             .nth(reference + 1)
             .and_then(|line| line.strip_prefix("media-projection="))
+            .map(|line| serde_json::from_str(line).expect("projection is JSON"))
             .expect("the projection follows its reference");
-        let projection: serde_json::Value =
-            serde_json::from_str(projection).expect("projection is JSON");
+        let cited = &wire::media::agent_media_references(
+            inbox.pending[0].directive,
+            &inbox.pending[0].attachments,
+        )
+        .expect("fixture media cites")[0];
+        assert_eq!(
+            projection["digest"],
+            serde_json::to_value(cited.digest()).expect("digest encodes"),
+        );
+        assert_eq!(projection["bytes"], cited.bytes());
+        assert_eq!(projection["content_type"], "image/png");
         let path = projection["path"]
             .as_str()
             .expect("projection names a path");
-        assert_eq!(
-            fs::read(path).expect("the named file is readable"),
-            inbox.pending[0].attachments[0]
-                .decoded_bytes()
-                .expect("fixture bytes decode"),
-        );
-        fs::remove_dir_all(root).expect("remove projection fixture");
+        let metadata = fs::symlink_metadata(path).expect("the named file exists");
+        assert!(metadata.file_type().is_file());
+        assert_eq!(metadata.len(), cited.bytes());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        }
+        assert_eq!(fs::read(path).expect("the named file reads"), PNG_BYTES);
     }
 
     #[test]
-    fn a_new_occupant_retires_what_its_predecessor_was_shown() {
-        let root = scratch();
-        let lane: CanonicalUuid = LANE.parse().expect("fixture lane");
-        let earlier = project(
-            &root,
-            lane,
-            &root.join("predecessor.json"),
-            &inbox(lane, 3, "1b3f6c7d-2e4f-4051-9b02-c3d4e5f60718"),
-        )
-        .expect("earlier media projects");
-        let earlier = path(earlier.values().next().expect("earlier projection"));
-        assert!(fs::metadata(&earlier).is_ok());
-
-        project(
-            &root,
-            lane,
-            &root.join("successor.json"),
-            &inbox(lane, 0, "2c4a7d8e-3f50-4162-8c13-d4e5f6071829"),
-        )
-        .expect("successor media projects");
+    fn a_predecessor_reading_after_its_successor_touches_none_of_the_successors_media() {
+        let fixture = Fixture::new();
+        let earlier = only_path(
+            &fixture
+                .read(PREDECESSOR, &inbox(Some(PREDECESSOR), Some(10), &[FIRST]))
+                .expect("the predecessor's media projects"),
+        );
+        let shown = only_path(
+            &fixture
+                .read(SUCCESSOR, &inbox(Some(SUCCESSOR), Some(20), &[FIRST]))
+                .expect("the successor's media projects"),
+        );
+        assert_ne!(earlier, shown, "occupants never share a projection path");
         assert!(
             fs::symlink_metadata(&earlier).is_err(),
-            "a successor must not inherit its predecessor's private media",
+            "the seated successor retires its predecessor's media",
         );
-        fs::remove_dir_all(root).expect("remove projection fixture");
+
+        for answer in [
+            inbox(Some(SUCCESSOR), Some(20), &[FIRST, SECOND]),
+            inbox(None, None, &[FIRST, SECOND]),
+        ] {
+            assert!(matches!(
+                fixture.read(PREDECESSOR, &answer),
+                Err(Refusal::Stale(_)),
+            ));
+        }
+        assert_eq!(fs::read(&shown).expect("successor media reads"), PNG_BYTES);
+        assert!(
+            fs::symlink_metadata(fixture.occupant_tree(PREDECESSOR)).is_err(),
+            "a stale read publishes nothing",
+        );
     }
 
     #[test]
-    fn one_occupant_keeps_what_it_was_shown_across_reads_until_compaction() {
-        let root = scratch();
-        let lane: CanonicalUuid = LANE.parse().expect("fixture lane");
-        let state = root.join("occupant.json");
-        let shown = project(
-            &root,
-            lane,
-            &state,
-            &inbox(lane, 3, "1b3f6c7d-2e4f-4051-9b02-c3d4e5f60718"),
-        )
-        .expect("first read projects");
-        let shown = path(shown.values().next().expect("first projection"));
-
-        // A later read in the same generation no longer lists the answered
-        // directive, yet the path it advertised stays readable.
-        project(
-            &root,
-            lane,
-            &state,
-            &inbox(lane, 3, "2c4a7d8e-3f50-4162-8c13-d4e5f6071829"),
-        )
-        .expect("later read projects");
-        assert!(
-            fs::metadata(&shown).is_ok(),
-            "a path advertised to this occupant must survive its next read",
+    fn a_new_occupant_keeps_what_it_received_before_seating_through_ack_and_rereads() {
+        let fixture = Fixture::new();
+        let predecessor = only_path(
+            &fixture
+                .read(PREDECESSOR, &inbox(Some(PREDECESSOR), Some(10), &[SECOND]))
+                .expect("the predecessor's media projects"),
         );
 
-        project(
-            &root,
-            lane,
-            &state,
-            &inbox(lane, 4, "2c4a7d8e-3f50-4162-8c13-d4e5f6071829"),
-        )
-        .expect("post-compaction read projects");
-        assert!(
-            fs::symlink_metadata(&shown).is_err(),
-            "compaction retires what the dropped context was shown",
+        // The successor's first turn reads before the resident seats it: the
+        // lane still names its predecessor, or nobody.
+        for unseated in [
+            inbox(Some(PREDECESSOR), Some(10), &[FIRST]),
+            inbox(None, None, &[FIRST]),
+        ] {
+            let received = only_path(
+                &fixture
+                    .read(SUCCESSOR, &unseated)
+                    .expect("an unseated occupant still receives its media"),
+            );
+            assert_eq!(
+                fs::read(&received).expect("received media reads"),
+                PNG_BYTES
+            );
+            assert_eq!(
+                fs::read(&predecessor).expect("nothing retires before seating"),
+                PNG_BYTES,
+            );
+        }
+        let received = only_path(
+            &fixture
+                .read(SUCCESSOR, &inbox(None, None, &[FIRST]))
+                .expect("an unseated occupant still receives its media"),
         );
-        fs::remove_dir_all(root).expect("remove projection fixture");
+
+        // The start anchor lands after the occupant answered: the directive
+        // has left pending, and every reread keeps what it was shown.
+        for _ in 0..2 {
+            fixture
+                .read(SUCCESSOR, &inbox(Some(SUCCESSOR), Some(953_349), &[]))
+                .expect("the seated occupant reads");
+            assert_eq!(
+                fs::read(&received).expect("acknowledged media stays readable"),
+                PNG_BYTES,
+            );
+        }
+        assert!(
+            fs::symlink_metadata(&predecessor).is_err(),
+            "the successor's first seated read retires its predecessor's media",
+        );
     }
 
-    fn path(encoded: &str) -> String {
+    #[test]
+    fn a_compaction_keeps_what_its_replay_showed_and_retires_the_generation_before_it() {
+        let fixture = Fixture::new();
+        let read = |anchor: u64, pending: &[&str]| {
+            fixture
+                .read(SUCCESSOR, &inbox(Some(SUCCESSOR), Some(anchor), pending))
+                .expect("the seated occupant reads")
+        };
+        let first = only_path(&read(10, &[FIRST]));
+        read(10, &[]);
+        assert_eq!(fs::read(&first).expect("answered media reads"), PNG_BYTES);
+
+        // The replay into a compacted context runs before its anchor lands.
+        let second = only_path(&read(10, &[SECOND]));
+        read(30, &[]);
+        assert_eq!(
+            fs::read(&second).expect("the replayed context keeps its media"),
+            PNG_BYTES,
+        );
+
+        read(50, &[]);
+        for retired in [&first, &second] {
+            assert!(
+                fs::symlink_metadata(retired).is_err(),
+                "the next context retires what only an earlier one was shown",
+            );
+        }
+    }
+
+    #[test]
+    fn only_an_occupants_own_state_path_names_it() {
+        let fixture = Fixture::new();
+        let supervisors = fixture.root.join("supervisors");
+        let state = fixture.state(SUCCESSOR);
+        assert_eq!(
+            occupant(&supervisors, fixture.lane, &state, PROJECTION_STATE).ok(),
+            Some(SUCCESSOR.parse().expect("fixture occupant")),
+        );
+        let lane = supervisors.join(LANE);
+        for malformed in [
+            lane.join(SUCCESSOR).join("state.json"),
+            lane.join("not-an-occupant").join(PROJECTION_STATE),
+            supervisors
+                .join(FIRST)
+                .join(SUCCESSOR)
+                .join(PROJECTION_STATE),
+            fixture
+                .root
+                .join(LANE)
+                .join(SUCCESSOR)
+                .join(PROJECTION_STATE),
+            lane.join(PREDECESSOR).join(PROJECTION_STATE),
+        ] {
+            assert!(
+                occupant(&supervisors, fixture.lane, &malformed, PROJECTION_STATE).is_err(),
+                "{} names no occupant of this lane",
+                malformed.display(),
+            );
+        }
+    }
+
+    struct Fixture {
+        root: PathBuf,
+        lane: CanonicalUuid,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                root: std::env::temp_dir().join(format!(
+                    "spice-supervisor-media-{}-{}",
+                    std::process::id(),
+                    uuid::Uuid::new_v4().simple(),
+                )),
+                lane: LANE.parse().expect("fixture lane"),
+            }
+        }
+
+        fn media(&self) -> PathBuf {
+            self.root.join("steering-media")
+        }
+
+        fn occupant_tree(&self, occupant: &str) -> PathBuf {
+            self.media().join(LANE).join(occupant)
+        }
+
+        fn state(&self, occupant: &str) -> PathBuf {
+            let directory = self.root.join("supervisors").join(LANE).join(occupant);
+            fs::create_dir_all(&directory).expect("supervisor directory");
+            directory.join(PROJECTION_STATE)
+        }
+
+        fn read(
+            &self,
+            occupant: &str,
+            inbox: &wire::intent::LaneInbox,
+        ) -> Result<Projected, Refusal> {
+            project(
+                &self.media(),
+                self.lane,
+                occupant.parse().expect("fixture occupant"),
+                &self.state(occupant),
+                inbox,
+            )
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn only_path(projected: &Projected) -> PathBuf {
+        let [encoded] = projected.values().collect::<Vec<_>>()[..] else {
+            panic!("exactly one projection");
+        };
         let projection: serde_json::Value = serde_json::from_str(encoded).expect("projection");
-        projection["path"].as_str().expect("path").to_owned()
+        PathBuf::from(projection["path"].as_str().expect("path"))
     }
 
-    fn scratch() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "spice-supervisor-media-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4().simple(),
-        ))
-    }
-
-    fn inbox(lane: CanonicalUuid, compaction: u64, directive: &str) -> wire::intent::LaneInbox {
-        serde_json::from_value(serde_json::json!({
-            "lane": lane,
-            "occupant": "3d5b8e9f-4061-4273-9d24-e5f607182930",
-            "compaction": compaction,
-            "pending": [{
-                "directive": directive,
-                "key": "1kMedia1",
-                "text": "inspect the capture",
-                "attachments": [{
-                    "name": "capture.png",
-                    "content_type": "image/png",
-                    "data_url": PNG_DATA_URL,
-                }],
-                "authored": "2026-08-30T09:00:00.000Z",
-                "stage": "published",
-                "expires": "2026-08-30T10:00:00.000Z",
-            }],
-        }))
-        .expect("inbox fixture admits")
+    fn inbox(
+        occupant: Option<&str>,
+        compaction: Option<u64>,
+        directives: &[&str],
+    ) -> wire::intent::LaneInbox {
+        let mut row = serde_json::json!({
+            "lane": LANE,
+            "pending": directives
+                .iter()
+                .map(|directive| serde_json::json!({
+                    "directive": directive,
+                    "key": "1kMedia1",
+                    "text": "inspect the capture",
+                    "attachments": [{
+                        "name": "capture.png",
+                        "content_type": "image/png",
+                        "data_url": PNG_DATA_URL,
+                    }],
+                    "authored": "2026-08-30T09:00:00.000Z",
+                    "stage": "published",
+                    "expires": "2026-08-30T10:00:00.000Z",
+                }))
+                .collect::<Vec<_>>(),
+        });
+        if let Some(occupant) = occupant {
+            row["occupant"] = occupant.into();
+        }
+        if let Some(compaction) = compaction {
+            row["compaction"] = compaction.into();
+        }
+        serde_json::from_value(row).expect("inbox fixture admits")
     }
 }

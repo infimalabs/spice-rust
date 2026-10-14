@@ -4,9 +4,9 @@
 //! resident to a release whose command protocol this supervisor's build cannot
 //! open a session with. The installed executable always speaks the resident's
 //! release, so every inbox read runs it under [`ENTRY`]: it reads the lane's
-//! authenticated inbox, projects pending media, and prints the rendered
-//! steering. The entry's arguments and the projection state file are the
-//! contract between releases.
+//! authenticated inbox, projects pending media for the exact occupant its
+//! projection state path names, and prints the rendered steering. The entry's
+//! arguments and the projection state file are the contract between releases.
 
 use std::ffi::OsString;
 use std::io::{self, Write as _};
@@ -82,7 +82,11 @@ impl Reader {
 }
 
 /// Print `lane`'s rendered pending steering for the supervisor that ran this
-/// entry from the lane's worktree.
+/// entry from the lane's worktree, on behalf of the exact occupant whose
+/// projection state is `projection`.
+///
+/// A state path that names no occupant of `lane`, or an occupant that no
+/// longer holds the lane, refuses before any media is touched.
 pub(in crate::resident::supervisor) fn run(lane: &OsString, projection: &Path) -> io::Result<()> {
     let lane = lane
         .to_str()
@@ -92,6 +96,8 @@ pub(in crate::resident::supervisor) fn run(lane: &OsString, projection: &Path) -
     let repository = Repository::discover(&worktree).map_err(io::Error::other)?;
     let paths = RuntimePaths::from_repository(&repository)
         .map_err(|outcome| io::Error::other(format!("{outcome:?}")))?;
+    let occupant = media::occupant(&paths.supervisors, lane, projection, PROJECTION_STATE)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let inbox = crate::command_client::read_lane_inbox(&paths.serve, lane)
         .map_err(|outcome| io::Error::other(format!("{outcome:?}")))?;
     let pending = inbox
@@ -101,11 +107,15 @@ pub(in crate::resident::supervisor) fn run(lane: &OsString, projection: &Path) -
         .ok_or_else(|| io::Error::other("the resident's inbox answer omits this lane"))?;
     // Direction outranks its pictures: a projection failure still delivers
     // the text and references, and says why on stderr.
-    let projected = media::project(&paths.steering_media, lane, projection, pending)
-        .unwrap_or_else(|error| {
+    let projected = match media::project(&paths.steering_media, lane, occupant, projection, pending)
+    {
+        Ok(projected) => projected,
+        Err(media::Refusal::Stale(error)) => return Err(io::Error::other(error)),
+        Err(media::Refusal::Failed(error)) => {
             eprintln!("spice supervisor: steering media projection failed: {error}");
             media::Projected::new()
-        });
+        }
+    };
     let rendered = steer::inbox::render_pending(
         &steer::Key::for_identity(lane),
         &pending.pending,
