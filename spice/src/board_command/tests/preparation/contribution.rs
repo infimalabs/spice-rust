@@ -110,7 +110,7 @@ fn refused(outcome: &Outcome<CommandAnswer>) -> &str {
 }
 
 /// One `spice room history` page, its sources read under `artifacts_root`.
-fn history(root: &Path, artifacts_root: &Path, words: &[&str]) -> Value {
+pub(super) fn history(root: &Path, artifacts_root: &Path, words: &[&str]) -> Value {
     let matches = crate::cli::command()
         .try_get_matches_from(["spice", "room", "history"].iter().chain(words))
         .expect("room history parses");
@@ -145,7 +145,12 @@ fn publications(page: &Value) -> Vec<String> {
 }
 
 /// Every authority a contribution must leave alone, as the operator reads it.
-fn authority(bus: &Bus, epoch: CanonicalUuid, root: &FixtureRoot, design: &TaskHandle) -> Value {
+pub(super) fn authority(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    root: &FixtureRoot,
+    design: &TaskHandle,
+) -> Value {
     let visible = board(bus, epoch, Actor::Operator);
     let task = at(&visible, design);
     let mut preparation = preparation_page(root, &[design.as_str()]);

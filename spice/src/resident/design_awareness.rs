@@ -12,11 +12,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
 use spice::rooms::awareness::{DesignTerms, pitch, task_terms};
 use wire::rooms::DesignNoticed;
 use wire::{Actor, CanonicalUuid, ClaimDisposition, Producer, Seq, SequenceCode, TaskStamp};
 
+use super::design_input::{BackgroundNotice, clip};
 use super::room_catch_up::{Planning, unit_outcome};
 use super::*;
 
@@ -28,22 +28,21 @@ const NOTICE_TERMS: usize = 6;
 const SHORTEST_CLIP_BYTES: usize = 16;
 
 /// One private Design awareness notice, scoped to the claim's exact occupant.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::resident) struct DesignNotice {
-    pub(in crate::resident) occupant: CanonicalUuid,
-    pub(in crate::resident) design: String,
-    pub(in crate::resident) task: String,
-    pub(in crate::resident) title: String,
-    pub(in crate::resident) pitch: String,
-    pub(in crate::resident) terms: Vec<String>,
+    occupant: CanonicalUuid,
+    design: String,
+    task: String,
+    title: String,
+    pitch: String,
+    terms: Vec<String>,
 }
 
 impl DesignNotice {
-    /// This notice shrunk until it fits one kick datagram of `bytes`: matched
-    /// terms first, then the pitch, then the title.
-    fn fit(mut self, bytes: usize) -> Self {
-        while serde_json::to_vec(&self).map_or(usize::MAX, |encoded| encoded.len()) > bytes {
+    /// This notice shrunk until it fits one kick datagram: matched terms
+    /// first, then the pitch, then the title.
+    fn fit(mut self) -> Self {
+        while !self.background().fits() {
             if self.terms.len() > 1 {
                 self.terms.pop();
             } else if self.pitch.len() > SHORTEST_CLIP_BYTES {
@@ -57,26 +56,25 @@ impl DesignNotice {
         self
     }
 
-    /// Background purpose: one queued notice per Design.
-    pub(in crate::resident) fn purpose(&self) -> String {
-        format!("design:{}", self.design)
-    }
-
-    /// The notice its lane hears.
-    pub(in crate::resident) fn text(&self) -> String {
+    /// The notice its lane hears, queued once per Design.
+    fn background(&self) -> BackgroundNotice {
         let design = &self.design;
-        format!(
-            "<system-notice>\nOpen Design {design} \"{}\" matches your task {} on: {}.\n\
-             Pitch: {}\nRead its room with `spice room history {design}` \
-             (`spice://task/{design}/room`); contribute with a visible `MSG #{design}: BODY` \
-             packet. This is a private background notice: it needs no acknowledgment key or \
-             visible ACK/NAK, starts no work, and does not make this lane a room listener.\n\
-             </system-notice>",
-            self.title,
-            self.task,
-            self.terms.join(", "),
-            self.pitch,
-        )
+        BackgroundNotice {
+            occupant: self.occupant,
+            purpose: format!("design:{design}"),
+            text: format!(
+                "<system-notice>\nOpen Design {design} \"{}\" matches your task {} on: {}.\n\
+                 Pitch: {}\nRead its room with `spice room history {design}` \
+                 (`spice://task/{design}/room`); contribute with a visible `MSG #{design}: BODY` \
+                 packet. This is a private background notice: it needs no acknowledgment key or \
+                 visible ACK/NAK, starts no work, and does not make this lane a room listener.\n\
+                 </system-notice>",
+                self.title,
+                self.task,
+                self.terms.join(", "),
+                self.pitch,
+            ),
+        }
     }
 }
 
@@ -101,22 +99,18 @@ pub(in crate::resident) fn reconcile(
     seats: &Seats,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    let occupied = seats
-        .lanes()
-        .into_iter()
-        .filter_map(|lane| {
-            seats
-                .occupant(lane)
-                .map(|occupant| (lane, occupant.occupant()))
-        })
-        .collect::<BTreeMap<_, _>>();
+    let occupied = occupied(seats);
     if occupied.is_empty() {
         return Ok(());
     }
     let planning = Planning::load(bus, config)?;
     for told in plan(bus, &planning, &occupied)? {
         match record(bus, &told) {
-            Ok(()) => super::supervisor::command::design_notice(paths, told.lane, told.notice),
+            Ok(()) => super::supervisor::command::background_notice(
+                paths,
+                told.lane,
+                told.notice.background(),
+            ),
             Err(error) => {
                 let _ = writeln!(
                     diagnostic,
@@ -127,6 +121,19 @@ pub(in crate::resident) fn reconcile(
         }
     }
     Ok(())
+}
+
+/// Each seated lane and its current occupant.
+pub(super) fn occupied(seats: &Seats) -> BTreeMap<CanonicalUuid, CanonicalUuid> {
+    seats
+        .lanes()
+        .into_iter()
+        .filter_map(|lane| {
+            seats
+                .occupant(lane)
+                .map(|occupant| (lane, occupant.occupant()))
+        })
+        .collect()
 }
 
 /// Every Design each occupied claimant is owed, in lane then Design order.
@@ -212,7 +219,7 @@ fn plan(
                     ),
                     terms: matched.iter().take(NOTICE_TERMS).cloned().collect(),
                 }
-                .fit(super::supervisor::command::KICK_BYTES),
+                .fit(),
                 terms: matched,
             });
         }
@@ -325,16 +332,4 @@ fn record(bus: &Bus, told: &Told) -> CommandResult<()> {
             Err(store_fault("room::awareness-fault", &fault.to_string()))
         }
     }
-}
-
-/// `text` cut at a character boundary to at most `bytes` bytes.
-fn clip(text: &str, bytes: usize) -> String {
-    if text.len() <= bytes {
-        return text.to_owned();
-    }
-    let mut end = bytes - '…'.len_utf8();
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &text[..end])
 }

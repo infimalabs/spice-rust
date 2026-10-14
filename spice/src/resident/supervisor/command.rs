@@ -195,8 +195,8 @@ pub(in crate::resident) enum Kick {
     TaskGeneration(TaskGenerationNotice),
     /// A task the resident proactively assigned to this exact occupant.
     TaskAssignment(TaskAssignmentNotice),
-    /// An open Design matching this exact occupant's claimed task.
-    DesignNotice(crate::resident::design_awareness::DesignNotice),
+    /// A private background notice for this exact occupant.
+    Background(crate::resident::design_input::BackgroundNotice),
     /// A claim this lane held lapsed; addressed to the lane's current occupant.
     ClaimLapse(ClaimLapseNotice),
     /// An MSG packet this exact occupant authored missed some or every address.
@@ -1160,13 +1160,13 @@ pub(in crate::resident) fn task_assignment(
     send(paths, lane, &Kick::TaskAssignment(notice));
 }
 
-/// Privately tell the exact claimant occupant about one matching open Design.
-pub(in crate::resident) fn design_notice(
+/// Privately tell the exact occupant one keyless background notice.
+pub(in crate::resident) fn background_notice(
     paths: &RuntimePaths,
     lane: CanonicalUuid,
-    notice: crate::resident::design_awareness::DesignNotice,
+    notice: crate::resident::design_input::BackgroundNotice,
 ) {
-    send(paths, lane, &Kick::DesignNotice(notice));
+    send(paths, lane, &Kick::Background(notice));
 }
 
 /// Privately tell the lane that held a lapsed claim, at its current occupant.
@@ -1356,10 +1356,10 @@ pub(in crate::resident) fn listen_for_kicks(
                             driver.deliver_task_assignment(&notice);
                         }
                         Ok(Kick::TaskAssignment(_)) => {}
-                        Ok(Kick::DesignNotice(notice)) if notice.occupant == occupant => {
-                            let _ = driver.background(&notice.purpose(), &notice.text());
+                        Ok(Kick::Background(notice)) if notice.occupant == occupant => {
+                            let _ = driver.background(&notice.purpose, &notice.text);
                         }
-                        Ok(Kick::DesignNotice(_)) => {}
+                        Ok(Kick::Background(_)) => {}
                         Ok(Kick::ClaimLapse(notice)) if notice.occupant == occupant => {
                             driver.deliver_claim_lapse(&notice);
                         }

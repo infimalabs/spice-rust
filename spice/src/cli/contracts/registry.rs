@@ -709,7 +709,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         ["preparation", "decide"],
         "preparation decide DECISION_JSON",
         Command,
-        [PreparationDecided, ExecutionAuthorized],
+        [PreparationDecided, ExecutionAuthorized, TaskConcluded],
         Reply,
         "preparation::decide"
     ),

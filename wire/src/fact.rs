@@ -113,6 +113,9 @@ macro_rules! registered_body {
     (DesignNoticed) => {
         crate::rooms::DesignNoticed
     };
+    (DesignReturnDelivered) => {
+        crate::rooms::DesignReturnDelivered
+    };
     (RoomRelevanceObserved) => {
         crate::rooms::RoomRelevanceObserved
     };
@@ -313,6 +316,8 @@ vocabulary! {
     RoomHorizon = "room::horizon" by ResidentRecognition;
     /// The resident told a lane about one open Design matching its claimed work.
     DesignNoticed = "room::noticed" by ResidentRecognition;
+    /// The resident handed an active Design's holder its newest return decision.
+    DesignReturnDelivered = "room::relayed" by ResidentRecognition;
     /// The resident recorded one source-backed shadow relevance observation.
     RoomRelevanceObserved = "room::observed" by ResidentRecognition;
     /// The operator assessed one shadow observation for quality measurement.

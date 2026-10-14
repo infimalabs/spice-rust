@@ -8,6 +8,8 @@ use wire::rooms::{
 pub(super) fn dispatch_preparation(
     bus: &Bus,
     command: &wire::AdmittedCommand,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Option<Outcome<CommandAnswer>> {
     Some(match command.body() {
         wire::intent::Intent::CandidateRetain(retain) => retain_candidate(bus, command, retain),
@@ -18,7 +20,7 @@ pub(super) fn dispatch_preparation(
             record_coverage(bus, command, coverage)
         }
         wire::intent::Intent::PreparationDecide(decision) => {
-            decide_preparation(bus, command, decision)
+            decide_preparation(bus, command, decision, projects, allocation)
         }
         wire::intent::Intent::OutputAdopt(adopt) => adopt_output(bus, command, adopt),
         _ => return None,
@@ -295,10 +297,27 @@ pub(super) fn record_coverage(
     )
 }
 
+/// What one decision commits beyond its own immutable record.
+enum Consequence<'a> {
+    /// A selection authorizes exactly its chosen outputs.
+    Authorize(Vec<TaskHead>, ExecutionAuthorization),
+    /// A return is the Design's next input and moves nothing.
+    Record,
+    /// A collapse concludes its Design through the operator conclusion path.
+    Conclude {
+        design: TaskHandle,
+        reason: String,
+        projects: &'a ProjectPolicy,
+        allocation: &'a board::NextConfig,
+    },
+}
+
 pub(super) fn decide_preparation(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     request_body: &PreparationDecide,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let decision = &request_body.decision;
     let subject = ProposalRef::Decision {
@@ -323,7 +342,7 @@ pub(super) fn decide_preparation(
     if let Err(outcome) = require_open_design(command, controller, &candidate_ref.controller) {
         return outcome;
     }
-    let (selected_heads, authorization) = match &decision.outcome {
+    let consequence = match &decision.outcome {
         DecisionOutcome::Selected {
             selected_outputs, ..
         } => match prepare_selection(
@@ -334,19 +353,21 @@ pub(super) fn decide_preparation(
             &candidate,
             selected_outputs,
         ) {
-            Ok(selection) => (selection.0, Some(selection.1)),
+            Ok((outputs, authorization)) => Consequence::Authorize(outputs, authorization),
             Err(outcome) => return outcome,
         },
-        DecisionOutcome::Returned { .. } | DecisionOutcome::Collapse { .. } => (Vec::new(), None),
+        DecisionOutcome::Returned { .. } => Consequence::Record,
+        DecisionOutcome::Collapse { reason, .. } => Consequence::Conclude {
+            design: TaskHandle::for_project(
+                &controller.statement().body().project,
+                &candidate_ref.controller,
+            ),
+            reason: reason.clone(),
+            projects,
+            allocation,
+        },
     };
-    commit_decision(
-        bus,
-        command,
-        request_body,
-        candidate,
-        selected_heads,
-        authorization,
-    )
+    commit_decision(bus, command, request_body, candidate, consequence)
 }
 
 fn retained_candidate(
@@ -502,8 +523,7 @@ fn commit_decision(
     command: &wire::AdmittedCommand,
     request_body: &PreparationDecide,
     candidate: RetainedCandidate,
-    outputs: Vec<TaskHead>,
-    authorization: Option<ExecutionAuthorization>,
+    consequence: Consequence<'_>,
 ) -> Outcome<CommandAnswer> {
     let decision = &request_body.decision;
     let at = match current_instant() {
@@ -525,33 +545,44 @@ fn commit_decision(
         Ok(fact) => fact,
         Err(error) => return store_fault("preparation::decision-invalid", &error.to_string()),
     };
-    if let Some(authorization) = authorization {
-        let authorized = match write.fact(
-            ExecutionAuthorized {
-                authorization: authorization.clone(),
-            },
-            FactCause::Pending(decided),
-        ) {
-            Ok(fact) => fact,
-            Err(error) => {
-                return store_fault("preparation::authorization-invalid", &error.to_string());
+    let action = match consequence {
+        Consequence::Authorize(outputs, authorization) => {
+            let authorized = match write.fact(
+                ExecutionAuthorized {
+                    authorization: authorization.clone(),
+                },
+                FactCause::Pending(decided),
+            ) {
+                Ok(fact) => fact,
+                Err(error) => {
+                    return store_fault("preparation::authorization-invalid", &error.to_string());
+                }
+            };
+            let selected = outputs.len();
+            for output in outputs {
+                let decision = authorization.decision.clone();
+                write.task_head(authorized, move |revision| TaskHead {
+                    authorization: Some(decision),
+                    revision,
+                    ..output
+                });
             }
-        };
-        for output in outputs {
-            let decision = authorization.decision.clone();
-            write.task_head(authorized, move |revision| TaskHead {
-                authorization: Some(decision),
-                revision,
-                ..output
-            });
+            format!("selected {selected} output(s)")
         }
-    }
-    let action = match &decision.outcome {
-        DecisionOutcome::Selected {
-            selected_outputs, ..
-        } => format!("selected {} output(s)", selected_outputs.len()),
-        DecisionOutcome::Returned { .. } => "returned the candidate".to_owned(),
-        DecisionOutcome::Collapse { .. } => "recorded the candidate's collapse request".to_owned(),
+        Consequence::Record => "returned the candidate".to_owned(),
+        Consequence::Conclude {
+            design,
+            reason,
+            projects,
+            allocation,
+        } => {
+            if let Err(outcome) = super::mutation::stage_collapse(
+                bus, command, design, reason, projects, allocation, &mut write, decided, at,
+            ) {
+                return outcome;
+            }
+            "collapsed the Design".to_owned()
+        }
     };
     let answer = TextAnswer {
         text: format!(

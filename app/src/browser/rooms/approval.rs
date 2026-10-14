@@ -25,7 +25,7 @@ enum Standing<'a> {
     Undecided,
     /// Its latest decision returned it for further preparation.
     Returned,
-    /// Its latest decision requests collapse through the Design authority.
+    /// Its latest decision collapsed the Design.
     Collapse,
     /// A selected decision whose authorization is not in this projection.
     Selected(&'a DecisionRef),
@@ -38,7 +38,7 @@ impl Standing<'_> {
         match self {
             Self::Undecided => "Undecided".to_owned(),
             Self::Returned => "Returned".to_owned(),
-            Self::Collapse => "Collapse requested".to_owned(),
+            Self::Collapse => "Collapsed".to_owned(),
             Self::Selected(decision) => format!("Selected by decision {}", decision.decision),
             Self::Authorized(authorization) => format!(
                 "Selected {} output(s) by decision {}",

@@ -95,7 +95,9 @@ instead.
   controller: `{"kind": "selected", "candidate": …, "selected_outputs": […]}`,
   `{"kind": "returned", "candidate": …, "reason": TEXT}`, or
   `{"kind": "collapse", "candidate": …, "reason": TEXT}`. A selected subset is
-  nonempty and unique; return and collapse-request reasons are nonblank.
+  nonempty and unique; return and collapse reasons are nonblank. A collapse
+  concludes the Design as `task conclude --collapse REASON` would, refusing a
+  held Design with `task::conclude-claimed`.
 
 ### Limits and their repairs
 
