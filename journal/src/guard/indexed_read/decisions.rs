@@ -7,6 +7,15 @@ use super::{
     decode_bounded_fact, read_metrics,
 };
 
+/// Which way one decision page walks the controller's index.
+#[derive(Clone, Copy)]
+enum Direction {
+    /// Oldest first, strictly after the cursor.
+    Forward,
+    /// Newest first, strictly before the cursor.
+    Backward,
+}
+
 impl JournalRead<'_> {
     /// One bounded page of `controller`'s recorded `proposal::decided` facts
     /// strictly after `after`, in decision order, through the current horizon.
@@ -15,6 +24,30 @@ impl JournalRead<'_> {
         controller: &wire::TaskStamp,
         after: Option<wire::Seq>,
         budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
+        self.decision_page(controller, after, budget, Direction::Forward)
+    }
+
+    /// One bounded page of `controller`'s recorded `proposal::decided` facts
+    /// strictly before `before` (or through the current horizon without one),
+    /// newest first. Its continuation is the oldest returned position, so the
+    /// next page resumes strictly before it; the work is bounded by the page,
+    /// never by the controller's whole decision history.
+    pub fn newest_preparation_decisions(
+        &self,
+        controller: &wire::TaskStamp,
+        before: Option<wire::Seq>,
+        budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
+        self.decision_page(controller, before, budget, Direction::Backward)
+    }
+
+    fn decision_page(
+        &self,
+        controller: &wire::TaskStamp,
+        cursor: Option<wire::Seq>,
+        budget: FactReadBudget,
+        direction: Direction,
     ) -> Result<SelectedFactPage, GuardError> {
         let Some(horizon) = self.cursor else {
             return Ok(SelectedFactPage {
@@ -25,8 +58,25 @@ impl JournalRead<'_> {
         };
         let invalid =
             || GuardError::Invalid("preparation decision cursor exceeds SQLite".to_owned());
-        let after = i64::try_from(after.map_or(0, wire::Seq::get)).map_err(|_| invalid())?;
         let horizon_sql = i64::try_from(horizon.get()).map_err(|_| invalid())?;
+        let (low, high, order) = match direction {
+            Direction::Forward => (
+                i64::try_from(cursor.map_or(0, wire::Seq::get)).map_err(|_| invalid())?,
+                horizon_sql,
+                "ASC",
+            ),
+            Direction::Backward => (
+                0,
+                match cursor {
+                    Some(before) => i64::try_from(before.get())
+                        .map_err(|_| invalid())?
+                        .saturating_sub(1)
+                        .min(horizon_sql),
+                    None => horizon_sql,
+                },
+                "DESC",
+            ),
+        };
         let probe = budget
             .rows()
             .checked_add(1)
@@ -35,21 +85,21 @@ impl JournalRead<'_> {
         read_metrics::observe_query();
         let mut statement = self
             .connection
-            .prepare(
+            .prepare(&format!(
                 "SELECT facts.seq, facts.kind, length(facts.envelope), facts.envelope \
                  FROM proposal_heads AS heads \
                  JOIN fact_envelopes AS facts ON facts.seq = heads.head_seq \
                  WHERE heads.controller = ?1 AND facts.kind = ?2 \
                  AND facts.seq > ?3 AND facts.seq <= ?4 \
-                 ORDER BY facts.seq LIMIT ?5",
-            )
+                 ORDER BY heads.head_seq {order} LIMIT ?5"
+            ))
             .map_err(GuardError::Store)?;
         let mut rows = statement
             .query(params![
                 controller.as_str(),
                 wire::FactKind::PreparationDecided.as_str(),
-                after,
-                horizon_sql,
+                low,
+                high,
                 probe
             ])
             .map_err(GuardError::Store)?;

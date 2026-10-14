@@ -21,7 +21,7 @@ mod conversation;
 pub(crate) mod inbox;
 pub(crate) mod relevance;
 pub(crate) mod result;
-mod sections;
+pub(crate) mod sections;
 mod sources;
 
 pub(crate) use sources::{RoomSources, SourceOwners};
@@ -434,12 +434,13 @@ fn recorded(
             None => break,
         }
     }
+    let decisions = sections::decisions(read, anchor, &room)?;
     Ok(Recorded {
         cursor,
         room,
         population,
         rows,
-        decisions: sections::decisions(read, anchor)?,
+        decisions,
     })
 }
 

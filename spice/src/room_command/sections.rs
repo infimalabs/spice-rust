@@ -12,12 +12,12 @@ use std::fmt;
 
 use serde::Serialize;
 use wire::rooms::{DecisionOutcome, PreparationDecided, RoomAuthorityStamp, RoomContributionKind};
-use wire::{Actor, Instant, Seq, SequenceCode, TaskStamp};
+use wire::{Actor, Instant, Seq, SequenceCode, TaskHandle, TaskStamp};
 
 use super::{Content, Failure, Publication, fault, store};
 
 /// Most decisions one room read shows, newest kept.
-pub(super) const DECISION_ROWS: usize = 32;
+pub(crate) const DECISION_ROWS: usize = 32;
 
 /// The shown contributions of one kind, in journal order.
 #[derive(Debug, Serialize)]
@@ -54,13 +54,15 @@ impl fmt::Display for ContributionGroup {
     }
 }
 
-/// The anchor's newest decisions, oldest first, and how many older ones the
-/// read withholds.
+/// The anchor's newest decisions, oldest first, and the read that pages its
+/// complete decision record when older ones exist.
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct Decisions {
     rows: VecDeque<Decision>,
-    #[serde(skip_serializing_if = "is_zero")]
-    withheld: usize,
+    /// The command paging every decision from the first, when this read
+    /// withholds older ones.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    older: Option<String>,
 }
 
 /// One operator decision as the journal records it.
@@ -73,59 +75,61 @@ struct Decision {
     outcome: DecisionOutcome,
 }
 
-fn is_zero(count: &usize) -> bool {
-    *count == 0
-}
-
 impl Decisions {
     pub(super) fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }
 }
 
-/// Every decision recorded on `anchor`'s candidates, keeping the newest
-/// [`DECISION_ROWS`] in decision order.
+/// The newest [`DECISION_ROWS`] decisions recorded on `anchor`'s candidates,
+/// in decision order, read as one newest-first page so the work never grows
+/// with the anchor's whole history. Older decisions stay reachable through
+/// the preparation authority of `room`, which pages from the first record.
 pub(super) fn decisions(
     read: &journal::JournalRead<'_>,
     anchor: &TaskStamp,
+    room: &TaskHandle,
 ) -> Result<Decisions, Failure> {
-    let mut shown = Decisions::default();
-    let mut after = None;
-    loop {
-        let page = read
-            .preparation_decisions(anchor, after, journal::FactReadBudget::RETAINED)
-            .map_err(store)?;
-        for envelope in page.rows {
-            let decided = envelope.fact.read::<PreparationDecided>().ok_or_else(|| {
-                fault(
-                    wire::FaultClass::Store,
-                    "room::decision-invalid",
-                    format!("decision {} is not a recorded decision", envelope.seq),
-                )
-            })?;
-            shown.rows.push_back(Decision {
-                decision: decided.decision.decision.decision,
-                seq: envelope.seq,
-                at: envelope.at,
-                actor: envelope.actor,
-                outcome: decided.decision.outcome,
-            });
-            if shown.rows.len() > DECISION_ROWS {
-                shown.rows.pop_front();
-                shown.withheld += 1;
-            }
-        }
-        match page.continuation {
-            Some(continuation) => after = Some(continuation),
-            None => return Ok(shown),
-        }
+    let budget = journal::FactReadBudget::new(
+        DECISION_ROWS,
+        journal::FactReadBudget::RETAINED.decoded_bytes(),
+    )
+    .map_err(store)?;
+    let page = read
+        .newest_preparation_decisions(anchor, None, budget)
+        .map_err(store)?;
+    let mut shown = Decisions {
+        rows: VecDeque::with_capacity(page.rows.len()),
+        older: page
+            .continuation
+            .map(|_| format!("spice preparation show {room}")),
+    };
+    for envelope in page.rows {
+        let decided = envelope.fact.read::<PreparationDecided>().ok_or_else(|| {
+            fault(
+                wire::FaultClass::Store,
+                "room::decision-invalid",
+                format!("decision {} is not a recorded decision", envelope.seq),
+            )
+        })?;
+        shown.rows.push_front(Decision {
+            decision: decided.decision.decision.decision,
+            seq: envelope.seq,
+            at: envelope.at,
+            actor: envelope.actor,
+            outcome: decided.decision.outcome,
+        });
     }
+    Ok(shown)
 }
 
 impl fmt::Display for Decisions {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.withheld > 0 {
-            write!(formatter, "\ndecisions: {} older withheld", self.withheld)?;
+        if let Some(older) = &self.older {
+            write!(
+                formatter,
+                "\ndecisions: older withheld; every decision: {older}"
+            )?;
         }
         for row in &self.rows {
             write!(

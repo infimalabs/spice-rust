@@ -134,14 +134,19 @@ impl Returnable {
         vec![(self.seats[seat].lane, reason.to_owned())]
     }
 
-    /// Each decision the room read shows, as (decision, outcome).
-    fn decisions(&self) -> Vec<(Value, Value)> {
-        let page = history(
+    /// The room read's decision section.
+    fn decision_section(&self) -> Value {
+        history(
             self.root.as_ref(),
             self.root.as_ref(),
             &[self.design.as_str()],
-        );
-        page["decisions"]["rows"]
+        )["decisions"]
+            .clone()
+    }
+
+    /// Each decision the room read shows, as (decision, outcome).
+    fn decisions(&self) -> Vec<(Value, Value)> {
+        self.decision_section()["rows"]
             .as_array()
             .expect("decision rows")
             .iter()
@@ -197,6 +202,49 @@ fn returns_read_in_decision_order_and_change_no_authority() {
             ),
         ],
         "every return reads whole, in decision order"
+    );
+    assert_eq!(
+        fixture.decision_section().get("older"),
+        None,
+        "a history the read shows whole names no older read"
+    );
+    fixture.finish();
+}
+
+#[test]
+fn a_room_read_keeps_the_newest_decisions_and_names_the_complete_record() {
+    let fixture = Returnable::new("design-returned-many", 1, None);
+    let rows = crate::room_command::sections::DECISION_ROWS;
+    let reasons: Vec<String> = (1..=rows + 1).map(|n| format!("reason {n}")).collect();
+    fixture.return_each(&reasons.iter().map(String::as_str).collect::<Vec<_>>());
+
+    let section = fixture.decision_section();
+    let shown: Vec<Value> = fixture
+        .decisions()
+        .into_iter()
+        .map(|(_, outcome)| outcome)
+        .collect();
+    assert_eq!(
+        shown,
+        reasons[1..]
+            .iter()
+            .map(|reason| encoded(&fixture.returned(reason)))
+            .collect::<Vec<_>>(),
+        "the read keeps the newest decisions, oldest first"
+    );
+    let older = section["older"]
+        .as_str()
+        .expect("older decisions are named");
+    let words: Vec<&str> = older
+        .strip_prefix("spice preparation show ")
+        .expect("the complete record is the preparation authority read")
+        .split(' ')
+        .collect();
+    assert!(
+        serde_json::to_string(&preparation_page(&fixture.root, &words))
+            .expect("page encodes")
+            .contains("\"reason 1\""),
+        "the named read's first page reaches the withheld oldest return"
     );
     fixture.finish();
 }
