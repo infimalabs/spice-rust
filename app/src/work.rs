@@ -444,6 +444,18 @@ impl<'a> WorkTask<'a> {
             .map(|claim| &claim.body.actor)
     }
 
+    /// The canonical member accent for the lane currently working this task.
+    ///
+    /// Operator claims and lanes outside the admitted roster have no member
+    /// accent. `working_claimant` excludes stale and terminal claim evidence.
+    #[must_use]
+    pub fn working_claimant_accent(&self, lanes: Option<&LaneView>) -> Option<usize> {
+        let Actor::Lane(lane) = self.working_claimant()? else {
+            return None;
+        };
+        watchband::lane_accent(&lanes?.lanes, *lane)
+    }
+
     /// The actor that owns this task: its active claimant, else its assignee.
     #[must_use]
     pub fn owner(&self) -> Option<&'a Actor> {

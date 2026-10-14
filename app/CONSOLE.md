@@ -254,12 +254,14 @@ team's complete current execution set selected without changing the durable
 location. Totals keep one footprint for every count. Tabs past a total scroll
 horizontally under edge fades and never enter the status row.
 
-Team- and group-local task tabs stay neutral in every state: a claim never
-colors their rim, text, badge, or background. Their labels, availability, and
-focus treatment still identify and operate the same work, while global strips
-own their interaction feedback independently. Every count badge is one neutral
-open-task total; see [Task counts show one open
-total](../docs/product/loops.md#the-jitter-contract).
+A team-local task tab a lane is working wears that lane's accent, and a
+group-local tab wears the accent of the Design it serves. An accented tab's
+text is always accent-tinted and its background carries a 5% accent tint, 10%
+on hover. Every horn tab's rails, global or local, keep the neutral line color
+and undim one neutral step on hover; no accent paints them. Unaccented local
+tabs and totals stay neutral, and global strips own their other interaction
+feedback independently. Every count badge is one neutral open-task total; see
+[Task counts show one open total](../docs/product/loops.md#the-jitter-contract).
 
 Each global stem tab opens its complete visibility-qualified stem within its
 own partition. A team strip has no stem roll-ups: past its total, each open
