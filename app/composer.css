@@ -66,6 +66,16 @@
   height: 1.5px;
   background: currentColor;
 }
+/* A lane's 22px menu control is materially smaller than the team's 34px
+   control, so its three bars keep the same hierarchy instead of reusing the
+   team glyph at full size. */
+.agent-menu-button .composer-menu-icon {
+  width: 8px;
+  height: 6px;
+}
+.agent-menu-button .composer-menu-icon > span {
+  height: 1px;
+}
 .agent-menu { position: static; }
 .agent-menu > .agent-menu-button {
   --team-control-button-size: 22px;
