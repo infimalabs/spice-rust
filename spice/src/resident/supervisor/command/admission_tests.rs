@@ -232,7 +232,6 @@ fn steering_pending_while_the_first_turn_is_held_follows_that_prompt_once() {
         );
 
         seat.register();
-        seat.steer(&[EARLIER]);
         seat.flush(&mut omp);
         omp.settle();
 
