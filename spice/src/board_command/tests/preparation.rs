@@ -955,17 +955,6 @@ fn a_design_awaiting_selection_waits_on_the_operator_until_its_outputs_settle() 
         Some("review"),
     );
     let lane = Actor::Lane(seats[0].lane);
-    let selection_count = |bus: &Bus| {
-        let status = task_status(&board(bus, epoch, lane.clone())).expect("status renders");
-        status
-            .lines()
-            .find_map(|line| line.strip_prefix("selection "))
-            .expect("status names the selection wait")
-            .parse::<usize>()
-            .expect("selection count")
-    };
-    assert!(open_awaiting_selection(&bus, epoch).is_empty());
-    assert_eq!(selection_count(&bus), 0);
 
     // A final-phase Design with an unselected output waits on the operator:
     // no lane can claim it, nor any output it gates.
@@ -975,7 +964,6 @@ fn a_design_awaiting_selection_waits_on_the_operator_until_its_outputs_settle() 
         open_awaiting_selection(&bus, epoch),
         [design.born().expect("design stamp")].into()
     );
-    assert_eq!(selection_count(&bus), 1);
     let available = board(&bus, epoch, lane.clone());
     let claim = issue(
         &bus,
@@ -996,10 +984,8 @@ fn a_design_awaiting_selection_waits_on_the_operator_until_its_outputs_settle() 
     // Settling one output leaves the wait; settling the last releases the
     // Design with no lane action, and it then concludes like any review.
     settle_output(&bus, epoch, &closed, false);
-    assert_eq!(selection_count(&bus), 1);
     settle_output(&bus, epoch, &deleted, true);
     assert!(open_awaiting_selection(&bus, epoch).is_empty());
-    assert_eq!(selection_count(&bus), 0);
     claim_task(&bus, epoch, &seats[0], &lane, &design);
     assert_committed(review_clean(&bus, epoch, &seats[0], &design));
     clean(&root, bus);

@@ -1197,6 +1197,37 @@ fn a_design_output_is_eligible_only_under_that_designs_selection() {
 }
 
 #[test]
+fn speculative_design_work_ends_at_exact_execution_authorization() {
+    let design = planning("BOARD-design", wire::TaskIntent::Design, Standing::Open);
+    let plan = planning("BOARD-plan", wire::TaskIntent::Plan, Standing::Open);
+    let resolved = board::resolved_tasks(&[design.clone(), plan.clone()]);
+    let speculative = constructed("BOARD-design", "BOARD-design", None, None, Vec::new());
+    let authorized = constructed(
+        "BOARD-design",
+        "BOARD-design",
+        None,
+        Some("BOARD-design"),
+        Vec::new(),
+    );
+    let mismatched = constructed(
+        "BOARD-design",
+        "BOARD-design",
+        None,
+        Some("BOARD-other"),
+        Vec::new(),
+    );
+    let plan_output = constructed("BOARD-plan", "BOARD-plan", None, None, Vec::new());
+
+    assert!(resolved.speculative_design_work(design.statement()));
+    assert!(resolved.speculative_design_work(speculative.statement()));
+    assert!(resolved.speculative_design_work(mismatched.statement()));
+    assert!(!resolved.speculative_design_work(authorized.statement()));
+    assert!(!resolved.speculative_design_work(plan.statement()));
+    assert!(!resolved.speculative_design_work(plan_output.statement()));
+    assert!(!resolved.speculative_design_work(entry("BOARD-ordinary").statement()));
+}
+
+#[test]
 fn a_plan_output_waits_only_for_its_plans_positive_conclusion() {
     let plan = |standing| planning("BOARD-plan", wire::TaskIntent::Plan, standing);
     let task = |dependencies| constructed("BOARD-plan", "BOARD-plan", None, None, dependencies);

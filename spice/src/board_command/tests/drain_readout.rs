@@ -91,10 +91,107 @@ fn next_read_classifies_peer_only_parked_work_without_board_rows() {
             stale: 1,
             blocked: 1,
             waiting: 1,
-            selection: 0,
             oops: 1,
         }
     );
+    clean(&root, bus);
+}
+
+#[test]
+fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
+    let (root, bus, epoch, seats) = fixture("next-read-design", 2);
+    let design_born = stamp("DRAIN-design01");
+    let design = TaskHandle::for_project("board.test", &design_born);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: design_born }],
+        &TaskAdd {
+            preparation: None,
+            intent: Some(wire::TaskIntent::Design),
+            title: "Explore a Design".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["Reach a decision".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:drain-design".parse().expect("fixture origin")),
+            flow: Some("design,review".to_owned()),
+            depends: Vec::new(),
+            claim: false,
+        },
+    ));
+    let output = stamp("DRAIN-output01");
+    let current = board(&bus, epoch, Actor::Operator);
+    let controller = at(&current, &design);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![
+            Witness::Absence {
+                task: output.clone(),
+            },
+            statement_witness(controller),
+            workflow_witness(controller),
+        ],
+        &TaskAdd {
+            preparation: Some(design.clone()),
+            intent: None,
+            title: "Candidate output".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["The candidate is selected".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:drain-design".parse().expect("fixture origin")),
+            flow: None,
+            depends: Vec::new(),
+            claim: false,
+        },
+    ));
+    let prerequisite = todo_task(&bus, epoch, "DRAIN-first002", "Executable prerequisite");
+    let blocked = todo_task(&bus, epoch, "DRAIN-block002", "Ordinary blocked work");
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        dependency_witnesses(&current, &blocked, &[&prerequisite], None, false),
+        &TaskDepends {
+            task: blocked,
+            after: vec![prerequisite],
+            remove: false,
+        },
+    ));
+    claim_task(&bus, epoch, &seats[1], &Actor::Lane(seats[1].lane), &design);
+    subscription::configure_subscription(&bus, epoch, &seats[0], TeamLife::Steer);
+
+    let answer = next_board(&bus, epoch, Actor::Lane(seats[0].lane));
+    let Some(NextWorkState::Dry { board: counts, .. }) = answer.next else {
+        panic!("a steered lane stays dry")
+    };
+    assert_eq!(
+        counts,
+        NextWorkCounts {
+            active: 0,
+            stale: 0,
+            blocked: 1,
+            waiting: 0,
+            oops: 0,
+        },
+        "the Design and its unauthorized output stay on Design surfaces"
+    );
+    let status =
+        task_status(&board(&bus, epoch, Actor::Lane(seats[0].lane))).expect("task status renders");
+    for summary in ["active 0", "ready 1", "review 0", "blocked 1", "waiting 0"] {
+        assert!(
+            status.lines().any(|line| line == summary),
+            "{summary:?} is absent from:\n{status}"
+        );
+    }
     clean(&root, bus);
 }
 
@@ -359,7 +456,6 @@ fn next_read_returns_each_authoritative_team_policy() {
                 stale: 0,
                 blocked: 0,
                 waiting: 0,
-                selection: 0,
                 oops: 0,
             }
         );

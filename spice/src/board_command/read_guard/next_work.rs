@@ -256,18 +256,20 @@ fn dry_counts(
         stale: 0,
         blocked: 0,
         waiting: 0,
-        selection: 0,
         oops: entries
             .iter()
             .filter(|entry| {
                 entry.project().visibility().hidden_stem() == Some("oops")
                     && entry.workflow().status == "pending"
                     && entry.workflow().completion.is_none()
+                    && !satisfied.speculative_design_work(entry.statement())
             })
             .count(),
     };
     for entry in visible.filter(|entry| {
-        entry.workflow().status == "pending" && entry.workflow().completion.is_none()
+        entry.workflow().status == "pending"
+            && entry.workflow().completion.is_none()
+            && !satisfied.speculative_design_work(entry.statement())
     }) {
         match entry.claim().map(|claim| claim.disposition) {
             Some(ClaimDisposition::Active) => counts.active += 1,
@@ -279,9 +281,6 @@ fn dry_counts(
         }
         if entry.workflow().deferral.is_some() {
             counts.waiting += 1;
-        }
-        if board::awaits_selection(entry, satisfied) {
-            counts.selection += 1;
         }
     }
     counts
