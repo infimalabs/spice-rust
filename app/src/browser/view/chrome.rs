@@ -304,11 +304,6 @@ impl DesignSplit {
     fn title(self) -> String {
         format!("; Designs {} active, {} passive", self.active, self.passive)
     }
-
-    /// Whether every open Design here is passive: no lane can acquire one.
-    const fn idle(self) -> bool {
-        self.active == 0 && self.passive > 0
-    }
 }
 
 fn render_global_work_rail(
@@ -366,12 +361,7 @@ fn render_aggregate_pill(
     html! {
         <button
             key={focus_key}
-            class={classes!(
-                "app-horn-tab",
-                "app-horn-tab--down",
-                "app-horn-tab--wide",
-                designs.is_some_and(DesignSplit::idle).then_some("app-horn-tab--passive"),
-            )}
+            class="app-horn-tab app-horn-tab--down app-horn-tab--wide"
             type="button"
             title={title.clone()}
             aria-label={title}
@@ -403,14 +393,12 @@ fn render_stem_pill(
         designs.map(DesignSplit::title).unwrap_or_default(),
     );
     let navigate = navigate.clone();
+    let label = html! { <span class="app-horn-tab__label">{identity.stem().to_owned()}</span> };
+    let count = render_task_count(counts);
     html! {
         <button
             key={focus_key.clone()}
-            class={classes!(
-                "app-horn-tab",
-                "app-horn-tab--down",
-                designs.is_some_and(DesignSplit::idle).then_some("app-horn-tab--passive"),
-            )}
+            class="app-horn-tab app-horn-tab--down"
             type="button"
             title={title.clone()}
             aria-label={title}
@@ -421,8 +409,13 @@ fn render_stem_pill(
             data-sidebar-focus-key={focus_key}
             onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))}
         >
-            <span class="app-horn-tab__label">{identity.stem().to_owned()}</span>
-            {render_task_count(counts)}
+            if matches!(rail, GlobalWorkRail::Design) {
+                {count}
+                {label}
+            } else {
+                {label}
+                {count}
+            }
         </button>
     }
 }

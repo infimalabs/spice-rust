@@ -97,6 +97,9 @@
   --accent-3: #b3402a;
   --accent-4: #007c89;
   --accent-5: #8a4fbf;
+  /* Surfaces that ask for the end of the configured palette never name its
+     current colour or ordinal themselves. */
+  --accent-final: var(--accent-5);
   /* The speaker accent of the operator and of the system itself: any card or
      quote whose speaker holds no lane accent slot wears it. */
   --accent-neutral: var(--ink);
@@ -185,6 +188,16 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 /* Shared application materials. Placement remains with each surface; these
    classes own the visual recipe and semantic state exactly once. */
 .app-horn-tabs {
+  /* A flavor shifts one component's semantic surface roles together. Tabs use
+     the product's first accent by default; an enclosing rail may select any
+     other base without growing a parallel color recipe. */
+  --app-flavor-base: var(--accent-0);
+  --app-flavor-control: color-mix(in srgb, var(--app-flavor-base) 3%, var(--control));
+  --app-flavor-ink: color-mix(in srgb, var(--app-flavor-base) 12%, var(--ink));
+  --app-flavor-muted: color-mix(in srgb, var(--app-flavor-base) 18%, var(--muted));
+  --app-flavor-line: color-mix(in srgb, var(--app-flavor-base) 24%, var(--line));
+  --app-flavor-ground: color-mix(in srgb, var(--app-flavor-base) 3%, var(--page));
+  --app-flavor-focus: color-mix(in srgb, var(--app-flavor-base) 58%, var(--muted));
   display: flex;
   align-items: flex-end;
   gap: var(--mosaic-gap);
@@ -194,7 +207,7 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   scrollbar-width: none;
 }
 .app-horn-tab {
-  --app-horn-tab-tint: var(--muted);
+  --app-horn-tab-tint: var(--app-flavor-muted);
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -203,16 +216,15 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   padding: 0 var(--app-horn-tab-inset);
   overflow: clip;
   border: 0;
-  border-inline: var(--quote-rail) solid var(--line);
-  background: var(--control);
-  color: var(--muted);
+  border-inline: var(--quote-rail) solid var(--app-flavor-line);
+  background: var(--app-flavor-control);
+  color: var(--app-flavor-muted);
   font: 500 var(--app-type-status)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-horn-tab--down { border-radius: 0 0 var(--app-radius-card) var(--app-radius-card); }
 .app-horn-tab--up { border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
 .app-horn-tab--wide { border-inline-width: var(--message-rail); }
-.app-horn-tab__label { color: var(--muted); opacity: .72; }
-.app-horn-tab--passive { border-style: dashed; opacity: .64; }
+.app-horn-tab__label { color: var(--app-flavor-muted); opacity: .72; }
 .app-horn-tab--group { gap: 0; padding: 0; }
 .app-horn-tab--group > button {
   align-self: stretch;
@@ -244,33 +256,33 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   text-align: center;
 }
 :is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button) {
-  background: color-mix(in srgb, var(--app-horn-tab-tint) 5%, var(--control));
-  color: var(--muted);
+  background: color-mix(in srgb, var(--app-horn-tab-tint) 5%, var(--app-flavor-control));
+  color: var(--app-flavor-muted);
 }
 :is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button):hover {
-  background: color-mix(in srgb, var(--app-horn-tab-tint) 10%, var(--control));
+  background: color-mix(in srgb, var(--app-horn-tab-tint) 10%, var(--app-flavor-control));
 }
-/* Hover undims every horn tab's rails a neutral step; no accent paints them. */
-.app-horn-tab:hover { border-color: color-mix(in srgb, var(--muted) 35%, var(--line)); }
+/* Hover strengthens every horn tab's rails within the rail's base flavor. */
+.app-horn-tab:hover { border-color: color-mix(in srgb, var(--app-flavor-muted) 35%, var(--app-flavor-line)); }
 .app-horn-tab__handle.dormant {
-  color: color-mix(in srgb, var(--muted) 62%, transparent);
+  color: color-mix(in srgb, var(--app-flavor-muted) 62%, transparent);
 }
 /* A local handle in its work's accent: tinted text and background always, with
-   the shared neutral rails. */
+   rails supplied by the enclosing flavor. */
 .app-horn-tab__handle[data-accent] {
   --app-horn-tab-tint: var(--accent-slot);
-  color: color-mix(in srgb, var(--accent-slot) 55%, var(--ink));
+  color: color-mix(in srgb, var(--accent-slot) 55%, var(--app-flavor-ink));
 }
 .app-horn-tabs :focus-visible {
-  outline: var(--app-focus-ring-width) solid var(--muted);
+  outline: var(--app-focus-ring-width) solid var(--app-flavor-focus);
   outline-offset: -2px;
 }
 .app-count-badge {
   padding: 0 5px;
   border-radius: var(--app-radius-pill);
-  background: var(--muted);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 24%, transparent);
-  color: var(--page);
+  background: var(--app-flavor-muted, var(--muted));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-flavor-ground, var(--page)) 24%, transparent);
+  color: var(--app-flavor-ground, var(--page));
   font-size: var(--app-type-badge);
 }
 

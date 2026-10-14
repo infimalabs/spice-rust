@@ -136,9 +136,11 @@ list`, `spice room status`, and the browser all render it:
 A concluded or deleted Design keeps its standing while a saved group still
 holds it: group membership decides activity only for an open Design. The
 command bar's Design rail names how many open Designs each stem holds active
-and passive, and dashes a stem whose open Designs are all passive. In the work
-overview and on dependency cards a passive Design reads **Passive**, waiting on
-the operator.
+and passive without dimming or changing the tab edge for passive standing.
+Design tabs share the global execution tabs' structure and interactions, with
+their count before the stem and their whole surface flavored by the palette's
+final accent rather than its first. In the work overview and on dependency
+cards a passive Design reads **Passive**, waiting on the operator.
 
 ## Concluding a Design
 
