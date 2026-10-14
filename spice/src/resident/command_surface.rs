@@ -294,9 +294,42 @@ impl<'a> Surface<'a> {
     }
 
     fn dispatch_controls(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
-        self.dispatch_room_coordination(command)
+        self.dispatch_room_reads(command)
+            .map(CommandDispatch::ordinary)
+            .or_else(|| self.dispatch_room_coordination(command))
             .or_else(|| self.dispatch_steering(command))
             .or_else(|| self.dispatch_policy(command).map(CommandDispatch::ordinary))
+    }
+
+    /// Room reads, which commit nothing and notify no lane.
+    fn dispatch_room_reads(
+        &self,
+        command: &wire::AdmittedCommand,
+    ) -> Option<Outcome<CommandAnswer>> {
+        Some(match (command.kind(), command.body()) {
+            (CommandKind::RoomCoordinationRead, Intent::RoomCoordinationRead(request)) => {
+                crate::board_command::room_coordination_read(
+                    self.bus,
+                    request,
+                    &self.config.projects,
+                    &self.config.allocation,
+                )
+            }
+            (CommandKind::RoomConversationText, Intent::RoomConversationText(request)) => {
+                crate::room_command::conversation_text(self.bus, &self.paths.tape, request)
+            }
+            (CommandKind::RoomContributionSources, Intent::RoomContributionSources(request)) => {
+                crate::room_command::contribution_sources(
+                    self.bus,
+                    crate::room_command::SourceOwners {
+                        tape: &self.paths.tape,
+                        artifacts: &self.paths.artifacts(),
+                    },
+                    request,
+                )
+            }
+            _ => return None,
+        })
     }
 
     fn dispatch_room_coordination(
@@ -304,19 +337,6 @@ impl<'a> Surface<'a> {
         command: &wire::AdmittedCommand,
     ) -> Option<CommandDispatch> {
         let (outcome, notify) = match (command.kind(), command.body()) {
-            (CommandKind::RoomCoordinationRead, Intent::RoomCoordinationRead(request)) => (
-                crate::board_command::room_coordination_read(
-                    self.bus,
-                    request,
-                    &self.config.projects,
-                    &self.config.allocation,
-                ),
-                None,
-            ),
-            (CommandKind::RoomConversationText, Intent::RoomConversationText(request)) => (
-                crate::room_command::conversation_text(self.bus, &self.paths.tape, request),
-                None,
-            ),
             (CommandKind::RoomCoordinate, Intent::RoomCoordinate(request)) => (
                 crate::board_command::room_coordinate(
                     self.bus,

@@ -564,7 +564,8 @@ impl CommandKind {
             | Self::VendorCatalog
             | Self::BoardHandout
             | Self::RoomCoordinationRead
-            | Self::RoomConversationText => Law::OPERATOR_READ,
+            | Self::RoomConversationText
+            | Self::RoomContributionSources => Law::OPERATOR_READ,
             Self::WorkingGroupMove | Self::WorkingGroupArrange => Law::GROUP,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::RoomPost => Law::ROOM_POST,
@@ -785,7 +786,9 @@ impl CommandKind {
     const fn non_task_law(self) -> Law {
         match self {
             Self::RoomPost => Law::ROOM_POST,
-            Self::RoomCoordinationRead | Self::RoomConversationText => Law::OPERATOR_READ,
+            Self::RoomCoordinationRead
+            | Self::RoomConversationText
+            | Self::RoomContributionSources => Law::OPERATOR_READ,
             Self::RoomCoordinate => Law::ROOM_COORDINATE,
             Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
             Self::RoomLeave => Law::ROOM_LEAVE,

@@ -212,6 +212,67 @@ pub(super) async fn send_operator_item_texts(
     Ok(())
 }
 
+/// Read the sources of contributions in shown Designs while the mailbox can
+/// hold their answers; a read the pool cannot hold stays owed for the next
+/// settled response.
+pub(super) async fn send_contribution_source_reads(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    data: &SurfaceData,
+) -> Result<(), String> {
+    let pane = SteerPane::over(principal);
+    if !pane.offers(CommandKind::RoomContributionSources) {
+        return Ok(());
+    }
+    let owed = data
+        .write()
+        .as_mut()
+        .map(|runtime| runtime.take_contribution_source_reads(actions.contribution_source_slots()))
+        .unwrap_or_default();
+    let mut owed = owed.into_iter();
+    while let Some((room, publication)) = owed.next() {
+        let id = random_uuid()?;
+        let command = pane
+            .command(
+                id,
+                CommandKind::RoomContributionSources,
+                vec![],
+                wire::intent::RoomContributionSources {
+                    room,
+                    publication: publication.clone(),
+                },
+            )
+            .map_err(|error| error.to_string())?;
+        let bytes = wire::encode(&command).map_err(|error| error.to_string())?;
+        match actions.reserve_pending(
+            id,
+            PendingKind::ContributionSources {
+                publication: publication.clone(),
+            },
+            bytes.len(),
+        ) {
+            Ok(()) => {}
+            Err(ActionAdmissionError::Records | ActionAdmissionError::Payload) => {
+                if let Some(runtime) = data.write().as_mut() {
+                    std::iter::once(publication)
+                        .chain(owed.map(|(_, publication)| publication))
+                        .for_each(|publication| {
+                            runtime.restore_contribution_source_read(&publication);
+                        });
+                }
+                return Ok(());
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+        if let Err(error) = writer.send(Message::Bytes(bytes)).await {
+            actions.cancel_pending(id);
+            return Err(websocket_error(error));
+        }
+    }
+    Ok(())
+}
+
 async fn send_board(
     principal: &Principal,
     writer: &mut SocketWriter,

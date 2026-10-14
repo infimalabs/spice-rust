@@ -14,6 +14,9 @@ const HISTORY_RECORD_LIMIT: usize = 32;
 /// Outstanding task detail reads, kept below [`ACTION_RECORD_LIMIT`] so a
 /// large selection never crowds out current reads and mutations.
 pub(super) const TASK_DETAIL_READ_LIMIT: usize = 16;
+/// Outstanding contribution source reads, bounded like task detail reads.
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+const CONTRIBUTION_SOURCE_READ_LIMIT: usize = 8;
 const TEXT_ALLOWANCE_BYTES: usize = wire::media::MAX_MEDIA_BYTES;
 const MEDIA_URL_BYTES: usize = wire::media::MAX_MEDIA_BYTES.div_ceil(3) * 4 + 64;
 const ACTION_PAYLOAD_LIMIT: usize =
@@ -165,6 +168,18 @@ impl ActionQueue {
             matches!(&entry.kind, PendingKind::TaskDetail { task: pending } if pending == task)
         })
     }
+    /// How many more contribution source reads may be outstanding.
+    #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+    pub(super) fn contribution_source_slots(&self) -> usize {
+        let outstanding = self
+            .mailbox
+            .borrow()
+            .pending
+            .values()
+            .filter(|entry| matches!(entry.kind, PendingKind::ContributionSources { .. }))
+            .count();
+        CONTRIBUTION_SOURCE_READ_LIMIT.saturating_sub(outstanding)
+    }
     #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
     pub(super) fn has_task_relations(&self, key: &crate::TaskRelationsKey) -> bool {
         self.mailbox.borrow().pending.values().any(|entry| {
@@ -236,6 +251,7 @@ impl PendingKind {
             Self::Consent => Some(CurrentRead::Consent),
             Self::TaskDetail { .. }
             | Self::ConversationText { .. }
+            | Self::ContributionSources { .. }
             | Self::Job { .. }
             | Self::Jobs { .. }
             | Self::WorkingGroup { .. }
@@ -245,6 +261,7 @@ impl PendingKind {
             | Self::Preparation { .. }
             | Self::Draft { .. }
             | Self::Conclude { .. }
+            | Self::Contribute { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
             | Self::TrustGrant { .. }
@@ -482,6 +499,17 @@ impl ClientAction {
                     .saturating_add(reason)
                     .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>())
             }
+            Self::Contribute {
+                request, expected, ..
+            } => request
+                .room
+                .as_str()
+                .len()
+                .saturating_add(request.text.len())
+                .saturating_add(
+                    request.sources.len() * std::mem::size_of::<wire::rooms::RoomSource>(),
+                )
+                .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>()),
             Self::Steer {
                 message,
                 attachments,

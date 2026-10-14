@@ -308,7 +308,7 @@ fn inbox_words(runtime: &AppRuntime, conversation: &Conversation) -> String {
     }
 }
 
-fn unavailable_reason(unavailable: &RoomSourceUnavailable) -> String {
+pub(super) fn unavailable_reason(unavailable: &RoomSourceUnavailable) -> String {
     match unavailable {
         RoomSourceUnavailable::Missing {} => "the source is missing".to_owned(),
         RoomSourceUnavailable::Hidden {} => "the source is hidden".to_owned(),

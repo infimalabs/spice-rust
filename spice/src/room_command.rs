@@ -828,6 +828,70 @@ pub(crate) fn conversation_text(
     })
 }
 
+/// One contribution's cited sources, resolved at its own journal position
+/// exactly as [`answer`] resolves them; an unknown contribution refuses.
+pub(crate) fn contribution_sources(
+    bus: &bus::Bus,
+    owners: SourceOwners<'_>,
+    request: &wire::intent::RoomContributionSources,
+) -> Outcome<wire::intent::CommandAnswer> {
+    let (room, publication) = (request.room.clone(), request.publication.clone());
+    let read = bus.read(move |read| {
+        let cursor = read.cursor()?;
+        let Some(seq) = read.room_publication_seq(&room, &publication)? else {
+            return Ok((cursor, None));
+        };
+        let page = read.fact_page(
+            journal::FactPageStart::At(seq),
+            seq,
+            journal::FactReadBudget::RETAINED,
+        )?;
+        let contributed = page
+            .rows
+            .into_iter()
+            .next()
+            .and_then(|envelope| envelope.fact.read::<RoomContributed>())
+            .filter(|contributed| contributed.publication == publication);
+        Ok((cursor, contributed.map(|contributed| (seq, contributed))))
+    });
+    let (cursor, contributed) = match read {
+        Ok((Some(cursor), contributed)) => (cursor, contributed),
+        Ok((None, _)) => {
+            return fault(
+                FaultClass::Store,
+                "room::cursor-missing",
+                "the admitted journal names no read position",
+            )
+            .outcome();
+        }
+        Err(error) => {
+            return fault(FaultClass::Store, "room::journal-unreadable", error).outcome();
+        }
+    };
+    let Some((seq, contributed)) = contributed else {
+        return Outcome::Refusal(crate::read_page::refusal(
+            "room",
+            "contribution-missing",
+            Some(request.publication.to_string()),
+            "read the room and name one of its contributions",
+        ));
+    };
+    let mut sources = RoomSources::new(Some(owners), &request.room);
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Snapshot(cursor),
+        body: wire::intent::CommandAnswer::RoomContributionSources(
+            wire::intent::RoomContributionSourcesAnswer {
+                publication: request.publication.clone(),
+                sources: contributed
+                    .sources
+                    .into_iter()
+                    .map(|source| sources.view(source, seq))
+                    .collect(),
+            },
+        ),
+    })
+}
+
 impl fmt::Display for RoomHistory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

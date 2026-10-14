@@ -782,6 +782,7 @@
 .room-preparation > header,
 .room-approval > header,
 .room-conclusion > header,
+.room-contributions > header,
 .room-history > header {
   display: flex;
   justify-content: space-between;
@@ -791,7 +792,74 @@
 
 .room-reading,
 .room-approval,
+.room-contributions,
 .room-history { display: grid; gap: 8px; }
+
+/* Contributions are evidence, never authority, so they keep the neutral rail
+   and say what they offer in words rather than colour. */
+.room-contribution-group { display: grid; gap: 6px; }
+.room-contribution-group h4 {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--app-type-detail);
+}
+.room-contribution-count { color: var(--muted); font-weight: normal; }
+.room-contribution-group ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.room-contribution-card > header { flex-wrap: wrap; gap: 4px 8px; }
+.room-contribution-author { margin-inline-end: auto; }
+.room-contribution-sources ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--app-type-meta);
+}
+.room-contribution-sources li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+  overflow-wrap: anywhere;
+}
+.room-contribution-source-state { color: var(--muted); }
+.room-contribution-sources li[data-source-state="unavailable"] .room-contribution-source-state,
+.room-card p.room-contribution-sources-failed { color: var(--danger); }
+.room-card p.room-contribution-sources-none { color: var(--muted); font-size: var(--app-type-meta); }
+
+.room-contribute,
+.room-invitations { display: grid; gap: 8px; font-size: var(--app-type-detail); }
+.room-contribute:focus { outline: none; }
+.room-contribute :is(button, input, textarea) { font: inherit; }
+.room-contribute fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 6px 8px;
+  border: var(--app-edge);
+  border-radius: var(--app-radius-compact);
+  min-width: 0;
+}
+.room-contribute-sources { flex-direction: column; }
+.room-contribute-sources label,
+.room-contribute-kinds label { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
+.room-contribute-sources span { overflow-wrap: anywhere; }
+.room-contribute-text { display: grid; gap: 4px; }
+.room-contribute-text textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.room-contribute-cite input { flex: 1 1 12em; min-width: 0; }
+.room-contribute-preview { display: grid; gap: 6px; }
+.room-contribute-refusal { color: var(--danger); overflow-wrap: anywhere; }
+.room-invitations > header { display: flex; justify-content: space-between; align-items: baseline; }
+.room-invitations h3 { margin: 0; font-size: inherit; }
+.room-invitation-card p { margin: 4px 0 0; color: var(--muted); overflow-wrap: anywhere; }
 
 .room-conclusion { display: grid; gap: 6px; font-size: var(--app-type-detail); }
 .room-conclusion :is(button, input) { font: inherit; }

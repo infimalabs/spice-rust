@@ -1,10 +1,11 @@
-//! Typed operator task changes on the live operator socket: Draft creation,
-//! revision, and filing, and a Design's conclusion.
+//! Typed task changes on the live socket: Draft creation, revision, and
+//! filing, a Design's conclusion, and a lane's Design contribution.
 
 use super::*;
 
-/// Send one operator task change under the heads its control was drawn from:
-/// a Draft's creation, revision, or filing, or a Design's conclusion.
+/// Send one typed task change under the heads its control was drawn from:
+/// a Draft's creation, revision, or filing, a Design's conclusion, or a
+/// lane's contribution to an open Design.
 pub(super) async fn send_task_change(
     principal: &Principal,
     writer: &mut SocketWriter,
@@ -28,6 +29,24 @@ pub(super) async fn send_task_change(
                     respond: respond.clone(),
                 },
                 CommandKind::TaskConclude,
+                expected.clone(),
+                request,
+            )
+            .await
+        }
+        ClientAction::Contribute {
+            request,
+            expected,
+            respond,
+        } => {
+            send_typed(
+                principal,
+                writer,
+                actions,
+                PendingKind::Contribute {
+                    respond: respond.clone(),
+                },
+                CommandKind::RoomContribute,
                 expected.clone(),
                 request,
             )

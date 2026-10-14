@@ -333,6 +333,7 @@ async fn apply_incoming_frame(
     .await?;
     refresh::send_task_detail_reads(principal, writer, actions, data).await?;
     refresh::send_operator_item_texts(principal, writer, actions, data).await?;
+    refresh::send_contribution_source_reads(principal, writer, actions, data).await?;
     drain_submissions(principal, writer, actions, &handles.submissions).await?;
     actions.rearm().map_err(|error| error.to_string())?;
     Ok(application.lane_refresh)
@@ -928,11 +929,11 @@ async fn dispatch_action(
                 .await
                 .map(Some)
         }
-        action @ (ClientAction::Draft { .. } | ClientAction::Conclude { .. }) => {
-            send_task_change(principal, writer, actions, action)
-                .await
-                .map(Some)
-        }
+        action @ (ClientAction::Draft { .. }
+        | ClientAction::Conclude { .. }
+        | ClientAction::Contribute { .. }) => send_task_change(principal, writer, actions, action)
+            .await
+            .map(Some),
         ClientAction::DrainSubmissions => {
             drain_submissions(principal, writer, actions, submissions)
                 .await

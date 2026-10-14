@@ -13,6 +13,8 @@ pub(crate) type RoomCoordinationResponse =
     std::rc::Rc<dyn Fn(Result<wire::intent::RoomCoordinationView, String>)>;
 pub(crate) type PreparationResponse = std::rc::Rc<dyn Fn(Result<wire::intent::TextAnswer, String>)>;
 pub(crate) type TaskResponse = std::rc::Rc<dyn Fn(Result<wire::intent::TaskAnswer, String>)>;
+pub(crate) type ContributeResponse =
+    std::rc::Rc<dyn Fn(Result<wire::intent::RoomContributeAnswer, String>)>;
 
 /// One complete room publication request retained by the bounded action mailbox.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
@@ -132,6 +134,13 @@ pub(crate) enum ClientAction {
         request: wire::intent::TaskConclude,
         expected: Vec<wire::Witness>,
         respond: TaskResponse,
+    },
+    /// Contribute one typed record to an open Design as this lane, at the
+    /// Design and source heads its preview was drawn from.
+    Contribute {
+        request: wire::intent::RoomContribute,
+        expected: Vec<wire::Witness>,
+        respond: ContributeResponse,
     },
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,

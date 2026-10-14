@@ -275,6 +275,36 @@ progress or approval. The section only renders inside an explicitly opened menu
 or read view: a status, relevance, or automation update changes its text in
 place and never mounts a room, moves a console, or wakes a lane.
 
+## Design contributions
+
+A lane contributes to an open Design's problem space with one typed record:
+a reason for, a reason against, evidence, or a question, with its text and
+the transcript, journal, or artifact sources it cites. A contribution is
+lane-authored evidence for the operator's judgment, never authority: it
+moves no task, claim, working group, candidate, decision, or authorization,
+and it wakes nobody. Only a lane session can contribute; the operator reads
+contributions and decides through the ordinary Design controls.
+
+The Design read view groups contributions by kind, each with its lane,
+time, text, and every cited source, while room history keeps them in journal
+order among the ordinary conversation. The resident resolves each cited
+source for the shown Design and the card says whether it is available or
+why not (missing, hidden, changed, unreadable, or retained in an unsupported
+shape), the same states `spice room history` prints.
+
+A lane session's open Design view carries the contribution form: choose a
+kind, write nonempty text, cite this room's recent publications or a typed
+artifact digest or journal fact code, then **Preview contribution** to see
+the non-authorizing effect before **Submit contribution**. The submission
+witnesses the Design's statement and workflow heads and each cited source, so
+a concluded Design or a changed source refuses beside the kept draft and
+leaves every other surface as it was. A pending submission cannot be sent
+again, and the contribution appears only when the room fact arrives. A
+concluded Design stays readable with no form. The lane's **Design
+invitations**, in the Spice sidebar, list the resident's notices of open
+Designs matching its claimed work, newest first; following one opens that
+Design's view and form without joining its group or acquiring it.
+
 ## Toolbar
 
 The toolbar has two rows: the team's task strip, then one status band holding

@@ -3,9 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::rooms::{
-    QuestionClosure, QuestionResultRef, RoomAuthorityStamp, RoomContributionKind,
+    QuestionClosure, QuestionResultRef, RoomAnchor, RoomAuthorityStamp, RoomContributionKind,
     RoomReceiptDisposition, RoomReceiptRef, RoomRelevanceVerdict, RoomSource,
-    RoomSourceUnavailable,
+    RoomSourceUnavailable, RoomSourceView,
 };
 pub use crate::rooms::{WorkingGroupArrange, WorkingGroupMove};
 use crate::{OccupantAddress, SequenceCode, TaskHandle, TaskStamp};
@@ -116,6 +116,27 @@ pub struct RoomContributeAnswer {
     pub publication: RoomAuthorityStamp,
     /// What the contribution offers.
     pub kind: RoomContributionKind,
+}
+
+/// Resolve one recorded contribution's cited sources at its own position.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomContributionSources {
+    /// The Design room the contribution belongs to.
+    pub room: RoomAnchor,
+    /// The recorded contribution.
+    pub publication: RoomAuthorityStamp,
+}
+
+/// Each cited source of one contribution, in the author's order, as a link
+/// it can still follow or the typed reason it cannot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomContributionSourcesAnswer {
+    /// The contribution read.
+    pub publication: RoomAuthorityStamp,
+    /// Its sources at the read barrier.
+    pub sources: Vec<RoomSourceView>,
 }
 
 /// Read one room's current coordination projection.

@@ -49,6 +49,8 @@ mod composer_reading_order;
 #[cfg(any(target_arch = "wasm32", test))]
 mod composer_submissions;
 #[cfg(any(target_arch = "wasm32", test))]
+mod contribution_draft;
+#[cfg(any(target_arch = "wasm32", test))]
 mod image_annotation;
 #[cfg(any(target_arch = "wasm32", test))]
 mod image_navigation;
@@ -119,6 +121,9 @@ pub(crate) enum PendingKind {
     Conclude {
         respond: client_action::TaskResponse,
     },
+    Contribute {
+        respond: client_action::ContributeResponse,
+    },
     Board,
     Lanes {
         rebases: Vec<wire::CanonicalUuid>,
@@ -143,6 +148,10 @@ pub(crate) enum PendingKind {
     },
     /// One lane-authored conversation publication's text.
     ConversationText {
+        publication: wire::rooms::RoomAuthorityStamp,
+    },
+    /// One Design contribution's resolved sources.
+    ContributionSources {
         publication: wire::rooms::RoomAuthorityStamp,
     },
     TaskRelations {
@@ -186,13 +195,14 @@ mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
-    AppRuntime, AppSurface, BlockerActionState, BoardView, Conversation, ConversationProjection,
-    ConversationText, CoordinationStanding, Delivery, ItemConcern, LaneActivity, LaneMember,
-    LaneRow, LaneStatus, LaneView, OperatorItem, ParticipantReason, PreparationProjection,
-    QuestionResult, Relevance, ResumeAutomation, RoomAnchorAuthority, RoomAnchorSettlement,
-    RoomEvent, RoomEventKind, RoomParticipant, RoomPositioned, RoomProjection,
-    RoomProjectionStatus, RoomState, Stale, StreamApplication, StreamDirective, StreamTerminal,
-    TaskDetailState, TaskRelationsKey, TaskRelationsState, stale_reads,
+    AppRuntime, AppSurface, BlockerActionState, BoardView, Contribution, ContributionGroup,
+    ContributionSources, Conversation, ConversationProjection, ConversationText,
+    CoordinationStanding, Delivery, ItemConcern, LaneActivity, LaneMember, LaneRow, LaneStatus,
+    LaneView, OperatorItem, ParticipantReason, PreparationProjection, QuestionResult, Relevance,
+    ResumeAutomation, RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind,
+    RoomParticipant, RoomPositioned, RoomProjection, RoomProjectionStatus, RoomState, Stale,
+    StreamApplication, StreamDirective, StreamTerminal, TaskDetailState, TaskRelationsKey,
+    TaskRelationsState, stale_reads,
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};

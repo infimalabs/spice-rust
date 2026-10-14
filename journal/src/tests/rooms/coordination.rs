@@ -435,6 +435,45 @@ fn room_authority_pages_current_heads_through_their_horizon() {
     );
 }
 
+/// Every Design notice belongs to the room snapshot, so a lane's invitation
+/// survives a reconnect; the tasks it names do not enter it.
+#[test]
+fn room_authority_pages_every_design_notice() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let design = task(&mut journal, 1, None);
+    let claimed = task(&mut journal, 2, None);
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        "task:rooms".parse().expect("room origin"),
+        instant(),
+        wire::Producer::ResidentRecognition,
+    );
+    write
+        .fact(
+            wire::rooms::DesignNoticed {
+                design,
+                lane: uuid(HOLDER),
+                occupant: uuid(HOLDER),
+                task: claimed,
+                claim: wire::SequenceCode::new(2),
+                terms: vec!["rooms".to_owned()],
+            },
+            crate::FactCause::Root,
+        )
+        .expect("notice builds");
+    journal.apply(write).expect("notice stored");
+    let noticed = cursor(&journal).expect("noticed");
+    let page = journal
+        .read(|read| {
+            read.room_authority_page(crate::FactPageStart::After(None), noticed, fact_budget(8))
+        })
+        .expect("room authority reads");
+    assert_eq!(
+        page.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+        vec![noticed]
+    );
+}
+
 /// An operator record may authorize 1 through 8 automated resumes; each
 /// automated record spends the room's latest rule one step at a time, to the
 /// same target, citing a room publication, and none follows a put-aside.

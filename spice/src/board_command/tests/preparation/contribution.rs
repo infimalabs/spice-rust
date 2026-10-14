@@ -272,7 +272,63 @@ fn lanes_contribute_typed_records_that_read_grouped_and_authorize_nothing() {
         pruned["page"]["rows"][3]["content"]["text"],
         "Measured under load."
     );
+
+    assert_sources_read_as_history(
+        &bus,
+        root.as_ref(),
+        &born,
+        (&elsewhere, &pruned),
+        &written,
+        &publications(&page)[0],
+    );
     clean(&root, bus);
+}
+
+/// The browser's per-contribution read resolves each source exactly as the
+/// history read `shown` did against the same owners, and refuses a
+/// publication that is not a contribution of the room.
+fn assert_sources_read_as_history(
+    bus: &Bus,
+    root: &Path,
+    born: &TaskStamp,
+    (elsewhere, shown): (&Path, &Value),
+    written: &[String],
+    untyped: &str,
+) {
+    let resolved = |artifacts_root: &Path, publication: &str| {
+        let store = artifacts(artifacts_root);
+        let tape = root.join("tape");
+        crate::room_command::contribution_sources(
+            bus,
+            SourceOwners {
+                tape: &tape,
+                artifacts: &store,
+            },
+            &wire::intent::RoomContributionSources {
+                room: born.clone(),
+                publication: publication.parse().expect("fixture publication"),
+            },
+        )
+    };
+    for (index, publication) in written.iter().enumerate() {
+        let Outcome::Reply(reply) = resolved(elsewhere, publication) else {
+            panic!("the sources read answers {publication}");
+        };
+        let CommandAnswer::RoomContributionSources(answer) = reply.body else {
+            panic!("another answer shape: {:?}", reply.body);
+        };
+        let row = &shown["page"]["rows"][index + 1]["content"];
+        assert_eq!(
+            serde_json::to_value(&answer.sources).expect("sources encode"),
+            row.get("sources").cloned().unwrap_or_else(|| json!([])),
+            "contribution {publication} resolves as the history read shows it"
+        );
+    }
+    assert_eq!(
+        refused(&resolved(root, untyped)),
+        "room::contribution-missing",
+        "an untyped post has no contribution sources"
+    );
 }
 
 /// Write five contributions, one with each source kind it can cite, in order.

@@ -56,6 +56,8 @@ pub enum CommandKind {
     RoomLeave,
     /// A lane records one typed problem-space contribution in an open Design.
     RoomContribute,
+    /// Resolve one Design contribution's cited sources at its own position.
+    RoomContributionSources,
     /// Operator ACK, NAK, answer, or recovery of its own room authority.
     RoomControl,
     /// Decline or cancel one pending question by its party or operator override.
