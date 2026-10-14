@@ -888,6 +888,8 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
                 badge: Some(DirectiveBadge::Taste),
                 sender: None,
                 recipient: None,
+                packet: None,
+                result: None,
             }],
             sends: vec![send_sample(first_id, second_id)],
             quotes: Vec::new(),

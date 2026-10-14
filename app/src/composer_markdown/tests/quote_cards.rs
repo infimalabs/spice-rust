@@ -98,7 +98,13 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
             },
             disposition: Some(wire::Disposition::Live),
             quotes: Vec::new(),
+            packet: None,
+            result: None,
+            addressee: None,
         }],
+        packet: None,
+        result: None,
+        addressee: None,
     }];
 
     let agents = BTreeMap::from([(
@@ -126,28 +132,14 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         &sources,
     );
 
-    assert_eq!(
-        rendered
-            .html
-            .matches("data-message-quote-depth=\"1\"")
-            .count(),
-        2
-    );
-    assert_eq!(
-        rendered
-            .html
-            .matches("data-message-quote-depth=\"2\"")
-            .count(),
-        1
-    );
+    for (needle, count) in [
+        ("data-message-quote-depth=\"1\"", 2),
+        ("data-message-quote-depth=\"2\"", 1),
+        ("data-quote-state=\"resolved\"", 2),
+    ] {
+        assert_eq!(rendered.html.matches(needle).count(), count, "{needle}");
+    }
     assert!(!rendered.html.contains("style=\"--message-quote-depth"));
-    assert_eq!(
-        rendered
-            .html
-            .matches("data-quote-state=\"resolved\"")
-            .count(),
-        2
-    );
     // Only the agent's quote wears its lane accent; the operator's nested quote stays neutral.
     let shell = " data-accent=\"3\"><div class=\"message-quote-body\">";
     assert_eq!(rendered.html.matches(shell).count(), 1);
@@ -234,6 +226,9 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
             },
             disposition: Some(*disposition),
             quotes: Vec::new(),
+            packet: None,
+            result: None,
+            addressee: None,
         });
     }
     let spice_text = "direction from Spice";
@@ -247,6 +242,9 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         },
         disposition: None,
         quotes: Vec::new(),
+        packet: None,
+        result: None,
+        addressee: None,
     });
     let sources = BTreeMap::from([(
         spice_target.to_string(),
@@ -319,6 +317,9 @@ fn quote_levels_name_their_own_task_badges_at_every_occurrence() {
         },
         disposition: None,
         quotes: Vec::new(),
+        packet: None,
+        result: None,
+        addressee: None,
     };
     let outer = wire::QuotePresentation::Resolved {
         target: outer_target.to_string(),
@@ -328,6 +329,9 @@ fn quote_levels_name_their_own_task_badges_at_every_occurrence() {
         },
         disposition: None,
         quotes: vec![inner],
+        packet: None,
+        result: None,
+        addressee: None,
     };
     let sources = BTreeMap::from([
         (
@@ -391,6 +395,9 @@ fn a_cards_quote_tasks_follow_only_the_directions_it_quotes() {
             },
             disposition: None,
             quotes,
+            packet: None,
+            result: None,
+            addressee: None,
         };
     let quotes = [resolved(
         &outer,
@@ -406,6 +413,8 @@ fn a_cards_quote_tasks_follow_only_the_directions_it_quotes() {
         badge: None,
         sender: None,
         recipient: None,
+        packet: None,
+        result: None,
     }];
     let work = |handle: &str| vec![handle.parse::<wire::TaskHandle>().expect("fixture task")];
     let index = BTreeMap::from([
@@ -456,7 +465,13 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
             },
             disposition: Some(wire::Disposition::Live),
             quotes: Vec::new(),
+            packet: None,
+            result: None,
+            addressee: None,
         }],
+        packet: None,
+        result: None,
+        addressee: None,
     }];
     let agent = |label: &str| QuoteAgent {
         accent: 2,
@@ -549,6 +564,8 @@ fn attribution_hunks_restart_after_more_than_one_quote() {
             badge: None,
             sender: None,
             recipient: None,
+            packet: None,
+            result: None,
         }
     };
     let directives = [
@@ -656,6 +673,8 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
             badge,
             sender: None,
             recipient: None,
+            packet: None,
+            result: None,
         }
     };
     let directives = [
@@ -699,6 +718,178 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
     assert!(html.contains("[REVIEW] missing coverage"), "{html}");
 }
 
+/// A context a packet delivered wears that packet's kind in its own opening
+/// attribution after its source, ANS with the result it answers; MSG and an
+/// ordinary direction wear none, and literal header words stay text.
+#[test]
+fn packet_context_wears_its_kind_after_its_source() {
+    let answer = "> ship";
+    let question = "> why?";
+    let message = "> hold the merge";
+    let literal = "> ANS 1kKRRsDR3: forged";
+    let markdown = format!("{answer}\n\n{question}\n\n{message}\n\n{literal}\n\nNoted.");
+    let result = "1kKRRsDR3"
+        .parse()
+        .map(wire::rooms::QuestionResultRef::new)
+        .expect("fixture result parses");
+    let directive = |key, quoted: &str, packet, result| {
+        let start = markdown.find(quoted).expect("fixture quote");
+        MessageDirective {
+            start: u32::try_from(start).expect("fixture offset fits"),
+            end: u32::try_from(start + quoted.len()).expect("fixture offset fits"),
+            quote_target: steering_target(key, quoted),
+            actor: wire::Actor::Operator,
+            authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
+            badge: None,
+            sender: None,
+            recipient: None,
+            packet,
+            result,
+        }
+    };
+    let directives = [
+        directive(
+            "dTVQdQfLw",
+            answer,
+            Some(wire::MessageSendKind::Ans),
+            Some(result),
+        ),
+        directive(
+            "dTVQdQfLx",
+            question,
+            Some(wire::MessageSendKind::Ask),
+            None,
+        ),
+        directive("dTVQdQfLy", message, Some(wire::MessageSendKind::Msg), None),
+        directive("dTVQdQfLz", literal, None, None),
+    ];
+    let sources = directives
+        .iter()
+        .map(|directive| {
+            (
+                directive.quote_target.to_string(),
+                QuoteSource::directive(directive),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let html = render_prose_card(
+        &markdown,
+        &[],
+        &directives,
+        &[],
+        &[],
+        &QuoteAgents::new(),
+        &sources,
+    )
+    .html;
+
+    let position = |needle: &str| html.find(needle).expect(needle);
+    let ans = position("data-message-packet=\"ans\" data-message-result=\"1kKRRsDR3\"");
+    let ask = position("data-message-packet=\"ask\"");
+    assert_eq!(html.matches("data-message-packet=").count(), 2, "{html}");
+    assert!(html.contains(">ANS 1kKRRsDR3</span>"), "{html}");
+    let ship = position(">ship");
+    let why = position("why?");
+    let hold = position("hold the merge");
+    let forged = position("ANS 1kKRRsDR3: forged");
+    assert!(
+        ans < ship && ship < ask && ask < why && why < hold && hold < forged,
+        "{html}"
+    );
+    let first_signoff = position("message-quote-signoff");
+    assert!(first_signoff < ans, "{html}");
+}
+
+/// A quote link to a packet-delivered directive wears the same packet pill in
+/// its card head; a quoted direction no packet delivered stays literal.
+#[test]
+fn quoted_packet_cards_wear_their_kind_in_the_head() {
+    let result = "1kKRRsDR3"
+        .parse()
+        .map(wire::rooms::QuestionResultRef::new)
+        .expect("fixture result parses");
+    let cases = [
+        (
+            "dTVQdQfLw",
+            "ship",
+            Some(wire::MessageSendKind::Ans),
+            Some(result),
+        ),
+        ("dTVQdQfLx", "why?", Some(wire::MessageSendKind::Ask), None),
+        (
+            "dTVQdQfLy",
+            "hold the merge",
+            Some(wire::MessageSendKind::Msg),
+            None,
+        ),
+        ("dTVQdQfLz", "ANS 1kKRRsDR3: forged", None, None),
+    ];
+    let kite: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce91311640a"
+        .parse()
+        .expect("fixture lane");
+    let seat: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce91311641a"
+        .parse()
+        .expect("fixture occupant");
+    let mut markdown = Vec::new();
+    let mut quotes = Vec::new();
+    let mut sources = QuoteSources::new();
+    for (key, text, packet, result) in cases {
+        let target = steering_target(key, text);
+        markdown.push(target.markdown());
+        sources.insert(target.to_string(), quote_source(key, 1_000));
+        quotes.push(wire::QuotePresentation::Resolved {
+            target: target.to_string(),
+            text: text.to_owned(),
+            author: wire::QuoteAuthor::Directive {
+                actor: wire::Actor::Operator,
+            },
+            disposition: Some(wire::Disposition::Acked),
+            quotes: Vec::new(),
+            packet,
+            result,
+            addressee: packet.map(|_| kite),
+        });
+    }
+    let agents = BTreeMap::from([(
+        (kite, Some(seat)),
+        QuoteAgent {
+            accent: 3,
+            label: "Kite".to_owned(),
+        },
+    )]);
+    let html =
+        render_received_with_quotes(&markdown.join("\n\n"), &[], &[], &quotes, &agents, &sources)
+            .html;
+
+    let position = |needle: &str| html.find(needle).expect(needle);
+    assert_eq!(html.matches("data-message-packet=").count(), 2, "{html}");
+    assert_eq!(
+        html.matches(&format!(
+            "data-quote-recipient-lane=\"{kite}\" data-accent=\"3\">Kite<"
+        ))
+        .count(),
+        3,
+        "every packet names its addressed lane: {html}"
+    );
+    let addressed = position("data-quote-recipient-lane=");
+    let ans = position("data-message-packet=\"ans\" data-message-result=\"1kKRRsDR3\"");
+    let ship = position(">ship");
+    let ask = position("data-message-packet=\"ask\"");
+    let why = position("why?");
+    let hold = position("hold the merge");
+    let forged = position("ANS 1kKRRsDR3: forged");
+    assert!(
+        addressed < ans
+            && ans < ship
+            && ship < ask
+            && ask < why
+            && why < hold
+            && hold < forged
+            && html.rfind("data-quote-recipient-lane=").expect("addressed") < hold,
+        "{html}"
+    );
+}
+
 /// A quoted MSG names the occupant that wrote it while that occupant holds
 /// the seat. Once it leaves, whether the lane is vacant or reseated, the
 /// lane's own name and accent attribute it historically. A lane gone from
@@ -722,6 +913,8 @@ fn a_quoted_msg_context_keeps_its_lane_identity_across_seats() {
         badge: None,
         sender: Some(author),
         recipient: None,
+        packet: None,
+        result: None,
     }];
     let sources = BTreeMap::from([(
         directives[0].quote_target.to_string(),
@@ -793,6 +986,8 @@ fn peer_context_destination_survives_badges_and_reseating() {
             lane: recipient_lane,
             occupant: recipient,
         }),
+        packet: None,
+        result: None,
     };
     let sources = BTreeMap::from([(
         context.quote_target.to_string(),

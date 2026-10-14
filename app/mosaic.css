@@ -1409,6 +1409,7 @@ a.relative-age {
   display: block;
   width: 3ch;
 }
+.team-surface .message-ack-pill[data-message-packet] .message-ack-label { width: auto; } /* sized to kind and result */
 .team-surface .message-ack-pill[data-acknowledgement="pending"] {
   --message-inline-pill-accent: var(--muted);
 }

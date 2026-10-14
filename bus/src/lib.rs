@@ -41,6 +41,7 @@ mod runtime {
     mod error;
     pub use error::{BusError, BusReadError, BusVerifyError};
     mod rooms;
+    mod steering_publication;
 
     /// One successful journal transaction, constructable only by the bus
     /// writer after durability.
@@ -177,12 +178,13 @@ mod runtime {
     }
 
     /// One exact steering head with the immutable facts that created and most
-    /// recently transitioned it.
+    /// recently transitioned it, and the room publication that opened it.
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct SteeringPresentation {
         head: JournalHead<journal::crossing::SteeringHead>,
         created: journal::crossing::Envelope<journal::crossing::AnyFact>,
         current: journal::crossing::Envelope<journal::crossing::AnyFact>,
+        publication: Option<journal::crossing::Envelope<journal::crossing::AnyFact>>,
     }
 
     impl SteeringPresentation {
@@ -212,10 +214,12 @@ mod runtime {
             };
             let created = fact(head.body().created)?;
             let current = fact(head.position())?;
+            let publication = steering_publication::opening_publication(read, head.body())?;
             Ok(Some(Self {
                 head,
                 created,
                 current,
+                publication,
             }))
         }
 
@@ -232,6 +236,16 @@ mod runtime {
         #[must_use]
         pub const fn current(&self) -> &journal::crossing::Envelope<journal::crossing::AnyFact> {
             &self.current
+        }
+
+        /// The `room::posted` or `room::conversed` fact whose `directed` list
+        /// names this directive: the MSG, ASK, or ANS this directive delivers.
+        /// Absent on every directive no room publication opened.
+        #[must_use]
+        pub const fn publication(
+            &self,
+        ) -> Option<&journal::crossing::Envelope<journal::crossing::AnyFact>> {
+            self.publication.as_ref()
         }
     }
 

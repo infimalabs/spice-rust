@@ -806,6 +806,15 @@
 }
 /* A quoted directive's badge shares the signoff's type scale. */
 .markdown-body .message-attribution > .message-classification-group { font-size: .8125em; }
+/* A quote's text already sits at the card head's scale, so its head, pills,
+   and task tail keep that scale rather than shrinking a second time. */
+.markdown-body :is(blockquote, .message-quote-card) :is(
+  .message-quote-signoff,
+  .message-attribution > .message-classification-group,
+  .message-quote-task-tail
+) {
+  font-size: 1em;
+}
 /* The age keeps a natural word space before the name it dates. */
 .markdown-body :is(.message-signoff > .relative-age, .message-quote-signoff > .message-quote-age-slot) {
   margin-right: .2em;
@@ -860,7 +869,7 @@
   min-width: 0;
   align-items: center;
   overflow: hidden;
-  color: color-mix(in srgb, var(--message-quote-name-accent) 72%, var(--muted));
+  color: color-mix(in srgb, var(--message-quote-name-accent) 70%, var(--ink));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;

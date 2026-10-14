@@ -63,10 +63,19 @@ pub struct MessageDirective {
     /// context names instead of whoever now represents the sending lane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender: Option<crate::CanonicalUuid>,
-    /// Exact destination of an authored peer message. Classification badges
-    /// do not change this provenance.
+    /// Exact destination of an authored peer message, or the occupant whose
+    /// acknowledgment this card presents for an operator MSG, ASK, or ANS.
+    /// Classification badges do not change this provenance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipient: Option<MessageDestination>,
+    /// Protocol kind of the room publication whose write opened this
+    /// directive, when an MSG, ASK, or ANS delivered it. The context then
+    /// renders that packet's body without its header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packet: Option<MessageSendKind>,
+    /// Result an ANS packet context answers. Other packet kinds carry none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<crate::rooms::QuestionResultRef>,
 }
 
 /// A peer message's immutable destination, independent of current seating.
@@ -90,7 +99,9 @@ impl MessageDirective {
             && text.get(start..end).is_some()
             && matches!(&self.quote_target, QuoteTarget::Steering { .. })
             && (self.recipient.is_none()
-                || (self.sender.is_some() && matches!(self.actor, crate::Actor::Lane(_))))
+                || (self.sender.is_some() && matches!(self.actor, crate::Actor::Lane(_)))
+                || (self.packet.is_some() && matches!(self.actor, crate::Actor::Operator)))
+            && (self.result.is_some() == (self.packet == Some(MessageSendKind::Ans)))
     }
 }
 /// Whether directive contexts are exact, ordered, and non-overlapping.

@@ -14,6 +14,9 @@ use super::conversation::asked;
 use super::*;
 use crate::resident::timers::{Fired, RoomDue};
 
+#[path = "packet_context.rs"]
+mod packet_context;
+
 impl Lanes {
     fn admitted(
         &self,
