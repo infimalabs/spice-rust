@@ -40,6 +40,9 @@ const DEMO_OCCUPANT: &str = "018f82d4-6f59-7d06-92e3-bce913116414";
 const DEMO_SECOND_LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116415";
 const DEMO_SECOND_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce913116416";
 const DEMO_SECOND_OCCUPANT: &str = "018f82d4-6f59-7d06-92e3-bce913116417";
+const DEMO_RESIDENT_AT: &str = "2026-07-11T04:59:00.000000Z";
+const DEMO_CLAIM_EXPIRY: &str = "2099-07-11T05:00:00.000000Z";
+const DEMO_CLAIM_MAXIMUM: &str = "2100-07-11T05:00:00.000000Z";
 const SEED_BRANCH: &str = "refs/heads/main";
 const SEED_NAME: &str = "spice demo";
 const SEED_EMAIL: &str = "demo@spice.invalid";
@@ -105,8 +108,8 @@ const CANNED_TRANSCRIPT: [(&str, &str); 4] = [
         "2026-07-11T05:03:00.000000Z",
         concat!(
             "Done -- `spice status --porcelain` ships behind one flag, with a single ",
-            "renderer feeding both views and a test pinning them together. Handing ",
-            "the lane back."
+            "renderer feeding both views and a test pinning them together. Keeping ",
+            "the task with Ava while it is reviewed."
         ),
     ),
 ];
@@ -653,11 +656,12 @@ fn seed_journal(state: &spice::repository::StatePaths, root: &Path) -> DemoResul
         .map_err(|error| environment_fault("demo::journal-unavailable", error.to_string()))?;
     crate::resident::admit_steering_index(&mut journal)
         .map_err(|outcome| environment_fault("demo::journal-invalid", format!("{outcome:?}")))?;
+    seed_lanes(&mut journal, root)?;
     let task: wire::TaskHandle = DEMO_TASK.parse().expect("demo task handle is valid");
     let previous = seed_task(&mut journal, &task)?;
+    seed_claim(&mut journal, &task)?;
     seed_turns(&mut journal, &task, previous)?;
     seed_oops_group(&mut journal)?;
-    seed_lanes(&mut journal, root)?;
     journal
         .verify()
         .map_err(|error| environment_fault("demo::journal-invalid", error.to_string()))?;
@@ -733,6 +737,54 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
         generation: 0,
     });
     Ok(journal.apply(write).map_err(commit_failure)?.last())
+}
+
+/// Give the seeded lane the same canonical claim authority a real allocation
+/// writes, so every consumer derives team ownership from production evidence.
+fn seed_claim(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoResult<()> {
+    let born = task.born().expect("demo task carries a canonical stamp");
+    let phase: wire::Phase = "todo".parse().expect("demo phase is valid");
+    let workflow = WorkflowHead {
+        flow: vec![phase.clone()],
+        phase,
+        status: "pending".to_owned(),
+        review: "unassigned".to_owned(),
+        assignment: None,
+        deferral: None,
+        completion: None,
+        generation: 0,
+    };
+    let actor = Actor::Lane(uuid(DEMO_LANE));
+    let at = instant(CANNED_TRANSCRIPT[0].0);
+    let mut write = JournalWrite::new(
+        actor.clone(),
+        format!("task:{DEMO_STAMP}")
+            .parse()
+            .expect("demo task origin is valid"),
+        at,
+        Producer::CommandDoor,
+    );
+    board::allocate::mint(
+        &mut write,
+        board::allocate::Mint {
+            task: &born,
+            actor: &actor,
+            workflow: &workflow,
+            project: DEMO_PROJECT,
+            lane: uuid(DEMO_LANE),
+            occupant: uuid(DEMO_OCCUPANT),
+            epoch: uuid(DEMO_EPOCH),
+            at,
+            expiry: instant(DEMO_CLAIM_EXPIRY),
+            maximum: instant(DEMO_CLAIM_MAXIMUM),
+            git: None,
+            recovery: None,
+            source: body::SourceBoundary::Proven { heads: Vec::new() },
+        },
+    )
+    .map_err(|error| build_failure(error.into_build()))?;
+    journal.apply(write).map_err(commit_failure)?;
+    Ok(())
 }
 
 fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
@@ -908,7 +960,7 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
         format!("resident:{epoch}")
             .parse()
             .expect("demo resident origin is valid"),
-        instant(CANNED_TRANSCRIPT[3].0),
+        instant(DEMO_RESIDENT_AT),
         Producer::ResidentRecognition,
     );
     let mut cause = FactCause::Root;
@@ -1025,17 +1077,26 @@ fn validate_seeded_journal(state: &spice::repository::StatePaths) -> DemoResult<
                 })
         })
     });
+    let claimed = snapshot.facts().iter().any(|envelope| {
+        envelope.fact.read::<body::ClaimWon>().is_some_and(|claim| {
+            claim.task == DEMO_STAMP.parse().expect("demo task stamp is valid")
+                && claim.actor == Actor::Lane(uuid(DEMO_LANE))
+                && claim.lane == uuid(DEMO_LANE)
+                && claim.occupant == uuid(DEMO_OCCUPANT)
+                && claim.epoch == uuid(DEMO_EPOCH)
+        })
+    });
     let notes = snapshot
         .facts()
         .iter()
         .filter(|envelope| envelope.fact.kind() == wire::FactKind::TaskNoted)
         .count();
-    if !task || !lanes || !starts || notes < CANNED_TRANSCRIPT.len() {
+    if !task || !lanes || !starts || !claimed || notes < CANNED_TRANSCRIPT.len() {
         return Err(refusal(
             "demo::seed-moved",
-            Some("the seeded task, two seated simulated lanes, and four canned turns"),
+            Some("the seeded task, Ava's claim, two seated simulated lanes, and four canned turns"),
             Some(&format!(
-                "task={task}, lanes={lanes}, starts={starts}, turns={notes}"
+                "task={task}, claimed={claimed}, lanes={lanes}, starts={starts}, turns={notes}"
             )),
             "restore the seeded journal or remove this disposable root",
         )
