@@ -129,6 +129,53 @@ enum Connection {
     Lane(CanonicalUuid),
 }
 
+/// A lane launched from one Git-common authority is addressing another.
+///
+/// This is only a routing guard. It grants no cross-repository authority and
+/// is acted on only after the addressed resident proves that it is live.
+#[derive(Debug)]
+struct ForeignRepository {
+    source: PathBuf,
+    addressed: PathBuf,
+}
+
+fn foreign_repository(
+    operator_discovery: &Path,
+    connection: Connection,
+) -> Option<ForeignRepository> {
+    if matches!(connection, Connection::Operator) {
+        return None;
+    }
+    let wrapper = crate::bootstrap_environment(wire::SpiceVariable::WrapperSpice.as_str())?;
+    foreign_repository_from_paths(connection, Path::new(&wrapper), operator_discovery)
+}
+
+fn foreign_repository_from_paths(
+    connection: Connection,
+    wrapper: &Path,
+    operator_discovery: &Path,
+) -> Option<ForeignRepository> {
+    if !matches!(connection, Connection::Lane(_)) {
+        return None;
+    }
+    let source = wrapper
+        .parent()
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some("bin"))?
+        .parent()
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some(".spice-install"))?
+        .parent()?;
+    let addressed = operator_discovery
+        .parent()
+        .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some(".spice-rs"))?
+        .parent()?;
+    if source == addressed {
+        return None;
+    }
+    let source = fs::canonicalize(source).ok()?;
+    let addressed = fs::canonicalize(addressed).ok()?;
+    (source != addressed).then_some(ForeignRepository { source, addressed })
+}
+
 /// Submit one contract-bound command to the current repository resident.
 ///
 /// `discovery_path` must be the app-server path returned by the caller's single
@@ -181,11 +228,13 @@ fn execute_mapped_with(
         Ok(mapped) => mapped,
         Err(outcome) => return outcome,
     };
+    let foreign = foreign_repository(operator_discovery, connection);
     let discovery_path = selected_discovery_path(operator_discovery, connection);
     let bound = answer_bound(mapped.kind, &discovery_path);
     execute_mapped_within(
         operator_discovery,
         &discovery_path,
+        foreign.as_ref(),
         contract,
         mapped,
         bound,
@@ -197,6 +246,7 @@ fn execute_mapped_with(
 fn execute_mapped_within(
     operator_discovery: &Path,
     discovery_path: &Path,
+    foreign: Option<&ForeignRepository>,
     contract: &Contract,
     mapped: MappedCommand,
     bound: Duration,
@@ -206,8 +256,10 @@ fn execute_mapped_within(
     let resident_lock = resident_lock_path(operator_discovery);
     let session = match acquire_session_until(
         contract,
+        operator_discovery,
         discovery_path,
         &resident_lock,
+        foreign,
         deadline,
         bound,
         false,
@@ -245,8 +297,10 @@ fn execute_mapped_within(
     // interruption or refusal is terminal rather than an unbounded replay loop.
     let session = match acquire_session_until(
         contract,
+        operator_discovery,
         discovery_path,
         &resident_lock,
+        foreign,
         deadline,
         bound,
         true,
@@ -324,10 +378,15 @@ fn authenticate_with(
         ));
     }
     let connection = ambient_lane_identity()?.map_or(Connection::Operator, Connection::Lane);
+    let foreign = foreign_repository(discovery_path, connection);
+    let selected = selected_discovery_path(discovery_path, connection);
+    let resident_lock = resident_lock_path(discovery_path);
     let session = acquire_session_with(
+        discovery_path,
+        &selected,
+        &resident_lock,
+        foreign.as_ref(),
         contract,
-        &selected_discovery_path(discovery_path, connection),
-        &resident_lock_path(discovery_path),
         OPENING_BOUND,
         after_transient,
     )?;
@@ -418,17 +477,21 @@ pub(crate) fn read_lane_quote(
 /// opening is retried; the command envelope remains untouched until this
 /// function succeeds.
 fn acquire_session_with(
-    contract: &Contract,
+    operator_discovery: &Path,
     discovery_path: &Path,
     resident_lock: &Path,
+    foreign: Option<&ForeignRepository>,
+    contract: &Contract,
     bound: Duration,
     mut after_transient: impl FnMut(&Fault),
 ) -> ClientResult<AuthenticatedSession> {
     let deadline = Instant::now() + bound;
     acquire_session_until(
         contract,
+        operator_discovery,
         discovery_path,
         resident_lock,
+        foreign,
         deadline,
         bound,
         false,
@@ -438,13 +501,16 @@ fn acquire_session_with(
 
 fn acquire_session_until(
     contract: &Contract,
+    operator_discovery: &Path,
     discovery_path: &Path,
     resident_lock: &Path,
+    foreign: Option<&ForeignRepository>,
     deadline: Instant,
     bound: Duration,
     recovering_submission: bool,
     after_transient: &mut impl FnMut(&Fault),
 ) -> ClientResult<AuthenticatedSession> {
+    require_repository_route(foreign, operator_discovery, resident_lock)?;
     let attempt = acquire_session_attempt(contract, discovery_path, resident_lock, deadline, bound);
     let Err(outcome) = attempt else {
         return attempt;
@@ -458,6 +524,7 @@ fn acquire_session_until(
 
     // A replacement may already have published. Re-read before constructing
     // the observer so a present authenticated surface has no watcher latency.
+    require_repository_route(foreign, operator_discovery, resident_lock)?;
     let retry = acquire_session_attempt(contract, discovery_path, resident_lock, deadline, bound);
     let Err(outcome) = retry else {
         return retry;
@@ -473,6 +540,7 @@ fn acquire_session_until(
     loop {
         // The first iteration closes the interval between the last read and
         // arming the observer; later iterations consume signalled changes.
+        require_repository_route(foreign, operator_discovery, resident_lock)?;
         let attempt =
             acquire_session_attempt(contract, discovery_path, resident_lock, deadline, bound);
         let Err(outcome) = attempt else {
@@ -491,6 +559,41 @@ fn acquire_session_until(
             DiscoveryWait::Failed => return Err(outcome),
         }
     }
+}
+
+/// Stop a lane from presenting its repository-bound identity to another
+/// repository once that repository's own resident is provably serving.
+///
+/// An absent or changing operator record is not proof of a foreign resident:
+/// the local resident may be between its lock acquisition and lane-surface
+/// publication, so that state keeps the ordinary bounded wait.
+fn require_repository_route(
+    foreign: Option<&ForeignRepository>,
+    operator_discovery: &Path,
+    resident_lock: &Path,
+) -> ClientResult<()> {
+    let Some(foreign) = foreign else {
+        return Ok(());
+    };
+    let Ok(discovery) = DiscoveryRead::open_fault(operator_discovery, resident_lock) else {
+        return Ok(());
+    };
+    if discovery.require_live_publisher().is_err() {
+        return Ok(());
+    }
+    Err(Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            "serve::foreign-repository".to_owned(),
+            Some("repository-authority".to_owned()),
+            Some(foreign.source.display().to_string()),
+            Some(foreign.addressed.display().to_string()),
+        )
+        .with_detail(format!(
+            "the resident serving repository authority {} does not own this lane; ask the \
+             operator to run the command there or exchange an explicit document handoff",
+            foreign.addressed.display()
+        )),
+    )))
 }
 
 fn acquire_session_attempt(

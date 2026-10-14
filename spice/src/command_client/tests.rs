@@ -443,8 +443,113 @@ fn refreshed_authority_returns_a_moved_claim_with_current_owner_evidence() {
 }
 
 #[test]
-fn authenticated_read_reacquires_discovery_from_a_live_replacement() {
-    let fixture = Fixture::new("replacement-authentication");
+fn repository_route_distinguishes_local_foreign_and_operator_callers() {
+    let fixture = Fixture::new("repository-route");
+    let source = fixture.root.join("source.git");
+    let addressed = fixture.root.join("addressed.git");
+    let wrapper = source.join(".spice-install/bin/spice");
+    let local_discovery = source.join(".spice-rs/serve");
+    let foreign_discovery = addressed.join(".spice-rs/serve");
+    fs::create_dir_all(
+        wrapper
+            .parent()
+            .expect("installed wrapper has one bounded parent"),
+    )
+    .expect("source install exists");
+    fs::create_dir_all(
+        local_discovery
+            .parent()
+            .expect("local discovery has one bounded parent"),
+    )
+    .expect("local runtime exists");
+    fs::create_dir_all(
+        foreign_discovery
+            .parent()
+            .expect("foreign discovery has one bounded parent"),
+    )
+    .expect("foreign runtime exists");
+    fs::write(&wrapper, []).expect("wrapper fixture exists");
+
+    assert!(
+        foreign_repository_from_paths(Connection::Lane(uuid(27)), &wrapper, &local_discovery)
+            .is_none(),
+        "one Git-common authority is local even while its lane surface is absent"
+    );
+    assert!(
+        foreign_repository_from_paths(Connection::Operator, &wrapper, &foreign_discovery).is_none(),
+        "operator commands never borrow lane repository identity"
+    );
+    let foreign =
+        foreign_repository_from_paths(Connection::Lane(uuid(28)), &wrapper, &foreign_discovery)
+            .expect("distinct Git-common authorities are foreign");
+    assert_eq!(
+        foreign.source,
+        fs::canonicalize(source).expect("source authority canonicalizes")
+    );
+    assert_eq!(
+        foreign.addressed,
+        fs::canonicalize(addressed).expect("addressed authority canonicalizes")
+    );
+}
+
+#[test]
+fn a_live_foreign_resident_refuses_the_lane_before_discovery_waits() {
+    let fixture = Fixture::new("foreign-resident");
+    fixture.publish();
+    let lane_surface = selected_discovery_path(&fixture.serve, Connection::Lane(uuid(28)));
+    let before = fs::read(&fixture.serve).expect("operator discovery is readable");
+    let foreign = ForeignRepository {
+        source: fixture.root.join("source.git"),
+        addressed: fixture.root.join("addressed.git"),
+    };
+    let started = Instant::now();
+
+    let outcome = match acquire_session_with(
+        &fixture.serve,
+        &lane_surface,
+        &resident_lock_path(&fixture.serve),
+        Some(&foreign),
+        &COMMAND_CONTRACT,
+        Duration::from_secs(1),
+        |_| panic!("a proved foreign resident does not enter publication handoff"),
+    ) {
+        Err(outcome) => outcome,
+        Ok(_) => panic!("a foreign resident cannot authenticate this lane"),
+    };
+
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("foreign repository mismatch must be a typed refusal: {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "serve::foreign-repository");
+    let diagnostic = refusal
+        .diagnostic()
+        .expect("foreign repository refusal carries both authorities");
+    assert_eq!(diagnostic.expected(), foreign.source.to_str());
+    assert_eq!(diagnostic.observed(), foreign.addressed.to_str());
+    assert!(
+        started.elapsed() < Duration::from_millis(100),
+        "a healthy foreign resident is classified without the one-second discovery bound"
+    );
+    assert_eq!(
+        fs::read(&fixture.serve).expect("operator discovery remains readable"),
+        before
+    );
+    assert!(
+        !lane_surface.exists(),
+        "refusal creates no foreign lane surface"
+    );
+}
+
+#[test]
+fn a_local_lane_reacquires_its_surface_from_a_live_replacement() {
+    let fixture = Fixture::new("replacement-lane-authentication");
+    let lane_surface = selected_discovery_path(&fixture.serve, Connection::Lane(uuid(29)));
+    fs::create_dir(
+        lane_surface
+            .parent()
+            .expect("lane discovery has one bounded parent"),
+    )
+    .expect("lane discovery family exists");
     let listener = TcpListener::bind("127.0.0.1:0").expect("replacement peer binds");
     let epoch = uuid(30);
     let discovery = serve::Discovery {
@@ -460,18 +565,20 @@ fn authenticated_read_reacquires_discovery_from_a_live_replacement() {
     let mut transients = Vec::new();
 
     let session = acquire_session_with(
-        &COMMAND_CONTRACT,
         &fixture.serve,
+        &lane_surface,
         &resident_lock_path(&fixture.serve),
+        None,
+        &COMMAND_CONTRACT,
         Duration::from_secs(10),
         |fault| {
             transients.push(fault.reason.clone());
             discovery
-                .publish(&fixture.serve)
-                .expect("replacement discovery publishes");
+                .publish(&lane_surface)
+                .expect("replacement lane discovery publishes");
         },
     )
-    .expect("authenticated read reaches replacement");
+    .expect("authenticated lane read reaches its replacement");
 
     assert_eq!(session.accepted.epoch, epoch);
     assert_eq!(transients, ["serve::discovery-unavailable"]);
