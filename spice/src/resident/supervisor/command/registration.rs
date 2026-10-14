@@ -1,9 +1,10 @@
 //! The first turn, held until omp answers the `spice` scheme registration:
 //! only a seat that serves the scheme is told about it and handed URLs to
 //! read. A resumed seat's notice is read from current authority only then.
-//! Background notices wait behind that turn: omp runs whatever reaches an
-//! idle session first as a turn of its own, so a notice written ahead of the
-//! first prompt would leave the prompt's authority stale by its delivery.
+//! Background notices and steering wait behind that turn: omp runs whatever
+//! reaches an idle session first as a turn of its own, so anything written
+//! ahead of the first prompt would leave the prompt's authority stale by its
+//! delivery.
 
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -80,7 +81,9 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// registration, then start the first turn as that answer decides. The
     /// first answer alone takes the turn, so a resumed seat's authority is
     /// read once, at this delivery. Background notices held meanwhile follow
-    /// the prompt, so omp starts the prompt's turn before any of theirs.
+    /// the prompt, then the inbox as it stands now, so omp starts the
+    /// prompt's turn before any of theirs and the direction it counts
+    /// arrives after it.
     pub(super) fn observe_uri_registration(&self, decoded: &Decoded) {
         let Some(response) = decoded
             .context()
@@ -126,6 +129,8 @@ impl<W: Write + Send + 'static> Driver<W> {
                 eprintln!("spice supervisor: held notice {purpose} unwritten: {error}");
             }
         }
+        drop(queued);
+        self.interject(super::steering::InboxDelivery::Update);
     }
 
     /// `text` as this seat should read it: with `spice://` URLs and the scheme

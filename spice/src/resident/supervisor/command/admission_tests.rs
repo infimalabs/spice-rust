@@ -103,9 +103,19 @@ impl Seat {
     /// Open the seat and let omp answer the scheme registration, which
     /// releases the first turn.
     fn open(&self) {
+        self.hold(FirstTurn::Fresh(FIRST.to_owned()));
+        self.register();
+    }
+
+    /// Open the seat with its first turn held for the registration answer.
+    fn hold(&self, first_turn: FirstTurn) {
         self.driver
-            .open(b"", Some(FirstTurn::Fresh(FIRST.to_owned())))
+            .open(b"", Some(first_turn))
             .expect("opening writes");
+    }
+
+    /// Answer the scheme registration, releasing the held first turn.
+    fn register(&self) {
         let answer = serde_json::to_vec(&serde_json::json!({
             "id": listen::OMP_URI_SCHEMES_REQUEST_ID,
             "type": "response",
@@ -198,6 +208,38 @@ fn a_turn_starting_before_any_delivery_still_admits_each_once_in_order() {
             position(&omp.handed, &format!("direction {EARLIER}"))
                 < position(&omp.handed, &format!("direction {LATER}")),
             "steering keeps its order: {:?}",
+            omp.handed
+        );
+    }
+}
+
+/// A seat woken for steering states its authority, a resumed seat's pending
+/// count included, in the first prompt; omp runs whatever reaches it idle as
+/// a turn of its own, so the direction that prompt counts must reach omp
+/// after it rather than be answered in a turn ahead of it.
+#[test]
+fn steering_pending_while_the_first_turn_is_held_follows_that_prompt_once() {
+    for first_turn in [FirstTurn::Fresh, FirstTurn::Resumed] {
+        let mut seat = Seat::new();
+        let mut omp = Omp::default();
+        seat.hold(first_turn(FIRST.to_owned()));
+        seat.steer(&[EARLIER]);
+        seat.flush(&mut omp);
+        assert!(
+            omp.handed.is_empty(),
+            "nothing starts a turn ahead of the first prompt: {:?}",
+            omp.handed
+        );
+
+        seat.register();
+        seat.steer(&[EARLIER]);
+        seat.flush(&mut omp);
+        omp.settle();
+
+        assert!(omp.refused.is_empty(), "{:?}", omp.refused);
+        assert!(
+            position(&omp.handed, FIRST) < position(&omp.handed, &format!("direction {EARLIER}")),
+            "the first prompt precedes the direction it counts: {:?}",
             omp.handed
         );
     }
