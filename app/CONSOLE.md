@@ -392,5 +392,8 @@ cells, tall images take tall cells, and no image is badly cropped or shrunk to
 a sliver; the cells divide again as images load and whenever the card's box
 changes shape. Each cell opens its own image full size. Hover and keyboard
 focus tint and ring only that actionable cell; the grouped card and its other
-images remain at rest. The effect is the plane's presentation only: narration,
+images remain at rest. While a lane image is open full size, Right Arrow opens
+the next newer rendered image and Left Arrow the previous older one. Every
+crystal cell is one stop, navigation never crosses lanes, and either end holds
+without wrapping. The effect is the plane's presentation only: narration,
 quotes, receipts, and every other surface still see one message per image.
