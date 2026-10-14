@@ -15,7 +15,7 @@ use crate::browser::{navigation, view};
 use crate::room_views::GroupView;
 use crate::runtime::{DesignStanding, RoomEvent};
 use crate::watchband;
-use crate::work::{WorkCounts, WorkScope, WorkTask};
+use crate::work::{WorkCounts, WorkScope};
 
 pub(super) fn render(
     render: &GroupRender<'_, '_>,
@@ -66,14 +66,14 @@ fn scope(view: &GroupView, channels: &[Channel]) -> WorkScope {
 /// The fixed total and active-agent scroller. Like the Design globals, the
 /// total closes the rail and the agents stack toward the start beside it.
 fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Channel]) -> Html {
-    let workers = render
+    let (counts, workers) = render
         .work
         .map(|work| work.group_worker_strip(&scope(view, channels)))
         .unwrap_or_default();
     html! {
         <div class="team-task-rail">
             if !workers.is_empty() {
-                {render_total(render, view, channels, &workers)}
+                {render_total(render, view, channels, counts)}
                 <nav class="app-horn-tabs team-tasks" aria-label="Agents currently working in this group's designs">
                     {for workers.into_iter().map(|(lane, _)| render_worker(render, lane))}
                 </nav>
@@ -88,12 +88,8 @@ fn render_total(
     render: &GroupRender<'_, '_>,
     view: &GroupView,
     channels: &[Channel],
-    workers: &[(wire::CanonicalUuid, &WorkTask<'_>)],
+    counts: WorkCounts,
 ) -> Html {
-    let counts = workers
-        .iter()
-        .map(|(_, task)| task.availability())
-        .collect::<WorkCounts>();
     let open = counts.open();
     let title = format!(
         "Open work active in this group: {open} {}",
@@ -123,7 +119,6 @@ fn render_total(
         </span>
     }
 }
-
 /// One agent tab in that lane's canonical accent. A currently admitted Chat
 /// member links to its composer; a lane absent from Chat stays a plain label.
 fn render_worker(render: &GroupRender<'_, '_>, lane: wire::CanonicalUuid) -> Html {

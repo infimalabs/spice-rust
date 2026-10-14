@@ -836,6 +836,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   --muted: var(--app-base-muted);
   --line: var(--app-base-line);
   --accent: var(--app-base-accent);
+  --focus: var(--app-base-focus);
   --accent-soft: color-mix(in oklch, var(--app-base-accent) 22%, var(--app-base-ground));
 }
 
