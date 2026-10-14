@@ -102,7 +102,7 @@ pub(crate) enum ClientAction {
         revision: u64,
         respond: GroupResponse,
     },
-    /// Publish operator-authored text or one typed OOPS disposition to a task room.
+    /// Publish operator-authored text to a task room.
     RoomPost(RoomPostAction),
     /// Settle the operator's own room receipts and results, or close a question.
     RoomControl {
