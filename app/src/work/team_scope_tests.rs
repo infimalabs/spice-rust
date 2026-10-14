@@ -4,14 +4,10 @@ use wire::CanonicalUuid;
 use wire::head::ClaimDisposition;
 
 use super::tests::{board, claim, stamp, task};
-use super::{WorkOwner, WorkProjection, WorkScope, WorkStemIdentity, WorkVisibility};
+use super::{WorkOwner, WorkProjection, WorkScope};
 
 fn uuid(value: &str) -> CanonicalUuid {
     value.parse().expect("fixture uuid")
-}
-
-fn public(stem: &str) -> WorkStemIdentity {
-    WorkStemIdentity::new(WorkVisibility::Public, stem.to_owned())
 }
 
 #[test]
@@ -36,7 +32,7 @@ fn team_scope_waits_for_the_roster_then_homes_creator_and_member_claimed_tasks()
 
     let board = board(vec![created, claimed, both, unrelated]);
     let pending = WorkProjection::from_board_and_lanes(&board, None);
-    let scope = WorkScope::team_wide(team);
+    let scope = WorkScope::Team { team };
     assert_eq!(pending.contains_scope(&scope), None);
     assert_eq!(pending.scope_counts(&scope).open(), 0);
 
@@ -47,7 +43,7 @@ fn team_scope_waits_for_the_roster_then_homes_creator_and_member_claimed_tasks()
     );
     assert_eq!(projection.contains_scope(&scope), Some(true));
     assert_eq!(
-        projection.contains_scope(&WorkScope::team_wide(other_team)),
+        projection.contains_scope(&WorkScope::Team { team: other_team }),
         Some(false)
     );
     assert_eq!(projection.scope_counts(&scope).open(), 3);
@@ -60,22 +56,10 @@ fn team_scope_waits_for_the_roster_then_homes_creator_and_member_claimed_tasks()
             .collect::<Vec<_>>(),
         [stamp(1), stamp(2), stamp(3)]
     );
-
-    let narrowed = WorkScope::Team {
-        team,
-        stem: Some(public("beta")),
-    };
-    assert_eq!(projection.contains_scope(&narrowed), Some(true));
-    assert_eq!(projection.scope_counts(&narrowed).open(), 1);
-    let absent_stem = WorkScope::Team {
-        team,
-        stem: Some(public("gone")),
-    };
-    assert_eq!(projection.contains_scope(&absent_stem), Some(false));
 }
 
 #[test]
-fn team_header_groups_stems_by_first_task_without_changing_source_order() {
+fn team_strip_lists_each_open_task_once_by_availability_then_offer_order() {
     let team = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     let other_team = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     let member = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
@@ -121,27 +105,18 @@ fn team_header_groups_stems_by_first_task_without_changing_source_order() {
         hidden_ready,
     ]);
     board.offer = vec![stamp(2), stamp(1), stamp(8)];
-    let groups = |projection: &WorkProjection<'_>, team| {
+    let strip = |projection: &WorkProjection<'_>, team| {
         projection
-            .stem_task_groups(&WorkScope::team_wide(team))
+            .scope_strip(&WorkScope::Team { team })
             .into_iter()
-            .map(|group| {
-                (
-                    group.stem().to_string(),
-                    group
-                        .tasks()
-                        .iter()
-                        .map(|task| task.row().statement.body.project.clone())
-                        .collect::<Vec<_>>(),
-                )
-            })
+            .map(|task| task.row().statement.body.project.clone())
             .collect::<Vec<_>>()
     };
 
     let pending = WorkProjection::from_board_and_lanes(&board, None);
     assert!(
-        groups(&pending, team).is_empty(),
-        "a team's header waits for the roster",
+        strip(&pending, team).is_empty(),
+        "a team's strip waits for the roster",
     );
 
     let loaded = WorkProjection::from_board_with_team_memberships(
@@ -149,31 +124,26 @@ fn team_header_groups_stems_by_first_task_without_changing_source_order() {
         Some(BTreeSet::from([team, other_team])),
         &BTreeMap::from([(member, team), (other_member, other_team)]),
     );
-    let grouped = groups(&loaded, team);
+    let tabs = strip(&loaded, team);
     assert_eq!(
-        grouped,
+        tabs,
         [
-            ("gamma.*".to_owned(), vec!["gamma.claimed".to_owned()]),
-            ("beta.*".to_owned(), vec!["beta.second".to_owned()]),
-            (
-                "alpha.*".to_owned(),
-                vec!["alpha.first".to_owned(), "alpha.blocked".to_owned()],
-            ),
-            (".alpha.*".to_owned(), vec![".alpha.hidden".to_owned()]),
+            "gamma.claimed",
+            "beta.second",
+            "alpha.first",
+            "alpha.blocked",
+            ".alpha.hidden",
         ],
-        "groups follow their first task and gather later stem matches in source order",
+        "in-flight work leads, ready work keeps offer order across stems, then held and parked",
     );
     assert_eq!(
-        grouped.iter().map(|(_, tasks)| tasks.len()).sum::<usize>(),
-        loaded.scope_counts(&WorkScope::team_wide(team)).open(),
-        "the header holds exactly the open tasks of the team's Work scope",
+        tabs.len(),
+        loaded.scope_counts(&WorkScope::Team { team }).open(),
+        "the strip holds exactly the open tasks of the team's Work scope",
     );
     assert_eq!(
-        groups(&loaded, other_team),
-        [
-            ("delta.*".to_owned(), vec!["delta.elsewhere".to_owned()]),
-            ("omega.*".to_owned(), vec!["omega.unrelated".to_owned()]),
-        ],
+        strip(&loaded, other_team),
+        ["delta.elsewhere", "omega.unrelated"],
         "a task created by one team and actively claimed by another shows only on the claimant's",
     );
 }
@@ -308,7 +278,7 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
         "a Plan-controlled task stays execution work and no Design-owned row is duplicated",
     );
     assert_eq!(
-        borns(&WorkScope::team_wide(executor)),
+        borns(&WorkScope::Team { team: executor }),
         BTreeSet::from([stamp(4), stamp(5)]),
         "a current team strip excludes Design-owned planning even while its member claims it",
     );
@@ -368,51 +338,30 @@ fn a_group_scope_holds_exactly_the_open_tasks_associated_with_its_designs() {
         board
     };
     let projection = WorkProjection::from_board(&board);
-    let scope = |designs: &[wire::TaskStamp], stem: Option<WorkStemIdentity>| WorkScope::Group {
+    let scope = |designs: &[wire::TaskStamp]| WorkScope::Group {
         group: group.clone(),
         designs: designs.to_vec(),
-        stem,
     };
-    let whole = scope(std::slice::from_ref(&design), None);
+    let whole = scope(std::slice::from_ref(&design));
     let strip = projection
-        .stem_task_groups(&whole)
+        .scope_strip(&whole)
         .into_iter()
-        .map(|group| {
-            (
-                group.stem().to_string(),
-                group
-                    .tasks()
-                    .iter()
-                    .map(|task| task.row().statement.body.born.clone())
-                    .collect::<Vec<_>>(),
-            )
-        })
+        .map(|task| task.row().statement.body.born.clone())
         .collect::<Vec<_>>();
     assert_eq!(
         strip,
-        [
-            ("alpha.*".to_owned(), vec![stamp(4), stamp(2)]),
-            ("rooms.*".to_owned(), vec![stamp(1), stamp(3)]),
-        ],
-        "the Design and every open task it parents, controls, or constructs cluster by \
-         stem in offer order; settled and unassociated work stays out",
+        [stamp(4), stamp(1), stamp(2), stamp(3)],
+        "the Design and every open task it parents, controls, or constructs keep offer order \
+         across stems; settled and unassociated work stays out",
     );
     assert_eq!(
         projection.overview_for_scope(whole.clone()).tasks(),
-        &[stamp(4), stamp(1), stamp(2), stamp(3)],
+        strip.as_slice(),
         "the total opens exactly the strip's tasks",
     );
     assert_eq!(projection.scope_counts(&whole).open(), 4);
-    let alpha = WorkStemIdentity::new(WorkVisibility::Public, "alpha".to_owned());
-    assert_eq!(
-        projection
-            .overview_for_scope(scope(std::slice::from_ref(&design), Some(alpha)))
-            .tasks(),
-        &[stamp(4), stamp(2)],
-        "a stem tab opens only its stem within the group",
-    );
     assert!(
-        projection.scope_tasks(&scope(&[], None)).is_empty(),
+        projection.scope_tasks(&scope(&[])).is_empty(),
         "a group without designs holds no work",
     );
 }

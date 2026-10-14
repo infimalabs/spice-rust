@@ -250,11 +250,11 @@ neutral in every strip. Every count badge is one neutral open-task total; see
 total](../docs/product/loops.md#the-jitter-contract).
 
 Each global stem tab opens its complete visibility-qualified stem within its
-own partition. A team strip clusters by Work's rule: in in-flight, ready,
-blocked, and deferred offer order, each stem's first task places one flag and
-later matches join it in order. The flag's stem target opens the overview with
-that team's stem selected; each following handle opens its exact task. Closing
-any overview returns focus to the control that opened it.
+own partition. A team strip has no stem roll-ups: past its total, each open
+task is its own tab, ordered by availability (in flight, ready, review, stale,
+blocked, selection, held, deferred, parked) and, within one availability, by
+the resident's offer order. Each tab opens its exact task. Closing any overview
+returns focus to the control that opened it.
 
 Work keeps immutable creator-team provenance separate from its current
 accountable owner. A Design owns itself and tasks it directly controls. All
@@ -279,7 +279,7 @@ element to a design-side analog:
 | Team toolbar | Group toolbar |
 | --- | --- |
 | Team total: opens the overview with the team's task set selected | Group total: opens the overview with every open task associated with the group's designs selected |
-| Stem tabs clustered by Work's rule; a stem target selects the team's stem | The same clustering over the group's associated tasks; a stem target selects that stem within them |
+| One tab per open task, in availability then offer order | One tab per open task associated with the group's designs, in the same order |
 | A task handle carries the accent of the lane working it | A task handle carries the accent of the design it serves |
 | Presence pips: one per member, by state | Design lights: one per design in its accent, distinguishing open, claimed, in review, holding unauthorized outputs, and settled, with an accessible label naming the standing; a design whose board row is unavailable invents no standing |
 | Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest room publication or coordination event across the group's designs, with the same age, prefix, accessible label, and live region; its accent and status are the design it landed in |

@@ -293,9 +293,9 @@ fn render_direction(
     let navigate = navigate.clone();
     let open = Callback::from(move |event: MouseEvent| {
         agent_menu::close(&event);
-        navigate.emit(navigation::Intent::Work(crate::work::WorkScope::team_wide(
+        navigate.emit(navigation::Intent::Work(crate::work::WorkScope::Team {
             team,
-        )));
+        }));
     });
     html! {
         <button
