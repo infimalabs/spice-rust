@@ -8,55 +8,11 @@
 gate = ["cargo", "run", "--locked", "--package", "spice", "--", "gate"]
 
 [tasks]
-# Public scheduler stems beyond the packaged `task` and `serve` defaults.
-# Product work routes directly by ownership so the allocator can retain domain
-# locality instead of collapsing every crate under one `task` bucket.
-#
-# The dependency lattice owns the workspace inventory. Every product member is
-# present below except `xtask`: it is the verification launcher for `gate`, not
-# a second verification domain. `doctrine` owns settled repository law;
-# `scheduler` owns the task-plane topology; `rim` owns the cross-crate command,
-# exit, and environment edge; and `corpus` owns fixture bodies replayed across
-# multiple crates.
-#
-# One sense keeps one name. Work formerly described as `release`, `studies`,
-# `mail`, `lifecycle`, or `hooks` routes to its current owner (`dist`, `gate`,
-# `steer`, or `lane`). `cli` and `tests` remain `rim` and `corpus`. Generic
-# activity/history labels such as `docs`, `config`, `toolchain`, and `spec` do
-# not become scheduler domains; they route to the organ whose contract moves.
-stems = [
-    "app",
-    "atomic",
-    "board",
-    "bus",
-    "canvas",
-    "consent",
-    "corpus",
-    "dialect",
-    "dist",
-    "doctrine",
-    "fold",
-    "gate",
-    "journal",
-    "lane",
-    "listen",
-    "proof",
-    "rim",
-    "scheduler",
-    "sill",
-    "spice",
-    "steer",
-    "tape",
-    "taste",
-    "vendor",
-    "wire",
-]
-
-# A stem names the domain that owns the work, never the work itself. Every
-# project therefore takes a child segment saying what moves inside that domain,
-# with a third available when a child needs to subdivide. A bare stem would let
-# a domain accumulate rows that are distinguishable only by handle, which is the
-# same undifferentiated bucket the stem inventory above exists to break up.
+# Any `[0-9a-z_]+` root names a project; authors choose it. A root names the
+# domain that owns the work, never the work itself. Every project therefore
+# takes a child segment saying what moves inside that domain, with a third
+# available when a child needs to subdivide. A bare root would let a domain
+# accumulate rows that are distinguishable only by handle.
 project_min_depth = 2
 project_max_depth = 3
 
