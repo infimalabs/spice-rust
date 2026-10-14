@@ -240,10 +240,10 @@ pub(super) fn conversation_stamp(
     })
 }
 
-/// The routes a conversation record freezes: the operator concern, each
-/// admitted lane route with its own context, and their task contexts in header
-/// order. A lane route is admitted when it delivers to a seat or queues for a
-/// vacant lane; an operator route about a direction names one the operator sent
+/// The routes a conversation record freezes: the operator direction, each
+/// admitted lane route with its own context, and each room-only route, in
+/// header order. A lane route is admitted when it delivers to a seat or queues
+/// for a vacant lane; an operator route names a direction the operator sent
 /// this lane.
 fn conversation_routes(
     bus: &Bus,
@@ -256,8 +256,8 @@ fn conversation_routes(
     for route in packet.request_routes() {
         let context = context_room(route.context.as_ref());
         let destination = match route.audience {
-            Audience::OperatorConcern => RoomDestination::Operator {},
-            Audience::Occupant(_) => {
+            Some(Audience::Operator) => RoomDestination::Operator {},
+            Some(Audience::Occupant(_)) => {
                 let directive = directed.next().copied();
                 match targets
                     .iter()
@@ -266,6 +266,20 @@ fn conversation_routes(
                     Some(target) => RoomDestination::Lane { lane: target.lane },
                     None => continue,
                 }
+            }
+            None => {
+                let task = context.ok_or_else(|| {
+                    Unpublished::Failed(typed_protocol_fault(
+                        "msg::route-empty",
+                        "a room-only route names no task",
+                    ))
+                })?;
+                routes.push(RoomRoute {
+                    destination: RoomDestination::Task { task },
+                    context: None,
+                    direction: None,
+                });
+                continue;
             }
         };
         let direction = route

@@ -1064,7 +1064,7 @@ fn direct(addresses: &[wire::OccupantAddress]) -> Vec<steer::ack::scan::Route> {
     addresses
         .iter()
         .map(|address| steer::ack::scan::Route {
-            audience: steer::ack::scan::Audience::Occupant(*address),
+            audience: Some(steer::ack::scan::Audience::Occupant(*address)),
             context: None,
             direction: None,
             span: 0..0,

@@ -138,8 +138,8 @@ impl Publication {
         self.routes()
             .iter()
             .filter_map(|route| match route.audience {
-                Audience::Occupant(address) => Some(address),
-                Audience::OperatorConcern => None,
+                Some(Audience::Occupant(address)) => Some(address),
+                Some(Audience::Operator) | None => None,
             })
     }
 }
@@ -149,8 +149,9 @@ impl Publication {
 pub enum Audience {
     /// One exact occupant, by its address.
     Occupant(OccupantAddress),
-    /// The operator, reached only through this route's direction or task.
-    OperatorConcern,
+    /// The operator, reached only through the operator direction this route's
+    /// `#KEY` names, so everything it hears traces back to what it said.
+    Operator,
 }
 
 impl std::fmt::Display for Audience {
@@ -158,19 +159,21 @@ impl std::fmt::Display for Audience {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Occupant(address) => address.fmt(formatter),
-            Self::OperatorConcern => formatter.write_str("operator concern"),
+            Self::Operator => formatter.write_str("the operator"),
         }
     }
 }
 
-/// One selector: an occupant, a concern pointer, or an occupant in a task.
+/// One selector: an occupant, an operator direction, a room record, or an
+/// occupant in a task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
-    /// Explicit occupant, or the operator inferred from a concern pointer.
-    pub audience: Audience,
+    /// Explicit occupant, or the operator a `#KEY` points at; absent on a
+    /// room-only `#TASK` record, which reaches nobody.
+    pub audience: Option<Audience>,
     /// Task whose room context the route carries; absent on a direct route.
     pub context: Option<TaskHandle>,
-    /// Operator direction an operator concern names.
+    /// Operator direction an operator route names.
     pub direction: Option<Key>,
     /// Byte range of the whole selector.
     pub span: Range<usize>,
@@ -205,6 +208,11 @@ pub enum MessageRefusal {
         /// Byte range of the spelling.
         span: Range<usize>,
     },
+    /// An ASK selector names no respondent.
+    Respondent {
+        /// Byte range of the selector.
+        span: Range<usize>,
+    },
     /// An ANS selector does not spell a result handle.
     Result {
         /// Byte range of the handle.
@@ -231,6 +239,13 @@ pub enum MessageRefusal {
         /// Byte range of its later naming.
         span: Range<usize>,
     },
+    /// A room-only route names a task another room-only route already names.
+    RepeatedContext {
+        /// The later spelling of the repeated task.
+        context: TaskHandle,
+        /// Byte range of the later selector.
+        span: Range<usize>,
+    },
     /// Nothing but whitespace lies between the colon and the next boundary.
     EmptyBody,
 }
@@ -247,10 +262,12 @@ impl MessageRefusal {
             Self::Selectors { .. } => "ask::selector-count",
             Self::Recipient { .. } => "msg::recipient-malformed",
             Self::Concern { .. } => "msg::concern-missing",
+            Self::Respondent { .. } => "ask::respondent-missing",
             Self::Result { .. } => "ans::result-malformed",
             Self::Context { .. } => "msg::context-malformed",
             Self::DirectionAudience { .. } => "msg::direction-audience",
             Self::Repeated { .. } => "msg::recipient-repeated",
+            Self::RepeatedContext { .. } => "msg::context-repeated",
             Self::EmptyBody => "msg::body-empty",
         }
     }
@@ -377,9 +394,11 @@ fn publication(
             let &[(start, end)] = header.tokens.as_slice() else {
                 return Err(selectors(header));
             };
-            Request::Ask {
-                route: route(prose, start, end)?,
+            let route = route(prose, start, end)?;
+            if route.audience.is_none() {
+                return Err(MessageRefusal::Respondent { span: start..end });
             }
+            Request::Ask { route }
         }
         Verb::Ans => {
             let &[(start, end)] = header.tokens.as_slice() else {
@@ -421,14 +440,24 @@ fn routes(prose: &str, tokens: &[(usize, usize)]) -> Result<Vec<Route>, MessageR
     let mut routes: Vec<Route> = Vec::with_capacity(tokens.len());
     for &(start, end) in tokens {
         let route = route(prose, start, end)?;
-        if routes.iter().any(|known| known.audience == route.audience) {
-            let span = match route.audience {
+        if let Some(audience) = route.audience
+            && routes.iter().any(|known| known.audience == Some(audience))
+        {
+            let span = match audience {
                 Audience::Occupant(_) => split(prose, start, end).0,
-                Audience::OperatorConcern => route.span.clone(),
+                Audience::Operator => route.span.clone(),
             };
-            return Err(MessageRefusal::Repeated {
-                audience: route.audience,
-                span,
+            return Err(MessageRefusal::Repeated { audience, span });
+        }
+        if route.audience.is_none()
+            && let Some(context) = &route.context
+            && routes
+                .iter()
+                .any(|known| known.audience.is_none() && same_task(known.context.as_ref(), context))
+        {
+            return Err(MessageRefusal::RepeatedContext {
+                context: context.clone(),
+                span: route.span,
             });
         }
         routes.push(route);
@@ -465,7 +494,7 @@ fn route(prose: &str, start: usize, end: usize) -> Result<Route, MessageRefusal>
             .transpose()?,
     };
     Ok(Route {
-        audience: recipient.unwrap_or(Audience::OperatorConcern),
+        audience: recipient.or(direction.is_some().then_some(Audience::Operator)),
         context,
         direction,
         span: start..end,
@@ -476,6 +505,11 @@ fn task_context(prose: &str, span: Range<usize>) -> Result<TaskHandle, MessageRe
     prose[span.clone()]
         .parse::<TaskHandle>()
         .map_err(|error| MessageRefusal::Context { span, error })
+}
+
+/// Whether two spellings name one task: a renamed handle keeps its birth stamp.
+fn same_task(known: Option<&TaskHandle>, context: &TaskHandle) -> bool {
+    known.is_some_and(|known| known.born().ok() == context.born().ok())
 }
 
 /// Where a body preceding the header at `start` ends.

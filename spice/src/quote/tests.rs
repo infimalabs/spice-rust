@@ -790,7 +790,7 @@ fn delivery_depth_limit_leaves_one_explicit_source_stub() {
 
 /// One settled omp assistant message whose visible prose the provider
 /// folded into reasoning, so its only verbatim words are the call intent.
-const NARRATED_ASK: &str = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"ASK #ROOMS-dVrD255Kf: paraphrased question"},{"type":"toolCall","id":"call-1","name":"shell","arguments":{"command":"true","i":"ASK #ROOMS-dVrD255Kf: arguments are not authored words"},"intent":"ASK #ROOMS-dVrD255Kf: Which gesture activates a design?"}],"stopReason":"toolUse"}}"#;
+const NARRATED_ASK: &str = r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"ASK #dVwg6Zqlf: paraphrased question"},{"type":"toolCall","id":"call-1","name":"shell","arguments":{"command":"true","i":"ASK #dVwg6Zqlf: arguments are not authored words"},"intent":"ASK #dVwg6Zqlf: Which gesture activates a design?"}],"stopReason":"toolUse"}}"#;
 
 fn narrated_events() -> Vec<listen::Event> {
     let decoded = listen::decode(
@@ -813,8 +813,8 @@ fn a_packet_cited_from_a_call_intent_resolves_to_its_exact_bytes() {
         .iter()
         .position(|event| matches!(event, listen::Event::Tool(_)))
         .expect("the record carries the call");
-    let header = "ASK #ROOMS-dVrD255Kf: ".len() as u64;
-    let end = "ASK #ROOMS-dVrD255Kf: Which gesture activates a design?".len() as u64;
+    let header = "ASK #dVwg6Zqlf: ".len() as u64;
+    let end = "ASK #dVwg6Zqlf: Which gesture activates a design?".len() as u64;
 
     assert_eq!(
         hunk_text(&events, call as u32, range(header, end)),
@@ -844,7 +844,7 @@ fn a_hunk_naming_reasoning_or_an_out_of_range_span_reads_as_changed() {
 fn operator_prose_is_never_packet_text() {
     let operator = listen::Event::StreamedProse(listen::Prose {
         role: listen::ProseRole::Operator,
-        text: "ASK #ROOMS-dVrD255Kf: not authored by the lane".to_owned(),
+        text: "ASK #dVwg6Zqlf: not authored by the lane".to_owned(),
         phase: None,
         media: Vec::new(),
         external_media: Vec::new(),

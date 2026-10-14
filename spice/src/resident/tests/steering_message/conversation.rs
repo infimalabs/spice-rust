@@ -259,33 +259,35 @@ fn a_nak_of_the_live_ask_declines_its_result() {
     lanes.finish();
 }
 
-/// A task concern opens one pending operator item and wakes no lane; an
-/// operator-routed MSG still reaches its seated lane routes.
+/// A task pointer records its room and reaches nobody: it opens no operator
+/// item and cannot be asked. Only `#KEY` of a direction the operator sent
+/// this lane opens one pending operator item, beside its seated lane routes.
 #[test]
-fn operator_concerns_open_pending_items() {
+fn only_a_direction_key_opens_a_pending_operator_item() {
     let lanes = Lanes::new("conv-operator");
     let room = lanes.room("dVrD244Jd");
-    let born = room.born().expect("fixture handle carries its birth");
     let first = lanes.address(FIRST);
 
-    let asking = lanes.say(SENDER, &format!("ASK #{room}: ship it?"));
-    let result = asked(&asking);
-    let Ok(Published::Sent {
-        lanes: reached,
-        conversed: Some(Conversed { operator: true, .. }),
-        ..
-    }) = &asking
-    else {
-        panic!("the operator ASK opens an item: {asking:?}");
-    };
-    assert!(reached.is_empty());
-    assert_eq!(
-        lanes.question(&result).0.respondent(),
-        &RoomDestination::Operator {}
+    let noting = lanes.say(SENDER, &format!("MSG #{room}: status"));
+    assert!(
+        matches!(
+            &noting,
+            Ok(Published::Sent { lanes: reached, conversed: None, .. }) if reached.is_empty()
+        ),
+        "{noting:?}"
     );
-    assert_eq!(lanes.question(&result).0.context(), Some(&born));
+    assert_eq!(lanes.rooms().len(), 1, "the room records the packet");
+    assert!(
+        lanes.conversations().is_empty(),
+        "a room record opens no operator item"
+    );
+    assert_eq!(
+        refused(&lanes.say(SENDER, &format!("ASK #{room}: ship it?"))),
+        "ask::respondent-missing"
+    );
 
-    let telling = lanes.say(SENDER, &format!("MSG #{room} {first}: shipped"));
+    let own = lanes.direct(SENDER, 60, "ship when green");
+    let telling = lanes.say(SENDER, &format!("MSG #{own} {first}#{room}: shipped"));
     assert!(
         matches!(
             &telling,
@@ -294,27 +296,22 @@ fn operator_concerns_open_pending_items() {
         ),
         "{telling:?}"
     );
-    let [_, told] = lanes
+    let [told] = lanes
         .conversations()
         .try_into()
-        .expect("two conversation records");
-    for item in [
-        RoomReceiptRef::new(result.authority().clone()),
-        RoomReceiptRef::new(told.publication),
-    ] {
-        let opened = lanes
-            .bus
-            .read(move |read| read.room_item(&item))
-            .expect("items read");
-        assert!(
-            matches!(
-                opened.as_ref().map(|(_, head)| head.body().state()),
-                Some(wire::rooms::RoomReceiptState::Pending { .. })
-            ),
-            "each operator route opens one pending item: {opened:?}"
-        );
-    }
-    assert!(lanes.pending(SENDER).is_empty());
+        .expect("one conversation record");
+    let item = RoomReceiptRef::new(told.publication);
+    let opened = lanes
+        .bus
+        .read(move |read| read.room_item(&item))
+        .expect("items read");
+    assert!(
+        matches!(
+            opened.as_ref().map(|(_, head)| head.body().state()),
+            Some(wire::rooms::RoomReceiptState::Pending { .. })
+        ),
+        "the direction route opens one pending item: {opened:?}"
+    );
     lanes.finish();
 }
 
@@ -382,8 +379,8 @@ fn an_operator_concern_names_the_direction_it_points_at() {
 #[test]
 fn an_operator_item_body_reads_back_from_its_authoring_transcript() {
     let lanes = Lanes::new("conv-operator-text");
-    let room = lanes.room("dVrD244Jd");
-    let asking = lanes.say(SENDER, &format!("ASK #{room}: ship it?"));
+    let key = lanes.direct(SENDER, 20, "ship when green");
+    let asking = lanes.say(SENDER, &format!("ASK #{key}: ship it?"));
     asked(&asking);
     let [asked] = lanes
         .conversations()

@@ -172,10 +172,10 @@ name, and email and above Jobs, not in the shared Working groups catalog. Its
 heading reads `<initials>'s inbox` (for example, "CA's inbox") once Git
 identity supplies initials, and "Your inbox" until then; an identity refresh
 retitles the same surface in place. It catalogs every open operator item each
-lane addressed by pointing at a concern the operator already sees. A `#KEY`
-item names that operator direction by key and the text the operator sent; a
-`#TASK` item names that task or room. Retained pre-cutover items that named no
-concern remain visible as unnamed, but current packets cannot create another.
+lane addressed through `#KEY` of a direction the operator sent it; the card
+names that direction by key and the text the operator sent. Retained
+pre-cutover items name the task they concerned, or show as unnamed when they
+named none; current packets cannot create either.
 Then the card shows its publication's full body. A lane's body stays in its
 transcript, so the app reads it once, with the concerned direction's text,
 through the operator-only `room::conversation-text` read, which projects the
