@@ -11,26 +11,32 @@ fn uuid(value: &str) -> CanonicalUuid {
 }
 
 #[test]
-fn team_scope_waits_for_the_roster_then_homes_creator_and_member_claimed_tasks() {
+fn team_scope_docks_only_active_member_work_without_changing_ownership() {
     let team = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
-    let member = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-    let other_team = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    let other_team = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    let member = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    let other_member = uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
 
-    let mut created = task(1, "alpha.created");
-    created.creator_team = Some(team);
-    let mut claimed = task(2, "beta.claimed");
-    let mut member_claim = claim(&claimed, ClaimDisposition::Active);
-    member_claim.body.lane = member;
-    claimed.claim = Some(member_claim);
-    let mut both = task(3, "gamma.both");
-    both.creator_team = Some(team);
-    let mut both_claim = claim(&both, ClaimDisposition::Freed);
-    both_claim.body.lane = member;
-    both.claim = Some(both_claim);
-    let mut unrelated = task(4, "delta.unrelated");
-    unrelated.creator_team = Some(other_team);
+    let created = |value, project| {
+        let mut row = task(value, project);
+        row.creator_team = Some(team);
+        row
+    };
+    let inactive = created(1, "alpha.inactive");
+    let mut active = created(2, "alpha.active");
+    let mut active_claim = claim(&active, ClaimDisposition::Active);
+    active_claim.body.lane = member;
+    active.claim = Some(active_claim);
+    let mut released = created(3, "alpha.released");
+    let mut released_claim = claim(&released, ClaimDisposition::Freed);
+    released_claim.body.lane = member;
+    released.claim = Some(released_claim);
+    let mut moved = created(4, "alpha.moved");
+    let mut moved_claim = claim(&moved, ClaimDisposition::Active);
+    moved_claim.body.lane = other_member;
+    moved.claim = Some(moved_claim);
 
-    let board = board(vec![created, claimed, both, unrelated]);
+    let board = board(vec![inactive, active, released, moved]);
     let pending = WorkProjection::from_board_and_lanes(&board, None);
     let scope = WorkScope::Team { team };
     assert_eq!(pending.contains_scope(&scope), None);
@@ -38,113 +44,41 @@ fn team_scope_waits_for_the_roster_then_homes_creator_and_member_claimed_tasks()
 
     let projection = WorkProjection::from_board_with_team_memberships(
         &board,
-        Some(BTreeSet::from([team])),
-        &BTreeMap::from([(member, team)]),
-    );
-    assert_eq!(projection.contains_scope(&scope), Some(true));
-    assert_eq!(
-        projection.contains_scope(&WorkScope::Team { team: other_team }),
-        Some(false)
-    );
-    assert_eq!(projection.scope_counts(&scope).open(), 3);
-    assert_eq!(
-        projection
-            .tasks()
-            .iter()
-            .filter(|task| projection.in_scope(task, &scope))
-            .map(|task| task.row().statement.body.born.clone())
-            .collect::<Vec<_>>(),
-        [stamp(1), stamp(2), stamp(3)]
-    );
-}
-
-#[test]
-fn team_strip_lists_each_open_task_once_by_availability_then_offer_order() {
-    let team = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
-    let other_team = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-    let member = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
-    let other_member = uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
-
-    let created = |value, project| {
-        let mut task = task(value, project);
-        task.creator_team = Some(team);
-        task
-    };
-    let first_ready = created(1, "alpha.first");
-    let second_ready = created(2, "beta.second");
-    let mut blocked = created(3, "alpha.blocked");
-    blocked.statement.body.requirements = wire::EnvironmentRequirements::one(
-        wire::EnvironmentRequirement::journal_schema(2).expect("fixture requirement"),
-    );
-    let mut claimed = task(4, "gamma.claimed");
-    let mut member_claim = claim(&claimed, ClaimDisposition::Active);
-    member_claim.body.lane = member;
-    claimed.claim = Some(member_claim);
-    let mut elsewhere = created(5, "delta.elsewhere");
-    let mut other_claim = claim(&elsewhere, ClaimDisposition::Active);
-    other_claim.body.lane = other_member;
-    elsewhere.claim = Some(other_claim);
-    let mut finished = created(6, "alpha.done");
-    finished.workflow.body.completion = Some(
-        "2026-09-23T06:00:00.000Z"
-            .parse()
-            .expect("fixture completion"),
-    );
-    let mut unrelated = task(7, "omega.unrelated");
-    unrelated.creator_team = Some(other_team);
-    let hidden_ready = created(8, ".alpha.hidden");
-
-    let mut board = board(vec![
-        first_ready,
-        second_ready,
-        blocked,
-        claimed,
-        elsewhere,
-        finished,
-        unrelated,
-        hidden_ready,
-    ]);
-    board.offer = vec![stamp(2), stamp(1), stamp(8)];
-    let strip = |projection: &WorkProjection<'_>, team| {
-        projection
-            .scope_strip(&WorkScope::Team { team })
-            .into_iter()
-            .map(|task| task.row().statement.body.project.clone())
-            .collect::<Vec<_>>()
-    };
-
-    let pending = WorkProjection::from_board_and_lanes(&board, None);
-    assert!(
-        strip(&pending, team).is_empty(),
-        "a team's strip waits for the roster",
-    );
-
-    let loaded = WorkProjection::from_board_with_team_memberships(
-        &board,
         Some(BTreeSet::from([team, other_team])),
         &BTreeMap::from([(member, team), (other_member, other_team)]),
     );
-    let tabs = strip(&loaded, team);
     assert_eq!(
-        tabs,
-        [
-            "gamma.claimed",
-            "beta.second",
-            "alpha.first",
-            "alpha.blocked",
-            ".alpha.hidden",
-        ],
-        "in-flight work leads, ready work keeps offer order across stems, then held and parked",
+        projection.scope_tasks(&scope),
+        [stamp(2)],
+        "creator provenance and released claims do not dock inactive work",
+    );
+    assert_eq!(projection.scope_counts(&scope).open(), 1);
+    assert_eq!(
+        projection.overview_for_scope(scope).tasks(),
+        &[stamp(2)],
+        "the team total selects exactly the tabs currently docked there",
     );
     assert_eq!(
-        tabs.len(),
-        loaded.scope_counts(&WorkScope::Team { team }).open(),
-        "the strip holds exactly the open tasks of the team's Work scope",
+        projection.scope_tasks(&WorkScope::Team { team: other_team }),
+        [stamp(4)],
+        "an active claim moves local placement to the claimant's team",
     );
     assert_eq!(
-        strip(&loaded, other_team),
-        ["delta.elsewhere", "omega.unrelated"],
-        "a task created by one team and actively claimed by another shows only on the claimant's",
+        projection
+            .scope_tasks(&WorkScope::AllOpen)
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([stamp(1), stamp(2), stamp(3), stamp(4)]),
+        "local docking never removes execution work from its global namespace",
+    );
+    assert_eq!(
+        projection.tasks()[0].accountable_owner(),
+        Some(&WorkOwner::Team(team)),
+    );
+    assert_eq!(
+        projection.tasks()[2].accountable_owner(),
+        Some(&WorkOwner::Team(team)),
+        "release changes local placement without erasing accountable ownership",
     );
 }
 
@@ -277,10 +211,9 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
         BTreeSet::from([stamp(4), stamp(5)]),
         "a Plan-controlled task stays execution work and no Design-owned row is duplicated",
     );
-    assert_eq!(
-        borns(&WorkScope::Team { team: executor }),
-        BTreeSet::from([stamp(4), stamp(5)]),
-        "a current team strip excludes Design-owned planning even while its member claims it",
+    assert!(
+        borns(&WorkScope::Team { team: executor }).is_empty(),
+        "accountable ownership alone does not dock inactive execution work",
     );
     assert_eq!(
         projection.tasks()[1].accountable_owner(),
@@ -295,73 +228,57 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
 }
 
 #[test]
-fn a_group_scope_holds_exactly_the_open_tasks_associated_with_its_designs() {
+fn group_scope_docks_only_active_work_associated_with_its_designs() {
     let design = stamp(1);
     let group = "dVxJ7j0vj"
         .parse::<wire::rooms::RoomAuthorityStamp>()
         .expect("fixture group");
-    let prepared = |value, project, relation: fn(&mut wire::TaskPreparation, wire::TaskStamp)| {
-        let mut task = task(value, project);
-        let mut preparation = wire::TaskPreparation {
-            parent: stamp(90),
-            controller: stamp(91),
-            construction: stamp(92),
-        };
-        relation(&mut preparation, design.clone());
-        task.statement.body.preparation = Some(preparation);
-        task
+    let preparation = || wire::TaskPreparation {
+        parent: design.clone(),
+        controller: design.clone(),
+        construction: design.clone(),
     };
-    let mut settled = prepared(5, "rooms.settled", |preparation, design| {
-        preparation.parent = design;
-    });
-    settled.workflow.body.completion = Some(
-        "2026-09-23T06:00:00.000Z"
-            .parse()
-            .expect("fixture completion"),
-    );
-    let board = {
-        let mut board = board(vec![
-            task(1, "rooms.design"),
-            prepared(2, "alpha.child", |preparation, design| {
-                preparation.parent = design;
-            }),
-            prepared(3, "rooms.controlled", |preparation, design| {
-                preparation.controller = design;
-            }),
-            prepared(4, "alpha.constructed", |preparation, design| {
-                preparation.construction = design;
-            }),
-            settled,
-            task(6, "rooms.other"),
-        ]);
-        board.offer = vec![stamp(4), stamp(1), stamp(2), stamp(3), stamp(6)];
-        board
+    let activate = |row: &mut wire::intent::BoardTask| {
+        row.claim = Some(claim(row, ClaimDisposition::Active));
     };
+
+    let mut active_design = task(1, "rooms.design");
+    active_design.statement.body.intent = Some(wire::TaskIntent::Design);
+    activate(&mut active_design);
+    let mut active_output = task(2, "rooms.active");
+    active_output.statement.body.preparation = Some(preparation());
+    activate(&mut active_output);
+    let mut inactive_output = task(3, "rooms.inactive");
+    inactive_output.statement.body.preparation = Some(preparation());
+    let mut unrelated = task(4, "rooms.unrelated");
+    activate(&mut unrelated);
+
+    let board = board(vec![
+        active_design,
+        active_output,
+        inactive_output,
+        unrelated,
+    ]);
     let projection = WorkProjection::from_board(&board);
-    let scope = |designs: &[wire::TaskStamp]| WorkScope::Group {
-        group: group.clone(),
-        designs: designs.to_vec(),
+    let scope = WorkScope::Group {
+        group,
+        designs: vec![design],
     };
-    let whole = scope(std::slice::from_ref(&design));
-    let strip = projection
-        .scope_strip(&whole)
-        .into_iter()
-        .map(|task| task.row().statement.body.born.clone())
-        .collect::<Vec<_>>();
     assert_eq!(
-        strip,
-        [stamp(4), stamp(1), stamp(2), stamp(3)],
-        "the Design and every open task it parents, controls, or constructs keep offer order \
-         across stems; settled and unassociated work stays out",
+        projection
+            .scope_tasks(&scope)
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([stamp(1), stamp(2)]),
+        "association without active work does not dock a group tab, and an unrelated claim does not enter",
     );
+    assert_eq!(projection.scope_counts(&scope).open(), 2);
     assert_eq!(
-        projection.overview_for_scope(whole.clone()).tasks(),
-        strip.as_slice(),
-        "the total opens exactly the strip's tasks",
-    );
-    assert_eq!(projection.scope_counts(&whole).open(), 4);
-    assert!(
-        projection.scope_tasks(&scope(&[])).is_empty(),
-        "a group without designs holds no work",
+        projection
+            .scope_tasks(&WorkScope::planning())
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([stamp(1), stamp(2), stamp(3)]),
+        "active and inactive Design work remain in the global planning namespace",
     );
 }

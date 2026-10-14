@@ -249,25 +249,30 @@ badge-only total. The global strips keep equal, small browser-edge insets,
 including the platform safe area: execution at the left and Design at the
 right. The left global total opens all current execution work. The right global
 total opens all current Design-owned work: each Design root and each open task
-directly controlled by a Design. A team total opens the overview with that
-team's complete current execution set selected without changing the durable
-location. Totals keep one footprint for every count. Tabs past a total scroll
-horizontally under edge fades and never enter the status row.
+directly controlled by a Design. Global membership is the stable namespace;
+active local docking does not remove a task from its global strip. A team total
+opens the overview with exactly the tasks its members are currently working,
+without changing task authority or accountable ownership. Totals keep one
+footprint for every count. Tabs past a total scroll horizontally under edge
+fades and never enter the status row.
 
-A team-local task tab a lane is working wears that lane's accent, and a
-group-local tab wears the accent of the Design it serves. An accented tab's
-text is always accent-tinted and its background carries a 5% accent tint, 10%
-on hover. Every horn tab's rails, global or local, keep the neutral line color
-and undim one neutral step on hover; no accent paints them. Unaccented local
-tabs and totals stay neutral, and global strips own their other interaction
-feedback independently. Every count badge is one neutral open-task total; see
+A team-local task tab appears only while one of that team's lanes actively
+claims it, and wears that lane's accent. A group-local tab appears only while
+its associated Design work has an active claimant, and wears the accent of the
+Design it serves. An accented tab's text is always accent-tinted and its
+background carries a 5% accent tint, 10% on hover. Every horn tab's rails,
+global or local, keep the neutral line color and undim one neutral step on
+hover; no accent paints them. Totals stay neutral, and global strips own their
+other interaction feedback independently. Every count badge is one neutral
+open-task total; see
 [Task counts show one open total](../docs/product/loops.md#the-jitter-contract).
 
 Each global stem tab opens its complete visibility-qualified stem within its
-own partition. A team strip has no stem roll-ups: past its total, each open
-task is its own tab, ordered by availability (in flight, ready, review, stale,
-blocked, selection, held, deferred, parked) and, within one availability, by
-the resident's offer order. Each tab opens its exact task. Closing any overview
+own partition. A local strip has no stem roll-ups: past its total, each actively
+worked task is its own tab in the projection's deterministic order. Each tab
+opens its exact task, and the local total selects exactly the tabs beside it.
+Starting, moving, releasing, lapsing, or completing a claim updates local
+docking; it does not change the task's global namespace. Closing any overview
 returns focus to the control that opened it.
 
 Typed OOPS rows retain their public project but stay out of allocator and
@@ -283,11 +288,12 @@ accountable owner. A Design owns itself and tasks it directly controls. All
 other work belongs to the team of the lane actively claiming it (no team when
 that lane is unteamed), otherwise to a still-live creator team, otherwise to
 its last claimant's current team. A task can therefore move from a dissolved
-creator team to a live team without losing who created it. A Design-produced
-Plan stays on the right planning strip; tasks that Plan creates for authorized
-execution use the ordinary team and left-global strips. Ownership is never
-inferred from dependency reachability, working-group placement, or a transitive
-preparation ancestor.
+creator team to a live team without losing who created it. Accountable owner
+chooses the execution or Design global namespace; it does not by itself dock a
+local tab. A Design-produced Plan stays on the right planning strip; tasks that
+Plan creates for authorized execution use the ordinary left-global strip.
+Ownership is never inferred from dependency reachability, working-group
+placement, or a transitive preparation ancestor.
 
 Project controls select the exact dotted project, and a relationship control
 extends the current selection with that task. Selection always follows the
@@ -300,8 +306,8 @@ element to a design-side analog:
 
 | Team toolbar | Group toolbar |
 | --- | --- |
-| Team total: opens the overview with the team's task set selected | Group total: opens the overview with every open task associated with the group's designs selected |
-| One tab per open task, in availability then offer order | One tab per open task associated with the group's designs, in the same order |
+| Team total: opens the overview with exactly the tasks its members are actively working | Group total: opens the overview with exactly the actively claimed work associated with the group's designs |
+| One tab per actively worked team task | One tab per actively worked task associated with the group's designs |
 | A task handle carries the accent of the lane working it | A task handle carries the accent of the design it serves |
 | Presence pips: one per member, by state | Design lights: one per design in its accent, distinguishing open, claimed, in review, holding unauthorized outputs, and settled, with an accessible label naming the standing; a design whose board row is unavailable invents no standing |
 | Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest room publication or coordination event across the group's designs, with the same age, prefix, accessible label, and live region; its accent and status are the design it landed in |

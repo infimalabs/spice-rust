@@ -283,7 +283,8 @@ fn render_team_toolbar(
     }
 }
 
-/// The fixed team total and task scroller remain independent of the status row.
+/// The fixed team total and active-task scroller remain independent of the
+/// status row.
 fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     let tasks = render
         .work
@@ -293,7 +294,7 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
         <div class="team-task-rail">
             if !tasks.is_empty() {
                 {render_team_total(team, &tasks, render.navigate)}
-                <nav class="app-horn-tabs team-tasks" aria-label="Open tasks this team created or claims">
+                <nav class="app-horn-tabs team-tasks" aria-label="Tasks currently worked by this team">
                     {for tasks.iter().copied().map(|task| render_team_task_handle(task, render))}
                 </nav>
             }
@@ -301,8 +302,8 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     }
 }
 
-/// The leading tab: only a badge counting every task the rail shows, opening
-/// the unified overview with that team's complete current selection.
+/// The leading tab: only a badge counting every active task the rail shows,
+/// opening the unified overview with exactly that current selection.
 fn render_team_total(
     team: CanonicalUuid,
     tasks: &[&crate::work::WorkTask<'_>],
@@ -315,7 +316,7 @@ fn render_team_total(
         .collect::<WorkCounts>();
     let open = counts.open();
     let title = format!(
-        "Open all of this team's work: {open} {}",
+        "Open work active on this team: {open} {}",
         if open == 1 { "task" } else { "tasks" }
     );
     let navigate = navigate.clone();

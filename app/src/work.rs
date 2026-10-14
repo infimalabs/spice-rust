@@ -133,10 +133,10 @@ pub enum WorkScope {
     Stem(WorkStemIdentity),
     /// Design roots and directly Design-controlled planning tasks.
     Planning { stem: Option<WorkStemIdentity> },
-    /// Open execution tasks currently accountable to one team.
+    /// Open execution tasks currently worked by one team's members.
     Team { team: wire::CanonicalUuid },
-    /// Open tasks associated with any Design of one working group, as its
-    /// partition held them when the scope was chosen.
+    /// Open tasks currently worked within any Design of one working group, as
+    /// its partition held them when the scope was chosen.
     Group {
         group: wire::rooms::RoomAuthorityStamp,
         designs: Vec<wire::TaskStamp>,
@@ -635,12 +635,15 @@ impl<'a> WorkProjection<'a> {
                         .as_ref()
                         .is_none_or(|stem| self.task_stem(task) == stem)
             }
-            WorkScope::Team { team } => task.belongs_to_team(*team),
+            WorkScope::Team { team } => {
+                task.working_claimant().is_some() && task.belongs_to_team(*team)
+            }
             WorkScope::Group { designs, .. } => {
                 let statement = &task.row.statement.body;
-                designs
-                    .iter()
-                    .any(|design| crate::runtime::associated(statement, design))
+                task.working_claimant().is_some()
+                    && designs
+                        .iter()
+                        .any(|design| crate::runtime::associated(statement, design))
             }
         }
     }

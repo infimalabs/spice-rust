@@ -52,7 +52,7 @@ pub(super) fn render(
     }
 }
 
-/// The scope that selects this group's associated work.
+/// The scope that selects work active in this group's associated Designs.
 fn scope(view: &GroupView, channels: &[Channel]) -> WorkScope {
     WorkScope::Group {
         group: view.group.clone(),
@@ -63,7 +63,7 @@ fn scope(view: &GroupView, channels: &[Channel]) -> WorkScope {
     }
 }
 
-/// The fixed total and the task scroller.
+/// The fixed total and active-task scroller.
 fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Channel]) -> Html {
     let tasks = render
         .work
@@ -73,7 +73,7 @@ fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Chann
         <div class="team-task-rail">
             if !tasks.is_empty() {
                 {render_total(render, view, channels, &tasks)}
-                <nav class="app-horn-tabs team-tasks" aria-label="Open tasks associated with this group's designs">
+                <nav class="app-horn-tabs team-tasks" aria-label="Tasks currently worked in this group's designs">
                     {for tasks.iter().copied().map(|task| render_handle(render, channels, task))}
                 </nav>
             }
@@ -81,8 +81,8 @@ fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Chann
     }
 }
 
-/// The leading tab: a badge counting every task the rail shows, opening the
-/// overview with the group's whole associated selection.
+/// The leading tab: a badge counting every active task the rail shows, opening
+/// the overview with exactly that current selection.
 fn render_total(
     render: &GroupRender<'_, '_>,
     view: &GroupView,
@@ -95,7 +95,7 @@ fn render_total(
         .collect::<WorkCounts>();
     let open = counts.open();
     let title = format!(
-        "Open all of this group's work: {open} {}",
+        "Open work active in this group: {open} {}",
         if open == 1 { "task" } else { "tasks" }
     );
     let open_group = {
