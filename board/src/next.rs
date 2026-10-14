@@ -13,12 +13,14 @@ use crate::urgency::{Urgency, declared_priority};
 /// Plan's positive completion. An output whose immediate preparation is a
 /// Design instead requires that Design's exact selection, which never
 /// concludes it, so each known preparation parent records whether it is a
-/// Design. Each Design that still has a live output awaiting that selection is
-/// recorded too, so it waits on the operator rather than a lane.
+/// Design and whether the working-group partition holds it. Each Design that
+/// still has a live output awaiting that selection is recorded too, so it
+/// waits on the operator rather than a lane.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResolvedTasks {
     settled: BTreeMap<TaskStamp, bool>,
     designs: BTreeMap<TaskStamp, bool>,
+    active_designs: BTreeSet<TaskStamp>,
     unselected: BTreeSet<TaskStamp>,
 }
 
@@ -37,6 +39,12 @@ impl ResolvedTasks {
     pub fn know(&mut self, task: TaskStamp, intent: Option<TaskIntent>) {
         self.designs
             .insert(task, intent == Some(TaskIntent::Design));
+    }
+
+    /// Record that the working-group partition holds `task`. Only a known
+    /// Design reads as active; gather tasks under it run while it stays open.
+    pub fn group(&mut self, task: TaskStamp) {
+        self.active_designs.insert(task);
     }
 
     /// Record one live task; an output still lacking its selection marks the
@@ -80,6 +88,12 @@ impl ResolvedTasks {
         self.designs.get(task).copied()
     }
 
+    /// Whether `task` is a known Design that is still open and that the
+    /// working-group partition holds.
+    fn open_active_design(&self, task: &TaskStamp) -> bool {
+        self.design(task) == Some(true) && !self.settled(task) && self.active_designs.contains(task)
+    }
+
     /// Whether this statement remains Design-side speculative work rather than
     /// execution the allocator may expose in an agent-facing summary.
     ///
@@ -87,6 +101,8 @@ impl ResolvedTasks {
     /// controlled by a Design stays there until the same control predicate used
     /// by allocation releases it. This includes ordinary outputs of an
     /// authorized Plan once both that Plan and its Design conclude positively.
+    /// A gather task is Design-side evidence work that never carries an
+    /// authorization, so it always stays here.
     #[must_use]
     pub fn speculative_design_work(&self, statement: &wire::TaskHead) -> bool {
         if statement.intent == Some(TaskIntent::Design) {
@@ -94,7 +110,7 @@ impl ResolvedTasks {
         }
         statement.preparation.as_ref().is_some_and(|preparation| {
             self.design(&preparation.controller) == Some(true)
-                && !control_satisfied(statement, self)
+                && !control_satisfied(statement, false, self)
         })
     }
 }
@@ -128,9 +144,22 @@ impl SelectionIndex {
     }
 }
 
+/// The phase a gather task walks: evidence-only work under an open, active
+/// Design.
+const GATHER_PHASE: &str = "gather";
+
+/// Whether a task with `intent` and `flow` is a gather task: no declared
+/// intent and the one `gather` phase. It holds no commit authority, lands
+/// nothing, and is never a preparation output awaiting selection; any other
+/// route under a Design is an ordinary output.
+#[must_use]
+pub fn gather_task(intent: Option<TaskIntent>, flow: &[wire::Phase]) -> bool {
+    intent.is_none() && matches!(flow, [phase] if phase.as_str() == GATHER_PHASE)
+}
+
 /// The preparation whose selection one live output still lacks: an output its
 /// preparation constructed directly that is pending without an execution
-/// authorization.
+/// authorization. A gather task is evidence, never an output.
 ///
 /// A Design cannot be concluded done while it owns such an output; only the
 /// operator's selection, or closing or deleting the output, discharges it.
@@ -143,8 +172,9 @@ pub fn unselected_output_of<'a>(
     (workflow.status == "pending"
         && workflow.completion.is_none()
         && statement.authorization.is_none()
-        && preparation.construction == statement.born)
-        .then_some(&preparation.parent)
+        && preparation.construction == statement.born
+        && !gather_task(statement.intent, &workflow.flow))
+    .then_some(&preparation.parent)
 }
 
 /// Whether an open Design waits on the operator's selection: an output it
@@ -828,7 +858,11 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
         .dependencies
         .iter()
         .all(|dependency| completed.settled(dependency))
-        && control_satisfied(entry.statement(), completed)
+        && control_satisfied(
+            entry.statement(),
+            gather_task(entry.statement().intent, &entry.workflow().flow),
+            completed,
+        )
 }
 
 /// A constructed output waits for its controller to stand: known, and not
@@ -839,11 +873,15 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
 /// operator closure, releases it. Retained pre-cutover group markers are
 /// unsupported evidence and never participate in eligibility. A preparation a
 /// Plan constructs runs alongside it. An unknown preparation leaves the output
-/// gated.
-fn control_satisfied(statement: &wire::TaskHead, completed: &ResolvedTasks) -> bool {
+/// gated. A gather task needs no authorization: it runs exactly while the
+/// Design that constructed it is open and grouped.
+fn control_satisfied(statement: &wire::TaskHead, gather: bool, completed: &ResolvedTasks) -> bool {
     let Some(preparation) = &statement.preparation else {
-        return true;
+        return !gather;
     };
+    if gather {
+        return completed.open_active_design(&preparation.parent);
+    }
     if preparation.construction != statement.born {
         return true;
     }
@@ -998,6 +1036,9 @@ pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
             );
         }
         resolved.know(candidate.born().clone(), candidate.statement().intent);
+        if candidate.grouped() {
+            resolved.group(candidate.born().clone());
+        }
         resolved.observe(candidate.statement(), candidate.workflow());
     }
     resolved

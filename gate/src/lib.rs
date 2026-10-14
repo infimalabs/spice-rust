@@ -102,7 +102,7 @@ pub use core::{
     CoreTimeoutContract, CoreToolContract, DocMeasurement, GitCommandContract,
     MergeIntegrityEvidence, MergeTreeCompletion, PlanningPhaseEvidence,
     PredecessorObservation as CorePredecessorObservation, RepoDocLimit, RepoDocsEvidence,
-    RepoShapeEvidence, StagingEvidence, core_declarations, evaluate_core, is_planning_phase,
+    RepoShapeEvidence, StagingEvidence, core_declarations, evaluate_core, lacks_commit_authority,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use evidence_store::{

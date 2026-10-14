@@ -412,6 +412,8 @@ fn prepare_followup_policy(
         )?
     };
     planning::admit_design_flow(intent, &flow)?;
+    // A correction follows its reviewed task, never a Design, so it never gathers.
+    planning::admit_gather_design(intent, &flow, None)?;
     let reviewed = &context.reviewed_task.workflow.body;
     // Ordinary corrections may rely on their parent's re-review. Planning
     // corrections retain their own planning route and construction owner.

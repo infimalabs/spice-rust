@@ -108,6 +108,8 @@ instead.
 | Partition revision | the one read | `group::partition-moved`: read the groups and retry |
 | Design possession | inside a working group | `claim::design-passive` on capture, steal, or recovery and `room::design-passive` on coordination: `spice group move DESIGN --to GROUP` or `--new` |
 | Deactivating a held Design | a holder address proved by its seat or its claimed occupant's birth | `room::holder-address-unavailable`: the move records nothing; free or reseat the holder and retry |
+| Gather task creation | the bare `gather` flow without intent, created directly under an open Design inside a working group | `task::gather-design`: create it under an active open Design while holding it or with `--preparation DESIGN` |
+| Candidate outputs | no gather task | `preparation::gather-output`: cite the gather task's note or artifact as a candidate reference instead |
 | Automated resumes per rule | 1 through 8 | `room::auto-resume-out-of-range` |
 | Scoped request field | 2048 bytes | `room::coordination-scope-too-large` |
 | Live coordination per room | one request | `room::coordination-live`: retire or put aside the unanswered request |

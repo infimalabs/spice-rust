@@ -35,7 +35,7 @@ pub use declaration::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use evaluate::evaluate_core_arm;
-pub use evaluate::{evaluate_core, is_planning_phase};
+pub use evaluate::{evaluate_core, lacks_commit_authority};
 
 use crate::GateId;
 use crate::state::BoundDecision;

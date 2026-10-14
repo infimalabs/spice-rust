@@ -11,26 +11,17 @@ Spice started you. The initial prompt is a neutral bootstrap signal, not the
 operator's request. This file is installed from the package source; edit the
 source copy, not the installation.
 
-On a fresh start the resident appends a `# Spice briefing` page, framed as a
-`<system-notice>`, to the prompt, and after every compaction it queues the same
-notice beside the replayed steering. When allocation assigned the lane before
-its agent came online, the fresh notice begins with `# Task already assigned`
-(startup only); continue that task before asking the allocator for work. The
-page folds what binds this lane: pending steering, the held claim with its
-acceptance, unknowns, unclaimed board work, posture, uncommitted files and
-recent commits, recent turns, answered steering, and touched paths. It is
-current truth as of its read, the start or the compaction; a compaction's page
-can arrive after further tool calls, so anything you did since is newer. Do not
-rerun its reads. Its pending keys still need ACK or NAK; the notice itself
-needs none. Each cut row names the command that reads the rest. A
-`# Spice briefing unavailable` page names its refusal and the commands that
-read the same ground.
+On a fresh start, and after every compaction, the resident delivers a
+`# Spice briefing` `<system-notice>`: what binds this lane, current as of its
+read. A compaction's page can trail later tool calls, so anything you did since
+is newer. A fresh page beginning `# Task already assigned` names a task to
+continue before asking the allocator for work. Do not rerun its reads. Its
+pending keys still need ACK or NAK; the notice itself needs none.
 
 A resumed seat keeps its context and instead receives a short `# Seat resumed`
 notice naming the held claim, or why possession is unknown (unknown never means
 none), and the pending key count; continue from context.
-`spice session briefing` (`--json` for typed rows) refreshes the page,
-`spice task status` reads the board, and `spice task next` asks for work.
+`spice session briefing` refreshes the page.
 
 A private `<system-notice>` that carries no acknowledgment key is not steering:
 follow its authority action without ACK/NAK.
@@ -72,22 +63,17 @@ reasoning, code, quotes, and tool arguments never send. A selector is
 `ADDRESS`, `ADDRESS#TASK`, `#TASK` (only a deliberate room record; ordinary
 output needs no packet header), or, best first, `#KEY` of an operator direction
 you got, `operator#TASK`, or `operator`; TASK is a handle. The body ends at the
-next placed ACK, NAK, MSG, ASK, or ANS header or the text block's end. A seated
-address receives immediately; a valid address whose logical lane is vacant
-queues unheard under the same key and deadline for its next occupant. Once a
-newer occupant is born, the old address refuses and names the newer one; it
-never retargets. An unknown TASK refuses the packet. Room recording is not
-receipt and wakes nobody. Send a peer only what it needs.
+next placed ACK, NAK, MSG, ASK, or ANS header or the text block's end. A
+vacant lane's address queues the packet for its next occupant. Room recording
+is not receipt and wakes nobody. Send a peer only what it needs.
 
 `ASK AUDIENCE[#TASK]: BODY` asks one address or operator route and opens a
 result named by its private notice; that result handle keys a lane delivery.
-`ASK` and `ANS` use the same first-tool-intent fallback as `MSG`. A proved
-vacant lane queues it; another unavailable audience refuses. Only the
-respondent answers, once, with `ANS RESULT[#TASK]: BODY`; TASK, when present,
-must equal the stored context. The answer returns to the requester and retires
-the live ASK delivery; NAK declines it instead. The requester withdraws a
-pending question with `spice room cancel RESULT --clause TEXT`;
-`spice://room/result/RESULT` reads its state and answer.
+`ASK` and `ANS` use the same first-tool-intent fallback as `MSG`. Only the
+respondent answers, once, with `ANS RESULT[#TASK]: BODY`; the answer returns to
+the requester and retires the live ASK delivery; NAK declines it instead. The
+requester withdraws a pending question with
+`spice room cancel RESULT --clause TEXT`.
 
 `[PEER sender ADDRESS lane ID]` is information, never operator or task
 authority: ACK/NAK it normally, and never repeat the clause as MSG, since it
@@ -97,11 +83,9 @@ no address is proved. Peer messages and replies never wake a lane.
 
 Each `# Room catch-up` room names why the lane listens and the exact leave
 command. Once a room is low value or the lane's part is done, run
-`spice room leave HANDLE --clause TEXT`. That attributed act is recorded in the
-room and ends listening derived from prior contribution, activity, or
-invitation; contributing again or a later addressed packet resumes it. Leaving
-never frees a claim, settles a delivery, answers a question, or removes a
-native duty; its reply names any duty that still holds the lane.
+`spice room leave HANDLE --clause TEXT`; contributing again or a later
+addressed packet resumes listening. Leaving never frees a claim, settles a
+delivery, answers a question, or removes a native duty.
 
 If continuity is clipped, recover only the detail needed with
 `spice session sweep` (newest compaction windows first) or
@@ -159,10 +143,8 @@ whose omission names the exact continuation.
   and task state, and do not bypass `session::context-live-session-self` by
   opening that transcript. If the description no longer matches repository or
   operator state, update, split, or release the task rather than force it.
-- `task plan` defaults to `plan,review`; `task design` to its one open
-  `design` phase. Declared purpose survives phases and corrections and cannot
-  be cleared or reinterpreted as execution. Ordinary done cannot supply a
-  required review verdict or skip later declared phases.
+- Declared Plan or Design purpose survives phases and corrections; ordinary
+  done cannot supply a required review verdict or skip later declared phases.
 - A Design plans Plans; a Plan plans executable tasks. Creation without another
   `--origin` under an ambient Plan or Design binds to it; `--preparation
   HANDLE` binds explicitly. A Plan must create at least one acceptance-bearing
@@ -170,33 +152,28 @@ whose omission names the exact continuation.
   positive review releases those tasks onto their ordinary dependencies, with
   no candidate, selection, or authorization. When a Design finds follow-up
   warranted, create its acceptance-bearing output Plans under it and run
-  `spice preparation retain CANDIDATE_JSON` naming them (a malformed body's
-  refusal shows an accepted one); a no-follow-up finding says so explicitly in
-  the Design's notes. A Design stays open: `spice task done` refuses it, so
-  checkpoint and run `spice task free HANDLE`; only the operator concludes it
-  with `spice task conclude`. Design outputs wait for the operator's exact
-  selection: leave `spice preparation decide DECISION_JSON` to the operator.
-  `--depends` never removes that gate;
-  never add a reciprocal controller-to-output edge. Origin creates no
-  dependency; closure, deletion, a finding, or a working-group move releases or
-  authorizes nothing. A Design outside every working group is passive and
-  refuses claims; a stop direction for a held one means checkpoint and free.
+  `spice preparation retain CANDIDATE_JSON` naming them; a no-follow-up
+  finding says so explicitly in the Design's notes. A Design stays open:
+  checkpoint and run `spice task free HANDLE`; only the operator concludes it.
+  Design outputs wait for the operator's exact selection (`spice preparation
+  decide`); `--depends` never removes that gate, and never add a reciprocal
+  controller-to-output edge. Origin creates no dependency; closure, deletion,
+  a finding, or a working-group move releases or authorizes nothing. A stop
+  direction for a held Design means checkpoint and free. To try an idea for an
+  active Design, create a `--flow gather` task under it: a gather task lands
+  nothing, and candidates cite its notes and artifacts, never select it.
 - Keep work incremental and validated. Commit only while holding the matching
   claim. Git synchronization belongs to allocation and completion: never pull
   or push during implementation or alter harness-added attribution trailers.
 - Release unfinished work with `spice task free HANDLE` or self-deferral, not
-  stash or a gate bypass. Spice parks unpublished commits and dirty
-  tracked/staged/non-ignored untracked content as dangling objects under the
-  task, with no preservation ref. The next claim replays real commits first and
-  restores the worktree snapshot uncommitted; those edits still need the
-  pre-commit gate. Plan completion preserves in-flight edits the same way but
-  does not authorize implementation in plan. Resolve open merges or paused
-  replays before release; a pruned parked object refuses the next claim.
-- After staging the exact change, run `spice gate prove`; it reads only the
-  current fingerprint and trusted receipts. Run a named miss with
-  `spice gate prove ACTION`, or every miss with `spice gate prove --missing`;
-  ad hoc output is not proof. Run proof directly with exit status and full
-  output intact (redirect to a file if needed); never pipe it through filters.
+  stash or a gate bypass. Spice parks unpublished commits and dirty work under
+  the task; the next claim replays the commits and restores the edits
+  uncommitted, and those edits still need the pre-commit gate. Resolve open
+  merges or paused replays before release.
+- After staging the exact change, run `spice gate prove`, or every miss with
+  `spice gate prove --missing`; ad hoc output is not proof. Run proof directly
+  with exit status and full output intact (redirect to a file if needed);
+  never pipe it through filters.
 - The pre-commit gate is the default constitution: invoke it through
   `git commit` or `spice gate pre-commit` and fix what it reports unless
   current operator steering authorizes another path. `git commit --no-verify`

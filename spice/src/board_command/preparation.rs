@@ -66,12 +66,33 @@ pub(super) fn require_no_pending_controlled_outputs(
     ))
 }
 
-/// Refuse candidate selection authority over anything but a Design.
-fn require_design(bus: &Bus, controller: &TaskStamp) -> Result<(), Outcome<CommandAnswer>> {
+/// Refuse candidate selection authority over anything but a Design, and any
+/// gather task offered as an output: a candidate cites its evidence instead.
+fn require_design(
+    bus: &Bus,
+    controller: &TaskStamp,
+    outputs: &[TaskStamp],
+) -> Result<(), Outcome<CommandAnswer>> {
     let snapshot = bus
         .task_snapshot()
         .map_err(|error| store_fault("preparation::heads-unreadable", &error.to_string()))?;
-    design_controller(task_heads(&snapshot, controller)?, controller)
+    design_controller(task_heads(&snapshot, controller)?, controller)?;
+    for output in outputs {
+        if let Some(heads) = snapshot.task_heads(output)
+            && board::gather_task(
+                heads.statement().body().intent,
+                &heads.workflow().body().flow,
+            )
+        {
+            return Err(refusal(
+                "preparation::gather-output",
+                Some(output.to_string()),
+                "a gather task lands nothing and is never an output; cite its notes or artifacts \
+                 as candidate references instead",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn design_controller(
@@ -135,7 +156,11 @@ pub(super) fn retain_candidate(
     if let Err(outcome) = require_proposal_absence(command, &subject) {
         return outcome;
     }
-    if let Err(outcome) = require_design(bus, &request_body.candidate.candidate.controller) {
+    if let Err(outcome) = require_design(
+        bus,
+        &request_body.candidate.candidate.controller,
+        &request_body.candidate.outputs,
+    ) {
         return outcome;
     }
     record(
@@ -507,6 +532,10 @@ fn output_is_authorizable(
         && heads.workflow().body().completion.is_none()
         && !active_claim(heads)
         && heads.statement().body().authorization.is_none()
+        && !board::gather_task(
+            heads.statement().body().intent,
+            &heads.workflow().body().flow,
+        )
         && heads.statement().body().engagement.is_none()
         && heads
             .statement()

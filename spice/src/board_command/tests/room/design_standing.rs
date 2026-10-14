@@ -4,17 +4,17 @@
 use super::super::preparation::add_controller;
 use super::*;
 
-fn design(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
+pub(super) fn design(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
     add_controller(bus, epoch, name, wire::TaskIntent::Design, None)
 }
 
-fn born(task: &TaskHandle) -> TaskStamp {
+pub(super) fn born(task: &TaskHandle) -> TaskStamp {
     task.born().expect("fixture task stamp")
 }
 
 /// Win `task` for `seat` under the named `rule`, as `spice task capture` and
 /// `spice task steal` submit it.
-fn win_named(
+pub(super) fn win_named(
     bus: &Bus,
     epoch: CanonicalUuid,
     seat: &Seat,
@@ -44,21 +44,21 @@ fn win_named(
     )
 }
 
-fn refused(outcome: &Outcome<CommandAnswer>) -> &str {
+pub(super) fn refused(outcome: &Outcome<CommandAnswer>) -> &str {
     match outcome {
         Outcome::Refusal(refusal) => refusal.reason(),
         other => panic!("expected a refusal, got {other:?}"),
     }
 }
 
-fn offered(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) -> Option<TaskStamp> {
+pub(super) fn offered(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) -> Option<TaskStamp> {
     match next_board(bus, epoch, Actor::Lane(seat.lane)).next {
         Some(NextWorkState::Candidate { task }) => Some(task.statement.body.born),
         _ => None,
     }
 }
 
-fn active_holder(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> Option<Actor> {
+pub(super) fn active_holder(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> Option<Actor> {
     at(&board(bus, epoch, Actor::Operator), task)
         .claim
         .as_ref()
@@ -83,7 +83,7 @@ fn stop_directions(bus: &Bus, room: &TaskHandle) -> Vec<wire::body::SteerSent> {
         .collect()
 }
 
-fn move_out(
+pub(super) fn move_out(
     bus: &Bus,
     epoch: CanonicalUuid,
     task: &TaskHandle,

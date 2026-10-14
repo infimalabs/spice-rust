@@ -2,7 +2,7 @@
 
 use super::*;
 
-pub(super) fn done_conclusion() -> body::DesignConclusion {
+pub(in crate::board_command::tests) fn done_conclusion() -> body::DesignConclusion {
     body::DesignConclusion::Done {}
 }
 
@@ -44,7 +44,7 @@ fn conclude_witnessed(
 }
 
 /// Drive one conclusion against the heads the board shows right now.
-pub(super) fn conclude(
+pub(in crate::board_command::tests) fn conclude(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,

@@ -56,16 +56,18 @@ fn require_no_planning_implementation(
     action: &str,
 ) -> Result<(), Outcome<CommandAnswer>> {
     match claim_capture_from_board(board) {
-        gate::ClaimCapture::Active { task, phase } if gate::is_planning_phase(phase.as_str()) => {
+        gate::ClaimCapture::Active { task, phase }
+            if gate::lacks_commit_authority(phase.as_str()) =>
+        {
             Err(refusal(
                 "task::planning-implementation",
                 Some(format!(
                     "active task={task}; phase={phase}; refused action={action}"
                 )),
                 concat!(
-                    "organize the planning work with task add, task modify, task depends, and ",
-                    "task note; then complete the planning phase and claim an implementation ",
-                    "phase before changing repository history",
+                    "this phase holds no commit authority: record planning or gather findings ",
+                    "with task add, task modify, task depends, task note, or task artifact add; ",
+                    "only a claimed implementation phase changes repository history",
                 ),
             ))
         }
