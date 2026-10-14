@@ -115,7 +115,7 @@ pub(crate) enum PendingKind {
     },
     Board,
     Lanes {
-        wakes: Vec<wire::CanonicalUuid>,
+        rebases: Vec<wire::CanonicalUuid>,
     },
     Inbox {
         covered: std::collections::BTreeMap<wire::CanonicalUuid, String>,
@@ -155,10 +155,6 @@ pub(crate) enum PendingKind {
     /// A resident member's launch-model change.
     LaneRetune {
         request: runtime::MemberRequest,
-    },
-    WakeSubmission {
-        lane: wire::CanonicalUuid,
-        submission: wire::CanonicalUuid,
     },
     TeamConfigure {
         team: wire::CanonicalUuid,

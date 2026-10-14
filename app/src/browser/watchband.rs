@@ -121,7 +121,6 @@ pub(super) fn render_team(
     for standing in &mut standings {
         standing.pending = view::member_pending(waiting, &submissions.status, standing.lane);
         standing.waking = view::member_waking(waiting, &submissions.status, standing.lane);
-        standing.wake_pending = submissions.status.wake_pending(standing.lane);
     }
     let authority =
         SubmissionAuthority::derive(connection.is_online(), |kind| runtime.offers(kind));
@@ -781,7 +780,7 @@ fn render_agent_composer(
     let lane_key = lane_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let target = authority.target(member.occupant, member.wakeable, epoch);
-    let wake = target == Some(SubmissionTarget::Wake);
+    let wake = matches!(target, Some(SubmissionTarget::Vacant { .. }));
     let command_submit_eligible = target.is_some();
     let broadcast_target_eligible = broadcast_targets
         .iter()
@@ -1093,8 +1092,6 @@ fn send_slots(
                 broadcast: broadcast_targets
                     .iter()
                     .any(|target| target.lane == member.lane),
-                waking: member.liveness == wire::intent::LaneLiveness::Vacant
-                    && standing.wake_pending,
             }
         })
         .collect()
@@ -1160,11 +1157,11 @@ fn submit_draft(
             prepared.attachments,
             prepared.snapshot,
         ),
-        Some(SubmissionTarget::Wake) => Submission::wake(
+        Some(SubmissionTarget::Vacant { epoch }) => Submission::vacant(
             id,
             fanout,
             lane,
-            authored_millis,
+            (epoch, authored_millis),
             prepared.message,
             prepared.attachments,
             prepared.snapshot,

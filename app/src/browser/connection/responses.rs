@@ -354,9 +354,9 @@ fn apply_mutating_response(
         // Orgs move only when that answer lands. A refused mutation differs:
         // it means this client lost its optimistic revision, so it immediately
         // re-reads the winning table rather than retaining the stale render.
-        PendingKind::Lanes { wakes } => {
+        PendingKind::Lanes { rebases } => {
             let (refresh, applied) =
-                apply_lane_response(session, handles, runtime, &wakes, false, bytes)?;
+                apply_lane_response(session, handles, runtime, &rebases, false, bytes)?;
             CommandApplication {
                 refresh,
                 lane_authority: applied,
@@ -386,9 +386,6 @@ fn apply_mutating_response(
             runtime.apply_conversation_text(&publication, &admitted);
             CommandApplication::ordinary(false)
         }
-        PendingKind::WakeSubmission { lane, submission } => CommandApplication::ordinary(
-            apply_wake_submission_response(session, handles, submission, lane, bytes)?,
-        ),
         PendingKind::TeamConfigure {
             team,
             life,
@@ -626,65 +623,65 @@ fn apply_lane_response(
     session: &Session,
     handles: &SurfaceHandles,
     runtime: &mut AppRuntime,
-    wakes: &[CanonicalUuid],
+    rebases: &[CanonicalUuid],
     refresh_on_failure: bool,
     bytes: &[u8],
 ) -> Result<(bool, bool), String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
         admit_response(session, bytes)?;
-    let wake_lanes = handles.submissions.queue.borrow().awaiting_lanes(wakes);
+    let rebase_lanes = handles.submissions.queue.borrow().awaiting_lanes(rebases);
+    let reply = matches!(&admitted.get().outcome, wire::Outcome::Reply(_));
     let applied = runtime.apply_lanes(&admitted);
-    if let wire::Outcome::Reply(reply) = &admitted.get().outcome
+    if let wire::Outcome::Reply(answer) = &admitted.get().outcome
         && applied
     {
-        for lane in &wake_lanes {
-            let row = reply.body.lanes.iter().find(|row| row.lane == *lane);
-            if let Some(row) = row
-                && row.bound
-                && let Some(occupant) = row.occupant
-            {
-                handles.submissions.queue.borrow_mut().bind_woken_lane(
+        for lane in &rebase_lanes {
+            let target = runtime
+                .lanes()
+                .and_then(|lanes| lanes.member(*lane))
+                .and_then(|member| {
+                    (member.occupant.is_some() || member.wakeable).then_some(member.occupant)
+                });
+            if let Some(occupant) = target {
+                handles.submissions.queue.borrow_mut().rebase_awaiting_lane(
+                    rebases,
                     *lane,
                     occupant,
-                    reply.body.epoch,
+                    answer.body.epoch,
                 );
             } else {
                 let restored = handles
                     .submissions
                     .queue
                     .borrow_mut()
-                    .refuse_woken_lane(*lane)?;
+                    .refuse_awaiting_lane(*lane, rebases)?;
                 restore_submissions(
                     handles,
                     restored,
-                    "Agent wake succeeded, but a fresh lane snapshot did not establish an \
-                     occupant. Review the lane and retry.",
+                    "Message was not sent because a fresh lane snapshot no longer presents a \
+                     reachable seat. Review the lane and retry.",
                 );
             }
         }
         handles
             .team_controls
             .dispatch(TeamControlAction::SyncLanes {
-                answer: reply.body.clone(),
+                answer: answer.body.clone(),
                 settle: None,
             });
-    } else if let Some(issue) = outcome_issue(
-        "Agent woke, but spice could not confirm fresh residency",
-        &admitted.get().outcome,
-    ) {
-        for lane in &wake_lanes {
-            let restored = handles
-                .submissions
-                .queue
-                .borrow_mut()
-                .refuse_woken_lane(*lane)?;
-            restore_submissions(handles, restored, &issue);
-        }
     }
-    if !wake_lanes.is_empty() {
+    if applied && !rebase_lanes.is_empty() {
         handles.submissions.publish();
     }
-    let refresh = refresh_on_failure && topology_mutation_requires_refresh(&admitted.get().outcome);
+    let needs_followup = reply
+        && !handles
+            .submissions
+            .queue
+            .borrow()
+            .awaiting_residency()
+            .is_empty();
+    let refresh = needs_followup
+        || (refresh_on_failure && topology_mutation_requires_refresh(&admitted.get().outcome));
     Ok((refresh, applied))
 }
 
@@ -852,36 +849,6 @@ fn apply_submission_response(
     }
     handles.submissions.publish();
     Ok(true)
-}
-
-fn apply_wake_submission_response(
-    session: &Session,
-    handles: &SurfaceHandles,
-    submission: CanonicalUuid,
-    _lane: CanonicalUuid,
-    bytes: &[u8],
-) -> Result<bool, String> {
-    let admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
-        admit_response(session, bytes)?;
-    match &admitted.get().outcome {
-        wire::Outcome::Reply(_) => handles
-            .submissions
-            .queue
-            .borrow_mut()
-            .wake_accepted(submission)?,
-        wire::Outcome::Refusal(_) | wire::Outcome::Fault(_) => {
-            let restored = handles
-                .submissions
-                .queue
-                .borrow_mut()
-                .refuse_wake(submission)?;
-            let issue = outcome_issue("Could not wake this agent", &admitted.get().outcome)
-                .expect("the refused or faulted wake outcome has an issue");
-            restore_submissions(handles, restored, &issue);
-        }
-    }
-    handles.submissions.publish();
-    Ok(matches!(&admitted.get().outcome, wire::Outcome::Reply(_)))
 }
 
 fn restore_lane_submissions(

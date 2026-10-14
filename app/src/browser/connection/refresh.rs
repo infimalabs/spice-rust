@@ -65,12 +65,13 @@ pub(super) async fn send_after_frame(
     }
 
     // A lane read already in flight can coalesce a causal refresh, but it
-    // cannot prove a wake's residency or activity observed by a newer inbox.
-    // Keep the requirement live until a post-observation lane read starts.
-    let causal_lane_read = {
-        let queue = submissions.queue.borrow();
-        !queue.awaiting_residency().is_empty() || queue.activity_read_requirement().is_some()
-    };
+    // cannot prove activity observed by a newer inbox. Keep the requirement
+    // live until a post-observation lane read starts.
+    let causal_lane_read = submissions
+        .queue
+        .borrow()
+        .activity_read_requirement()
+        .is_some();
     if causal_lane_read {
         send_lanes(principal, writer, actions, submissions).await?;
     }
@@ -256,23 +257,23 @@ pub(super) async fn send_lanes(
     actions: &ActionQueue,
     submissions: &SubmissionHandle,
 ) -> Result<(), String> {
-    let (wakes, activity_generation) = {
-        let queue = submissions.queue.borrow();
-        (
-            queue.awaiting_residency(),
-            queue.activity_read_requirement(),
-        )
-    };
     if !SteerPane::over(principal).offers(CommandKind::LaneRead)
         || actions.has_current_read(CurrentRead::Lanes)
     {
         return Ok(());
     }
+    let (activity_generation, rebases) = {
+        let queue = submissions.queue.borrow();
+        (
+            queue.activity_read_requirement(),
+            queue.awaiting_residency(),
+        )
+    };
     send_typed(
         principal,
         writer,
         actions,
-        PendingKind::Lanes { wakes },
+        PendingKind::Lanes { rebases },
         CommandKind::LaneRead,
         vec![],
         LaneRead {},

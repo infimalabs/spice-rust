@@ -134,10 +134,10 @@ fn a_positionless_lane_reply_is_not_authority() {
 }
 
 /// A lane fresh from `spice lane add` has neither occupant nor session, and
-/// the resident launches it fresh on an operator wake; only a seat that was
-/// started and lost its session is one the resident refuses to wake.
+/// direct operator steering launches it; only a seat that was started and lost
+/// its session has no available destination.
 #[test]
-fn a_never_started_vacant_lane_takes_a_wake_submission() {
+fn a_never_started_vacant_lane_takes_a_submission() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = AppRuntime::new(&accepted);
@@ -163,12 +163,12 @@ fn a_never_started_vacant_lane_takes_a_wake_submission() {
     };
     assert_eq!(
         target(LANE),
-        Some(app::watchband::SubmissionTarget::Wake),
+        Some(app::watchband::SubmissionTarget::Vacant { epoch: uuid(EPOCH) }),
         "a never-started seat launches fresh"
     );
     assert_eq!(
         target(SECOND_LANE),
-        Some(app::watchband::SubmissionTarget::Wake),
+        Some(app::watchband::SubmissionTarget::Vacant { epoch: uuid(EPOCH) }),
         "a bound seat resumes its session"
     );
     assert_eq!(
