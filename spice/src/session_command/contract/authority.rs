@@ -89,8 +89,14 @@ fn task_added(
     phase: &str,
     intent: Option<wire::TaskIntent>,
     preparation: Option<wire::TaskPreparation>,
+    positive: bool,
 ) {
-    let workflow = workflow(phase);
+    let mut workflow = workflow(phase);
+    if positive {
+        workflow.status = "completed".to_owned();
+        workflow.review = "clean".to_owned();
+        workflow.completion = Some(instant(9));
+    }
     let title = title.to_owned();
     let project = project.to_owned();
     let fact = write
@@ -149,6 +155,7 @@ fn seed_board_glance_tasks(write: &mut JournalWrite, origin: &Origin) {
         "todo",
         None,
         None,
+        false,
     );
     let design = stamp("SESSION-design");
     task_added(
@@ -160,6 +167,7 @@ fn seed_board_glance_tasks(write: &mut JournalWrite, origin: &Origin) {
         "design",
         Some(wire::TaskIntent::Design),
         None,
+        false,
     );
     task_added(
         write,
@@ -174,6 +182,76 @@ fn seed_board_glance_tasks(write: &mut JournalWrite, origin: &Origin) {
             controller: design,
             construction: stamp("SESSION-output"),
         }),
+        false,
+    );
+    let released_design = stamp("SESSION-released-design");
+    task_added(
+        write,
+        origin.clone(),
+        released_design.clone(),
+        "Concluded Design",
+        SESSION_PROJECT,
+        "review",
+        Some(wire::TaskIntent::Design),
+        None,
+        true,
+    );
+    let released_plan = stamp("SESSION-released-plan");
+    task_added(
+        write,
+        origin.clone(),
+        released_plan.clone(),
+        "Concluded selected Plan",
+        SESSION_PROJECT,
+        "review",
+        Some(wire::TaskIntent::Plan),
+        None,
+        true,
+    );
+    task_added(
+        write,
+        origin.clone(),
+        stamp("SESSION-released-output"),
+        "Released nested output",
+        SESSION_PROJECT,
+        "todo",
+        None,
+        Some(wire::TaskPreparation {
+            parent: released_plan,
+            controller: released_design,
+            construction: stamp("SESSION-released-output"),
+        }),
+        false,
+    );
+}
+
+fn seed_claimed_tasks(
+    write: &mut JournalWrite,
+    origin: &Origin,
+    held: &TaskStamp,
+    peer: &TaskStamp,
+) {
+    task_added(
+        write,
+        origin.clone(),
+        held.clone(),
+        "Compose Rust briefings",
+        SESSION_PROJECT,
+        "review",
+        None,
+        None,
+        false,
+    );
+    task_added(
+        write,
+        origin.clone(),
+        peer.clone(),
+        "Peer active claim",
+        SESSION_PROJECT,
+        "todo",
+        None,
+        None,
+        false,
     );
 }
 
@@ -209,26 +287,7 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         subscriptions: Vec::new(),
         renewals: Vec::new(),
     });
-    task_added(
-        &mut write,
-        origin.clone(),
-        held.clone(),
-        "Compose Rust briefings",
-        SESSION_PROJECT,
-        "review",
-        None,
-        None,
-    );
-    task_added(
-        &mut write,
-        origin.clone(),
-        peer.clone(),
-        "Peer active claim",
-        SESSION_PROJECT,
-        "todo",
-        None,
-        None,
-    );
+    seed_claimed_tasks(&mut write, &origin, &held, &peer);
     seed_board_glance_tasks(&mut write, &origin);
     let steering = body::SteerSent {
         from: None,
@@ -308,7 +367,7 @@ fn briefing_board_counts_execution_without_hiding_designs_from_storage() {
     let glance = journal
         .read(crate::session_command::glance::board)
         .expect("board glance reads");
-    assert_eq!(glance.unclaimed, vec![("todo".to_owned(), 1)]);
+    assert_eq!(glance.unclaimed, vec![("todo".to_owned(), 2)]);
     let retained = journal
         .read(|read| {
             Ok((
