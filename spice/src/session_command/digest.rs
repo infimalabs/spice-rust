@@ -12,8 +12,8 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use super::model::{
-    BoardGlanceView, HeldClaimView, HeldWorkView, LiveView, OutstandingAskView, PeerView,
-    PostureView, Report, RepositoryGlanceView, RetiredDirectionView,
+    BoardGlanceView, HeldWorkView, LiveView, OutstandingAskView, PeerView, PostureView, Report,
+    RepositoryGlanceView, RetiredDirectionView,
 };
 
 /// Ceiling on one folded briefing, in bytes.
@@ -86,11 +86,7 @@ pub(super) fn fold(report: &Report, files: &[String]) -> String {
             INBOX,
         ),
     }
-    page.whole(
-        "Held claim",
-        held(held_work.own_claim.as_ref()),
-        "spice task show HANDLE",
-    );
+    page.whole("Held claim", held(held_work), "spice task show HANDLE");
     page.whole(
         "Unknown",
         unknowns
@@ -295,9 +291,12 @@ fn ask(row: &OutstandingAskView) -> String {
     )
 }
 
-fn held(claim: Option<&HeldClaimView>) -> Vec<String> {
-    let Some(claim) = claim else {
-        return vec!["none; take work with `spice task next`".to_owned()];
+fn held(held_work: &HeldWorkView) -> Vec<String> {
+    let Some(claim) = held_work.own_claim.as_ref() else {
+        return vec![held_work.own_claim_unread.as_ref().map_or_else(
+            || "none; take work with `spice task next`".to_owned(),
+            |refusal| format!("unknown, not none: {refusal}"),
+        )];
     };
     let mut rows = vec![format!(
         "{} [{}] {}: {}",
@@ -509,6 +508,7 @@ mod tests {
                     description: Some(text(bytes)),
                     acceptance: (0..rows).map(|_| text(bytes)).collect(),
                 }),
+                own_claim_unread: None,
                 peer_claims: Some(rows),
                 renewed_from: None,
                 address: None,

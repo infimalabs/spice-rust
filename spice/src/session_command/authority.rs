@@ -53,6 +53,7 @@ impl RecallAuthorities {
                 thread: None,
                 lane: None,
                 own_claim: None,
+                own_claim_unread: Some("the claim probe did not run".to_owned()),
                 peer_claims: None,
                 renewed_from: None,
                 address: None,
@@ -354,6 +355,7 @@ fn apply_observed(recall: &mut RecallAuthorities, seat: Seat<'_>, observed: Obse
         unavailable_probe(recall, "steering", "thread-lane", &detail);
         unavailable_probe(recall, "board", "thread-actor", &detail);
         unavailable_probe(recall, "board", "active-peer-count", &detail);
+        recall.held_work.own_claim_unread = Some(detail);
         return;
     };
     recall.held_work.lane = Some(lane.lane.to_string());
@@ -418,9 +420,14 @@ fn apply_observed(recall: &mut RecallAuthorities, seat: Seat<'_>, observed: Obse
 
     if let Some(own_claim) = observed.own_claim {
         match own_claim {
-            Ok(Some(entry)) => recall.held_work.own_claim = Some(held_claim(&entry)),
-            Ok(None) => {}
-            Err(error) => unknown(recall, "board", "exact-actor-claim", &error),
+            Ok(entry) => {
+                recall.held_work.own_claim = entry.as_ref().map(held_claim);
+                recall.held_work.own_claim_unread = None;
+            }
+            Err(error) => {
+                recall.held_work.own_claim_unread = Some(error.to_string());
+                unknown(recall, "board", "exact-actor-claim", &error);
+            }
         }
     }
     if let Some(peer_claims) = observed.peer_claims {
@@ -474,6 +481,7 @@ fn apply_team(
 fn unavailable_probes(recall: &mut RecallAuthorities, detail: &str) {
     unavailable_probe(recall, "steering", "pending-thread-lane", detail);
     unavailable_probe(recall, "board", "exact-actor-claim", detail);
+    recall.held_work.own_claim_unread = Some(detail.to_owned());
     unavailable_probe(recall, "board", "active-peer-count", detail);
 }
 

@@ -1224,3 +1224,46 @@ fn a_failed_steering_probe_does_not_hide_independent_board_answers() {
 
     scratch.remove();
 }
+
+#[test]
+fn a_claim_the_current_policy_refuses_reads_as_unknown_possession_not_none() {
+    let scratch = Scratch::new("authority-claim-unknown");
+    fake_repository(scratch.path());
+    let transcript = scratch.path().join("omp.jsonl");
+    write_jsonl(&transcript, &omp_rows(THREAD));
+    let thread = uuid(0xaa).to_string();
+    seed_recall_authority(&authority_path(scratch.path()), &thread);
+    // The held row's two-segment project falls below this floor, so the
+    // claim exists but its board entry cannot be admitted.
+    fs::write(
+        scratch.path().join("spice-rust.toml"),
+        "[tasks]\nproject_min_depth = 3\nproject_max_depth = 3\n",
+    )
+    .expect("fixture tracked task policy is tightened");
+    let argv = strings(&[
+        "session",
+        "briefing",
+        &transcript.to_string_lossy(),
+        "--deadline-seconds",
+        "5",
+    ]);
+    let environment = [(SESSION_ENVIRONMENT, thread)];
+
+    let recall = reply_forms_in(Some(scratch.path()), &argv, &environment, "recall");
+    assert_eq!(recall["held_work"]["own_claim"], Value::Null);
+    let refusal = recall["held_work"]["own_claim_unread"]
+        .as_str()
+        .expect("the failed claim probe is carried as unread possession");
+    assert!(refusal.starts_with("board entry is invalid"), "{refusal}");
+
+    let page = super::invoke_in(Some(scratch.path()), &argv, &environment);
+    let page = String::from_utf8(page.out).expect("the briefing page is UTF-8");
+    let held = page
+        .split("## Held claim\n")
+        .nth(1)
+        .and_then(|rest| rest.split("\n## ").next())
+        .expect("the page keeps its held-claim section");
+    assert!(held.contains(refusal), "{held}");
+
+    scratch.remove();
+}
