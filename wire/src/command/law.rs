@@ -558,14 +558,14 @@ impl CommandKind {
             | Self::TaskRelations
             | Self::TaskTimeline
             | Self::BoardGraph
-            | Self::DocLedger => Law::READ,
+            | Self::DocLedger
+            | Self::RoomContributionSources => Law::READ,
             Self::WorkingGroupRead
             | Self::GlobalSettingsRead
             | Self::VendorCatalog
             | Self::BoardHandout
             | Self::RoomCoordinationRead
-            | Self::RoomConversationText
-            | Self::RoomContributionSources => Law::OPERATOR_READ,
+            | Self::RoomConversationText => Law::OPERATOR_READ,
             Self::WorkingGroupMove | Self::WorkingGroupArrange => Law::GROUP,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::RoomPost => Law::ROOM_POST,
@@ -786,9 +786,7 @@ impl CommandKind {
     const fn non_task_law(self) -> Law {
         match self {
             Self::RoomPost => Law::ROOM_POST,
-            Self::RoomCoordinationRead
-            | Self::RoomConversationText
-            | Self::RoomContributionSources => Law::OPERATOR_READ,
+            Self::RoomCoordinationRead | Self::RoomConversationText => Law::OPERATOR_READ,
             Self::RoomCoordinate => Law::ROOM_COORDINATE,
             Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
             Self::RoomLeave => Law::ROOM_LEAVE,
@@ -796,7 +794,7 @@ impl CommandKind {
             Self::RoomClose => Law::ROOM_CLOSE,
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
-            Self::SteerInbox | Self::QuoteRead => Law::READ,
+            Self::SteerInbox | Self::QuoteRead | Self::RoomContributionSources => Law::READ,
             Self::SteerHistory => Law::OPERATOR_READ,
             Self::SteerResend => Law::RESEND,
             Self::SteerRecover => Law::RECOVER,

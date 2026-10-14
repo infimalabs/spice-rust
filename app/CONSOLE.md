@@ -288,9 +288,10 @@ contributions and decides through the ordinary Design controls.
 The Design read view groups contributions by kind, each with its lane,
 time, text, and every cited source, while room history keeps them in journal
 order among the ordinary conversation. The resident resolves each cited
-source for the shown Design and the card says whether it is available or
-why not (missing, hidden, changed, unreadable, or retained in an unsupported
-shape), the same states `spice room history` prints.
+source for the shown Design, in operator and lane sessions alike, and the
+card says whether it is available or why not (missing, hidden, changed,
+unreadable, or retained in an unsupported shape), the same states any actor's
+`spice room history` prints.
 
 A lane session's open Design view carries the contribution form: choose a
 kind, write nonempty text, cite this room's recent publications or a typed
