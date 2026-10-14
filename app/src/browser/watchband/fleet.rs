@@ -288,7 +288,7 @@ fn render_team_toolbar(
 fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     let tasks = render
         .work
-        .map(|work| work.team_strip(team))
+        .map(|work| work.scope_strip(&crate::work::WorkScope::Team { team }))
         .unwrap_or_default();
     html! {
         <div class="team-task-rail">
