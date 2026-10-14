@@ -10,7 +10,7 @@ fn planning_publication_requires_a_clean_captured_opening() {
         local_commits: 0,
     };
 
-    for phase in ["plan", "design"] {
+    for phase in ["plan", "design", "gather"] {
         assert!(require_planning_opening(phase, false, Some(&clean)).is_ok());
 
         let missing = require_planning_opening(phase, false, None)

@@ -291,7 +291,7 @@ mod tests {
     fn only_active_planning_claims_refuse_commits() {
         let task: wire::TaskHandle = "PHASE-1kRKw9Qj".parse().expect("fixture task handle");
 
-        for phase in ["plan", "design"] {
+        for phase in ["plan", "design", "gather"] {
             let phase: wire::Phase = phase.parse().expect("fixture planning phase");
             let (standing, diagnostic) = evaluate_planning_phase(&PlanningPhaseEvidence::Active {
                 task: task.clone(),
