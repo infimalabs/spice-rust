@@ -220,6 +220,7 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
             {super::rooms::render_invitations(runtime)}
             {spice_jobs::render(standings.clone(), render.connection, runtime, render.sender)}
             {super::drafts::render_section(runtime, render.draft_controls, render.sender, &render.select_task)}
+            {super::drafts::render_oops_section(runtime, &render.select_task)}
             {super::rooms::render_catalog(runtime, render.room_controls, render.sender, &render.select_task)}
             {render_spice_topology(render, runtime, standings.as_deref().map(Vec::as_slice))}
             {quota::render_sidebar(runtime)}

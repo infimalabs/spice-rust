@@ -1,6 +1,7 @@
-//! The operator's Drafts: prospective work with an admitted public project and
-//! editable content that no allocator, dependency, claim, or strip sees until
-//! the explicit file transition turns it into ordinary filed work.
+//! The operator's unfiled work: Drafts, prospective work with an admitted
+//! public project and editable content, and parked OOPS reports. No allocator,
+//! dependency, claim, or strip sees either until the explicit file transition
+//! turns it into ordinary filed work.
 
 use std::cell::Cell;
 
@@ -42,7 +43,7 @@ impl Controls {
         });
         if !admit_action(sender, ClientAction::Draft { request, respond }) {
             self.notice
-                .set(Some("The Draft change could not be queued.".to_owned()));
+                .set(Some("The task change could not be queued.".to_owned()));
         }
     }
 
@@ -113,20 +114,7 @@ pub(super) fn render_section(
             if drafts.is_empty() {
                 <p class="empty">{"No unfiled Drafts."}</p>
             } else {
-                <ul class="draft-list">
-                    {for drafts.into_iter().map(|task| {
-                        let born = task.statement.body.born.clone();
-                        let onclick = open.reform(move |_: MouseEvent| born.clone());
-                        html! {
-                            <li key={task.statement.body.born.to_string()}>
-                                <button type="button" class="app-compact-control" data-draft-task={task.statement.body.handle.to_string()} {onclick}>
-                                    <code>{task.statement.body.handle.to_string()}</code>
-                                    <span>{task.presentation_title.clone()}</span>
-                                </button>
-                            </li>
-                        }
-                    })}
-                </ul>
+                {unfiled_list(drafts, open)}
             }
             if creates {
                 <details class="draft-create">
@@ -143,6 +131,56 @@ pub(super) fn render_section(
                 </details>
             }
         </section>
+    }
+}
+
+/// The open OOPS reports the operator can read, each opening the task detail
+/// that files it.
+pub(super) fn render_oops_section(
+    runtime: Option<&AppRuntime>,
+    open: &Callback<TaskStamp>,
+) -> Html {
+    let parked = runtime
+        .and_then(AppRuntime::board)
+        .map_or_else(Vec::new, |board| {
+            board
+                .tasks
+                .iter()
+                .filter(|task| open_oops(task))
+                .collect::<Vec<_>>()
+        });
+    html! {
+        <section class="app-sheet-section draft-section" aria-labelledby="spice-oops-heading" data-oops="">
+            <div class="section-heading">
+                <h2 id="spice-oops-heading">{"OOPS"}</h2>
+                <span class="section-count">{format!("{} parked", parked.len())}</span>
+            </div>
+            if parked.is_empty() {
+                <p class="empty">{"No parked OOPS reports."}</p>
+            } else {
+                {unfiled_list(parked, open)}
+            }
+        </section>
+    }
+}
+
+/// Unfiled rows, each a button that opens its task detail.
+fn unfiled_list(tasks: Vec<&BoardTask>, open: &Callback<TaskStamp>) -> Html {
+    html! {
+        <ul class="draft-list">
+            {for tasks.into_iter().map(|task| {
+                let born = task.statement.body.born.clone();
+                let onclick = open.reform(move |_: MouseEvent| born.clone());
+                html! {
+                    <li key={task.statement.body.born.to_string()}>
+                        <button type="button" class="app-compact-control" data-unfiled-task={task.statement.body.handle.to_string()} {onclick}>
+                            <code>{task.statement.body.handle.to_string()}</code>
+                            <span>{task.presentation_title.clone()}</span>
+                        </button>
+                    </li>
+                }
+            })}
+        </ul>
     }
 }
 
@@ -174,7 +212,7 @@ pub(super) fn render_editor(
             };
             let notice = controls.notice.clone();
             let request = if filing {
-                Ok(filing_request(&row))
+                Ok(filing_request(&row, None))
             } else {
                 revision(&form, &row)
             };
@@ -213,10 +251,80 @@ pub(super) fn render_editor(
     }
 }
 
+/// The filing control an open OOPS report's task detail carries: it files the
+/// report as ordinary work under the named public project, its current project
+/// unless the operator names another.
+pub(super) fn render_oops_filing(
+    runtime: Option<&AppRuntime>,
+    controls: &Controls,
+    sender: &SenderHandle,
+    row: &BoardTask,
+) -> Html {
+    if !open_oops(row) {
+        return Html::default();
+    }
+    let files = runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskFile));
+    let statement = &row.statement.body;
+    let submit = {
+        let controls = controls.clone();
+        let sender = sender.clone();
+        let row = row.clone();
+        Callback::from(move |event: SubmitEvent| {
+            event.prevent_default();
+            let Some(form) = submitted_form(&event) else {
+                return;
+            };
+            match destination(&field(&form, "project"), &row.statement.body.project) {
+                Ok(into) => {
+                    let notice = controls.notice.clone();
+                    let landed = Callback::from(move |answer: TaskAnswer| {
+                        notice.set(Some(format!("Filed {}.", answer.task)));
+                    });
+                    controls.send(&sender, filing_request(&row, into), landed);
+                }
+                Err(problem) => controls.notice.set(Some(problem)),
+            }
+        })
+    };
+    html! {
+        <section class="app-sheet-section" data-oops-filing={statement.handle.to_string()}>
+            <h3>{"OOPS"}</h3>
+            <p class="muted">{"Parked off the allocator until it is filed. File admits it as ordinary work under the named public project, or refuses and keeps it parked."}</p>
+            {controls.notice()}
+            <form
+                key={format!("{}-{}", statement.born, row.statement.position)}
+                class="draft-form"
+                onsubmit={submit}
+            >
+                <label class="draft-field-project"><span>{"Project"}</span><input name="project" type="text" required=true value={statement.project.clone()} /></label>
+                <div class="draft-actions">
+                    <button type="submit" disabled={!files}>{"File"}</button>
+                </div>
+            </form>
+        </section>
+    }
+}
+
 fn open_draft(task: &BoardTask) -> bool {
     task.statement.body.filing.is_draft()
         && task.workflow.body.status == "pending"
         && task.workflow.body.completion.is_none()
+}
+
+fn open_oops(task: &BoardTask) -> bool {
+    task.statement.body.filing.is_oops()
+        && task.workflow.body.status == "pending"
+        && task.workflow.body.completion.is_none()
+}
+
+/// The `into` a filing names for an entered project: none when it keeps the
+/// task's current project.
+fn destination(entered: &str, current: &str) -> Result<Option<String>, String> {
+    let entered = entered.trim();
+    if entered.is_empty() {
+        return Err("Name the public project that receives the filed task.".to_owned());
+    }
+    Ok((entered != current).then(|| entered.to_owned()))
 }
 
 /// The editable content of a new Draft, or of `row` when it exists.
@@ -377,12 +485,14 @@ fn revision(form: &web_sys::HtmlFormElement, row: &BoardTask) -> Result<DraftReq
     })
 }
 
-fn filing_request(row: &BoardTask) -> DraftRequest {
+/// The guarded file transition for `row`, into `into` when it names another
+/// public project.
+fn filing_request(row: &BoardTask, into: Option<String>) -> DraftRequest {
     let task = row.statement.body.born.clone();
     DraftRequest::File {
         request: TaskFile {
             task: row.statement.body.handle.clone(),
-            into: None,
+            into,
             preparation: None,
             claim: false,
         },

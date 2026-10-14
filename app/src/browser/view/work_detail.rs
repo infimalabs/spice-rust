@@ -269,6 +269,12 @@ fn render_available(
                 render.sender,
                 projected.map_or(row, |task| task.row()),
             )}
+            {super::super::drafts::render_oops_filing(
+                render.runtime,
+                render.draft_controls,
+                render.sender,
+                projected.map_or(row, |task| task.row()),
+            )}
             {task_detail::render_media(&answer.media)}
             <section class="app-sheet-section">
                 <h3>{"State"}</h3>

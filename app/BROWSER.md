@@ -214,15 +214,15 @@ controller is named, and its card continues to show authorization pending until
 an accepted candidate receives separate selected authorization. A concluded
 Design accepts no later grooming; start a new Design room for a later batch.
 
-## Drafts
+## Drafts and OOPS
 
 A task's filing state is one of three standings. **Filed** work is ordinary
 board work. An **OOPS** report asserts unexpected behavior, stays parked for
-grooming, and is filed through `spice task file`. A **Draft** is prospective
-work its author is still shaping. It asserts nothing, never joins OOPS
-grooming, and stays outside allocation, claims, capture, dependency
-satisfaction, completion, team strips, and execution summaries until the same
-`spice task file` transition admits it.
+grooming, and is filed through `spice task file` or its task detail's **File**.
+A **Draft** is prospective work its author is still shaping. It asserts
+nothing, never joins OOPS grooming, and stays outside allocation, claims,
+capture, dependency satisfaction, completion, team strips, and execution
+summaries until the same `spice task file` transition admits it.
 
 The Spice view's **Drafts** section follows Jobs. It lists each open Draft the
 operator can read, then keeps the Task/Plan/Design creator behind one compact
@@ -236,6 +236,16 @@ writes only the fields that changed, including project, intent, and flow.
 refusal names the field or filing option to repair and leaves the Draft
 unchanged. Success replaces the Draft with its Filed task, which the allocator
 can offer at once.
+
+The **OOPS** section follows Drafts and lists each open OOPS report the
+operator can read, each opening its task detail. That detail carries **File**
+with a **Project** field holding the report's current project; naming another
+public project files it there instead. Filing witnesses the statement,
+workflow, and deferral heads the control was drawn from, so a report that
+changed meanwhile refuses. A refusal, including a refused project, is shown
+beside the control and leaves the report parked. Success replaces the report
+with its Filed task under that project's handle. Filing under a Design's
+preparation, or filing and claiming at once, stays with `spice task file`.
 
 ## Resident topology in the global menu
 
@@ -281,7 +291,7 @@ No roster gesture mounts, reorders, closes, or focuses a view.
 
 Immediately after the operator panel and its inbox, the Spice view shows
 **Jobs**, every job every lane keeps, apart from the topology roster. Jobs
-stays ahead of Drafts, working groups, resident topology, and the **Provider
+stays ahead of Drafts, OOPS, working groups, resident topology, and the **Provider
 quota** section that ends the view. The list and its full-width inspection card
 share the existing four-row slot. Empty, loading, filtered, and inspection
 states retain that footprint; larger lists and evidence scroll inside it rather
