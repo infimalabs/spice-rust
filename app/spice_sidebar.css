@@ -301,7 +301,9 @@
   block-size: 100%;
   overflow: auto;
   scrollbar-width: thin;
-  overscroll-behavior: contain;
+  /* Keep the four-row viewport while wheel and touch boundary gestures
+     continue through the containing Spice menu. */
+  overscroll-behavior: auto;
   font: var(--app-type-fact)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-spice-job {
@@ -398,7 +400,7 @@
   min-inline-size: 0;
   overflow: auto;
   scrollbar-width: thin;
-  overscroll-behavior: contain;
+  overscroll-behavior: auto;
   padding: 2px 4px;
   border-left: var(--quote-rail) solid var(--accent-slot, var(--accent));
   background: color-mix(in srgb, var(--panel) 76%, var(--page));

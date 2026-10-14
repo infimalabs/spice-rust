@@ -203,10 +203,10 @@ grooming, and stays outside allocation, claims, capture, dependency
 satisfaction, completion, team strips, and execution summaries until the same
 `spice task file` transition admits it.
 
-The Spice view's **Drafts** section follows the operator panel. It lists each
-open Draft the operator can read and offers a form that records a new one. A
-new Draft needs a title and an admitted public project, and takes an optional
-Plan or Design intent, description, and acceptance. Recording one opens it in
+The Spice view's **Drafts** section follows Jobs. It lists each open Draft the
+operator can read and offers a form that records a new one. A new Draft needs a
+title and an admitted public project, and takes an optional Plan or Design
+intent, description, and acceptance. Recording one opens it in
 task detail, which shows an editor beside the Draft's contract. **Save Draft**
 writes only the fields that changed, including project, intent, and flow.
 **File** validates the Draft as a complete ordinary Task, Plan, or Design. A
@@ -252,11 +252,15 @@ No roster gesture mounts, reorders, closes, or focuses a view.
 
 ## Jobs in the global menu
 
-After the operator panel the Spice view shows **Jobs**, every job every lane
-keeps, apart from the topology roster; **Provider quota** ends the view. The
-list and its full-width inspection card share the existing four-row slot.
-Empty, loading, filtered, and inspection states retain that footprint; larger
-lists and evidence scroll inside it rather than enlarging the sheet.
+Immediately after the operator panel and its inbox, the Spice view shows
+**Jobs**, every job every lane keeps, apart from the topology roster. Jobs
+stays ahead of Drafts, working groups, resident topology, and the **Provider
+quota** section that ends the view. The list and its full-width inspection card
+share the existing four-row slot. Empty, loading, filtered, and inspection
+states retain that footprint; larger lists and evidence scroll inside it rather
+than enlarging the sheet. Those bounded viewports retain native wheel and touch
+scroll chaining. At either edge, arrow and page keys continue through the
+containing Spice menu instead of trapping keyboard navigation in Jobs.
 
 Rows show kind (▶ command, ◆ service, ● watch), agent accent and name, observed
 start age, and the complete command in the tooltip. Ended jobs awaiting agent
