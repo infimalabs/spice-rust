@@ -33,8 +33,8 @@ impl ParkedCounts {
     /// pending execution rows.
     ///
     /// Blocked asks the board which prerequisites are satisfied so the same
-    /// row cannot count ready and blocked at once; parked `.oops` rows are
-    /// counted across the whole visible board, as task status does.
+    /// row cannot count ready and blocked at once; typed OOPS rows are counted
+    /// across the whole visible board, as task status does.
     pub(in crate::board_command) fn measure(
         entries: &[Entry],
         satisfied: &board::ResolvedTasks,
@@ -65,7 +65,7 @@ impl ParkedCounts {
             oops: entries
                 .iter()
                 .filter(|entry| {
-                    entry.project().visibility().hidden_stem() == Some("oops")
+                    entry.is_oops()
                         && entry.workflow().status == "pending"
                         && entry.workflow().completion.is_none()
                         && !satisfied.speculative_design_work(entry.statement())
@@ -74,12 +74,12 @@ impl ParkedCounts {
         }
     }
 
-    /// Pending parked `.oops` rows across the whole visible board.
+    /// Pending parked OOPS rows across the whole visible board.
     pub(in crate::board_command) fn oops(entries: &[Entry]) -> usize {
         entries
             .iter()
             .filter(|entry| {
-                entry.project().visibility().hidden_stem() == Some("oops")
+                entry.is_oops()
                     && entry.workflow().status == "pending"
                     && entry.workflow().completion.is_none()
             })

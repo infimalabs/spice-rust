@@ -1,9 +1,7 @@
 use super::*;
 
 const RECOMMENDED: &str = "board.cli";
-const STALE: &str = "rim.ops.cli";
 const EXPLICIT: &str = "rim.edge";
-const DERIVED: &str = "task.oops";
 
 fn policy(max_depth: usize) -> ProjectPolicy {
     ProjectPolicy::new(
@@ -60,7 +58,7 @@ fn parked(
     (answer.task, stored)
 }
 
-fn wake(
+fn file_task(
     bus: &Bus,
     epoch: CanonicalUuid,
     task: &TaskHandle,
@@ -72,13 +70,13 @@ fn wake(
     let command = fixture_command(
         epoch,
         Actor::Operator,
-        CommandKind::TaskWake,
+        CommandKind::TaskFile,
         vec![
             workflow_witness(heads),
             deferral_witness(heads),
             statement_witness(heads),
         ],
-        &TaskWake {
+        &TaskFile {
             task: task.clone(),
             into: into.map(str::to_owned),
             preparation: None,
@@ -89,11 +87,11 @@ fn wake(
         .expect("board command owns fixture kind")
 }
 
-fn promoted_project(bus: &Bus, epoch: CanonicalUuid, outcome: Outcome<CommandAnswer>) -> String {
+fn filed_project(bus: &Bus, epoch: CanonicalUuid, outcome: Outcome<CommandAnswer>) -> String {
     let CommandAnswer::Task(answer) = assert_committed(outcome) else {
-        panic!("promotion returned another answer shape");
+        panic!("filing returned another answer shape");
     };
-    assert_eq!(answer.status, "promoted");
+    assert_eq!(answer.status, "filed");
     let heads = at(&board(bus, epoch, Actor::Operator), &answer.task).clone();
     assert!(!heads.visibility.is_hidden());
     assert_eq!(
@@ -117,33 +115,31 @@ fn assert_refused_without_facts(
 }
 
 #[test]
-fn bare_wake_lands_in_the_recommendation_or_the_derived_task_project() {
+fn oops_without_project_or_one_active_public_claim_refuses_before_mutation() {
+    let (root, bus, epoch, _seats) = fixture("oops-project-required", 1);
+    let facts = fact_count(&bus);
+    assert_refused_without_facts(
+        &bus,
+        file(&bus, epoch, "OOPS-noowner1", None),
+        "task::oops-project-required",
+        facts,
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn filing_without_rehome_keeps_the_public_owner() {
     let (root, bus, epoch, _seats) = fixture("oops-destination-bare", 1);
     let current = policy(dialect::PROJECT_MAX_DEPTH);
-    let (hinted, hinted_parked) = parked(&bus, epoch, "OOPS-hinted01", Some(RECOMMENDED));
-    let (stale, _) = parked(&bus, epoch, "OOPS-stale001", Some(STALE));
-    let (missing, missing_parked) = parked(&bus, epoch, "OOPS-missing1", None);
-    assert_eq!(hinted_parked, format!(".oops.{RECOMMENDED}"));
-    assert_eq!(missing_parked, ".oops");
+    let (hinted, hinted_project) = parked(&bus, epoch, "OOPS-hinted01", Some(RECOMMENDED));
+    assert_eq!(hinted_project, RECOMMENDED);
     assert!(
         hinted.as_str().starts_with("OOPS-"),
-        "parked family drifted: {hinted}"
+        "OOPS task family drifted: {hinted}"
     );
-
     assert_eq!(
-        promoted_project(&bus, epoch, wake(&bus, epoch, &hinted, None, &current)),
+        filed_project(&bus, epoch, file_task(&bus, epoch, &hinted, None, &current)),
         RECOMMENDED
-    );
-    // A recommendation deeper than the current bound no longer passes manual
-    // admission, so the wake derives its project instead.
-    let narrowed = policy(dialect::PROJECT_MIN_DEPTH);
-    assert_eq!(
-        promoted_project(&bus, epoch, wake(&bus, epoch, &stale, None, &narrowed)),
-        DERIVED
-    );
-    assert_eq!(
-        promoted_project(&bus, epoch, wake(&bus, epoch, &missing, None, &current)),
-        DERIVED
     );
     clean(&root, bus);
 }
@@ -162,8 +158,8 @@ fn explicit_into_wins_and_every_refused_destination_writes_nothing() {
     let (kept, kept_parked) = parked(&bus, epoch, "OOPS-keptpark", Some(RECOMMENDED));
     let facts = fact_count(&bus);
     for refused in [".sandbox.cli", "board", "nowhere.one.two.three"] {
-        let outcome = wake(&bus, epoch, &kept, Some(refused), &current);
-        assert_refused_without_facts(&bus, outcome, "task::promotion-project-refused", facts);
+        let outcome = file_task(&bus, epoch, &kept, Some(refused), &current);
+        assert_refused_without_facts(&bus, outcome, "task::filing-project-refused", facts);
     }
     assert_eq!(
         at(&board(&bus, epoch, Actor::Operator), &kept)
@@ -173,10 +169,10 @@ fn explicit_into_wins_and_every_refused_destination_writes_nothing() {
         kept_parked,
     );
     assert_eq!(
-        promoted_project(
+        filed_project(
             &bus,
             epoch,
-            wake(&bus, epoch, &overridden, Some(EXPLICIT), &current)
+            file_task(&bus, epoch, &overridden, Some(EXPLICIT), &current)
         ),
         EXPLICIT,
     );

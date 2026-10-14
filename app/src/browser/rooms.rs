@@ -673,7 +673,7 @@ fn grooming_summary(runtime: &AppRuntime, grooming: &wire::rooms::OopsGrooming) 
             }) else {
                 return format!("{report} · unavailable");
             };
-            let standing = if wire::is_oops_project(&task.statement.body.project) {
+            let standing = if task.statement.body.filing.is_oops() {
                 "parked input"
             } else if task.statement.body.authorization.is_some() {
                 "selected authorization"
@@ -744,8 +744,7 @@ fn oops_grooming_form(
         .tasks
         .iter()
         .filter(|task| {
-            wire::is_oops_project(&task.statement.body.project)
-                && task.workflow.body.completion.is_none()
+            task.statement.body.filing.is_oops() && task.workflow.body.completion.is_none()
         })
         .map(|task| {
             (
@@ -850,7 +849,7 @@ fn oops_submit(
         let batch_for_next = batch_handle.clone();
         let next = (disposition == wire::rooms::OopsDisposition::ProposedWork).then(|| {
             format!(
-                " Promote with `spice task wake {report_handle} --preparation {batch_for_next}`; capture remains gated until selected authorization."
+                " File with `spice task file {report_handle} --preparation {batch_for_next}`; capture remains gated until selected authorization."
             )
         });
         let respond =

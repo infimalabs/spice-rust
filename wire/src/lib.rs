@@ -95,9 +95,10 @@ pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState,
     LaneRenewalRecord, LaneRenewalState, LaneResidency, LaneSession, LeaseHead, RenewalIdentity,
-    ResidencyHead, ResidentState, SeatRefusal, SteeringHead, TapeLocus, TaskEvidenceEdit, TaskHead,
-    TaskIntent, TaskIntentEdit, TaskPreparation, TeamSubscription, TranscriptSourceHead,
-    TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead, WorkflowHead,
+    ResidencyHead, ResidentState, SeatRefusal, SteeringHead, TapeLocus, TaskEvidenceEdit,
+    TaskFiling, TaskHead, TaskIntent, TaskIntentEdit, TaskPreparation, TeamSubscription,
+    TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,
+    WorkflowHead,
 };
 pub use hello::{
     Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,
@@ -136,9 +137,8 @@ pub use stream::{
     valid_message_directives, valid_message_sends,
 };
 pub use witness::{
-    Answer, Disposition, Name, NameError, OOPS_STEM, Phase, PhaseError, TaskHandle,
-    TaskHandleError, TaskStamp, TaskStampError, TaskStampMintError, Witness, WitnessKind,
-    is_oops_project,
+    Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError,
+    TaskStamp, TaskStampError, TaskStampMintError, Witness, WitnessKind,
 };
 
 /// Decode wire bytes into a DTO.

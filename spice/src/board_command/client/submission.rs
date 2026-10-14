@@ -693,8 +693,8 @@ pub(in crate::board_command) fn mutation_read(
         .collect();
     // Plan progress witnesses inspect prerequisite heads, including settled ones.
     let mut dependencies = matches!(contract.path, ["task", "done" | "review"]);
-    // Every handle an option names joins the scoped read; a parked `.oops`
-    // report or grooming controller is otherwise absent from it.
+    // Every handle an option names joins the scoped read; a typed OOPS report
+    // or grooming controller is otherwise absent from it.
     for (argument, invalid, graph) in [
         ("AFTER", "task::dependency-invalid", true),
         ("followup", "task::handle-invalid", true),

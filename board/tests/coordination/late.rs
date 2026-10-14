@@ -546,8 +546,8 @@ fn effective_priority_precedes_greater_downstream_weight() {
 fn downstream_weight_ignores_hidden_and_settled_branches() {
     let root = entry("BOARD-a1");
     let mut hidden_head = statement("BOARD-h1");
-    hidden_head.project = ".oops.correctness".to_owned();
-    hidden_head.dependencies.push(stamp("BOARD-a1"));
+    hidden_head.project = "board.correctness".to_owned();
+    hidden_head.filing = wire::TaskFiling::Oops;
     let hidden = admitted(hidden_head, workflow("todo"), None, None).expect("hidden dependent");
     let mut after_hidden_head = statement("BOARD-z1");
     after_hidden_head.dependencies.push(stamp("BOARD-h1"));

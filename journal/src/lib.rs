@@ -7,7 +7,7 @@
 /// shape. Retired schemas refuse before persistent storage configuration and
 /// name the release that last migrated them; newer schemas refuse because this
 /// build cannot know what their owning release added.
-pub const SCHEMA_VERSION: u32 = 53;
+pub const SCHEMA_VERSION: u32 = 54;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
@@ -75,9 +75,9 @@ pub mod crossing {
         CommandKind, Digest, Envelope, Environment, EnvironmentRequirement,
         EnvironmentRequirements, Fact, FactKind, FindingHead, Instant, JournalCursor,
         LaneResidency, LaneSession, LeaseHead, OccupantAddress, Origin, Packed, Phase, Producer,
-        ResidencyHead, ResidentState, SeatAddress, Seq, SteeringHead, TapeLocus, TaskHandle,
-        TaskHead, TaskStamp, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState,
-        WireVersion, Witness, WitnessHead, WorkflowHead,
+        ResidencyHead, ResidentState, SeatAddress, Seq, SteeringHead, TapeLocus, TaskFiling,
+        TaskHandle, TaskHead, TaskStamp, TranscriptSourceHead, TranscriptStreamKey, TrustHead,
+        TrustState, WireVersion, Witness, WitnessHead, WorkflowHead,
     };
 }
 

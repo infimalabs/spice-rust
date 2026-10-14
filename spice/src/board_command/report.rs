@@ -179,10 +179,11 @@ fn public_task(
     let project = projects
         .admit(&head.body().project)
         .map_err(|error| GuardError::Invalid(format!("report project scope: {error}")))?;
-    Ok(matches!(
-        project.visibility(),
-        wire::intent::ProjectVisibility::Public
-    ))
+    Ok(head.body().filing.is_filed()
+        && matches!(
+            project.visibility(),
+            wire::intent::ProjectVisibility::Public
+        ))
 }
 
 fn boundary_refusal(reason: &str, detail: &str) -> wire::Refusal {

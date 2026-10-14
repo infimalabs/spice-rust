@@ -137,7 +137,7 @@ pub(crate) struct PostureCounts {
     pub(crate) waiting: usize,
     pub(crate) selection: usize,
     pub(crate) pending: usize,
-    /// Parked `.oops` rows across the visible board.
+    /// Typed OOPS rows across the visible board.
     pub(crate) oops: usize,
 }
 

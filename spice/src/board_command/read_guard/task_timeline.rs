@@ -295,6 +295,10 @@ fn authored_transition(envelope: &wire::Envelope<wire::AnyFact>) -> Option<Attri
             fact.read::<body::TaskWoken>()?.task,
             TaskTimelineEvent::Woken {},
         ),
+        wire::FactKind::TaskFiled => (
+            fact.read::<body::TaskFiled>()?.task,
+            TaskTimelineEvent::Filed {},
+        ),
         wire::FactKind::TaskDeleted => (
             fact.read::<body::TaskDeleted>()?.task,
             TaskTimelineEvent::Deleted {},

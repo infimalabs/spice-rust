@@ -58,8 +58,8 @@ pub enum WorkAvailability {
     Held,
     /// Open and unclaimed, with an explicit wakeable deferral.
     Deferred,
-    /// Open and unclaimed in a hidden project the allocator never offers,
-    /// such as a filed OOPS report awaiting promotion.
+    /// Open and unclaimed OOPS work the allocator never offers until the
+    /// operator files it.
     Parked,
     /// No longer open, regardless of stale possession evidence.
     Terminal,
@@ -100,7 +100,7 @@ pub struct WorkStemIdentity {
     stem: String,
 }
 
-/// Visibility is part of identity: `.oops.*` and `oops.*` never collapse.
+/// Visibility is part of identity: hidden and public stems never collapse.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WorkVisibility {
     Public,
@@ -1002,7 +1002,9 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
     }
     match task.claim.as_ref().map(|claim| claim.body.disposition) {
         Some(ClaimDisposition::Active) => return WorkAvailability::InFlight,
-        _ if matches!(task.visibility, ProjectVisibility::Hidden { .. }) => {
+        _ if task.statement.body.filing.is_oops()
+            || matches!(task.visibility, ProjectVisibility::Hidden { .. }) =>
+        {
             return WorkAvailability::Parked;
         }
         Some(ClaimDisposition::Lapsed) => return WorkAvailability::Stale,

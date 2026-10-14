@@ -249,16 +249,17 @@ fn list_scope_matches(board: &BoardAnswer, task: &BoardTask, options: &TaskListO
     options.all || actor_route_matches(board, task)
 }
 
-/// Whether the actor may *read* the row by default: every public row, plus
-/// rows created on the actor's own origin thread.
+/// Whether the actor may read the row by default: every filed public row, plus
+/// hidden or OOPS rows created on the actor's own origin thread.
 ///
-/// Deliberately wider than the allocation scope in `board::next::selectable`,
-/// which states the rule and why the two must stay apart.
+/// Deliberately wider than allocation scope while keeping foreign parked
+/// evidence out of default detailed reads.
 pub(in crate::board_command::client) fn actor_route_matches(
     board: &BoardAnswer,
     task: &BoardTask,
 ) -> bool {
-    !task.visibility.is_hidden() || task.origin_thread == board.actor_route.origin_thread
+    (!task.visibility.is_hidden() && !task.statement.body.filing.is_oops())
+        || task.origin_thread == board.actor_route.origin_thread
 }
 
 fn list_status_matches(task: &BoardTask, options: &TaskListOptions) -> bool {

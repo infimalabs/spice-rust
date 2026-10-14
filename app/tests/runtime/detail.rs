@@ -11,6 +11,7 @@ fn detail_answer(label: &str, text: &str) -> TaskDetailAnswer {
             "unused",
             "Selected task",
             "canvas.detail",
+            wire::TaskFiling::Filed,
             None,
             wire::EnvironmentRequirements::default(),
         ),

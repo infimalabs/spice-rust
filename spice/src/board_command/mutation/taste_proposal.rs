@@ -113,6 +113,7 @@ pub(in crate::board_command) fn taste_proposal_add(
         origin,
         creation,
         flow,
+        wire::TaskFiling::Filed,
     ) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
@@ -128,7 +129,6 @@ pub(in crate::board_command) fn taste_proposal_add(
         bus,
         command,
         &normalized,
-        &project,
         add.clone(),
         &snapshot,
         prepared,

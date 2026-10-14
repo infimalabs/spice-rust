@@ -1061,6 +1061,7 @@ mod tests {
             acceptance: Vec::new(),
             requirements: wire::EnvironmentRequirements::default(),
             project: "spice.rooms".to_owned(),
+            filing: wire::TaskFiling::Filed,
             tags: Vec::new(),
             dependencies: Vec::new(),
             intent: None,

@@ -258,7 +258,7 @@ fn root_is_exactly_the_eighteen_typed_domains() {
     assert!(root.proof().runner().is_some());
     assert_eq!(
         root.tasks().hidden_stems(),
-        ["oops", "maxim_proposal", "sandbox"]
+        ["maxim_proposal", "oops", "sandbox"]
     );
     assert_eq!(root.tasks().project_min_depth(), 2);
     assert_eq!(root.tasks().project_max_depth(), 3);

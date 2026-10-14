@@ -87,6 +87,7 @@ fn task_kind_for(verb: &str) -> Option<CommandKind> {
         "note" => CommandKind::TaskNote,
         "defer" => CommandKind::TaskDefer,
         "wake" => CommandKind::TaskWake,
+        "file" => CommandKind::TaskFile,
         "free" => CommandKind::ClaimFree,
         "depends" => CommandKind::TaskDepends,
         "modify" | "require" => CommandKind::TaskEdit,

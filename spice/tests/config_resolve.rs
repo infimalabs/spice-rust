@@ -280,7 +280,7 @@ fn current_metadata_resolves_and_removed_spellings_refuse() {
         .expect("current resolution admits typed shared metadata");
     assert_eq!(
         current.root().tasks().hidden_stems(),
-        ["oops", "maxim_proposal", "sandbox"]
+        ["maxim_proposal", "sandbox"]
     );
     assert_eq!(
         current.root().tasks().project_min_depth(),
@@ -404,7 +404,7 @@ env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
 
     assert_eq!(
         resolved.root().tasks().hidden_stems(),
-        ["oops", "maxim_proposal", "sandbox"]
+        ["maxim_proposal", "sandbox", "oops"]
     );
     assert_eq!(resolved.root().tasks().project_min_depth(), 2);
     assert_eq!(resolved.root().tasks().project_max_depth(), 3);
@@ -422,7 +422,7 @@ env_names = ["FIXTURE_INBOX", "FIXTURE_PROOF"]
     }
     assert_eq!(
         path_builtin(&resolved, "tasks.hidden_stems"),
-        Some(Builtin::Strings(&["oops", "maxim_proposal"]))
+        Some(Builtin::Strings(&["maxim_proposal"]))
     );
 
     let error = resolve(documents(

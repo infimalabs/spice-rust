@@ -16,7 +16,7 @@ pub(super) fn add_oops(
         (value * 131 + i64::from(byte)) % 10_000_000_000_000
     });
     let born = wire::TaskStamp::for_micros(value).expect("oops fixture stamp");
-    let task = TaskHandle::for_project(".oops", &born);
+    let task = TaskHandle::for_filing("board.test", &born, wire::TaskFiling::Oops);
     assert_committed(issue(
         bus,
         epoch,
@@ -27,7 +27,7 @@ pub(super) fn add_oops(
             title: title.to_owned(),
             description: title.to_owned(),
             origin: Some("fixture:oops".parse().expect("fixture origin")),
-            project: None,
+            project: Some("board.test".to_owned()),
         },
     ));
     task
@@ -42,9 +42,13 @@ fn assert_hidden_actor_document(
 ) {
     assert_eq!(&answer.principal, actor);
     let hidden_heads = at(answer, hidden);
-    assert_eq!(hidden_heads.visibility.hidden_stem(), Some("oops"));
+    assert_eq!(
+        hidden_heads.visibility,
+        wire::intent::ProjectVisibility::Public
+    );
     assert_eq!(hidden_heads.statement.body.handle, *hidden);
-    assert_eq!(hidden_heads.statement.body.project, ".oops");
+    assert_eq!(hidden_heads.statement.body.project, "board.test");
+    assert!(hidden_heads.statement.body.filing.is_oops());
     assert_eq!(hidden_heads.presentation_title(), title);
     assert_eq!(
         hidden_heads.statement.body.description.as_deref(),
@@ -65,8 +69,9 @@ fn assert_hidden_actor_document(
         .expect("hidden JSON row");
     assert_eq!(
         hidden_json["visibility"],
-        serde_json::json!({"kind": "hidden", "stem": "oops"})
+        serde_json::json!({"kind": "public"})
     );
+    assert_eq!(hidden_json["statement"]["body"]["filing"], "oops");
     assert_eq!(hidden_json["presentation_title"], title);
     assert_eq!(hidden_json["statement"]["body"]["description"], title);
     assert_eq!(hidden_json["workflow"]["body"]["status"], "pending");
@@ -404,7 +409,7 @@ fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
             title: "Ungrounded system filing".to_owned(),
             description: "The hidden route still needs causal authority".to_owned(),
             origin: None,
-            project: None,
+            project: Some("board.test".to_owned()),
         },
     );
     assert!(matches!(
@@ -424,13 +429,11 @@ fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
 
     let answer = board(&bus, epoch, Actor::Operator);
     assert_eq!(answer.tasks.len(), 2);
-    assert!(answer.tasks.iter().all(|task| task.visibility.is_hidden()));
-    assert!(
-        answer
-            .tasks
-            .iter()
-            .all(|task| task.statement.body.project == ".oops")
-    );
+    assert!(answer.tasks.iter().all(|task| {
+        task.visibility == wire::intent::ProjectVisibility::Public
+            && task.statement.body.project == "board.test"
+            && task.statement.body.filing.is_oops()
+    }));
     let expected: wire::Origin = "fixture:oops".parse().expect("fixture origin");
     for task in [operator_oops, lane_oops] {
         assert_eq!(at(&answer, &task).statement.body.provenance, expected);
@@ -448,7 +451,6 @@ fn facts_len(bus: &Bus, when: &str) -> usize {
 /// principal, and leaves the journal exactly as it found it.
 fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &Actor) {
     let manual = [
-        (Actor::Operator, "MANUAL-oops1", ".oops"),
         (lane.clone(), "MANUAL-maxim1", ".maxim_proposal.theme_2"),
         (Actor::Operator, "MANUAL-sand1", ".sandbox.audit"),
     ];
@@ -489,8 +491,8 @@ fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &
     }
 }
 
-/// A hidden project recommended on the system route never reaches the
-/// journal: only a public project this board admits may park beneath `.oops`.
+/// A hidden project named for an OOPS row never reaches the journal: typed
+/// OOPS filing requires a public project admitted by the board.
 fn assert_forged_hidden_route_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &Actor) {
     for actor in [Actor::Operator, lane.clone()] {
         for project in [".oops", ".maxim_proposal.theme_2", ".sandbox.audit"] {
@@ -600,8 +602,6 @@ pub(super) fn exercise_deferral_staleness(bus: &Bus, epoch: CanonicalUuid, alpha
         ],
         &TaskWake {
             task: alpha.clone(),
-            into: None,
-            preparation: None,
             claim: false,
         },
     );
@@ -622,8 +622,6 @@ pub(super) fn exercise_deferral_staleness(bus: &Bus, epoch: CanonicalUuid, alpha
         ],
         &TaskWake {
             task: alpha.clone(),
-            into: None,
-            preparation: None,
             claim: false,
         },
     ));

@@ -1029,7 +1029,10 @@ fn push_bulleted(lines: &mut Vec<String>, text: &str) {
 fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
     let statement = &task.statement.body;
     let workflow = &task.workflow.body;
-    if workflow.status != "pending" || workflow.phase.as_str() != "plan" {
+    if statement.filing.is_oops()
+        || workflow.status != "pending"
+        || workflow.phase.as_str() != "plan"
+    {
         return Vec::new();
     }
     let handle = &statement.handle;
@@ -1103,6 +1106,9 @@ fn render_dependency(board: &BoardAnswer, dependency: &TaskStamp) -> String {
 }
 
 pub(super) fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String {
+    if task.statement.body.filing.is_oops() {
+        return format!("next: spice task file {}", task.statement.body.handle);
+    }
     if has_taste_review(&task.statement.body.tags) {
         return format!(
             "next: spice task modify {} --title \"...\"",

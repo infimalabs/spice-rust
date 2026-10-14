@@ -931,6 +931,9 @@ fn desired_deferrals(
             continue;
         }
         let statement = heads.statement().body();
+        if statement.filing.is_oops() {
+            continue;
+        }
         let project = projects.admit(&statement.project).map_err(|error| {
             store_fault(
                 "bus::timer-project-invalid",

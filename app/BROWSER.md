@@ -181,18 +181,17 @@ conclusions, lane changes, and late hydration never mount, close, reorder, or
 focus a console.
 
 An open, pending Design also exposes bounded OOPS grooming. Each record
-names the exact parked reports it considered, one of `duplicate`, `no-work`,
+names the exact OOPS reports it considered, one of `duplicate`, `no-work`,
 `deferred-for-later`, `covered`, or `proposed-work`, its evidenced cause, and
 any exceptions or uncertainty. Recording changes no report workflow;
-`deferred-for-later` has no wake time. A proposed report is promoted through
-`spice task wake REPORT --preparation DESIGN`, which atomically makes it a
-controlled, unauthorized output. Dispositions are evidence, not authority: that
-explicit wake neither requires nor follows from a `proposed-work` record.
-Promotion with `--claim` is refused, and its card continues to show
-authorization pending until an accepted candidate receives separate selected
-authorization.
-A concluded Design accepts no later grooming; start a new Design room for a
-later batch.
+`deferred-for-later` has no wake time. A proposed report is filed through
+`spice task file REPORT --preparation DESIGN`, which atomically changes its
+filing state and makes it a controlled, unauthorized output. Dispositions are
+evidence, not authority: filing neither requires nor follows from a
+`proposed-work` record. Filing with `--claim` is refused when a preparation
+controller is named, and its card continues to show authorization pending until
+an accepted candidate receives separate selected authorization. A concluded
+Design accepts no later grooming; start a new Design room for a later batch.
 
 ## Resident topology in the global menu
 

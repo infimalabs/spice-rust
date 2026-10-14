@@ -204,6 +204,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::TaskNote
         | CommandKind::TaskDefer
         | CommandKind::TaskWake
+        | CommandKind::TaskFile
         | CommandKind::TaskDepends
         | CommandKind::TaskPhase
         | CommandKind::TaskReview
@@ -443,6 +444,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["task", "note"]
             | ["task", "defer"]
             | ["task", "wake"]
+            | ["task", "file"]
             | ["task", "free"]
             | ["task", "oops"]
             | ["task", "depends"]

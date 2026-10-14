@@ -141,6 +141,9 @@ pub struct TaskAdded {
     pub requirements: crate::EnvironmentRequirements,
     /// Dotted project stem.
     pub project: String,
+    /// Initial filing standing.
+    #[serde(default, skip_serializing_if = "crate::TaskFiling::is_filed")]
+    pub filing: crate::TaskFiling,
     /// Free tags carried on the statement.
     pub tags: Vec<String>,
     /// Tasks this one waits behind.
@@ -337,6 +340,15 @@ pub struct TaskDeferred {
 pub struct TaskWoken {
     /// Woken task.
     pub task: TaskStamp,
+}
+
+/// A parked OOPS row entered ordinary filed work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskFiled {
+    /// Filed task.
+    pub task: TaskStamp,
+    /// Public owner project after filing.
+    pub project: String,
 }
 
 /// An unsettled task statement changed.

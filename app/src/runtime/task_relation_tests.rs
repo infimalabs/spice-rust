@@ -84,6 +84,10 @@ fn fact_vocabulary_owns_the_complete_task_relation_mapping() {
             &[Origin, Dependency, Review, Lifecycle],
         ),
         (
+            FactKind::TaskFiled,
+            &[Origin, Dependency, Review, Lifecycle],
+        ),
+        (
             FactKind::TaskEdited,
             &[Origin, Dependency, Review, Lifecycle],
         ),

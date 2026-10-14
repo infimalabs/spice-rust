@@ -450,7 +450,14 @@ fn due_task_deferral_wakes_the_task_into_allocator_eligibility() {
         Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical"),
         -1,
     );
-    seed_timer_task(&bus, &task, "timer.defer", Some(deadline), Vec::new());
+    seed_timer_task(
+        &bus,
+        &task,
+        "timer.defer",
+        wire::TaskFiling::Filed,
+        Some(deadline),
+        Vec::new(),
+    );
     let mut timers = start_timers(projects()).expect("timer runtime starts");
     timers.synchronize(&bus).expect("due task deferral arms");
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -495,13 +502,25 @@ fn startup_catches_up_two_overdue_tasks_but_leaves_future_and_parked_work_waitin
     let first = deferred_task("timer.defer", "1kKRRsDS");
     let second = deferred_task("timer.defer", "1kKRRsDT");
     let future = deferred_task("timer.defer", "1kKRRsDV");
-    let parked = deferred_task(".oops.timer", "1kKRRsDW");
-    seed_timer_task(&bus, &anchor, "timer.defer", None, Vec::new());
+    let parked = wire::TaskHandle::for_filing(
+        "timer.defer",
+        &"1kKRRsDW".parse().expect("fixture task stamp"),
+        wire::TaskFiling::Oops,
+    );
+    seed_timer_task(
+        &bus,
+        &anchor,
+        "timer.defer",
+        wire::TaskFiling::Filed,
+        None,
+        Vec::new(),
+    );
     let dependency = vec![anchor.born().expect("anchor has a stamp")];
     seed_timer_task(
         &bus,
         &first,
         "timer.defer",
+        wire::TaskFiling::Filed,
         Some(shifted(now, -2)),
         dependency.clone(),
     );
@@ -509,6 +528,7 @@ fn startup_catches_up_two_overdue_tasks_but_leaves_future_and_parked_work_waitin
         &bus,
         &second,
         "timer.defer",
+        wire::TaskFiling::Filed,
         Some(shifted(now, -1)),
         dependency.clone(),
     );
@@ -516,20 +536,22 @@ fn startup_catches_up_two_overdue_tasks_but_leaves_future_and_parked_work_waitin
         &bus,
         &future,
         "timer.defer",
+        wire::TaskFiling::Filed,
         Some(shifted(now, 3600)),
         dependency.clone(),
     );
     seed_timer_task(
         &bus,
         &parked,
-        ".oops.timer",
+        "timer.defer",
+        wire::TaskFiling::Oops,
         Some(shifted(now, -1)),
         dependency.clone(),
     );
 
     let mut timers = start_timers(projects()).expect("timer runtime starts");
     timers.synchronize(&bus).expect("startup deferrals arm");
-    assert_eq!(timers.deferrals.len(), 3, "hidden parked work is not armed");
+    assert_eq!(timers.deferrals.len(), 3, "OOPS filing is not armed");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("fixture async runtime builds");
@@ -596,7 +618,14 @@ fn duplicate_overdue_catch_up_commits_one_wake_transition() {
         Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical"),
         -1,
     );
-    seed_timer_task(&bus, &task, "timer.defer", Some(deadline), Vec::new());
+    seed_timer_task(
+        &bus,
+        &task,
+        "timer.defer",
+        wire::TaskFiling::Filed,
+        Some(deadline),
+        Vec::new(),
+    );
     let mut first = start_timers(projects()).expect("first timer starts");
     let mut second = start_timers(projects()).expect("second timer starts");
     first.synchronize(&bus).expect("first catch-up arms");
@@ -1061,6 +1090,7 @@ fn seed_write_with_lanes(authority: &Authority, lanes: Vec<LaneResidency>) -> Jo
                 acceptance: Vec::new(),
                 requirements: wire::EnvironmentRequirements::default(),
                 project: "timer.claim".to_owned(),
+                filing: wire::TaskFiling::Filed,
                 tags: Vec::new(),
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
@@ -1143,6 +1173,7 @@ fn attach_heads(
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
         project: "timer.claim".to_owned(),
+        filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: statement_origin,

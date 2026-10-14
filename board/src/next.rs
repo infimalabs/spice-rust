@@ -696,6 +696,7 @@ fn downstream_weights(graph: &RankingGraph) -> Vec<usize> {
 fn unsettled_public(entry: &Entry) -> bool {
     let workflow = entry.workflow();
     !entry.project().visibility().is_hidden()
+        && !entry.is_oops()
         && workflow.status == "pending"
         && workflow.completion.is_none()
 }
@@ -762,7 +763,9 @@ pub fn is_released_by(entry: &Entry, actor: &Actor) -> bool {
 /// Allocation and stealing agree on all of this and disagree on possession
 /// alone, so possession is the only thing either caller states for itself.
 fn workable(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
-    !entry.project().visibility().is_hidden() && operational(entry, actor, completed)
+    !entry.project().visibility().is_hidden()
+        && !entry.is_oops()
+        && operational(entry, actor, completed)
 }
 
 fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
@@ -870,11 +873,11 @@ pub fn eligible_entry(
     workable(entry, actor, satisfied) && environment_satisfied(entry, environment) && unheld(entry)
 }
 
-/// Whether one exact task may be captured, including parked `.oops` triage.
+/// Whether one exact task may be captured, including typed OOPS triage.
 ///
-/// Hidden rows remain unavailable to allocator selection. The one exception is
-/// an explicitly named `.oops` row: a lane may hold it while investigating,
-/// but promotion is still required before dependencies or completion move.
+/// Hidden rows remain unavailable to allocator selection. An explicitly named
+/// OOPS row may be captured while it remains parked, but filing is required
+/// before dependencies or completion move.
 #[must_use]
 pub fn capturable_entry(
     satisfied: &ResolvedTasks,
@@ -883,8 +886,7 @@ pub fn capturable_entry(
     environment: &wire::Environment,
 ) -> bool {
     let public = workable(entry, actor, satisfied);
-    let oops = entry.project().visibility().hidden_stem() == Some("oops")
-        && operational(entry, actor, satisfied);
+    let oops = entry.is_oops() && operational(entry, actor, satisfied);
     (public || oops) && environment_satisfied(entry, environment) && unheld(entry)
 }
 
@@ -956,6 +958,7 @@ pub fn stealable_entry(
     environment: &wire::Environment,
 ) -> bool {
     !entry.project().visibility().is_hidden()
+        && !entry.is_oops()
         && operational_without_assignment(entry, satisfied)
         && environment_satisfied(entry, environment)
 }

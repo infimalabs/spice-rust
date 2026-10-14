@@ -39,6 +39,7 @@ impl Lanes {
                     acceptance: Vec::new(),
                     requirements: wire::EnvironmentRequirements::default(),
                     project: "serve.rooms".to_owned(),
+                    filing: wire::TaskFiling::Filed,
                     tags: Vec::new(),
                     depends: Vec::new(),
                     intent,
@@ -67,6 +68,7 @@ impl Lanes {
             acceptance: Vec::new(),
             requirements: wire::EnvironmentRequirements::default(),
             project: "serve.rooms".to_owned(),
+            filing: wire::TaskFiling::Filed,
             tags: Vec::new(),
             dependencies: Vec::new(),
             provenance: "resident:018f82d4-6f59-7d06-92e3-000000000001"

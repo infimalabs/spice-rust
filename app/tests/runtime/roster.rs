@@ -25,6 +25,7 @@ fn design(label: &str) -> wire::intent::BoardTask {
         label,
         label,
         "PUBLIC",
+        wire::TaskFiling::Filed,
         None,
         wire::EnvironmentRequirements::default(),
     );
@@ -56,6 +57,7 @@ fn the_ungrouped_list_holds_only_members_no_formed_group_holds() {
         "plain",
         "plain",
         "PUBLIC",
+        wire::TaskFiling::Filed,
         None,
         wire::EnvironmentRequirements::default(),
     );

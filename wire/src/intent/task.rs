@@ -276,30 +276,38 @@ pub struct TaskDefer {
     pub wait: Instant,
 }
 
-/// Wake ordinary deferred work, or promote one parked `.oops` row.
+/// Clear the current deferral, optionally claiming the filed task atomically.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskWake {
-    /// Task being woken or promoted.
+    /// Filed deferred task being woken.
     pub task: TaskHandle,
-    /// Public project receiving a parked `.oops` row.
+    /// Wake and atomically claim the resulting ready task.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub claim: bool,
+}
+
+/// File one parked OOPS row as ordinary work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskFile {
+    /// OOPS task being filed.
+    pub task: TaskHandle,
+    /// Public project receiving the filed task; omission keeps its owner.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
     pub into: Option<String>,
-    /// Pending Plan or Design that controls a promoted `.oops` report.
-    ///
-    /// Admission records the relationship atomically with promotion and leaves
-    /// the output unauthorized.
+    /// Pending Plan or Design that controls the filed output.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
     pub preparation: Option<TaskHandle>,
-    /// Wake or promote and atomically claim the resulting ready task.
+    /// File and atomically claim the resulting ready task.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub claim: bool,
 }

@@ -649,6 +649,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 ],
                 requirements: wire::EnvironmentRequirements::default(),
                 project: "wire.binding".to_owned(),
+                filing: wire::TaskFiling::Filed,
                 tags: vec!["binding".to_owned()],
                 dependencies: vec!["1kKRRsDQ".parse().expect("a task stamp")],
                 provenance: "task:1kKRRsDP".parse().expect("an origin"),

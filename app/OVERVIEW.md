@@ -50,8 +50,8 @@ rest **Ready**, so each count equals `spice board`'s. The gate is the
 allocator's verdict: the resident's open board names every row it holds back,
 judged over terminal evidence the browser never receives, so an unauthorized
 controlled output reads Blocked exactly when `task next` skips it. A row in a
-hidden project, such as a filed OOPS report, reads **Parked**: the allocator
-never offers it until it is promoted.
+typed OOPS filing state reads **Parked**: its public project remains visible,
+but the allocator never offers it until the operator files it as ordinary work.
 
 The graph region holds one fixed footprint whatever the diagram's shape. A
 truncated typed read states how many relationships lie outside it in the map

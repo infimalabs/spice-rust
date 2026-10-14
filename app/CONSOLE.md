@@ -268,6 +268,11 @@ blocked, selection, held, deferred, parked) and, within one availability, by
 the resident's offer order. Each tab opens its exact task. Closing any overview
 returns focus to the control that opened it.
 
+Typed OOPS rows retain their public project but stay out of allocator and
+team-local work until the operator uses `spice task file`; task detail presents
+them as Parked. Their filing state, rather than a hidden stem, controls that
+placement.
+
 Work keeps immutable creator-team provenance separate from its current
 accountable owner. A Design owns itself and tasks it directly controls. All
 other work belongs to the team of the lane actively claiming it (no team when

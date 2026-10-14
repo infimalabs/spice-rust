@@ -21,7 +21,7 @@ use super::{
     RoomConversationText, RoomConversationTextAnswer, RoomCoordinate, RoomCoordinationRead,
     RoomCoordinationView, RoomLeave, RoomLeaveAnswer, RoomPutAside, StateAnswer, SteerDispose,
     SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskDefer,
-    TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote,
+    TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskFile, TaskNote,
     TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline,
     TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
     TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
@@ -89,7 +89,7 @@ pub enum BodyShape {
     VendorCatalog,
     /// [`TaskAdd`]
     TaskAdd,
-    /// [`TaskOopsAdd`], the strict body for the server-owned `.oops` route.
+    /// [`TaskOopsAdd`], the strict body for typed OOPS filing.
     TaskOopsAdd,
     /// [`TasteProposalAdd`], the strict body for the hidden taste-proposal route.
     TasteProposalAdd,
@@ -103,6 +103,8 @@ pub enum BodyShape {
     TaskNote,
     /// [`TaskDefer`]
     TaskDefer,
+    /// [`TaskFile`]
+    TaskFile,
     /// [`TaskWake`]
     TaskWake,
     /// [`TaskRef`]
@@ -621,6 +623,7 @@ impl CommandKind {
             | Self::TaskNote
             | Self::TaskDefer
             | Self::TaskWake
+            | Self::TaskFile
             | Self::TaskDepends
             | Self::TaskPhase
             | Self::TaskDone
@@ -698,6 +701,7 @@ impl CommandKind {
             Self::TaskNote => Binding::of(B::TaskNote, A::Task),
             Self::TaskDefer => Binding::of(B::TaskDefer, A::Task),
             Self::TaskWake => Binding::of(B::TaskWake, A::Task),
+            Self::TaskFile => Binding::of(B::TaskFile, A::Task),
             Self::TaskDepends => Binding::of(B::TaskDepends, A::Task),
             Self::TaskPhase => Binding::of(B::TaskPhase, A::Task),
             Self::TaskDone => Binding::of(B::TaskDone, A::Task),
@@ -903,6 +907,8 @@ pub enum Intent {
     TaskDefer(TaskDefer),
     /// [`BodyShape::TaskWake`]
     TaskWake(TaskWake),
+    /// [`BodyShape::TaskFile`]
+    TaskFile(TaskFile),
     /// [`BodyShape::TaskRef`]
     TaskRef(TaskRef),
     /// [`BodyShape::TaskDepends`]
@@ -1020,6 +1026,7 @@ impl Intent {
             | Self::TaskNote(_)
             | Self::TaskDefer(_)
             | Self::TaskWake(_)
+            | Self::TaskFile(_)
             | Self::TaskRef(_)
             | Self::TaskDepends(_)
             | Self::TaskPhase(_)
@@ -1086,6 +1093,7 @@ impl Intent {
             Self::TaskNote(_) => BodyShape::TaskNote,
             Self::TaskDefer(_) => BodyShape::TaskDefer,
             Self::TaskWake(_) => BodyShape::TaskWake,
+            Self::TaskFile(_) => BodyShape::TaskFile,
             Self::TaskRef(_) => BodyShape::TaskRef,
             Self::TaskDepends(_) => BodyShape::TaskDepends,
             Self::TaskPhase(_) => BodyShape::TaskPhase,
@@ -1229,6 +1237,7 @@ impl BodyShape {
                 | Self::TaskNote
                 | Self::TaskDefer
                 | Self::TaskWake
+                | Self::TaskFile
                 | Self::TaskRef
                 | Self::TaskDepends
                 | Self::TaskPhase
@@ -1358,6 +1367,7 @@ impl BodyShape {
         Ok(match self {
             Self::TaskDefer => Intent::TaskDefer(crate::decode(bytes)?),
             Self::TaskWake => Intent::TaskWake(crate::decode(bytes)?),
+            Self::TaskFile => Intent::TaskFile(crate::decode(bytes)?),
             Self::TaskRef => Intent::TaskRef(crate::decode(bytes)?),
             Self::TaskDepends => Intent::TaskDepends(crate::decode(bytes)?),
             Self::TaskPhase => Intent::TaskPhase(crate::decode(bytes)?),

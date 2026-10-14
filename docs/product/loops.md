@@ -129,8 +129,14 @@ flowchart LR
   so an authored root is never invisible to a lane that may be allocated it.
   Hidden roots remain reserved for their typed system routes and stay out of
   other actors' default reads.
-- `task oops` parks a row in plan through the hidden `.oops` filing filter; only an explicit
-  `task wake` promotes it, and every destination passes manual admission.
+- `task oops` creates a typed OOPS row under a public project. The command uses
+  `--project` or derives the one public project held by the actor; zero or
+  multiple eligible claims refuse without mutation. OOPS is filing state, not
+  project visibility: the allocator never offers it, default detail reads show
+  only the origin thread's rows, and complete operator reads retain every row.
+  `task file` changes it to ordinary Filed work and can atomically rehome it,
+  attach a preparation controller, or claim an uncontrolled row. `task wake`
+  remains only for ordinary deferred work.
 
 ---
 
@@ -496,10 +502,10 @@ owns each rule summarized here.
 - **OOPS grooming.** `spice room post DESIGN --report REPORT... --disposition
   duplicate|no-work|deferred-for-later|covered|proposed-work --cause TEXT
   [--exceptions TEXT] [--uncertainty TEXT]` records, in an open Design's room,
-  a disposition over parked `.oops` reports. A disposition is evidence, never
-  authority: it changes no report workflow, `deferred-for-later` carries no
-  wake time, and only `spice task wake REPORT --preparation DESIGN` promotes a
-  report, as a controlled output that is not yet authorized.
+  a disposition over typed OOPS reports. A disposition is evidence, never
+  authority: it changes no report workflow, and `deferred-for-later` carries no
+  wake time. Only `spice task file REPORT --preparation DESIGN` files a report
+  as a controlled output that is not yet authorized.
 
 Every read — `spice room history|inbox|result|relevance|status`,
 `spice preparation show`, `spice group list`, and their `spice://` resources —

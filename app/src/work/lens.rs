@@ -508,6 +508,7 @@ fn lifecycle_label(event: TaskLifecycleKind) -> &'static str {
         TaskLifecycleKind::Reviewed => "Reviewed",
         TaskLifecycleKind::Deferred => "Deferred",
         TaskLifecycleKind::Woken => "Woken",
+        TaskLifecycleKind::Filed => "Filed",
         TaskLifecycleKind::Deleted => "Deleted",
     }
 }

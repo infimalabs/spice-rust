@@ -183,6 +183,7 @@ fn statement() -> TaskHead {
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
         project: "gate.selection".to_owned(),
+        filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
         provenance: "task:fixture".parse().expect("fixture origin"),

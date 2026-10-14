@@ -6,7 +6,7 @@ mod edit;
 mod requirements;
 mod settlement;
 mod taste_proposal;
-pub(super) use deferral::{task_defer, task_wake};
+pub(super) use deferral::{task_defer, task_file, task_wake};
 pub(super) use settlement::{task_close, task_delete};
 
 #[cfg(test)]
@@ -121,7 +121,8 @@ pub(super) fn task_add_with(
         bus,
         command,
         add,
-        project,
+        Some(project),
+        wire::TaskFiling::Filed,
         add.clone(),
         repository,
         projects,
@@ -145,28 +146,18 @@ pub(super) fn task_oops_add(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let recommended = match add.project.as_deref().map(|project| {
+    let project = match add.project.as_deref().map(|project| {
         projects.admit_manual_creation(project).map_err(|error| {
             refusal(
                 "task::oops-project-refused",
                 Some(error.to_string()),
-                "recommend a public project this board admits for manual filing, or omit --project",
+                "name a public project this board admits for manual filing",
             )
         })
     }) {
         Some(Ok(project)) => Some(project),
         Some(Err(outcome)) => return outcome,
         None => None,
-    };
-    let route = SystemTaskRoute::oops(recommended.as_ref());
-    let project = match projects.admit_system_creation(&route) {
-        Ok(project) => project,
-        Err(error) => {
-            return protocol_fault(
-                "task::oops-route-invalid",
-                &format!("resident-owned .oops route is not admitted: {error}"),
-            );
-        }
     };
     let normalized = TaskAdd {
         preparation: None,
@@ -186,6 +177,7 @@ pub(super) fn task_oops_add(
         command,
         &normalized,
         project,
+        wire::TaskFiling::Oops,
         add.clone(),
         None,
         projects,
@@ -202,7 +194,8 @@ fn create_task<B: serde::Serialize>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
-    project: Project,
+    project: Option<Project>,
+    filing: wire::TaskFiling,
     request_body: B,
     repository: Option<&Repository>,
     projects: &ProjectPolicy,
@@ -219,6 +212,13 @@ fn create_task<B: serde::Serialize>(
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
+    };
+    let project = match project {
+        Some(project) => project,
+        None => match oops_claim_project(command.actor(), &snapshot.entries) {
+            Ok(project) => project,
+            Err(outcome) => return outcome,
+        },
     };
     let parked = referenced_oops(&snapshot.entries, add.depends.iter());
     if !parked.is_empty() {
@@ -240,8 +240,9 @@ fn create_task<B: serde::Serialize>(
         Ok(observation) => observation,
         Err(outcome) => return outcome,
     };
-    let mut prepared = match prepare_task(command, add, &project, projects, origin, creation, flow)
-    {
+    let mut prepared = match prepare_task(
+        command, add, &project, projects, origin, creation, flow, filing,
+    ) {
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
@@ -290,7 +291,6 @@ fn create_task<B: serde::Serialize>(
         bus,
         command,
         add,
-        &project,
         request_body,
         &snapshot,
         prepared,
@@ -301,6 +301,38 @@ fn create_task<B: serde::Serialize>(
         |_| {},
         added_claim,
     )
+}
+
+fn oops_claim_project(
+    actor: &wire::Actor,
+    entries: &[Entry],
+) -> Result<Project, Outcome<CommandAnswer>> {
+    let mut projects = entries
+        .iter()
+        .filter(|entry| {
+            entry.claim().is_some_and(|claim| {
+                claim.actor == *actor && claim.disposition == wire::ClaimDisposition::Active
+            }) && matches!(
+                entry.project().visibility(),
+                wire::intent::ProjectVisibility::Public
+            )
+        })
+        .map(|entry| entry.project().clone());
+    let Some(project) = projects.next() else {
+        return Err(refusal(
+            "task::oops-project-required",
+            Some(actor.to_string()),
+            "pass --project because this actor has no active public claim",
+        ));
+    };
+    if projects.next().is_some() {
+        return Err(refusal(
+            "task::oops-project-ambiguous",
+            Some(actor.to_string()),
+            "pass --project because this actor has more than one active public claim",
+        ));
+    }
+    Ok(project)
 }
 
 pub(super) fn task_add_roots(add: &TaskAdd) -> Vec<wire::TaskStamp> {
@@ -357,7 +389,6 @@ fn commit_prepared_task<B, F>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
-    project: &Project,
     request_body: B,
     snapshot: &ValidatedSnapshot,
     prepared: PreparedTask,
@@ -402,6 +433,7 @@ where
         claim.guard(&mut write, snapshot, command);
     }
     extra_guard(&mut write);
+    let filing = prepared.statement.filing;
     let added = match write.fact(
         body::TaskAdded {
             preparation: prepared.statement.preparation.clone(),
@@ -412,6 +444,7 @@ where
             acceptance: add.acceptance.clone(),
             requirements: add.requirements.clone(),
             project: prepared.project,
+            filing: prepared.statement.filing,
             tags,
             depends: prepared.statement.dependencies.clone(),
             flow: prepared.flow,
@@ -441,7 +474,7 @@ where
         ..statement
     });
     write.workflow_head(prepared.born.clone(), added, move |_| prepared.workflow);
-    if let Err(outcome) = add_oops_note(&mut write, project, add, &prepared.born, added) {
+    if let Err(outcome) = add_oops_note(&mut write, filing, add, &prepared.born, added) {
         return outcome;
     }
     if let Some(claim) = added_claim
@@ -491,6 +524,7 @@ fn prepare_task(
     origin: wire::Origin,
     creation: TaskCreationCapture,
     flow: Vec<wire::Phase>,
+    filing: wire::TaskFiling,
 ) -> Result<PreparedTask, Outcome<CommandAnswer>> {
     let handles = command
         .expected()
@@ -515,7 +549,7 @@ fn prepare_task(
         ));
     }
     let project_text = project.as_str().to_owned();
-    let task = TaskHandle::for_project(&project_text, &born);
+    let task = TaskHandle::for_filing(&project_text, &born, filing);
     let phase = flow[0].clone();
     let at = current_instant()?;
     let statement = TaskHead {
@@ -531,6 +565,7 @@ fn prepare_task(
         acceptance: add.acceptance.clone(),
         requirements: add.requirements.clone(),
         project: project_text.clone(),
+        filing,
         tags: Vec::new(),
         dependencies: add
             .depends
@@ -682,12 +717,12 @@ pub(super) fn omit_review_phase(flow: &mut Vec<wire::Phase>, all_review: bool) {
 
 fn add_oops_note(
     write: &mut JournalWrite,
-    project: &Project,
+    filing: wire::TaskFiling,
     add: &TaskAdd,
     task: &wire::TaskStamp,
     added: PendingFact,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    if project.visibility().hidden_stem() == Some("oops")
+    if filing.is_oops()
         && let Some(note) = &add.description
         && let Err(error) = write.fact(
             body::TaskNoted {
@@ -1083,7 +1118,7 @@ fn dependency_reaches(entries: &[Entry], start: &TaskStamp, target: &TaskStamp) 
 }
 
 pub(super) fn is_oops(entry: &Entry) -> bool {
-    entry.project().visibility().hidden_stem() == Some(wire::OOPS_STEM)
+    entry.statement().filing.is_oops()
 }
 
 pub(super) fn oops_state(entry: &Entry) -> String {
@@ -1094,7 +1129,7 @@ pub(super) fn oops_state(entry: &Entry) -> String {
         None => "none",
     };
     format!(
-        "{} project={} status={} claim={claim}",
+        "{} project={} filing=oops status={} claim={claim}",
         entry.handle(),
         entry.project(),
         entry.workflow().status,
@@ -1111,7 +1146,7 @@ fn oops_dependency_refusal(entries: &[&Entry]) -> Outcome<CommandAnswer> {
         "task::dependency-oops-refused",
         Some(offenders.clone()),
         &format!(
-            "parked dependency endpoint(s): {offenders}; promote every parked row first with spice task wake HANDLE [--into PUBLIC_PROJECT]",
+            "OOPS dependency endpoint(s): {offenders}; file every OOPS row first with spice task file HANDLE [--into PUBLIC_PROJECT]",
         ),
     )
 }
