@@ -108,16 +108,15 @@ Any Design, open, completed, or closed, opens for reading in its task
 overview: the **Read** action on each design tile in the Spice menu's Working
 groups catalog, a Design-intent task's detail, and a Design permalink all open
 the same view. Below the task's state, its **Design room** section shows the
-room's [standing](#design-standing), the
-[conclusion control](#concluding-a-design) while the Design is open, the
-[approval control](#approving-a-designs-outputs), its preparation authority
-records, and its full room history newest first, resolved through the Design's
-birth stamp under its current handle, with the permalink beside the heading.
-Room history and retained candidates stay readable in every standing. The view
-holds no composer, receipt, answer, or coordination control. Opening or reading
-it moves no group, joins, acknowledges, authorizes, and wakes nothing, and
-commits no journal fact; acting on a room stays with the group console and the
-`spice room` commands.
+room's [standing](#design-standing), its positive
+[conclusion control](#concluding-a-design), every immutable
+[proposal version and decision](#deciding-a-design-proposal), and its full
+room history newest first, resolved through the Design's birth stamp under its
+current handle, with the permalink beside the heading. Room history and
+proposal versions stay readable in every standing. Opening or reading the view
+moves no group, joins, acknowledges, authorizes, and wakes nothing, and commits
+no journal fact. Operator decision controls appear only on an open Design;
+lane sessions retain their typed contribution composer.
 
 ## Design standing
 
@@ -144,61 +143,64 @@ the operator.
 ## Concluding a Design
 
 Only the operator concludes a Design. While it is open and the resident offers
-conclusion, the read view's **Conclusion** section previews either **done** or
-**collapse** with a nonblank reason, stating what the conclusion does: done
-keeps outputs already selected released and is refused while an output still
-owes the operator's selection; collapse keeps every output it constructed
-gated. A blank collapse reason previews nothing and names the refusal. **Submit
-conclusion** sends the previewed conclusion witnessing the Design's statement,
-workflow, and claim heads the preview was drawn from, the same contract as
-`spice task conclude`. The section reports the resident's answer: a refusal,
-such as a live claim or heads that moved since the preview, keeps the preview
-beside it and changes no standing; the standing moves only when the board
-shows the conclusion. Ordinary task and Plan controls are unchanged.
+conclusion, the read view's **Conclusion** section previews **done**. Done keeps
+outputs already selected by proposal decisions released and is refused while
+an output still owes the operator's selection. **Submit conclusion** witnesses
+the Design's statement, workflow, and claim heads, the same contract as
+`spice task conclude`. A refusal, including a live claim or moved head, keeps
+the preview beside it; standing moves only when the board shows the conclusion.
+Collapse is not a second conclusion shortcut in this panel: it is a decision
+on the exact proposal version whose premise failed.
 
-## Approving a Design's outputs
+## Deciding a Design proposal
 
-The read view's **Approval** section lists each candidate retained under the
-Design with its standing (undecided, returned, accepted by a decision, or
-authorized), every review coverage recorded over it, its governed inputs, and
-each output's title, handle, status, and acceptance. While the Design is an
-open board task, **Accept** and **Return** record the operator's next decision
-on that candidate, citing the candidate's retaining fact as its basis. A
-returned candidate authorizes nothing.
+The read view's **Proposal versions** section lists every candidate retained
+under the Design, newest first, without replacing earlier versions. Each card
+names its immutable candidate identity and retaining journal fact, governed
+inputs, retained source references, cited question results, critiques, review
+coverage, and every earlier decision and execution authorization. Each output
+shows its current title, handle, status, and acceptance. A referenced task or
+question result absent from the current projection is shown as unavailable;
+an exact source identity is shown as an unresolved link rather than being
+called available. Concluded Designs keep the same cards read-only.
 
-Authorization requires current coverage from the operator or an independent
-lane; the candidate author's self-review certifies nothing alone. Until the
-candidate is authorized, **Record my review** records the operator's own
-coverage of that exact candidate, citing its retaining fact and covering its
-outputs and their acceptance, the same record `spice preparation cover` writes.
-Recording again is how stale coverage is renewed after candidate evidence is
-answered.
+On an open Design, an operator chooses one action for an exact version:
 
-Once a decision accepts the candidate, each of its outputs on the board gets an
-unchecked box. **Authorize selected** records one execution authorization of
-exactly the checked outputs under that decision, the candidate's governed
-inputs, and every coverage recorded over it; it completes the Design, and only
-those outputs become eligible. Unchecked outputs stay pending and ineligible.
-While the view can already see a refusal, no certifying coverage or a pending
-dependency of the Design, the control is disabled and the section states the
-reason and the act that clears it. With nothing checked the control submits
-nothing. Each command witnesses the Design, input, and output heads the view
-was drawn from, and the resident alone judges admissibility: its answer, or a
-refusal such as stale coverage, a moved board, an output outside the
-candidate, or a controller that is not an open Design, appears under the
-candidate and records nothing. This is the same contract as
-`spice preparation decide`, `cover`, and `authorize`.
+- **Select outputs** checks any nonempty subset. Its preview states that only
+  those checked outputs are released, unchecked outputs stay gated, and the
+  Design remains open.
+- **Return** requires a reason naming what another proposal must change. It
+  releases nothing and leaves the Design open.
+- **Collapse** requires a reason naming why this version's premise did not
+  hold. It atomically records the decision and concludes the Design collapsed.
+
+**Preview decision** mutates nothing. **Submit decision** sends one
+`preparation decide` command witnessing the Design's statement, workflow, and
+claim heads, the exact retained candidate fact, governed input statements,
+selected output transitions, and absence of the new decision and output
+authorizations. Selection atomically records its decision and authorization;
+there is no coverage-record prerequisite, Accept stage, post-Accept checkbox,
+or separate Authorize action. Coverage remains readable evidence.
+
+The first click marks that exact version pending before the socket write, so a
+double activation cannot submit twice. A successful reply reports only that
+the write landed: standing, selected outputs, and conclusion continue to come
+from committed room and board authority. A stale candidate, moved head, live
+claim, concluded Design, foreign output, or mismatched version refusal stays
+beside the unchanged choice and reason and requires a fresh preview. Passive
+versus active working-group standing changes no operator decision authority.
+Native radio, checkbox, text, and button controls preserve keyboard order in
+normal and narrow layouts.
 
 ## Preparation authority
 
-A room for a controlling task shows its retained candidate, critique, review
-coverage, decision, and execution-authorization records above the timeline in
-immutable journal order. Each card preserves the record's exact outputs,
-governed inputs, source link, decision outcome, and selected outputs; review
-coverage and execution authorization remain distinct. The same authority is
-available through bounded `spice preparation show HANDLE` and
-`spice://task/HANDLE/preparation` pages. Reading or opening these records joins,
-acknowledges, and changes nothing.
+A room for a controlling task also exposes its retained candidate, critique,
+review coverage, decision, and execution-authorization records in immutable
+journal order. Each record preserves exact outputs, governed inputs, source
+link, decision outcome, and selected outputs; review evidence and execution
+authorization remain distinct. The same authority is available through bounded
+`spice preparation show HANDLE` and `spice://task/HANDLE/preparation` pages.
+Reading or opening these records joins, acknowledges, and changes nothing.
 
 ## Room coordination
 

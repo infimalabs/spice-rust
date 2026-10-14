@@ -861,12 +861,15 @@
 .room-invitations h3 { margin: 0; font-size: inherit; }
 .room-invitation-card p { margin: 4px 0 0; color: var(--muted); overflow-wrap: anywhere; }
 
-.room-conclusion { display: grid; gap: 6px; font-size: var(--app-type-detail); }
-.room-conclusion :is(button, input) { font: inherit; }
-.room-conclusion p { margin: 0; }
+.room-conclusion,
+.room-decision { display: grid; gap: 6px; font-size: var(--app-type-detail); }
+.room-conclusion :is(button, input),
+.room-decision :is(button, input) { font: inherit; }
+.room-conclusion p,
+.room-decision p { margin: 0; }
 
-/* Review coverage and output authorization own the accent rail; receipts and
-   answers in conversation cards never use it. */
+/* Proposal decisions own the accent rail; contributions, receipts, and
+   answers remain evidence with neutral rails. */
 .room-preparation-card,
 .room-approval-card {
   border-inline-start-color: var(--accent);
@@ -880,6 +883,13 @@
   font: inherit;
 }
 
+.room-approval-card > header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: baseline;
+}
+.room-approval-card > header span { margin-inline-start: auto; }
 .room-approval-card ul {
   display: grid;
   gap: 4px;
@@ -898,12 +908,32 @@
 .room-approval-outputs label > span,
 .room-approval-acceptance,
 .room-approval-coverage,
-.room-approval-inputs {
+.room-approval-inputs,
+.room-approval-references,
+.room-approval-evidence,
+.room-approval-critiques,
+.room-approval-history {
   color: var(--muted);
   font-size: var(--app-type-detail);
 }
-
-.room-approval-card .room-inline-actions { margin-top: 8px; }
+.room-approval-card [data-reference-state="unavailable"],
+.room-decision-refusal { color: var(--danger); }
+.room-reference-state { display: block; color: var(--muted); font-size: var(--app-type-meta); }
+.room-decision { margin-top: 8px; }
+.room-decision-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 6px 8px;
+  min-width: 0;
+  border: var(--app-edge);
+  border-radius: var(--app-radius-compact);
+}
+.room-decision-choices label { display: flex; gap: 6px; align-items: baseline; }
+.room-decision-reason { display: grid; gap: 4px; }
+.room-decision-reason input { width: 100%; box-sizing: border-box; }
+.room-decision-preview { display: grid; gap: 6px; }
 
 /* Room standing: each reason kind keeps its own rail so invitation, activity,
    work, requests, owed duties and responsibility never read alike. */

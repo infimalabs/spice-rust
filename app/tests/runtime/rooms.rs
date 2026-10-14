@@ -4,9 +4,10 @@
 use super::*;
 use serde::Serialize;
 use wire::rooms::{
-    CandidateRef, CoverageRef, DecisionRef, ExecutionAuthorization, ExecutionAuthorized,
-    RoomAuthorityStamp, RoomCoordinationStarted, RoomMessaged, RoomPutAside, RoomStopRequest,
-    TextRange, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
+    CandidateRef, CandidateReference, CandidateRetained, CoverageRef, DecisionOutcome, DecisionRef,
+    ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
+    RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomMessaged, RoomPutAside,
+    RoomSource, RoomStopRequest, TextRange, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
 };
 
 #[path = "rooms/contributions.rs"]
@@ -19,6 +20,7 @@ const COORDINATION_EVENT: &str = "dVsYdDj7k";
 const GROUP: &str = "dVsYdDj7f";
 const STOP_EVENT: &str = "dVsYdDj7g";
 const CANDIDATE: &str = "dVsYdDj7h";
+const SECOND_CANDIDATE: &str = "dVsYdDj7m";
 const COORDINATION_KEY: &str = "dCoordKey1";
 const STOP_KEY: &str = "dStopKey1";
 
@@ -211,6 +213,58 @@ fn authorized(position: u64, decision: u64) -> serde_json::Value {
     envelope(position, "proposal::authorized", &body)
 }
 
+fn retained(position: u64, candidate: &str, output: &str) -> serde_json::Value {
+    envelope(
+        position,
+        "proposal::retained",
+        &CandidateRetained {
+            candidate: RetainedCandidate {
+                candidate: CandidateRef {
+                    controller: room(),
+                    candidate: authority(candidate),
+                },
+                governed_inputs: vec![room()],
+                outputs: vec![fixture_stamp(output)],
+                references: vec![CandidateReference {
+                    relation: "contract".parse().expect("fixture relation"),
+                    source: RoomSource::Journal {
+                        fact: wire::SequenceCode::new(1),
+                    },
+                }],
+                evidence: Vec::new(),
+            },
+        },
+    )
+}
+
+fn decided(
+    position: u64,
+    candidate: &str,
+    decision: u64,
+    outcome: impl FnOnce(CandidateRef) -> DecisionOutcome,
+) -> serde_json::Value {
+    let candidate = CandidateRef {
+        controller: room(),
+        candidate: authority(candidate),
+    };
+    envelope(
+        position,
+        "proposal::decided",
+        &PreparationDecided {
+            decision: PreparationDecision {
+                decision: DecisionRef {
+                    controller: room(),
+                    decision: wire::SequenceCode::new(decision),
+                },
+                source: RoomSource::Journal {
+                    fact: wire::SequenceCode::new(position - 1),
+                },
+                outcome: outcome(candidate),
+            },
+        },
+    )
+}
+
 /// The fact page an operator subscription opens with: live, empty, at its horizon.
 fn operator_facts(session: &Session, horizon: u64) -> app::Admitted<StreamFrame> {
     admitted_stream(session, &packed_frame("facts", &[], None, horizon))
@@ -401,6 +455,73 @@ fn operator_subscription_rebuilds_room_authority_from_its_paged_room_snapshot() 
             .current_stop(&room(), runtime.board())
             .is_none(),
         "no board snapshot proves the stopped claim active"
+    );
+}
+
+#[test]
+fn proposal_projection_keeps_every_version_and_each_versions_decision_history() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    runtime.apply_stream(&operator_facts(&session, 5));
+    runtime.apply_stream(&room_page(
+        &session,
+        &[
+            room_message(1),
+            retained(2, CANDIDATE, "HIDDEN-oops1"),
+            decided(3, CANDIDATE, 1, |candidate| DecisionOutcome::Returned {
+                candidate,
+                reason: "the evidence is incomplete".to_owned(),
+            }),
+            retained(4, SECOND_CANDIDATE, "PUBLIC-work2"),
+            decided(5, SECOND_CANDIDATE, 2, |candidate| {
+                DecisionOutcome::Collapse {
+                    candidate,
+                    reason: "the premise no longer holds".to_owned(),
+                }
+            }),
+        ],
+        None,
+        5,
+    ));
+
+    let preparation = runtime.room_projection().preparation();
+    assert_eq!(
+        preparation
+            .candidates
+            .values()
+            .map(|candidate| candidate.position)
+            .collect::<Vec<_>>(),
+        [seq(2), seq(4)]
+    );
+    assert_eq!(
+        preparation
+            .decisions
+            .values()
+            .map(|decision| (&decision.value.outcome, decision.position))
+            .collect::<Vec<_>>(),
+        [
+            (
+                &DecisionOutcome::Returned {
+                    candidate: CandidateRef {
+                        controller: room(),
+                        candidate: authority(CANDIDATE),
+                    },
+                    reason: "the evidence is incomplete".to_owned(),
+                },
+                seq(3),
+            ),
+            (
+                &DecisionOutcome::Collapse {
+                    candidate: CandidateRef {
+                        controller: room(),
+                        candidate: authority(SECOND_CANDIDATE),
+                    },
+                    reason: "the premise no longer holds".to_owned(),
+                },
+                seq(5),
+            ),
+        ]
     );
 }
 

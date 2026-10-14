@@ -1,13 +1,12 @@
-//! A Design's room read in place: its standing, conclusion control, approval
-//! control, preparation authority, kind-grouped contributions, and room
-//! history, for open and concluded Designs alike. The controls that write are
-//! the operator's conclusion of an open Design and review evidence over a
-//! retained candidate; showing the view joins, groups, or wakes nothing.
+//! A Design's room read in place: its standing, positive conclusion control,
+//! immutable proposal versions and exact decisions, kind-grouped
+//! contributions, and room history for open and concluded Designs alike.
+//! Showing the view joins, groups, or wakes nothing.
 
 use wire::intent::BoardTask;
 use yew::prelude::*;
 
-use super::{Controls, RoomProjectionStatus, render_event, render_preparation};
+use super::{Controls, RoomProjectionStatus, render_event};
 use crate::AppRuntime;
 use crate::browser::sender::SenderHandle;
 
@@ -40,7 +39,6 @@ pub(in crate::browser) fn render_design_room(
                     {super::standing::render_standing(runtime, design, Some(row))}
                     {super::conclusion::render_conclusion(runtime, controls, sender, row)}
                     {super::approval::render_approval(runtime, controls, sender, design)}
-                    {render_preparation(runtime, design)}
                     {super::contributions::render_groups(runtime, design)}
                     {super::contribute::render_composer(runtime, controls, sender, row)}
                     <section class="room-history" aria-label="Room history">

@@ -59,8 +59,10 @@ pub(super) struct Controls {
     notice: UseStateHandle<Option<String>>,
     /// The outcome of the last inbox control, shown beside the inbox.
     inbox_notice: UseStateHandle<Option<String>>,
-    /// The outcome of the last approval control, shown under its candidate.
-    approval_notice: UseStateHandle<Option<(wire::rooms::CandidateRef, String)>>,
+    /// The operator's draft decision for one exact proposal version.
+    decision: UseReducerHandle<approval::Composer>,
+    /// Proposal versions whose decision awaits the resident's answer.
+    deciding: Rc<RefCell<BTreeSet<wire::rooms::CandidateRef>>>,
     /// The read view's Design conclusion preview and last outcome.
     conclusion: UseStateHandle<Option<conclusion::Conclusion>>,
     /// The read view's lane contribution draft.
@@ -91,6 +93,7 @@ pub(super) fn use_controls() -> Controls {
     let drawn = use_mut_ref(BTreeMap::new);
     let posting = use_mut_ref(BTreeSet::new);
     let contributing = use_mut_ref(BTreeSet::new);
+    let deciding = use_mut_ref(BTreeSet::new);
     let arranging = use_state_eq(|| None);
     let slots = super::watchband::ComposerSlots(use_mut_ref(std::collections::HashMap::new));
     use_effect_with((*views).clone(), store);
@@ -99,7 +102,8 @@ pub(super) fn use_controls() -> Controls {
         views,
         notice: use_state(|| None),
         inbox_notice: use_state(|| None),
-        approval_notice: use_state(|| None),
+        decision: use_reducer(approval::Composer::default),
+        deciding,
         conclusion: use_state(|| None),
         composer: use_reducer(contribute::Composer::default),
         contributing,
@@ -151,12 +155,6 @@ impl Controls {
     fn inbox_reporter(&self) -> Callback<String> {
         let notice = self.inbox_notice.clone();
         Callback::from(move |text| notice.set(Some(text)))
-    }
-
-    /// One candidate's approval notice as a callback for its controls.
-    fn approval_reporter(&self, candidate: wire::rooms::CandidateRef) -> Callback<String> {
-        let notice = self.approval_notice.clone();
-        Callback::from(move |text| notice.set(Some((candidate.clone(), text))))
     }
 
     /// The text a design composer draws with: its saved draft the first time

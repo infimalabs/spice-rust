@@ -1,7 +1,6 @@
-//! The operator's explicit conclusion of an open Design from its read view:
-//! preview done or collapse-with-reason, then submit it at the heads the
-//! preview was drawn from. The standing moves only when the board does; a
-//! refusal, such as a live claim or heads that moved, is reported in place.
+//! The operator's explicit positive conclusion of an open Design from its read
+//! view. Collapse belongs to the exact proposal decision whose premise failed;
+//! this separate control only ends a Design done after its selections.
 
 use std::rc::Rc;
 
@@ -10,7 +9,7 @@ use wire::intent::{BoardTask, TaskConclude};
 use wire::{CommandKind, TaskStamp, Witness};
 use yew::prelude::*;
 
-use super::{Controls, input_value, transition_witnesses};
+use super::{Controls, transition_witnesses};
 use crate::AppRuntime;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::ClientAction;
@@ -24,8 +23,8 @@ pub(super) struct Conclusion {
     notice: Option<String>,
 }
 
-/// The conclusion section of an open Design's read view; absent once it
-/// concludes or while the operator socket does not offer conclusion.
+/// The positive conclusion section of an open Design's read view; absent once
+/// it concludes or while the operator socket does not offer conclusion.
 pub(super) fn render_conclusion(
     runtime: &AppRuntime,
     controls: &Controls,
@@ -43,43 +42,25 @@ pub(super) fn render_conclusion(
     let state = (*controls.conclusion)
         .as_ref()
         .filter(|state| state.design == *design);
-    let reason = NodeRef::default();
-    let preview = |conclusion: Option<DesignConclusion>| {
-        let (state, reason, design) = (controls.conclusion.clone(), reason.clone(), design.clone());
+    let done = {
+        let (state, design) = (controls.conclusion.clone(), design.clone());
         let witnesses = transition_witnesses(row);
         Callback::from(move |_: MouseEvent| {
-            let conclusion = conclusion
-                .clone()
-                .unwrap_or_else(|| DesignConclusion::Collapsed {
-                    reason: input_value(&reason).unwrap_or_default().trim().to_owned(),
-                });
-            let empty =
-                matches!(&conclusion, DesignConclusion::Collapsed { reason } if reason.is_empty());
             state.set(Some(Conclusion {
                 design: design.clone(),
-                preview: (!empty).then(|| (conclusion, witnesses.clone())),
-                notice: empty.then(|| {
-                    "task::collapse-reason-empty: state why its premise did not hold".to_owned()
-                }),
+                preview: Some((DesignConclusion::Done {}, witnesses.clone())),
+                notice: None,
             }));
         })
     };
-    let (done, collapse) = (preview(Some(DesignConclusion::Done {})), preview(None));
     html! {
         <section class="room-conclusion" aria-label="Conclusion" data-room-conclusion={design.to_string()}>
             <header><strong>{"Conclusion"}</strong></header>
             <p class="room-notice">
-                {"Only the operator concludes a Design. Done ends it, keeping outputs you already selected released; collapse ends it with a reason and keeps every output gated. Its room history and retained candidates stay readable."}
+                {"Done ends the Design after its proposal decisions, keeping selected outputs released. Collapse is decided on the exact proposal version whose premise failed."}
             </p>
             <div class="room-inline-actions">
                 <button type="button" onclick={done}>{"Preview done"}</button>
-            </div>
-            <label>
-                <span>{"Collapse reason"}</span>
-                <input ref={reason} type="text" placeholder="Why its premise did not hold" />
-            </label>
-            <div class="room-inline-actions">
-                <button type="button" onclick={collapse}>{"Preview collapse"}</button>
             </div>
             if let Some((conclusion, witnesses)) = state.and_then(|state| state.preview.as_ref()) {
                 {render_preview(controls, sender, row, conclusion, witnesses)}

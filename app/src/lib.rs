@@ -67,6 +67,8 @@ pub mod narration;
 mod operator_inbox;
 pub mod pane;
 #[cfg(any(target_arch = "wasm32", test))]
+mod preparation_decision;
+#[cfg(any(target_arch = "wasm32", test))]
 #[cfg_attr(test, allow(dead_code))]
 mod quota;
 #[cfg(any(target_arch = "wasm32", test))]
