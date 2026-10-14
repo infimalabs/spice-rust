@@ -101,8 +101,9 @@ flowchart LR
   ref, and a pruned object refuses the next claim without changing the board or
   the lane.
 - The next claim replays real commits oldest first, then applies the snapshot
-  without committing it, so restored work still passes the ordinary pre-commit
-  gate. A conflicting commit leaves the replay paused for the claimant with the
+  as ordinary unstaged work without committing it or leaving Git operation
+  state, so restored work still passes the ordinary pre-commit gate. A
+  conflicting commit leaves the replay paused for the claimant with the
   snapshot waiting behind it until task completion is retried.
 - `task free`, the holder's own deferral, and plan completion all park this way.
   A peer's deferral changes scheduling only and never takes possession.

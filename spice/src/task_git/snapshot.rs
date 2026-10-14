@@ -198,6 +198,14 @@ pub(super) fn apply(root: &Path, commit: &str) -> Result<Option<TransplantConfli
     transplant::require_object(root, commit)?;
     let picked = run(root, &["cherry-pick", "--no-commit", commit])?;
     if picked.success() {
+        // A successful no-commit pick leaves MERGE_MSG and AUTO_MERGE behind,
+        // including when the restored delta is already present. Let Git clear
+        // that synthetic operation state without moving HEAD or discarding the
+        // restored work; the claimant stages it through the ordinary gate.
+        checked(
+            run(root, &["reset", "--mixed", "--quiet", "HEAD"])?,
+            "finish restoring uncommitted task snapshot",
+        )?;
         return Ok(None);
     }
     let paths = required_read(
