@@ -529,6 +529,21 @@ fn a_job_call_leads_with_its_typed_intent_through_updates_and_its_result() {
             "job: Waiting for the gate (wait dVW6Zkf0h) update"
         );
     }
+    let progress = serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": "[job dVW6Zkf0h] spice gate prove\nchecking\ncargo tests passed"
+        }]
+    })
+    .to_string();
+    assert_eq!(
+        activity(
+            lane(1),
+            &tool("call-1", update("job", &progress)),
+            &mut previews
+        ),
+        "job: Waiting for the gate (wait dVW6Zkf0h) — cargo tests passed"
+    );
     assert_eq!(
         activity(lane(1), &tool("call-1", succeeded()), &mut previews),
         "job: Waiting for the gate (wait dVW6Zkf0h) succeeded"

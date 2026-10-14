@@ -1162,6 +1162,22 @@ pub fn job_flooded(job: &str) -> String {
     )
 }
 
+/// One in-flight host tool result as far as it has progressed.
+///
+/// omp presents the partial result on the active tool call and emits its
+/// `tool_execution_update` frame. The final [`host_tool_result`] remains the
+/// sole settlement.
+#[must_use]
+pub fn host_tool_update(id: &str, output: &str) -> Vec<u8> {
+    request_line(&serde_json::json!({
+        "type": "host_tool_update",
+        "id": id,
+        "partialResult": {
+            "content": [{"type": "text", "text": output}],
+        },
+    }))
+}
+
 /// The answer to one host tool call: what the command said and how it ended.
 ///
 /// The exit code rides the result's details, where omp's own `bash` keeps

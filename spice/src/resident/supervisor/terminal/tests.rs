@@ -1,7 +1,12 @@
+use std::fs;
+use std::time::Duration;
+
+use sill::Environment;
+use vendor::omp::{JobCall, JobOp};
 use wire::intent::{LaneJobKind, LaneJobStanding};
 
 use super::job::Ending;
-use super::{Jobs, unheard};
+use super::{Control, Jobs, Terminal, unheard};
 
 #[test]
 fn a_lane_lists_each_kept_job_by_how_it_lives_and_whether_it_ended() {
@@ -41,6 +46,36 @@ fn a_lane_lists_each_kept_job_by_how_it_lives_and_whether_it_ended() {
     expected.sort();
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(listed, expected);
+}
+
+#[test]
+fn a_finite_wait_reports_the_job_and_latest_output_while_it_remains_blocked() {
+    let root = std::env::temp_dir().join(format!(
+        "spice-lane-wait-progress-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple(),
+    ));
+    let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
+    let job = jobs.record_for_tests("serve --port 8080", false, Some(600_000));
+    fs::write(job.log_path(), "building\nready on 8080\n").expect("job output");
+    let terminal = Terminal::new("/bin/sh", &root, Environment::empty(), jobs);
+    let call = JobCall {
+        op: JobOp::Wait,
+        id: Some(job.id().to_owned()),
+        timeout: Duration::ZERO,
+    };
+    let mut progress = Vec::new();
+
+    let report = terminal.job(&call, &Control::new(), &mut |report| {
+        progress.push(report.output.clone());
+    });
+
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(
+        progress,
+        ["[job ".to_owned() + job.id() + "] serve --port 8080\nready on 8080"]
+    );
+    assert!(report.output.contains("Command still running"));
 }
 
 /// A confirmed no-process launch failure removes its record. Cleanup failures

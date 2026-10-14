@@ -275,7 +275,16 @@ impl Terminal {
 
     /// Answer one request on the lane's jobs. An answer that reports how a
     /// job ended is the lane hearing it, so its completion notice is not owed.
-    pub(in crate::resident) fn job(&self, call: &JobCall, control: &Control) -> Report {
+    ///
+    /// A finite wait reports its current output when observation starts and
+    /// whenever that output changes. The caller can present those snapshots
+    /// while the final answer remains pending.
+    pub(in crate::resident) fn job(
+        &self,
+        call: &JobCall,
+        control: &Control,
+        progress: &mut dyn FnMut(&Report),
+    ) -> Report {
         // History's id is a cursor into delivered jobs, not a job to open.
         let id = match call.op {
             JobOp::History { .. } => None,
@@ -293,7 +302,7 @@ impl Terminal {
                 Some(ended) => told(&job, &ended),
                 None => snapshot(&job, None),
             },
-            (JobOp::Wait, Some(job)) => wait(&job, control, call.timeout),
+            (JobOp::Wait, Some(job)) => wait(&job, control, call.timeout, progress),
             (JobOp::Stop, Some(job)) => match stop(&job, control) {
                 Some(ended) => told(&job, &ended),
                 None => still(&job, "stop asked"),
@@ -498,11 +507,24 @@ impl Report {
 /// Follow a finite job without changing it. A running service never ends on
 /// its own, so waiting on one answers at once with what it has said so far;
 /// its task claim's end, or an earlier `stop`, ends it.
-fn wait(job: &Job, control: &Control, bound: Duration) -> Report {
+fn wait(
+    job: &Job,
+    control: &Control,
+    bound: Duration,
+    progress: &mut dyn FnMut(&Report),
+) -> Report {
     if job.timeout().is_none() && job.ended().is_none() {
         return still(job, SERVICE_WAIT);
     }
-    match job.observe(control, bound) {
+    let mut previous = String::new();
+    let mut changed = || {
+        let report = wait_progress(job);
+        if report.output != previous {
+            progress(&report);
+            previous = report.output;
+        }
+    };
+    match job.observe_with(control, bound, &mut changed) {
         Ok(Observed::Ended(ended)) => told(job, &ended),
         Ok(Observed::Elapsed) => snapshot(job, None),
         Ok(Observed::Interrupted) => still(job, "wait interrupted by an incoming message"),
@@ -622,6 +644,33 @@ fn kept(job: &Job, notice: Option<&str>) -> Report {
         exit_code: None,
         failed: false,
     }
+}
+
+/// Current output of the job one in-flight wait follows.
+///
+/// The progress frame itself states that the call remains active. Only the
+/// latest bounded line rides repeated frames: a cumulative tail would copy the
+/// same growing output on every keeper wake.
+fn wait_progress(job: &Job) -> Report {
+    const LATEST_BYTES: usize = 2 * 1024;
+
+    let mut output = format!("[job {}] {}\n", job.id(), job.command());
+    let tail = job.tail().unwrap_or_else(|error| Tail {
+        text: format!("log unreadable: {error}"),
+        truncated: false,
+    });
+    let latest = tail
+        .text
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("(no output yet)");
+    let mut start = latest.len().saturating_sub(LATEST_BYTES);
+    while !latest.is_char_boundary(start) {
+        start += 1;
+    }
+    output.push_str(&latest[start..]);
+    Report::answered(output)
 }
 
 /// One job as the `job` tool reads it: named, then its result so far.

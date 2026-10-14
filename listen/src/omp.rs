@@ -113,13 +113,20 @@ const SILENT: &[&str] = &[
 ];
 
 /// Partials the frame that ends them restates whole, except a terminal text
-/// update. Provider adapters may normalize tool-adjacent commentary out of the
+/// update and an in-flight Spice job wait.
+///
+/// Provider adapters may normalize tool-adjacent commentary out of the
 /// settled message, so capture keeps that one complete streamed revision as
 /// evidence. Earlier cumulative updates remain omitted to avoid quadratic tape
-/// growth. Tool execution updates are always restated by their terminal frame.
+/// growth. A job wait may remain open for minutes and its later terminal frame
+/// cannot describe what the operator should see while it is blocked, so those
+/// bounded progress frames are retained.
 pub(crate) fn restated(record: &Object) -> bool {
     match record.get("type").and_then(Value::as_str) {
-        Some("tool_execution_update" | "tool_stream_update") => true,
+        Some("tool_execution_update") => {
+            record.get("toolName").and_then(Value::as_str) != Some("job")
+        }
+        Some("tool_stream_update") => true,
         Some("message_update") => {
             record
                 .get("assistantMessageEvent")
@@ -266,6 +273,11 @@ pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
     match string(record, "type")? {
         "message_end" | "message" => message(object(record, "message")?, locus),
         "message_update" => message_update(record, locus),
+        "tool_execution_update"
+            if record.get("toolName").and_then(Value::as_str) == Some("job") =>
+        {
+            tool_update(record, locus)
+        }
         "response" => response(record, locus),
         "session" => Ok(vec![Event::Session(SessionDeclaration {
             identity: string(record, "id")?.to_owned(),
@@ -506,6 +518,22 @@ fn assistant(message: &Object, locus: Locus) -> Events {
         events.push(Event::Usage(usage_event(usage, locus)?));
     }
     Ok(events)
+}
+
+fn tool_update(record: &Object, locus: Locus) -> Events {
+    let partial = required(record, "partialResult")?;
+    let arguments = serde_json::to_string(partial).map_err(|_| ResidueKind::Malformed {
+        field: "partialResult",
+        expected: "JSON value",
+    })?;
+    Ok(vec![Event::Tool(Tool {
+        call_id: string(record, "toolCallId")?.to_owned(),
+        moment: ToolMoment::Update {
+            name: string(record, "toolName")?.to_owned(),
+            arguments,
+        },
+        locus,
+    })])
 }
 
 fn tool_result(message: &Object, locus: Locus) -> Events {

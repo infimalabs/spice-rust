@@ -55,7 +55,9 @@ keeper requests a lane wake, and the successor's startup catch-up delivers the
 unheard events and then the ending. An agent holding a claim may therefore end
 its turn while a deadline-bounded job runs; it is woken with its claim when the
 job ends or emits an event. `job wait` is for a finite job whose result blocks
-current work.
+current work. While it blocks, the lane's current activity remains that wait:
+the exact job and its latest bounded output replace any earlier tool as the
+operator-visible status. The job's final result alone settles the tool call.
 
 A [service](../invariants/lifecycle.md#lifecycle-services-belong-to-one-claim-win)
 never ends on its own and never keeps a lane idle; `job wait` answers at once
