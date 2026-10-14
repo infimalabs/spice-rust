@@ -116,23 +116,17 @@ pub(super) fn project(
             )));
         }
     };
-    let seated = inbox.occupant == Some(occupant);
-    if !seated && shown.compaction.is_some() {
+    if inbox.occupant != Some(occupant) {
         return Err(Refusal::Stale(match inbox.occupant {
             Some(current) => {
                 format!("lane {lane} is seated by occupant {current}, not {occupant}")
             }
-            None => format!("lane {lane} no longer seats occupant {occupant}"),
+            None => format!("lane {lane} does not authorize occupant {occupant}"),
         }));
     }
     let (projected, desired) =
         media_projection::publish(lane, occupant, &inbox.pending, root).map_err(Refusal::Failed)?;
-    if seated {
-        let anchor = inbox.compaction.ok_or_else(|| {
-            Refusal::Failed(format!(
-                "lane {lane} seats occupant {occupant} without a context anchor"
-            ))
-        })?;
+    if let Some(anchor) = inbox.compaction {
         match shown.compaction {
             None => media_projection::retire_other_occupants(root, lane, occupant)
                 .map_err(Refusal::Failed)?,
@@ -279,6 +273,38 @@ mod tests {
     }
 
     #[test]
+    fn an_unseated_predecessor_cannot_republish_after_its_successor_takes_the_lane() {
+        let fixture = Fixture::new();
+        let earlier = only_path(
+            &fixture
+                .read(PREDECESSOR, &inbox(Some(PREDECESSOR), None, &[FIRST]))
+                .expect("the exact incoming predecessor receives its media"),
+        );
+        let shown = only_path(
+            &fixture
+                .read(SUCCESSOR, &inbox(Some(SUCCESSOR), Some(20), &[SECOND]))
+                .expect("the successor's media projects"),
+        );
+        assert!(fs::symlink_metadata(&earlier).is_err());
+
+        assert!(matches!(
+            fixture.read(
+                PREDECESSOR,
+                &inbox(Some(SUCCESSOR), Some(20), &[FIRST, SECOND]),
+            ),
+            Err(Refusal::Stale(_)),
+        ));
+        assert_eq!(
+            fs::read(&shown).expect("successor media stays readable"),
+            PNG_BYTES,
+        );
+        assert!(
+            fs::symlink_metadata(fixture.occupant_tree(PREDECESSOR)).is_err(),
+            "the stale null-anchor reader cannot recreate its tree",
+        );
+    }
+
+    #[test]
     fn a_new_occupant_keeps_what_it_received_before_seating_through_ack_and_rereads() {
         let fixture = Fixture::new();
         let predecessor = only_path(
@@ -287,20 +313,25 @@ mod tests {
                 .expect("the predecessor's media projects"),
         );
 
-        // The successor's first turn reads before the resident seats it: the
-        // lane still names its predecessor, or nobody.
-        for unseated in [
+        for unauthorized in [
             inbox(Some(PREDECESSOR), Some(10), &[FIRST]),
             inbox(None, None, &[FIRST]),
         ] {
+            assert!(matches!(
+                fixture.read(SUCCESSOR, &unauthorized),
+                Err(Refusal::Stale(_)),
+            ));
+        }
+        let incoming = inbox(Some(SUCCESSOR), None, &[FIRST]);
+        for _ in 0..2 {
             let received = only_path(
                 &fixture
-                    .read(SUCCESSOR, &unseated)
-                    .expect("an unseated occupant still receives its media"),
+                    .read(SUCCESSOR, &incoming)
+                    .expect("the exact incoming occupant receives its media"),
             );
             assert_eq!(
                 fs::read(&received).expect("received media reads"),
-                PNG_BYTES
+                PNG_BYTES,
             );
             assert_eq!(
                 fs::read(&predecessor).expect("nothing retires before seating"),
@@ -309,8 +340,8 @@ mod tests {
         }
         let received = only_path(
             &fixture
-                .read(SUCCESSOR, &inbox(None, None, &[FIRST]))
-                .expect("an unseated occupant still receives its media"),
+                .read(SUCCESSOR, &incoming)
+                .expect("the exact incoming occupant rereads its media"),
         );
 
         // The start anchor lands after the occupant answered: the directive
