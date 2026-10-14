@@ -241,15 +241,15 @@ fn placed_sends(
             let recipients = routes
                 .iter()
                 .filter_map(|route| match route.audience {
-                    steer::ack::scan::Audience::Occupant(address) => {
+                    Some(steer::ack::scan::Audience::Occupant(address)) => {
                         Some(directives.recipients.get(&address).copied())
                     }
-                    steer::ack::scan::Audience::OperatorConcern => None,
+                    Some(steer::ack::scan::Audience::Operator) | None => None,
                 })
                 .collect::<Option<Vec<_>>>()?;
             let operator = routes
                 .iter()
-                .any(|route| route.audience == steer::ack::scan::Audience::OperatorConcern);
+                .any(|route| route.audience == Some(steer::ack::scan::Audience::Operator));
             let mut contexts = Vec::new();
             for context in routes.iter().filter_map(|route| route.context.as_ref()) {
                 if !contexts.contains(context) {

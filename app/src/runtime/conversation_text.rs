@@ -31,7 +31,7 @@ pub enum ConversationText {
 pub enum ItemConcern {
     /// The operator direction a lane's `#KEY` named, with its text once read.
     Direction { key: String, text: Option<String> },
-    /// The task a lane's `#TASK` named.
+    /// The task a retained pre-cutover `operator#TASK` route named.
     Task(RoomAnchor),
     /// A retained pre-cutover operator route with no concern.
     Unnamed,

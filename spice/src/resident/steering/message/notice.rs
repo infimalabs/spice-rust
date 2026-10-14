@@ -17,8 +17,14 @@ pub(super) fn refusal_detail(text: &str, refusal: &steer::ack::scan::MessageRefu
             )
         }
         MessageRefusal::Concern { span } => format!(
-            "`{}` names no concern; point at `#KEY` of an operator direction or `#TASK` of \
-             the task or room this is about",
+            "`{}` traces to nothing the operator said; reach the operator through `#KEY` of \
+             a direction it sent you, or write `#TASK` to record the task's room without \
+             reaching anyone",
+            &text[span.clone()]
+        ),
+        MessageRefusal::Respondent { span } => format!(
+            "`{}` names no respondent: a room records but cannot answer; ask an occupant \
+             `ADDRESS#TASK` or the operator through `#KEY` of a direction it sent you",
             &text[span.clone()]
         ),
         MessageRefusal::Result { span, error } => {
@@ -36,6 +42,9 @@ pub(super) fn refusal_detail(text: &str, refusal: &steer::ack::scan::MessageRefu
         ),
         MessageRefusal::Repeated { audience, .. } => {
             format!("{audience} is named more than once")
+        }
+        MessageRefusal::RepeatedContext { context, .. } => {
+            format!("#{context} names a room another room-only route already names")
         }
         MessageRefusal::EmptyBody => "the packet has no body".to_owned(),
     }

@@ -527,7 +527,7 @@ pub(in crate::resident) fn publish_packet(
         Request::Msg { routes }
             if routes
                 .iter()
-                .all(|route| route.audience != Audience::OperatorConcern) =>
+                .all(|route| route.audience != Some(Audience::Operator)) =>
         {
             publish_message(bus, epoch, config, packet, routes, view)
         }
@@ -636,8 +636,8 @@ fn occupant_routes(routes: &[Route]) -> Vec<Directed> {
     routes
         .iter()
         .filter_map(|route| match route.audience {
-            Audience::Occupant(address) => Some((address, route.context.clone())),
-            Audience::OperatorConcern => None,
+            Some(Audience::Occupant(address)) => Some((address, route.context.clone())),
+            Some(Audience::Operator) | None => None,
         })
         .collect()
 }

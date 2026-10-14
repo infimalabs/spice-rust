@@ -2,8 +2,8 @@
 //!
 //! Each item is the receipt the operator owes one publication, pending or
 //! lapsed, shown with what it concerns: the operator direction a lane's `#KEY`
-//! named or the task its `#TASK` named. Retained pre-cutover routes with no
-//! concern remain readable as unnamed. Its text comes from its owning source
+//! named. Retained pre-cutover routes remain readable with the task they named,
+//! or as unnamed when they named none. Its text comes from its owning source
 //! and, for an ASK, its question result. Items page whole in key order; a page
 //! that withholds any continues at the first withheld item. Reading settles
 //! nothing.
@@ -55,7 +55,7 @@ pub(crate) struct InboxItem {
 enum Concern {
     /// The operator direction a lane's `#KEY` named.
     Direction(RoomConcernedDirection),
-    /// The task a lane's `#TASK` named.
+    /// The task a retained pre-cutover `operator#TASK` route named.
     Task { task: RoomAnchor },
     /// A retained pre-cutover operator route with no concern.
     Unnamed,
