@@ -408,11 +408,13 @@
 }
 .team-composer .team-composer-controls > * { z-index: 1; }
 /* SEND is one optical system of two layers. This lower disc is the emitter: an
-   even diffuse field behind the whole glass disc that softens into the panel
-   just beyond its edge, with no drawn ring and no center hotspot. The glass
-   face in mosaic.css transmits it and collects light in irregular catches
-   along its curved perimeter. States modulate only this field's intensity;
-   typed rims stay separate layers above both. */
+   even diffuse field behind the whole glass disc, with no drawn ring and no
+   center hotspot. Its softened edge is clipped to SEND's own circle (whose
+   bottom meets the controls' bottom, 3px above the emitter's), so no light
+   reaches the panel outside the disc. The glass face in mosaic.css transmits
+   it and collects light in irregular catches along its curved perimeter.
+   States modulate only this field's intensity; typed rims stay separate
+   layers above both. */
 .team-composer .team-composer-controls::after {
   position: absolute;
   z-index: 0;
@@ -430,6 +432,10 @@
   filter: blur(3px);
   opacity: .58;
   translate: -50% 0;
+  clip-path: circle(
+    calc(var(--team-control-send-size) / 2)
+    at 50% calc(100% - 3px - var(--team-control-send-size) / 2)
+  );
   content: "";
   pointer-events: none;
   transition: opacity var(--app-motion-settle) var(--app-ease-standard);
