@@ -36,7 +36,7 @@ fn add_design(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
             acceptance: vec!["The bounded grooming batch records its disposition".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
             origin: Some("fixture:oops-grooming".parse().expect("fixture origin")),
-            flow: Some("design,review".to_owned()),
+            flow: Some("design".to_owned()),
             depends: Vec::new(),
             intent: Some(wire::TaskIntent::Design),
             claim: false,

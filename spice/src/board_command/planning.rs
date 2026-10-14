@@ -1,11 +1,34 @@
 use super::*;
 
+/// The one open phase a Design walks until the operator concludes it.
+const DESIGN_PHASE: &str = "design";
+
 pub(super) fn default_flow(intent: Option<wire::TaskIntent>, flow: Option<&str>) -> Option<&str> {
     flow.or(match intent {
         Some(wire::TaskIntent::Plan) => Some("plan,review"),
-        Some(wire::TaskIntent::Design) => Some("design,review"),
+        Some(wire::TaskIntent::Design) => Some(DESIGN_PHASE),
         None => None,
     })
+}
+
+/// Refuse a Design whose flow is anything but its one open phase: no lane
+/// step advances or concludes a Design, so another phase could never be
+/// reached.
+pub(super) fn admit_design_flow(
+    intent: Option<wire::TaskIntent>,
+    flow: &[wire::Phase],
+) -> Result<(), Outcome<CommandAnswer>> {
+    if intent != Some(wire::TaskIntent::Design)
+        || matches!(flow, [phase] if phase.as_str() == DESIGN_PHASE)
+    {
+        return Ok(());
+    }
+    let flow = flow.iter().map(wire::Phase::as_str).collect::<Vec<_>>();
+    Err(refusal(
+        "task::design-flow",
+        Some(flow.join(",")),
+        "a Design walks the one open `design` phase until the operator concludes it; omit --flow",
+    ))
 }
 
 pub(super) fn requires_construction(
@@ -117,13 +140,25 @@ pub(super) fn admit_preparation(
             .preparation
             .as_ref()
             .expect("association was admitted");
+        // Selection, not conclusion, releases work a Design controls, and a
+        // Design stays open after selecting it, so an ordinary edge to an open
+        // Design would hold its output until the Design concluded.
         for prerequisite in [&preparation.parent, &preparation.controller] {
-            if !statement.dependencies.contains(prerequisite) {
+            if !statement.dependencies.contains(prerequisite)
+                && !is_design(&snapshot.answer, prerequisite)
+            {
                 statement.dependencies.push(prerequisite.clone());
             }
         }
     }
     Ok(())
+}
+
+fn is_design(board: &BoardAnswer, task: &TaskStamp) -> bool {
+    board.tasks.iter().any(|heads| {
+        heads.statement.body.born == *task
+            && heads.statement.body.intent == Some(wire::TaskIntent::Design)
+    })
 }
 
 pub(super) fn correction_preparation(entry: &BoardTask) -> Option<wire::TaskPreparation> {

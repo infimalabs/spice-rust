@@ -53,11 +53,15 @@ fn done(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHandle) -> Outc
 }
 
 #[test]
-fn declared_planning_defaults_preserve_the_review_deliverable() {
+fn declared_planning_defaults_give_each_purpose_its_flow() {
     let (root, bus, epoch, _) = fixture("planning-defaults", 1);
-    for (name, intent, first) in [
-        ("Plan contracts", wire::TaskIntent::Plan, "plan"),
-        ("Design assembly", wire::TaskIntent::Design, "design"),
+    for (name, intent, flow) in [
+        (
+            "Plan contracts",
+            wire::TaskIntent::Plan,
+            &["plan", "review"][..],
+        ),
+        ("Design assembly", wire::TaskIntent::Design, &["design"][..]),
     ] {
         let task = add_planning(&bus, epoch, name, intent, None);
         let view = board(&bus, epoch, Actor::Operator);
@@ -70,9 +74,63 @@ fn declared_planning_defaults_preserve_the_review_deliverable() {
                 .iter()
                 .map(wire::Phase::as_str)
                 .collect::<Vec<_>>(),
-            [first, "review"]
+            flow
         );
     }
+    for flow in ["design,review", "review", "todo"] {
+        let born = stamp(&format!("Design flow {flow}"));
+        let result = issue(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::TaskAdd,
+            vec![Witness::Absence { task: born.clone() }],
+            &TaskAdd {
+                preparation: None,
+                title: format!("Design flow {flow}"),
+                project: Some("board.test".to_owned()),
+                description: None,
+                acceptance: vec!["The design is supported".to_owned()],
+                requirements: wire::EnvironmentRequirements::default(),
+                origin: Some("fixture:planning".parse().expect("origin")),
+                flow: Some(flow.to_owned()),
+                depends: Vec::new(),
+                intent: Some(wire::TaskIntent::Design),
+                claim: false,
+            },
+        );
+        assert!(
+            matches!(&result, Outcome::Refusal(refusal) if refusal.reason() == "task::design-flow"),
+            "a Design with flow {flow} must refuse: {result:?}"
+        );
+    }
+    clean(&root, bus);
+}
+
+#[test]
+fn a_lane_never_completes_a_design_it_holds() {
+    let (root, bus, epoch, seats) = fixture("planning-design-done", 1);
+    let design = add_planning(
+        &bus,
+        epoch,
+        "Design held open",
+        wire::TaskIntent::Design,
+        None,
+    );
+    let result = done(&bus, epoch, &seats[0], &design);
+    assert!(
+        matches!(&result, Outcome::Refusal(refusal) if refusal.reason() == "task::design-open"),
+        "lane done must leave a Design open: {result:?}"
+    );
+    let view = board(&bus, epoch, Actor::Operator);
+    let held = at(&view, &design);
+    assert_eq!(
+        (
+            held.workflow.body.status.as_str(),
+            held.workflow.body.completion
+        ),
+        ("pending", None)
+    );
     clean(&root, bus);
 }
 

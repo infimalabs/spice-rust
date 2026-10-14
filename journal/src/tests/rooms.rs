@@ -108,10 +108,10 @@ fn authorization_write(
     write
 }
 
-/// Commit `body` as its controller's positive completion, moving each existing
+/// Commit `body`, leaving its controller open and moving each existing
 /// selected output's statement to carry the decision.
 fn authorize(journal: &mut Journal, body: ExecutionAuthorized) -> Commit {
-    let write = authorization_write(journal, Actor::Operator, body, Conclusion::Completed, true);
+    let write = authorization_write(journal, Actor::Operator, body, Conclusion::Untouched, true);
     journal.apply(write)
 }
 

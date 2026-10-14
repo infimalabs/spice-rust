@@ -244,6 +244,11 @@ pub enum TaskStep {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         followups: Vec<crate::TaskStamp>,
     },
+    /// The operator concluded an open Design.
+    Concluded {
+        /// Done, or collapsed with the stated reason its premise failed.
+        conclusion: crate::body::DesignConclusion,
+    },
 }
 
 /// One acknowledged steering directive on a task's history: a task or claim

@@ -499,7 +499,7 @@ fn oops_grooming_records_source_preserving_negative_triage_without_mutating_repo
             acceptance: vec!["Each selected source receives a typed disposition".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
             origin: Some("fixture:oops-grooming".parse().expect("fixture origin")),
-            flow: Some("design,review".to_owned()),
+            flow: Some("design".to_owned()),
             depends: Vec::new(),
             intent: Some(wire::TaskIntent::Design),
             claim: false,

@@ -27,13 +27,13 @@ pub(super) fn dispatch_preparation(
     })
 }
 
-/// Refuse a positive Design conclusion while any live output it constructed
+/// Refuse concluding a Design done while any live output it constructed
 /// directly still lacks that Design's exact execution authorization.
 ///
 /// A Plan concludes like any reviewed task; its outputs then wait only for
-/// that positive boundary and ordinary dependencies. Operator close and delete
-/// are separate, explicit negative dispositions. They intentionally leave
-/// outputs gated and do not call this guard.
+/// that positive boundary and ordinary dependencies. Collapse, operator close,
+/// and delete are separate, explicit negative dispositions. They intentionally
+/// leave outputs gated and do not call this guard.
 pub(super) fn require_no_pending_controlled_outputs(
     snapshot: &ValidatedSnapshot,
     controller: &Entry,
@@ -88,53 +88,34 @@ fn design_controller(
     ))
 }
 
-/// Admit an authorization's controller: a witnessed, pending Design with no
-/// unsettled dependency. An active claim is admitted only once that Design is
-/// parked awaiting this selection; authorization then concludes the Design and
-/// releases the parked claim atomically.
+/// Admit an authorization's controller: a witnessed, open Design with no
+/// unsettled dependency. Selection releases outputs and leaves the Design
+/// open, so a lane holding it keeps its claim.
 fn require_open_design(
     command: &wire::AdmittedCommand,
     snapshot: &bus::TaskSnapshot,
     heads: &journal::TaskHeads,
     controller: &TaskStamp,
-) -> Result<Option<ClaimHead>, Outcome<CommandAnswer>> {
+) -> Result<(), Outcome<CommandAnswer>> {
     require_transition_witnesses(command, heads)?;
     design_controller(heads, controller)?;
     if heads.workflow().body().status != "pending" || heads.workflow().body().completion.is_some() {
         return Err(refusal(
             "preparation::controller-not-open",
             Some(controller.to_string()),
-            "authorize while the preparation controller is pending",
+            "authorize while the Design is open",
         ));
-    }
-    let claim = heads
-        .claim()
-        .filter(|claim| claim.body().disposition == ClaimDisposition::Active)
-        .map(|claim| claim.body().clone());
-    if claim.is_some() {
-        let mut resolved = board::ResolvedTasks::new();
-        for task in snapshot.tasks() {
-            resolved.observe(task.statement().body(), task.workflow().body());
-        }
-        if !resolved.awaits_selection(heads.statement().body(), heads.workflow().body()) {
-            return Err(refusal(
-                "preparation::controller-not-open",
-                Some(controller.to_string()),
-                "free an active Design before authorizing unless it is parked awaiting selection",
-            ));
-        }
     }
     for dependency in &heads.statement().body().dependencies {
         if task_heads(snapshot, dependency)?.workflow().body().status == "pending" {
             return Err(refusal(
                 "preparation::controller-blocked",
                 Some(dependency.to_string()),
-                "settle the Design's pending dependencies, including review corrections, before \
-                 authorizing its outputs",
+                "settle the Design's pending dependencies before authorizing its outputs",
             ));
         }
     }
-    Ok(claim)
+    Ok(())
 }
 
 pub(super) fn retain_candidate(
@@ -351,15 +332,14 @@ pub(super) fn authorize_execution(
         Ok(heads) => heads,
         Err(outcome) => return outcome,
     };
-    let controller_claim = match require_open_design(
+    if let Err(outcome) = require_open_design(
         command,
         &snapshot,
         controller,
         &authorization.candidate.controller,
     ) {
-        Ok(claim) => claim,
-        Err(outcome) => return outcome,
-    };
+        return outcome;
+    }
     let mut outputs = Vec::with_capacity(authorization.selected_outputs.len());
     for output in &authorization.selected_outputs {
         let heads = match task_heads(&snapshot, output) {
@@ -418,16 +398,6 @@ pub(super) fn authorize_execution(
         Ok(fact) => fact,
         Err(error) => return store_fault("preparation::authorization-invalid", &error.to_string()),
     };
-    let workflow = controller.workflow().body().clone();
-    let controller_stamp = authorization.candidate.controller.clone();
-    let completion = at;
-    write.workflow_head(controller_stamp.clone(), fact, move |_| WorkflowHead {
-        status: "completed".to_owned(),
-        completion: Some(completion),
-        assignment: None,
-        ..workflow
-    });
-    release_parked_claim(&mut write, controller_stamp, fact, controller_claim);
     for output in outputs {
         let decision = authorization.decision.clone();
         write.task_head(fact, move |revision| TaskHead {
@@ -689,19 +659,6 @@ fn task_heads<'a>(
                 "read the current board and name an existing task",
             )
         })
-}
-
-fn release_parked_claim(
-    write: &mut JournalWrite,
-    controller: TaskStamp,
-    fact: PendingFact,
-    claim: Option<ClaimHead>,
-) {
-    let Some(mut claim) = claim else {
-        return;
-    };
-    claim.disposition = ClaimDisposition::Freed;
-    write.claim_head(controller, fact, move |fact| ClaimHead { fact, ..claim });
 }
 
 fn active_claim(heads: &journal::TaskHeads) -> bool {

@@ -59,6 +59,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::TaskEdit
         | CommandKind::TaskDelete
         | CommandKind::TaskClose
+        | CommandKind::TaskConclude
         | CommandKind::TaskNote
         | CommandKind::TaskDefer
         | CommandKind::TaskWake

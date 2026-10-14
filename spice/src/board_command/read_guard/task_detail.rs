@@ -202,6 +202,18 @@ fn task_step(
                 },
             ))
         }
+        wire::FactKind::TaskConcluded => {
+            let concluded = envelope.fact.read::<body::TaskConcluded>()?;
+            if !tasks.contains(&concluded.task) {
+                return None;
+            }
+            Some((
+                concluded.task,
+                wire::intent::TaskStep::Concluded {
+                    conclusion: concluded.conclusion,
+                },
+            ))
+        }
         _ => None,
     }
 }

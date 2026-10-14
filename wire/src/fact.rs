@@ -272,6 +272,8 @@ vocabulary! {
     TaskDeleted = "task::deleted" by CommandDoor;
     /// The operator closed a task as completed with a recorded validation.
     TaskClosed = "task::closed" by CommandDoor;
+    /// The operator concluded an open Design done or collapsed.
+    TaskConcluded = "task::concluded" by CommandDoor;
     /// An existing task entered exactly one preparation controller's gating.
     OutputControlled = "task::controlled" by CommandDoor;
 
@@ -563,6 +565,7 @@ impl FactKind {
             | Self::TaskEdited
             | Self::TaskDeleted
             | Self::TaskClosed
+            | Self::TaskConcluded
             | Self::OutputControlled => &[Origin, Dependency, Review, Lifecycle],
             _ => &[],
         }
@@ -777,6 +780,7 @@ impl AnyFact {
             Decoded::TaskEdited(body) => (Some(&body.task), &[]),
             Decoded::TaskDeleted(body) => (Some(&body.task), &[]),
             Decoded::TaskClosed(body) => (Some(&body.task), &[]),
+            Decoded::TaskConcluded(body) => (Some(&body.task), &[]),
             Decoded::OutputControlled(body) => (Some(&body.output), &[]),
             Decoded::ExecutionAuthorized(body) => (
                 Some(&body.authorization.candidate.controller),

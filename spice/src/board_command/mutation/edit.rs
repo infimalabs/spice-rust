@@ -214,6 +214,7 @@ fn corrected_statement(
                 "retain the declared planning purpose through construction and review",
             ));
         }
+        planning::admit_design_flow(intent.intent(), &entry.workflow().flow)?;
         statement.intent = intent.intent();
     }
     if let Some(priority) = &edit.priority {

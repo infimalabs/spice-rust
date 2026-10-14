@@ -79,7 +79,7 @@ fn task_plan_and_design_creation_admit_authored_roots_within_the_depth_bounds() 
     for (name, intent, flow) in [
         ("ordinary", None, "todo,review"),
         ("plan", Some(wire::TaskIntent::Plan), "plan,review"),
-        ("design", Some(wire::TaskIntent::Design), "design,review"),
+        ("design", Some(wire::TaskIntent::Design), "design"),
     ] {
         let create = |label: &str, project: &str| {
             let born = stamp(&format!("{name}-{label}"));

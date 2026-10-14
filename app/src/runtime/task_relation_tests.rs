@@ -100,6 +100,10 @@ fn fact_vocabulary_owns_the_complete_task_relation_mapping() {
             &[Origin, Dependency, Review, Lifecycle],
         ),
         (
+            FactKind::TaskConcluded,
+            &[Origin, Dependency, Review, Lifecycle],
+        ),
+        (
             FactKind::OutputControlled,
             &[Origin, Dependency, Review, Lifecycle],
         ),
