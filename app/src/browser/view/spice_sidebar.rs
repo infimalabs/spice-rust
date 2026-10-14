@@ -76,36 +76,13 @@ pub(super) fn render_arrangement(
     })
 }
 
+/// The first row: resident state and product identity beside the theme
+/// selector.
 pub(super) fn render_global_settings(
     connection: &Connection,
-    runtime: Option<&AppRuntime>,
     identity: Option<&AppIdentity>,
     update: Option<&AppUpdate>,
-    sender: &SenderHandle,
 ) -> Html {
-    let settings = runtime.and_then(AppRuntime::settings);
-    let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
-    let enabled = settings.is_some()
-        && runtime.is_some_and(|runtime| runtime.offers(CommandKind::GlobalSettingsSet));
-    let sender = sender.clone();
-    let onclick = Callback::from(move |event: MouseEvent| {
-        if enabled
-            && admit_action(
-                &sender,
-                ClientAction::GlobalSettings(GlobalSettingsSet {
-                    fast_mode: !fast_mode,
-                }),
-            )
-        {
-            event.stop_propagation();
-        }
-    });
-    let title = match (settings.is_some(), enabled, fast_mode) {
-        (false, _, _) => "Fast mode is loading",
-        (true, false, _) => "Fast mode cannot be changed by this resident",
-        (true, true, true) => "Turbo: every agent runs in fast mode",
-        (true, true, false) => "Turbo off: press to run every agent in fast mode",
-    };
     let (status, status_details) = match connection {
         Connection::Starting => ("Starting Spice", "Starting Spice".to_owned()),
         Connection::Connecting => (
@@ -132,18 +109,48 @@ pub(super) fn render_global_settings(
                 </span>
                 {render_product_version(identity, update)}
             </div>
-            <chrome::TurboButton
-                class={classes!("app-spice-turbo")}
-                engaged={fast_mode}
-                label={format!(
-                    "Global fast mode: {}",
-                    if fast_mode { "on" } else { "off" },
-                )}
-                disabled={!enabled}
-                title={title}
-                onclick={onclick}
-            />
+            {render_theme_selector()}
         </section>
+    }
+}
+
+/// Global TURBO, beside the Spice button in the open view's header.
+pub(super) fn render_global_turbo(runtime: Option<&AppRuntime>, sender: &SenderHandle) -> Html {
+    let settings = runtime.and_then(AppRuntime::settings);
+    let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
+    let enabled = settings.is_some()
+        && runtime.is_some_and(|runtime| runtime.offers(CommandKind::GlobalSettingsSet));
+    let sender = sender.clone();
+    let onclick = Callback::from(move |event: MouseEvent| {
+        if enabled
+            && admit_action(
+                &sender,
+                ClientAction::GlobalSettings(GlobalSettingsSet {
+                    fast_mode: !fast_mode,
+                }),
+            )
+        {
+            event.stop_propagation();
+        }
+    });
+    let title = match (settings.is_some(), enabled, fast_mode) {
+        (false, _, _) => "Fast mode is loading",
+        (true, false, _) => "Fast mode cannot be changed by this resident",
+        (true, true, true) => "Turbo: every agent runs in fast mode",
+        (true, true, false) => "Turbo off: press to run every agent in fast mode",
+    };
+    html! {
+        <chrome::TurboButton
+            class={classes!("app-spice-turbo")}
+            engaged={fast_mode}
+            label={format!(
+                "Global fast mode: {}",
+                if fast_mode { "on" } else { "off" },
+            )}
+            disabled={!enabled}
+            title={title}
+            onclick={onclick}
+        />
     }
 }
 
@@ -341,8 +348,8 @@ fn identity_presentation(identity: Option<&AppIdentity>) -> IdentityPresentation
     }
 }
 
-/// The one theme selector, beside the Spice button in the open view's header.
-pub(super) fn render_theme_selector() -> Html {
+/// The one theme selector, ending the resident settings row.
+fn render_theme_selector() -> Html {
     let selected = web_sys::window()
         .and_then(|window| window.document())
         .and_then(|document| document.document_element())
