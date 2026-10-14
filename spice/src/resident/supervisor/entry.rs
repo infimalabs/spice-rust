@@ -5,6 +5,7 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::Path;
 
+use super::command::current;
 use super::terminal::job;
 
 /// Dispatch a hidden entry before normal CLI parsing.
@@ -12,6 +13,9 @@ pub(crate) fn entry(arguments: impl IntoIterator<Item = OsString>) -> Option<i32
     let mut arguments = arguments.into_iter();
     let _executable = arguments.next()?;
     let role = arguments.next()?;
+    if let Some(code) = current::entry(&role, &mut arguments) {
+        return Some(code);
+    }
     let (name, run): (&str, fn(&Path) -> io::Result<()>) = if role == OsStr::new(super::ENTRY) {
         ("lane supervisor", super::run)
     } else if role == OsStr::new(job::ENTRY) {

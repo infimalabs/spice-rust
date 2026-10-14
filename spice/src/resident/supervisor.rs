@@ -621,7 +621,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
                 request.lane,
                 repository.worktree_root().to_path_buf(),
                 terminal,
-            );
+            )?;
             reporter.drive(Arc::clone(&driver));
             driver.open(&opening, launch.first_prompt)?;
             let door = command::listen_for_kicks(

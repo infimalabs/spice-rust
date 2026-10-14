@@ -253,6 +253,11 @@ pub(in crate::resident) struct ClaimLapseNotice {
 impl<W: Write + Send + 'static> Driver<W> {
     /// Own a child's stdin, authenticated resident discovery, lane identity,
     /// steering media root, and the terminal its commands run in.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error naming why this supervisor cannot launch reads
+    /// through its executable's currently installed image.
     pub(in crate::resident) fn new(
         stdin: W,
         discovery: impl Into<PathBuf>,
@@ -260,13 +265,13 @@ impl<W: Write + Send + 'static> Driver<W> {
         lane: CanonicalUuid,
         worktree: PathBuf,
         terminal: Option<Terminal>,
-    ) -> Arc<Self> {
+    ) -> io::Result<Arc<Self>> {
+        let sessions = current::Sessions::new(lane, worktree.clone())?;
+        let uri_server = current::resource_server(lane, worktree.clone(), terminal.clone())?;
         let discovery = discovery.into();
-        let environment = crate::session_environment().rooted(worktree.clone());
-        let occupant = uri::occupant_environment(terminal.as_ref(), &environment);
-        let uri_server = uri::resident_server(discovery.clone(), lane, worktree, occupant);
         let projector = media::Projector::new(steering_media, lane);
-        Self::with_server(
+        let briefing = Arc::clone(&sessions);
+        Ok(Self::with_server(
             stdin,
             move || {
                 let inbox = crate::command_client::read_lane_inbox(&discovery, lane).ok()?;
@@ -287,21 +292,12 @@ impl<W: Write + Send + 'static> Driver<W> {
                     .into_bytes(),
                 )
             },
-            {
-                let environment = environment.clone();
-                move || {
-                    Some(crate::session_command::lane_briefing(
-                        &environment,
-                        lane,
-                        None,
-                    ))
-                }
-            },
-            move || crate::session_command::lane_resume_notice(&environment, lane, None),
+            move || briefing.briefing(),
+            move || sessions.resume(),
             uri_server,
             steer::Key::for_identity(lane),
             terminal,
-        )
+        ))
     }
 
     fn with_server(
@@ -1431,6 +1427,7 @@ impl Drop for KickDoor {
 #[cfg(test)]
 mod admission_tests;
 mod answered;
+pub(in crate::resident::supervisor) mod current;
 #[cfg(test)]
 mod event_tests;
 mod media;
