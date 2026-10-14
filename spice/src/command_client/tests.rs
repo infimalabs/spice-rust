@@ -185,6 +185,7 @@ fn answer_replacement_opening(
                 wire: wire::WireVersion::CURRENT,
                 actor: Actor::Operator,
                 epoch,
+                release: "1.2.3".parse().expect("fixture release"),
             })
             .expect("replacement acceptance encodes")
             .into(),
@@ -248,6 +249,7 @@ fn accept_fixture_session(listener: TcpListener, epoch: CanonicalUuid) -> WebSoc
                 wire: wire::WireVersion::CURRENT,
                 actor: Actor::Operator,
                 epoch,
+                release: "1.2.3".parse().expect("fixture release"),
             })
             .expect("fixture acceptance encodes")
             .into(),

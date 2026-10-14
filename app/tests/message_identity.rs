@@ -150,7 +150,10 @@ fn mixed_messages() -> MixedMessages {
 fn revised_message_snapshot_preserves_unchanged_allocation_identity() {
     let session = Session::open(uuid(OPERATOR), uuid(EPOCH));
     let accepted = session
-        .admit_accepted(format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}"}}"#).as_bytes())
+        .admit_accepted(
+            format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}","release":"1.2.3"}}"#)
+                .as_bytes(),
+        )
         .expect("acceptance is admitted");
     let mut runtime = AppRuntime::new(&accepted);
     let first = serde_json::json!({
@@ -219,7 +222,10 @@ fn revised_message_snapshot_preserves_unchanged_allocation_identity() {
 fn final_answer_revision_invalidates_the_ordinary_card() {
     let session = Session::open(uuid(OPERATOR), uuid(EPOCH));
     let accepted = session
-        .admit_accepted(format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}"}}"#).as_bytes())
+        .admit_accepted(
+            format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}","release":"1.2.3"}}"#)
+                .as_bytes(),
+        )
         .expect("acceptance is admitted");
     let mut runtime = AppRuntime::new(&accepted);
     let ordinary = serde_json::json!({
@@ -257,7 +263,10 @@ fn final_answer_revision_invalidates_the_ordinary_card() {
 fn mixed_cards_reduce_identically_across_snapshot_history_and_replay() {
     let session = Session::open(uuid(OPERATOR), uuid(EPOCH));
     let accepted = session
-        .admit_accepted(format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}"}}"#).as_bytes())
+        .admit_accepted(
+            format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}","release":"1.2.3"}}"#)
+                .as_bytes(),
+        )
         .expect("acceptance is admitted");
     let MixedMessages {
         older,

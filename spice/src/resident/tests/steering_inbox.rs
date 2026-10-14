@@ -64,6 +64,7 @@ impl Lanes {
             wire: wire::WireVersion::CURRENT,
             actor: Actor::Operator,
             epoch: self.epoch,
+            release: "1.2.3".parse().expect("fixture release"),
         })
         .expect("operator command admits")
     }
@@ -133,6 +134,7 @@ impl Lanes {
             wire: wire::WireVersion::CURRENT,
             actor,
             epoch: self.epoch,
+            release: "1.2.3".parse().expect("fixture release"),
         })
         .expect("inbox admits");
         let Outcome::Reply(Reply {

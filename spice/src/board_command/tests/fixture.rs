@@ -232,6 +232,7 @@ pub(super) fn fixture_command<B: Serialize>(
         wire: WireVersion::CURRENT,
         actor,
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("fixture command admits")
 }

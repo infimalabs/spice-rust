@@ -27,6 +27,7 @@ impl Arranged {
             wire: wire::WireVersion::CURRENT,
             actor: Actor::Operator,
             epoch: self.epoch,
+            release: "1.2.3".parse().expect("fixture release"),
         })
         .expect("operator lane arrangement admits");
         lane_surface::arrange(
@@ -65,6 +66,7 @@ impl Arranged {
             wire: wire::WireVersion::CURRENT,
             actor: Actor::Operator,
             epoch: self.epoch,
+            release: "1.2.3".parse().expect("fixture release"),
         })
         .expect("operator team configuration admits");
         lane_surface::configure(
@@ -104,6 +106,7 @@ impl Arranged {
             wire: wire::WireVersion::CURRENT,
             actor: Actor::Operator,
             epoch: self.epoch,
+            release: "1.2.3".parse().expect("fixture release"),
         })
         .expect("operator team membership admits");
         lane_surface::configure(

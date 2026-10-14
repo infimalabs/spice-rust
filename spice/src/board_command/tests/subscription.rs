@@ -223,6 +223,7 @@ fn team_lifetimes_use_immutable_creator_team_and_survive_restart() {
         wire: WireVersion::CURRENT,
         actor: lane.clone(),
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("stale allocator command admits");
     configure_subscription(&bus, epoch, seat, wire::intent::TeamLife::Drain);

@@ -244,6 +244,7 @@ fn admitted_demo_group_command(
         wire: WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("fixture command admits")
 }

@@ -853,9 +853,11 @@ fn duplicate_capability_refuses_without_replacing_its_principal() {
                 epoch: epoch(),
             },
             epoch(),
+            &"1.2.3".parse().expect("fixture release"),
         )
         .expect("original registration survives");
     assert_eq!(accepted.actor, wire::Actor::Operator);
+    assert_eq!(accepted.release.as_str(), "1.2.3");
 }
 
 #[test]
@@ -869,7 +871,7 @@ fn unknown_capability_refuses_without_echoing_the_credential() {
     };
 
     let refusal = capabilities
-        .admit(&hello, epoch())
+        .admit(&hello, epoch(), &"1.2.3".parse().expect("fixture release"))
         .expect_err("unknown capability refuses");
 
     assert!(matches!(

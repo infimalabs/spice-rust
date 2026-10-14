@@ -587,7 +587,7 @@ fn submit(
         contract,
         mapped.id,
         mapped.kind,
-        session.discovery.value.epoch,
+        &session.accepted,
         session.discovery.value.capability,
     )
 }
@@ -641,7 +641,7 @@ fn decode_response(
     contract: &Contract,
     id: CanonicalUuid,
     kind: CommandKind,
-    epoch: CanonicalUuid,
+    accepted: &wire::Accepted,
     capability: CanonicalUuid,
 ) -> Outcome<CommandAnswer> {
     let response = match wire::decode::<Response<serde_json::Value>>(bytes) {
@@ -656,7 +656,7 @@ fn decode_response(
     if discloses_capability(bytes, capability) {
         return capability_disclosed();
     }
-    if !response.v.is_current() || response.id != id || response.epoch != epoch {
+    if !response.v.is_current() || response.id != id || response.epoch != accepted.epoch {
         return protocol_fault(
             "command::answer-mismatch",
             "resident response does not bind the current command identity and epoch",
@@ -671,10 +671,7 @@ fn decode_response(
                 );
             }
             let Ok(body) = kind.binding().answer.decode_value(reply.body) else {
-                return protocol_fault(
-                    "command::answer-binding",
-                    "resident reply body violates the command registry binding",
-                );
+                return answer_binding_fault(spice::version::product(), &accepted.release);
             };
             Outcome::Reply(Reply {
                 position: reply.position,
@@ -684,6 +681,34 @@ fn decode_response(
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
         Outcome::Fault(fault) => Outcome::Fault(fault),
     }
+}
+
+/// Refuse an answer outside this client's command registry, naming the
+/// releases on both sides of the session and which one must move.
+///
+/// The foreign body is never interpreted: the session handshake already
+/// proved which release the resident runs, so that is the whole diagnosis.
+fn answer_binding_fault(
+    client: &wire::manifest::ProductVersion,
+    resident: &wire::manifest::ProductVersion,
+) -> Outcome<CommandAnswer> {
+    if client == resident {
+        return protocol_fault(
+            "command::answer-binding",
+            "resident reply body violates the command registry binding",
+        );
+    }
+    let boundary = if client.precedence(resident).is_lt() {
+        format!("run the spice executable installed with release {resident}")
+    } else {
+        format!("restart the resident on release {client} with `spice down`, then `spice up`")
+    };
+    protocol_fault(
+        "command::answer-binding",
+        &format!(
+            "client release {client} cannot read an answer from resident release {resident}; {boundary}"
+        ),
+    )
 }
 
 fn position_matches(law: ReplyPositionLaw, position: ReplyPosition) -> bool {

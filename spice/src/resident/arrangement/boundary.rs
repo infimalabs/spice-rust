@@ -254,6 +254,7 @@ fn configure_member(
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch: fixture.epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("operator team configuration admits");
     let outcome = lane_surface::configure(

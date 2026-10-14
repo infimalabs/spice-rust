@@ -17,6 +17,7 @@ fn accepted(actor: Actor) -> Accepted {
         wire: WireVersion::CURRENT,
         actor,
         epoch: uuid(1),
+        release: "1.2.3".parse().expect("fixture release"),
     }
 }
 

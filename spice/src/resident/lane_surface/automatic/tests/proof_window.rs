@@ -465,6 +465,7 @@ fn operator_wake(fixture: &LaunchFixture, request: &LaneState) -> wire::Admitted
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch: fixture.epoch,
+        release: "1.2.3".parse().expect("fixture release"),
     })
     .expect("operator wake command admits")
 }
