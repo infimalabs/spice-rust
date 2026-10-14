@@ -24,6 +24,7 @@ const PROJECT: &str = "lifecycle.work";
 const TASK_MOMENT: &str = "1kKRRsDP";
 const NEWER_TASK_MOMENT: &str = "1kKRRsDT";
 const INVALID_TASK_MOMENT: &str = "1kKRRsDQ";
+const DESIGN_MOMENT: &str = "1kKRRsDV";
 
 #[derive(Debug, PartialEq, Eq)]
 struct SemanticState {
@@ -112,6 +113,73 @@ fn allocation_index_rebuilds_only_for_changed_task_heads() {
         "one task-head generation rebuilds shared allocation evidence once"
     );
     bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
+fn group_moves_refresh_a_designs_standing_incrementally() {
+    let (bus, projects, mut incremental) = caught_up_fixture(0);
+    committed(
+        bus.commit(design_write(instant(5)))
+            .expect("open Design commits"),
+    );
+    let design = task(DESIGN_MOMENT);
+    assert!(!standing(&bus, &projects, &mut incremental, &design));
+
+    let mut from = None;
+    for (revision, second) in (1_u64..=3).zip(6..) {
+        let to = (revision % 2 == 1).then(|| {
+            wire::rooms::RoomAuthorityStamp::for_micros(
+                1_900_000_000_000_000 + revision.cast_signed(),
+            )
+            .expect("fixture group stamp")
+        });
+        committed(
+            bus.commit(move_write(
+                &design,
+                from,
+                to.clone(),
+                revision,
+                instant(second),
+            ))
+            .expect("partition move commits"),
+        );
+        assert_eq!(
+            standing(&bus, &projects, &mut incremental, &design),
+            to.is_some(),
+            "revision {revision} leaves the Design's standing current"
+        );
+        from = to;
+    }
+    bus.shutdown().expect("standing fixture bus stops");
+}
+
+/// Advance `incremental`, prove it equals a restart rebuild, and read whether
+/// it projects `design` inside a working group.
+fn standing(
+    bus: &Bus,
+    projects: &ProjectPolicy,
+    incremental: &mut Projection,
+    design: &TaskStamp,
+) -> bool {
+    let snapshot = bus.task_snapshot().expect("standing snapshot reads");
+    incremental
+        .advance(&snapshot, projects)
+        .expect("incremental projection advances");
+    let mut restarted = Projection::new();
+    restarted
+        .advance(&snapshot, projects)
+        .expect("restart projection rebuilds");
+    assert_eq!(
+        (incremental.entries(), incremental.ready_at()),
+        (restarted.entries(), restarted.ready_at()),
+        "incremental standing equals restart state"
+    );
+    incremental
+        .entries()
+        .iter()
+        .find(|entry| entry.born() == design)
+        .expect("the Design is projected")
+        .grouped()
 }
 
 #[test]
@@ -760,6 +828,112 @@ fn ready_task_write(moment: &str, at: Instant) -> JournalWrite {
         )
         .expect("ready task fact builds");
     attach_task_heads(&mut write, added, task, origin, phase, Vec::new());
+    write
+}
+
+fn design_write(at: Instant) -> JournalWrite {
+    let born = task(DESIGN_MOMENT);
+    let flow: Vec<Phase> = ["design", "review"]
+        .iter()
+        .map(|phase| phase.parse().expect("Design phase"))
+        .collect();
+    let phase = flow[0].clone();
+    let origin = format!("task:{}", handle(DESIGN_MOMENT))
+        .parse::<Origin>()
+        .expect("Design origin");
+    let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let intent = Some(wire::TaskIntent::Design);
+    let creation =
+        body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor);
+    let added = write
+        .fact(
+            body::TaskAdded {
+                preparation: None,
+                intent,
+                task: born.clone(),
+                title: "Open lifecycle Design".to_owned(),
+                description: None,
+                acceptance: Vec::new(),
+                requirements: wire::EnvironmentRequirements::default(),
+                project: PROJECT.to_owned(),
+                filing: wire::TaskFiling::Filed,
+                tags: Vec::new(),
+                depends: Vec::new(),
+                flow: flow.clone(),
+                phase: phase.clone(),
+                creation: creation.clone(),
+                revision: 1,
+            },
+            FactCause::Root,
+        )
+        .expect("Design fact builds");
+    let statement_task = born.clone();
+    write.task_head(added, move |position| TaskHead {
+        preparation: None,
+        authorization: None,
+        engagement: None,
+        evidence: Vec::new(),
+        intent,
+        born: statement_task,
+        queue_origin: position,
+        title: "Open lifecycle Design".to_owned(),
+        description: None,
+        acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
+        project: PROJECT.to_owned(),
+        filing: wire::TaskFiling::Filed,
+        tags: Vec::new(),
+        dependencies: Vec::new(),
+        provenance: origin,
+        creation,
+        revision: position,
+    });
+    write.workflow_head(born, added, move |_| WorkflowHead {
+        flow,
+        phase,
+        status: "pending".to_owned(),
+        review: "unassigned".to_owned(),
+        assignment: None,
+        deferral: None,
+        completion: None,
+        generation: 0,
+    });
+    write
+}
+
+/// Move `design` from `from` into `to`, or out of every group, as partition
+/// `revision`, where it is the only grouped Design.
+fn move_write(
+    design: &TaskStamp,
+    from: Option<wire::rooms::RoomAuthorityStamp>,
+    to: Option<wire::rooms::RoomAuthorityStamp>,
+    revision: u64,
+    at: Instant,
+) -> JournalWrite {
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        wire::rooms::working_group_origin(),
+        at,
+        Producer::CommandDoor,
+    );
+    let groups = to
+        .iter()
+        .map(|group| wire::rooms::WorkingGroup {
+            group: group.clone(),
+            anchors: vec![design.clone()],
+        })
+        .collect();
+    write
+        .fact(
+            wire::rooms::WorkingGroupMoved {
+                design: design.clone(),
+                from,
+                to,
+                partition: wire::rooms::WorkingGroupPartition { revision, groups },
+            },
+            FactCause::Root,
+        )
+        .expect("partition move builds");
     write
 }
 

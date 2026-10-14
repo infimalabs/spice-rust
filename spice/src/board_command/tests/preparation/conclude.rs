@@ -117,6 +117,7 @@ fn the_operator_alone_concludes_an_unheld_open_design() {
         matches!(&by_lane, Err(wire::CommandRejection::Refusal(refusal)) if refusal.reason() == "command::authority"),
         "a lane principal never concludes a Design: {by_lane:?}"
     );
+    group_design(&bus, epoch, &design);
     claim_task(&bus, epoch, &seats[0], &lane, &design);
     let held = conclude(&bus, epoch, Actor::Operator, &design, done_conclusion());
     assert_eq!(refusal_reason(&held), "task::conclude-claimed");

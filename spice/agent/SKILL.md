@@ -179,7 +179,8 @@ whose omission names the exact continuation.
   AUTHORIZATION_JSON` to the operator. `--depends` never removes that gate;
   never add a reciprocal controller-to-output edge. Origin creates no
   dependency; closure, deletion, a finding, or a working-group move releases or
-  authorizes nothing.
+  authorizes nothing. A Design outside every working group is passive and
+  refuses claims; a stop direction for a held one means checkpoint and free.
 - Keep work incremental and validated. Commit only while holding the matching
   claim. Git synchronization belongs to allocation and completion: never pull
   or push during implementation or alter harness-added attribution trailers.

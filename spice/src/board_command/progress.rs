@@ -468,7 +468,8 @@ fn projected_done_next_action(
         entry.lease().cloned(),
         projects,
     )
-    .expect("an admitted transition preserves a valid task entry");
+    .expect("an admitted transition preserves a valid task entry")
+    .with_grouped(entry.grouped());
     next_action(snapshot, &post)
 }
 
@@ -805,7 +806,8 @@ fn commit_review(
         entry.lease().cloned(),
         projects,
     )
-    .expect("an admitted review preserves a valid task entry");
+    .expect("an admitted review preserves a valid task entry")
+    .with_grouped(entry.grouped());
     let next = next_action(&snapshot, &post);
     if let Err(outcome) = record_followups(
         &mut write,

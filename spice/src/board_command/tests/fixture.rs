@@ -285,6 +285,47 @@ pub(super) fn next_board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> Board
     *answer
 }
 
+/// Move `design` into `to`, or out of every group, at the current partition
+/// revision.
+pub(super) fn move_design_now(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    design: &TaskStamp,
+    to: Option<&wire::rooms::RoomAuthorityStamp>,
+) -> Outcome<CommandAnswer> {
+    let revision = bus
+        .read(|read| read.group_partition())
+        .expect("partition reads")
+        .map_or(0, |head| head.body().revision);
+    issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::WorkingGroupMove,
+        vec![
+            Witness::Group { revision },
+            Witness::Existence {
+                task: design.clone(),
+            },
+        ],
+        &wire::rooms::WorkingGroupMove {
+            design: design.clone(),
+            to: to.cloned(),
+        },
+    )
+}
+
+/// The working group fixtures stand a Design in to make it active.
+pub(super) fn fixture_group() -> wire::rooms::RoomAuthorityStamp {
+    wire::rooms::RoomAuthorityStamp::for_micros(1_750_000_000_000_000).expect("fixture group stamp")
+}
+
+/// Make `design` active by standing it in the fixture group.
+pub(super) fn group_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
+    let born = design.born().expect("fixture design stamp");
+    assert_committed(move_design_now(bus, epoch, &born, Some(&fixture_group())));
+}
+
 /// The rows an Open read reports blocked, after proving they are exactly the
 /// open rows the allocator's own gate holds back on the complete board.
 pub(super) fn open_blocked(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStamp> {

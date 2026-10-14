@@ -358,6 +358,13 @@ fn stage(
             "coordinate only an unresolved anchor task",
         ));
     }
+    if board::passive_design(anchor) {
+        return Err(refusal(
+            "room::design-passive",
+            Some(anchor.handle().to_string()),
+            "a Design outside every working group is passive; move it into a working group before coordinating lanes onto it",
+        ));
+    }
     let current = project(bus, anchor.handle(), heads, coordination, false)?;
     if !current.requests.is_empty() {
         return Err(refusal(
@@ -489,9 +496,7 @@ pub(crate) fn room_put_aside(
         Ok(view) => view,
         Err(outcome) => return outcome,
     };
-    if current.requests.is_empty()
-        && (current.stop.is_some() || active_lane_claim(&heads).is_none())
-    {
+    if quiescent(&current, &heads) {
         return Outcome::Reply(Reply {
             position: ReplyPosition::Snapshot(snapshot.cursor),
             body: CommandAnswer::RoomCoordination(wire::intent::RoomCoordinationView {
@@ -500,13 +505,8 @@ pub(crate) fn room_put_aside(
             }),
         });
     }
-    let now = jiff::Timestamp::now();
-    let at = match Instant::new(now) {
+    let at = match current_instant() {
         Ok(at) => at,
-        Err(error) => return environment_fault("room::clock-invalid", &error.to_string()),
-    };
-    let publication = match mint_publication(bus, anchor.born(), now.as_microsecond()) {
-        Ok(publication) => publication,
         Err(outcome) => return outcome,
     };
     let room = anchor.born().clone();
@@ -518,43 +518,33 @@ pub(crate) fn room_put_aside(
     let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     coordination.guard(&room, &mut write);
-    let canceled = match cancel_requests(bus, &mut write, at, current.requests) {
-        Ok(canceled) => canceled,
+    let withdrawn = match stage_withdrawal(
+        bus,
+        command,
+        config,
+        Standing {
+            snapshot: &snapshot,
+            anchor: &anchor,
+            heads: &heads,
+            current: &current,
+        },
+        origin,
+        &mut write,
+        at,
+        Withdrawal::PutAside,
+    ) {
+        Ok(Some(withdrawn)) => withdrawn,
+        Ok(None) => {
+            return refusal(
+                "room::already-quiescent",
+                Some(anchor.handle().to_string()),
+                "the room has no unanswered coordination or active anchor claim to put aside",
+            );
+        }
         Err(outcome) => return outcome,
     };
-    let stop = if existing_stop.is_some() {
-        None
-    } else {
-        match stage_stop_request(
-            bus, &snapshot, &anchor, &heads, command, config, origin, &room, &mut write, at,
-        ) {
-            Ok(stop) => stop,
-            Err(outcome) => return outcome,
-        }
-    };
-    if canceled.is_empty() && stop.is_none() {
-        return refusal(
-            "room::already-quiescent",
-            Some(anchor.handle().to_string()),
-            "the room has no unanswered coordination or active anchor claim to put aside",
-        );
-    }
-    if let Err(error) = write.fact(
-        RoomPutAsideFact {
-            room,
-            publication,
-            canceled,
-            stop: stop.clone(),
-        },
-        FactCause::Root,
-    ) {
-        return store_fault("room::put-aside-build", &error.to_string());
-    }
-    if let Err(outcome) = crate::resident::steering_envelope_admits(&write) {
-        return outcome;
-    }
-    let visible_stop = stop
-        .clone()
+    let visible_stop = withdrawn
+        .stop
         .map(|stop| wire::intent::RoomCoordinationStop {
             key: stop.key,
             target: stop.target,
@@ -578,6 +568,193 @@ pub(crate) fn room_put_aside(
     committed(bus, write, CommandAnswer::RoomCoordination(view))
 }
 
+/// Why a room's unanswered coordination and its anchor's holder are withdrawn.
+#[derive(Clone, Copy)]
+enum Withdrawal {
+    /// The operator put the room aside.
+    PutAside,
+    /// The anchor Design left every working group and stands passive.
+    Deactivation,
+}
+
+impl Withdrawal {
+    fn message(self, anchor: &TaskHandle) -> String {
+        match self {
+            Self::PutAside => format!(
+                "Put aside task room {anchor}. Checkpoint the anchor's current work and run `spice task free {anchor}` at the next safe boundary. Do not release child-plan claims or unrelated steering/ASK duties."
+            ),
+            Self::Deactivation => format!(
+                "Design {anchor} left every working group and is passive. Checkpoint its current work and run `spice task free {anchor}` at the next safe boundary; free parks unpublished commits and dirty work under the task, and your claim stays authoritative until then. Do not release child-plan claims or unrelated steering/ASK duties."
+            ),
+        }
+    }
+}
+
+/// Whether the room has nothing a withdrawal could take: no unanswered
+/// coordination, and either a standing stop or no lane holding the anchor.
+fn quiescent(
+    current: &wire::intent::RoomCoordinationView,
+    heads: &wire::intent::BoardTask,
+) -> bool {
+    current.requests.is_empty() && (current.stop.is_some() || active_lane_claim(heads).is_none())
+}
+
+/// One anchor's board row and coordination state as a withdrawal read them.
+#[derive(Clone, Copy)]
+struct Standing<'a> {
+    snapshot: &'a ValidatedSnapshot,
+    anchor: &'a Entry,
+    heads: &'a wire::intent::BoardTask,
+    current: &'a wire::intent::RoomCoordinationView,
+}
+
+/// What one withdrawal staged beyond its cancellations.
+struct Withdrawn {
+    stop: Option<RoomStopRequest>,
+}
+
+/// Withdraw the room's unanswered coordination and, unless a stop already
+/// stands, ask the lane holding the anchor to checkpoint and free, recording
+/// both as one `room::shelved` record in `write`. `None` when the room has
+/// nothing to withdraw.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a withdrawal stages into the write and origin its issuing command owns"
+)]
+fn stage_withdrawal(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    config: &steer::Config,
+    standing: Standing<'_>,
+    origin: wire::Origin,
+    write: &mut JournalWrite,
+    at: Instant,
+    why: Withdrawal,
+) -> Result<Option<Withdrawn>, Outcome<CommandAnswer>> {
+    let current = standing.current;
+    if quiescent(current, standing.heads) {
+        return Ok(None);
+    }
+    let room = standing.anchor.born().clone();
+    let publication = mint_publication(bus, &room, jiff::Timestamp::now().as_microsecond())?;
+    let canceled = cancel_requests(bus, write, at, current.requests.clone())?;
+    let stop = if current.stop.is_some() {
+        None
+    } else {
+        stage_stop_request(bus, standing, command, config, origin, write, at, why)?
+    };
+    if canceled.is_empty() && stop.is_none() {
+        return Ok(None);
+    }
+    write
+        .fact(
+            RoomPutAsideFact {
+                room,
+                publication,
+                canceled,
+                stop: stop.clone(),
+            },
+            FactCause::Root,
+        )
+        .map_err(|error| store_fault("room::put-aside-build", &error.to_string()))?;
+    crate::resident::steering_envelope_admits(write)?;
+    Ok(Some(Withdrawn { stop }))
+}
+
+/// A Design's room as read before a partition change takes the Design out of
+/// every working group. The change withdraws the room's coordination and asks
+/// the lane holding the Design to park, in the change's own write.
+pub(super) struct Deactivation {
+    snapshot: ValidatedSnapshot,
+    anchor: Entry,
+    heads: wire::intent::BoardTask,
+    coordination: Coordination,
+    current: wire::intent::RoomCoordinationView,
+}
+
+impl Deactivation {
+    /// Read `design`'s room, or `None` when the board no longer shows it.
+    pub(super) fn read(
+        bus: &Bus,
+        design: &TaskHandle,
+        projects: &ProjectPolicy,
+        allocation: &board::NextConfig,
+    ) -> Result<Option<Self>, Outcome<CommandAnswer>> {
+        let snapshot = validated_working_snapshot(
+            bus,
+            Actor::Operator,
+            std::slice::from_ref(design),
+            projects,
+            allocation,
+        )?;
+        let Some(anchor) = task_entry(&snapshot.entries, design).cloned() else {
+            return Ok(None);
+        };
+        let heads = task_heads(&snapshot.answer, design)?.clone();
+        let coordination = Coordination::read(bus, anchor.born())?;
+        let current = project(bus, anchor.handle(), &heads, &coordination, false)?;
+        Ok(Some(Self {
+            snapshot,
+            anchor,
+            heads,
+            coordination,
+            current,
+        }))
+    }
+
+    /// The origin the partition change commits under: the partition's own,
+    /// unless it withdraws something from the Design's room, whose steering
+    /// and claim its withdrawal cites and whose origin a cause cannot leave.
+    pub(super) fn origin(&self) -> Result<wire::Origin, Outcome<CommandAnswer>> {
+        if quiescent(&self.current, &self.heads) {
+            Ok(wire::rooms::working_group_origin())
+        } else {
+            task_origin(self.anchor.born())
+        }
+    }
+
+    /// Stage the withdrawal into the partition change's `write`, guarding the
+    /// claim and coordination records it read, so a claim won or coordination
+    /// issued meanwhile refuses the change. Returns the lane asked to park.
+    pub(super) fn stage(
+        self,
+        bus: &Bus,
+        command: &wire::AdmittedCommand,
+        config: &steer::Config,
+        write: &mut JournalWrite,
+        at: Instant,
+    ) -> Result<Option<CanonicalUuid>, Outcome<CommandAnswer>> {
+        let room = self.anchor.born().clone();
+        self.coordination.guard(&room, write);
+        guard(
+            write,
+            vec![Witness::Claim {
+                task: room,
+                head: self.heads.claim.as_ref().map(|claim| claim.position),
+            }],
+        );
+        let origin = self.origin()?;
+        let withdrawn = stage_withdrawal(
+            bus,
+            command,
+            config,
+            Standing {
+                snapshot: &self.snapshot,
+                anchor: &self.anchor,
+                heads: &self.heads,
+                current: &self.current,
+            },
+            origin,
+            write,
+            at,
+            Withdrawal::Deactivation,
+        )?;
+        Ok(withdrawn
+            .and_then(|withdrawn| withdrawn.stop)
+            .and(active_lane_claim(&self.heads).map(|(lane, _)| lane)))
+    }
+}
+
 fn cancel_requests(
     bus: &Bus,
     write: &mut JournalWrite,
@@ -595,33 +772,34 @@ fn cancel_requests(
     Ok(canceled)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a stop request stages into the write and origin its withdrawal owns"
+)]
 fn stage_stop_request(
     bus: &Bus,
-    snapshot: &ValidatedSnapshot,
-    anchor: &Entry,
-    heads: &wire::intent::BoardTask,
+    standing: Standing<'_>,
     command: &wire::AdmittedCommand,
     config: &steer::Config,
     origin: wire::Origin,
-    room: &wire::TaskStamp,
     write: &mut JournalWrite,
     at: Instant,
+    why: Withdrawal,
 ) -> Result<Option<RoomStopRequest>, Outcome<CommandAnswer>> {
-    let Some((lane, claim)) = active_lane_claim(heads) else {
+    let Some((lane, claim)) = active_lane_claim(standing.heads) else {
         return Ok(None);
     };
-    let target = target_for_lane(snapshot, lane)?;
+    let target = match why {
+        Withdrawal::PutAside => target_for_lane(standing.snapshot, lane)?,
+        Withdrawal::Deactivation => holder_address(standing.snapshot, lane, claim.body.occupant)?,
+    };
     let claim_code = wire::SequenceCode::new(claim.body.claimed.get());
     let control = CoordinationControl::Stop {
-        room: room.clone(),
+        room: standing.anchor.born().clone(),
         claim: claim_code,
     }
     .to_string();
-    let message = format!(
-        "Put aside task room {}. Checkpoint the anchor's current work and run `spice task free {}` at the next safe boundary. Do not release child-plan claims or unrelated steering/ASK duties.",
-        anchor.handle(),
-        anchor.handle(),
-    );
+    let message = why.message(standing.anchor.handle());
     let (key, _) = crate::resident::append_operator_directive(
         bus,
         origin,
@@ -643,6 +821,29 @@ fn stage_stop_request(
         target,
         claim: claim_code,
     }))
+}
+
+/// The address that reaches the lane holding a deactivated Design: its seated
+/// occupant's, or, while the lane is vacant, the birth address of the occupant
+/// that won the claim, under which steering queues for the lane's next seat.
+fn holder_address(
+    snapshot: &ValidatedSnapshot,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> Result<OccupantAddress, Outcome<CommandAnswer>> {
+    snapshot
+        .answer
+        .addresses
+        .get(&lane)
+        .and_then(wire::SeatAddress::address)
+        .or_else(|| snapshot.facts.occupant_address(lane, occupant).ok())
+        .ok_or_else(|| {
+            refusal(
+                "room::holder-address-unavailable",
+                None,
+                "the current anchor holder has no proved base-52 occupant address",
+            )
+        })
 }
 
 fn context(

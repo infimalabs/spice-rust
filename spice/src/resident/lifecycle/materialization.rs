@@ -218,7 +218,8 @@ impl Projection {
     }
 
     /// Every task a fact addresses, including each output an execution
-    /// authorization selects, so its entry and READY origin are refreshed.
+    /// authorization selects and each Design a working-group move carries in
+    /// or out, so its entry and READY origin are refreshed.
     fn changed_tasks(
         &self,
         snapshot: &bus::TaskSnapshot,
@@ -238,8 +239,13 @@ impl Projection {
                     .task_subject()
                     .into_iter()
                     .chain(fact.fact.mutated_tasks())
+                    .cloned()
+                    .chain(
+                        fact.fact
+                            .read::<wire::rooms::WorkingGroupMoved>()
+                            .map(|moved| moved.design),
+                    )
             })
-            .cloned()
             .collect()
     }
 
@@ -272,7 +278,8 @@ impl Projection {
                 .map_err(super::unit_outcome)?;
             let entry = entry(&heads, projects)?
                 .with_creator_team(creator_team)
-                .with_phase_handoff(phase_handoff);
+                .with_phase_handoff(phase_handoff)
+                .with_grouped(snapshot.facts().grouped(task));
             entries.insert(task.clone(), EntryUpdate { heads, entry });
         }
         Ok(entries)

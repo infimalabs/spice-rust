@@ -348,6 +348,16 @@ impl<'a> Surface<'a> {
                 };
                 (outcome, notify)
             }
+            (CommandKind::WorkingGroupMove, Intent::WorkingGroupMove(request)) => {
+                crate::board_command::move_working_group(
+                    self.bus,
+                    command,
+                    request,
+                    &self.config.steering,
+                    &self.config.projects,
+                    &self.config.allocation,
+                )
+            }
             (CommandKind::RoomLeave, Intent::RoomLeave(leave)) => (
                 crate::board_command::room_leave(
                     self.bus,

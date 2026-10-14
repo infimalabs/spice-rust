@@ -250,6 +250,7 @@ impl TaskProjection<'_> {
             .get(&statement.body.born)
             .copied()
             .flatten();
+        let grouped = self.facts.grouped(&statement.body.born);
         let entry = Entry::new(
             statement.body.clone(),
             workflow.body.clone(),
@@ -265,7 +266,8 @@ impl TaskProjection<'_> {
         })?
         .with_creator_team(creator_team)
         .with_explicit_release(explicit_release)
-        .with_phase_handoff(phase_handoff);
+        .with_phase_handoff(phase_handoff)
+        .with_grouped(grouped);
         let visibility = entry.project().visibility().clone();
         let origin_thread = self
             .origin_threads
@@ -287,6 +289,7 @@ impl TaskProjection<'_> {
             lease,
         )
         .with_explicit_release(explicit_release)
+        .with_grouped(grouped)
         .with_context(claim_context, git_context, parked_commits);
         Ok((entry, task))
     }
