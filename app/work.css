@@ -1210,8 +1210,11 @@ button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
   opacity: .52;
 }
 
+/* One column bounded by the section: a row's title ellipsizes instead of
+   widening the column to its whole unwrapped length. */
 .app-sheet-section .draft-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 4px;
   margin: 0 0 2px;
   padding: 0;
