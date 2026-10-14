@@ -118,16 +118,6 @@ impl Lanes {
     }
 
     fn inbox(&self, id: u8, actor: Actor, retired: bool) -> wire::intent::InboxAnswer {
-        self.inbox_with_seats(id, actor, retired, &Seats::new())
-    }
-
-    fn inbox_with_seats(
-        &self,
-        id: u8,
-        actor: Actor,
-        retired: bool,
-        seats: &Seats,
-    ) -> wire::intent::InboxAnswer {
         let request = wire::intent::SteerInbox {
             lane: None,
             retired,
@@ -150,14 +140,7 @@ impl Lanes {
         let Outcome::Reply(Reply {
             body: CommandAnswer::Inbox(inbox),
             ..
-        }) = steering::inbox_with_seats(
-            &self.bus,
-            &self.paths,
-            self.epoch,
-            seats,
-            &command,
-            &request,
-        )
+        }) = steering::inbox(&self.bus, &self.paths, self.epoch, &command, &request)
         else {
             panic!("inbox reads durable authority");
         };
@@ -231,35 +214,5 @@ fn a_lane_inbox_keeps_its_retired_direction_with_fanout_beside_live_direction() 
         .count();
     assert_eq!(others, 0, "a retirement belongs only to its own lane");
 
-    lanes.finish();
-}
-
-#[test]
-fn a_live_incoming_seat_replaces_the_durable_predecessor_before_its_start_anchor() {
-    let lanes = Lanes::new("steer-inbox-live-seat");
-    let lane = test_uuid(RECIPIENT);
-    let successor = test_uuid(9);
-    let mut seats = Seats::new();
-    seats
-        .seat_detached(
-            lane,
-            successor,
-            Box::new(DetachedFixture {
-                dropped: Arc::new(AtomicU64::new(0)),
-            }),
-        )
-        .expect("the incoming occupant takes the live seat");
-
-    let inbox = lanes.inbox_with_seats(64, Actor::Lane(lane), false, &seats);
-    let [row] = inbox.lanes.as_slice() else {
-        panic!("a lane principal reads only its own lane: {inbox:?}")
-    };
-    assert_eq!(row.occupant, Some(successor));
-    assert_eq!(
-        row.compaction, None,
-        "the live successor has no durable start anchor yet",
-    );
-
-    drop(seats);
     lanes.finish();
 }

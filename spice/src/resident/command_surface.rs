@@ -137,7 +137,7 @@ impl<'a> Surface<'a> {
         if let Some(dispatched) = self.dispatch_lane(seats, command) {
             return dispatched;
         }
-        if let Some(dispatched) = self.dispatch_controls(seats, command) {
+        if let Some(dispatched) = self.dispatch_controls(command) {
             return dispatched;
         }
         CommandDispatch::ordinary(Outcome::Refusal(Refusal::bare(
@@ -293,15 +293,11 @@ impl<'a> Surface<'a> {
         Some(CommandDispatch::with_effects(outcome, effects))
     }
 
-    fn dispatch_controls(
-        &self,
-        seats: &Seats,
-        command: &wire::AdmittedCommand,
-    ) -> Option<CommandDispatch> {
+    fn dispatch_controls(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
         self.dispatch_room_reads(command)
             .map(CommandDispatch::ordinary)
             .or_else(|| self.dispatch_room_coordination(command))
-            .or_else(|| self.dispatch_steering(seats, command))
+            .or_else(|| self.dispatch_steering(command))
             .or_else(|| self.dispatch_policy(command).map(CommandDispatch::ordinary))
     }
 
@@ -434,16 +430,12 @@ impl<'a> Surface<'a> {
         Some(CommandDispatch::with_effects(outcome, effects))
     }
 
-    fn dispatch_steering(
-        &self,
-        seats: &Seats,
-        command: &wire::AdmittedCommand,
-    ) -> Option<CommandDispatch> {
+    fn dispatch_steering(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
         let mut effects = CommandEffects::default();
         let outcome = match (command.kind(), command.body()) {
-            (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => Some(
-                steering::inbox_with_seats(self.bus, self.paths, self.epoch, seats, command, inbox),
-            ),
+            (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => Some(steering::inbox(
+                self.bus, self.paths, self.epoch, command, inbox,
+            )),
             (CommandKind::QuoteRead, Intent::QuoteRead(request)) => {
                 Some(steering::quote(self.bus, self.paths, request))
             }
@@ -567,7 +559,7 @@ impl<'a> Surface<'a> {
         diagnostic: &mut dyn std::io::Write,
         pending: lifecycle::PendingLaunch,
         launched: super::CommandResult<super::supervisor::Launch>,
-    ) -> super::CommandResult<()> {
+    ) -> super::CommandResult<Option<CanonicalUuid>> {
         lifecycle.complete_launch(
             self.bus,
             self.repository,

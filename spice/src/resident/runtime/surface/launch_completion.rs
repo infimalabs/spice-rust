@@ -83,6 +83,10 @@ pub(super) async fn settle_before_dark(
     Ok(())
 }
 
+/// Settle one launch. A launch that seated its occupant and committed its
+/// start kicks that lane's inbox: the supervisor's earlier reads ran before
+/// the resident named the occupant and refused, so this is the first read
+/// that can answer the steering that woke or awaits the lane.
 async fn settle(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
@@ -90,7 +94,7 @@ async fn settle(
     diagnostic: &mut dyn io::Write,
     completed: super::super::launch_runtime::Completion,
 ) -> CommandResult<Settled> {
-    match completed.authority {
+    let (started, settled) = match completed.authority {
         super::super::launch_runtime::Authority::Command {
             request,
             completion,
@@ -106,25 +110,28 @@ async fn settle(
                 completion,
                 completed.result,
             );
-            let witness = lifecycle_released.then(|| {
-                let position = match &outcome {
-                    Outcome::Reply(reply) => Some(reply.position),
-                    Outcome::Refusal(_) | Outcome::Fault(_) => None,
-                };
-                lifecycle::ReconciliationWitness::new(command, epoch, position)
-            });
+            let position = match &outcome {
+                Outcome::Reply(reply) => Some(reply.position),
+                Outcome::Refusal(_) | Outcome::Fault(_) => None,
+            };
+            let witness = lifecycle_released
+                .then(|| lifecycle::ReconciliationWitness::new(command, epoch, position));
             control_dispatch::complete_response(request, outcome).await;
-            Ok(Settled::Command(witness))
+            (position.map(|_| lane), Settled::Command(witness))
         }
         super::super::launch_runtime::Authority::Automatic(pending) => {
-            command_surface.complete_automatic_launch(
+            let started = command_surface.complete_automatic_launch(
                 lifecycle,
                 seats,
                 diagnostic,
                 pending,
                 completed.result,
             )?;
-            Ok(Settled::Automatic)
+            (started, Settled::Automatic)
         }
+    };
+    if let Some(lane) = started {
+        command_surface.notify_inbox(lane);
     }
+    Ok(settled)
 }
