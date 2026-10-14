@@ -1186,7 +1186,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   box-shadow: none;
 }
 .team-surface
-  .mosaic-message-card[data-layout-phase="committed"]:not(.mosaic-compaction-card):hover {
+  .mosaic-message-card[data-layout-phase="committed"]:not(
+    .mosaic-compaction-card
+  ):not(.mosaic-message-card--crystal):hover {
   z-index: 1;
   background-color: var(--card-hover-wash);
 }
