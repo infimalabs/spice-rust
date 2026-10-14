@@ -95,6 +95,8 @@ pub enum CommandKind {
     TaskDelete,
     /// Close a task as completed on the operator's word with a validation.
     TaskClose,
+    /// Conclude an open, unheld Design done or collapsed on the operator's word.
+    TaskConclude,
     /// Append an observation without replacing the statement.
     TaskNote,
     /// Set a wakeable deferral.

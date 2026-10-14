@@ -20,12 +20,13 @@ use super::{
     ReleasePublish, ReportAnswer, ReportRead, RoomClose, RoomControl, RoomControlAnswer,
     RoomConversationText, RoomConversationTextAnswer, RoomCoordinate, RoomCoordinationRead,
     RoomCoordinationView, RoomLeave, RoomLeaveAnswer, RoomPutAside, StateAnswer, SteerDispose,
-    SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskDefer,
-    TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskFile, TaskNote,
-    TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline,
-    TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
-    TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
-    WorkingGroupArrange, WorkingGroupChange, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
+    SteerHistory, SteerInbox, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskConclude,
+    TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskFile,
+    TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview,
+    TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord,
+    TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog,
+    VendorCatalogAnswer, WorkingGroupArrange, WorkingGroupChange, WorkingGroupMove,
+    WorkingGroupPage, WorkingGroupRead,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -99,6 +100,8 @@ pub enum BodyShape {
     TaskDelete,
     /// [`TaskClose`]
     TaskClose,
+    /// [`TaskConclude`]
+    TaskConclude,
     /// [`TaskNote`]
     TaskNote,
     /// [`TaskDefer`]
@@ -620,6 +623,7 @@ impl CommandKind {
             | Self::TaskEdit
             | Self::TaskDelete
             | Self::TaskClose
+            | Self::TaskConclude
             | Self::TaskNote
             | Self::TaskDefer
             | Self::TaskWake
@@ -698,6 +702,7 @@ impl CommandKind {
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
             Self::TaskDelete => Binding::of(B::TaskDelete, A::Task),
             Self::TaskClose => Binding::of(B::TaskClose, A::Task),
+            Self::TaskConclude => Binding::of(B::TaskConclude, A::Task),
             Self::TaskNote => Binding::of(B::TaskNote, A::Task),
             Self::TaskDefer => Binding::of(B::TaskDefer, A::Task),
             Self::TaskWake => Binding::of(B::TaskWake, A::Task),
@@ -901,6 +906,8 @@ pub enum Intent {
     TaskDelete(TaskDelete),
     /// [`BodyShape::TaskClose`]
     TaskClose(TaskClose),
+    /// [`BodyShape::TaskConclude`]
+    TaskConclude(TaskConclude),
     /// [`BodyShape::TaskNote`]
     TaskNote(TaskNote),
     /// [`BodyShape::TaskDefer`]
@@ -1023,6 +1030,7 @@ impl Intent {
             | Self::TaskEdit(_)
             | Self::TaskDelete(_)
             | Self::TaskClose(_)
+            | Self::TaskConclude(_)
             | Self::TaskNote(_)
             | Self::TaskDefer(_)
             | Self::TaskWake(_)
@@ -1090,6 +1098,7 @@ impl Intent {
             Self::TaskEdit(_) => BodyShape::TaskEdit,
             Self::TaskDelete(_) => BodyShape::TaskDelete,
             Self::TaskClose(_) => BodyShape::TaskClose,
+            Self::TaskConclude(_) => BodyShape::TaskConclude,
             Self::TaskNote(_) => BodyShape::TaskNote,
             Self::TaskDefer(_) => BodyShape::TaskDefer,
             Self::TaskWake(_) => BodyShape::TaskWake,
@@ -1234,6 +1243,7 @@ impl BodyShape {
                 | Self::TaskEdit
                 | Self::TaskDelete
                 | Self::TaskClose
+                | Self::TaskConclude
                 | Self::TaskNote
                 | Self::TaskDefer
                 | Self::TaskWake
@@ -1285,6 +1295,7 @@ impl BodyShape {
                 | Self::TaskEdit
                 | Self::TaskDelete
                 | Self::TaskClose
+                | Self::TaskConclude
                 | Self::TaskNote
         ) {
             self.decode_board_query_body(bytes)
@@ -1358,6 +1369,7 @@ impl BodyShape {
             Self::TaskEdit => Intent::TaskEdit(crate::decode(bytes)?),
             Self::TaskDelete => Intent::TaskDelete(crate::decode(bytes)?),
             Self::TaskClose => Intent::TaskClose(crate::decode(bytes)?),
+            Self::TaskConclude => Intent::TaskConclude(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),
             _ => unreachable!("board body partition is closed"),
         })

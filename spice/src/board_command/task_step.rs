@@ -28,16 +28,25 @@ pub(super) fn step_heading(step: &TaskDetailStep) -> String {
                 wire::body::Verdict::Finding => "finding",
             }
         ),
+        TaskStep::Concluded { conclusion } => match conclusion {
+            wire::body::DesignConclusion::Done {} => "concluded done".to_owned(),
+            wire::body::DesignConclusion::Collapsed { .. } => "concluded collapsed".to_owned(),
+        },
     };
     format!("{} {} {} {recorded}", step.position, step.at, step.author)
 }
 
-/// A completion's validation, or a verdict's finding or note.
+/// A completion's validation, a verdict's finding or note, or a collapse's
+/// reason.
 pub(super) fn step_text(step: &TaskDetailStep) -> Option<&str> {
     match &step.step {
         TaskStep::Done { validation, .. } => Some(validation),
         TaskStep::Phased { .. } => None,
         TaskStep::Reviewed { text, .. } => text.as_deref(),
+        TaskStep::Concluded { conclusion } => match conclusion {
+            wire::body::DesignConclusion::Done {} => None,
+            wire::body::DesignConclusion::Collapsed { reason } => Some(reason),
+        },
     }
 }
 

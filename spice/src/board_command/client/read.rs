@@ -1127,6 +1127,12 @@ pub(super) fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String
     if !active_claimed_by_principal(board, task) {
         return "next: spice task next".to_owned();
     }
+    if task.statement.body.intent == Some(wire::TaskIntent::Design) {
+        return format!(
+            "next: spice task free {} (only the operator concludes a Design)",
+            task.statement.body.handle
+        );
+    }
     "next: spice task done --validation \"...\"".to_owned()
 }
 

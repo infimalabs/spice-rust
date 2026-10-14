@@ -20,6 +20,7 @@ pub const REPORT_FACT_KINDS: &[FactKind] = &[
     FactKind::TaskEdited,
     FactKind::TaskDeleted,
     FactKind::TaskClosed,
+    FactKind::TaskConcluded,
     FactKind::ClaimWon,
     FactKind::ClaimCarried,
     FactKind::ClaimRebound,

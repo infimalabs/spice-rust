@@ -298,6 +298,10 @@ impl Indexes {
                 next.retire_task_origin(&deleted.task);
             } else if let Some(closed) = row.fact.read::<journal::crossing::body::TaskClosed>() {
                 next.retire_task_origin(&closed.task);
+            } else if let Some(concluded) =
+                row.fact.read::<journal::crossing::body::TaskConcluded>()
+            {
+                next.retire_task_origin(&concluded.task);
             } else if let Some(won) = row.fact.read::<journal::crossing::body::ClaimWon>() {
                 next.claims.insert(won.actor, (row.seq, won.cell));
             } else if let Some(freed) = row.fact.read::<journal::crossing::body::ClaimFreed>() {

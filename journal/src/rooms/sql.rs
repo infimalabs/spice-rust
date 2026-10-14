@@ -580,10 +580,10 @@ pub(crate) fn require_open_controllers<'a>(
 /// task heads it names carrying exactly that authority at its fact, and no
 /// statement this write moved disagrees with the authorization projection.
 ///
-/// Control writes the output's preparation. Authorization is its controller's
-/// positive completion and each selected output's statement authorization at
-/// once, so neither can land without the other, and no edit can grant,
-/// change, or drop an authorization.
+/// Control writes the output's preparation. Authorization writes each
+/// selected output's statement authorization and leaves its controlling
+/// Design open, so a selection can never conclude the Design, and no edit can
+/// grant, change, or drop an authorization.
 pub(crate) fn settle_controls<'a>(
     connection: &Connection,
     facts: impl IntoIterator<Item = (Seq, &'a AnyFact)>,
@@ -617,10 +617,10 @@ pub(crate) fn settle_controls<'a>(
             let controller = &authorization.candidate.controller;
             let workflow = stored::<wire::WorkflowHead>(connection, WORKFLOW, controller)?;
             if !workflow
-                .is_some_and(|(head_seq, head)| head_seq == seq && head.concluded_positively())
+                .is_some_and(|(_, head)| head.status == "pending" && head.completion.is_none())
             {
                 return unsound(format!(
-                    "authorization at {seq} is not controller {controller}'s positive completion"
+                    "authorization at {seq} must leave controller {controller} open"
                 ));
             }
         }

@@ -193,9 +193,9 @@ impl Law {
         optional: &[],
         authority: Authority::Connected,
     };
-    /// The withdrawal witnesses, because closing likewise decides against the
-    /// current workflow and possession; only the operator may close work it
-    /// does not hold.
+    /// The withdrawal witnesses, because closing a task or concluding a Design
+    /// likewise decides against the current workflow and possession; only the
+    /// operator settles work this way.
     pub const CLOSE: Self = Self {
         required: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
         optional: &[],
@@ -572,7 +572,7 @@ impl CommandKind {
             Self::TaskOopsAdd | Self::TasteProposalAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
             Self::TaskDelete => Law::DELETE,
-            Self::TaskClose => Law::CLOSE,
+            Self::TaskClose | Self::TaskConclude => Law::CLOSE,
             Self::TaskNote => Law::NOTE,
             Self::TaskDefer => Law::DEFER,
             Self::TaskWake => Law::WAKE,

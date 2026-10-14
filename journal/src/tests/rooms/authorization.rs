@@ -223,7 +223,7 @@ fn coverage_authority_is_its_writer_and_self_review_alone_authorizes_nothing() {
         &journal,
         Actor::Lane(reviewer),
         covered.clone(),
-        Conclusion::Completed,
+        Conclusion::Untouched,
         true,
     );
     let result = journal.apply(write);
@@ -233,7 +233,7 @@ fn coverage_authority_is_its_writer_and_self_review_alone_authorizes_nothing() {
 }
 
 #[test]
-fn authorization_lands_only_as_the_controllers_positive_completion_and_no_edit_moves_it() {
+fn authorization_leaves_its_controller_open_and_no_edit_moves_it() {
     let mut journal = Journal::in_memory().expect("journal");
     let preparation = Preparation::new(&mut journal);
     commit(
@@ -259,10 +259,12 @@ fn authorization_lands_only_as_the_controllers_positive_completion_and_no_edit_m
         vec![preparation.output.clone()],
     );
 
+    // Concluding the controller in the same write, or omitting the selected
+    // output's statement, refuses.
     for (conclusion, outputs) in [
         (Conclusion::Untouched, false),
-        (Conclusion::Untouched, true),
         (Conclusion::Closed, true),
+        (Conclusion::Completed, true),
         (Conclusion::Completed, false),
     ] {
         let write = authorization_write(
@@ -278,6 +280,16 @@ fn authorization_lands_only_as_the_controllers_positive_completion_and_no_edit_m
     authorize(&mut journal, exact).expect("exact selection authorized");
     let granted = statement(&journal, &preparation.output).authorization;
     assert_eq!(granted, Some(preparation.decision_ref(1)));
+    let controller = journal
+        .read(|read| read.workflow_head(&preparation.controller))
+        .expect("controller workflow reads")
+        .expect("controller exists")
+        .into_body();
+    assert_eq!(
+        (controller.status.as_str(), controller.completion),
+        ("pending", None),
+        "selection leaves the Design open"
+    );
 
     // An ordinary edit keeps the grant; no edit drops it or forges another.
     edit_project(&mut journal, &preparation.output, "elsewhere");

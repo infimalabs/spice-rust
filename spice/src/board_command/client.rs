@@ -77,7 +77,7 @@ fn dispatch_client(
         ["task", "depends"] => client_depends(repository, contract, matches),
         ["task", "modify"] => client_modify(repository, contract, matches),
         ["task", "require"] => client_require(repository, contract, matches),
-        ["task", "delete"] => client_delete(repository, contract, matches),
+        ["task", "delete" | "conclude"] => client_settle(repository, contract, matches),
         ["task", "done"] => client_done(repository, contract, matches),
         ["task", "review"] => client_review(repository, contract, matches),
         _ => refusal(
@@ -138,6 +138,8 @@ pub(crate) use graph::{GraphView, graph_snapshot_at, graph_view};
 
 mod read;
 pub(super) use read::*;
+mod settle;
+use settle::{client_settle, dispatch_settlement};
 mod drain;
 pub(super) use drain::actor_rows;
 pub(crate) use drain::{DrainReadout, ParkedCounts, TaskNext};
@@ -422,6 +424,8 @@ fn existing_next_claim_reply(board: &BoardAnswer, task: &NextWorkTask) -> Reply<
         format!(
             "next: spice task review {handle} --finding clean --note \"description current; ...\""
         )
+    } else if task.statement.body.intent == Some(wire::TaskIntent::Design) {
+        format!("next: spice task free {handle} (only the operator concludes a Design)")
     } else {
         "next: spice task done --validation \"...\"".to_owned()
     };
@@ -941,34 +945,6 @@ pub(super) fn declared_intent(
         .transpose()
 }
 
-fn client_delete(
-    repository: &Repository,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    mutate_task_from_board(repository, contract, matches, |_board, task, heads| {
-        // Law::DELETE names the claim head, and claim_witness spells the
-        // absence of a claim as `head: None`. That is the point: an unclaimed
-        // task witnesses that it was unclaimed, so a claim landing between this
-        // board read and the door turns the withdrawal into a refusal instead
-        // of silently taking the new holder's work.
-        Ok((
-            CommandKind::TaskDelete,
-            vec![
-                statement_witness(heads),
-                workflow_witness(heads),
-                claim_witness(heads),
-            ],
-            serde_json::to_value(TaskDelete {
-                task,
-                reason: required(matches, "REASON"),
-                force_claimed: matches.get_flag("force-claimed"),
-            })
-            .expect("typed intent encodes"),
-        ))
-    })
-}
-
 pub(super) fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<CommandAnswer>> {
     board
         .tasks
@@ -1349,6 +1325,9 @@ pub(crate) fn dispatch_with_repository(
     if let Some(outcome) = dispatch_working_group(bus, command) {
         return Some(outcome);
     }
+    if let Some(outcome) = dispatch_settlement(bus, command, projects, allocation) {
+        return Some(outcome);
+    }
 
     let outcome = match command.body() {
         wire::intent::Intent::ReportRead(read) => read_report(bus, read, command, projects),
@@ -1395,12 +1374,6 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects, allocation),
         wire::intent::Intent::TaskEdit(edit) => {
             task_edit(bus, command, edit, repository, projects, allocation)
-        }
-        wire::intent::Intent::TaskDelete(delete) => {
-            task_delete(bus, command, delete, projects, allocation)
-        }
-        wire::intent::Intent::TaskClose(close) => {
-            task_close(bus, command, close, projects, allocation)
         }
         wire::intent::Intent::TaskDefer(defer) => {
             task_defer(bus, command, defer, repository, projects, allocation)

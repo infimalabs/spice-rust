@@ -435,6 +435,36 @@ pub struct TaskClosed {
     pub claimed: Option<Actor>,
 }
 
+/// How the operator concludes an open Design.
+///
+/// `done` is the positive conclusion after its outputs; `collapsed` is the
+/// negative one, when the premise did not hold, and always records why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "lowercase", deny_unknown_fields)]
+pub enum DesignConclusion {
+    /// The Design is done.
+    Done {},
+    /// The Design collapsed because its premise did not hold.
+    Collapsed {
+        /// Why the premise did not hold; never empty.
+        reason: String,
+    },
+}
+
+/// The operator concluded an open, unheld Design.
+///
+/// A Design stays open through any number of lane passes and selections; this
+/// fact is its one terminal act. It never overrides a claim: a held Design
+/// refuses conclusion until its holder checkpoints and frees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskConcluded {
+    /// Concluded Design.
+    pub task: TaskStamp,
+    /// The operator's conclusion.
+    pub conclusion: DesignConclusion,
+}
+
 /// Exclusive possession was minted from the current eligibility and claim heads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimWon {

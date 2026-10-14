@@ -467,29 +467,32 @@ owns each rule summarized here.
   naming the Design's handle, title, and one-line pitch and how to read its
   room or contribute. Being told is not listening, and `spice room awareness
   HANDLE` shows the operator who was told and on which terms.
-- **Preparation.** `task plan` and `task design` declare intent with
-  `plan,review` and `design,review` flows, and active Plan and Design claims
-  refuse implementation commits. A Design plans Plans; a Plan plans executable
-  tasks. When a Design concludes that follow-up is warranted, it creates the
-  acceptance-bearing output Plans under itself and runs `preparation retain
-  CANDIDATE_JSON` before completion with a candidate that names those outputs.
-  Its reviewer checks that implied follow-up has a retained candidate. A
-  conclusion that no follow-up is warranted says so explicitly in the Design's
-  acceptance evidence.
+- **Preparation.** `task plan` declares a Plan with a `plan,review` flow and
+  `task design` declares a Design with its one open `design` phase; active Plan
+  and Design claims refuse implementation commits. A Design plans Plans; a
+  Plan plans executable tasks. When a Design finds follow-up warranted, it
+  creates the acceptance-bearing output Plans under itself and runs
+  `preparation retain CANDIDATE_JSON` with a candidate that names those
+  outputs. A finding that no follow-up is warranted says so explicitly in the
+  Design's notes.
 
-  Each Design output waits, gated, until
+  A Design
+  [stays open until the operator concludes it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
+  lane `task done` refuses it, so its holder checkpoints and runs `task free`.
+  Only `task conclude HANDLE --done` or `--collapse REASON` ends an unheld
+  Design; `task close` refuses Designs. Each Design output waits, gated, until
   [execution authorization](invariants/identity.md#work-execution-authorization-is-a-designs-exact-selection)
-  admits the operator's exact accepted selection. Selection belongs to the
-  operator; the Design author and reviewer do not infer it. Working-group
-  membership changes organization only. Operator close concludes negatively
-  and authorizes nothing.
+  admits the operator's exact accepted selection, which releases those outputs
+  and leaves the Design open. Selection belongs to the operator; the Design's
+  holders do not infer it. Working-group membership changes organization only.
+  A collapse authorizes nothing and keeps every output gated.
 
   A Plan is an ordinary reviewed task constructor. It creates its
   acceptance-bearing executable tasks under itself; those tasks wait for its
   positive review and their ordinary dependencies, with no candidate,
   selection, or execution authorization. A selected Plan therefore runs, and
-  its own review releases its tasks. A Design whose only remaining step is its
-  conclusion, while an output it constructed is still unselected,
+  its own review releases its tasks. An open Design with an output it
+  constructed that is still unselected
   [waits on the operator](invariants/identity.md#work-a-design-awaiting-selection-waits-on-the-operator-without-a-new-state):
   no lane is offered or woken for it, and status counts it under `selection`.
   Retained pre-cutover group markers are historical evidence; writable open

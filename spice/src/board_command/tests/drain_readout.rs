@@ -117,7 +117,7 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
             acceptance: vec!["Reach a decision".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
             origin: Some("fixture:drain-design".parse().expect("fixture origin")),
-            flow: Some("design,review".to_owned()),
+            flow: Some("design".to_owned()),
             depends: Vec::new(),
             claim: false,
         },
@@ -166,7 +166,6 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
             remove: false,
         },
     ));
-    claim_task(&bus, epoch, &seats[1], &Actor::Lane(seats[1].lane), &design);
     subscription::configure_subscription(&bus, epoch, &seats[0], TeamLife::Steer);
 
     let answer = next_board(&bus, epoch, Actor::Lane(seats[0].lane));

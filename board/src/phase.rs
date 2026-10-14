@@ -131,13 +131,19 @@ pub enum PhaseRefusal {
 /// The one deliverable a declared phase authorizes.
 ///
 /// A flow is an open vocabulary, so a phase this repository does not spell
-/// answers `None` rather than guessing at what it wants. The three declared
+/// answers `None` rather than guessing at what it wants. The declared
 /// stations differ in what they may touch, which is the whole reason a lane
-/// must read its phase before it acts: plan moves board state, todo moves
-/// repository files, and review returns a verdict on work already integrated.
+/// must read its phase before it acts: design and plan move board state, todo
+/// moves repository files, and review returns a verdict on work already
+/// integrated.
 #[must_use]
 pub fn deliverable(phase: &Phase) -> Option<&'static str> {
     match phase.as_str() {
+        "design" => Some(
+            "board state is the deliverable: retain proposals and Plans the evidence \
+             justifies under this open Design, then checkpoint and run `spice task free`; \
+             only the operator concludes a Design, and lanes never mark it done",
+        ),
         "plan" => Some(
             "board state is the deliverable: make the execution contract explicit or \
              decompose it into accepted children; do not edit or commit repository files",
