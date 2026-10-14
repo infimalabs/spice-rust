@@ -40,26 +40,8 @@ impl TaskOverviewContext {
             Self::Scope(WorkScope::Planning { stem: Some(stem) }) => {
                 format!("Design work · {stem}")
             }
-            Self::Scope(WorkScope::Team {
-                team: id,
-                stem: None,
-            }) => {
-                format!("Team {}", team(*id))
-            }
-            Self::Scope(WorkScope::Team {
-                team: id,
-                stem: Some(stem),
-            }) => format!("Team {} · {stem}", team(*id)),
-            Self::Scope(WorkScope::Group {
-                group: id,
-                designs,
-                stem: None,
-            }) => group(id, designs),
-            Self::Scope(WorkScope::Group {
-                group: id,
-                designs,
-                stem: Some(stem),
-            }) => format!("{} · {stem}", group(id, designs)),
+            Self::Scope(WorkScope::Team { team: id }) => format!("Team {}", team(*id)),
+            Self::Scope(WorkScope::Group { group: id, designs }) => group(id, designs),
             Self::Project(project) => format!("Project {project}"),
             Self::Relationships(task) => format!("Related to {task}"),
         }
@@ -410,16 +392,8 @@ mod tests {
             &[stamp(2)],
         );
         assert_eq!(
-            work.overview_for_scope(WorkScope::team_wide(team)).tasks(),
+            work.overview_for_scope(WorkScope::Team { team }).tasks(),
             &[stamp(2), stamp(4), stamp(1)],
-        );
-        assert_eq!(
-            work.overview_for_scope(WorkScope::Team {
-                team,
-                stem: Some(public_alpha),
-            })
-            .tasks(),
-            &[stamp(4), stamp(1)],
         );
         assert_eq!(
             work.overview_for_project("alpha.one".to_owned()).tasks(),
@@ -427,11 +401,9 @@ mod tests {
         );
 
         let empty = work.overview_for_scope(WorkScope::Team {
-            team,
-            stem: Some(super::super::WorkStemIdentity::new(
-                super::super::WorkVisibility::Public,
-                "beta".to_owned(),
-            )),
+            team: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+                .parse()
+                .expect("fixture team"),
         });
         assert!(empty.is_empty());
         assert!(matches!(empty.context(), TaskOverviewContext::Scope(_)));

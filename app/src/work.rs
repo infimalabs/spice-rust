@@ -129,19 +129,13 @@ pub enum WorkScope {
     Stem(WorkStemIdentity),
     /// Design roots and directly Design-controlled planning tasks.
     Planning { stem: Option<WorkStemIdentity> },
-    /// Open execution tasks currently accountable to one team, optionally
-    /// narrowed to one exact stem.
-    Team {
-        team: wire::CanonicalUuid,
-        stem: Option<WorkStemIdentity>,
-    },
+    /// Open execution tasks currently accountable to one team.
+    Team { team: wire::CanonicalUuid },
     /// Open tasks associated with any Design of one working group, as its
-    /// partition held them when the scope was chosen, optionally narrowed to
-    /// one exact stem.
+    /// partition held them when the scope was chosen.
     Group {
         group: wire::rooms::RoomAuthorityStamp,
         designs: Vec<wire::TaskStamp>,
-        stem: Option<WorkStemIdentity>,
     },
 }
 
@@ -176,13 +170,7 @@ impl Display for WorkStemIdentity {
 }
 
 impl WorkScope {
-    /// Every open task associated with one team.
-    #[must_use]
-    pub const fn team_wide(team: wire::CanonicalUuid) -> Self {
-        Self::Team { team, stem: None }
-    }
-
-    /// The exact stem this scope narrows to, alone or within a team, group, or
+    /// The exact stem this scope narrows to, alone or within the
     /// Design-planning rail.
     #[must_use]
     pub const fn stem(&self) -> Option<&WorkStemIdentity> {
@@ -190,19 +178,11 @@ impl WorkScope {
             Self::Stem(identity)
             | Self::Planning {
                 stem: Some(identity),
-            }
-            | Self::Team {
-                stem: Some(identity),
-                ..
-            }
-            | Self::Group {
-                stem: Some(identity),
-                ..
             } => Some(identity),
             Self::AllOpen
             | Self::Planning { stem: None }
-            | Self::Team { stem: None, .. }
-            | Self::Group { stem: None, .. } => None,
+            | Self::Team { .. }
+            | Self::Group { .. } => None,
         }
     }
 
@@ -215,7 +195,7 @@ impl WorkScope {
     #[must_use]
     pub const fn team(&self) -> Option<wire::CanonicalUuid> {
         match self {
-            Self::Team { team, .. } => Some(*team),
+            Self::Team { team } => Some(*team),
             Self::AllOpen | Self::Stem(_) | Self::Planning { .. } | Self::Group { .. } => None,
         }
     }
@@ -611,12 +591,8 @@ impl<'a> WorkProjection<'a> {
             WorkScope::Stem(_) | WorkScope::Planning { stem: Some(_) } => {
                 Some(self.tasks.iter().any(|task| self.in_scope(task, scope)))
             }
-            WorkScope::Team { team, stem } => self.teams.as_ref().map(|teams| {
-                teams.contains(team) && stem.as_ref().is_none_or(|stem| self.stem(stem).is_some())
-            }),
-            WorkScope::Group { stem, .. } => {
-                Some(stem.as_ref().is_none_or(|stem| self.stem(stem).is_some()))
-            }
+            WorkScope::Team { team } => self.teams.as_ref().map(|teams| teams.contains(team)),
+            WorkScope::Group { .. } => Some(true),
         }
     }
 
@@ -654,20 +630,12 @@ impl<'a> WorkProjection<'a> {
                         .as_ref()
                         .is_none_or(|stem| self.task_stem(task) == stem)
             }
-            WorkScope::Team { team, stem } => {
-                task.belongs_to_team(*team)
-                    && stem
-                        .as_ref()
-                        .is_none_or(|stem| self.task_stem(task) == stem)
-            }
-            WorkScope::Group { designs, stem, .. } => {
+            WorkScope::Team { team } => task.belongs_to_team(*team),
+            WorkScope::Group { designs, .. } => {
                 let statement = &task.row.statement.body;
                 designs
                     .iter()
                     .any(|design| crate::runtime::associated(statement, design))
-                    && stem
-                        .as_ref()
-                        .is_none_or(|stem| self.task_stem(task) == stem)
             }
         }
     }
@@ -678,35 +646,45 @@ impl<'a> WorkProjection<'a> {
         &self.stems[self.projects[task.project].stem].identity
     }
 
-    /// One scope's open task strip, grouped by visibility-qualified stem.
-    ///
-    /// The source order is in-flight, ready, blocked, then deferred, with each
-    /// lifecycle retaining resident offer order. As in the global task strip,
-    /// groups follow their first task and gather every later match without
-    /// changing the tasks' relative order.
+    /// One scope's open tasks in strip order: in-flight, ready, review,
+    /// stale, blocked, selection, held, deferred, then parked, with each
+    /// availability retaining resident offer order.
     #[must_use]
-    pub fn stem_task_groups<'p>(&'p self, scope: &WorkScope) -> Vec<StemTaskGroup<'p, 'a>> {
+    pub fn scope_strip<'p>(&'p self, scope: &WorkScope) -> Vec<&'p WorkTask<'a>> {
         use WorkAvailability::{
             Blocked, Deferred, Held, InFlight, Parked, Ready, Review, Selection, Stale,
         };
 
-        let mut groups = Vec::<StemTaskGroup<'p, 'a>>::new();
+        let mut strip = Vec::new();
         for availability in [
             InFlight, Ready, Review, Stale, Blocked, Selection, Held, Deferred, Parked,
         ] {
-            for task in self.offered.iter().map(|&index| &self.tasks[index]) {
-                if task.availability != availability || !self.in_scope(task, scope) {
-                    continue;
-                }
-                let stem = self.task_stem(task);
-                if let Some(group) = groups.iter_mut().find(|group| group.stem == stem) {
-                    group.tasks.push(task);
-                } else {
-                    groups.push(StemTaskGroup {
-                        stem,
-                        tasks: vec![task],
-                    });
-                }
+            strip.extend(
+                self.offered
+                    .iter()
+                    .map(|&index| &self.tasks[index])
+                    .filter(|task| task.availability == availability && self.in_scope(task, scope)),
+            );
+        }
+        strip
+    }
+
+    /// One scope's open task strip, grouped by visibility-qualified stem.
+    ///
+    /// Groups follow their first task in [`Self::scope_strip`] order and
+    /// gather every later match without changing the tasks' relative order.
+    #[must_use]
+    pub fn stem_task_groups<'p>(&'p self, scope: &WorkScope) -> Vec<StemTaskGroup<'p, 'a>> {
+        let mut groups = Vec::<StemTaskGroup<'p, 'a>>::new();
+        for task in self.scope_strip(scope) {
+            let stem = self.task_stem(task);
+            if let Some(group) = groups.iter_mut().find(|group| group.stem == stem) {
+                group.tasks.push(task);
+            } else {
+                groups.push(StemTaskGroup {
+                    stem,
+                    tasks: vec![task],
+                });
             }
         }
         groups

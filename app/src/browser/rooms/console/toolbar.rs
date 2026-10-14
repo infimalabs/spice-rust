@@ -1,5 +1,5 @@
 //! A working group's toolbar, the team toolbar's twin read from Designs: an
-//! open-task total and stem tabs over the tasks associated with the group's
+//! open-task total and one tab per task associated with the group's
 //! Designs, one standing light per Design, and a ticker of the newest room
 //! event across them. Only the name is the group's own; this browser's
 //! placement of the console lives in the panel's arrangement menu, where a
@@ -15,7 +15,7 @@ use crate::browser::{navigation, view};
 use crate::room_views::GroupView;
 use crate::runtime::{DesignStanding, RoomEvent};
 use crate::watchband;
-use crate::work::{StemTaskGroup, WorkCounts, WorkScope, WorkTask};
+use crate::work::{WorkCounts, WorkScope, WorkTask};
 
 pub(super) fn render(
     render: &GroupRender<'_, '_>,
@@ -52,34 +52,29 @@ pub(super) fn render(
     }
 }
 
-/// The scope that selects this group's associated work, optionally one stem.
-fn scope(
-    view: &GroupView,
-    channels: &[Channel],
-    stem: Option<crate::work::WorkStemIdentity>,
-) -> WorkScope {
+/// The scope that selects this group's associated work.
+fn scope(view: &GroupView, channels: &[Channel]) -> WorkScope {
     WorkScope::Group {
         group: view.group.clone(),
         designs: channels
             .iter()
             .map(|channel| channel.stamp.clone())
             .collect(),
-        stem,
     }
 }
 
-/// The fixed total and the stem-clustered task scroller.
+/// The fixed total and the task scroller.
 fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Channel]) -> Html {
-    let groups = render
+    let tasks = render
         .work
-        .map(|work| work.stem_task_groups(&scope(view, channels, None)))
+        .map(|work| work.scope_strip(&scope(view, channels)))
         .unwrap_or_default();
     html! {
         <div class="team-task-rail">
-            if !groups.is_empty() {
-                {render_total(render, view, channels, &groups)}
+            if !tasks.is_empty() {
+                {render_total(render, view, channels, &tasks)}
                 <nav class="app-horn-tabs team-tasks" aria-label="Open tasks associated with this group's designs">
-                    {for groups.iter().map(|group| render_stem(render, view, channels, group))}
+                    {for tasks.iter().copied().map(|task| render_handle(render, channels, task))}
                 </nav>
             }
         </div>
@@ -92,11 +87,11 @@ fn render_total(
     render: &GroupRender<'_, '_>,
     view: &GroupView,
     channels: &[Channel],
-    groups: &[StemTaskGroup<'_, '_>],
+    tasks: &[&WorkTask<'_>],
 ) -> Html {
-    let counts = groups
+    let counts = tasks
         .iter()
-        .flat_map(|group| group.tasks().iter().map(|task| task.availability()))
+        .map(|task| task.availability())
         .collect::<WorkCounts>();
     let open = counts.open();
     let title = format!(
@@ -105,7 +100,7 @@ fn render_total(
     );
     let open_group = {
         let navigate = render.navigate.clone();
-        let scope = scope(view, channels, None);
+        let scope = scope(view, channels);
         Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))
     };
     html! {
@@ -124,55 +119,6 @@ fn render_total(
             >
                 {view::chrome::render_task_count(counts)}
             </button>
-        </span>
-    }
-}
-
-/// One stem tab and every associated task handle grouped beneath it.
-fn render_stem(
-    render: &GroupRender<'_, '_>,
-    view: &GroupView,
-    channels: &[Channel],
-    group: &StemTaskGroup<'_, '_>,
-) -> Html {
-    let stem = group.stem().clone();
-    let stem_label = stem.stem().to_owned();
-    let stem_key = stem.to_string();
-    let counts = group
-        .tasks()
-        .iter()
-        .map(|task| task.availability())
-        .collect::<WorkCounts>();
-    let open = counts.open();
-    let title = format!(
-        "Open this group's {stem} work: {open} {}",
-        if open == 1 { "task" } else { "tasks" }
-    );
-    let visibility = if stem.hidden() { "hidden" } else { "public" };
-    let open_stem = {
-        let navigate = render.navigate.clone();
-        let scope = scope(view, channels, Some(stem));
-        Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))
-    };
-    html! {
-        <span
-            key={stem_key.clone()}
-            class="app-horn-tab app-horn-tab--up app-horn-tab--group"
-            data-task-stem={stem_label.clone()}
-            data-task-visibility={visibility}
-        >
-            <button
-                class="app-horn-tab__target"
-                type="button"
-                title={title.clone()}
-                aria-label={title}
-                data-sidebar-focus-key={format!("group-work:{}:stem:{stem_key}", view.group)}
-                onclick={open_stem}
-            >
-                <span class="app-horn-tab__label">{stem_label}</span>
-                {view::chrome::render_task_count(counts)}
-            </button>
-            {for group.tasks().iter().copied().map(|task| render_handle(render, channels, task))}
         </span>
     }
 }

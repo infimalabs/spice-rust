@@ -285,16 +285,16 @@ fn render_team_toolbar(
 
 /// The fixed team total and task scroller remain independent of the status row.
 fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
-    let groups = render
+    let tasks = render
         .work
-        .map(|work| work.stem_task_groups(&crate::work::WorkScope::team_wide(team)))
+        .map(|work| work.scope_strip(&crate::work::WorkScope::Team { team }))
         .unwrap_or_default();
     html! {
         <div class="team-task-rail">
-            if !groups.is_empty() {
-                {render_team_total(team, &groups, render.navigate)}
+            if !tasks.is_empty() {
+                {render_team_total(team, &tasks, render.navigate)}
                 <nav class="app-horn-tabs team-tasks" aria-label="Open tasks this team created or claims">
-                    {for groups.iter().map(|group| render_team_task_group(team, group, render))}
+                    {for tasks.iter().copied().map(|task| render_team_task_handle(task, render))}
                 </nav>
             }
         </div>
@@ -305,13 +305,13 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
 /// the unified overview with that team's complete current selection.
 fn render_team_total(
     team: CanonicalUuid,
-    groups: &[crate::work::StemTaskGroup<'_, '_>],
+    tasks: &[&crate::work::WorkTask<'_>],
     navigate: &Callback<navigation::Intent>,
 ) -> Html {
     use crate::work::{WorkCounts, WorkScope};
-    let counts = groups
+    let counts = tasks
         .iter()
-        .flat_map(|group| group.tasks().iter().map(|task| task.availability()))
+        .map(|task| task.availability())
         .collect::<WorkCounts>();
     let open = counts.open();
     let title = format!(
@@ -320,7 +320,7 @@ fn render_team_total(
     );
     let navigate = navigate.clone();
     let open_team = Callback::from(move |_| {
-        navigate.emit(navigation::Intent::Work(WorkScope::team_wide(team)));
+        navigate.emit(navigation::Intent::Work(WorkScope::Team { team }));
     });
     html! {
         <span
@@ -342,60 +342,7 @@ fn render_team_total(
     }
 }
 
-/// One stem tab: the stem target with its count badge, followed by every
-/// team-local task handle grouped beneath it.
-fn render_team_task_group(
-    team: CanonicalUuid,
-    group: &crate::work::StemTaskGroup<'_, '_>,
-    render: &FleetRender<'_, '_>,
-) -> Html {
-    let stem = group.stem().clone();
-    let stem_label = stem.stem().to_owned();
-    let stem_key = stem.to_string();
-    let focus_key = format!("team-work:{team}:stem:{stem_key}");
-    let counts = group
-        .tasks()
-        .iter()
-        .map(|task| task.availability())
-        .collect::<crate::work::WorkCounts>();
-    let open = counts.open();
-    let stem_aria_label = format!(
-        "Open this team's {stem} work: {open} {}",
-        if open == 1 { "task" } else { "tasks" }
-    );
-    let visibility = if stem.hidden() { "hidden" } else { "public" };
-    let open_stem = {
-        let navigate = render.navigate.clone();
-        let scope = crate::work::WorkScope::Team {
-            team,
-            stem: Some(stem),
-        };
-        Callback::from(move |_| navigate.emit(navigation::Intent::Work(scope.clone())))
-    };
-    html! {
-        <span
-            key={stem_key}
-            class="app-horn-tab app-horn-tab--up app-horn-tab--group"
-            data-task-stem={stem_label.clone()}
-            data-task-visibility={visibility}
-        >
-            <button
-                class="app-horn-tab__target"
-                type="button"
-                title={stem_aria_label.clone()}
-                aria-label={stem_aria_label}
-                data-sidebar-focus-key={focus_key}
-                onclick={open_stem}
-            >
-                <span class="app-horn-tab__label">{stem_label}</span>
-                {view::chrome::render_task_count(counts)}
-            </button>
-            {for group.tasks().iter().copied().map(|task| render_team_task_handle(task, render))}
-        </span>
-    }
-}
-
-/// One task-detail target inside its stem group.
+/// One task-detail tab in the team strip.
 fn render_team_task_handle(task: &crate::work::WorkTask<'_>, render: &FleetRender<'_, '_>) -> Html {
     let statement = &task.row().statement.body;
     let availability = task.availability();
