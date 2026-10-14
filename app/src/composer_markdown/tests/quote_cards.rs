@@ -881,6 +881,8 @@ fn a_sent_msg_names_every_destination_without_its_protocol_header() {
                 .parse()
                 .expect("fixture task handle parses"),
         ],
+        kind: wire::MessageSendKind::Msg,
+        result: None,
     }];
     let agent = |accent: usize, label: &str| QuoteAgent {
         accent,
@@ -933,4 +935,72 @@ fn a_sent_msg_names_every_destination_without_its_protocol_header() {
         html.contains("data-task-handle=\"ROOMS-dVrD244Jd\""),
         "{html}"
     );
+}
+
+#[test]
+fn ask_and_ans_quotes_carry_typed_badges_and_the_answered_result() {
+    let lane = "018f82d4-6f59-7d06-92e3-bce91311650a"
+        .parse()
+        .expect("fixture lane parses");
+    let sender = "018f82d4-6f59-7d06-92e3-bce91311651a"
+        .parse()
+        .expect("fixture occupant parses");
+    let question = "> Can you review this?";
+    let answer = "> Reviewed.";
+    let markdown = format!("{question}\n\n{answer}");
+    let question_start = markdown.find(question).expect("question exists");
+    let answer_start = markdown.find(answer).expect("answer exists");
+    let result = "1kKRRsDR3"
+        .parse()
+        .map(wire::rooms::QuestionResultRef::new)
+        .expect("fixture result parses");
+    let sends = [
+        wire::MessageSend {
+            start: u32::try_from(question_start).expect("fixture offset fits"),
+            end: u32::try_from(question_start + question.len()).expect("fixture offset fits"),
+            from: lane,
+            sender,
+            recipients: Vec::new(),
+            operator: true,
+            contexts: Vec::new(),
+            kind: wire::MessageSendKind::Ask,
+            result: None,
+        },
+        wire::MessageSend {
+            start: u32::try_from(answer_start).expect("fixture offset fits"),
+            end: u32::try_from(answer_start + answer.len()).expect("fixture offset fits"),
+            from: lane,
+            sender,
+            recipients: Vec::new(),
+            operator: false,
+            contexts: Vec::new(),
+            kind: wire::MessageSendKind::Ans,
+            result: Some(result),
+        },
+    ];
+    let agents = BTreeMap::from([(
+        (lane, Some(sender)),
+        QuoteAgent {
+            accent: 1,
+            label: "answering-agent".to_owned(),
+        },
+    )]);
+    let html = render_prose_card(
+        &markdown,
+        &[],
+        &[],
+        &sends,
+        &[],
+        &referenced_quote_agents(&[], &[], &sends, &agents),
+        &QuoteSources::new(),
+    )
+    .html;
+
+    assert!(html.contains("data-message-packet=\"ask\""), "{html}");
+    assert!(html.contains("aria-label=\"Question\">"), "{html}");
+    assert!(html.contains(">ASK</span>"), "{html}");
+    assert!(html.contains("data-message-packet=\"ans\""), "{html}");
+    assert!(html.contains("data-message-result=\"1kKRRsDR3\""), "{html}");
+    assert!(html.contains(">ANS 1kKRRsDR3</span>"), "{html}");
+    assert!(html.contains("data-quote-recipient=\"operator\""), "{html}");
 }

@@ -34,13 +34,15 @@ pub(super) struct PresentedDirectiveContext {
     pub(super) range: Range<usize>,
 }
 
-/// One MSG packet the resident presented as an outgoing quote block.
+/// One authored packet the resident presented as an outgoing quote block.
 #[derive(Debug)]
 pub(super) struct PresentedSend {
     pub(super) range: Range<usize>,
     pub(super) recipients: Vec<wire::MessageRecipient>,
     pub(super) operator: bool,
     pub(super) contexts: Vec<wire::TaskHandle>,
+    pub(super) kind: wire::MessageSendKind,
+    pub(super) result: Option<wire::rooms::QuestionResultRef>,
 }
 
 /// One placed packet in the source text, ready to present.
@@ -52,6 +54,8 @@ struct PlacedSend {
     recipients: Vec<wire::MessageRecipient>,
     operator: bool,
     contexts: Vec<wire::TaskHandle>,
+    kind: wire::MessageSendKind,
+    result: Option<wire::rooms::QuestionResultRef>,
 }
 
 /// One presented message and the quote blocks the resident itself wrote into it.
@@ -61,7 +65,7 @@ pub(super) struct Presentation {
     /// Exact directive contexts in source order. Quotation nested inside them
     /// is operator-authored journal text; anything outside them is agent prose.
     pub(super) contexts: Vec<PresentedDirectiveContext>,
-    /// Exact outgoing MSG quotes in source order, disjoint from `contexts`.
+    /// Exact outgoing packet quotes in source order, disjoint from `contexts`.
     pub(super) sends: Vec<PresentedSend>,
     /// Authenticated disposition of the whole answer. Mixed headers use
     /// declined, then pending, then acknowledged precedence.
@@ -213,10 +217,10 @@ fn append_directive_contexts<'k>(
     Ok(())
 }
 
-/// Every presentable MSG packet in `text`, in source order. Only an event
-/// whose authoring occupant is known presents sends. One unproved occupant
-/// address keeps its whole packet literal; operator and room-only routes need
-/// no occupant proof.
+/// Every presentable MSG, ASK, or ANS packet in `text`, in source order. Only
+/// an event whose authoring occupant is known presents packets. One unproved
+/// occupant address keeps its whole packet literal; operator, room-only, and
+/// answer routes need no occupant proof.
 fn placed_sends(
     text: &str,
     directives: &PresentationDirectives,
@@ -233,9 +237,7 @@ fn placed_sends(
         .into_iter()
         .filter_map(|message| {
             let publication = message.publication.ok()?;
-            let steer::ack::scan::Request::Msg { routes } = &publication.request else {
-                return None;
-            };
+            let routes = publication.routes();
             let recipients = routes
                 .iter()
                 .filter_map(|route| match route.audience {
@@ -254,12 +256,28 @@ fn placed_sends(
                     contexts.push(context.clone());
                 }
             }
+            let (kind, result) = match &publication.request {
+                steer::ack::scan::Request::Msg { .. } => (wire::MessageSendKind::Msg, None),
+                steer::ack::scan::Request::Ask { .. } => (wire::MessageSendKind::Ask, None),
+                steer::ack::scan::Request::Ans {
+                    result, context, ..
+                } => {
+                    if let Some(context) = context
+                        && !contexts.contains(context)
+                    {
+                        contexts.push(context.clone());
+                    }
+                    (wire::MessageSendKind::Ans, Some(result.clone()))
+                }
+            };
             Some(PlacedSend {
                 start: send_framing_start(text, message.header.start),
                 body: publication.body,
                 recipients,
                 operator,
                 contexts,
+                kind,
+                result,
             })
         })
         .collect()
@@ -281,7 +299,7 @@ fn send_framing_start(text: &str, start: usize) -> usize {
 }
 
 /// Copy one source segment the acknowledgement pass keeps, presenting every
-/// MSG packet wholly inside it as an outgoing quote block.
+/// authored packet wholly inside it as an outgoing quote block.
 fn append_authored(
     rendered: &mut String,
     text: &str,
@@ -312,6 +330,8 @@ fn append_authored(
             recipients: send.recipients,
             operator: send.operator,
             contexts: send.contexts,
+            kind: send.kind,
+            result: send.result,
         });
         cursor =
             skip_line_breaks(text, skip_horizontal_space(text, send.body.end)).min(segment.end);

@@ -820,7 +820,7 @@
 .markdown-body :is(.message-signoff > .relative-age, .message-quote-signoff > .message-quote-age-slot) {
   margin-right: .2em;
 }
-/* A sent MSG leads with sender, an outgoing arrow, then its recipients. */
+/* A sent packet leads with its kind, sender, arrow, and recipients when present. */
 .markdown-body .message-quote-direction {
   color: var(--muted);
   font-weight: 600;
