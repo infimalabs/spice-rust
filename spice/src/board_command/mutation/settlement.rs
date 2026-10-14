@@ -320,6 +320,16 @@ fn admitted_entry<'a>(
         let (reason, remedy) = settlement.empty_refusal();
         return Err(refusal(reason, Some(entry.handle().to_string()), remedy));
     }
+    if entry.is_draft() && !matches!(settlement, Settlement::Delete(_)) {
+        return Err(refusal(
+            "task::draft-unfiled",
+            Some(filing_state(entry)),
+            &format!(
+                "file the Draft with spice task file {handle}, or withdraw it with spice task delete {handle}",
+                handle = entry.handle(),
+            ),
+        ));
+    }
     let design = entry.statement().intent == Some(wire::TaskIntent::Design);
     match settlement {
         Settlement::Close(_) if design => {
@@ -357,16 +367,6 @@ fn admitted_entry<'a>(
             ));
         }
         _ => {}
-    }
-    if entry.is_draft() && matches!(settlement, Settlement::Close(_)) {
-        return Err(refusal(
-            "task::draft-unfiled",
-            Some(filing_state(entry)),
-            &format!(
-                "file the Draft with spice task file {handle}, or withdraw it with spice task delete {handle}",
-                handle = entry.handle(),
-            ),
-        ));
     }
     if let Some(claim) = entry
         .claim()

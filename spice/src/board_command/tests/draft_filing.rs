@@ -513,7 +513,7 @@ fn a_draft_refuses_closure_deferral_and_grooming() {
         epoch,
         Actor::Operator,
         "DRAFT-auth0003",
-        None,
+        Some(wire::TaskIntent::Design),
         &["The work is verified"],
     );
     let design_born = stamp("DRAFT-groom001");
@@ -552,6 +552,22 @@ fn a_draft_refuses_closure_deferral_and_grooming() {
         },
     );
     assert_eq!(refusal_reason(&close), "task::draft-unfiled");
+    let conclude = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskConclude,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ],
+        &TaskConclude {
+            task: draft.clone(),
+            conclusion: wire::body::DesignConclusion::Done {},
+        },
+    );
+    assert_eq!(refusal_reason(&conclude), "task::draft-unfiled");
     let defer = issue(
         &bus,
         epoch,
