@@ -145,6 +145,7 @@ use preparation::*;
 mod progress;
 use progress::*;
 mod group;
+pub(crate) use group::move_working_group;
 use group::*;
 mod read_guard;
 use read_guard::*;
@@ -160,9 +161,9 @@ pub(crate) use room_leave::room_leave;
 mod room_contribute;
 pub(crate) use room_contribute::room_contribute;
 mod room_coordination;
-use room_coordination::coordinate_target;
 #[cfg(test)]
 pub(crate) use room_coordination::room_coordinate_with;
+use room_coordination::{Deactivation, coordinate_target};
 pub(crate) use room_coordination::{
     coordination_lane, room_coordinate, room_coordination_read, room_put_aside,
     room_resumes_by_rule,

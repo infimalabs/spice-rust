@@ -857,6 +857,10 @@ pub struct BoardTask {
     /// Whether the current freed claim came from an explicit release command.
     #[serde(default, skip_serializing_if = "is_false")]
     pub explicit_release: bool,
+    /// Whether the current working-group partition holds this task. A Design
+    /// outside every group is passive and no claim path grants it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub grouped: bool,
     /// Claim-opening transcript coordinates, without embedded transcript content.
     #[serde(
         default,
@@ -980,6 +984,7 @@ impl BoardTask {
             claim,
             lease,
             explicit_release: false,
+            grouped: false,
             claim_context: None,
             git_context: None,
             parked_commits: None,
@@ -989,6 +994,13 @@ impl BoardTask {
     #[must_use]
     pub const fn with_explicit_release(mut self, explicit_release: bool) -> Self {
         self.explicit_release = explicit_release;
+        self
+    }
+
+    /// Attach whether the current working-group partition holds this task.
+    #[must_use]
+    pub const fn with_grouped(mut self, grouped: bool) -> Self {
+        self.grouped = grouped;
         self
     }
 

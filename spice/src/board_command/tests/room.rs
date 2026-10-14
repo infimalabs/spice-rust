@@ -12,6 +12,7 @@ use wire::rooms::{
 };
 
 mod automation;
+mod design_standing;
 
 fn room_projects() -> ProjectPolicy {
     ProjectPolicy::new(

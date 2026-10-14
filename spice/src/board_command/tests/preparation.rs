@@ -5,14 +5,14 @@ use wire::rooms::{
     CandidateRef, CandidateReference, CandidateRetain, CoverageAuthority, CoverageRef, CritiqueRef,
     CritiqueStanding, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorize,
     NegativeDecision, OutputAdopt, PreparationDecide, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomSource, WorkingGroupMove,
+    RetainedCandidate, RoomAuthorityStamp, RoomSource,
 };
 
 fn add_plan(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
     add_controller(bus, epoch, name, wire::TaskIntent::Plan, None)
 }
 
-fn add_controller(
+pub(super) fn add_controller(
     bus: &Bus,
     epoch: CanonicalUuid,
     name: &str,
@@ -183,6 +183,7 @@ fn operator_selection_releases_outputs_and_leaves_a_held_design_open() {
         wire::TaskIntent::Design,
         None,
     );
+    group_design(&bus, epoch, &controller);
     claim_task(
         &bus,
         epoch,
@@ -817,26 +818,7 @@ fn move_design(
     design: TaskStamp,
     to: Option<&RoomAuthorityStamp>,
 ) {
-    let revision = bus
-        .read(|read| read.group_partition())
-        .expect("partition reads")
-        .map_or(0, |head| head.body().revision);
-    assert_committed(issue(
-        bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::WorkingGroupMove,
-        vec![
-            Witness::Group { revision },
-            Witness::Existence {
-                task: design.clone(),
-            },
-        ],
-        &WorkingGroupMove {
-            design,
-            to: to.cloned(),
-        },
-    ));
+    assert_committed(move_design_now(bus, epoch, &design, to));
 }
 
 fn engagement(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> Option<Seq> {
@@ -1171,6 +1153,7 @@ fn next_work_offers_a_plan_released_task_whose_open_design_is_off_the_frontier()
             force_claimed: false,
         },
     ));
+    group_design(&bus, epoch, &design);
     claim_task(&bus, epoch, &seats[0], &planner, &design);
 
     let worker = Actor::Lane(seats[1].lane);

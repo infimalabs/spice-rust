@@ -604,6 +604,12 @@ impl TaskFacts {
         self.indexes.grouped_designs.iter()
     }
 
+    /// Whether the current working-group partition holds `task`.
+    #[must_use]
+    pub fn grouped(&self, task: &journal::crossing::TaskStamp) -> bool {
+        self.indexes.grouped_designs.contains(task)
+    }
+
     fn retain_allocation_origins(&mut self, frontier: &[journal::TaskHeads]) {
         let live = frontier
             .iter()

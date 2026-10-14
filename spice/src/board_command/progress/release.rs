@@ -41,7 +41,8 @@ fn release_transition(
         projects,
     )
     .expect("releasing a claim preserves a valid task entry")
-    .with_explicit_release(true);
+    .with_explicit_release(true)
+    .with_grouped(entry.grouped());
     Ok(ReleaseTransition {
         post,
         claimed: claim.claimed,

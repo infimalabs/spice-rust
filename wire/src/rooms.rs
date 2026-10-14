@@ -88,8 +88,11 @@ impl RoomAuthorityStamp {
     }
 }
 
-/// Canonical command attribution for every working-group partition change:
-/// the partition is one authority, whatever group a change touches.
+/// Canonical command attribution for working-group partition changes: the
+/// partition is one authority, whatever group a change touches. A move that
+/// takes a Design out of every group while its room has coordination or a
+/// lane holder to withdraw commits under that Design's task origin instead,
+/// so the withdrawal it records cites the room's own steering and claim.
 #[must_use]
 pub fn working_group_origin() -> Origin {
     "group:partition"

@@ -119,29 +119,103 @@ impl<'a> wire::grouping::Kind for DesignKind<'a> {
 
 /// Move one design into a group, founding the group when no group holds that
 /// identity, or out of every group; a group its last design leaves ends.
-pub(super) fn move_working_group(
+///
+/// A Design that leaves every group stands passive. The same write withdraws
+/// its room's unanswered coordination and asks the lane holding it to
+/// checkpoint and free; the returned lane is the one asked to park.
+pub(crate) fn move_working_group(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     request: &WorkingGroupMove,
-) -> Outcome<CommandAnswer> {
+    config: &steer::Config,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> (Outcome<CommandAnswer>, Option<wire::CanonicalUuid>) {
     let design = request.design.clone();
     let (current, head) =
         match bus.read(move |read| Ok((current_partition(read)?, read.task_head(&design)?))) {
             Ok(observed) => observed,
-            Err(error) => return store_fault("group::read-unavailable", &error.to_string()),
+            Err(error) => {
+                return (
+                    store_fault("group::read-unavailable", &error.to_string()),
+                    None,
+                );
+            }
         };
     let revision = match next_revision(command, current.revision) {
         Ok(revision) => revision,
-        Err(outcome) => return outcome,
+        Err(outcome) => return (outcome, None),
     };
     let Some(head) = head else {
-        return refusal(
+        let missing = refusal(
             "group::design-missing",
             Some(request.design.to_string()),
             "read the board and retry with a current Design task",
         );
+        return (missing, None);
     };
     let task = head.body();
+    let (fact, status) = match moved_fact(&current, task, request, revision) {
+        Ok(moved) => moved,
+        Err(outcome) => return (outcome, None),
+    };
+    let deactivation = if fact.to.is_none() {
+        let handle = TaskHandle::for_project(&task.project, &task.born);
+        match Deactivation::read(bus, &handle, projects, allocation) {
+            Ok(deactivation) => deactivation,
+            Err(outcome) => return (outcome, None),
+        }
+    } else {
+        None
+    };
+    let origin = match deactivation.as_ref().map(Deactivation::origin).transpose() {
+        Ok(origin) => origin.unwrap_or_else(working_group_origin),
+        Err(outcome) => return (outcome, None),
+    };
+    // The statement witness keeps a concurrent intent edit from slipping a
+    // withdrawn Design into a group. Group membership changes organization
+    // only; execution authorization is an explicit preparation decision.
+    let witnesses = vec![Witness::Task {
+        task: task.born.clone(),
+        head: head.position(),
+    }];
+    let mut parked = None;
+    let outcome = change_partition(
+        bus,
+        command,
+        origin,
+        revision,
+        status,
+        witnesses,
+        |write, at| {
+            write
+                .fact(fact, FactCause::Root)
+                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))?;
+            if let Some(deactivation) = deactivation {
+                parked = deactivation.stage(bus, command, config, write, at)?;
+            }
+            Ok(())
+        },
+        request.clone(),
+    );
+    let committed = matches!(
+        &outcome,
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(_),
+            ..
+        })
+    );
+    (outcome, parked.filter(|_| committed))
+}
+
+/// The move fact and change status `request` makes of `current`, refusing a
+/// non-Design, an unchanged standing, or a full group.
+fn moved_fact(
+    current: &WorkingGroupPartition,
+    task: &wire::TaskHead,
+    request: &WorkingGroupMove,
+    revision: u64,
+) -> Result<(WorkingGroupMoved, WorkingGroupChangeStatus), Outcome<CommandAnswer>> {
     let kind = DesignKind {
         admitted: (task.intent == Some(wire::TaskIntent::Design)).then_some(&request.design),
     };
@@ -149,28 +223,25 @@ pub(super) fn move_working_group(
         .to
         .as_ref()
         .map_or(Destination::Ungrouped, Destination::Group);
-    let designs = match designs(&current) {
-        Ok(designs) => designs,
-        Err(outcome) => return outcome,
-    };
+    let designs = designs(current)?;
     let (next, moved) = match designs.apply_move(&kind, &request.design, destination) {
         Ok(moved) => moved,
         Err(GroupingError::NotAdmitted(_)) => {
-            return refusal(
+            return Err(refusal(
                 "group::design-only",
                 Some(TaskHandle::for_project(&task.project, &task.born).to_string()),
                 "a working group holds only Design tasks; choose a Design or declare this \
                  task's Design intent",
-            );
+            ));
         }
         Err(GroupingError::Unchanged) => {
-            return refusal(
+            return Err(refusal(
                 "group::design-unchanged",
                 Some(request.design.to_string()),
                 "the design already stands there; drop it on another group or out of its group",
-            );
+            ));
         }
-        Err(other) => return grouping_refusal(other),
+        Err(other) => return Err(grouping_refusal(other)),
     };
     let ended = moved.from.is_some_and(|from| !next.holds(from));
     let fact = WorkingGroupMoved {
@@ -184,22 +255,7 @@ pub(super) fn move_working_group(
     } else {
         WorkingGroupChangeStatus::Moved
     };
-    // The statement witness keeps a concurrent intent edit from slipping a
-    // withdrawn Design into a group. Group membership changes organization
-    // only; execution authorization is an explicit preparation decision.
-    let witnesses = vec![Witness::Task {
-        task: task.born.clone(),
-        head: head.position(),
-    }];
-    change_partition(
-        bus,
-        command,
-        revision,
-        status,
-        witnesses,
-        |write| write.fact(fact, FactCause::Root),
-        request.clone(),
-    )
+    Ok((fact, status))
 }
 
 /// Restate the whole partition: group order, designs per group, and design
@@ -240,10 +296,16 @@ pub(super) fn arrange_working_groups(
     change_partition(
         bus,
         command,
+        working_group_origin(),
         revision,
         WorkingGroupChangeStatus::Arranged,
         Vec::new(),
-        |write| write.fact(fact, FactCause::Root),
+        |write, _| {
+            write
+                .fact(fact, FactCause::Root)
+                .map(drop)
+                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))
+        },
         request.clone(),
     )
 }
@@ -356,30 +418,36 @@ fn arrangement_refusal(error: DesignError<'_>) -> Outcome<CommandAnswer> {
     refusal(reason, Some(observed), detail)
 }
 
+/// Commit one partition change under `origin`: `stage` appends the change's
+/// facts to a write guarded by the command's witnesses and `witnesses`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one partition change owns its origin, witnesses, staging, and receipt"
+)]
 fn change_partition<F, B>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
+    origin: wire::Origin,
     revision: u64,
     status: WorkingGroupChangeStatus,
     witnesses: Vec<Witness>,
-    append: F,
+    stage: F,
     body: B,
 ) -> Outcome<CommandAnswer>
 where
-    F: FnOnce(&mut JournalWrite) -> Result<PendingFact, journal::BuildError>,
+    F: FnOnce(&mut JournalWrite, Instant) -> Result<(), Outcome<CommandAnswer>>,
     B: serde::Serialize,
 {
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
     };
-    let origin = working_group_origin();
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     let mut expected = command.expected().to_vec();
     expected.extend(witnesses);
     guard(&mut write, expected);
-    if let Err(error) = append(&mut write) {
-        return store_fault("group::fact-invalid", &error.to_string());
+    if let Err(outcome) = stage(&mut write, at) {
+        return outcome;
     }
     let answer = WorkingGroupChange { revision, status };
     if let Err(error) =

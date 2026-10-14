@@ -427,7 +427,7 @@ fn file_unfiled(
         entry.lease().cloned(),
         projects,
     ) {
-        Ok(post) => post,
+        Ok(post) => post.with_grouped(entry.grouped()),
         Err(error) => {
             return refusal(
                 "task::filing-refused",
@@ -575,7 +575,8 @@ fn deferral_transition(
                     Some(error.to_string()),
                     "wake a task into a valid pending state",
                 )
-            })?,
+            })?
+            .with_grouped(entry.grouped()),
         )
     } else {
         None

@@ -105,6 +105,8 @@ task handles instead.
 | Designs per working group | 6, as lanes per team | `group::design-limit`: move one out or choose another group |
 | Group membership | Design tasks only | `group::design-only`: choose a Design or declare its Design intent |
 | Partition revision | the one read | `group::partition-moved`: read the groups and retry |
+| Design possession | inside a working group | `claim::design-passive` on capture, steal, or recovery and `room::design-passive` on coordination: `spice group move DESIGN --to GROUP` or `--new` |
+| Deactivating a held Design | a holder address proved by its seat or its claimed occupant's birth | `room::holder-address-unavailable`: the move records nothing; free or reseat the holder and retry |
 | Automated resumes per rule | 1 through 8 | `room::auto-resume-out-of-range` |
 | Scoped request field | 2048 bytes | `room::coordination-scope-too-large` |
 | Live coordination per room | one request | `room::coordination-live`: retire or put aside the unanswered request |

@@ -462,7 +462,8 @@ owns each rule summarized here.
   authorization.
 - **Coordination.** `spice room start|resume HANDLE ADDRESS` sends one scoped
   operator direction naming the criterion, contribution, and stop condition;
-  the recipient acquires the anchor through ordinary native possession.
+  the recipient acquires the anchor through ordinary native possession. A
+  passive Design refuses coordination (`room::design-passive`).
   `spice room put-aside` cancels unanswered coordination and asks any holder to
   checkpoint or free, without freeing it. `spice room status` reads the
   standing.
@@ -510,7 +511,7 @@ owns each rule summarized here.
   [execution authorization](invariants/identity.md#work-execution-authorization-is-a-designs-exact-selection)
   admits the operator's exact accepted selection, which releases those outputs
   and leaves the Design open. Selection belongs to the operator; the Design's
-  holders do not infer it. Working-group membership changes organization only.
+  holders do not infer it. Working-group membership grants no authorization.
   A collapse authorizes nothing and keeps every output gated.
 
   A Plan is an ordinary reviewed task constructor. It creates its
@@ -528,6 +529,22 @@ owns each rule summarized here.
   is shared repository organization read by `spice group list` and changed only
   by `spice group move` and `spice group arrange`. Open consoles, their order,
   drafts, and focus are this browser's foreground and are never shared.
+- **Design standing.** An open Design inside a working group is
+  [active](invariants/identity.md#work-working-group-standing-makes-a-design-active-or-passive):
+  the allocator offers it and capture, steal, and room coordination may reach
+  it. Outside every group it is passive, and every one of those paths refuses
+  (`claim::design-passive`, `room::design-passive`). The operator journey is
+  `spice group move DESIGN --to GROUP` or `--new` to activate it and a bare
+  `spice group move DESIGN` to take it out of every group. Moving out an
+  unheld Design makes it passive at once. Moving out a Design a lane holds
+  also withdraws its room's unanswered
+  coordination and sends that holder one stop direction, queued for the lane's
+  next seat when it is vacant. The lane journey is the same as for a put
+  aside: the holder checkpoints and runs ordinary `spice task free DESIGN`,
+  which parks unpublished commits and dirty work under the task; its claim
+  stays authoritative until then, and the parked Design is offered to no lane
+  while it stays passive. Moving it back into a group makes it eligible again
+  with its room, candidates, outputs, history, and authorization unchanged.
 - **OOPS grooming.** `spice room post DESIGN --report REPORT... --disposition
   duplicate|no-work|deferred-for-later|covered|proposed-work --cause TEXT
   [--exceptions TEXT] [--uncertainty TEXT]` records, in an open Design's room,
@@ -559,11 +576,12 @@ refusals and repairs, are
   progress or approval.
 - No timed deferral coordinates a room, and gating adds no task status.
 - A working group has no name, is never empty, and is never removed as an
-  object; it holds no lanes, claims, or read or work authority. A grouped
-  design that is deleted or loses its Design intent stays in its group,
-  rendered unavailable.
-- Put aside never force-frees a claim or touches child claims and unrelated
-  direction.
+  object; it holds no lanes, claims, or read authority, and its only work
+  authority is the active standing of the Designs it holds. A grouped design
+  that is deleted or loses its Design intent stays in its group, rendered
+  unavailable.
+- Put aside and deactivation never force-free a claim or touch child claims
+  and unrelated direction.
 
 ---
 
