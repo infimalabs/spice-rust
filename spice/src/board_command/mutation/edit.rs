@@ -263,13 +263,13 @@ fn corrected_statement(
             )
         })?;
     }
-    // A Design and a probe each walk one phase: judge the pair this edit
-    // leaves, so an intent and a Draft route edited together are checked as
-    // they will stand.
+    // A Design walks one phase: judge the pair this edit leaves, so an intent
+    // and a Draft route edited together are checked as they will stand.
     if edit.intent.is_some() || flow.is_some() {
-        let flow = flow.as_deref().unwrap_or(&entry.workflow().flow);
-        planning::admit_design_flow(statement.intent, flow)?;
-        planning::admit_probe_flow(statement.intent, flow)?;
+        planning::admit_design_flow(
+            statement.intent,
+            flow.as_deref().unwrap_or(&entry.workflow().flow),
+        )?;
     }
     Ok((statement, flow))
 }

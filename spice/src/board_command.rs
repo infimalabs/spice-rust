@@ -65,7 +65,7 @@ fn require_no_planning_implementation(
                     "active task={task}; phase={phase}; refused action={action}"
                 )),
                 concat!(
-                    "this phase holds no commit authority: record planning or probe findings ",
+                    "this phase holds no commit authority: record planning or gather findings ",
                     "with task add, task modify, task depends, task note, or task artifact add; ",
                     "only a claimed implementation phase changes repository history",
                 ),

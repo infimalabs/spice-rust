@@ -148,10 +148,10 @@ pub fn deliverable(phase: &Phase) -> Option<&'static str> {
             "board state is the deliverable: make the execution contract explicit or \
              decompose it into accepted children; do not edit or commit repository files",
         ),
-        "probe" => Some(
+        "gather" => Some(
             "evidence is the deliverable: try the idea, then record what it showed as task \
-             notes or retained artifacts a Design proposal can cite; a probe holds no commit \
-             authority and lands nothing",
+             notes or retained artifacts a Design proposal can cite; a gather task holds no \
+             commit authority and lands nothing",
         ),
         "todo" => Some(
             "repository work is the deliverable: implement the acceptance this task \

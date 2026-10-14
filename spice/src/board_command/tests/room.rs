@@ -13,7 +13,7 @@ use wire::rooms::{
 
 mod automation;
 mod design_standing;
-mod probe;
+mod gather;
 
 fn room_projects() -> ProjectPolicy {
     ProjectPolicy::new(

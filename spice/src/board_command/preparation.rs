@@ -65,7 +65,7 @@ pub(super) fn require_no_pending_controlled_outputs(
 }
 
 /// Refuse candidate selection authority over anything but a Design, and any
-/// probe offered as an output: a candidate cites a probe's evidence instead.
+/// gather task offered as an output: a candidate cites its evidence instead.
 fn require_design(
     bus: &Bus,
     controller: &TaskStamp,
@@ -77,13 +77,16 @@ fn require_design(
     design_controller(task_heads(&snapshot, controller)?, controller)?;
     for output in outputs {
         if let Some(heads) = snapshot.task_heads(output)
-            && board::probe_flow(&heads.workflow().body().flow)
+            && board::gather_task(
+                heads.statement().body().intent,
+                &heads.workflow().body().flow,
+            )
         {
             return Err(refusal(
-                "preparation::probe-output",
+                "preparation::gather-output",
                 Some(output.to_string()),
-                "a probe lands nothing and is never an output; cite its notes or artifacts as \
-                 candidate references instead",
+                "a gather task lands nothing and is never an output; cite its notes or artifacts \
+                 as candidate references instead",
             ));
         }
     }
@@ -508,7 +511,10 @@ fn output_is_authorizable(
         && heads.workflow().body().completion.is_none()
         && !active_claim(heads)
         && heads.statement().body().authorization.is_none()
-        && !board::probe_flow(&heads.workflow().body().flow)
+        && !board::gather_task(
+            heads.statement().body().intent,
+            &heads.workflow().body().flow,
+        )
         && heads.statement().body().engagement.is_none()
         && heads
             .statement()

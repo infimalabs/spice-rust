@@ -36,26 +36,6 @@ fn constructs_work(phase: &str) -> bool {
     matches!(phase, "plan" | DESIGN_PHASE)
 }
 
-/// Refuse a probe whose route is anything but its one `probe` phase, or that
-/// also declares a planning intent: a probe is ordinary evidence work.
-pub(super) fn admit_probe_flow(
-    intent: Option<wire::TaskIntent>,
-    flow: &[wire::Phase],
-) -> Result<(), Outcome<CommandAnswer>> {
-    if !board::probe_flow(flow)
-        || (intent.is_none() && matches!(flow, [phase] if phase.as_str() == board::PROBE_PHASE))
-    {
-        return Ok(());
-    }
-    let flow = flow.iter().map(wire::Phase::as_str).collect::<Vec<_>>();
-    Err(refusal(
-        "task::probe-flow",
-        Some(flow.join(",")),
-        "a probe is an ordinary task walking the one `probe` phase; omit --intent and every \
-         other phase",
-    ))
-}
-
 /// The Design a new statement was constructed directly under, if any.
 pub(super) fn constructing_design<'a>(
     board: &'a BoardAnswer,
@@ -71,13 +51,14 @@ pub(super) fn constructing_design<'a>(
     })
 }
 
-/// Refuse a probe outside an open Design the working-group partition holds:
-/// a probe exists only to gather evidence for an active Design.
-pub(super) fn admit_probe_design(
+/// Refuse a gather task outside an open Design the working-group partition
+/// holds: it exists only to gather evidence for an active Design.
+pub(super) fn admit_gather_design(
+    intent: Option<wire::TaskIntent>,
     flow: &[wire::Phase],
     design: Option<&BoardTask>,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    if !board::probe_flow(flow) {
+    if !board::gather_task(intent, flow) {
         return Ok(());
     }
     if design.is_some_and(|design| {
@@ -88,10 +69,10 @@ pub(super) fn admit_probe_design(
         return Ok(());
     }
     Err(refusal(
-        "task::probe-design",
+        "task::gather-design",
         design.map(|design| design.statement.body.handle.to_string()),
-        "create a probe directly under an open Design in a working group, while holding it \
-         or by naming it with --preparation",
+        "create a gather task directly under an open Design in a working group, while holding \
+         it or by naming it with --preparation",
     ))
 }
 
@@ -167,8 +148,8 @@ pub(super) fn preparation_parent<'a>(
     .then_some(parent))
 }
 
-/// Bind a created statement to its planning parent, then admit a probe only
-/// directly under an active open Design.
+/// Bind a created statement to its planning parent, then admit a gather task
+/// only directly under an active open Design.
 pub(super) fn admit_preparation(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
@@ -185,7 +166,11 @@ pub(super) fn admit_preparation(
         }
         bind_preparation(&snapshot.answer, command, parent, statement)?;
     }
-    admit_probe_design(flow, constructing_design(&snapshot.answer, statement))
+    admit_gather_design(
+        statement.intent,
+        flow,
+        constructing_design(&snapshot.answer, statement),
+    )
 }
 
 /// Bind a new statement to its pending planning parent under current policy.

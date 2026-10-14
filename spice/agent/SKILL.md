@@ -160,8 +160,8 @@ whose omission names the exact continuation.
   controller-to-output edge. Origin creates no dependency; closure, deletion,
   a finding, or a working-group move releases or authorizes nothing. A stop
   direction for a held Design means checkpoint and free. To try an idea for an
-  active Design, create a `--flow probe` task under it: a probe lands nothing,
-  and candidates cite its notes and artifacts, never select it.
+  active Design, create a `--flow gather` task under it: a gather task lands
+  nothing, and candidates cite its notes and artifacts, never select it.
 - Keep work incremental and validated. Commit only while holding the matching
   claim. Git synchronization belongs to allocation and completion: never pull
   or push during implementation or alter harness-added attribution trailers.

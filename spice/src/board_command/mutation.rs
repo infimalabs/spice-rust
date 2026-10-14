@@ -721,7 +721,6 @@ fn task_flow_for_dependencies(
     };
     let mut flow = task_flow(requested, &add.acceptance)?;
     planning::admit_design_flow(add.intent, &flow)?;
-    planning::admit_probe_flow(add.intent, &flow)?;
     if (captures_implementation(command) || recovers_implementation(command))
         && (add.intent.is_some() || gate::lacks_commit_authority(flow[0].as_str()))
     {

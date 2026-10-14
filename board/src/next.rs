@@ -42,7 +42,7 @@ impl ResolvedTasks {
     }
 
     /// Record that the working-group partition holds `task`. Only a known
-    /// Design reads as active; probes under it run while it stays open.
+    /// Design reads as active; gather tasks under it run while it stays open.
     pub fn group(&mut self, task: TaskStamp) {
         self.active_designs.insert(task);
     }
@@ -101,7 +101,7 @@ impl ResolvedTasks {
     /// controlled by a Design stays there until the same control predicate used
     /// by allocation releases it. This includes ordinary outputs of an
     /// authorized Plan once both that Plan and its Design conclude positively.
-    /// A probe is Design-side evidence work that never carries an
+    /// A gather task is Design-side evidence work that never carries an
     /// authorization, so it always stays here.
     #[must_use]
     pub fn speculative_design_work(&self, statement: &wire::TaskHead) -> bool {
@@ -144,19 +144,22 @@ impl SelectionIndex {
     }
 }
 
-/// The phase a probe walks: evidence-only work under an open, active Design.
-pub const PROBE_PHASE: &str = "probe";
+/// The phase a gather task walks: evidence-only work under an open, active
+/// Design.
+const GATHER_PHASE: &str = "gather";
 
-/// Whether `flow` routes a probe. A probe holds no commit authority, lands
-/// nothing, and is never a preparation output awaiting selection.
+/// Whether a task with `intent` and `flow` is a gather task: no declared
+/// intent and the one `gather` phase. It holds no commit authority, lands
+/// nothing, and is never a preparation output awaiting selection; any other
+/// route under a Design is an ordinary output.
 #[must_use]
-pub fn probe_flow(flow: &[wire::Phase]) -> bool {
-    flow.iter().any(|phase| phase.as_str() == PROBE_PHASE)
+pub fn gather_task(intent: Option<TaskIntent>, flow: &[wire::Phase]) -> bool {
+    intent.is_none() && matches!(flow, [phase] if phase.as_str() == GATHER_PHASE)
 }
 
 /// The preparation whose selection one live output still lacks: an output its
 /// preparation constructed directly that is pending without an execution
-/// authorization. A probe is evidence, never an output.
+/// authorization. A gather task is evidence, never an output.
 ///
 /// A Design cannot be concluded done while it owns such an output; only the
 /// operator's selection, or closing or deleting the output, discharges it.
@@ -170,7 +173,7 @@ pub fn unselected_output_of<'a>(
         && workflow.completion.is_none()
         && statement.authorization.is_none()
         && preparation.construction == statement.born
-        && !probe_flow(&workflow.flow))
+        && !gather_task(statement.intent, &workflow.flow))
     .then_some(&preparation.parent)
 }
 
@@ -857,7 +860,7 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
         .all(|dependency| completed.settled(dependency))
         && control_satisfied(
             entry.statement(),
-            probe_flow(&entry.workflow().flow),
+            gather_task(entry.statement().intent, &entry.workflow().flow),
             completed,
         )
 }
@@ -870,13 +873,13 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
 /// operator closure, releases it. Retained pre-cutover group markers are
 /// unsupported evidence and never participate in eligibility. A preparation a
 /// Plan constructs runs alongside it. An unknown preparation leaves the output
-/// gated. A probe needs no authorization: it runs exactly while the Design
-/// that constructed it is open and grouped.
-fn control_satisfied(statement: &wire::TaskHead, probe: bool, completed: &ResolvedTasks) -> bool {
+/// gated. A gather task needs no authorization: it runs exactly while the
+/// Design that constructed it is open and grouped.
+fn control_satisfied(statement: &wire::TaskHead, gather: bool, completed: &ResolvedTasks) -> bool {
     let Some(preparation) = &statement.preparation else {
-        return !probe;
+        return !gather;
     };
-    if probe {
+    if gather {
         return completed.open_active_design(&preparation.parent);
     }
     if preparation.construction != statement.born {

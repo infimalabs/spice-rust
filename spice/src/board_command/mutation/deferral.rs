@@ -263,8 +263,8 @@ fn draft_filing(
         planning::bind_preparation(&snapshot.answer, command, parent, statement)?;
     }
     planning::admit_design_flow(statement.intent, &workflow.flow)?;
-    planning::admit_probe_flow(statement.intent, &workflow.flow)?;
-    planning::admit_probe_design(
+    planning::admit_gather_design(
+        statement.intent,
         &workflow.flow,
         planning::constructing_design(&snapshot.answer, statement),
     )?;

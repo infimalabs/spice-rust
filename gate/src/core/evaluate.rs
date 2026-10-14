@@ -148,12 +148,12 @@ fn evaluate_merge(evidence: &MergeIntegrityEvidence) -> (CoreStanding, String) {
 /// Whether an active claim in `phase` forbids task-owned implementation history.
 ///
 /// This is the one commit-authority deny-list. Only `plan`, `design`, and
-/// `probe` refuse commits, captures, and completions that would publish
+/// `gather` refuse commits, captures, and completions that would publish
 /// repository work; every other phase, named or not, keeps its native
 /// permission, so the board's phase vocabulary stays open.
 #[must_use]
 pub fn lacks_commit_authority(phase: &str) -> bool {
-    matches!(phase, "plan" | "design" | "probe")
+    matches!(phase, "plan" | "design" | "gather")
 }
 
 fn evaluate_planning_phase(evidence: &PlanningPhaseEvidence) -> (CoreStanding, String) {

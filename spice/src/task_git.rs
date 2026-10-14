@@ -840,7 +840,7 @@ fn planning_implementation_refusal(detail: impl Into<String>) -> Error {
         "git::planning-implementation",
         detail,
         concat!(
-            "this phase holds no commit authority: record planning or probe findings with task ",
+            "this phase holds no commit authority: record planning or gather findings with task ",
             "add, task modify, task depends, task note, or task artifact add; restore the lane ",
             "to its clean claim-opening commit and complete the phase, and only a claimed ",
             "implementation phase changes repository history",
