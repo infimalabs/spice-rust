@@ -138,9 +138,15 @@ holds it: group membership decides activity only for an open Design. The
 command bar's Design rail names how many open Designs each stem holds active
 and passive without dimming or changing the tab edge for passive standing.
 Design tabs share the global execution tabs' structure and interactions, with
-their count before the stem and their whole surface flavored by the palette's
-final accent rather than its first. In the work overview and on dependency
-cards a passive Design reads **Passive**, waiting on the operator.
+their count before the stem and their whole surface bound to the palette's
+final accent rather than its first. This uses the object-level base-flavor
+contract: an unselected object is an exact identity over the existing
+green-flavored roles, while a selected object rebuilds control, ink, muted,
+line, ground, and focus roles from one arbitrary base color and achromatic
+anchors. Accent slots are convenient inputs to that contract, not its boundary;
+no old green is tinted underneath the selected base. In the
+work overview and on dependency cards a passive Design reads **Passive**,
+waiting on the operator.
 
 ## Concluding a Design
 

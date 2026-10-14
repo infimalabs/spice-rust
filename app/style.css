@@ -90,7 +90,6 @@
   );
   /* A single image alone in a lane message card; task cards cap at the same size. */
   --mosaic-image-large-size: 15.75rem;
-  /* Slot 0 is the product green itself, in both themes. */
   --accent-0: var(--accent);
   --accent-1: #495dac;
   --accent-2: #8b5f00;
@@ -100,6 +99,15 @@
   /* Surfaces that ask for the end of the configured palette never name its
      current colour or ordinal themselves. */
   --accent-final: var(--accent-5);
+  /* Object-level surface roles. The inherited first base is an exact identity;
+     an individual object bearing a base flavor replaces them together. */
+  --app-base-accent: var(--accent-0);
+  --app-base-control: var(--control);
+  --app-base-ink: var(--ink);
+  --app-base-muted: var(--muted);
+  --app-base-line: var(--line);
+  --app-base-ground: var(--page);
+  --app-base-focus: var(--muted);
   /* The speaker accent of the operator and of the system itself: any card or
      quote whose speaker holds no lane accent slot wears it. */
   --accent-neutral: var(--ink);
@@ -188,16 +196,6 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 /* Shared application materials. Placement remains with each surface; these
    classes own the visual recipe and semantic state exactly once. */
 .app-horn-tabs {
-  /* A flavor shifts one component's semantic surface roles together. Tabs use
-     the product's first accent by default; an enclosing rail may select any
-     other base without growing a parallel color recipe. */
-  --app-flavor-base: var(--accent-0);
-  --app-flavor-control: color-mix(in srgb, var(--app-flavor-base) 3%, var(--control));
-  --app-flavor-ink: color-mix(in srgb, var(--app-flavor-base) 12%, var(--ink));
-  --app-flavor-muted: color-mix(in srgb, var(--app-flavor-base) 18%, var(--muted));
-  --app-flavor-line: color-mix(in srgb, var(--app-flavor-base) 24%, var(--line));
-  --app-flavor-ground: color-mix(in srgb, var(--app-flavor-base) 3%, var(--page));
-  --app-flavor-focus: color-mix(in srgb, var(--app-flavor-base) 58%, var(--muted));
   display: flex;
   align-items: flex-end;
   gap: var(--mosaic-gap);
@@ -207,7 +205,7 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   scrollbar-width: none;
 }
 .app-horn-tab {
-  --app-horn-tab-tint: var(--app-flavor-muted);
+  --app-horn-tab-tint: var(--app-base-muted);
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -216,15 +214,15 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   padding: 0 var(--app-horn-tab-inset);
   overflow: clip;
   border: 0;
-  border-inline: var(--quote-rail) solid var(--app-flavor-line);
-  background: var(--app-flavor-control);
-  color: var(--app-flavor-muted);
+  border-inline: var(--quote-rail) solid var(--app-base-line);
+  background: var(--app-base-control);
+  color: var(--app-base-muted);
   font: 500 var(--app-type-status)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .app-horn-tab--down { border-radius: 0 0 var(--app-radius-card) var(--app-radius-card); }
 .app-horn-tab--up { border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
 .app-horn-tab--wide { border-inline-width: var(--message-rail); }
-.app-horn-tab__label { color: var(--app-flavor-muted); opacity: .72; }
+.app-horn-tab__label { color: var(--app-base-muted); opacity: .72; }
 .app-horn-tab--group { gap: 0; padding: 0; }
 .app-horn-tab--group > button {
   align-self: stretch;
@@ -256,33 +254,33 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   text-align: center;
 }
 :is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button) {
-  background: color-mix(in srgb, var(--app-horn-tab-tint) 5%, var(--app-flavor-control));
-  color: var(--app-flavor-muted);
+  background: color-mix(in srgb, var(--app-horn-tab-tint) 5%, var(--app-base-control));
+  color: var(--app-base-muted);
 }
 :is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button):hover {
-  background: color-mix(in srgb, var(--app-horn-tab-tint) 10%, var(--app-flavor-control));
+  background: color-mix(in srgb, var(--app-horn-tab-tint) 10%, var(--app-base-control));
 }
-/* Hover strengthens every horn tab's rails within the rail's base flavor. */
-.app-horn-tab:hover { border-color: color-mix(in srgb, var(--app-flavor-muted) 35%, var(--app-flavor-line)); }
+/* Hover strengthens every horn tab's rails within the object's base flavor. */
+.app-horn-tab:hover { border-color: color-mix(in srgb, var(--app-base-muted) 35%, var(--app-base-line)); }
 .app-horn-tab__handle.dormant {
-  color: color-mix(in srgb, var(--app-flavor-muted) 62%, transparent);
+  color: color-mix(in srgb, var(--app-base-muted) 62%, transparent);
 }
 /* A local handle in its work's accent: tinted text and background always, with
-   rails supplied by the enclosing flavor. */
+   rails supplied by the enclosing base. */
 .app-horn-tab__handle[data-accent] {
   --app-horn-tab-tint: var(--accent-slot);
-  color: color-mix(in srgb, var(--accent-slot) 55%, var(--app-flavor-ink));
+  color: color-mix(in srgb, var(--accent-slot) 55%, var(--app-base-ink));
 }
 .app-horn-tabs :focus-visible {
-  outline: var(--app-focus-ring-width) solid var(--app-flavor-focus);
+  outline: var(--app-focus-ring-width) solid var(--app-base-focus);
   outline-offset: -2px;
 }
 .app-count-badge {
   padding: 0 5px;
   border-radius: var(--app-radius-pill);
-  background: var(--app-flavor-muted, var(--muted));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-flavor-ground, var(--page)) 24%, transparent);
-  color: var(--app-flavor-ground, var(--page));
+  background: var(--app-base-muted);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-base-ground) 24%, transparent);
+  color: var(--app-base-ground);
   font-size: var(--app-type-badge);
 }
 
@@ -774,6 +772,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 [data-accent="3"] { --accent-slot: var(--accent-3); }
 [data-accent="4"] { --accent-slot: var(--accent-4); }
 [data-accent="5"] { --accent-slot: var(--accent-5); }
+
+/* Accent slots are convenient inputs, not the boundary of the base-flavor
+   contract. Any object may instead provide its own --app-base-accent. */
+[data-base-flavor][data-accent] {
+  --app-base-accent: var(--accent-slot);
+}
+
+/* Rebuild every semantic role from its achromatic anchor and one object-owned
+   base. No hue from the product-green defaults can leak into another flavor.
+   Accent zero is the exact identity because the defaults already wear it. */
+[data-base-flavor]:not([data-base-flavor="identity"]):not([data-accent="0"]) {
+  --app-base-control: color-mix(in oklch, var(--app-base-accent) 3%, oklch(from var(--control) l 0 none));
+  --app-base-ink: color-mix(in oklch, var(--app-base-accent) 12%, oklch(from var(--ink) l 0 none));
+  --app-base-muted: color-mix(in oklch, var(--app-base-accent) 18%, oklch(from var(--muted) l 0 none));
+  --app-base-line: color-mix(in oklch, var(--app-base-accent) 24%, oklch(from var(--line) l 0 none));
+  --app-base-ground: color-mix(in oklch, var(--app-base-accent) 3%, oklch(from var(--page) l 0 none));
+  --app-base-focus: color-mix(in oklch, var(--app-base-accent) 58%, oklch(from var(--muted) l 0 none));
+}
 
 
 

@@ -311,6 +311,8 @@ fn render_global_work_rail(
     navigate: &Callback<navigation::Intent>,
     rail: GlobalWorkRail,
 ) -> Html {
+    let base_accent =
+        matches!(rail, GlobalWorkRail::Design).then(|| (watchband::ACCENTS - 1).to_string());
     let scope = rail.scope();
     let groups = work
         .map(|work| work.stem_task_groups(&scope))
@@ -332,6 +334,8 @@ fn render_global_work_rail(
         <nav
             class={classes!("app-horn-tabs", rail.class())}
             aria-label={rail.aria_label()}
+            data-base-flavor={base_accent.as_ref().map(|_| "accent")}
+            data-accent={base_accent}
         >
             {total}
             {for groups.iter().map(|group| render_stem_pill(group, designs(group.tasks()), navigate, rail))}
