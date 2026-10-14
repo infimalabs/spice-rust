@@ -93,21 +93,30 @@ footprint that scrolls beyond it.
 ## Task blocker review
 
 Every task overview reserves one fixed-height status rail under its header. It
-counts only walls the operator must move: unsatisfied environmental
-requirements (trust grant, journal schema, appliance version) and dependency
-chains no agent can advance because a link is deferred, cyclic, closed without
-completing, or held by such a requirement. A dependency on work an agent can
-claim or is working is an ordinary wait and never counts. A walled selection
-pairs the danger-styled `!` with **Needs attention**; otherwise a quiet `✓`
-pairs with **Ready to proceed**, even while tasks wait on peers. Each review
-card names the task where its chain stops and why only the operator can move
-it. Both states share one geometry, and detail reads do not own the rail's
-data.
+counts every task on the board only the operator can move, whatever overview
+scope is selected: a Design awaiting the operator's selection of its outputs,
+whatever its standing or claim; a task whose unsatisfied environmental
+requirement (trust grant, journal schema, appliance version) needs the
+operator, unless that task is already set aside (closed, Draft, parked,
+deferred, or a passive Design); and the task where a held task's dependency
+chain stops because a link is deferred, parked, cyclic, closed without
+completing, passive, awaiting selection, or held by such a requirement. Each
+such task counts once, in board order, however many reasons or held tasks
+reach it. A dependency on work an agent can claim or is working is an ordinary
+wait and never counts. A waiting board pairs the danger-styled `!` with
+**Needs attention**; otherwise a quiet `✓` pairs with **Ready to proceed**,
+even while tasks wait on peers. Both states share one geometry, and detail
+reads do not own the rail's data; an item leaves on the board update that
+records the operator's act.
 
-**Review blockers** opens a sheet-local overlay with its own scroll range; the
-graph and details stay mounted and inert behind it. Focus moves to **Back to
-overview**, Escape closes the review before the overview, and closing the
-review returns focus to its launcher.
+**Next** opens the next waiting task's own overview in board order, stepping
+from the task the overview currently shows and wrapping after the last; it is
+disabled while nothing waits. **Review** opens a sheet-local overlay with its
+own scroll range; the graph and details stay mounted and inert behind it. Each
+review card names one waiting task, why only the operator can move it, and the
+held tasks behind it, with **Open task** closing the review on that task's
+overview. Focus moves to **Back to overview**, Escape closes the review before
+the overview, and closing the review returns focus to its launcher.
 
 Trust approval names one exact digest. A grant action exists only when the
 current board snapshot carries that digest as pended with worktree provenance.
