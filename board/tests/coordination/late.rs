@@ -818,7 +818,6 @@ fn oops_routes_friction_to_work_and_observations_to_notes_only() {
         "A duplicate table refuses every command",
         "tooling.manifest",
         &board::ProjectPolicy::new(
-            ["tooling".to_owned()],
             Vec::new(),
             dialect::PROJECT_MIN_DEPTH as u64,
             dialect::PROJECT_MAX_DEPTH as u64,

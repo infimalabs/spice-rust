@@ -258,19 +258,12 @@ impl JudgeConfig {
 /// Tracked metadata shared with the task scheduler.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TaskMetadata {
-    stems: Vec<String>,
     hidden_stems: Vec<String>,
     project_min_depth: u64,
     project_max_depth: u64,
 }
 
 impl TaskMetadata {
-    /// Additional public project stems in tracked declaration order.
-    #[must_use]
-    pub fn stems(&self) -> &[String] {
-        &self.stems
-    }
-
     /// Fully resolved hidden roots in declared order, without leading dots.
     #[must_use]
     pub fn hidden_stems(&self) -> &[String] {
@@ -281,7 +274,6 @@ impl TaskMetadata {
     #[must_use]
     pub fn project_policy(&self) -> board::ProjectPolicy {
         board::ProjectPolicy::new(
-            self.stems.clone(),
             self.hidden_stems.clone(),
             self.project_min_depth,
             self.project_max_depth,
@@ -304,7 +296,6 @@ impl TaskMetadata {
     fn migrated(hidden_additions: Vec<String>) -> Result<Self, board::ProjectPolicyError> {
         let defaults = Self::default();
         let projects = board::ProjectPolicy::new(
-            defaults.stems.clone(),
             hidden_additions,
             defaults.project_min_depth,
             defaults.project_max_depth,
@@ -319,7 +310,6 @@ impl TaskMetadata {
 impl Default for TaskMetadata {
     fn default() -> Self {
         Self {
-            stems: Vec::new(),
             hidden_stems: board::BUILTIN_HIDDEN_STEMS
                 .into_iter()
                 .map(str::to_owned)
@@ -333,8 +323,6 @@ impl Default for TaskMetadata {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TaskMetadataInput {
-    #[serde(default, deserialize_with = "unique_names")]
-    stems: Vec<String>,
     #[serde(default)]
     hidden_stems: Vec<String>,
     #[serde(
@@ -362,14 +350,12 @@ impl<'de> Deserialize<'de> for TaskMetadata {
             )));
         }
         let projects = board::ProjectPolicy::new(
-            input.stems.clone(),
             input.hidden_stems,
             input.project_min_depth,
             input.project_max_depth,
         )
         .map_err(D::Error::custom)?;
         Ok(Self {
-            stems: input.stems,
             hidden_stems: projects.hidden_stems().to_vec(),
             project_min_depth: input.project_min_depth,
             project_max_depth: input.project_max_depth,

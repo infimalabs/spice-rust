@@ -162,8 +162,7 @@ impl EntryFixture {
             self.workflow.clone(),
             self.claim.clone(),
             self.lease.clone(),
-            &board::ProjectPolicy::new(["gate".to_owned()], Vec::new(), 2, 3)
-                .expect("fixture project policy"),
+            &board::ProjectPolicy::new(Vec::new(), 2, 3).expect("fixture project policy"),
         )
         .expect("fixture entry admits")
     }

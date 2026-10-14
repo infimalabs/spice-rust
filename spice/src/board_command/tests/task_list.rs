@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn default_task_list_selects_each_complete_actor_route_branch_only() {
+fn default_task_list_reads_every_public_root_and_only_its_own_hidden_rows() {
     let (root, bus, epoch, _) = fixture("task-list-actor-route", 0);
     let public = add_project(
         &bus,
@@ -30,22 +30,6 @@ fn default_task_list_selects_each_complete_actor_route_branch_only() {
         );
     }
     assert!(!listed.contains(excluded.as_str()), "{listed}");
-    assert!(listed.starts_with(concat!(
-        "scope actor-route filter ",
-        "( project:agent.operator.task or origin_thread.is:operator or ",
-        "( project:board or project:rim or project:serve or project:task ) )\n"
-    )));
-    let status = task_status(&answer).expect("planted actor-route rows validate");
-    assert!(status.lines().any(|line| line == "ready 3"), "{status}");
-    assert!(
-        status.lines().any(|line| {
-            line == concat!(
-                "filter ( project:agent.operator.task or origin_thread.is:operator or ",
-                "( project:board or project:rim or project:serve or project:task ) )"
-            )
-        }),
-        "{status}"
-    );
     clean(&root, bus);
 }
 
@@ -88,6 +72,33 @@ fn bare_task_list_applies_the_interactive_default_and_continuation() {
     clean(&root, bus);
 }
 
+fn route_row(
+    template: &BoardTask,
+    micros: i64,
+    project: &str,
+    hidden: bool,
+    origin_thread: &str,
+    title: &str,
+) -> BoardTask {
+    let mut row = template.clone();
+    row.statement.body.born = wire::TaskStamp::for_micros(micros).expect("fixture task stamp");
+    row.statement.body.project = project.to_owned();
+    row.statement.body.handle =
+        TaskHandle::for_project(&row.statement.body.project, &row.statement.body.born);
+    row.statement.body.provenance = "task:0000002z".parse().expect("fixture route provenance");
+    if hidden {
+        row.visibility = wire::intent::ProjectVisibility::Hidden {
+            stem: "sandbox".to_owned(),
+        };
+    }
+    row.origin_thread = origin_thread.to_owned();
+    row.presentation_title = title.to_owned();
+    row
+}
+
+/// Plant one row per route branch: public rows from another thread under a
+/// built-in and an arbitrary authored root, a hidden row on the actor's own
+/// thread, and a hidden row on another thread that the route must exclude.
 fn add_actor_route_rows(
     answer: &mut BoardAnswer,
     public: &TaskHandle,
@@ -99,52 +110,37 @@ fn add_actor_route_rows(
         .find(|task| task.statement.body.handle == *public)
         .expect("public route row")
         .origin_thread = "someone_else".to_owned();
-    let mut actor_private = template.clone();
-    actor_private.statement.body.born =
-        wire::TaskStamp::for_micros(8_002).expect("fixture task stamp");
-    actor_private.statement.body.project = answer.actor_route.project.clone();
-    actor_private.statement.body.handle = TaskHandle::for_project(
-        &actor_private.statement.body.project,
-        &actor_private.statement.body.born,
+    let own = answer.actor_route.origin_thread.clone();
+    let authored = route_row(
+        &template,
+        8_002,
+        "external.route",
+        false,
+        "someone_else",
+        "Authored root row",
     );
-    actor_private.statement.body.provenance = "task:0000002z"
-        .parse()
-        .expect("actor-private fixture origin");
-    actor_private.origin_thread = "someone_else".to_owned();
-    actor_private.presentation_title = "Actor-private route row".to_owned();
-
-    let mut origin_thread = template.clone();
-    origin_thread.statement.body.born =
-        wire::TaskStamp::for_micros(8_003).expect("fixture task stamp");
-    origin_thread.statement.body.project = "external.route".to_owned();
-    origin_thread.statement.body.handle = TaskHandle::for_project(
-        &origin_thread.statement.body.project,
-        &origin_thread.statement.body.born,
+    let own_hidden = route_row(
+        &template,
+        8_003,
+        ".sandbox.route",
+        true,
+        &own,
+        "Own hidden row",
     );
-    origin_thread.statement.body.provenance = "task:0000002B"
-        .parse()
-        .expect("origin-thread fixture provenance");
-    origin_thread.origin_thread = answer.actor_route.origin_thread.clone();
-    origin_thread.presentation_title = "Origin-thread route row".to_owned();
-
-    let mut outside = template;
-    outside.statement.body.born = wire::TaskStamp::for_micros(8_004).expect("fixture task stamp");
-    outside.statement.body.project = "agent.someone_else.task".to_owned();
-    outside.statement.body.handle = TaskHandle::for_project(
-        &outside.statement.body.project,
-        &outside.statement.body.born,
+    let outside = route_row(
+        &template,
+        8_004,
+        ".sandbox.secret",
+        true,
+        "someone_else",
+        "Outside hidden row",
     );
-    outside.statement.body.provenance =
-        "task:0000002C".parse().expect("outside fixture provenance");
-    outside.origin_thread = "someone_else".to_owned();
-    outside.presentation_title = "Outside route row".to_owned();
-
     let included = [
         public.clone(),
-        actor_private.statement.body.handle.clone(),
-        origin_thread.statement.body.handle.clone(),
+        authored.statement.body.handle.clone(),
+        own_hidden.statement.body.handle.clone(),
     ];
     let excluded = outside.statement.body.handle.clone();
-    answer.tasks.extend([actor_private, origin_thread, outside]);
+    answer.tasks.extend([authored, own_hidden, outside]);
     (included, excluded)
 }

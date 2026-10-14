@@ -1110,8 +1110,7 @@ mod tests {
             maximum: at(59),
             epoch: uuid("04"),
         });
-        let projects = board::ProjectPolicy::new(["spice".to_owned()], Vec::new(), 2, 3)
-            .expect("fixture project policy");
+        let projects = board::ProjectPolicy::new(Vec::new(), 2, 3).expect("fixture project policy");
         board::Entry::new(statement, workflow, Some(claim), lease, &projects)
             .expect("fixture task heads agree")
     }

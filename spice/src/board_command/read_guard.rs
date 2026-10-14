@@ -118,7 +118,6 @@ fn validated_snapshot_from_with_occupant(
             cursor,
             principal,
             project_policy: BoardProjectPolicy {
-                public_stems: projects.public_stems().iter().cloned().collect(),
                 public_min_depth: projects.public_min_depth(),
                 public_max_depth: projects.public_max_depth(),
             },
@@ -563,7 +562,6 @@ fn actor_route_with_occupant(
         }
     };
     Ok(wire::intent::BoardActorRoute {
-        project: format!("agent.{actor}.task"),
         origin_thread: actor.clone(),
         actor,
     })

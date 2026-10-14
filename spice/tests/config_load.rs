@@ -84,7 +84,7 @@ fn repository_loader_reads_current_tracked_and_local_intent_without_mutation() {
     write(
         root.join("spice-rust.toml"),
         concat!(
-            "[tasks]\nstems = ['rim']\nhidden_stems = ['sandbox']\n",
+            "[tasks]\nhidden_stems = ['sandbox']\n",
             "[policy]\nenv_names = []\n",
             "[taste.polling]\nwords = ['polling']\nmessage = 'use events'\n",
         ),
@@ -98,7 +98,6 @@ fn repository_loader_reads_current_tracked_and_local_intent_without_mutation() {
     let before = snapshot(scratch.path());
     let resolved =
         load_repository(&repository, &[]).expect("repository loader admits current typed metadata");
-    assert_eq!(resolved.root().tasks().stems(), ["rim"]);
     assert_eq!(
         resolved.root().tasks().hidden_stems(),
         ["oops", "maxim_proposal", "sandbox"]

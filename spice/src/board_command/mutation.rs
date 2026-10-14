@@ -131,18 +131,11 @@ pub(super) fn task_add_with(
 }
 
 fn manual_project_repair(projects: &ProjectPolicy) -> String {
-    let mut repair = format!(
-        "use {}..={} dotted segments beginning with an admissible public stem: ",
+    format!(
+        "use {}..={} dotted segments of [0-9a-z_]+ without a leading dot",
         projects.public_min_depth(),
         projects.public_max_depth(),
-    );
-    for (index, stem) in projects.public_stems().iter().enumerate() {
-        if index > 0 {
-            repair.push_str(", ");
-        }
-        repair.push_str(stem);
-    }
-    repair
+    )
 }
 
 pub(super) fn task_oops_add(

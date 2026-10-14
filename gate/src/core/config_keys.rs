@@ -43,7 +43,6 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("commands.<name>", TRACKED),
     ConfigKeyDeclaration::new("wrappers.spice", TRACKED),
     ConfigKeyDeclaration::new("rtk.executable", LOCAL),
-    ConfigKeyDeclaration::new("tasks.stems", TRACKED),
     ConfigKeyDeclaration::new("tasks.hidden_stems", TRACKED),
     ConfigKeyDeclaration::new("tasks.project_min_depth", TRACKED),
     ConfigKeyDeclaration::new("tasks.project_max_depth", TRACKED),

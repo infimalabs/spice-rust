@@ -911,26 +911,24 @@ pub enum NextWorkState {
     },
 }
 
-/// Server-resolved public task route metadata for one board snapshot.
+/// Server-resolved public project bounds for one board snapshot. Any valid
+/// root within them is admissible and readable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardProjectPolicy {
-    /// Public project roots admitted by the resident, in lexical order.
-    pub public_stems: Vec<String>,
     /// Fewest dotted segments admitted for a public project.
     pub public_min_depth: u64,
     /// Most dotted segments admitted for a public project.
     pub public_max_depth: u64,
 }
 
-/// Server-resolved predecessor-compatible route for one board principal.
+/// Server-resolved default read route for one board principal: every public
+/// row, plus any row created on the principal's own origin thread.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardActorRoute {
-    /// Actor identity used by predecessor task routing.
+    /// Actor identity the route reads for.
     pub actor: String,
-    /// Exact actor-private project selected by the route.
-    pub project: String,
     /// Exact creation-origin thread selected by the route.
     pub origin_thread: String,
 }

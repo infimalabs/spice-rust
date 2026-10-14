@@ -717,10 +717,6 @@ fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
         "claim -",
         "taste-review -",
         "actor operator",
-        concat!(
-            "filter ( project:agent.operator.task or origin_thread.is:operator or ",
-            "( project:board or project:rim or project:serve or project:task ) )"
-        ),
         "public task project depth 2..3 dotted segments",
         "active 0",
         "ready 1",
@@ -815,7 +811,6 @@ fn actor_route_projects_the_current_lane_session_identity() {
         .expect("current session identity names a route");
     let actor = identity.to_string();
     assert_eq!(route.actor, actor);
-    assert_eq!(route.project, format!("agent.{actor}.task"));
     assert_eq!(route.origin_thread, actor);
 
     residency.lanes[0]
@@ -946,11 +941,6 @@ fn assert_task_list_queries(
             status: None,
         },
     );
-    assert!(default.starts_with(concat!(
-        "scope actor-route filter ",
-        "( project:agent.operator.task or origin_thread.is:operator or ",
-        "( project:board or project:rim or project:serve or project:task ) )\n"
-    )));
     assert!(default.contains(&format!("{first} [todo] P:M task.cli First task route")));
     assert!(default.contains(&format!(
         "{descendant} [todo] task.cli.deep Descendant task route"

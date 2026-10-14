@@ -769,14 +769,14 @@ fn a_correction_cannot_move_a_task_onto_a_hidden_route() {
         );
     }
 
-    // A public project this board does not know is refused too, under a
+    // A public destination outside the depth bounds is refused too, under a
     // reason that says the destination rather than the route it protects.
     let outcome = correct(
         &bus,
         epoch,
         Actor::Operator,
         &TaskEdit {
-            project: Some("nowhere.at.all".to_owned()),
+            project: Some("nowhere.at.all.deeper".to_owned()),
             ..only(&task)
         },
     );

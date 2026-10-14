@@ -496,7 +496,6 @@ mod tests {
 
     fn projects() -> crate::ProjectPolicy {
         crate::ProjectPolicy::new(
-            ["board".to_owned()],
             Vec::new(),
             dialect::PROJECT_MIN_DEPTH as u64,
             dialect::PROJECT_MAX_DEPTH as u64,

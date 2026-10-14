@@ -38,13 +38,11 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
   "cursor": 1,
   "principal": "operator",
   "project_policy": {
-    "public_stems": ["serve", "task"],
     "public_min_depth": 2,
     "public_max_depth": 3
   },
   "actor_route": {
     "actor": "operator",
-    "project": "agent.operator.task",
     "origin_thread": "operator"
   },
   "allocation_band": 2,

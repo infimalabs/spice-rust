@@ -73,51 +73,65 @@ fn complete_review(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHand
 }
 
 #[test]
-fn task_plan_and_design_creation_refusals_name_the_current_public_projects() {
-    let (root, bus, epoch, _) = fixture("creation-project-repair", 1);
+fn task_plan_and_design_creation_admit_authored_roots_within_the_depth_bounds() {
+    let (root, bus, epoch, _) = fixture("creation-authored-root", 1);
     let projects = guard_projects();
-    let initial = board(&bus, epoch, Actor::Operator).tasks.len();
-    for (name, intent) in [
-        ("ordinary", None),
-        ("plan", Some(wire::TaskIntent::Plan)),
-        ("design", Some(wire::TaskIntent::Design)),
+    for (name, intent, flow) in [
+        ("ordinary", None, "todo,review"),
+        ("plan", Some(wire::TaskIntent::Plan), "plan,review"),
+        ("design", Some(wire::TaskIntent::Design), "design,review"),
     ] {
-        let born = stamp(name);
-        let mut add = dependent_add(Vec::new(), Some("todo,review"));
-        add.title = format!("Refused {name} project");
-        add.project = Some("foreign.work".to_owned());
-        add.intent = intent;
-        let command = fixture_command(
-            epoch,
-            Actor::Operator,
-            CommandKind::TaskAdd,
-            vec![Witness::Absence { task: born }],
-            &add,
-        );
-        let Outcome::Refusal(refusal) = task_add(
-            &bus,
-            &command,
-            &add,
-            None,
-            &projects,
-            &board::NextConfig::default(),
-        ) else {
-            panic!("{name} creation did not refuse its unknown project");
+        let create = |label: &str, project: &str| {
+            let born = stamp(&format!("{name}-{label}"));
+            let mut add = dependent_add(Vec::new(), Some(flow));
+            add.title = format!("Authored {name} project");
+            add.project = Some(project.to_owned());
+            add.intent = intent;
+            add.acceptance = vec!["Reach the outcome".to_owned()];
+            let command = fixture_command(
+                epoch,
+                Actor::Operator,
+                CommandKind::TaskAdd,
+                vec![Witness::Absence { task: born }],
+                &add,
+            );
+            task_add(
+                &bus,
+                &command,
+                &add,
+                None,
+                &projects,
+                &board::NextConfig::default(),
+            )
         };
-        assert_eq!(refusal.reason(), "task::add-refused");
-        assert_eq!(
-            refusal
-                .diagnostic()
-                .and_then(wire::RefusalDiagnostic::detail),
-            Some(
-                "use 2..=3 dotted segments beginning with an admissible public stem: board, rim, serve, task"
-            ),
-        );
-        assert_eq!(
-            board(&bus, epoch, Actor::Operator).tasks.len(),
-            initial,
-            "{name} refusal wrote task state",
-        );
+        // Depth, not the configured stem list, bounds an authored root.
+        for (label, refused) in [("shallow", "foreign"), ("deep", "foreign.one.two.three")] {
+            let before = board(&bus, epoch, Actor::Operator).tasks.len();
+            let Outcome::Refusal(refusal) = create(label, refused) else {
+                panic!("{name} creation admitted out-of-depth {refused}");
+            };
+            assert_eq!(refusal.reason(), "task::add-refused");
+            assert_eq!(
+                board(&bus, epoch, Actor::Operator).tasks.len(),
+                before,
+                "{name} refusal wrote task state",
+            );
+        }
+        for (label, project) in [
+            ("configured", "board.work"),
+            ("unconfigured", "foreign.work"),
+            ("unconfigured_deep", "foreign.deep_work.unit2"),
+        ] {
+            assert_committed(create(label, project));
+            assert!(
+                board(&bus, epoch, Actor::Operator)
+                    .tasks
+                    .iter()
+                    .any(|task| task.statement.body.project == project
+                        && task.statement.body.intent == intent),
+                "{name} {project} was not stored",
+            );
+        }
     }
     clean(&root, bus);
 }

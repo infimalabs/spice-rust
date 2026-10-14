@@ -392,7 +392,7 @@ fn startup_surface_captures_configured_hidden_project_policy_once() {
     fs::create_dir_all(root.join(".git")).expect("git directory");
     fs::write(
         root.join("spice-rust.toml"),
-        "[tasks]\nstems = ['board']\nhidden_stems = ['sandbox']\n",
+        "[tasks]\nhidden_stems = ['sandbox']\n",
     )
     .expect("tracked task metadata");
     let repository = Repository::discover(&root).expect("fixture repository resolves");

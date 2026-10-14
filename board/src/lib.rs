@@ -38,9 +38,8 @@ pub use next::{
 pub use overlap::{ClaimOverlap, claim_overlaps};
 pub use phase::{HANDOFF_SECONDS, PhaseRefusal, Transition, TransitionKind};
 pub use task::{
-    BUILTIN_HIDDEN_STEMS, BUILTIN_PUBLIC_STEMS, Dependency, Entry, Family, PhaseHandoff,
-    PhaseHandoffKind, Project, ProjectError, ProjectPolicy, ProjectPolicyError, SystemTaskRoute,
-    TaskError,
+    BUILTIN_HIDDEN_STEMS, Dependency, Entry, Family, PhaseHandoff, PhaseHandoffKind, Project,
+    ProjectError, ProjectPolicy, ProjectPolicyError, SystemTaskRoute, TaskError,
 };
 pub use urgency::{
     PRIORITY_TAG_PREFIX, Urgency, priority_from_authored, priority_from_tag, priority_from_wire,

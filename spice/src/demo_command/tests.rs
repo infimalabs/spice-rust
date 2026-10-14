@@ -374,7 +374,7 @@ fn advance_seeded_root(environment: &Environment) {
         .unwrap();
     fs::write(
         environment.root.join(CONFIG_NAME),
-        b"[tasks]\nstems = [\"rim\", \"probe\"]\n",
+        b"[tasks]\nproject_max_depth = 4\n",
     )
     .unwrap();
 

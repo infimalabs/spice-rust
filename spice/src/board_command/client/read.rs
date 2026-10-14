@@ -1131,16 +1131,9 @@ fn active_claimed_by_principal(board: &BoardAnswer, task: &BoardTask) -> bool {
 }
 
 fn actor_route_filter(board: &BoardAnswer) -> String {
-    let projects = board
-        .project_policy
-        .public_stems
-        .iter()
-        .map(|stem| format!("project:{stem}"))
-        .collect::<Vec<_>>()
-        .join(" or ");
     format!(
-        "( project:{} or origin_thread.is:{} or ( {projects} ) )",
-        board.actor_route.project, board.actor_route.origin_thread
+        "( visibility:public or origin_thread.is:{} )",
+        board.actor_route.origin_thread
     )
 }
 

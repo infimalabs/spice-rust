@@ -706,15 +706,12 @@ fn unsettled_public(entry: &Entry) -> bool {
 /// for the same immutable team, and Drain admits every otherwise workable
 /// public task.
 ///
-/// Reading is deliberately wider, and stem scoped rather than lifetime scoped
-/// -- see `actor_route_matches`, which decides what `spice task list` renders.
-/// The two scopes must not be unified. Only a lane that can *see* a row can
-/// correct it; if reading followed Steer's empty automatic allocation, such a
-/// row would be unreachable by construction and the board would gain an
-/// absorbing state, wrong once and wrong forever.
-///
-/// Reading and allocation remain intentionally independent. Project stems can
-/// widen reading without becoming lifetime predicates again.
+/// Reading is deliberately wider: every public row, whatever its root, plus
+/// rows on the reader's own origin thread -- see `actor_route_matches`, which
+/// decides what `spice task list` renders. The two scopes must not be unified.
+/// Only a lane that can *see* a row can correct it; if reading followed Steer's
+/// empty automatic allocation, such a row would be unreachable by construction
+/// and the board would gain an absorbing state, wrong once and wrong forever.
 fn selectable(
     entry: &Entry,
     actor: &Actor,

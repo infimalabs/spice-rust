@@ -7,9 +7,6 @@ use wire::{ClaimHead, LeaseHead, TaskHandle, TaskHead, TaskStamp, WorkflowHead};
 /// Public root a parked `.oops` row lands in when its recommendation cannot.
 pub const OOPS_PROMOTION_STEM: &str = "task";
 
-/// Public scheduler roots compiled into every project policy.
-pub const BUILTIN_PUBLIC_STEMS: [&str; 2] = [OOPS_PROMOTION_STEM, "serve"];
-
 /// Hidden system roots compiled into every project policy, in declaration order.
 pub const BUILTIN_HIDDEN_STEMS: [&str; 2] = [wire::OOPS_STEM, "maxim_proposal"];
 
@@ -86,9 +83,12 @@ impl SystemTaskRoute {
 }
 
 /// One captured project vocabulary shared by admission and allocation.
+///
+/// A public project needs only its spelling and dotted depth: any valid root
+/// segment is admissible and readable. Hidden roots stay closed to the
+/// resolved hidden vocabulary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectPolicy {
-    public_stems: BTreeSet<String>,
     hidden_stems: Vec<String>,
     hidden_lookup: BTreeSet<String>,
     public_min_depth: u64,
@@ -96,9 +96,9 @@ pub struct ProjectPolicy {
 }
 
 impl ProjectPolicy {
-    /// Resolve compiled roots with tracked additions and public depth bounds.
+    /// Resolve compiled hidden roots with tracked additions and public depth
+    /// bounds.
     pub fn new(
-        public_additions: impl IntoIterator<Item = String>,
         hidden_additions: impl IntoIterator<Item = String>,
         public_min_depth: u64,
         public_max_depth: u64,
@@ -109,11 +109,6 @@ impl ProjectPolicy {
                 maximum: public_max_depth,
             });
         }
-        let public_stems = BUILTIN_PUBLIC_STEMS
-            .into_iter()
-            .map(str::to_owned)
-            .chain(public_additions)
-            .collect::<BTreeSet<_>>();
         let additions = hidden_additions.into_iter().collect::<Vec<_>>();
         let mut hidden_stems = Vec::new();
         let mut hidden_lookup = BTreeSet::new();
@@ -126,16 +121,11 @@ impl ProjectPolicy {
                 let index = additions.iter().position(|candidate| candidate == &stem);
                 return Err(ProjectPolicyError::HiddenStem { index, stem });
             }
-            if public_stems.contains(&stem) {
-                let index = additions.iter().position(|candidate| candidate == &stem);
-                return Err(ProjectPolicyError::HiddenPublicCollision { index, stem });
-            }
             if hidden_lookup.insert(stem.clone()) {
                 hidden_stems.push(stem);
             }
         }
         Ok(Self {
-            public_stems,
             hidden_stems,
             hidden_lookup,
             public_min_depth,
@@ -169,10 +159,6 @@ impl ProjectPolicy {
                     minimum: self.public_min_depth,
                     maximum: self.public_max_depth,
                 });
-            }
-            let stem = segments[0];
-            if !self.public_stems.contains(stem) {
-                return Err(ProjectError::UnknownPublicStem(stem.to_owned()));
             }
             Ok(Project {
                 text: text.to_owned(),
@@ -239,12 +225,6 @@ impl ProjectPolicy {
         &self.hidden_stems
     }
 
-    /// Fully resolved public roots in deterministic lexical order.
-    #[must_use]
-    pub const fn public_stems(&self) -> &BTreeSet<String> {
-        &self.public_stems
-    }
-
     /// Fewest dotted segments admitted for a public project.
     #[must_use]
     pub const fn public_min_depth(&self) -> u64 {
@@ -263,7 +243,6 @@ impl ProjectPolicy {
 pub enum ProjectPolicyError {
     Depth { minimum: u64, maximum: u64 },
     HiddenStem { index: Option<usize>, stem: String },
-    HiddenPublicCollision { index: Option<usize>, stem: String },
 }
 
 impl fmt::Display for ProjectPolicyError {
@@ -276,11 +255,6 @@ impl fmt::Display for ProjectPolicyError {
             Self::HiddenStem { index, stem } => write!(
                 formatter,
                 "hidden stem{} must match [0-9a-z_]+ without a leading dot: {stem:?}",
-                index.map_or_else(String::new, |index| format!(" at index {index}"))
-            ),
-            Self::HiddenPublicCollision { index, stem } => write!(
-                formatter,
-                "hidden stem{} conflicts with public stem {stem:?}",
                 index.map_or_else(String::new, |index| format!(" at index {index}"))
             ),
         }
@@ -352,7 +326,6 @@ pub enum ProjectError {
         minimum: u64,
         maximum: u64,
     },
-    UnknownPublicStem(String),
     HiddenSpelling(String),
     UnknownHiddenStem(String),
     /// Hidden roots are addressable only by typed system creation routes.
@@ -381,9 +354,6 @@ impl fmt::Display for ProjectError {
                 formatter,
                 "public project {project:?} has depth {depth}, outside {minimum}..={maximum}"
             ),
-            Self::UnknownPublicStem(stem) => {
-                write!(formatter, "public project stem {stem:?} is not resolved")
-            }
             Self::HiddenSpelling(project) => write!(
                 formatter,
                 "hidden project must have a leading dot and [0-9a-z_]+ segments: {project:?}"
