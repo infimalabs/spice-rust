@@ -239,13 +239,15 @@ fn stale_or_incomplete_render_data_refuses_without_silently_narrowing_the_choice
 }
 
 #[test]
-fn a_pending_version_keeps_the_composer_until_its_exact_response_settles() {
+fn composer_retains_settled_versions_and_one_exact_pending_owner() {
     let first = candidate_ref();
     let second = CandidateRef {
         controller: stamp(1),
         candidate: "dVsYdDj7m".parse().expect("second candidate"),
     };
     let candidate = candidate();
+    let mut second_candidate = candidate.clone();
+    second_candidate.candidate = second.clone();
     let tasks = board();
     let mut composer = DecisionComposer::default();
     composer.apply(first.clone(), false, |draft| {
@@ -269,6 +271,9 @@ fn a_pending_version_keeps_the_composer_until_its_exact_response_settles() {
         composer.draft(&second).is_none(),
         "another version cannot displace a pending decision"
     );
+    composer.apply(second.clone(), true, |_| {
+        panic!("a response cannot settle a different candidate")
+    });
     assert!(
         composer
             .draft(&first)
@@ -288,12 +293,25 @@ fn a_pending_version_keeps_the_composer_until_its_exact_response_settles() {
 
     composer.apply(second.clone(), false, |draft| {
         draft.set_choice(DecisionChoice::Returned);
+        draft.set_reason("revise the second premise".to_owned());
+        draft.preview(
+            &design(),
+            Seq::new(51).expect("second fixture position"),
+            &second_candidate,
+            SequenceCode::new(2),
+            &tasks,
+        );
     });
-    assert_eq!(
-        composer
-            .draft(&second)
-            .expect("second version edits after settlement")
-            .choice(),
-        DecisionChoice::Returned
-    );
+    let second_draft = composer
+        .draft(&second)
+        .expect("second version has an independent draft");
+    assert_eq!(second_draft.choice(), DecisionChoice::Returned);
+    assert!(matches!(second_draft.phase(), DraftPhase::Previewing(_)));
+
+    let retained_first = composer
+        .draft(&first)
+        .expect("first version remains beside its refusal");
+    assert_eq!(refusal(retained_first), "preparation::stale");
+    assert_eq!(retained_first.choice(), DecisionChoice::Returned);
+    assert_eq!(retained_first.reason(), "revise the premise");
 }
