@@ -415,10 +415,23 @@ fn a_shell_call_always_has_a_bounded_deadline_unless_it_is_asked_for_as_a_servic
 }
 
 #[test]
-fn a_host_tool_answer_keeps_the_exit_code_where_bash_does_and_a_refusal_is_the_hosts() {
+fn host_tool_progress_is_partial_and_only_answers_or_refusals_settle_the_call() {
     let frame = |bytes: Vec<u8>| -> serde_json::Value {
         serde_json::from_slice(bytes.strip_suffix(b"\n").expect("one line")).expect("JSON")
     };
+    assert_eq!(
+        frame(omp::host_tool_update(
+            "call-0",
+            "[job dW3w7qC4G] serve\nready"
+        )),
+        serde_json::json!({
+            "type": "host_tool_update",
+            "id": "call-0",
+            "partialResult": {
+                "content": [{"type": "text", "text": "[job dW3w7qC4G] serve\nready"}],
+            },
+        })
+    );
     assert_eq!(
         frame(omp::host_tool_result("call-1", "ok\n", Some(0), false)),
         serde_json::json!({

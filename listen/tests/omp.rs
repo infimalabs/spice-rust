@@ -19,6 +19,7 @@ const TOOL_RESULT: &[u8] = br#"{"type":"message_end","message":{"role":"toolResu
 const OPERATOR: &[u8] = br#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"please run it"}],"attribution":"user","timestamp":1789525452570}}"#;
 const PARTIAL: &[u8] = br#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"do","partial":{"role":"assistant","content":[{"type":"text","text":"do"}]}},"message":{"role":"assistant","content":[{"type":"text","text":"do"}]}}"#;
 const TOOL_PARTIAL: &[u8] = br#"{"type":"tool_execution_update","toolCallId":"call_1","toolName":"bash","partialResult":{"content":[{"type":"text","text":"o"}]}}"#;
+const JOB_PARTIAL: &[u8] = br#"{"type":"tool_execution_update","toolCallId":"call_2","toolName":"job","partialResult":{"content":[{"type":"text","text":"[job dW3w7qC4G] serve\nready on 8080"}]}}"#;
 const TOOL_STREAM: &[u8] = br#"{"type":"tool_stream_update","toolCallId":"call_1","toolName":"edit","update":{"path":"src/lib.rs","diff":"+done"}}"#;
 const TOOL_END: &[u8] = br#"{"type":"tool_execution_end","toolCallId":"call_1","toolName":"bash","result":{"content":[{"type":"text","text":"ok"}]},"isError":false}"#;
 const COMPACTION: &[u8] = br#"{"type":"auto_compaction_end","action":"context-full","result":{"summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000},"aborted":false,"willRetry":false}"#;
@@ -601,13 +602,29 @@ fn boundary(bytes: &[u8]) -> wire::MessageBoundary {
 }
 
 #[test]
-fn partials_are_restated_by_the_frames_that_end_them_and_decode_to_nothing() {
+fn cumulative_partials_are_restated_while_a_blocked_job_wait_is_current_activity() {
     for partial in [PARTIAL, TOOL_PARTIAL, TOOL_STREAM] {
         assert!(restated(Dialect::Omp, partial));
         let decoded = decode(Dialect::Omp, partial, locus(partial)).expect("locus matches");
         assert!(decoded.events().is_empty(), "{decoded:?}");
         assert!(!matches!(decoded, Decoded::Residue(_)), "{decoded:?}");
     }
+    assert!(!restated(Dialect::Omp, JOB_PARTIAL));
+    assert!(matches!(
+        decoded(JOB_PARTIAL).events(),
+        [Event::Tool(tool)]
+            if tool.call_id == "call_2"
+                && matches!(
+                    &tool.moment,
+                    ToolMoment::Update { name, arguments }
+                        if name == "job"
+                            && serde_json::from_str::<serde_json::Value>(arguments)
+                                .ok()
+                                .and_then(|result| result["content"][0]["text"].as_str().map(str::to_owned))
+                                .as_deref()
+                                == Some("[job dW3w7qC4G] serve\nready on 8080")
+                )
+    ));
     for whole in [PROSE, TOOL_END, SESSION, COMPACTION] {
         assert!(!restated(Dialect::Omp, whole));
     }

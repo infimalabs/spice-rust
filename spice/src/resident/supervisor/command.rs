@@ -918,7 +918,16 @@ impl<W: Write + Send + 'static> Driver<W> {
                 Run::Ended(report) => (report, None),
                 Run::Backgrounded(report, job) => (report, Some(job)),
             },
-            Work::Job(call) => (terminal.job(call, control), None),
+            Work::Job(call) => {
+                // A sibling tool can finish after this wait starts. Without a
+                // later partial frame, that result remains the newest lane
+                // activity and omp can detach its working loader while this
+                // call is still blocked.
+                let mut progress = |report: &Report| {
+                    let _updated = self.write(&vendor::omp::host_tool_update(id, &report.output));
+                };
+                (terminal.job(call, control, &mut progress), None)
+            }
         };
         self.calls
             .lock()

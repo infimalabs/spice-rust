@@ -97,11 +97,15 @@ pub(super) fn activity(
             preview
         }
         listen::ToolMoment::Update { name, arguments } => {
-            let intent = previews
-                .by_call
-                .get(&key)
-                .and_then(|outstanding| outstanding.intent.clone());
-            let preview = identified_preview(name, arguments, intent.as_deref(), &tool.call_id);
+            let outstanding = previews.by_call.get(&key);
+            let intent = outstanding.and_then(|outstanding| outstanding.intent.clone());
+            let progress = partial_result_text(arguments);
+            let preview = progress
+                .as_ref()
+                .and_then(|_| outstanding.map(|outstanding| outstanding.preview.clone()))
+                .unwrap_or_else(|| {
+                    identified_preview(name, arguments, intent.as_deref(), &tool.call_id)
+                });
             if reads_steering_attachment(lane, arguments) {
                 previews.attachment_reads.insert(key.clone());
             }
@@ -112,7 +116,10 @@ pub(super) fn activity(
                     intent,
                 },
             );
-            flatten(&format!("{preview} update"))
+            progress.map_or_else(
+                || flatten(&format!("{preview} update")),
+                |progress| flatten(&format!("{preview} — {progress}")),
+            )
         }
         listen::ToolMoment::Result(result) => {
             let outcome = match result.result {
@@ -154,6 +161,25 @@ pub(super) fn result_media(
         return Vec::new();
     }
     outcome.media.clone()
+}
+
+/// Latest non-empty text line from an omp partial tool result.
+fn partial_result_text(arguments: &str) -> Option<String> {
+    let Value::Object(result) = serde_json::from_str::<Value>(arguments).ok()? else {
+        return None;
+    };
+    result
+        .get("content")?
+        .as_array()?
+        .iter()
+        .rev()
+        .filter_map(Value::as_object)
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .flat_map(|text| text.lines().rev())
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_owned)
 }
 
 fn reads_steering_attachment(lane: CanonicalUuid, arguments: &str) -> bool {
