@@ -1,8 +1,8 @@
 //! What a Design's occupied claimant is told privately after an authority
 //! change: matching open Designs ([`super::design_awareness`]) and the
 //! operator's newest return of its own active Design
-//! ([`crate::board_command::owed_returns`]). Each telling is recorded before
-//! it is sent, needs no acknowledgment, and starts no work.
+//! ([`crate::board_command::owed_returns`]). A return is recorded as consumed
+//! only after its exact occupant's supervisor confirms enqueue.
 
 use serde::{Deserialize, Serialize};
 use wire::CanonicalUuid;
@@ -25,17 +25,30 @@ pub(in crate::resident) struct BackgroundNotice {
 }
 
 impl BackgroundNotice {
-    /// Whether this notice fits one kick datagram.
+    /// Whether this notice fits one best-effort kick datagram.
     pub(in crate::resident) fn fits(&self) -> bool {
         serde_json::to_vec(&Kick::Background(self.clone()))
             .is_ok_and(|encoded| encoded.len() <= KICK_BYTES)
     }
+
+    /// Whether this notice and a maximum-size confirmation route fit one kick
+    /// datagram.
+    fn confirmed_fits(&self) -> bool {
+        serde_json::to_vec(&Kick::BackgroundConfirmed {
+            notice: self.clone(),
+            request: "00000000-0000-0000-0000-000000000000".to_owned(),
+            reply:
+                "/tmp/spice-b-0000000000000000000000000000000000000000000000000000000000000000.sock"
+                    .into(),
+        })
+        .is_ok_and(|encoded| encoded.len() <= KICK_BYTES)
+    }
 }
 
 /// Tell every occupied claimant what its Design input owes it: matching open
-/// Designs, then the newest return of an active Design it holds. A failed
-/// record is reported and retried on the next authority change; it never
-/// fails the caller, and nothing is told without its record.
+/// Designs, then the newest return of an active Design it holds. Return
+/// delivery is confirmed before its durable consumption record; either failure
+/// is reported and retried on the next authority change.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -56,16 +69,28 @@ pub(in crate::resident) fn reconcile(
         }
     };
     for owed in owed {
-        match record_return(bus, &owed) {
-            Ok(()) => super::supervisor::command::background_notice(
-                paths,
-                owed.lane,
-                return_notice(&owed),
-            ),
-            Err(outcome) => {
+        let notice = return_notice(&owed);
+        match super::supervisor::command::confirmed_background_notice(paths, owed.lane, notice) {
+            Ok(true) => {
+                if let Err(outcome) = record_return(bus, &owed) {
+                    let _ = writeln!(
+                        diagnostic,
+                        "lane {} return of Design {} was delivered but not recorded: {outcome:?}",
+                        owed.lane, owed.design
+                    );
+                }
+            }
+            Ok(false) => {
                 let _ = writeln!(
                     diagnostic,
-                    "lane {} return of Design {} was not recorded: {outcome:?}",
+                    "lane {} return of Design {} was refused by its current supervisor",
+                    owed.lane, owed.design
+                );
+            }
+            Err(error) => {
+                let _ = writeln!(
+                    diagnostic,
+                    "lane {} return of Design {} was not delivered: {error}",
                     owed.lane, owed.design
                 );
             }
@@ -91,7 +116,7 @@ pub(in crate::resident) fn return_notice(owed: &ReturnOwed) -> BackgroundNotice 
                 owed.candidate, owed.design, owed.decision.decision, owed.design,
             ),
         };
-        if notice.fits() || reason.len() <= SHORTEST_REASON_BYTES {
+        if notice.confirmed_fits() || reason.len() <= SHORTEST_REASON_BYTES {
             return notice;
         }
         reason = clip(&reason, reason.len() / 2);

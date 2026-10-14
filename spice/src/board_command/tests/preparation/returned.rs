@@ -1,7 +1,7 @@
 //! The operator's return of one candidate version: immutable history in the
-//! room read, and the newest return as its active Design's next input, told
-//! once to an occupied holder and never to a passive Design's lane. A collapse
-//! decision concludes the Design through the operator's conclusion path.
+//! room read, and the newest return as its active Design's next input, consumed
+//! only for the exact active claim that received it. A collapse decision
+//! concludes the Design through the operator's conclusion path.
 
 use std::collections::BTreeMap;
 
@@ -115,8 +115,8 @@ impl Returnable {
             .collect()
     }
 
-    /// Record every return `occupied` is owed as the resident does before
-    /// telling it, and name each lane told with the reason it heard.
+    /// Record every return `occupied` is owed after its supervisor has
+    /// confirmed delivery, and name each lane told with the reason it heard.
     fn tell(
         &self,
         occupied: &BTreeMap<CanonicalUuid, CanonicalUuid>,
@@ -227,6 +227,36 @@ fn an_active_holder_is_told_the_newest_return_once() {
         fixture.tell(&occupied),
         fixture.told(0, "a later reason"),
         "a later return is new input"
+    );
+    fixture.finish();
+}
+
+#[test]
+fn a_delivery_cannot_consume_a_return_after_its_claim_moves() {
+    let fixture = Returnable::new("design-return-claim-race", 2, Some(0));
+    let occupied = fixture.occupied();
+    fixture.return_each(&["route this to the current holder"]);
+    let stale = owed_returns(&fixture.bus, &occupied)
+        .expect("owed return reads")
+        .pop()
+        .expect("the first holder is owed the return");
+
+    fixture.free(0);
+    fixture.settle_outputs();
+    fixture.claim(1);
+    assert!(
+        record_return(&fixture.bus, &stale).is_err(),
+        "a delivery confirmed for the former claim cannot consume the return"
+    );
+    assert_eq!(
+        fixture.tell(&occupied),
+        fixture.told(1, "route this to the current holder"),
+        "the return remains owed to the new active holder"
+    );
+    assert_eq!(
+        fixture.tell(&occupied),
+        [],
+        "the current claim's delivery remains consumed across reconciliation"
     );
     fixture.finish();
 }

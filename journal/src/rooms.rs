@@ -34,6 +34,7 @@ mod evidence;
 mod relevance;
 mod sql;
 
+pub(crate) use awareness::require_deliveries as require_return_deliveries;
 pub(crate) use conversation::{
     ITEM_SCHEMA_SQL as CONVERSATION_ITEM_SCHEMA_SQL, SCHEMA_SQL as CONVERSATION_SCHEMA_SQL,
     require_deliveries as require_conversation_deliveries,

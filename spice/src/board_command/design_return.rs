@@ -2,13 +2,13 @@
 //!
 //! A return records why the operator sent one exact candidate version back.
 //! Each active Design (open and standing in a working group) whose claim an
-//! occupied lane holds is owed its newest return until any holder has been
-//! told it: the resident commits `room::relayed` first, then tells
-//! that occupant privately. The record consumes the decision, so a holder
+//! occupied lane holds is owed its newest return until that exact occupant's
+//! supervisor confirms enqueue and the resident commits `room::relayed` for
+//! the still-current claim. Failed or stale attempts remain owed. A holder
 //! present at the return hears it, a Design returned while unheld is told to
 //! its next claimant, a passive Design wakes and tells no one until a later
-//! group entry leads to a claim, and a restarted resident never tells one
-//! twice. Only the newest return is input; older ones stay history.
+//! group entry leads to a claim, and a completed delivery survives restart.
+//! Only the newest return is input; older ones stay history.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -85,8 +85,8 @@ pub(crate) fn owed_returns(
     Ok(owed)
 }
 
-/// Commit the durable record that consumes one owed return; the caller tells
-/// the holder only after it lands.
+/// Commit the durable record that consumes one owed return after its exact
+/// occupant's supervisor has confirmed enqueue.
 pub(crate) fn record_return(bus: &Bus, owed: &ReturnOwed) -> Result<(), Outcome<CommandAnswer>> {
     let at = current_instant()?;
     let origin = format!("lane:{}", owed.lane)
