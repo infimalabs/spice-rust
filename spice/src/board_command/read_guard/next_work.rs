@@ -220,7 +220,8 @@ pub(in crate::board_command) fn project_frontier<'a>(
         })?
         .with_creator_team(statement.creation.creator_team())
         .with_explicit_release(explicit_release)
-        .with_phase_handoff(phase_handoff);
+        .with_phase_handoff(phase_handoff)
+        .with_grouped(observed.facts().grouped(&statement.born));
         origin_threads.push(task_origin_thread(
             observed,
             &statement.born,

@@ -184,6 +184,7 @@ pub(super) fn prepare_capture_claim(
         planning::admit_capture(selected)?;
     }
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
+    refuse_passive_design(selected)?;
     if !board::capturable_entry(
         &board::resolved_tasks(&snapshot.entries),
         selected,
@@ -654,6 +655,7 @@ fn named_claim_selection<'a>(
                 "capture into one current pending task",
             )
         })?;
+    refuse_passive_design(entry)?;
     let environment = snapshot.answer.environment();
     let satisfied = board::resolved_tasks(&snapshot.entries);
     let (admitted, reason, remedy) = match possession {
@@ -679,6 +681,20 @@ fn named_claim_selection<'a>(
     } else {
         Err(refusal(reason, Some(task.to_string()), remedy))
     }
+}
+
+/// A Design outside every working group is passive: no claim path grants it.
+pub(in crate::board_command) fn refuse_passive_design(
+    entry: &Entry,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if board::passive_design(entry) {
+        return Err(refusal(
+            "claim::design-passive",
+            Some(entry.handle().to_string()),
+            "a Design outside every working group is passive; move it into a working group to make it claimable",
+        ));
+    }
+    Ok(())
 }
 
 fn claim_residency(

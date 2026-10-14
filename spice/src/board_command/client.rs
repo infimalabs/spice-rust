@@ -970,6 +970,7 @@ pub(super) fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<C
                 entry
                     .with_creator_team(heads.creator_team)
                     .with_explicit_release(heads.explicit_release)
+                    .with_grouped(heads.grouped)
             })
         })
         .collect()
@@ -1295,7 +1296,12 @@ pub(crate) fn dispatch(
         dialect::PROJECT_MAX_DEPTH as u64,
     )
     .expect("board command test project policy");
-    dispatch_with_repository(bus, command, None, &projects, &board::NextConfig::default())
+    let allocation = board::NextConfig::default();
+    if let wire::intent::Intent::WorkingGroupMove(moving) = command.body() {
+        let config = steer::Config::default();
+        return Some(move_working_group(bus, command, moving, &config, &projects, &allocation).0);
+    }
+    dispatch_with_repository(bus, command, None, &projects, &allocation)
 }
 fn dispatch_working_group(
     bus: &Bus,
@@ -1303,7 +1309,6 @@ fn dispatch_working_group(
 ) -> Option<Outcome<CommandAnswer>> {
     Some(match command.body() {
         wire::intent::Intent::WorkingGroupRead(read) => read_working_groups(bus, read),
-        wire::intent::Intent::WorkingGroupMove(moving) => move_working_group(bus, command, moving),
         wire::intent::Intent::WorkingGroupArrange(arrange) => {
             arrange_working_groups(bus, command, arrange)
         }

@@ -856,7 +856,7 @@ pub(super) fn task_depends_with(
         entry.lease().cloned(),
         projects,
     ) {
-        Ok(post) => post,
+        Ok(post) => post.with_grouped(entry.grouped()),
         Err(error) => {
             return refusal(
                 "task::dependency-refused",

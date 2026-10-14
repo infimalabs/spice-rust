@@ -783,6 +783,16 @@ fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool 
             .is_none_or(|assignment| assignment == actor || assignment_lapsed(entry, assignment))
         && dependencies_satisfied(entry, completed)
         && !awaits_selection(entry, completed)
+        && !passive_design(entry)
+}
+
+/// A Design stands active only while the working-group partition holds it.
+/// A Design outside every group is passive: no allocation, capture, steal,
+/// recovery, or room coordination grants it a claim. A claim already held
+/// stays authoritative until its holder parks it.
+#[must_use]
+pub fn passive_design(entry: &Entry) -> bool {
+    entry.statement().intent == Some(wire::TaskIntent::Design) && !entry.grouped()
 }
 
 /// Whether a review assignment died with the claim that carried it.
@@ -807,6 +817,7 @@ fn operational_without_assignment(entry: &Entry, completed: &ResolvedTasks) -> b
         && workflow.deferral.is_none()
         && dependencies_satisfied(entry, completed)
         && !awaits_selection(entry, completed)
+        && !passive_design(entry)
 }
 
 /// Ordinary prerequisites may resolve negatively; planning boundaries may not.

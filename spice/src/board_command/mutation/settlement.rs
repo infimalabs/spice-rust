@@ -397,4 +397,5 @@ fn projected_settled_entry(
         projects,
     )
     .expect("settling an admitted task preserves a valid historical entry")
+    .with_grouped(entry.grouped())
 }

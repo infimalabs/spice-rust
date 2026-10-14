@@ -104,7 +104,8 @@ fn prepare_correction(
             Some(error.to_string()),
             "submit a statement the board admits",
         )
-    })?;
+    })?
+    .with_grouped(entry.grouped());
     let publication = CorrectionPublication {
         next: next_action(snapshot, &post),
         at,

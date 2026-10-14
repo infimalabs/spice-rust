@@ -458,6 +458,7 @@ pub struct Entry {
     lease: Option<LeaseHead>,
     creator_team: Option<wire::CanonicalUuid>,
     explicit_release: bool,
+    grouped: bool,
     phase_handoff: Option<PhaseHandoff>,
     project: Project,
     family: Family,
@@ -519,6 +520,7 @@ impl Entry {
             lease,
             creator_team: None,
             explicit_release: false,
+            grouped: false,
             phase_handoff: None,
             project,
             family,
@@ -604,6 +606,20 @@ impl Entry {
     #[must_use]
     pub const fn explicit_release(&self) -> bool {
         self.explicit_release
+    }
+
+    /// Attach whether the current working-group partition holds this task.
+    #[must_use]
+    pub const fn with_grouped(mut self, grouped: bool) -> Self {
+        self.grouped = grouped;
+        self
+    }
+
+    /// Whether the current working-group partition holds this task. Only a
+    /// Design can stand in a group; a Design outside every group is passive.
+    #[must_use]
+    pub const fn grouped(&self) -> bool {
+        self.grouped
     }
 
     /// Validated and classified project.

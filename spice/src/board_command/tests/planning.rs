@@ -117,6 +117,7 @@ fn a_lane_never_completes_a_design_it_holds() {
         wire::TaskIntent::Design,
         None,
     );
+    group_design(&bus, epoch, &design);
     let result = done(&bus, epoch, &seats[0], &design);
     assert!(
         matches!(&result, Outcome::Refusal(refusal) if refusal.reason() == "task::design-open"),
