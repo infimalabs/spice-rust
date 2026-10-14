@@ -11,7 +11,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use super::{RoomAnchor, RoomAuthorityStamp, RoomSource};
-use crate::CanonicalUuid;
+use crate::{CanonicalUuid, Digest, Domain};
 
 /// Maximum bytes of one contribution's text.
 pub const ROOM_CONTRIBUTION_TEXT_LIMIT: usize = 4_096;
@@ -66,6 +66,27 @@ impl fmt::Display for RoomContributionKind {
 )]
 pub struct RoomContributionKindError(String);
 
+/// Canonical immutable authority behind one room-source link. A transcript's
+/// moving accounted boundary is deliberately absent.
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum RoomSourceAuthority<'a> {
+    Transcript {
+        lane: &'a CanonicalUuid,
+        vendor: &'a crate::Name,
+        stream: &'a str,
+        source: &'a CanonicalUuid,
+        locus: &'a crate::MessageLocus,
+        text: &'a super::TextRange,
+    },
+    Journal {
+        fact: &'a crate::SequenceCode,
+    },
+    Artifact {
+        digest: &'a Digest,
+    },
+}
+
 impl FromStr for RoomContributionKind {
     type Err = RoomContributionKindError;
 
@@ -75,6 +96,73 @@ impl FromStr for RoomContributionKind {
             .find(|kind| kind.as_str() == value)
             .ok_or_else(|| RoomContributionKindError(value.to_owned()))
     }
+}
+impl RoomSource {
+    /// Whether two links name the same immutable source authority.
+    ///
+    /// A transcript's accounted boundary may advance without changing the
+    /// event bytes its locus and text range identify.
+    #[must_use]
+    pub fn same_authority(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Transcript(left), Self::Transcript(right)) => left.same_bytes(right),
+            (Self::Journal { fact: left }, Self::Journal { fact: right }) => left == right,
+            (Self::Artifact { digest: left }, Self::Artifact { digest: right }) => left == right,
+            _ => false,
+        }
+    }
+
+    /// Digest of the exact immutable authority this link names.
+    #[must_use]
+    pub fn authority_digest(&self) -> Digest {
+        let authority = match self {
+            Self::Transcript(hunk) => RoomSourceAuthority::Transcript {
+                lane: &hunk.head.lane,
+                vendor: &hunk.head.vendor,
+                stream: &hunk.head.stream,
+                source: &hunk.head.source,
+                locus: &hunk.locus,
+                text: &hunk.text,
+            },
+            Self::Journal { fact } => RoomSourceAuthority::Journal { fact },
+            Self::Artifact { digest } => RoomSourceAuthority::Artifact { digest },
+        };
+        let canonical = crate::encode(&authority).expect("a typed room source authority encodes");
+        Digest::compute(Domain::RoomSource, &canonical)
+    }
+}
+
+/// Whether source witnesses name each cited immutable authority exactly once.
+///
+/// Non-source witnesses are ignored. The bounded comparison stays on the
+/// stack because every admitted contribution has at most eight citations.
+#[must_use]
+pub fn source_witnesses_match(sources: &[RoomSource], expected: &[crate::Witness]) -> bool {
+    if sources.len() > ROOM_CONTRIBUTION_SOURCE_LIMIT {
+        return false;
+    }
+    let mut cited: [Option<Digest>; ROOM_CONTRIBUTION_SOURCE_LIMIT] = std::array::from_fn(|_| None);
+    for (slot, source) in cited.iter_mut().zip(sources) {
+        *slot = Some(source.authority_digest());
+    }
+    let mut matched = [false; ROOM_CONTRIBUTION_SOURCE_LIMIT];
+    let mut source_count = 0_usize;
+    for witness in expected {
+        let crate::Witness::Source { source } = witness else {
+            continue;
+        };
+        source_count += 1;
+        let Some(index) = cited[..sources.len()]
+            .iter()
+            .position(|cited| cited.as_ref() == Some(source))
+        else {
+            return false;
+        };
+        if std::mem::replace(&mut matched[index], true) {
+            return false;
+        }
+    }
+    source_count == sources.len() && matched[..sources.len()].iter().all(|matched| *matched)
 }
 
 /// A lane contributed one typed record to an open Design room.
@@ -105,6 +193,9 @@ pub enum RoomContributionError {
     /// The text is empty or only whitespace.
     #[error("contribution text is empty")]
     Empty,
+    /// The stored text retains leading or trailing whitespace.
+    #[error("contribution text is not trimmed")]
+    Untrimmed,
     /// The text exceeds [`ROOM_CONTRIBUTION_TEXT_LIMIT`] bytes.
     #[error("contribution text exceeds {ROOM_CONTRIBUTION_TEXT_LIMIT} bytes")]
     TextTooLong,
@@ -126,19 +217,110 @@ impl RoomContributed {
         if text.trim().is_empty() {
             return Err(RoomContributionError::Empty);
         }
+        if text != text.trim() {
+            return Err(RoomContributionError::Untrimmed);
+        }
         if text.len() > ROOM_CONTRIBUTION_TEXT_LIMIT {
             return Err(RoomContributionError::TextTooLong);
         }
         if sources.len() > ROOM_CONTRIBUTION_SOURCE_LIMIT {
             return Err(RoomContributionError::TooManySources);
         }
-        if sources
-            .iter()
-            .enumerate()
-            .any(|(index, source)| sources[..index].contains(source))
-        {
+        if sources.iter().enumerate().any(|(index, source)| {
+            sources[..index]
+                .iter()
+                .any(|earlier| source.same_authority(earlier))
+        }) {
             return Err(RoomContributionError::DuplicateSource);
         }
         Ok(())
+    }
+
+    /// Whether one successful command receipt proves this exact record.
+    ///
+    /// The receipt binds the anchor heads, every cited source authority, the
+    /// submitted body, and the returned publication. A contribution fact
+    /// without this correspondence did not cross resident admission.
+    #[must_use]
+    pub fn matches_command(
+        &self,
+        actor: &crate::Actor,
+        request: &crate::intent::RoomContribute,
+        expected: &[crate::Witness],
+        answer: &crate::intent::RoomContributeAnswer,
+    ) -> bool {
+        let mut tasks = expected.iter().filter_map(|witness| match witness {
+            crate::Witness::Task { task, .. } => Some(task),
+            _ => None,
+        });
+        let task_matches =
+            tasks.next().is_some_and(|task| task == &self.room) && tasks.next().is_none();
+        let mut workflows = expected.iter().filter_map(|witness| match witness {
+            crate::Witness::Workflow { task, .. } => Some(task),
+            _ => None,
+        });
+        let workflow_matches =
+            workflows.next().is_some_and(|task| task == &self.room) && workflows.next().is_none();
+        request.room.born().is_ok_and(|room| room == self.room)
+            && *actor == crate::Actor::Lane(self.lane)
+            && task_matches
+            && workflow_matches
+            && source_witnesses_match(&self.sources, expected)
+            && request.kind == self.contribution
+            && request.text.trim() == self.text
+            && request.sources == self.sources
+            && answer.room == request.room
+            && answer.publication == self.publication
+            && answer.kind == self.contribution
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::body::TranscriptPosition;
+    use crate::rooms::{TextRange, TranscriptHunk};
+    use crate::{MessageLocus, TranscriptSourceHead};
+
+    fn transcript(accounted_offset: u64) -> RoomSource {
+        RoomSource::Transcript(TranscriptHunk {
+            head: TranscriptSourceHead {
+                lane: "018f82d4-6f59-7d06-92e3-bce913116302"
+                    .parse()
+                    .expect("fixture lane"),
+                vendor: "omp".parse().expect("fixture vendor"),
+                stream: "session".to_owned(),
+                source: "018f82d4-6f59-7d06-92e3-bce913116303"
+                    .parse()
+                    .expect("fixture source"),
+                next: TranscriptPosition {
+                    member: 1,
+                    offset: accounted_offset,
+                },
+            },
+            locus: MessageLocus {
+                member: 1,
+                offset: 20,
+                length: 30,
+                event: 2,
+            },
+            text: TextRange { start: 4, end: 12 },
+        })
+    }
+
+    #[test]
+    fn canonical_contributions_use_exact_source_authority() {
+        assert_eq!(
+            RoomContributed::admit(" evidence ", &[]),
+            Err(RoomContributionError::Untrimmed)
+        );
+        let first = transcript(50);
+        let advanced = transcript(90);
+        assert!(first.same_authority(&advanced));
+        assert_eq!(first.authority_digest(), advanced.authority_digest());
+        assert_eq!(
+            RoomContributed::admit("Evidence.", &[first, advanced]),
+            Err(RoomContributionError::DuplicateSource)
+        );
     }
 }

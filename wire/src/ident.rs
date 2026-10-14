@@ -92,6 +92,8 @@ pub enum Domain {
     TaskArtifactStore,
     /// The exact restore action pinned before authority replacement.
     JournalRestorePlan,
+    /// One canonical exact source link cited by a room contribution.
+    RoomSource,
     /// The payload manifest of one release target.
     DistTargetPayload,
     /// The bytes of one staged artifact.
@@ -215,6 +217,7 @@ impl Domain {
             | Self::ReportCommandRecord
             | Self::TaskArtifactStore
             | Self::JournalRestorePlan
+            | Self::RoomSource
             | Self::TasteProse
             | Self::TasteBag
             | Self::MediaContent
@@ -281,6 +284,7 @@ impl Domain {
             Self::ReportCommandRecord => "spice.report.command-record.v1",
             Self::TaskArtifactStore => "spice.task.artifact-store.v1",
             Self::JournalRestorePlan => "spice.journal.restore-plan.v1",
+            Self::RoomSource => "spice.room.source.v1",
             Self::TasteProse => "spice.taste.prose.v1",
             Self::TasteBag => "spice.taste.bag.v1",
             Self::MediaContent => "spice.media.content.v1",

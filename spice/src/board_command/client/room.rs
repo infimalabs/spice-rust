@@ -264,9 +264,13 @@ fn client_room_contribute(
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let mut expected = vec![statement_witness(heads), workflow_witness(heads)];
+        expected.extend(sources.iter().map(|source| wire::Witness::Source {
+            source: source.authority_digest(),
+        }));
         Ok((
             CommandKind::RoomContribute,
-            vec![statement_witness(heads), workflow_witness(heads)],
+            expected,
             serde_json::to_value(wire::intent::RoomContribute {
                 room,
                 kind,

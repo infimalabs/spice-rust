@@ -33,6 +33,10 @@ pub(crate) fn room_contribute(
     if let Err(error) = RoomContributed::admit(text, &contribute.sources) {
         return malformed(error);
     }
+    let expected = match contribution_witnesses(command, &contribute.sources) {
+        Ok(expected) => expected,
+        Err(refused) => return refused,
+    };
     let snapshot = match validated_working_snapshot(
         bus,
         command.actor().clone(),
@@ -83,7 +87,7 @@ pub(crate) fn room_contribute(
         kind: contribute.kind,
     };
     let mut write = JournalWrite::new(Actor::Lane(lane), origin, at, Producer::CommandDoor);
-    guard(&mut write, command.expected().to_vec());
+    guard(&mut write, expected);
     if let Err(error) = write.fact(
         RoomContributed {
             room,
@@ -112,6 +116,10 @@ fn malformed(error: RoomContributionError) -> Outcome<CommandAnswer> {
         RoomContributionError::Empty => {
             ("room::contribution-empty", "state the contribution as TEXT")
         }
+        RoomContributionError::Untrimmed => (
+            "room::contribution-untrimmed",
+            "remove leading and trailing whitespace",
+        ),
         RoomContributionError::TextTooLong => (
             "room::contribution-too-long",
             "shorten the contribution and cite longer material as a source",
@@ -126,6 +134,31 @@ fn malformed(error: RoomContributionError) -> Outcome<CommandAnswer> {
         ),
     };
     refusal(reason, Some(error.to_string()), hint)
+}
+/// The journal-backed witnesses and the refusal when source witnesses do not
+/// name exactly the request's citations. Source availability is evaluated
+/// separately through its owning authority before these witnesses are stored
+/// in the successful command receipt.
+fn contribution_witnesses(
+    command: &wire::AdmittedCommand,
+    cited: &[RoomSource],
+) -> Result<Vec<Witness>, Outcome<CommandAnswer>> {
+    if !wire::rooms::source_witnesses_match(cited, command.expected()) {
+        return Err(refusal(
+            "room::contribution-source-witness",
+            Some(format!(
+                "expected {:?}; cited sources {cited:?}",
+                command.expected()
+            )),
+            "read the Design again and retry with one witness for each exact source",
+        ));
+    }
+    Ok(command
+        .expected()
+        .iter()
+        .filter(|witness| !matches!(witness, Witness::Source { .. }))
+        .cloned()
+        .collect())
 }
 
 /// Why `anchor` is not an open Design: a Design whose workflow is pending

@@ -104,5 +104,13 @@ fn retained(
                 .map(|artifact| artifact.digest)
                 .collect()
         })
-        .map_err(|_| RoomSourceUnavailable::Unreadable {})
+        .map_err(|error| {
+            error
+                .unsupported_release()
+                .map_or(RoomSourceUnavailable::Unreadable {}, |release| {
+                    RoomSourceUnavailable::UnsupportedRetained {
+                        release: release.to_string(),
+                    }
+                })
+        })
 }

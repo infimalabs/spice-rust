@@ -776,8 +776,9 @@ fn validate_manifest_shape(
     subject: &str,
 ) -> Result<(), Error> {
     if manifest.version != STORE_VERSION {
-        return Err(Error::refused(
+        return Err(Error::unsupported(
             "artifact store version",
+            manifest.version,
             format!(
                 concat!(
                     "{} belongs to artifact store version {}; ",
@@ -1009,8 +1010,9 @@ fn parse_task_key(text: &str, subject: &str) -> Result<TaskStamp, Error> {
         Ok(task) => Ok(task),
         Err(stamp_error) => {
             if text.parse::<TaskHandle>().is_ok() {
-                Err(Error::refused(
+                Err(Error::unsupported(
                     "artifact store version",
+                    1,
                     format!(
                         concat!(
                             "{} uses rendered-handle task directory {:?} from artifact ",
@@ -1236,6 +1238,7 @@ pub struct Error {
     subject: String,
     detail: String,
     source: Option<io::Error>,
+    unsupported_release: Option<u16>,
 }
 
 impl Error {
@@ -1245,6 +1248,7 @@ impl Error {
             subject: subject.into(),
             detail: detail.into(),
             source: None,
+            unsupported_release: None,
         }
     }
 
@@ -1254,6 +1258,7 @@ impl Error {
             subject: subject.into(),
             detail: detail.into(),
             source: None,
+            unsupported_release: None,
         }
     }
 
@@ -1263,6 +1268,17 @@ impl Error {
             subject: subject.into(),
             detail: detail.into(),
             source: None,
+            unsupported_release: None,
+        }
+    }
+
+    fn unsupported(subject: impl Into<String>, release: u16, detail: impl Into<String>) -> Self {
+        Self {
+            class: ErrorClass::Refusal,
+            subject: subject.into(),
+            detail: detail.into(),
+            source: None,
+            unsupported_release: Some(release),
         }
     }
 
@@ -1272,6 +1288,7 @@ impl Error {
             subject: format!("{} at {}", operation.into(), path.as_ref().display()),
             detail: source.to_string(),
             source: Some(source),
+            unsupported_release: None,
         }
     }
 
@@ -1288,6 +1305,12 @@ impl Error {
     #[must_use]
     pub fn detail(&self) -> &str {
         &self.detail
+    }
+
+    /// Retained artifact-store release this build cannot decode, when known.
+    #[must_use]
+    pub const fn unsupported_release(&self) -> Option<u16> {
+        self.unsupported_release
     }
 
     fn io_kind(&self) -> Option<io::ErrorKind> {

@@ -475,6 +475,7 @@ fn rendered_handle_directories_are_refused_as_release_one_not_read_as_a_fallback
         .expect_err("release-one task directory must be refused");
 
     assert_eq!(failure.class(), ErrorClass::Refusal);
+    assert_eq!(failure.unsupported_release(), Some(1));
 }
 
 #[test]

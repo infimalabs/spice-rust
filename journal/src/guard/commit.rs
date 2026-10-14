@@ -55,6 +55,7 @@ impl Journal {
         ensure_steering_index_current(&transaction, current)?;
         validate_steering_updates(&write)?;
         run_guards(&transaction, current, std::mem::take(&mut write.guards))?;
+        require_contribution_receipt(&write)?;
         let assigned = assign_positions(current, write.facts.len())?;
         let prepared = prepare_facts(&write, &assigned, current)?;
         insert_facts(&transaction, &write, &prepared)?;
@@ -580,6 +581,59 @@ fn insert_facts(
             .map_err(sqlite_fault)?;
         crate::taste_index::record(transaction, &proposed.fact, fact.seq).map_err(sqlite_fault)?;
         insert_thread_index(transaction, fact.seq, fact.cause, write.origin.as_str())?;
+    }
+    Ok(())
+}
+
+/// Reject a raw contribution fact or a contribution command receipt unless
+/// the successful receipt proves exactly the one fact it spans.
+fn require_contribution_receipt(write: &JournalWrite) -> Result<(), CommitError> {
+    let contributions = write
+        .facts
+        .iter()
+        .filter_map(|proposed| proposed.fact.read::<wire::rooms::RoomContributed>())
+        .collect::<Vec<_>>();
+    let is_contribution_command = write
+        .receipt
+        .as_ref()
+        .is_some_and(|receipt| receipt.command.kind == wire::CommandKind::RoomContribute);
+    if contributions.is_empty() && !is_contribution_command {
+        return Ok(());
+    }
+    if write.facts.len() != 1 || contributions.len() != 1 {
+        return Err(room_refusal(crate::rooms::Refusal::Unsound(
+            "a room contribution receipt must span exactly one contribution fact".to_owned(),
+        )));
+    }
+    let Some(receipt) = write.receipt.as_ref() else {
+        return Err(room_refusal(crate::rooms::Refusal::Unsound(
+            "a room contribution fact has no command receipt".to_owned(),
+        )));
+    };
+    if !is_contribution_command {
+        return Err(room_refusal(crate::rooms::Refusal::Unsound(
+            "a room contribution fact has a receipt for another command".to_owned(),
+        )));
+    }
+    let request =
+        serde_json::from_value::<wire::intent::RoomContribute>(receipt.command.body.clone())
+            .map_err(|error| {
+                room_refusal(crate::rooms::Refusal::Unsound(format!(
+                    "room contribution request is not decodable: {error}"
+                )))
+            })?;
+    let answer =
+        serde_json::from_value::<wire::intent::RoomContributeAnswer>(receipt.result.clone())
+            .map_err(|error| {
+                room_refusal(crate::rooms::Refusal::Unsound(format!(
+                    "room contribution answer is not decodable: {error}"
+                )))
+            })?;
+    if !contributions[0].matches_command(&write.actor, &request, &receipt.command.expected, &answer)
+    {
+        return Err(room_refusal(crate::rooms::Refusal::Unsound(
+            "room contribution fact does not match its command receipt".to_owned(),
+        )));
     }
     Ok(())
 }

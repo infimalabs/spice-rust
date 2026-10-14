@@ -262,7 +262,7 @@ pub(crate) fn verify_connection_after_facts(
     verify_generations(connection, &facts, &mut violations)?;
     heads += steering::verify(connection, &facts, &mut violations)?;
     heads += rooms::verify(connection, &facts, &mut violations)?;
-    let receipts = verify_receipts(connection, &mut violations)?
+    let receipts = verify_receipts(connection, &facts, &mut violations)?
         + crate::historical_receipts::verify(connection, &mut violations)?;
     verify_cursor(connection, &facts, &mut violations)?;
 
@@ -1127,6 +1127,7 @@ fn verify_residency(
 
 fn verify_receipts(
     connection: &Connection,
+    facts: &BTreeMap<u64, FactRecord>,
     violations: &mut Vec<Violation>,
 ) -> Result<usize, VerifyError> {
     let mut statement = connection
@@ -1136,12 +1137,128 @@ fn verify_receipts(
         .query_map([], ReceiptRow::read)
         .map_err(VerifyError::Sqlite)?;
     let mut count = 0;
+    let mut uncovered = facts
+        .iter()
+        .filter_map(|(seq, record)| {
+            record
+                .envelope
+                .as_ref()
+                .is_some_and(|envelope| {
+                    envelope
+                        .fact
+                        .read::<wire::rooms::RoomContributed>()
+                        .is_some()
+                })
+                .then_some(*seq)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
     for row in rows {
         let row = row.map_err(VerifyError::Sqlite)?;
         count += 1;
         verify_receipt(&row, violations);
+        if row.kind == wire::CommandKind::RoomContribute.as_str() {
+            verify_contribution_receipt(&row, facts, &mut uncovered, violations);
+        }
+    }
+    for seq in uncovered {
+        violations.push(Violation::new(
+            ViolationClass::Receipt,
+            format!("fact:{seq}"),
+            "room contribution fact has no matching successful command receipt",
+        ));
     }
     Ok(count)
+}
+
+fn verify_contribution_receipt(
+    row: &ReceiptRow,
+    facts: &BTreeMap<u64, FactRecord>,
+    uncovered: &mut std::collections::BTreeSet<u64>,
+    violations: &mut Vec<Violation>,
+) {
+    let Some(seq) = row
+        .first
+        .and_then(|value| u64::try_from(value).ok())
+        .filter(|_| row.last == row.first)
+    else {
+        receipt_violation(
+            row,
+            violations,
+            "room contribution receipt does not span exactly one fact",
+        );
+        return;
+    };
+    let Some(record) = facts.get(&seq) else {
+        receipt_violation(
+            row,
+            violations,
+            "room contribution receipt names a missing fact",
+        );
+        return;
+    };
+    let Some(envelope) = record.envelope.as_ref() else {
+        receipt_violation(
+            row,
+            violations,
+            "room contribution receipt spans an undecodable fact",
+        );
+        return;
+    };
+    let Some(contribution) = envelope.fact.read::<wire::rooms::RoomContributed>() else {
+        receipt_violation(
+            row,
+            violations,
+            "room contribution receipt spans another fact kind",
+        );
+        return;
+    };
+    let Ok(command) = wire::decode::<wire::Command<serde_json::Value>>(&row.request) else {
+        return;
+    };
+    let Ok(request) = serde_json::from_value::<wire::intent::RoomContribute>(command.body.clone())
+    else {
+        receipt_violation(
+            row,
+            violations,
+            "room contribution request body does not decode",
+        );
+        return;
+    };
+    let Ok(response) = wire::decode::<wire::Response<serde_json::Value>>(&row.response) else {
+        return;
+    };
+    let wire::Outcome::Reply(reply) = response.outcome else {
+        return;
+    };
+    let Ok(answer) = serde_json::from_value::<wire::intent::RoomContributeAnswer>(reply.body)
+    else {
+        receipt_violation(
+            row,
+            violations,
+            "room contribution answer body does not decode",
+        );
+        return;
+    };
+    let Ok(actor) = row.actor.parse::<wire::Actor>() else {
+        return;
+    };
+    if actor != envelope.actor
+        || !contribution.matches_command(&actor, &request, &command.expected, &answer)
+    {
+        receipt_violation(
+            row,
+            violations,
+            "room contribution fact does not match its command receipt",
+        );
+        return;
+    }
+    if !uncovered.remove(&seq) {
+        receipt_violation(
+            row,
+            violations,
+            "room contribution fact has more than one command receipt",
+        );
+    }
 }
 
 pub(crate) struct ReceiptRow {

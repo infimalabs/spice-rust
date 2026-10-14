@@ -148,11 +148,11 @@ impl Law {
         authority: Authority::Connected,
     };
     /// A lane contributes to one open Design room. It binds the Design's exact
-    /// statement and workflow heads; any connection may submit, and the
-    /// resident admits only a lane principal.
+    /// statement and workflow heads plus every exact source it cites; any
+    /// connection may submit, and the resident admits only a lane principal.
     pub const ROOM_CONTRIBUTE: Self = Self {
         required: &[WitnessKind::Task, WitnessKind::Workflow],
-        optional: &[],
+        optional: &[WitnessKind::Source],
         authority: Authority::Connected,
     };
     /// Intended birth stamp is absent and every dependency exists at its

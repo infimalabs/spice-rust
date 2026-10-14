@@ -70,13 +70,11 @@ fn contribute(
 ) -> Outcome<CommandAnswer> {
     let visible = board(bus, epoch, Actor::Operator);
     let heads = at(&visible, &body.room);
-    let command = fixture_command(
-        epoch,
-        actor,
-        CommandKind::RoomContribute,
-        vec![statement_witness(heads), workflow_witness(heads)],
-        &body,
-    );
+    let mut expected = vec![statement_witness(heads), workflow_witness(heads)];
+    expected.extend(body.sources.iter().map(|source| Witness::Source {
+        source: source.authority_digest(),
+    }));
+    let command = fixture_command(epoch, actor, CommandKind::RoomContribute, expected, &body);
     let Intent::RoomContribute(request) = command.body() else {
         panic!("fixture command carries a contribution");
     };
@@ -250,6 +248,21 @@ fn lanes_contribute_typed_records_that_read_grouped_and_authorize_nothing() {
             "unavailable": { "reason": "missing" },
         }])
     );
+
+    // A retained authority from a store generation this release cannot decode
+    // stays distinct from missing or unreadable source bytes.
+    let unsupported = root.as_ref().join("unsupported");
+    let legacy = unsupported.join("artifacts").join(design.as_str());
+    fs::create_dir_all(&legacy).expect("legacy retained directory exists");
+    let retained = history(root.as_ref(), &unsupported, &[design.as_str()]);
+    assert_eq!(
+        retained["page"]["rows"][3]["content"]["sources"],
+        json!([{
+            "state": "unavailable",
+            "source": { "kind": "artifact", "digest": digest },
+            "unavailable": { "reason": "unsupported-retained", "release": "1" },
+        }])
+    );
     assert_eq!(
         pruned["page"]["rows"][3]["content"]["text"],
         "Measured under load."
@@ -394,6 +407,7 @@ fn contribution_admission_refuses_typed_and_writes_nothing() {
         let outcome = attempt(lane.clone(), &design, text, sources);
         assert_eq!(refused(&outcome), reason, "{outcome:?}");
     }
+    assert_exact_source_refusals(&bus, epoch, root.as_ref(), &lane, &design, seats[0].lane);
     let empty = history(
         root.as_ref(),
         root.as_ref(),
@@ -411,6 +425,69 @@ fn contribution_admission_refuses_typed_and_writes_nothing() {
     let late = attempt(lane, &design, "After the fact.", Vec::new());
     assert_eq!(refused(&late), "room::contribution-design-concluded");
     clean(&root, bus);
+}
+
+fn assert_exact_source_refusals(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    root: &Path,
+    lane: &Actor,
+    design: &TaskHandle,
+    author: CanonicalUuid,
+) {
+    let first = unwritten_hunk(author);
+    let mut advanced = first.clone();
+    advanced.head.next.offset += 64;
+    let equivalent = contribute(
+        bus,
+        epoch,
+        root,
+        lane.clone(),
+        contribution_body(
+            design,
+            RoomContributionKind::ReasonFor,
+            "Same transcript bytes twice.",
+            vec![
+                RoomSource::Transcript(first),
+                RoomSource::Transcript(advanced),
+            ],
+        ),
+    );
+    assert_eq!(refused(&equivalent), "room::contribution-source-duplicate");
+
+    let visible = board(bus, epoch, Actor::Operator);
+    let cited = journal_source(&visible, design);
+    let body = contribution_body(
+        design,
+        RoomContributionKind::Evidence,
+        "Unwitnessed citation.",
+        vec![cited],
+    );
+    let heads = at(&visible, design);
+    let command = fixture_command(
+        epoch,
+        lane.clone(),
+        CommandKind::RoomContribute,
+        vec![statement_witness(heads), workflow_witness(heads)],
+        &body,
+    );
+    let Intent::RoomContribute(request) = command.body() else {
+        panic!("fixture command carries a contribution");
+    };
+    let store = artifacts(root);
+    let tape = root.join("tape");
+    let unwitnessed = room_contribute(
+        bus,
+        &command,
+        request,
+        Some(SourceOwners {
+            tape: &tape,
+            artifacts: &store,
+        }),
+        &projects(),
+        &board::NextConfig::default(),
+    );
+    assert_eq!(refused(&unwitnessed), "room::contribution-source-witness");
 }
 
 /// A hunk of a transcript no tape holds.
@@ -502,10 +579,11 @@ fn the_journal_admits_only_a_lane_own_bounded_contribution_to_an_open_design() {
     ] {
         assert_eq!(refused(outcome), journal::ROOM_AUTHORITY_REFUSED);
     }
-    assert!(matches!(
-        commit(Actor::Lane(author), &design, "Sound.", Vec::new()),
-        CommitOutcome::Committed(_)
-    ));
+    assert_eq!(
+        refused(commit(Actor::Lane(author), &design, "Sound.", Vec::new())),
+        journal::ROOM_AUTHORITY_REFUSED,
+        "a raw contribution without its successful command receipt is refused"
+    );
     assert_committed(conclude(
         &bus,
         epoch,
@@ -524,4 +602,60 @@ fn the_journal_admits_only_a_lane_own_bounded_contribution_to_an_open_design() {
         "a concluded Design accepts no contribution at commit"
     );
     clean(&root, bus);
+}
+
+#[test]
+fn verification_binds_a_contribution_fact_to_its_successful_answer() {
+    let (root, bus, epoch, seats) = fixture("design-contribution-verification", 1);
+    let design = add_controller(
+        &bus,
+        epoch,
+        "Verified contribution",
+        wire::TaskIntent::Design,
+        None,
+    );
+    let answer = contributed(contribute(
+        &bus,
+        epoch,
+        root.as_ref(),
+        Actor::Lane(seats[0].lane),
+        contribution_body(
+            &design,
+            RoomContributionKind::Evidence,
+            "The receipt proves this record.",
+            Vec::new(),
+        ),
+    ));
+    let replacement = RoomAuthorityStamp::for_micros(1_790_000_000_999_999)
+        .expect("replacement publication identity");
+    assert_ne!(answer.publication, replacement);
+    bus.shutdown().expect("fixture writer stops");
+
+    let authority = root.as_ref().join("authority.sqlite3");
+    let connection = rusqlite::Connection::open(&authority).expect("fixture authority opens");
+    connection
+        .execute(
+            "UPDATE command_receipts SET response = CAST(json_set(\
+             CAST(response AS TEXT), '$.outcome.body.publication', ?1) AS BLOB) \
+             WHERE command_kind = 'room::contribute'",
+            [replacement.to_string()],
+        )
+        .expect("plant mismatched contribution answer");
+    drop(connection);
+
+    let journal = journal::Journal::open(&authority).expect("fixture authority reopens");
+    let failure = journal
+        .verify()
+        .expect_err("a mismatched contribution answer must fail verification");
+    assert!(
+        failure.violations().iter().any(|violation| {
+            violation.class == journal::ViolationClass::Receipt
+                && violation
+                    .detail
+                    .contains("contribution fact does not match")
+        }),
+        "semantic contribution corruption was not reported: {failure}"
+    );
+    drop(journal);
+    fs::remove_dir_all(root.as_ref()).expect("fixture cleanup");
 }
