@@ -83,7 +83,6 @@ body:has(.shell),
 }
 .app-global-work-tabs { justify-self: start; }
 .app-design-work-tabs {
-  --app-flavor-base: var(--accent-final);
   justify-self: end;
   flex-direction: row-reverse;
 }
