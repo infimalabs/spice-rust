@@ -528,20 +528,6 @@ pub const fn accent(members: usize, position: usize) -> usize {
     position % ACCENTS
 }
 
-/// Resolve the accent slot currently dealt to one independently steerable lane.
-///
-/// Agent color follows canonical team position, so every surface that names a
-/// lane uses the same right-edge palette deal.
-#[must_use]
-pub fn lane_accent(lanes: &[LaneRow], lane: CanonicalUuid) -> Option<usize> {
-    lanes.iter().find_map(|team| {
-        team.members
-            .iter()
-            .position(|member| member.lane == lane)
-            .map(|position| accent(team.members.len(), position))
-    })
-}
-
 /// The part of a worktree path that names one lane rather than the fleet.
 ///
 /// Lanes of one fleet are siblings in a single parent directory, so a path cut
@@ -1055,8 +1041,8 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_TEAM_VISUAL_WEIGHT, MILLIS_PER_DAY, agent_message_attribution, agent_message_label,
-        directive_context_prose, first_nonquoted_prose, lane_accent, short, swap_members,
-        task_elapsed_label, task_elapsed_label_deadline_millis, task_remaining_label,
+        directive_context_prose, first_nonquoted_prose, short, swap_members, task_elapsed_label,
+        task_elapsed_label_deadline_millis, task_remaining_label,
         task_remaining_label_deadline_millis, team_label_in, team_visual_weight,
         ticker_accessible_label, ticker_chunks, tool_media_description, transfer_member,
     };
@@ -1119,21 +1105,6 @@ mod tests {
         );
         assert_eq!(task_remaining_label(-1), Some("now".to_owned()));
         assert_eq!(task_remaining_label_deadline_millis(-1), None);
-    }
-
-    #[test]
-    fn lane_accent_resolves_the_same_right_edge_palette_used_by_agent_surfaces() {
-        let lanes = [crate::runtime::LaneRow {
-            lane: id(10),
-            subscription: wire::intent::TeamLife::Steer,
-            fast_mode: false,
-            members: vec![member(1), member(2), member(3)],
-        }];
-
-        assert_eq!(lane_accent(&lanes, id(1)), Some(0));
-        assert_eq!(lane_accent(&lanes, id(2)), Some(1));
-        assert_eq!(lane_accent(&lanes, id(3)), Some(2));
-        assert_eq!(lane_accent(&lanes, id(4)), None);
     }
 
     #[test]
