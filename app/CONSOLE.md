@@ -254,10 +254,11 @@ team's complete current execution set selected without changing the durable
 location. Totals keep one footprint for every count. Tabs past a total scroll
 horizontally under edge fades and never enter the status row.
 
-Task tabs are neutral. Only a handle a lane is working carries that lane's
-accent, beside the lane's name in its text; hover and keyboard focus stay
-neutral in every strip. Every count badge is one neutral open-task total; see
-[Task counts show one open
+Team- and group-local task tabs stay neutral in every state: a claim never
+colors their rim, text, badge, or background. Their labels, availability, and
+focus treatment still identify and operate the same work, while global strips
+own their interaction feedback independently. Every count badge is one neutral
+open-task total; see [Task counts show one open
 total](../docs/product/loops.md#the-jitter-contract).
 
 Each global stem tab opens its complete visibility-qualified stem within its
