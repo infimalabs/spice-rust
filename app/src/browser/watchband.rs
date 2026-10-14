@@ -22,6 +22,7 @@ mod fleet;
 mod member_controls;
 mod mosaic_view;
 mod provider_emblem;
+mod reading_focus;
 mod state;
 mod team_drag;
 
@@ -49,6 +50,7 @@ pub(in crate::browser) use mosaic_view::{
     ActivityCard, HistorySender, LIFECYCLE_CARD_PREFIX, MosaicPlane, PlaneOwner, ROOM_CARD_PREFIX,
 };
 pub(super) use provider_emblem::render_provider_emblem;
+pub(super) use reading_focus::use_composer_reading_focus;
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts, use_composer_issue_toast};
 use team_drag::team_dragging;
 pub(super) use team_drag::{TeamDragState, use_team_drag_state};
