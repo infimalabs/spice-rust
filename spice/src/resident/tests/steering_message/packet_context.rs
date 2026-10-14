@@ -128,13 +128,13 @@ fn a_direction_spelling_a_packet_header_stays_literal() {
 #[test]
 fn a_fanout_presents_its_publication_whatever_the_batch_order() {
     let lanes = Lanes::new("packet-fanout");
-    let room = lanes.room("dVrD244Jd");
+    let direction = lanes.direct(SENDER, 20, "decide the merge");
     let plain = lanes.direct(FIRST, 40, "keep the tree green");
     let (first, second) = (lanes.address(FIRST), lanes.address(SECOND));
     lanes
         .say(
             SENDER,
-            &format!("MSG {first} {second} #{room}: hold the merge"),
+            &format!("MSG #{direction} {first} {second}: hold the merge"),
         )
         .expect("the MSG publishes");
     let fanout = [
