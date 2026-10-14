@@ -3,13 +3,9 @@
   --page: #f7f8f4;
   --panel: #ffffff;
   --control: #ffffff;
-  --control-surface-soft: color-mix(in srgb, var(--page) 62%, var(--control));
   --ink: #1f271f;
   --muted: #647064;
   --line: #d7ded2;
-  --line-soft: color-mix(in srgb, var(--line) 58%, transparent);
-  /* Control edges stay opaque as content moves beneath translucent surfaces. */
-  --control-line-soft: color-mix(in srgb, var(--line) 40%, var(--control));
   --accent: #2d6a4f;
   --accent-soft: #d9eee5;
   --focus: #1268a5;
@@ -23,10 +19,8 @@
   --app-radius-surface: 9px; --app-radius-frame: 10px; --app-radius-overlay: 12px;
   --app-radius-pill: 999px;
   --app-radius-circle: 50%;
-  --app-edge: 1px solid var(--line); --app-edge-soft: 1px solid var(--line-soft);
-  --app-control-edge-width: 1px; --app-control-edge: var(--app-control-edge-width) solid var(--control-line-soft);
+  --app-control-edge-width: 1px;
   --app-focus-ring-width: 2px; --app-focus-ring-strong-width: 3px;
-  --app-selection-shadow: inset 0 0 0 1px var(--line-soft);
   --app-motion-fast: 120ms; --app-motion-settle: 180ms; --app-ease-standard: ease-out;
   /* A message card rounds by its rail width; work tabs share that curvature. */
   --app-radius-card: var(--message-rail);
@@ -102,15 +96,22 @@
   /* Object-level surface roles. The inherited first base is an exact identity;
      an individual object bearing a base flavor replaces them together. */
   --app-base-accent: var(--accent-0);
+  --app-base-panel: var(--panel);
   --app-base-control: var(--control);
   --app-base-ink: var(--ink);
   --app-base-muted: var(--muted);
   --app-base-line: var(--line);
   --app-base-ground: var(--page);
   --app-base-focus: var(--muted);
-  /* The speaker accent of the operator and of the system itself: any card or
-     quote whose speaker holds no lane accent slot wears it. */
-  --accent-neutral: var(--ink);
+  /* The identity neutrals exactly as the page resolves them. Never
+     redeclared, so a flavored object rebuilds its roles from these while it
+     rebinds the primitives they came from. */
+  --app-anchor-page: var(--page);
+  --app-anchor-panel: var(--panel);
+  --app-anchor-control: var(--control);
+  --app-anchor-ink: var(--ink);
+  --app-anchor-muted: var(--muted);
+  --app-anchor-line: var(--line);
   /* Speaker rail widths: a message card's and a quote's. Anything that names
      a speaker or owner with a left rail uses one of these two sizes. */
   --message-rail: 4px;
@@ -150,6 +151,22 @@
     --accent-4: #5fd6d0;
     --accent-5: #d1a3ff;
     --overlay-veil: rgb(0 0 0 / var(--app-glass-thickness));
+}
+
+/* Roles derived from the primitive neutrals resolve wherever those primitives
+   are bound: on the page, and again on every base-flavored object, so a
+   flavored subtree derives them from its own base. */
+:root, [data-base-flavor] {
+  --control-surface-soft: color-mix(in srgb, var(--page) 62%, var(--control));
+  --line-soft: color-mix(in srgb, var(--line) 58%, transparent);
+  /* Control edges stay opaque as content moves beneath translucent surfaces. */
+  --control-line-soft: color-mix(in srgb, var(--line) 40%, var(--control));
+  --app-edge: 1px solid var(--line); --app-edge-soft: 1px solid var(--line-soft);
+  --app-control-edge: var(--app-control-edge-width) solid var(--control-line-soft);
+  --app-selection-shadow: inset 0 0 0 1px var(--line-soft);
+  /* The speaker accent of the operator and of the system itself: any card or
+     quote whose speaker holds no lane accent slot wears it. */
+  --accent-neutral: var(--ink);
 }
 
 * { box-sizing: border-box; }
@@ -218,6 +235,7 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   background: var(--app-base-control);
   color: var(--app-base-muted);
   font: 500 var(--app-type-status)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-decoration: none;
 }
 .app-horn-tab--down { border-radius: 0 0 var(--app-radius-card) var(--app-radius-card); }
 .app-horn-tab--up { border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
@@ -329,6 +347,11 @@ select, input, textarea { border-radius: var(--app-radius-control); }
   grid-template-columns: var(--app-total-tab-inline-size) minmax(0, 1fr) auto;
   grid-template-rows: minmax(0, 1fr);
 }
+/* The rail mirrors the Design globals: the total closes it and the lanes
+   working the group stack toward the start beside it. */
+.group-surface > .team-toolbar > .team-task-rail { grid-template-columns: minmax(0, 1fr) var(--app-total-tab-inline-size); }
+.group-surface .team-task-rail > [data-work-scope="group"] { grid-column: 2; }
+.group-surface .team-task-rail > .team-tasks { grid-column: 1; flex-direction: row-reverse; }
 .group-surface-name {
   align-self: center;
   min-width: 0;
@@ -781,21 +804,38 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 [data-accent="5"] { --accent-slot: var(--accent-5); }
 
 /* Accent slots are convenient inputs, not the boundary of the base-flavor
-   contract. Any object may instead provide its own --app-base-accent. */
+   contract. Any object may instead provide its own --app-base-accent, and
+   `final` names the end of the configured palette without wearing its slot,
+   so slotless descendants keep their own speaker accents. */
 [data-base-flavor][data-accent] {
   --app-base-accent: var(--accent-slot);
 }
+[data-base-flavor="final"] {
+  --app-base-accent: var(--accent-final);
+}
 
 /* Rebuild every semantic role from its achromatic anchor and one object-owned
-   base. No hue from the product-green defaults can leak into another flavor.
-   Accent zero is the exact identity because the defaults already wear it. */
+   base, then bind the object's primitives to those roles, so everything in
+   the subtree reads the base while keeping its relationships to every other
+   role. Lane accent slots stay the page's. No hue from the product-green
+   defaults can leak into another flavor. Accent zero is the exact identity
+   because the defaults already wear it. */
 [data-base-flavor]:not([data-base-flavor="identity"]):not([data-accent="0"]) {
-  --app-base-control: color-mix(in oklch, var(--app-base-accent) 3%, oklch(from var(--control) l 0 none));
-  --app-base-ink: color-mix(in oklch, var(--app-base-accent) 12%, oklch(from var(--ink) l 0 none));
-  --app-base-muted: color-mix(in oklch, var(--app-base-accent) 18%, oklch(from var(--muted) l 0 none));
-  --app-base-line: color-mix(in oklch, var(--app-base-accent) 24%, oklch(from var(--line) l 0 none));
-  --app-base-ground: color-mix(in oklch, var(--app-base-accent) 3%, oklch(from var(--page) l 0 none));
-  --app-base-focus: color-mix(in oklch, var(--app-base-accent) 58%, oklch(from var(--muted) l 0 none));
+  --app-base-panel: color-mix(in oklch, var(--app-base-accent) 3%, oklch(from var(--app-anchor-panel) l 0 none));
+  --app-base-control: color-mix(in oklch, var(--app-base-accent) 3%, oklch(from var(--app-anchor-control) l 0 none));
+  --app-base-ink: color-mix(in oklch, var(--app-base-accent) 12%, oklch(from var(--app-anchor-ink) l 0 none));
+  --app-base-muted: color-mix(in oklch, var(--app-base-accent) 18%, oklch(from var(--app-anchor-muted) l 0 none));
+  --app-base-line: color-mix(in oklch, var(--app-base-accent) 24%, oklch(from var(--app-anchor-line) l 0 none));
+  --app-base-ground: color-mix(in oklch, var(--app-base-accent) 3%, oklch(from var(--app-anchor-page) l 0 none));
+  --app-base-focus: color-mix(in oklch, var(--app-base-accent) 58%, oklch(from var(--app-anchor-muted) l 0 none));
+  --page: var(--app-base-ground);
+  --panel: var(--app-base-panel);
+  --control: var(--app-base-control);
+  --ink: var(--app-base-ink);
+  --muted: var(--app-base-muted);
+  --line: var(--app-base-line);
+  --accent: var(--app-base-accent);
+  --accent-soft: color-mix(in oklch, var(--app-base-accent) 22%, var(--app-base-ground));
 }
 
 

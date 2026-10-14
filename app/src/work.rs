@@ -9,6 +9,7 @@
 pub(crate) mod lens;
 mod overview;
 mod relationship;
+mod scope_lanes;
 mod wall;
 pub use overview::{
     TaskOverviewContext, TaskOverviewEdge, TaskOverviewGraph, TaskOverviewNode,
@@ -20,6 +21,7 @@ pub use relationship::{
     WorkRelationshipKind, WorkRelationshipNode, WorkRelationshipOptions,
     WorkRelationshipOriginNode, WorkRelationshipTaskNode,
 };
+pub use scope_lanes::ScopeLane;
 pub use wall::{DependencyWall, DependencyWalls};
 #[cfg(test)]
 mod team_scope_tests;

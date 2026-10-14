@@ -48,7 +48,6 @@ pub(in crate::browser) struct GroupRender<'a, 'w> {
     pub(in crate::browser) sender: &'a SenderHandle,
     pub(in crate::browser) drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub(in crate::browser) open_message_task: &'a Callback<(TaskStamp, web_sys::Element)>,
-    pub(in crate::browser) select_task: &'a Callback<TaskStamp>,
     pub(in crate::browser) navigate: &'a Callback<crate::browser::navigation::Intent>,
 }
 
@@ -135,6 +134,7 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
             key={view.group.to_string()}
             class="team-surface group-surface"
             data-group={view.group.to_string()}
+            data-base-flavor="final"
             data-team-weight={watchband::team_visual_weight(channels.len()).to_string()}
             onclick={panel::dismissal(render.controls, &view.group)}
         >

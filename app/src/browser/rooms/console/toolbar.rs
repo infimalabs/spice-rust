@@ -1,6 +1,6 @@
 //! A working group's toolbar, the team toolbar's twin read from Designs: an
-//! open-task total and one tab per task associated with the group's
-//! Designs, one standing light per Design, and a ticker of the newest room
+//! open-task total closing a rail of the lanes working the group's Designs,
+//! one standing light per Design, and a ticker of the newest room
 //! event across them. Only the name is the group's own; this browser's
 //! placement of the console lives in the panel's arrangement menu, where a
 //! team's arrangement stands. Everything renders from the board, the room
@@ -15,7 +15,7 @@ use crate::browser::{navigation, view};
 use crate::room_views::GroupView;
 use crate::runtime::{DesignStanding, RoomEvent};
 use crate::watchband;
-use crate::work::{WorkCounts, WorkScope, WorkTask};
+use crate::work::{ScopeLane, WorkCounts, WorkScope, WorkTask};
 
 pub(super) fn render(
     render: &GroupRender<'_, '_>,
@@ -63,26 +63,28 @@ fn scope(view: &GroupView, channels: &[Channel]) -> WorkScope {
     }
 }
 
-/// The fixed total and active-task scroller.
+/// The rail mirrors the Design globals: the fixed total closes it and the
+/// lanes working the group stack toward the start beside it.
 fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Channel]) -> Html {
     let tasks = render
         .work
         .map(|work| work.scope_strip(&scope(view, channels)))
         .unwrap_or_default();
+    let lanes = ScopeLane::working(&tasks);
     html! {
         <div class="team-task-rail">
             if !tasks.is_empty() {
                 {render_total(render, view, channels, &tasks)}
-                <nav class="app-horn-tabs team-tasks" aria-label="Tasks currently worked in this group's designs">
-                    {for tasks.iter().copied().map(|task| render_handle(render, channels, task))}
+                <nav class="app-horn-tabs team-tasks" aria-label="Lanes working this group's designs">
+                    {for lanes.iter().map(|working| render_lane_tab(render, channels, working))}
                 </nav>
             }
         </div>
     }
 }
 
-/// The leading tab: a badge counting every active task the rail shows, opening
-/// the overview with exactly that current selection.
+/// The closing tab: a badge counting every active task in the group's work,
+/// opening the overview with exactly that current selection.
 fn render_total(
     render: &GroupRender<'_, '_>,
     view: &GroupView,
@@ -123,42 +125,65 @@ fn render_total(
     }
 }
 
-/// One task-detail target in the accent of the Design it serves.
-fn render_handle(render: &GroupRender<'_, '_>, channels: &[Channel], task: &WorkTask<'_>) -> Html {
-    let statement = &task.row().statement.body;
-    let availability = task.availability();
-    let accent = channels
-        .iter()
-        .find(|channel| crate::runtime::associated(statement, &channel.stamp))
-        .map(|channel| channel.accent);
-    let label = format!(
-        "Open {}: {}, {}",
-        statement.handle,
-        crate::composer_markdown::inline::plain_text(task.row().presentation_title()),
-        availability.key(),
+/// One lane working the group, the twin of a team's task tab: named as its
+/// cards sign themselves, in the accent of the Design its first task serves.
+/// A seated lane opens its composer in Chat, where its history lives; a lane
+/// with no Chat seat reads as a plain label.
+fn render_lane_tab(
+    render: &GroupRender<'_, '_>,
+    channels: &[Channel],
+    working: &ScopeLane<'_, '_>,
+) -> Html {
+    let lanes = render.runtime.lanes();
+    let lane = working.lane();
+    let label = crate::work::owner_label(
+        &wire::Actor::Lane(lane),
+        lanes.and_then(|lanes| lanes.member(lane)),
     );
-    let open_task = {
-        let select = render.select_task.clone();
-        let born = statement.born.clone();
-        Callback::from(move |_| select.emit(born.clone()))
-    };
-    html! {
-        <button
-            key={statement.born.to_string()}
-            class={classes!(
-                "app-horn-tab",
-                "app-horn-tab--up",
-                "app-horn-tab__handle",
-                (!availability.moving()).then_some("dormant"),
-            )}
-            type="button"
-            title={label.clone()}
-            aria-label={label}
-            data-availability={availability.key()}
-            data-accent={accent.map(|accent| accent.to_string())}
-            data-sidebar-focus-key={format!("group-task:{}", statement.born)}
-            onclick={open_task}
-        >{statement.handle.to_string()}</button>
+    let accent = working
+        .tasks()
+        .iter()
+        .find_map(|task| {
+            channels.iter().find(|channel| {
+                crate::runtime::associated(&task.row().statement.body, &channel.stamp)
+            })
+        })
+        .map(|channel| channel.accent.to_string());
+    let handles = working
+        .tasks()
+        .iter()
+        .map(|task| task.row().statement.body.handle.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let key = lane.to_string();
+    let classes = classes!("app-horn-tab", "app-horn-tab--up", "app-horn-tab__handle");
+    if lanes
+        .and_then(|lanes| lanes.chat_target_for_lane(lane))
+        .is_some()
+    {
+        let title = format!("Open {label}'s composer in Chat, working {handles}");
+        let href = crate::view::card_href(&crate::browser::watchband::primary_textarea_id(&key));
+        html! {
+            <a
+                key={key.clone()}
+                class={classes}
+                {href}
+                title={title.clone()}
+                aria-label={title}
+                data-accent={accent}
+                data-group-lane={key}
+            >{label}</a>
+        }
+    } else {
+        html! {
+            <span
+                key={key.clone()}
+                class={classes}
+                title={format!("{label}, working {handles}")}
+                data-accent={accent}
+                data-group-lane={key}
+            >{label}</span>
+        }
     }
 }
 

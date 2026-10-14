@@ -105,9 +105,11 @@ intent and `group::partition-moved` for a partition that changed since the
 browser read it, each leave every group unchanged.
 
 Each opened group is a console in the team fleet, after the teams, read exactly
-as a team console with tasks and agents swapped. A team's composers target its
-lanes and its tabs are tasks; a group's composers target its designs and its
-tabs are lanes. The group's designs, in their shared order, each take the
+as a team console with tasks and agents swapped, its whole console rebuilt on
+the palette's final accent through the
+[base-flavor contract](CONSOLE.md#design-standing). A team's composers target
+its lanes and its tabs are tasks; a group's composers target its designs and
+its tabs are lanes. The group's designs, in their shared order, each take the
 accent a lane in that position takes in a team: the design's composer, its
 light in the status band, and every one of its room cards carry it. All
 designs' publications interleave newest first in one packed plane, so no room
@@ -115,12 +117,14 @@ is paged or opened separately; durable task and publication stamps key the
 cards, and linked bytes that are not present stay labeled source
 placeholders.
 
-The tab rail lists each lane that holds an active claim on an open task
+As on the command bar's Design rail, the group's total closes its tab rail and
+opens the group's work overview. Beside it, toward the start, the rail lists
+each lane that holds an active claim on an open task
 associated with any of the group's designs: the design itself, or a task
 whose preparation parent, controller, or construction is that design. A lane
 enters and leaves the rail exactly as a task enters and leaves a team's rail,
-as board facts change, and its task handles follow it in the accent of the
-design each serves. Activating a lane opens its composer in Chat, whose team
+as board facts change, in the accent of the design its first such task serves,
+with its task handles in its title. Activating a lane opens its composer in Chat, whose team
 plane holds its history; a lane with no Chat seat stays a plain label.
 
 A design's composer posts the guarded native room-post command to exactly that
