@@ -180,10 +180,16 @@ pub(in crate::board_command) fn project_frontier<'a>(
                 );
             }
         }
-        if let Some(preparation) = &statement.preparation
-            && let Some(parent) = observed.task_heads(&preparation.parent)
+        // Control reads both the parent's intent and whether the controller
+        // still stands, so both must be known even when off the frontier.
+        for known in statement
+            .preparation
+            .iter()
+            .flat_map(|preparation| [&preparation.parent, &preparation.controller])
         {
-            satisfied.know(preparation.parent.clone(), parent.statement().body().intent);
+            if let Some(task) = observed.task_heads(known) {
+                satisfied.know(known.clone(), task.statement().body().intent);
+            }
         }
         satisfied.observe(statement, heads.workflow().body());
         let explicit_release = heads.claim().is_some_and(|claim| {
