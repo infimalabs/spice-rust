@@ -16,7 +16,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant as Monotonic};
 
 use sill::{Environment, Spec};
 use vendor::omp::{JobCall, JobOp, Lifetime, ShellCall};
@@ -44,6 +44,12 @@ const FOREGROUND_BUFFER: Duration = Duration::from_secs(1);
 /// How long a follow waits between looks when nothing signals: the job's
 /// deadline is the keeper's business, so a follow is bounded only in cadence.
 const FOLLOW_CADENCE: Duration = Duration::from_secs(60);
+
+/// How often a finite wait looks at its job's output while nothing signals,
+/// and the most often it reports progress. A job's log can grow without any
+/// change a platform's directory watch reports, or with a change on every
+/// write.
+const PROGRESS_CADENCE: Duration = Duration::from_secs(2);
 
 /// omp's own notice when a message backgrounds the running command.
 const STEERED: &str =
@@ -256,7 +262,7 @@ impl Terminal {
         progress: &mut dyn FnMut(),
     ) -> Option<Report> {
         loop {
-            match job.observe_with(control, FOLLOW_CADENCE, progress) {
+            match job.observe_with(control, FOLLOW_CADENCE, FOLLOW_CADENCE, progress) {
                 Ok(Observed::Ended(Ended {
                     ending: Ending::Stopped,
                     ..
@@ -276,9 +282,10 @@ impl Terminal {
     /// Answer one request on the lane's jobs. An answer that reports how a
     /// job ended is the lane hearing it, so its completion notice is not owed.
     ///
-    /// A finite wait reports its current output when observation starts and
-    /// whenever that output changes. The caller can present those snapshots
-    /// while the final answer remains pending.
+    /// A finite wait reports its current output when observation starts and,
+    /// at most once per [`PROGRESS_CADENCE`], whenever that output changes,
+    /// whether or not the platform reports the log's growth. The caller can
+    /// present those snapshots while the final answer remains pending.
     pub(in crate::resident) fn job(
         &self,
         call: &JobCall,
@@ -302,7 +309,9 @@ impl Terminal {
                 Some(ended) => told(&job, &ended),
                 None => snapshot(&job, None),
             },
-            (JobOp::Wait, Some(job)) => wait(&job, control, call.timeout, progress),
+            (JobOp::Wait, Some(job)) => {
+                wait(&job, control, call.timeout, PROGRESS_CADENCE, progress)
+            }
             (JobOp::Stop, Some(job)) => match stop(&job, control) {
                 Some(ended) => told(&job, &ended),
                 None => still(&job, "stop asked"),
@@ -507,24 +516,34 @@ impl Report {
 /// Follow a finite job without changing it. A running service never ends on
 /// its own, so waiting on one answers at once with what it has said so far;
 /// its task claim's end, or an earlier `stop`, ends it.
+///
+/// While the job runs, its current output is read at most once per `cadence`
+/// and reported whenever it differs from the last report.
 fn wait(
     job: &Job,
     control: &Control,
     bound: Duration,
+    cadence: Duration,
     progress: &mut dyn FnMut(&Report),
 ) -> Report {
     if job.timeout().is_none() && job.ended().is_none() {
         return still(job, SERVICE_WAIT);
     }
     let mut previous = String::new();
-    let mut changed = || {
+    let mut looked: Option<Monotonic> = None;
+    let mut look = || {
+        let now = Monotonic::now();
+        if looked.is_some_and(|at| now.duration_since(at) < cadence) {
+            return;
+        }
+        looked = Some(now);
         let report = wait_progress(job);
         if report.output != previous {
             progress(&report);
             previous = report.output;
         }
     };
-    match job.observe_with(control, bound, &mut changed) {
+    match job.observe_with(control, bound, cadence, &mut look) {
         Ok(Observed::Ended(ended)) => told(job, &ended),
         Ok(Observed::Elapsed) => snapshot(job, None),
         Ok(Observed::Interrupted) => still(job, "wait interrupted by an incoming message"),

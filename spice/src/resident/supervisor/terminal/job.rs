@@ -857,13 +857,18 @@ impl Job {
         control: &Control,
         bound: Duration,
     ) -> io::Result<Observed> {
-        self.observe_with(control, bound, &mut || {})
+        self.observe_with(control, bound, bound, &mut || {})
     }
 
     /// Observe the job as [`Job::observe`] does, calling `progress` once
-    /// the watch is armed on every look at a running job and once more on
+    /// the watch is armed, on every look at a running job, and once more on
     /// seeing its ending: the keeper publishes every event before the
     /// ending, so the last call sees them all.
+    ///
+    /// A job's directory need not change when its log grows, so a running job
+    /// is also looked at after each `cadence` without a change. The armed
+    /// watch persists across those looks: a watch that never fires holds its
+    /// thread until this process ends.
     ///
     /// # Errors
     ///
@@ -872,13 +877,18 @@ impl Job {
         &self,
         control: &Control,
         bound: Duration,
+        cadence: Duration,
         progress: &mut dyn FnMut(),
     ) -> io::Result<Observed> {
         let mut keeper = self.keeper;
         let deadline = Monotonic::now() + bound;
         let mut observed_exit = false;
+        let mut armed = false;
         loop {
-            watch(&self.directory, &control.sender, Signal::woke)?;
+            if !armed {
+                watch(&self.directory, &control.sender, Signal::woke)?;
+                armed = true;
+            }
             if let Some(state) = self.state()? {
                 if let Some(ended) = state.ended() {
                     progress();
@@ -894,8 +904,9 @@ impl Job {
                 }
             }
             let remaining = deadline.saturating_duration_since(Monotonic::now());
-            match control.receiver.recv_timeout(remaining) {
-                Ok(Signal::Changed) => {}
+            let look = remaining.min(cadence);
+            match control.receiver.recv_timeout(look) {
+                Ok(Signal::Changed) => armed = false,
                 Ok(Signal::KeeperExited) => {
                     progress();
                     if let Some(ended) = self.state()?.and_then(|state| state.ended()) {
@@ -909,7 +920,10 @@ impl Job {
                 Ok(Signal::ObserverFailed(reason)) => return Err(io::Error::other(reason)),
                 Ok(Signal::Cancel) => return Ok(Observed::Cancelled),
                 Ok(Signal::Interrupt) => return Ok(Observed::Interrupted),
-                Err(mpsc::RecvTimeoutError::Timeout) => return Ok(Observed::Elapsed),
+                Err(mpsc::RecvTimeoutError::Timeout) if look == remaining => {
+                    return Ok(Observed::Elapsed);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err(io::Error::new(
                         ErrorKind::BrokenPipe,

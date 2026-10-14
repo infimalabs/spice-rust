@@ -1,12 +1,32 @@
 use std::fs;
-use std::time::Duration;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use sill::Environment;
 use vendor::omp::{JobCall, JobOp};
 use wire::intent::{LaneJobKind, LaneJobStanding};
 
 use super::job::Ending;
-use super::{Control, Jobs, Terminal, unheard};
+use super::{Control, Jobs, Terminal, unheard, wait};
+
+fn scratch(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "spice-lane-{label}-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple(),
+    ))
+}
+
+fn append(log: &Path, text: &str) {
+    fs::OpenOptions::new()
+        .append(true)
+        .open(log)
+        .and_then(|mut file| file.write_all(text.as_bytes()))
+        .expect("job output appends");
+}
 
 #[test]
 fn a_lane_lists_each_kept_job_by_how_it_lives_and_whether_it_ended() {
@@ -76,6 +96,89 @@ fn a_finite_wait_reports_the_job_and_latest_output_while_it_remains_blocked() {
         ["[job ".to_owned() + job.id() + "] serve --port 8080\nready on 8080"]
     );
     assert!(report.output.contains("Command still running"));
+}
+
+#[test]
+fn a_finite_wait_reports_what_its_log_gains_though_its_directory_never_changes() {
+    let root = scratch("wait-refresh");
+    let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
+    let job = jobs.record_for_tests("serve --port 8080", false, Some(600_000));
+    fs::write(job.log_path(), "building\n").expect("job output");
+    let control = Control::new();
+    let handle = control.handle();
+    let mut progress = Vec::new();
+
+    wait(
+        &job,
+        &control,
+        Duration::from_secs(30),
+        Duration::from_millis(10),
+        &mut |report| {
+            progress.push(report.output.clone());
+            if progress.len() == 1 {
+                append(&job.log_path(), "ready on 8080\n");
+            } else {
+                handle.cancel();
+            }
+        },
+    );
+
+    let _ = fs::remove_dir_all(&root);
+    let named = format!("[job {}] serve --port 8080\n", job.id());
+    assert_eq!(
+        progress,
+        [named.clone() + "building", named + "ready on 8080"]
+    );
+}
+
+#[test]
+fn a_finite_wait_reports_at_most_once_per_cadence_however_often_its_job_changes() {
+    let root = scratch("wait-cadence");
+    let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
+    let job = jobs.record_for_tests("chatty", false, Some(600_000));
+    fs::write(job.log_path(), "0\n").expect("job output");
+    let cadence = Duration::from_millis(20);
+    let stopped = Arc::new(AtomicBool::new(false));
+    let writer = {
+        let (log, stopped) = (job.log_path().to_path_buf(), Arc::clone(&stopped));
+        let probe = log.with_file_name("probe");
+        std::thread::spawn(move || {
+            let mut line = 0_u64;
+            while !stopped.load(Ordering::Relaxed) {
+                line += 1;
+                append(&log, &format!("{line}\n"));
+                // A directory entry change wakes the watch on every platform.
+                let _ = fs::write(&probe, b"");
+                let _ = fs::remove_file(&probe);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        })
+    };
+    let mut reported = Vec::new();
+
+    wait(
+        &job,
+        &Control::new(),
+        Duration::from_millis(200),
+        cadence,
+        &mut |_| reported.push(Instant::now()),
+    );
+
+    stopped.store(true, Ordering::Relaxed);
+    writer.join().expect("writer stops");
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        reported.len() > 1,
+        "a job that keeps printing is reported again"
+    );
+    // The wait spaces its reads by the cadence; each report follows its read
+    // by however long that read took, so reports keep at least half of it.
+    assert!(
+        reported
+            .windows(2)
+            .all(|pair| pair[1] - pair[0] >= cadence / 2),
+        "{reported:?}"
+    );
 }
 
 /// A confirmed no-process launch failure removes its record. Cleanup failures
