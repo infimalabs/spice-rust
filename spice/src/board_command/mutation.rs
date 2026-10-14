@@ -318,10 +318,7 @@ fn create_task<B: serde::Serialize>(
         prepared.workflow.flow.clone_from(&prepared.flow);
         prepared.workflow.phase.clone_from(&prepared.phase);
     }
-    if !filing.is_draft()
-        && let Err(outcome) =
-            planning::admit_preparation(&snapshot, command, add, &mut prepared.statement)
-    {
+    if let Err(outcome) = admit_prepared(&snapshot, command, add, filing, &mut prepared) {
         return outcome;
     }
     let post = prepared_entry(&mut prepared, &tags, projects);
@@ -347,6 +344,27 @@ fn create_task<B: serde::Serialize>(
         dependency_witnesses,
         |_| {},
         added_claim,
+    )
+}
+
+/// Bind a filed statement to its planning parent and admit its route there; a
+/// Draft binds at filing instead.
+fn admit_prepared(
+    snapshot: &ValidatedSnapshot,
+    command: &wire::AdmittedCommand,
+    add: &TaskAdd,
+    filing: wire::TaskFiling,
+    prepared: &mut PreparedTask,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if filing.is_draft() {
+        return Ok(());
+    }
+    planning::admit_preparation(
+        snapshot,
+        command,
+        add,
+        &prepared.flow,
+        &mut prepared.statement,
     )
 }
 
@@ -703,8 +721,9 @@ fn task_flow_for_dependencies(
     };
     let mut flow = task_flow(requested, &add.acceptance)?;
     planning::admit_design_flow(add.intent, &flow)?;
+    planning::admit_probe_flow(add.intent, &flow)?;
     if (captures_implementation(command) || recovers_implementation(command))
-        && (add.intent.is_some() || gate::is_planning_phase(flow[0].as_str()))
+        && (add.intent.is_some() || gate::lacks_commit_authority(flow[0].as_str()))
     {
         return Err(refusal(
             "task::capture-planning",

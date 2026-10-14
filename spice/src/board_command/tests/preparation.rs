@@ -927,7 +927,7 @@ fn review_clean(
 }
 
 mod conclude;
-use conclude::{conclude, done_conclusion};
+pub(super) use conclude::{conclude, done_conclusion};
 mod contribution;
 
 #[test]

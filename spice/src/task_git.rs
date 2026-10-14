@@ -717,7 +717,7 @@ fn publish_inner(
 
 /// The holder's routes for dirty completion; planning phases admit no commit.
 fn completion_dirty_remedy(meta: Metadata<'_>) -> String {
-    if gate::is_planning_phase(meta.phase) {
+    if gate::lacks_commit_authority(meta.phase) {
         format!(
             "run spice task free {} to park the reported paths on the task",
             meta.label
@@ -765,7 +765,7 @@ fn require_planning_opening(
     resolution_state: bool,
     opening: Option<&GitBoundary>,
 ) -> Result<(), Error> {
-    if !gate::is_planning_phase(phase) {
+    if !gate::lacks_commit_authority(phase) {
         return Ok(());
     }
     if resolution_state {
@@ -794,7 +794,7 @@ fn require_planning_synchronization(
     observed_head: &str,
     target: Option<(&Target, &str)>,
 ) -> Result<(), Error> {
-    if !gate::is_planning_phase(phase) {
+    if !gate::lacks_commit_authority(phase) {
         return Ok(());
     }
     let opening = opening.expect("planning opening was admitted before target resolution");
@@ -840,9 +840,10 @@ fn planning_implementation_refusal(detail: impl Into<String>) -> Error {
         "git::planning-implementation",
         detail,
         concat!(
-            "organize the planning work with task add, task modify, task depends, and task note; ",
-            "restore the lane to its clean claim-opening commit, complete the planning phase, ",
-            "and claim an implementation phase before changing repository history",
+            "this phase holds no commit authority: record planning or probe findings with task ",
+            "add, task modify, task depends, task note, or task artifact add; restore the lane ",
+            "to its clean claim-opening commit and complete the phase, and only a claimed ",
+            "implementation phase changes repository history",
         ),
     )
 }

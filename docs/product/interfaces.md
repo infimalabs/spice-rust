@@ -106,6 +106,8 @@ instead.
 | Partition revision | the one read | `group::partition-moved`: read the groups and retry |
 | Design possession | inside a working group | `claim::design-passive` on capture, steal, or recovery and `room::design-passive` on coordination: `spice group move DESIGN --to GROUP` or `--new` |
 | Deactivating a held Design | a holder address proved by its seat or its claimed occupant's birth | `room::holder-address-unavailable`: the move records nothing; free or reseat the holder and retry |
+| Probe creation | the bare `probe` flow without intent, created directly under an open Design inside a working group | `task::probe-flow`: omit `--intent` and every other phase; `task::probe-design`: create it under an active open Design while holding it or with `--preparation DESIGN` |
+| Candidate outputs | no probe | `preparation::probe-output`: cite the probe's note or artifact as a candidate reference instead |
 | Automated resumes per rule | 1 through 8 | `room::auto-resume-out-of-range` |
 | Scoped request field | 2048 bytes | `room::coordination-scope-too-large` |
 | Live coordination per room | one request | `room::coordination-live`: retire or put aside the unanswered request |

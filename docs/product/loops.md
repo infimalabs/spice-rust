@@ -525,6 +525,18 @@ owns each rule summarized here.
   no lane is offered or woken for it, and status counts it under `selection`.
   Retained pre-cutover group markers are historical evidence; writable open
   refuses them under their owning release rather than executing them.
+
+  A [probe](invariants/identity.md#work-a-probe-gathers-evidence-for-an-active-design)
+  tries an idea for an open, active Design without the operator authorizing
+  the experiment. It is an ordinary task walking the one `probe` phase,
+  created directly under that Design: `spice task add TITLE --flow probe`
+  while holding the Design, or with `--preparation DESIGN`. It runs under
+  ordinary routing with no execution authorization while its Design stays
+  open in a working group. Like a planning claim it holds no commit
+  authority, so it lands nothing; its deliverable is task notes and retained
+  artifacts that a retained candidate cites by exact source. A probe is never
+  a candidate output, so turning a finding into work still takes a candidate
+  output the operator selects.
 - **Organization and foreground.** The
   [working-group partition](invariants/identity.md#identity-working-groups-are-one-guarded-partition-of-designs)
   is shared repository organization read by `spice group list` and changed only
