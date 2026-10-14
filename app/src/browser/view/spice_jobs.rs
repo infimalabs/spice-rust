@@ -157,6 +157,7 @@ fn jobs_view(props: &JobsProps) -> Html {
             query.set(String::new());
         })
     };
+    let on_scroll_key = Callback::from(chain_scroll_key);
     html! {
         <section class="app-sheet-section app-spice-jobs" aria-labelledby={HEADING}
             data-state={if rows.is_some() { "ready" } else { "loading" }}>
@@ -167,7 +168,8 @@ fn jobs_view(props: &JobsProps) -> Html {
                     aria-label="Find jobs by agent, command, or job ID" value={(*query).clone()} {oninput} />
                 {census(jobs, &filter)}
             </div>
-            <div class="app-job-stage" ref={stage} tabindex="-1" data-view={if current.is_some() { "detail" } else { "list" }}>
+            <div class="app-job-stage" ref={stage} tabindex="-1" data-view={if current.is_some() { "detail" } else { "list" }}
+                onkeydown={on_scroll_key}>
                 if let Some(selection) = current {
                     <inspector::Inspector key={row_id(&selection.target)} selection={selection.clone()} {position} {count} {in_list}
                         ready={props.inspect} can_stop={props.can_stop} scope={props.scope}
@@ -388,6 +390,61 @@ fn navigation(
             selected.set(Some(row.selection.clone()));
         }
     })
+}
+
+/// Native wheel and touch chaining cross a nested scrollport boundary. Browsers
+/// do not consistently do the same for scroll keys, so pass only a key that
+/// reached the active Jobs viewport's edge to the containing menu.
+fn chain_scroll_key(event: KeyboardEvent) {
+    if event.alt_key() || event.ctrl_key() || event.meta_key() {
+        return;
+    }
+    let key = event.key();
+    let direction = match key.as_str() {
+        "ArrowUp" | "PageUp" => -1,
+        "ArrowDown" | "PageDown" => 1,
+        _ => return,
+    };
+    let Some(stage) = event
+        .current_target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+    else {
+        return;
+    };
+    let selector = if stage.get_attribute("data-view").as_deref() == Some("detail") {
+        ".app-job-evidence"
+    } else {
+        ".app-spice-job-board"
+    };
+    let Ok(Some(inner)) = stage.query_selector(selector) else {
+        return;
+    };
+    let target_is_inside = event
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| target.closest(selector).ok().flatten())
+        .is_some();
+    let at_boundary = !target_is_inside
+        || direction < 0 && inner.scroll_top() <= 0
+        || direction > 0 && inner.scroll_top() + inner.client_height() >= inner.scroll_height() - 1;
+    if !at_boundary {
+        return;
+    }
+    let Ok(Some(outer)) = stage.closest(".app-sidebar-frame") else {
+        return;
+    };
+    let step = if key.starts_with("Page") {
+        inner.client_height().max(1)
+    } else {
+        40
+    };
+    let current = outer.scroll_top();
+    let maximum = (outer.scroll_height() - outer.client_height()).max(0);
+    let next = (current + direction * step).clamp(0, maximum);
+    if next != current {
+        event.prevent_default();
+        outer.set_scroll_top(next);
+    }
 }
 
 fn matches_filter(row: &Row, filter: Filter, query: &str) -> bool {
