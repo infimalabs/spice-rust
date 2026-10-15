@@ -116,6 +116,7 @@ fn seed_lane_in_team_at(
     {
         head.subscriptions.push(wire::TeamSubscription {
             team,
+            formed_at: None,
             policy: wire::intent::TeamLife::Drive,
             fast_mode: false,
         });

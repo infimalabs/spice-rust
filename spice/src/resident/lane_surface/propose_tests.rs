@@ -235,6 +235,7 @@ fn seating_appends_the_lane_without_reordering_teams_or_members() {
     };
     let subscription = |team: CanonicalUuid| wire::TeamSubscription {
         team,
+        formed_at: None,
         policy: TeamLife::Drive,
         fast_mode: false,
     };

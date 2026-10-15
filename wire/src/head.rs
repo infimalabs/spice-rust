@@ -979,6 +979,10 @@ pub struct LaneResidency {
 pub struct TeamSubscription {
     /// Stable app team identifying the subscribed team.
     pub team: CanonicalUuid,
+    /// Commit instant when this identity most recently crossed from a lone seat
+    /// into a team. Absent while the identity holds exactly one member.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formed_at: Option<Instant>,
     /// Authoritative task-selection policy for the entire team.
     pub policy: crate::intent::TeamLife,
     /// Whether this team enables fast mode for every member it holds.
@@ -1008,6 +1012,7 @@ impl TeamSubscription {
         };
         Self {
             team: self.team,
+            formed_at: self.formed_at,
             policy,
             fast_mode: self.fast_mode,
         }

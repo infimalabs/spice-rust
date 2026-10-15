@@ -664,11 +664,17 @@ fn cover_residency_heads() {
     law("LaneResidency", &[occupied.clone(), empty.clone()]);
     let drive = TeamSubscription {
         team: first_uuid,
+        formed_at: Some(
+            "2030-04-12T18:44:09.271Z"
+                .parse()
+                .expect("fixture formation instant"),
+        ),
         policy: wire::intent::TeamLife::Drive,
         fast_mode: true,
     };
     let steer = TeamSubscription {
         team: second_uuid,
+        formed_at: None,
         policy: wire::intent::TeamLife::Steer,
         fast_mode: false,
     };

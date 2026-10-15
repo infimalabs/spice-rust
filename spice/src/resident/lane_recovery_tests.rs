@@ -628,6 +628,7 @@ fn watchband_drain_does_not_end_a_drive_lanes_import_life() {
         lanes: vec![row.clone()],
         subscriptions: vec![wire::TeamSubscription {
             team: row.team,
+            formed_at: None,
             policy: wire::intent::TeamLife::Drain,
             fast_mode: false,
         }],

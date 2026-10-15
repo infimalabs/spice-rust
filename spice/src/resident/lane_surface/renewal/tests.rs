@@ -461,6 +461,7 @@ fn seeded(
         }],
         subscriptions: vec![wire::TeamSubscription {
             team: lane,
+            formed_at: None,
             policy: wire::intent::TeamLife::Drive,
             fast_mode: false,
         }],

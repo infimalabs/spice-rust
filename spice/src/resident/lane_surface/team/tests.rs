@@ -42,6 +42,16 @@ fn head(rows: &[(u8, u8)]) -> wire::ResidencyHead {
             .into_iter()
             .map(|team| wire::TeamSubscription {
                 team: uuid(team),
+                formed_at: (rows
+                    .iter()
+                    .filter(|(_, candidate)| *candidate == team)
+                    .count()
+                    > 1)
+                .then(|| {
+                    "2030-04-12T18:44:09.271Z"
+                        .parse()
+                        .expect("fixture formation instant")
+                }),
                 policy: TeamLife::Drive,
                 fast_mode: false,
             })
@@ -265,4 +275,31 @@ fn removing_a_host_mints_an_identity_when_every_remaining_member_name_is_taken()
             .policy,
         TeamLife::Drive
     );
+}
+
+#[test]
+fn formation_reconciliation_tracks_only_singleton_boundaries() {
+    let observed = head(&[(1, 1)]);
+    let mut formed = head(&[(1, 1), (2, 1)]);
+    formed.subscriptions[0].formed_at = None;
+    let first: wire::Instant = "2030-04-12T18:44:09.271Z"
+        .parse()
+        .expect("first formation instant");
+    reconcile_formations(&observed, &mut formed, first);
+    assert_eq!(formed.subscriptions[0].formed_at, Some(first));
+
+    let before_reorder = formed.clone();
+    formed.lanes.reverse();
+    let later: wire::Instant = "2030-04-12T18:44:10.271Z".parse().expect("later instant");
+    reconcile_formations(&before_reorder, &mut formed, later);
+    assert_eq!(
+        formed.subscriptions[0].formed_at,
+        Some(first),
+        "member order does not reform the team"
+    );
+
+    let before_split = formed.clone();
+    formed.lanes.pop();
+    reconcile_formations(&before_split, &mut formed, later);
+    assert_eq!(formed.subscriptions[0].formed_at, None);
 }

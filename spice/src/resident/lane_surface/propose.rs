@@ -34,6 +34,7 @@ pub(super) fn propose_seat(
         })?;
         next.subscriptions.push(wire::TeamSubscription {
             team: request.team,
+            formed_at: None,
             policy,
             fast_mode: false,
         });
@@ -61,6 +62,7 @@ pub(super) fn propose_seat(
         epoch,
         Producer::ResidentRecognition,
     )?;
+    team::reconcile_formations(observed.body(), &mut next, write.at());
     guard_residency(&mut write, observed);
     let seated = write
         .fact(
@@ -229,6 +231,7 @@ pub(super) fn propose_remove(
         observed.body().epoch,
         Producer::ResidentRecognition,
     )?;
+    team::reconcile_formations(observed.body(), &mut next, write.at());
     guard_residency(&mut write, observed);
     let fact = write
         .fact(

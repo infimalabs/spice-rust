@@ -842,6 +842,7 @@ fn a_lane_seated_alone_under_its_own_identity_is_not_on_a_team() {
     for policy in [TeamLife::Steer, TeamLife::Drive, TeamLife::Drain] {
         let configured = TeamSubscription {
             team: lane,
+            formed_at: None,
             policy,
             fast_mode: false,
         };
@@ -850,6 +851,7 @@ fn a_lane_seated_alone_under_its_own_identity_is_not_on_a_team() {
         assert_eq!(
             TeamSubscription {
                 team,
+                formed_at: None,
                 policy,
                 fast_mode: false,
             }
@@ -903,6 +905,7 @@ fn fast_mode_is_on_when_any_of_lane_team_or_global_enables_it() {
     let other = uuid("018f82d4-6f59-7d06-92e3-bce913116304");
     let subscription = |team, fast_mode| TeamSubscription {
         team,
+        formed_at: None,
         policy: wire::intent::TeamLife::Drive,
         fast_mode,
     };

@@ -335,6 +335,7 @@ pub(super) fn occupied_seed_with_session(
         }],
         subscriptions: vec![wire::TeamSubscription {
             team: team(),
+            formed_at: None,
             policy: wire::intent::TeamLife::Drive,
             fast_mode: false,
         }],

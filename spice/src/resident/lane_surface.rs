@@ -421,10 +421,6 @@ pub(super) fn arrange(
     };
     let mut next = next;
     next.topology_revision = topology_revision;
-    let lane_answer = match answer(&next, None, seats, paths) {
-        Ok(answer) => answer,
-        Err(outcome) => return typed_outcome(outcome),
-    };
     // Read before the write is opened, so an unreadable boundary refuses the
     // whole arrangement instead of committing a move whose attribution split
     // nothing can reconstruct.
@@ -440,6 +436,11 @@ pub(super) fn arrange(
         Producer::ResidentRecognition,
     ) {
         Ok(write) => write,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    team::reconcile_formations(observed.body(), &mut next, write.at());
+    let lane_answer = match answer(&next, None, seats, paths) {
+        Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
     guard_residency(&mut write, &observed);
