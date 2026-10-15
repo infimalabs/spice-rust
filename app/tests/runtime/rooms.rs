@@ -745,6 +745,52 @@ fn a_leave_ends_activity_until_the_lane_contributes_again() {
     );
 }
 
+#[test]
+fn only_a_leave_divides_a_working_group_plane() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    for frame in opening(&session) {
+        runtime.apply_stream(&frame);
+    }
+    let left = later_publication(1);
+    live(
+        &mut runtime,
+        &session,
+        envelope(
+            9,
+            "room::left",
+            &wire::rooms::RoomLeft {
+                room: room(),
+                publication: left.clone(),
+                lane: uuid(LANE),
+                clause: "my part is done".to_owned(),
+            },
+        ),
+    );
+    let returned = later_publication(3);
+    let mut contribution = room_message(10);
+    contribution["fact"]["publication"] = serde_json::json!(returned.to_string());
+    live(&mut runtime, &session, contribution);
+
+    let projection = runtime.room_projection();
+    let events = projection.room(&room()).expect("room").events();
+    let dividers = events
+        .iter()
+        .filter(|(_, event)| event.kind.divides_plane())
+        .map(|(publication, _)| publication.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        dividers,
+        vec![left],
+        "the departure alone divides; the same lane's earlier and later publications stay cards"
+    );
+    assert!(
+        events.contains_key(&returned) && events.contains_key(&authority(ROOM_EVENT)),
+        "the ordinary publications on either side of the leave remain in the timeline"
+    );
+}
+
 /// A coordination record at `position` under `key`, carrying a rule of
 /// `limit` resumes and, for an automated resume, its `step`.
 fn ruled(

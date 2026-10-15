@@ -45,6 +45,9 @@ pub(in crate::browser) enum ActivityCard {
         design: wire::TaskStamp,
         publication: wire::rooms::RoomAuthorityStamp,
         position: wire::Seq,
+        /// A full-width divider rather than a message card: a lane's
+        /// departure, as a compaction is in a team.
+        divider: bool,
         /// Everything that can change the card's measured geometry. Receipt
         /// state is excluded: its slots keep one geometry in every state.
         shape: Rc<str>,
@@ -109,6 +112,7 @@ impl PartialEq for ActivityCard {
                     accent: left_accent,
                     design: left_design,
                     publication: left_publication,
+                    divider: left_divider,
                     shape: left_shape,
                     body: left_body,
                     ..
@@ -117,6 +121,7 @@ impl PartialEq for ActivityCard {
                     accent: right_accent,
                     design: right_design,
                     publication: right_publication,
+                    divider: right_divider,
                     shape: right_shape,
                     body: right_body,
                     ..
@@ -125,6 +130,7 @@ impl PartialEq for ActivityCard {
                 left_accent == right_accent
                     && left_design == right_design
                     && left_publication == right_publication
+                    && left_divider == right_divider
                     && left_shape == right_shape
                     && left_body == right_body
             }
@@ -299,22 +305,19 @@ impl ActivityCard {
     }
 
     fn base_span(&self, geometry: &crate::mosaic::Geometry) -> usize {
-        match self {
-            Self::Agent { message, .. } if message.activity.is_boundary() => {
-                crate::mosaic::TRACK_COUNT
-            }
-            Self::Agent { .. } | Self::Room { .. } => geometry.base_span,
-            Self::Lifecycle { .. } => crate::mosaic::TRACK_COUNT,
+        if self.is_boundary() {
+            crate::mosaic::TRACK_COUNT
+        } else {
+            geometry.base_span
         }
     }
 
     fn is_boundary(&self) -> bool {
-        matches!(self, Self::Lifecycle { .. })
-            || matches!(
-                self,
-                Self::Agent { message, .. }
-                    if message.activity.is_boundary()
-            )
+        match self {
+            Self::Agent { message, .. } => message.activity.is_boundary(),
+            Self::Lifecycle { .. } => true,
+            Self::Room { divider, .. } => *divider,
+        }
     }
 }
 
@@ -1390,9 +1393,10 @@ fn render_activity_cards(
                 ActivityCard::Room {
                     accent,
                     design,
+                    divider,
                     body,
                     ..
-                } => render_room_card(*accent, design, body, &key, &layout),
+                } => render_room_card(*accent, design, *divider, body, &key, &layout),
             }
         })
         .collect()

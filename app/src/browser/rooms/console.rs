@@ -256,6 +256,47 @@ fn room_card(
 ) -> ActivityCard {
     let source_id = format!("{ROOM_CARD_PREFIX}{publication}");
     let display_millis = publication.micros() / 1_000;
+    let body = match &event.kind {
+        RoomEventKind::Left { lane, clause } => render_departure(
+            render.runtime,
+            channel,
+            *lane,
+            clause,
+            &source_id,
+            display_millis,
+        ),
+        _ => render_publication(
+            render,
+            group,
+            channel,
+            publication,
+            event,
+            &source_id,
+            display_millis,
+        ),
+    };
+    ActivityCard::Room {
+        accent: channel.accent,
+        design: channel.stamp.clone(),
+        publication: publication.clone(),
+        position: event.position,
+        divider: event.kind.divides_plane(),
+        shape: Rc::from(format!("{:?}", event.kind)),
+        body,
+    }
+}
+
+/// One publication's message-card face, with its quote action when it
+/// carries authored words.
+fn render_publication(
+    render: &GroupRender<'_, '_>,
+    group: &RoomAuthorityStamp,
+    channel: &Channel,
+    publication: &RoomAuthorityStamp,
+    event: &RoomEvent,
+    source_id: &str,
+    display_millis: i64,
+) -> Html {
     // Only authored words quote; the plane has no text for a lane's packet
     // until its transcript is read, and other events carry no words at all.
     let quote = match &event.kind {
@@ -268,7 +309,7 @@ fn room_card(
             let lane = design_key(group, &channel.stamp);
             let identity = target.to_string();
             let dispatcher = render.drafts.dispatcher();
-            let source_id = source_id.clone();
+            let source_id = source_id.to_owned();
             let order = event.position.get();
             let preview = watchband::quote_label(watchband::first_nonquoted_prose(text).as_deref())
                 .to_owned();
@@ -312,22 +353,50 @@ fn room_card(
         }
     });
     let anchor = card::Anchor {
-        id: &source_id,
+        id: source_id,
         label: format!("Link to publication in {}", channel.label),
         island,
     };
-    let body = html! {
+    html! {
         <div class="mosaic-message-content">
             {card::render_face(render.runtime, Some(controls), publication, event, Some(anchor))}
         </div>
-    };
-    ActivityCard::Room {
-        accent: channel.accent,
-        design: channel.stamp.clone(),
-        publication: publication.clone(),
-        position: event.position,
-        shape: Rc::from(format!("{:?}", event.kind)),
-        body,
+    }
+}
+
+/// A lane's departure as the working group's counterpart of a team's
+/// compaction boundary: two rules around one compact label holding the
+/// publication's linked age, the leaving lane, its design, and its clause.
+/// The label truncates at narrow widths; its title keeps the whole words.
+fn render_departure(
+    runtime: &AppRuntime,
+    channel: &Channel,
+    lane: wire::CanonicalUuid,
+    clause: &str,
+    source_id: &str,
+    display_millis: i64,
+) -> Html {
+    let leaver = super::conversation::lane_label(runtime, lane);
+    let departure = format!("left {}", channel.label);
+    let summary = format!("{leaver} {departure}: {clause}");
+    html! {
+        <>
+            <span class="mosaic-compaction-rule" aria-hidden="true"></span>
+            <span class="mosaic-compaction-label" title={summary.clone()}>
+                <Age
+                    authored={display_millis}
+                    class="mosaic-compaction-age"
+                    href={crate::view::card_href(source_id)}
+                    label={format!("Link to {summary}")}
+                />
+                <span class="mosaic-compaction-context">
+                    <span class="mosaic-compaction-agent">{leaver}</span>
+                    <span class="message-key">{departure}</span>
+                    <span class="mosaic-compaction-clause">{clause.to_owned()}</span>
+                </span>
+            </span>
+            <span class="mosaic-compaction-rule" aria-hidden="true"></span>
+        </>
     }
 }
 

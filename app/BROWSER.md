@@ -121,9 +121,13 @@ message card, with no card nested inside it and no publication key shown. Its
 words lead with the relative age, the speaker in their lane's team accent, an
 arrow to any receivers, and one badge: ASK or ANS for a question or answer, or
 the contribution kind (reason for, reason against, evidence, question). Its
-receipts, result, or cited sources follow the words. As on a team toolbar, the
-status band shows the newest thing said in any of the group's designs and no
-group name.
+receipts, result, or cited sources follow the words. A lane's departure from a
+design's room is instead one full-width divider, the group's counterpart of a
+team's compaction card and in its compact shape: two rules in the design's
+accent around the leave's linked age, the leaving lane, the design it left, and
+its clause, which alone yields width; the label's title keeps the whole
+sentence. As on a team toolbar, the status band shows the newest thing said in
+any of the group's designs and no group name.
 
 As on the command bar's Design rail, the group's total closes its tab rail and
 opens the group's work overview. Beside it, toward the start, the rail lists

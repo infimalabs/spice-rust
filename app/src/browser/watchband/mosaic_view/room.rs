@@ -4,10 +4,13 @@ use super::CardLayout;
 use yew::prelude::*;
 
 /// One room publication placed in a working-group plane. Its design channel
-/// shows only through the accent, exactly as a lane's does in a team.
+/// shows only through the accent, exactly as a lane's does in a team. A
+/// divider spans the plane in a team compaction card's shape; its body
+/// supplies that card's rules and label.
 pub(super) fn render_room_card(
     accent: usize,
     design: &wire::TaskStamp,
+    divider: bool,
     body: &Html,
     key: &str,
     layout: &CardLayout,
@@ -16,9 +19,14 @@ pub(super) fn render_room_card(
         <article
             key={key.to_owned()}
             id={key.to_owned()}
-            class={classes!("mosaic-message-card", "mosaic-room-card", layout.lifecycle.as_str())}
+            class={classes!(
+                "mosaic-message-card",
+                "mosaic-room-card",
+                divider.then_some("mosaic-compaction-card"),
+                layout.lifecycle.as_str(),
+            )}
             tabindex="-1"
-            data-card-kind="room"
+            data-card-kind={if divider { "room-departure" } else { "room" }}
             data-mosaic-card-key={key.to_owned()}
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-design={design.to_string()}

@@ -197,6 +197,15 @@ pub enum RoomEventKind {
     },
 }
 
+impl RoomEventKind {
+    /// Whether this event divides a working-group plane as one full-width
+    /// boundary, as a compaction divides a team's: only a lane's departure.
+    #[must_use]
+    pub const fn divides_plane(&self) -> bool {
+        matches!(self, Self::Left { .. })
+    }
+}
+
 /// One task-keyed room projection.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RoomState {
