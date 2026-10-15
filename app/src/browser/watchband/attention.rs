@@ -65,8 +65,18 @@ impl TeamAttention {
         select: &Callback<wire::TaskStamp>,
         navigate: &Callback<navigation::Intent>,
     ) -> Self {
-        let mut items =
-            watchband::team_attention(standings, work, runtime.inbox(), runtime.consent_queue());
+        let steeped = runtime
+            .room_projection()
+            .maturity_attention()
+            .cloned()
+            .collect();
+        let mut items = watchband::team_attention(
+            standings,
+            work,
+            runtime.inbox(),
+            runtime.consent_queue(),
+            &steeped,
+        );
         items.retain(|item| match &item.subject {
             AttentionSubject::Consent(pending) => !matches!(
                 runtime.consent_ruling(pending.request),
