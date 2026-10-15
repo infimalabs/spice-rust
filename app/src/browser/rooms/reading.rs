@@ -86,7 +86,7 @@ fn render_amendment(
             .board()
             .and_then(|board| board.seats.occupant(*lane))
             .map(|occupant| (*lane, occupant)),
-        Actor::Operator | Actor::Spice => None,
+        Actor::Human(_) | Actor::Operator | Actor::Spice => None,
     };
     if !runtime.offers(CommandKind::TaskEdit)
         || !crate::design_amendment::visible(

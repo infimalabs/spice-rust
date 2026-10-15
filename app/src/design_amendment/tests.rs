@@ -39,6 +39,21 @@ fn refusal(draft: &DesignAmendment) -> &str {
     }
 }
 
+fn moved(design: &BoardTask, by: u64, change: impl FnOnce(&mut BoardTask)) -> BoardTask {
+    let mut moved = design.clone();
+    moved.statement.position =
+        wire::Seq::new(design.statement.position.get() + by).expect("moved position");
+    change(&mut moved);
+    moved
+}
+
+fn witness(design: &BoardTask) -> Witness {
+    Witness::Task {
+        task: design.statement.body.born.clone(),
+        head: design.statement.position,
+    }
+}
+
 #[test]
 fn preview_freezes_the_shown_head_and_omits_unchanged_fields() {
     let design = design();
@@ -104,19 +119,12 @@ fn a_refusal_keeps_both_fields_and_resubmission_reads_the_new_head() {
         "a refusal needs a new preview"
     );
 
-    let mut moved = design.clone();
-    moved.statement.position =
-        wire::Seq::new(design.statement.position.get() + 10).expect("moved position");
-    moved.presentation_title = "Competing title".to_owned();
-    draft.preview(&moved);
+    let competing = moved(&design, 10, |competing| {
+        competing.presentation_title = "Competing title".to_owned();
+    });
+    draft.preview(&competing);
     let second = draft.begin_submit().expect("retained fields resubmit");
-    assert_eq!(
-        second.expected,
-        [Witness::Task {
-            task: moved.statement.body.born.clone(),
-            head: moved.statement.position,
-        }]
-    );
+    assert_eq!(second.expected, [witness(&competing)]);
     assert_eq!(second.request.title.as_deref(), Some("Proposed title"));
     assert_eq!(
         second.request.description.as_deref(),
@@ -170,4 +178,53 @@ fn success_rebases_to_the_submitted_values() {
         Some(&DraftNotice::Saved),
         "only a pending edit settles"
     );
+
+    let delivered = moved(&design, 1, |delivered| {
+        delivered.presentation_title = "Revised title".to_owned();
+        delivered.statement.body.description = Some("Revised description".to_owned());
+    });
+    draft.preview(&delivered);
+    assert_eq!(refusal(&draft), "task::edit-empty");
+    draft.set_description("Second description".to_owned());
+    draft.preview(&delivered);
+    let DraftPhase::Previewing(next) = draft.phase() else {
+        panic!("a further change previews: {:?}", draft.phase());
+    };
+    assert_eq!(next.request.title, None);
+    assert_eq!(next.expected, [witness(&delivered)]);
+}
+
+#[test]
+fn a_competing_edit_refuses_at_the_base_head_and_rebases_only_untouched_fields() {
+    let design = design();
+    let mut draft = DesignAmendment::new(&design);
+    draft.set_title("Proposed title".to_owned());
+    let competing = moved(&design, 10, |competing| {
+        competing.statement.body.description = Some("Competing description".to_owned());
+    });
+
+    draft.preview(&competing);
+    let submission = draft.begin_submit().expect("the title change previews");
+    assert_eq!(submission.request.title.as_deref(), Some("Proposed title"));
+    assert_eq!(
+        submission.request.description, None,
+        "an untouched description is never sent"
+    );
+    assert_eq!(submission.expected, [witness(&design)]);
+
+    draft.settle(Err(
+        "board::witness-moved: the statement changed first".to_owned()
+    ));
+    assert_eq!(draft.title(), "Proposed title");
+    assert_eq!(draft.description(), "Current description");
+
+    draft.preview(&competing);
+    assert_eq!(draft.title(), "Proposed title");
+    assert_eq!(draft.description(), "Competing description");
+    let DraftPhase::Previewing(rebased) = draft.phase() else {
+        panic!("the rebased title previews: {:?}", draft.phase());
+    };
+    assert_eq!(rebased.request.title.as_deref(), Some("Proposed title"));
+    assert_eq!(rebased.request.description, None);
+    assert_eq!(rebased.expected, [witness(&competing)]);
 }
