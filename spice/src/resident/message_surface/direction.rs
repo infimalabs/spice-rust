@@ -1,0 +1,124 @@
+//! The operator's own direction, presented where a lane's transcript records
+//! receiving it.
+//!
+//! Spice delivers direction as operator-role prose whose sealed headers name
+//! each directive's key. Only the journal authenticates what a header names:
+//! a key presents as the operator's card when its creating fact is a plain
+//! operator direction to the receiving lane, never a peer note, a packet, or a
+//! resident-generated reminder. Records that carry no such header (bootstrap
+//! prompts, notices, briefings, room catch-up) present nothing.
+
+use super::acknowledgement::{PresentedDirectiveContext, append_acknowledgement_quote};
+use super::*;
+
+#[cfg(test)]
+mod tests;
+
+/// Keys of the direction one operator-role text delivers, in header order:
+/// every sealed header that names no peer sender. A post-compaction replay
+/// repeats direction its lane already received and delivers none.
+fn delivered_keys(text: &str) -> Vec<steer::Key> {
+    if steer::inbox::replays(text) {
+        return Vec::new();
+    }
+    let peers = steer::inbox::peer_keys(text).collect::<BTreeSet<_>>();
+    let mut keys = Vec::new();
+    for key in steer::inbox::keys(text).filter(|key| !peers.contains(key)) {
+        if let Ok(key) = key.parse::<steer::Key>()
+            && !keys.contains(&key)
+        {
+            keys.push(key);
+        }
+    }
+    keys
+}
+
+fn operator_text(event: &listen::Event) -> Option<&str> {
+    match event {
+        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Operator => {
+            Some(prose.text.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// Every key the operator-role prose among `events` delivers.
+pub(super) fn delivered<'a>(
+    events: impl IntoIterator<Item = &'a listen::Event>,
+) -> BTreeSet<steer::Key> {
+    events
+        .into_iter()
+        .filter_map(operator_text)
+        .flat_map(delivered_keys)
+        .collect()
+}
+
+/// Present the plain operator direction one operator-role record delivered
+/// to the event's lane, one quote per directive in header order. Each
+/// context carries the delivery its card presents: the send's fanout and the
+/// occupant whose transcript recorded it.
+pub(super) fn present(
+    text: &str,
+    steering: Option<&PresentationDirectives>,
+    event: PresentationEvent,
+) -> Result<Option<serve::stream::MessagePresentation>, String> {
+    let (Some(steering), Some(receiver)) = (steering, event.author) else {
+        return Ok(None);
+    };
+    let mut rendered = String::new();
+    let mut contexts = Vec::new();
+    let mut broadcasts = 0;
+    for key in delivered_keys(text) {
+        let Some(directive) = steering.directives.get(&key) else {
+            continue;
+        };
+        if !matches!(directive.actor, wire::Actor::Operator)
+            || directive.sender.is_some()
+            || directive.packet.is_some()
+            || directive.lane != event.lane
+        {
+            continue;
+        }
+        if !rendered.is_empty() {
+            rendered.push_str("\n\n");
+        }
+        let start = rendered.len();
+        append_acknowledgement_quote(&mut rendered, &directive.text);
+        contexts.push(PresentedDirectiveContext {
+            key,
+            range: start..rendered.len(),
+        });
+        broadcasts += usize::from(has_broadcast_marker(&directive.text));
+    }
+    if contexts.is_empty() {
+        return Ok(None);
+    }
+    let presented = Presentation {
+        text: rendered,
+        contexts,
+        sends: Vec::new(),
+        acknowledgement: None,
+    };
+    let classifications = hydrate_message_classifications(&presented, broadcasts)?;
+    let directive_contexts = hydrate_directive_contexts(&presented, steering, event)?
+        .into_iter()
+        .zip(&presented.contexts)
+        .map(|(mut context, presented)| {
+            context.delivery = Some(wire::MessageDelivery {
+                fanout: steering.directives[&presented.key].fanout,
+                receivers: vec![wire::MessageDestination {
+                    lane: event.lane,
+                    occupant: receiver,
+                }],
+            });
+            context
+        })
+        .collect();
+    Ok(Some(serve::stream::MessagePresentation {
+        text: presented.text,
+        acknowledgement: None,
+        classifications,
+        directive_contexts,
+        sends: Vec::new(),
+    }))
+}

@@ -23,6 +23,8 @@ use crate::runtime::LaneRow;
 #[cfg(any(target_arch = "wasm32", test))]
 mod attention;
 #[cfg(any(target_arch = "wasm32", test))]
+mod direction;
+#[cfg(any(target_arch = "wasm32", test))]
 mod pointer_drag;
 mod presence;
 mod provider;
@@ -35,6 +37,8 @@ pub use attention::{
     AttentionItem, AttentionSubject, DIRECTION_ATTENTION_MILLIS, LEASE_ATTENTION_MILLIS,
     TaskAttention, attention_at, team_attention,
 };
+#[cfg(target_arch = "wasm32")]
+pub(crate) use direction::direction_cards;
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use pointer_drag::PointerDragSession;
 pub use presence::{MemberPresence, MemberPresenceState, member_presence};
@@ -676,6 +680,7 @@ pub(crate) const fn agent_activity_name(activity: wire::AgentActivityKind) -> &'
         wire::AgentActivityKind::Compaction => "compaction",
         wire::AgentActivityKind::Session => "session",
         wire::AgentActivityKind::SignOut => "sign-out",
+        wire::AgentActivityKind::Direction => "direction",
     }
 }
 

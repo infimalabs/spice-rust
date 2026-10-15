@@ -309,6 +309,7 @@ impl LaneActivity {
             AgentActivityKind::Compaction => ("compaction", "compaction"),
             AgentActivityKind::Session => ("session", "fresh session"),
             AgentActivityKind::SignOut => ("sign-out", "signed out"),
+            AgentActivityKind::Direction => ("direction", "operator direction"),
         };
         let detail = match message.activity {
             AgentActivityKind::Prose => {
@@ -389,6 +390,14 @@ pub(crate) fn agent_message_display_millis(message: &wire::AgentMessage) -> i64 
 /// DOM and Mosaic key rather than remove and reinsert the divider.
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn agent_message_card_identity(message: &wire::AgentMessage) -> String {
+    // A direction card stands for one directive whichever delivery row it
+    // was cut from, and one row can carry several directives.
+    if message.activity == AgentActivityKind::Direction
+        && let [context] = message.directive_contexts.as_slice()
+        && let wire::QuoteTarget::Steering { key, .. } = &context.quote_target
+    {
+        return format!("agent-{}-direction-{key}", message.lane);
+    }
     let Some(boundary) = message
         .boundary
         .as_ref()

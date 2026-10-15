@@ -161,6 +161,7 @@ fn a_packet_and_a_following_acknowledgement_present_as_separate_quotes() {
             sender: None,
             recipient: None,
             packet: None,
+            fanout: None,
             published: "2030-04-12T18:44:09.001Z"
                 .parse()
                 .expect("fixture instant parses"),

@@ -1186,6 +1186,11 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"] .work-n
   line-height: 1.25;
   box-shadow: none;
 }
+/* The operator's direction card rests in the neutral accent the operator
+   speaks in; only its quote wears the receiving member's slot. */
+.team-surface .mosaic-message-card[data-message-role="operator"] {
+  --accent-slot: var(--accent-neutral);
+}
 .team-surface
   .mosaic-message-card[data-layout-phase="committed"]:not(
     .mosaic-compaction-card

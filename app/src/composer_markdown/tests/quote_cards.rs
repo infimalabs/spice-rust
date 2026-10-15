@@ -415,6 +415,7 @@ fn a_cards_quote_tasks_follow_only_the_directions_it_quotes() {
         recipient: None,
         packet: None,
         result: None,
+        delivery: None,
     }];
     let work = |handle: &str| vec![handle.parse::<wire::TaskHandle>().expect("fixture task")];
     let index = BTreeMap::from([
@@ -566,6 +567,7 @@ fn attribution_hunks_restart_after_more_than_one_quote() {
             recipient: None,
             packet: None,
             result: None,
+            delivery: None,
         }
     };
     let directives = [
@@ -675,6 +677,7 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
             recipient: None,
             packet: None,
             result: None,
+            delivery: None,
         }
     };
     let directives = [
@@ -745,6 +748,7 @@ fn packet_context_wears_its_kind_after_its_source() {
             recipient: None,
             packet,
             result,
+            delivery: None,
         }
     };
     let directives = [
@@ -915,6 +919,7 @@ fn a_quoted_msg_context_keeps_its_lane_identity_across_seats() {
         recipient: None,
         packet: None,
         result: None,
+        delivery: None,
     }];
     let sources = BTreeMap::from([(
         directives[0].quote_target.to_string(),
@@ -988,6 +993,7 @@ fn peer_context_destination_survives_badges_and_reseating() {
         }),
         packet: None,
         result: None,
+        delivery: None,
     };
     let sources = BTreeMap::from([(
         context.quote_target.to_string(),
@@ -1033,6 +1039,74 @@ fn peer_context_destination_survives_badges_and_reseating() {
             assert!(html.contains("Checked."));
         }
     }
+}
+
+/// A delivered operator direction reads operator → every receiving member, and
+/// its rail wears the first receiver's accent instead of the operator's.
+#[test]
+fn a_delivered_direction_names_every_receiver_in_the_first_receivers_accent() {
+    let id = |suffix: &str| -> wire::CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-bce9131167{suffix}")
+            .parse()
+            .unwrap()
+    };
+    let (first_lane, first, second_lane, second) = (id("0a"), id("1a"), id("0b"), id("1b"));
+    let body = "> Ship the projection.";
+    let context = MessageDirective {
+        start: 0,
+        end: u32::try_from(body.len()).unwrap(),
+        quote_target: steering_target("dTVQdQfLy", body),
+        actor: wire::Actor::Operator,
+        authored: "1970-01-01T00:00:01.000Z".parse().unwrap(),
+        badge: None,
+        sender: None,
+        recipient: None,
+        packet: None,
+        result: None,
+        delivery: Some(wire::MessageDelivery {
+            fanout: Some(id("ff")),
+            receivers: vec![
+                wire::MessageDestination {
+                    lane: first_lane,
+                    occupant: first,
+                },
+                wire::MessageDestination {
+                    lane: second_lane,
+                    occupant: second,
+                },
+            ],
+        }),
+    };
+    let sources = BTreeMap::from([(
+        context.quote_target.to_string(),
+        QuoteSource::directive(&context),
+    )]);
+    let agent = |accent: usize, label: &str| QuoteAgent {
+        accent,
+        label: label.to_owned(),
+    };
+    let roster = BTreeMap::from([
+        ((first_lane, Some(first)), agent(3, "first")),
+        ((second_lane, Some(second)), agent(5, "second")),
+    ]);
+    let agents = referenced_quote_agents(&[], std::slice::from_ref(&context), &[], &roster);
+
+    let html = render_received_with_quotes(
+        body,
+        &[],
+        std::slice::from_ref(&context),
+        &[],
+        &agents,
+        &sources,
+    )
+    .html;
+
+    assert!(html.contains("data-accent=\"3\""), "{html}");
+    let destination = html.split("message-quote-recipients").nth(1).unwrap();
+    let first = destination.find(">first</span>").expect("first receiver");
+    let second = destination.find(">second</span>").expect("second receiver");
+    assert!(first < second, "{destination}");
+    assert!(html.contains("Ship the projection."));
 }
 
 /// An outgoing MSG names its exact sender, every addressed occupant in header

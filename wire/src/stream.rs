@@ -13,8 +13,8 @@ mod prose;
 pub use prose::{MessageProseOrigin, superseded_prose};
 mod annotation;
 pub use annotation::{
-    DirectiveBadge, MessageClassification, MessageClassificationKind, MessageDestination,
-    MessageDirective, MessageRecipient, MessageSend, MessageSendKind,
+    DirectiveBadge, MessageClassification, MessageClassificationKind, MessageDelivery,
+    MessageDestination, MessageDirective, MessageRecipient, MessageSend, MessageSendKind,
     valid_message_classifications, valid_message_directives, valid_message_sends,
 };
 
@@ -275,6 +275,10 @@ pub enum AgentActivityKind {
     /// The vendor signed an account out; the card names the account and the
     /// login the operator must run before the lane can work on it again.
     SignOut,
+    /// Plain operator direction the lane's transcript recorded receiving,
+    /// rendered as the operator's own conversation card. Its directive
+    /// contexts each carry the delivery they present.
+    Direction,
 }
 
 /// Structured provider cause carried by a failed agent activity.
@@ -422,6 +426,7 @@ impl AgentActivityKind {
                 | Self::Compaction
                 | Self::Session
                 | Self::SignOut
+                | Self::Direction
         )
     }
 

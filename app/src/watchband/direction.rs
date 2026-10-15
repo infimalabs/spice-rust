@@ -1,0 +1,266 @@
+//! The operator's own direction as top-level team cards.
+
+use std::collections::BTreeMap;
+
+use wire::{AgentActivityKind, AgentMessage, CanonicalUuid, MessageDestination, MessageDirective};
+
+/// The operator's direction cards one team shows: one per send, however many
+/// of its members and deliveries recorded it.
+///
+/// A direction row carries one context per directive its transcript record
+/// delivered. Each context becomes its own card, joined with every other
+/// delivery of the same send to one of `members`: the send's fanout names it,
+/// else its directive does. The card sits at the send's earliest recorded
+/// delivery and names every member that recorded it, in member order, so a
+/// resend, a nudge, or an older page never adds a second card.
+#[must_use]
+pub(crate) fn direction_cards<'m>(
+    messages: impl IntoIterator<Item = &'m AgentMessage>,
+    members: &[CanonicalUuid],
+) -> Vec<AgentMessage> {
+    let mut sends = BTreeMap::<String, (AgentMessage, Vec<MessageDestination>)>::new();
+    for message in messages.into_iter().filter(|message| {
+        message.activity == AgentActivityKind::Direction && members.contains(&message.lane)
+    }) {
+        for context in &message.directive_contexts {
+            let Some(delivery) = &context.delivery else {
+                continue;
+            };
+            let Some(card) = direction_card(message, context) else {
+                continue;
+            };
+            let send = delivery.fanout.map_or_else(
+                || context.quote_target.to_string(),
+                |fanout| fanout.to_string(),
+            );
+            let (earliest, receivers) = sends
+                .entry(send)
+                .or_insert_with(|| (card.clone(), Vec::new()));
+            if card.chronology_key() < earliest.chronology_key() {
+                *earliest = card;
+            }
+            for receiver in &delivery.receivers {
+                if members.contains(&receiver.lane) && !receivers.contains(receiver) {
+                    receivers.push(*receiver);
+                }
+            }
+        }
+    }
+    sends
+        .into_values()
+        .map(|(mut card, mut receivers)| {
+            receivers
+                .sort_by_key(|receiver| members.iter().position(|lane| *lane == receiver.lane));
+            if let Some(delivery) = card
+                .directive_contexts
+                .first_mut()
+                .and_then(|context| context.delivery.as_mut())
+            {
+                delivery.receivers = receivers;
+            }
+            card
+        })
+        .collect()
+}
+
+/// One directive of a direction row as a card of its own: the context's quote
+/// alone, with the classifications inside it.
+fn direction_card(message: &AgentMessage, context: &MessageDirective) -> Option<AgentMessage> {
+    let start = usize::try_from(context.start).ok()?;
+    let end = usize::try_from(context.end).ok()?;
+    let text = message.text.get(start..end)?.to_owned();
+    let classifications = message
+        .classifications
+        .iter()
+        .filter(|classification| {
+            classification.start >= context.start && classification.end <= context.end
+        })
+        .map(|classification| wire::MessageClassification {
+            start: classification.start - context.start,
+            end: classification.end - context.start,
+            ..*classification
+        })
+        .collect();
+    Some(AgentMessage {
+        directive_contexts: vec![MessageDirective {
+            start: 0,
+            end: context.end - context.start,
+            ..context.clone()
+        }],
+        text,
+        classifications,
+        quote_target: None,
+        ..message.clone()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uuid(last: u8) -> CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-bce9131163{last:02x}")
+            .parse()
+            .expect("fixture uuid")
+    }
+
+    fn context(key: &str, text: &str, fanout: Option<CanonicalUuid>) -> MessageDirective {
+        MessageDirective {
+            start: 0,
+            end: u32::try_from(text.len()).expect("fixture length"),
+            quote_target: wire::QuoteTarget::Steering {
+                key: key.to_owned(),
+                digest: wire::QuoteTarget::text_digest(text),
+            },
+            actor: wire::Actor::Operator,
+            authored: "2030-04-12T18:44:08.000Z".parse().expect("fixture instant"),
+            badge: None,
+            sender: None,
+            recipient: None,
+            packet: None,
+            result: None,
+            delivery: Some(wire::MessageDelivery {
+                fanout,
+                receivers: Vec::new(),
+            }),
+        }
+    }
+
+    /// One delivery row on `lane` at `offset`, recording `quotes` in order.
+    fn row(
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        offset: u64,
+        quotes: &[(&str, &str, Option<CanonicalUuid>)],
+    ) -> AgentMessage {
+        let mut text = String::new();
+        let mut contexts = Vec::new();
+        for (key, quote, fanout) in quotes {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            let start = u32::try_from(text.len()).expect("fixture length");
+            text.push_str(quote);
+            let mut context = context(key, quote, *fanout);
+            context.start = start;
+            context.end = u32::try_from(text.len()).expect("fixture length");
+            context
+                .delivery
+                .as_mut()
+                .expect("fixture delivery")
+                .receivers
+                .push(MessageDestination { lane, occupant });
+            contexts.push(context);
+        }
+        AgentMessage {
+            prose_origin: None,
+            lane,
+            author: occupant,
+            locus: wire::MessageLocus {
+                member: 1,
+                offset,
+                length: 1,
+                event: 0,
+            },
+            // Delivery order is time order, whatever lane recorded it.
+            authored: format!("2030-04-12T18:44:08.{offset:03}Z")
+                .parse()
+                .expect("fixture instant"),
+            authored_synthetic: false,
+            observed: None,
+            activity: AgentActivityKind::Direction,
+            final_answer: false,
+            acknowledgement: None,
+            text,
+            provider_error: None,
+            classifications: Vec::new(),
+            quote_target: None,
+            directive_contexts: contexts,
+            sends: Vec::new(),
+            quotes: Vec::new(),
+            automatic_speech: None,
+            unavailable_tool_terminals: Vec::new(),
+            boundary: None,
+            media: Vec::new(),
+            markdown_images: Vec::new(),
+        }
+    }
+
+    fn receivers(card: &AgentMessage) -> Vec<CanonicalUuid> {
+        card.directive_contexts[0]
+            .delivery
+            .as_ref()
+            .expect("card delivery")
+            .receivers
+            .iter()
+            .map(|receiver| receiver.lane)
+            .collect()
+    }
+
+    #[test]
+    fn one_send_is_one_card_naming_every_member_at_its_first_delivery() {
+        let (first, second, outside) = (uuid(0xa1), uuid(0xa2), uuid(0xa3));
+        let fanout = Some(uuid(0xf1));
+        let send = ("dW4Wl4fRP", "> Ship it", fanout);
+        let rows = [
+            row(second, uuid(0xb2), 40, &[send]),
+            row(first, uuid(0xb1), 70, &[send]),
+            // A resend later on the same lane is the same send.
+            row(second, uuid(0xb2), 90, &[send]),
+            row(outside, uuid(0xb3), 10, &[send]),
+        ];
+
+        let cards = direction_cards(&rows, &[first, second]);
+
+        assert_eq!(cards.len(), 1);
+        let card = &cards[0];
+        assert_eq!((card.lane, card.locus.offset), (second, 40));
+        assert_eq!(receivers(card), vec![first, second]);
+        assert_eq!(card.text, "> Ship it");
+        assert!(card.quote_target.is_none());
+        assert!(wire::valid_message_directives(
+            &card.text,
+            &card.directive_contexts
+        ));
+    }
+
+    #[test]
+    fn each_directive_one_record_delivered_is_its_own_card() {
+        let lane = uuid(0xa1);
+        let rows = [row(
+            lane,
+            uuid(0xb1),
+            40,
+            &[
+                ("dW4Wl4fRP", "> First", Some(uuid(0xf1))),
+                ("dW4Wl4fRQ", "> Second", None),
+            ],
+        )];
+
+        let mut texts = direction_cards(&rows, &[lane])
+            .into_iter()
+            .map(|card| {
+                assert!(wire::valid_message_directives(
+                    &card.text,
+                    &card.directive_contexts
+                ));
+                card.text
+            })
+            .collect::<Vec<_>>();
+        texts.sort();
+
+        assert_eq!(texts, ["> First", "> Second"]);
+    }
+
+    #[test]
+    fn a_team_without_a_receiving_member_shows_no_card() {
+        let rows = [row(
+            uuid(0xa1),
+            uuid(0xb1),
+            40,
+            &[("dW4Wl4fRP", "> Ship", None)],
+        )];
+
+        assert!(direction_cards(&rows, &[uuid(0xa2)]).is_empty());
+    }
+}
