@@ -238,6 +238,7 @@ fn speech_resolves_from_local_settings_with_device_default_voice() {
     let unset = resolve(documents(None, None)).expect("unset speech resolves");
     assert_eq!(unset.root().say().backend(), serve::SpeechBackend::System);
     assert!(unset.root().say().voices().is_empty());
+    assert_eq!(unset.root().say().words_per_minute(), 200);
 
     let system = resolve(documents(None, Some("[say]\nwords_per_minute = 205\n")))
         .expect("local system speech resolves");

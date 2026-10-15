@@ -7,7 +7,7 @@ use serde::de::{Deserializer, Error as _};
 use serde::{Deserialize, Serialize};
 
 /// Installed base speaking rate.
-pub const DEFAULT_WORDS_PER_MINUTE: u32 = 175;
+pub const DEFAULT_WORDS_PER_MINUTE: u32 = 200;
 
 const MAX_WORDS_PER_MINUTE: u32 = 1_000;
 const MAX_VOICES: usize = 16;
@@ -203,7 +203,7 @@ mod tests {
             unset.playback(),
             wire::SpeechPlayback::System {
                 voices: Vec::new(),
-                words_per_minute: DEFAULT_WORDS_PER_MINUTE,
+                words_per_minute: 200,
             }
         );
         let disabled: SpeechConfig =
