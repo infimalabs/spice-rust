@@ -1110,16 +1110,70 @@ button.room-flow-control {
 .room-flow-control button:disabled,
 button.room-flow-control:disabled { cursor: not-allowed; opacity: .52; }
 
-.room-inbox { display: grid; gap: 6px; }
+.room-inbox {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  min-width: 0;
+}
 
 .room-inbox > header {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
   color: var(--muted);
   font-size: var(--app-type-meta);
 }
 
-.room-inbox > header > h3 { margin: 0; font-size: inherit; }
+.room-inbox > header > h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-inbox > header > span { flex: 0 0 auto; }
+
+.room-inbox-scroll {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  max-block-size: min(38vh, 24rem);
+  overflow: hidden auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.room-inbox-scroll > * {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.room-inbox-scroll .room-card > header {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.room-inbox-scroll .room-card > header > * {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.room-inbox-scroll .room-flow-concern {
+  margin-inline: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 
 .room-coordination {
   display: grid;

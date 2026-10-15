@@ -319,10 +319,12 @@ pub(super) fn render_inbox(
                     <span>{count}</span>
                 }
             </header>
-            if let Some(notice) = (*controls.inbox_notice).clone() {
-                <p class="room-notice" role="status">{notice}</p>
-            }
-            {body}
+            <div class="room-inbox-scroll">
+                if let Some(notice) = (*controls.inbox_notice).clone() {
+                    <p class="room-notice" role="status">{notice}</p>
+                }
+                {body}
+            </div>
         </section>
     }
 }
