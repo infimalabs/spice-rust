@@ -251,17 +251,18 @@ pub(in crate::resident) fn plan(
                     .get(occupant)
                     .is_some_and(|designs| designs.contains(design.born()))
                 || held_or_created(design, claim.lane)
+            {
+                continue;
+            }
+            let matched = design_terms.matched(&claimed_terms(entry));
+            // Engagement projects the Design's attention: read it only for a
+            // claimant this pass could tell.
+            if (matched.is_none() && !can_seed)
                 || engaged(bus, planning, design.born(), claim.lane)?
             {
                 continue;
             }
-            let statement = entry.statement();
-            let terms = task_terms(
-                &statement.title,
-                statement.description.as_deref(),
-                &statement.acceptance,
-            );
-            if let Some(matched) = design_terms.matched(&terms) {
+            if let Some(matched) = matched {
                 owed.push(invitation(
                     entry,
                     claim.lane,
@@ -274,7 +275,7 @@ pub(in crate::resident) fn plan(
                     seeded_before,
                     horizon,
                 ));
-            } else if can_seed {
+            } else {
                 seeded.push(index);
             }
         }
@@ -350,6 +351,16 @@ fn invitation(
         terms,
         horizon,
     }
+}
+
+/// Distinctive terms of one claimed task's statement.
+fn claimed_terms(entry: &board::Entry) -> BTreeSet<String> {
+    let statement = entry.statement();
+    task_terms(
+        &statement.title,
+        statement.description.as_deref(),
+        &statement.acceptance,
+    )
 }
 
 /// Stable per-Design start within the current sorted eligible cohort.
