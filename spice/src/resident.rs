@@ -213,6 +213,7 @@ mod log;
 mod message_surface;
 mod narration;
 mod policy_surface;
+mod principal_surface;
 mod quota;
 mod read_materializations;
 mod room_automation;

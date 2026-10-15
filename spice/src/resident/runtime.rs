@@ -955,6 +955,10 @@ where
         first.get_or_insert_with(|| committed.first());
         cause = FactCause::Existing(seq(committed.last()));
     }
+    if let Some(committed) = super::principal_surface::bootstrap(bus, repository, epoch, cause)? {
+        first.get_or_insert_with(|| committed.first());
+        cause = FactCause::Existing(seq(committed.last()));
+    }
 
     before_seating();
     let mut write = write(Actor::Spice, epoch, Producer::CommandDoor)?;

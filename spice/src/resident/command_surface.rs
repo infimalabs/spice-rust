@@ -13,8 +13,8 @@ use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal, Reply, ReplyPosi
 use super::{
     CommandDispatch, CommandEffects, RuntimePaths, SurfaceConfig, consent_surface,
     current_residency, dispatch_proof_recognize, dispatch_release_publish, dispatch_up_change,
-    lane_recovery, lane_surface, lifecycle, policy_surface, read_materializations::CurrentReads,
-    settings_surface, steering, vendor_surface,
+    lane_recovery, lane_surface, lifecycle, policy_surface, principal_surface,
+    read_materializations::CurrentReads, settings_surface, steering, vendor_surface,
 };
 
 pub(super) struct Surface<'a> {
@@ -542,6 +542,21 @@ impl<'a> Surface<'a> {
                     reference,
                 ))
             }
+            (CommandKind::PrincipalRead, Intent::PrincipalRead(_)) => {
+                Some(principal_surface::read(self.bus))
+            }
+            (CommandKind::PrincipalAdmit, Intent::PrincipalAdmit(admit)) => Some(
+                principal_surface::admit(self.bus, self.repository, self.epoch, command, admit),
+            ),
+            (CommandKind::PrincipalEdit, Intent::PrincipalEdit(edit)) => {
+                Some(principal_surface::edit(self.bus, self.epoch, command, edit))
+            }
+            (
+                CommandKind::PrincipalGrant | CommandKind::PrincipalRevoke,
+                Intent::PrincipalRoleRef(reference),
+            ) => Some(principal_surface::role(
+                self.bus, self.epoch, command, reference,
+            )),
             _ => None,
         }
     }

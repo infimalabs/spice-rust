@@ -23,14 +23,14 @@ fn stored_fast_mode(envelope: Option<&wire::Envelope<wire::AnyFact>>) -> bool {
         .is_some_and(|settings| settings.fast_mode)
 }
 
-fn normalize(value: Option<&str>) -> Option<String> {
+pub(super) fn normalize(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
 }
 
-fn malformed(value: Option<&str>) -> bool {
+pub(super) fn malformed(value: Option<&str>) -> bool {
     value.is_some_and(|value| {
         let value = value.trim();
         !value.is_empty() && value.chars().any(char::is_control)
@@ -61,7 +61,7 @@ fn identity(name: Option<String>, email: Option<String>) -> OperatorIdentity {
     }
 }
 
-fn git_operator(repository: &Repository) -> CommandResult<OperatorIdentity> {
+pub(super) fn git_operator(repository: &Repository) -> CommandResult<OperatorIdentity> {
     let git = gix::open(repository.worktree_root()).map_err(|error| {
         super::environment_fault("serve::operator-identity-unavailable", &error.to_string())
     })?;

@@ -24,6 +24,8 @@ mod media;
 mod message_backlog;
 #[path = "tests/narration_prod.rs"]
 mod narration_prod;
+#[path = "tests/principal.rs"]
+mod principal;
 #[path = "tests/quote_delivery.rs"]
 mod quote_delivery;
 #[path = "tests/read_materialization_bounds.rs"]

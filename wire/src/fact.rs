@@ -168,6 +168,18 @@ macro_rules! registered_body {
     (ExecutionAuthorized) => {
         crate::rooms::ExecutionAuthorized
     };
+    (PrincipalAdmitted) => {
+        crate::principal::PrincipalAdmitted
+    };
+    (PrincipalProfiled) => {
+        crate::principal::PrincipalProfiled
+    };
+    (PrincipalGranted) => {
+        crate::principal::PrincipalGranted
+    };
+    (PrincipalRevoked) => {
+        crate::principal::PrincipalRevoked
+    };
     ($variant:ident) => {
         crate::body::$variant
     };
@@ -499,6 +511,15 @@ vocabulary! {
     TrustGranted = "trust::granted" by CommandDoor;
     /// The operator withdrew approval from the exact executable digest.
     TrustRevoked = "trust::revoked" by CommandDoor;
+
+    /// A human principal was born with its first profile and roles.
+    PrincipalAdmitted = "principal::admitted" by CommandDoor;
+    /// One principal's recorded profile changed.
+    PrincipalProfiled = "principal::profiled" by CommandDoor;
+    /// One principal gained a role.
+    PrincipalGranted = "principal::granted" by CommandDoor;
+    /// One principal lost a role.
+    PrincipalRevoked = "principal::revoked" by CommandDoor;
 
     /// The resident recognized a repository commit and bound its receipt verdict.
     CommitLanded = "commit::landed" by ResidentRecognition;

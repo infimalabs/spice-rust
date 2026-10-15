@@ -167,6 +167,17 @@ pub enum CommandKind {
     /// Withdraw approval from the exact executable digest.
     TrustRevoke,
 
+    /// Read every born human principal.
+    PrincipalRead,
+    /// Bear one new human principal.
+    PrincipalAdmit,
+    /// Change one principal's recorded profile.
+    PrincipalEdit,
+    /// Grant one role to one principal.
+    PrincipalGrant,
+    /// Revoke one role from one principal.
+    PrincipalRevoke,
+
     /// Read the current lane table at one resident barrier.
     LaneRead,
     /// Read the operator job catalog without claiming delivery.

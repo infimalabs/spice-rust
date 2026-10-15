@@ -1298,6 +1298,46 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "spice::trust_revoke"
     ),
+    operator!(
+        ["principal", "list"],
+        "principal list",
+        Read,
+        [],
+        Reply,
+        "principal::read"
+    ),
+    operator!(
+        ["principal", "admit"],
+        "principal admit [--name NAME] [--email EMAIL] [--operator]",
+        Command,
+        [PrincipalAdmitted],
+        Reply,
+        "principal::admit"
+    ),
+    operator!(
+        ["principal", "profile"],
+        "principal profile PRINCIPAL [--name NAME] [--email EMAIL]",
+        Command,
+        [PrincipalProfiled],
+        Reply,
+        "principal::edit"
+    ),
+    operator!(
+        ["principal", "role", "grant"],
+        "principal role grant PRINCIPAL ROLE",
+        Command,
+        [PrincipalGranted],
+        Reply,
+        "principal::grant"
+    ),
+    operator!(
+        ["principal", "role", "revoke"],
+        "principal role revoke PRINCIPAL ROLE",
+        Command,
+        [PrincipalRevoked],
+        Reply,
+        "principal::revoke"
+    ),
     row!(
         ["backup"],
         "backup OUTPUT",

@@ -78,6 +78,14 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
+    /// Operator-authored principal birth, profile, and role changes. The
+    /// resident guards every principal head it read, so the operator proposes
+    /// no board predicate.
+    pub const PRINCIPAL: Self = Self {
+        required: &[],
+        optional: &[],
+        authority: Authority::Operator,
+    };
     /// True when this law admits `kind` at all.
     #[must_use]
     pub fn admits(&self, kind: WitnessKind) -> bool {
@@ -804,10 +812,6 @@ impl CommandKind {
             Self::SteerRecover => Law::RECOVER,
             Self::SteerDispose => Law::DISPOSE,
             Self::SteerCancel => Law::CANCEL,
-            Self::ConsentRead | Self::ConsentPolicy => Law::INSPECT,
-            Self::ConsentDecide => Law::DECIDE,
-            Self::TrustPend => Law::PEND,
-            Self::TrustGrant | Self::TrustRevoke => Law::TRUST,
             Self::LaneRead => Law::LANE_READ,
             Self::LaneJobsRead | Self::LaneJobRead => Law::OPERATOR_READ,
             Self::LaneJobStop => Law::JOB_STOP,
@@ -828,6 +832,21 @@ impl CommandKind {
             | Self::ProofRecognize => Law::RECOGNIZE,
             Self::ReleasePublish => Law::PUBLISH,
             Self::UpChange => Law::UP,
+            _ => self.authority_law(),
+        }
+    }
+
+    const fn authority_law(self) -> Law {
+        match self {
+            Self::ConsentRead | Self::ConsentPolicy => Law::INSPECT,
+            Self::ConsentDecide => Law::DECIDE,
+            Self::TrustPend => Law::PEND,
+            Self::TrustGrant | Self::TrustRevoke => Law::TRUST,
+            Self::PrincipalRead => Law::OPERATOR_READ,
+            Self::PrincipalAdmit
+            | Self::PrincipalEdit
+            | Self::PrincipalGrant
+            | Self::PrincipalRevoke => Law::PRINCIPAL,
             _ => panic!("command law partition is closed"),
         }
     }

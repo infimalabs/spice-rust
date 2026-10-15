@@ -233,6 +233,11 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::TrustPend
         | CommandKind::TrustGrant
         | CommandKind::TrustRevoke
+        | CommandKind::PrincipalRead
+        | CommandKind::PrincipalAdmit
+        | CommandKind::PrincipalEdit
+        | CommandKind::PrincipalGrant
+        | CommandKind::PrincipalRevoke
         | CommandKind::LaneRead
         | CommandKind::LaneJobsRead
         | CommandKind::LaneJobRead
@@ -427,6 +432,11 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["group", "list"]
             | ["group", "move"]
             | ["group", "arrange"]
+            | ["principal", "list"]
+            | ["principal", "admit"]
+            | ["principal", "profile"]
+            | ["principal", "role", "grant"]
+            | ["principal", "role", "revoke"]
             | ["preparation", "retain"]
             | ["preparation", "show"]
             | ["preparation", "critique"]

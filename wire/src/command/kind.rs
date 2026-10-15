@@ -78,6 +78,11 @@ impl CommandKind {
         Self::TrustPend,
         Self::TrustGrant,
         Self::TrustRevoke,
+        Self::PrincipalRead,
+        Self::PrincipalAdmit,
+        Self::PrincipalEdit,
+        Self::PrincipalGrant,
+        Self::PrincipalRevoke,
         Self::LaneRead,
         Self::LaneJobsRead,
         Self::LaneJobRead,
@@ -197,6 +202,11 @@ impl CommandKind {
             | Self::ProofRecognize
             | Self::ReleasePublish
             | Self::UpChange => self.runtime_spelling(),
+            Self::PrincipalRead
+            | Self::PrincipalAdmit
+            | Self::PrincipalEdit
+            | Self::PrincipalGrant
+            | Self::PrincipalRevoke => self.principal_spelling(),
         }
     }
 
@@ -303,6 +313,17 @@ impl CommandKind {
         }
     }
 
+    const fn principal_spelling(self) -> &'static str {
+        match self {
+            Self::PrincipalRead => "principal::read",
+            Self::PrincipalAdmit => "principal::admit",
+            Self::PrincipalEdit => "principal::edit",
+            Self::PrincipalGrant => "principal::grant",
+            Self::PrincipalRevoke => "principal::revoke",
+            _ => panic!("command spelling partition is closed"),
+        }
+    }
+
     const fn runtime_spelling(self) -> &'static str {
         match self {
             Self::TrustPend => "trust::pend",
@@ -364,6 +385,7 @@ impl CommandKind {
                 | Self::RoomConversationText
                 | Self::RoomContributionSources
                 | Self::LaneRecall
+                | Self::PrincipalRead
         )
     }
 }

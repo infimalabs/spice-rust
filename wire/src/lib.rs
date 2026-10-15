@@ -60,6 +60,7 @@ pub mod media;
 mod optional;
 pub mod output;
 pub mod packed;
+pub mod principal;
 pub mod quota;
 pub mod quote;
 pub mod reply;
