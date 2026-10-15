@@ -9,10 +9,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use journal::{GuardError, JournalRead};
-use spice::rooms::awareness::{CommonTerms, DesignTerms, pitch, task_terms};
+use spice::rooms::awareness::{
+    COMPLETION_VALIDATION_BYTES, CommonTerms, DesignTerms, completion_terms, pitch, task_terms,
+};
+use wire::body::TaskDone as CompletedTask;
 use wire::rooms::DesignNoticed;
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, LaneResidency, Producer, Seq, SequenceCode, TaskStamp,
+    intent::TaskDone as TaskDoneIntent,
 };
 
 use super::design_input::{BackgroundNotice, clip};
@@ -26,6 +30,10 @@ const STALE: &str = "room::awareness-stale";
 const TITLE_BYTES: usize = 200;
 /// Pitch and title lengths a notice keeps whole while fitting one datagram.
 const SHORTEST_CLIP_BYTES: usize = 16;
+/// Completions admitted to one resident reconciliation pass.
+const COMPLETION_PAGE_ROWS: usize = 64;
+/// Aggregate completion envelope bytes decoded in one reconciliation pass.
+const COMPLETION_PAGE_BYTES: usize = 256 * 1024;
 
 /// One private Design awareness notice, scoped to the claim's exact occupant.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,6 +101,7 @@ pub(in crate::resident) struct Told {
     pub(in crate::resident) task: TaskStamp,
     pub(in crate::resident) task_statement: Seq,
     pub(in crate::resident) claim: Seq,
+    trigger: Trigger,
     pub(in crate::resident) design: TaskStamp,
     pub(in crate::resident) statement: Seq,
     pub(in crate::resident) terms: Vec<String>,
@@ -100,15 +109,110 @@ pub(in crate::resident) struct Told {
     horizon: Option<Seq>,
 }
 
-/// Invite every occupied claimant to each matching passive Design its
-/// occupant was never told about. An invitation a later commit made stale is
-/// dropped; any other failed record is reported and retried on the next
-/// commit. It never fails the caller, and nothing is told without its record.
+/// Authority that made one invitation candidate current.
+#[derive(Clone, Copy)]
+enum Trigger {
+    Claim,
+    Completion(Seq),
+}
+
+/// One newly observed task completion and its bounded matching input.
+#[derive(Clone)]
+pub(in crate::resident) struct Completion {
+    at: Seq,
+    task: TaskStamp,
+    operation: CanonicalUuid,
+    validation: String,
+}
+
+/// Process-local completion horizon. Starting at the resident's current
+/// journal cursor deliberately prevents historical completion backfill.
+pub(in crate::resident) struct CompletionCursor {
+    after: Option<Seq>,
+}
+
+impl CompletionCursor {
+    pub(in crate::resident) fn start(bus: &Bus) -> CommandResult<Self> {
+        let after = bus.cursor().map_err(|error| {
+            store_fault("room::awareness-cursor-unreadable", &error.to_string())
+        })?;
+        Ok(Self { after })
+    }
+
+    /// Consume at most one bounded page, advancing only after a successful
+    /// read. A continuation advances to the last admitted row rather than the
+    /// page horizon, so no completion can be skipped.
+    pub(in crate::resident) fn take(&mut self, bus: &Bus) -> CommandResult<Vec<Completion>> {
+        let after = self.after;
+        let page = bus
+            .read(move |read| {
+                read.selected_fact_page(
+                    &[wire::FactKind::TaskDone],
+                    after,
+                    None,
+                    journal::FactReadBudget::new(COMPLETION_PAGE_ROWS, COMPLETION_PAGE_BYTES)?,
+                )
+            })
+            .map_err(|error| {
+                store_fault("room::awareness-completions-unreadable", &error.to_string())
+            })?;
+        self.after = page.continuation.or(page.horizon);
+        Ok(page
+            .rows
+            .into_iter()
+            .filter_map(|envelope| {
+                let done = envelope.fact.read::<CompletedTask>()?;
+                let operation = done.terminal.as_ref()?.operation;
+                let mut validation_end = done.validation.len().min(COMPLETION_VALIDATION_BYTES);
+                while !done.validation.is_char_boundary(validation_end) {
+                    validation_end -= 1;
+                }
+                Some(Completion {
+                    at: envelope.seq,
+                    task: done.task.clone(),
+                    operation,
+                    validation: done.validation[..validation_end].to_owned(),
+                })
+            })
+            .collect())
+    }
+}
+
+/// Invite every occupied claimant, and every newly completing occupant, to
+/// each matching passive Design its occupant was never told about. An
+/// invitation a later commit made stale is dropped. Claim observations retry
+/// on later commits; each completion is consumed by its first bounded pass.
+/// Nothing is told without its record.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     paths: &RuntimePaths,
     config: &SurfaceConfig,
     seats: &Seats,
+    completions: &mut CompletionCursor,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    let completed = completions.take(bus)?;
+    reconcile_observed(bus, paths, config, seats, &completed, diagnostic)
+}
+
+/// Claim-only seam retained for focused in-process resident contracts.
+#[cfg(test)]
+pub(in crate::resident) fn reconcile_claims(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    config: &SurfaceConfig,
+    seats: &Seats,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    reconcile_observed(bus, paths, config, seats, &[], diagnostic)
+}
+
+fn reconcile_observed(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    config: &SurfaceConfig,
+    seats: &Seats,
+    completions: &[Completion],
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let occupied = occupied(seats);
@@ -116,7 +220,7 @@ pub(in crate::resident) fn reconcile(
         return Ok(());
     }
     let planning = Planning::load(bus, config)?;
-    for told in plan(bus, &planning, &occupied)? {
+    for told in plan(bus, &planning, &occupied, completions)? {
         match record(bus, &told) {
             Ok(true) => super::supervisor::command::background_notice(
                 paths,
@@ -150,22 +254,60 @@ pub(super) fn occupied(seats: &Seats) -> BTreeMap<CanonicalUuid, CanonicalUuid> 
 }
 
 /// Every invitation each occupied claimant's occupant is owed, in task then
-/// Design order.
+/// Design order. Completion profiles are built once before the Design cross
+/// product.
 pub(in crate::resident) fn plan(
     bus: &Bus,
     planning: &Planning,
     occupied: &BTreeMap<CanonicalUuid, CanonicalUuid>,
+    completions: &[Completion],
 ) -> CommandResult<Vec<Told>> {
     let entries = &planning.entries;
-    let claims = entries
+    let mut candidates = entries
         .iter()
         .filter_map(|entry| {
             let claim = entry.claim()?;
             let occupant = *occupied.get(&claim.lane)?;
-            (claim.disposition == ClaimDisposition::Active).then_some((entry, claim, occupant))
+            (claim.disposition == ClaimDisposition::Active).then(|| Candidate {
+                entry,
+                lane: claim.lane,
+                occupant,
+                claim: claim.claimed,
+                trigger: Trigger::Claim,
+                terms: statement_terms(entry),
+            })
         })
         .collect::<Vec<_>>();
-    if claims.is_empty() {
+    for completed in completions {
+        let Some(entry) = entries.iter().find(|entry| entry.born() == &completed.task) else {
+            continue;
+        };
+        let Some(claim) = entry.claim() else {
+            continue;
+        };
+        if claim.disposition != ClaimDisposition::Freed
+            || claim.fact != completed.at
+            || completed.operation != TaskDoneIntent::operation_for_claim(claim.claimed)
+            || occupied.get(&claim.lane) != Some(&claim.occupant)
+        {
+            continue;
+        }
+        let statement = entry.statement();
+        candidates.push(Candidate {
+            entry,
+            lane: claim.lane,
+            occupant: claim.occupant,
+            claim: claim.claimed,
+            trigger: Trigger::Completion(completed.at),
+            terms: completion_terms(
+                &statement.title,
+                statement.description.as_deref(),
+                &statement.acceptance,
+                &completed.validation,
+            ),
+        });
+    }
+    if candidates.is_empty() {
         return Ok(Vec::new());
     }
     let designs = entries
@@ -182,46 +324,43 @@ pub(in crate::resident) fn plan(
     if designs.is_empty() {
         return Ok(Vec::new());
     }
-    let claims = claims
-        .into_iter()
-        .map(|(entry, claim, occupant)| (entry, claim, occupant, statement_terms(entry)))
-        .collect::<Vec<_>>();
     let common = CommonTerms::of(
         entries
             .iter()
             .filter(|entry| open(entry))
             .map(statement_terms),
     );
-    let claimants = claims
+    let claimants = candidates
         .iter()
-        .map(|(_, claim, occupant, _)| (claim.lane, *occupant))
+        .map(|candidate| (candidate.lane, candidate.occupant))
         .collect();
     let (history, horizon) = noticed(bus, planning.residency.lanes.clone(), claimants)?;
     let mut owed = Vec::new();
     for (design, design_terms) in designs {
-        for (entry, claim, occupant, terms) in &claims {
-            if design.born() == entry.born()
+        for candidate in &candidates {
+            if design.born() == candidate.entry.born()
                 || history
                     .told
-                    .get(occupant)
+                    .get(&candidate.occupant)
                     .is_some_and(|designs| designs.contains(design.born()))
-                || held_or_created(design, claim.lane)
+                || held_or_created(design, candidate.lane)
             {
                 continue;
             }
-            let Some(matched) = design_terms.matched(terms, &common) else {
+            let Some(matched) = design_terms.matched(&candidate.terms, &common) else {
                 continue;
             };
             // Engagement projects the Design's attention: read it only for a
-            // claimant this pass could tell.
-            if engaged(bus, planning, design.born(), claim.lane)? {
+            // candidate this pass could tell.
+            if engaged(bus, planning, design.born(), candidate.lane)? {
                 continue;
             }
             owed.push(invitation(
-                entry,
-                claim.lane,
-                *occupant,
-                claim.claimed,
+                candidate.entry,
+                candidate.lane,
+                candidate.occupant,
+                candidate.claim,
+                candidate.trigger,
                 design,
                 matched,
                 horizon,
@@ -236,11 +375,21 @@ pub(in crate::resident) fn plan(
     Ok(owed)
 }
 
+struct Candidate<'a> {
+    entry: &'a board::Entry,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    claim: Seq,
+    trigger: Trigger,
+    terms: BTreeSet<String>,
+}
+
 fn invitation(
     entry: &board::Entry,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     claim: Seq,
+    trigger: Trigger,
     design: &board::Entry,
     terms: Vec<String>,
     horizon: Option<Seq>,
@@ -253,6 +402,7 @@ fn invitation(
         task: entry.born().clone(),
         task_statement: statement.revision,
         claim,
+        trigger,
         design: design.born().clone(),
         statement: design_statement.revision,
         notice: DesignNotice {
@@ -429,20 +579,31 @@ fn current_recipient(read: &JournalRead<'_>, told: &Told) -> Result<(), GuardErr
     if !occupied {
         return Err(stale("the occupant moved"));
     }
-    let claimed = read.claim_head(&told.task)?.is_some_and(|head| {
+    let recipient_current = read.claim_head(&told.task)?.is_some_and(|head| {
         let claim = head.body();
-        claim.disposition == ClaimDisposition::Active
-            && claim.lane == told.lane
-            && claim.claimed == told.claim
+        match told.trigger {
+            Trigger::Claim => {
+                claim.disposition == ClaimDisposition::Active
+                    && claim.lane == told.lane
+                    && claim.claimed == told.claim
+            }
+            Trigger::Completion(done) => {
+                claim.disposition == ClaimDisposition::Freed
+                    && claim.lane == told.lane
+                    && claim.occupant == told.occupant
+                    && claim.claimed == told.claim
+                    && claim.fact == done
+            }
+        }
     });
-    if !claimed {
-        return Err(stale("the claim moved"));
+    if !recipient_current {
+        return Err(stale("the claim or completion moved"));
     }
     if !read
         .task_head(&told.task)?
         .is_some_and(|head| head.body().revision == told.task_statement)
     {
-        return Err(stale("the claimed task statement moved"));
+        return Err(stale("the task statement moved"));
     }
     Ok(())
 }

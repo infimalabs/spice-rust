@@ -261,6 +261,7 @@ pub(super) async fn run_surface(
     seats: &mut Seats,
     launch: SurfaceLaunch<'_>,
 ) -> CommandResult<()> {
+    let design_completions = design_awareness::CompletionCursor::start(bus)?;
     let residency = current_residency(bus, epoch)?;
     let mut backgrounds = SurfaceRuntimes::start(bus, config, paths)?;
     let StartedSurface {
@@ -349,6 +350,7 @@ pub(super) async fn run_surface(
         message_publisher,
         message_state,
         session_compactions,
+        design_completions,
         taste_submitter,
         taste_completions,
         records: channels.records,
@@ -575,6 +577,7 @@ struct LiveSurface<'s, 'c> {
     message_publisher: serve::stream::MessagePublisher,
     message_state: Arc<std::sync::Mutex<message_surface::MessageState>>,
     session_compactions: message_surface::SessionCompactions,
+    design_completions: design_awareness::CompletionCursor,
     taste_submitter: Option<&'s mut taste_surface::AdjudicationSubmitter>,
     taste_completions: Option<&'s mut taste_surface::AdjudicationCompletions>,
     records: tokio::sync::mpsc::Receiver<lane::capture::CaptureRecord>,
@@ -678,7 +681,8 @@ impl LiveSurface<'_, '_> {
                 bus, self.seats, command_surface, &self.message_publisher, &mut self.lifecycle,
                 &mut self.supervisor_reports, self.message_state.as_ref(), self.diagnostic,
                 &mut self.timers, &mut self.quota, &mut self.quota_triggers,
-                &mut self.lifecycle_reconciliation, &mut self.launches, committed,
+                &mut self.lifecycle_reconciliation, &mut self.design_completions,
+                &mut self.launches, committed,
             )?,
             completed = self.launches.recv() => launch_completion::accept(
                 bus, command_surface, self.seats, &mut self.lifecycle,
@@ -1235,6 +1239,7 @@ fn accept_commit_turn(
     quota: &mut quota::Runtime,
     quota_triggers: &mut quota::Triggers,
     reconciliation: &mut lifecycle::Reconciliation,
+    design_completions: &mut design_awareness::CompletionCursor,
     launches: &mut super::launch_runtime::Runtime,
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
 ) -> CommandResult<()> {
@@ -1283,6 +1288,7 @@ fn accept_commit_turn(
             command_surface.paths,
             command_surface.config,
             seats,
+            design_completions,
             diagnostic,
         )?;
     }

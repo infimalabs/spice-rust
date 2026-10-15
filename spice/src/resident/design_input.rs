@@ -54,9 +54,10 @@ pub(in crate::resident) fn reconcile(
     paths: &RuntimePaths,
     config: &SurfaceConfig,
     seats: &Seats,
+    completions: &mut super::design_awareness::CompletionCursor,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    super::design_awareness::reconcile(bus, paths, config, seats, diagnostic)?;
+    super::design_awareness::reconcile(bus, paths, config, seats, completions, diagnostic)?;
     let occupied = super::design_awareness::occupied(seats);
     if occupied.is_empty() {
         return Ok(());
