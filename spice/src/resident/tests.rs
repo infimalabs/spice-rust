@@ -478,7 +478,7 @@ fn startup_admits_only_one_ordered_subscription_per_resident_team() {
     let lanes = vec![
         row(test_uuid(3), team, "drive"),
         row(test_uuid(4), team, "drive"),
-        row(test_uuid(6), sibling, "steer"),
+        row(sibling, sibling, "steer"),
     ];
     let current = vec![
         wire::TeamSubscription {
@@ -529,4 +529,55 @@ fn startup_admits_only_one_ordered_subscription_per_resident_team() {
         panic!("duplicate subscription authority must fault")
     };
     assert_eq!(fault.reason, "team::subscription-ambiguous");
+}
+
+#[test]
+fn startup_admits_a_formation_instant_exactly_for_each_teamed_identity() {
+    let team = test_uuid(2);
+    let row = |lane| wire::LaneResidency {
+        lane,
+        team,
+        name: None,
+        worktree: format!("/fixture/{lane}"),
+        life: "drive".to_owned(),
+        vendor: "omp".parse().expect("fixture vendor"),
+        model: None,
+        effort: None,
+        fast_mode: false,
+        occupant: None,
+        lineage: Vec::new(),
+        capabilities: Vec::new(),
+        session: None,
+        disposition: "vacant".to_owned(),
+    };
+    let subscription = |formed: bool| wire::TeamSubscription {
+        team,
+        formed_at: formed.then(|| {
+            "2030-04-12T18:44:09.271Z"
+                .parse()
+                .expect("fixture formation instant")
+        }),
+        policy: wire::intent::TeamLife::Drive,
+        fast_mode: false,
+    };
+    let self_identified = vec![row(team)];
+    let lone_member = vec![row(test_uuid(3))];
+    let pair = vec![row(test_uuid(3)), row(test_uuid(4))];
+    for (case, lanes, formed) in [
+        ("a self-identified seat", &self_identified, false),
+        ("one member under another identity", &lone_member, true),
+        ("several members", &pair, true),
+    ] {
+        assert_eq!(
+            super::startup_subscriptions(lanes, vec![subscription(formed)])
+                .unwrap_or_else(|_| panic!("{case} is admitted with its formation state")),
+            vec![subscription(formed)],
+        );
+        let Err(Outcome::Fault(fault)) =
+            super::startup_subscriptions(lanes, vec![subscription(!formed)])
+        else {
+            panic!("{case} refuses the opposite formation state")
+        };
+        assert_eq!(fault.reason, "team::formation-misaligned", "{case}");
+    }
 }

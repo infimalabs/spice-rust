@@ -243,36 +243,35 @@ fn previous_subscription(
     }
 }
 
-/// Preserve a team's first multi-member instant, mint it on a singleton-to-team
-/// crossing, and clear it when the identity becomes a lone seat.
+/// Preserve a team's formation instant while its identity stays
+/// [`wire::head::teamed`], mint it at the commit that makes the identity
+/// teamed, and clear it while the identity is unteamed.
 pub(super) fn reconcile_formations(
     observed: &wire::ResidencyHead,
     next: &mut wire::ResidencyHead,
     at: wire::Instant,
 ) {
-    for subscription in &mut next.subscriptions {
-        let members = next
-            .lanes
-            .iter()
-            .filter(|row| row.team == subscription.team)
-            .count();
-        subscription.formed_at = if members < 2 {
-            None
-        } else {
-            let existing = observed
-                .lanes
+    let teamed = |head: &wire::ResidencyHead, team| {
+        wire::head::teamed(
+            team,
+            head.lanes
                 .iter()
-                .filter(|row| row.team == subscription.team)
-                .count();
-            if existing < 2 {
-                Some(at)
-            } else {
-                observed
-                    .subscriptions
-                    .iter()
-                    .find(|current| current.team == subscription.team)
-                    .and_then(|current| current.formed_at)
-            }
+                .filter(|row| row.team == team)
+                .map(|row| row.lane),
+        )
+    };
+    for index in 0..next.subscriptions.len() {
+        let team = next.subscriptions[index].team;
+        next.subscriptions[index].formed_at = if !teamed(next, team) {
+            None
+        } else if teamed(observed, team) {
+            observed
+                .subscriptions
+                .iter()
+                .find(|current| current.team == team)
+                .and_then(|current| current.formed_at)
+        } else {
+            Some(at)
         };
     }
 }

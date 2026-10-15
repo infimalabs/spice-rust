@@ -39,6 +39,19 @@ const PROCESS_GROUP_GRACE: Duration = Duration::from_millis(100);
 const DESCENDANT_EXIT_GRACE: Duration = Duration::from_millis(500);
 const PROCESS_GROUP_REAP_LIMIT: Duration = Duration::from_secs(1);
 const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
+const CAPTURE_UNOWNED_DIRTY_REMEDY: &str = concat!(
+    "task capture records commits only and the reported paths belong to no claim; ",
+    "preserve them losslessly by running `spice task add TITLE --project PROJECT ",
+    "--origin ORIGIN --flow todo,review --recover` for new execution work, or ",
+    "`spice task recover HANDLE` for an existing ready execution task",
+);
+const CLAIM_UNOWNED_DIRTY_REMEDY: &str = concat!(
+    "release parks a claim's uncommitted work on its task: if a held claim left ",
+    "the reported paths, run `spice task free HANDLE` under that claim; otherwise ",
+    "preserve them losslessly by running `spice task add TITLE --project PROJECT ",
+    "--origin ORIGIN --flow todo,review --recover` for new execution work, or ",
+    "`spice task recover HANDLE` for an existing ready execution task",
+);
 
 /// Task facts used to build one durable integration commit message.
 #[derive(Clone, Copy, Debug)]
@@ -191,14 +204,7 @@ enum Pending {
 pub fn capture(repository: &Repository) -> Result<Capture, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
-    require_clean_or(
-        root,
-        "task capture",
-        concat!(
-            "task capture records commits only and the reported paths belong to no ",
-            "claim; clear them from the worktree, then retry",
-        ),
-    )?;
+    require_clean_or(root, "task capture", CAPTURE_UNOWNED_DIRTY_REMEDY)?;
     let target = resolve_target(root)?.ok_or_else(|| {
         Error::refusal(
             "git::capture-no-baseline",
@@ -492,15 +498,7 @@ fn prepare_claim_observed(
 ) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
-    require_clean_or(
-        root,
-        "task next",
-        concat!(
-            "the reported paths belong to no claim, because release parks a claim's ",
-            "uncommitted work on its task; if a held claim left them, run ",
-            "spice task free HANDLE under that claim, otherwise clear them before claiming",
-        ),
-    )?;
+    require_clean_or(root, "task next", CLAIM_UNOWNED_DIRTY_REMEDY)?;
     let before = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     let target = resolve_target(root)?;
     preflight()?;

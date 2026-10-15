@@ -409,11 +409,12 @@ fn lane_response_with_renewals(
     let subscriptions = rows
         .iter()
         .map(|(_, team, _, _)| {
-            let formed_at = (rows
-                .iter()
-                .filter(|(_, candidate, _, _)| candidate == team)
-                .count()
-                > 1)
+            let formed_at = wire::head::teamed(
+                uuid(team),
+                rows.iter()
+                    .filter(|(_, candidate, _, _)| candidate == team)
+                    .map(|(lane, _, _, _)| uuid(lane)),
+            )
             .then(|| {
                 "2030-04-12T18:44:09.271Z"
                     .parse()

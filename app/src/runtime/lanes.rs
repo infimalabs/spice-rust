@@ -372,53 +372,46 @@ mod tests {
     }
 
     #[test]
-    fn team_console_order_follows_formation_instead_of_lane_order() {
+    fn team_console_order_follows_formation_for_every_teamed_row() {
         let older = uuid(1);
         let younger = uuid(2);
-        let mut subscriptions = BTreeMap::new();
-        let older_subscription = wire::TeamSubscription {
-            team: older,
-            formed_at: Some(
-                "2030-04-12T18:44:09.271Z"
-                    .parse()
-                    .expect("older formation instant"),
-            ),
+        let split = uuid(7);
+        let seat = uuid(9);
+        let subscription = |team, formed_at: Option<&str>| wire::TeamSubscription {
+            team,
+            formed_at: formed_at.map(|at| at.parse().expect("fixture formation instant")),
             policy: wire::intent::TeamLife::Drive,
             fast_mode: false,
         };
-        let younger_subscription = wire::TeamSubscription {
-            team: younger,
-            formed_at: Some(
-                "2030-04-12T18:44:10.271Z"
-                    .parse()
-                    .expect("younger formation instant"),
-            ),
-            policy: wire::intent::TeamLife::Drive,
+        let stored = [
+            subscription(older, Some("2030-04-12T18:44:09.271Z")),
+            subscription(younger, Some("2030-04-12T18:44:10.271Z")),
+            subscription(split, Some("2030-04-12T18:44:09.771Z")),
+            subscription(seat, None),
+        ];
+        let subscriptions = stored
+            .iter()
+            .map(|subscription| (subscription.team, subscription))
+            .collect();
+        let row = |lane, members: &[CanonicalUuid]| LaneRow {
+            lane,
+            subscription: wire::intent::TeamLife::Drive,
             fast_mode: false,
+            members: members.iter().copied().map(member).collect(),
+            console: None,
         };
-        subscriptions.insert(older, &older_subscription);
-        subscriptions.insert(younger, &younger_subscription);
         let mut teams = [
-            LaneRow {
-                lane: younger,
-                subscription: wire::intent::TeamLife::Drive,
-                fast_mode: false,
-                members: vec![member(uuid(3)), member(uuid(4))],
-                console: None,
-            },
-            LaneRow {
-                lane: older,
-                subscription: wire::intent::TeamLife::Drive,
-                fast_mode: false,
-                members: vec![member(uuid(5)), member(uuid(6))],
-                console: None,
-            },
+            row(younger, &[uuid(3), uuid(4)]),
+            row(seat, &[seat]),
+            row(older, &[uuid(5), uuid(6)]),
+            row(split, &[uuid(8)]),
         ];
 
         deal_team_consoles(&mut teams, &subscriptions);
         assert_eq!(
             teams.iter().map(|team| team.console).collect::<Vec<_>>(),
-            [Some(1), Some(0)]
+            [Some(2), None, Some(0), Some(1)],
+            "a one-member team under a distinct identity ranks by its formation; a lone seat has no console"
         );
     }
 

@@ -843,15 +843,17 @@ pub(super) fn startup_subscriptions(
         ));
     }
     for subscription in &stored {
-        let teamed = lanes
-            .iter()
-            .filter(|row| row.team == subscription.team)
-            .nth(1)
-            .is_some();
+        let teamed = wire::head::teamed(
+            subscription.team,
+            lanes
+                .iter()
+                .filter(|row| row.team == subscription.team)
+                .map(|row| row.lane),
+        );
         if teamed != subscription.formed_at.is_some() {
             return Err(store_fault(
                 "team::formation-misaligned",
-                "a durable team names one formation instant exactly while it holds multiple members",
+                "a durable team names one formation instant exactly while it is teamed",
             ));
         }
     }

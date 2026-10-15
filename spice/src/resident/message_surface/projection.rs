@@ -249,6 +249,7 @@ fn publish_turn_boundary(
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
             media: Vec::new(),
+            media_quotes: Vec::new(),
             markdown_images: Vec::new(),
         },
     )
@@ -355,6 +356,7 @@ fn project_agent_event(
         event: ordinal,
     };
     let quote_target = agent_quote_target(decoded, lane, source, locus)?;
+    let media_quotes = agent_media_quotes(lane, source, locus, &media)?;
     let published = wire::AgentMessage {
         lane,
         author,
@@ -377,6 +379,7 @@ fn project_agent_event(
         unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
         boundary: event_boundary(decoded),
         media,
+        media_quotes,
         markdown_images,
     };
     let pending = pending_presentation(decoded, steering, presentation_event, published.locus);
@@ -559,6 +562,33 @@ fn agent_quote_target(
         locus,
         digest: wire::QuoteTarget::text_digest(&prose.text),
     }))
+}
+
+fn agent_media_quotes(
+    lane: CanonicalUuid,
+    source: Option<CanonicalUuid>,
+    locus: wire::MessageLocus,
+    media: &[wire::Media],
+) -> CommandResult<Vec<wire::MediaQuote>> {
+    if media.is_empty() {
+        return Ok(Vec::new());
+    }
+    let source = source.ok_or_else(|| {
+        store_fault(
+            "serve::message-source-unavailable",
+            "agent media has no durable tape source",
+        )
+    })?;
+    spice::quote::media_quotes(
+        &wire::QuoteTarget::Tape {
+            lane,
+            source,
+            locus,
+            digest: wire::QuoteTarget::text_digest(""),
+        },
+        media,
+    )
+    .map_err(|error| store_fault("serve::message-media-invalid", &format!("{error:?}")))
 }
 
 fn project_prose_presentation(

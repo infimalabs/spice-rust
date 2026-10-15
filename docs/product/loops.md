@@ -117,6 +117,9 @@ flowchart LR
   target first, `task recover --restore` restores the sealed generation and
   leaves the task unchanged, refusing rather than deleting the quarantine on any
   mismatch.
+- Claim-boundary and `task capture` dirty-worktree refusals name these lossless
+  recovery commands when the generation belongs to no claim; they never reduce
+  recovery guidance to discarding the reported paths.
 - Every phase transition is a journal fact visible on the board, including one
   that changes no tree. A landing commit carries the task's key, project, phase,
   and session trailers; first-parent history records mutating landings, not

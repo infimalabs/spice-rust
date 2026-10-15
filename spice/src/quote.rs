@@ -8,8 +8,8 @@ use pulldown_cmark::{CowStr, Event as MarkdownEvent, Parser, Tag, TagEnd};
 
 use bus::BusReader;
 use wire::{
-    CanonicalUuid, QUOTE_DEPTH_LIMIT, QuoteAuthor, QuotePresentation, QuoteResolution, QuoteTarget,
-    QuoteUnavailable, ResolvedQuote,
+    CanonicalUuid, MediaQuote, QUOTE_DEPTH_LIMIT, QuoteAuthor, QuotePresentation, QuoteResolution,
+    QuoteTarget, QuoteUnavailable, ResolvedMediaQuote, ResolvedQuote,
 };
 
 /// One fixed-label Markdown quote link and its exact source range.
@@ -167,44 +167,106 @@ fn present_with(store: &impl QuoteStore, text: &str, depth: u8) -> Vec<QuotePres
         .quotes()
         .iter()
         .map(|quote| {
-            match resolve_source(store, &quote.target, depth).and_then(|source| {
-                let (text, packet, result, addressee) = match source.packet {
+            let presented = admitted_target(&quote.target, depth).and_then(|target| {
+                if target.is_media() {
+                    let resolved = resolve_media_source(store, &target)?;
+                    return Ok(QuotePresentation::Media {
+                        target: quote.target.clone(),
+                        media: resolved.media,
+                        author: resolved.author,
+                        disposition: resolved.disposition,
+                    });
+                }
+                let source = resolve_text_source(store, &target)?;
+                let media_quotes = media_quotes(&target, &source.media)?;
+                let SourceQuote {
+                    text,
+                    author,
+                    disposition,
+                    media,
+                    packet,
+                    ..
+                } = source;
+                let (text, packet, result, addressee) = match packet {
                     Some(packet) => (
-                        packet.body().map_or(source.text, str::to_owned),
+                        packet.body().map_or(text, str::to_owned),
                         Some(packet.kind),
                         packet.result,
                         packet.addressee,
                     ),
-                    None => (source.text, None, None, None),
+                    None => (text, None, None, None),
                 };
                 let quotes = present_with(
                     store,
                     &text,
                     depth.checked_add(1).unwrap_or(QUOTE_DEPTH_LIMIT),
                 );
-                let inlined = wire::media::with_media_payloads(&text, &source.media)
+                let inlined = wire::media::with_media_payloads(&text, &media)
                     .map_err(|_| QuoteUnavailable::Unreadable)?;
-                let inlined = match inlined {
-                    std::borrow::Cow::Owned(text) => Some(text),
-                    std::borrow::Cow::Borrowed(_) => None,
-                };
                 Ok(QuotePresentation::Resolved {
                     target: quote.target.clone(),
-                    text: inlined.unwrap_or(text),
-                    author: source.author,
-                    disposition: source.disposition,
+                    text: inlined.into_owned(),
+                    author,
+                    disposition,
                     quotes,
+                    media_quotes,
                     packet,
                     result,
                     addressee,
                 })
-            }) {
-                Ok(presentation) => presentation,
-                Err(reason) => QuotePresentation::Unavailable {
-                    target: quote.target.clone(),
-                    reason,
+            });
+            presented.unwrap_or_else(|reason| QuotePresentation::Unavailable {
+                target: quote.target.clone(),
+                reason,
+            })
+        })
+        .collect()
+}
+
+/// Derive one exact media target per retained image on a text quote source.
+///
+/// # Errors
+///
+/// Returns unreadable when the source kind cannot own media or retained bytes
+/// no longer satisfy media admission.
+pub fn media_quotes(
+    source: &QuoteTarget,
+    media: &[wire::Media],
+) -> Result<Vec<MediaQuote>, QuoteUnavailable> {
+    media
+        .iter()
+        .enumerate()
+        .map(|(ordinal, media)| {
+            let ordinal = u8::try_from(ordinal).map_err(|_| QuoteUnavailable::Unreadable)?;
+            let digest = media.identity().map_err(|_| QuoteUnavailable::Unreadable)?;
+            let target = match source {
+                QuoteTarget::Tape {
+                    lane,
+                    source,
+                    locus,
+                    ..
+                } => QuoteTarget::TapeMedia {
+                    lane: *lane,
+                    source: *source,
+                    locus: *locus,
+                    ordinal,
+                    digest,
                 },
-            }
+                QuoteTarget::Steering { key, .. } => QuoteTarget::SteeringMedia {
+                    key: key.clone(),
+                    ordinal,
+                    digest,
+                },
+                QuoteTarget::Room { .. }
+                | QuoteTarget::TapeMedia { .. }
+                | QuoteTarget::SteeringMedia { .. } => {
+                    return Err(QuoteUnavailable::Unreadable);
+                }
+            };
+            Ok(MediaQuote {
+                target,
+                name: media.name.clone(),
+            })
         })
         .collect()
 }
@@ -302,13 +364,13 @@ pub fn presenter(
 pub fn render(resolution: &QuoteResolution) -> Result<String, String> {
     match resolution {
         QuoteResolution::Resolved(quote) => {
-            let author = match &quote.author {
-                QuoteAuthor::Agent { lane, occupant } => {
-                    format!("agent occupant {occupant} of lane {lane}")
-                }
-                QuoteAuthor::Directive { actor } => actor.to_string(),
-            };
+            let author = render_author(&quote.author);
             Ok(format!("Quoted from {author}:\n\n{}", quote.text))
+        }
+        QuoteResolution::Media(quote) => {
+            let author = render_author(&quote.author);
+            let markdown = quote.media.markdown().map_err(|error| error.to_string())?;
+            Ok(format!("Quoted image from {author}:\n\n{markdown}"))
         }
         QuoteResolution::Unavailable { target, reason } => {
             let mut refusal = String::new();
@@ -318,9 +380,30 @@ pub fn render(resolution: &QuoteResolution) -> Result<String, String> {
     }
 }
 
+fn render_author(author: &QuoteAuthor) -> String {
+    match author {
+        QuoteAuthor::Agent { lane, occupant } => {
+            format!("agent occupant {occupant} of lane {lane}")
+        }
+        QuoteAuthor::Directive { actor } => actor.to_string(),
+    }
+}
+
+/// What a text quote target's digest authenticates on one source.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TextIdentity {
+    /// The presented `text` is itself the digested prose.
+    Presented,
+    /// A presenter rewrote `text`; the target digests this authored prose.
+    Authored(String),
+    /// The source carries media but no quoteable prose, so no text target
+    /// names it; only its media targets resolve.
+    Absent,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SourceQuote {
-    identity: Option<String>,
+    identity: TextIdentity,
     text: String,
     author: QuoteAuthor,
     disposition: Option<wire::Disposition>,
@@ -423,7 +506,7 @@ impl QuoteStore for ResidentStore<'_> {
             |(lane, occupant)| QuoteAuthor::Agent { lane, occupant },
         );
         Ok(SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text: head.text.clone(),
             author,
             disposition: Some(head.disposition),
@@ -446,7 +529,7 @@ impl QuoteStore for ResidentStore<'_> {
             .map_err(|_| SourceError::Unreadable)?
             .ok_or(SourceError::Unknown)?;
         let authored = |text, packet| SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text,
             author: QuoteAuthor::Directive {
                 actor: envelope.actor.clone(),
@@ -474,7 +557,7 @@ impl QuoteStore for ResidentStore<'_> {
                 _ => SourceError::Unknown,
             })?;
         Ok(SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text,
             author: QuoteAuthor::Agent {
                 lane: messaged.hunk.head.lane,
@@ -488,7 +571,17 @@ impl QuoteStore for ResidentStore<'_> {
 }
 
 fn resolve_with(store: &impl QuoteStore, target: &str, depth: u8) -> QuoteResolution {
-    match resolve_source(store, target, depth) {
+    let parsed = match admitted_target(target, depth) {
+        Ok(parsed) => parsed,
+        Err(reason) => return unavailable(target, reason),
+    };
+    if parsed.is_media() {
+        return match resolve_media_source(store, &parsed) {
+            Ok(resolved) => QuoteResolution::Media(resolved),
+            Err(reason) => unavailable(target, reason),
+        };
+    }
+    match resolve_text_source(store, &parsed) {
         Ok(source) => QuoteResolution::Resolved(ResolvedQuote {
             text: source.text,
             author: source.author,
@@ -498,26 +591,33 @@ fn resolve_with(store: &impl QuoteStore, target: &str, depth: u8) -> QuoteResolu
     }
 }
 
-/// The authenticated source one target names, or why it cannot be quoted.
-fn resolve_source(
-    store: &impl QuoteStore,
-    target: &str,
-    depth: u8,
-) -> Result<SourceQuote, QuoteUnavailable> {
+fn admitted_target(target: &str, depth: u8) -> Result<QuoteTarget, QuoteUnavailable> {
     if depth >= QUOTE_DEPTH_LIMIT {
         return Err(QuoteUnavailable::DepthExceeded);
     }
-    let parsed = target
+    target
         .parse::<QuoteTarget>()
-        .map_err(|_| QuoteUnavailable::Malformed)?;
-    let source = match &parsed {
+        .map_err(|_| QuoteUnavailable::Malformed)
+}
+
+fn source_for(
+    store: &impl QuoteStore,
+    target: &QuoteTarget,
+) -> Result<SourceQuote, QuoteUnavailable> {
+    let source = match target {
         QuoteTarget::Tape {
             lane,
             source,
             locus,
             ..
+        }
+        | QuoteTarget::TapeMedia {
+            lane,
+            source,
+            locus,
+            ..
         } => store.tape(*lane, *source, *locus),
-        QuoteTarget::Steering { key, .. } => {
+        QuoteTarget::Steering { key, .. } | QuoteTarget::SteeringMedia { key, .. } => {
             if key.parse::<steer::Key>().is_err() {
                 return Err(QuoteUnavailable::Malformed);
             }
@@ -527,15 +627,56 @@ fn resolve_source(
             room, publication, ..
         } => store.room(room, publication),
     };
-    let resolved = source.map_err(|error| match error {
+    source.map_err(|error| match error {
         SourceError::Unknown => QuoteUnavailable::Unknown,
         SourceError::Unreadable => QuoteUnavailable::Unreadable,
-    })?;
-    let identity = resolved.identity.as_deref().unwrap_or(&resolved.text);
-    if QuoteTarget::text_digest(identity) != *parsed.digest() {
+    })
+}
+
+fn resolve_text_source(
+    store: &impl QuoteStore,
+    target: &QuoteTarget,
+) -> Result<SourceQuote, QuoteUnavailable> {
+    if target.is_media() {
+        return Err(QuoteUnavailable::Malformed);
+    }
+    let resolved = source_for(store, target)?;
+    let identity = match &resolved.identity {
+        TextIdentity::Presented => resolved.text.as_str(),
+        TextIdentity::Authored(prose) => prose.as_str(),
+        TextIdentity::Absent => return Err(QuoteUnavailable::Unknown),
+    };
+    if QuoteTarget::text_digest(identity) != *target.digest() {
         return Err(QuoteUnavailable::DigestMismatch);
     }
     Ok(resolved)
+}
+
+fn resolve_media_source(
+    store: &impl QuoteStore,
+    target: &QuoteTarget,
+) -> Result<ResolvedMediaQuote, QuoteUnavailable> {
+    let ordinal = match target {
+        QuoteTarget::TapeMedia { ordinal, .. } | QuoteTarget::SteeringMedia { ordinal, .. } => {
+            usize::from(*ordinal)
+        }
+        _ => return Err(QuoteUnavailable::Malformed),
+    };
+    let source = source_for(store, target)?;
+    let media = source
+        .media
+        .get(ordinal)
+        .ok_or(QuoteUnavailable::Unknown)?
+        .clone();
+    let identity = media.identity().map_err(|_| QuoteUnavailable::Unreadable)?;
+    if identity != *target.digest() {
+        return Err(QuoteUnavailable::DigestMismatch);
+    }
+    Ok(ResolvedMediaQuote {
+        media,
+        author: source.author,
+        disposition: source.disposition,
+    })
 }
 
 fn expand_with(store: &impl QuoteStore, source: &str, depth: u8) -> String {
@@ -551,6 +692,12 @@ fn expand_with(store: &impl QuoteStore, source: &str, depth: u8) -> String {
             QuoteResolution::Resolved(resolved) => {
                 expanded.push_str(&expand_with(store, &resolved.text, depth + 1));
             }
+            QuoteResolution::Media(resolved) => match resolved.media.markdown() {
+                Ok(markdown) => expanded.push_str(&markdown),
+                Err(_) => {
+                    render_unavailable(&mut expanded, &quote.target, QuoteUnavailable::Unreadable)
+                }
+            },
             QuoteResolution::Unavailable { target, reason } => {
                 render_unavailable(&mut expanded, &target, reason);
             }
@@ -732,21 +879,39 @@ fn resolve_tape(
         .ok()
         .and_then(|event| decoded.events().get(event))
         .ok_or(SourceError::Unknown)?;
-    let prose = crate::agent_prose::quoteable(event).ok_or(SourceError::Unknown)?;
-    let text = agent_presenter
-        .map_or_else(
-            || Ok(prose.text.clone()),
-            |present| present(reader, lane, source, locus.event, &prose),
-        )
-        .map_err(|_| SourceError::Unreadable)?;
+    let media = event_media(event).to_vec();
+    let (identity, text) = if let Some(prose) = crate::agent_prose::quoteable(event) {
+        let text = agent_presenter
+            .map_or_else(
+                || Ok(prose.text.clone()),
+                |present| present(reader, lane, source, locus.event, &prose),
+            )
+            .map_err(|_| SourceError::Unreadable)?;
+        (TextIdentity::Authored(prose.text.clone()), text)
+    } else if media.is_empty() {
+        return Err(SourceError::Unknown);
+    } else {
+        (TextIdentity::Absent, String::new())
+    };
     Ok(SourceQuote {
-        identity: Some(prose.text.clone()),
+        identity,
         text,
         author: QuoteAuthor::Agent { lane, occupant },
         disposition: None,
-        media: prose.media.clone(),
+        media,
         packet: None,
     })
+}
+
+fn event_media(event: &listen::Event) -> &[wire::Media] {
+    match event {
+        listen::Event::Prose(prose) | listen::Event::StreamedProse(prose) => &prose.media,
+        listen::Event::Tool(listen::Tool {
+            moment: listen::ToolMoment::Result(outcome),
+            ..
+        }) => &outcome.media,
+        _ => &[],
+    }
 }
 
 #[cfg(test)]

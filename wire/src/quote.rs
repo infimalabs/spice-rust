@@ -45,6 +45,29 @@ pub enum QuoteTarget {
         /// Digest of the publication's UTF-8 text.
         digest: Digest,
     },
+
+    /// One retained image in an exact tape event.
+    TapeMedia {
+        /// Lane whose vendor tape owns the record.
+        lane: CanonicalUuid,
+        /// Opaque tape generation identity.
+        source: CanonicalUuid,
+        /// Exact record and event coordinates.
+        locus: MessageLocus,
+        /// Zero-based position in the event's retained media.
+        ordinal: u8,
+        /// Digest of the selected image's decoded bytes.
+        digest: Digest,
+    },
+    /// One retained image on a journal directive.
+    SteeringMedia {
+        /// Human-sized durable directive key.
+        key: String,
+        /// Zero-based position in the directive's retained attachments.
+        ordinal: u8,
+        /// Digest of the selected image's decoded bytes.
+        digest: Digest,
+    },
 }
 
 /// Why text resembling a quote target is not admitted.
@@ -82,6 +105,33 @@ pub enum QuoteAuthor {
         /// Actor on the directive's creating fact.
         actor: Actor,
     },
+}
+
+/// Browser presentation metadata for one image carrying its own quote action.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaQuote {
+    /// Canonical target resolving exactly this image.
+    pub target: QuoteTarget,
+    /// Admitted source name shown in the composer quote shard.
+    pub name: String,
+}
+
+/// One successfully resolved retained image.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolvedMediaQuote {
+    /// Exact admitted image bytes and metadata.
+    pub media: crate::Media,
+    /// Durable recorded authorship of the owning source.
+    pub author: QuoteAuthor,
+    /// Current directive disposition; absent for tape media.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub disposition: Option<Disposition>,
 }
 
 /// Successfully resolved quote text and live journal presentation data.
@@ -123,6 +173,8 @@ pub enum QuoteUnavailable {
 pub enum QuoteResolution {
     /// Named authority authenticated and supplied the quote.
     Resolved(ResolvedQuote),
+    /// Named authority authenticated and supplied one retained image.
+    Media(ResolvedMediaQuote),
     /// Resolution refused without fabricating text or authorship.
     Unavailable {
         /// Original target spelling that could not be resolved.
@@ -157,6 +209,9 @@ pub enum QuotePresentation {
         /// Quote links found in `text`, in source order.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         quotes: Vec<QuotePresentation>,
+        /// Images retained by this source, each with its exact quote target.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        media_quotes: Vec<MediaQuote>,
         /// Protocol kind of the room publication that opened a quoted
         /// directive, when an MSG, ASK, or ANS delivered it. `text` is then
         /// that packet's authenticated body, without the header its recipient
@@ -170,6 +225,22 @@ pub enum QuotePresentation {
         /// its addressee. A room post addresses its room and names none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         addressee: Option<CanonicalUuid>,
+    },
+    /// Durable authority authenticated one selected image.
+    Media {
+        /// Original target spelling embedded in the containing message.
+        target: String,
+        /// Exact admitted image bytes and metadata.
+        media: crate::Media,
+        /// Durable recorded authorship of the owning source.
+        author: QuoteAuthor,
+        /// Current directive disposition; absent for tape media.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        disposition: Option<Disposition>,
     },
     /// Resolution refused without fabricating presentation data.
     Unavailable {
@@ -191,8 +262,8 @@ impl QuoteTarget {
     #[must_use]
     pub const fn tape_source(&self) -> Option<CanonicalUuid> {
         match self {
-            Self::Tape { source, .. } => Some(*source),
-            Self::Steering { .. } | Self::Room { .. } => None,
+            Self::Tape { source, .. } | Self::TapeMedia { source, .. } => Some(*source),
+            Self::Steering { .. } | Self::Room { .. } | Self::SteeringMedia { .. } => None,
         }
     }
 
@@ -217,8 +288,16 @@ impl QuoteTarget {
         match self {
             Self::Tape { digest, .. }
             | Self::Steering { digest, .. }
-            | Self::Room { digest, .. } => digest,
+            | Self::Room { digest, .. }
+            | Self::TapeMedia { digest, .. }
+            | Self::SteeringMedia { digest, .. } => digest,
         }
+    }
+
+    /// Whether this target resolves one retained image rather than prose.
+    #[must_use]
+    pub const fn is_media(&self) -> bool {
+        matches!(self, Self::TapeMedia { .. } | Self::SteeringMedia { .. })
     }
 }
 
@@ -244,6 +323,22 @@ impl fmt::Display for QuoteTarget {
                 publication,
                 digest,
             } => write!(formatter, "room/{room}/{publication}/{digest}"),
+            Self::TapeMedia {
+                lane,
+                source,
+                locus,
+                ordinal,
+                digest,
+            } => write!(
+                formatter,
+                "tape-media/{lane}/{source}/{}/{}/{}/{}/{ordinal}/{digest}",
+                locus.member, locus.offset, locus.length, locus.event
+            ),
+            Self::SteeringMedia {
+                key,
+                ordinal,
+                digest,
+            } => write!(formatter, "steer-media/{key}/{ordinal}/{digest}"),
         }
     }
 }
@@ -276,9 +371,34 @@ impl FromStr for QuoteTarget {
                 publication: coordinate("publication", publication)?,
                 digest: coordinate("digest", digest)?,
             }),
+            ["tape-media", fields @ ..] => tape_media(fields),
+            ["steer-media", key, ordinal, digest] if steering_key(key) => Ok(Self::SteeringMedia {
+                key: (*key).to_owned(),
+                ordinal: number("ordinal", ordinal)?,
+                digest: coordinate("digest", digest)?,
+            }),
+            ["steer-media", key, _, _] => Err(QuoteTargetError::SteeringKey((*key).to_owned())),
             _ => Err(QuoteTargetError::Shape),
         }
     }
+}
+
+fn tape_media(fields: &[&str]) -> Result<QuoteTarget, QuoteTargetError> {
+    let [lane, source, member, offset, length, event, ordinal, digest] = fields else {
+        return Err(QuoteTargetError::Shape);
+    };
+    Ok(QuoteTarget::TapeMedia {
+        lane: coordinate("lane", lane)?,
+        source: coordinate("source", source)?,
+        locus: MessageLocus {
+            member: number("member", member)?,
+            offset: number("offset", offset)?,
+            length: number("length", length)?,
+            event: number("event", event)?,
+        },
+        ordinal: number("ordinal", ordinal)?,
+        digest: coordinate("digest", digest)?,
+    })
 }
 
 fn coordinate<T>(field: &'static str, text: &str) -> Result<T, QuoteTargetError>
@@ -346,6 +466,23 @@ mod tests {
                 room: "dVrD59Y8N".parse().expect("fixture room"),
                 publication: "dVsYdDj7d".parse().expect("fixture publication"),
                 digest: QuoteTarget::text_digest(text),
+            },
+            QuoteTarget::TapeMedia {
+                lane: uuid(1),
+                source: uuid(2),
+                locus: MessageLocus {
+                    member: 3,
+                    offset: 5,
+                    length: 8,
+                    event: 13,
+                },
+                ordinal: 2,
+                digest: Digest::compute(crate::Domain::MediaContent, b"image"),
+            },
+            QuoteTarget::SteeringMedia {
+                key: "dTVLR0qL0".to_owned(),
+                ordinal: 1,
+                digest: Digest::compute(crate::Domain::MediaContent, b"image"),
             },
         ];
         for target in targets {

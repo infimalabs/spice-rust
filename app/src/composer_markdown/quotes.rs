@@ -85,14 +85,15 @@ pub(crate) fn referenced_quote_agents(
         .collect::<std::collections::BTreeSet<_>>();
     let mut pending = presentations.iter().collect::<Vec<_>>();
     while let Some(presentation) = pending.pop() {
-        let QuotePresentation::Resolved {
-            author,
-            quotes,
-            addressee,
-            ..
-        } = presentation
-        else {
-            continue;
+        let (author, quotes, addressee) = match presentation {
+            QuotePresentation::Resolved {
+                author,
+                quotes,
+                addressee,
+                ..
+            } => (author, quotes.as_slice(), *addressee),
+            QuotePresentation::Media { author, .. } => (author, &[][..], None),
+            QuotePresentation::Unavailable { .. } => continue,
         };
         match author {
             QuoteAuthor::Agent { lane, .. }
@@ -103,7 +104,7 @@ pub(crate) fn referenced_quote_agents(
             }
             QuoteAuthor::Directive { .. } => {}
         }
-        lanes.extend(*addressee);
+        lanes.extend(addressee);
         pending.extend(quotes);
     }
     agents
@@ -128,8 +129,10 @@ pub(crate) fn referenced_quote_sources(
     }
     let mut pending = presentations.iter().collect::<Vec<_>>();
     while let Some(presentation) = pending.pop() {
-        let QuotePresentation::Resolved { target, quotes, .. } = presentation else {
-            continue;
+        let (target, quotes) = match presentation {
+            QuotePresentation::Resolved { target, quotes, .. } => (target, quotes.as_slice()),
+            QuotePresentation::Media { target, .. } => (target, &[][..]),
+            QuotePresentation::Unavailable { .. } => continue,
         };
         if let Some(source) = sources.get(target) {
             referenced.insert(target.clone(), source.clone());
@@ -148,9 +151,11 @@ pub(crate) fn referenced_quote_tasks(
 ) -> crate::runtime::QuoteTasks {
     let mut referenced = crate::runtime::QuoteTasks::new();
     let mut take = |target: &QuoteTarget| {
-        if let QuoteTarget::Steering { key, .. } = target
-            && let Some(handles) = tasks.get(key)
-        {
+        let key = match target {
+            QuoteTarget::Steering { key, .. } | QuoteTarget::SteeringMedia { key, .. } => key,
+            _ => return,
+        };
+        if let Some(handles) = tasks.get(key) {
             referenced.insert(key.clone(), handles.clone());
         }
     };
@@ -159,8 +164,10 @@ pub(crate) fn referenced_quote_tasks(
     }
     let mut pending = presentations.iter().collect::<Vec<_>>();
     while let Some(presentation) = pending.pop() {
-        let QuotePresentation::Resolved { target, quotes, .. } = presentation else {
-            continue;
+        let (target, quotes) = match presentation {
+            QuotePresentation::Resolved { target, quotes, .. } => (target, quotes.as_slice()),
+            QuotePresentation::Media { target, .. } => (target, &[][..]),
+            QuotePresentation::Unavailable { .. } => continue,
         };
         if let Ok(target) = target.parse() {
             take(&target);
@@ -457,8 +464,9 @@ fn occupant_agent(
 /// Empty portal target that board provenance fills at the quoted content's
 /// trailing edge after the card has rendered.
 pub(super) fn task_tail_html(target: &str) -> String {
-    let Ok(QuoteTarget::Steering { key, .. }) = target.parse() else {
-        return String::new();
+    let key = match target.parse() {
+        Ok(QuoteTarget::Steering { key, .. } | QuoteTarget::SteeringMedia { key, .. }) => key,
+        _ => return String::new(),
     };
     format!(
         "<span class=\"message-quote-task-tail\" data-quote-tasks=\"{}\"></span>",
@@ -483,6 +491,7 @@ fn structural_quote_target<'event>(events: &'event [MarkdownEvent<'_>]) -> Optio
 fn presentation_target(presentation: &QuotePresentation) -> &str {
     match presentation {
         QuotePresentation::Resolved { target, .. }
+        | QuotePresentation::Media { target, .. }
         | QuotePresentation::Unavailable { target, .. } => target,
     }
 }
@@ -500,6 +509,7 @@ fn render(
             author,
             disposition,
             quotes,
+            media_quotes,
             packet,
             result,
             addressee,
@@ -512,6 +522,7 @@ fn render(
                 quotes,
                 agents,
                 sources,
+                media_quotes,
                 super::image_flow::Attribution {
                     controls_target: target.clone(),
                     signoff,
@@ -526,6 +537,47 @@ fn render(
             format!(
                 "<div class=\"message-quote-card\" data-quote-state=\"resolved\" \
                  data-quote-target=\"{}\"{accent}><div class=\"message-quote-body\">{}</div></div>",
+                super::escape_html_attribute(target),
+                body.html,
+            )
+        }
+        QuotePresentation::Media {
+            target,
+            media,
+            author,
+            disposition,
+        } => {
+            let disposition = disposition.map(disposition_html).unwrap_or_default();
+            let signoff = signoff_html(author, None, target, agents, sources);
+            let task_tail = task_tail_html(target);
+            let own_quote = target.parse().ok().map(|target| wire::MediaQuote {
+                target,
+                name: media.name.clone(),
+            });
+            let markdown = media
+                .markdown()
+                .expect("resident-resolved media passed admission");
+            let body = super::render_quote_card_body(
+                &markdown,
+                &[],
+                agents,
+                sources,
+                own_quote.as_slice(),
+                super::image_flow::Attribution {
+                    controls_target: target.clone(),
+                    signoff,
+                    disposition,
+                    badge: String::new(),
+                    task_tail,
+                },
+                quote_depth,
+            );
+            let accent = speaker_accent(author, target, agents, sources)
+                .map_or_else(String::new, |accent| format!(" data-accent=\"{accent}\""));
+            format!(
+                "<div class=\"message-quote-card message-quote-card--media\" \
+                 data-quote-state=\"resolved\" data-quote-target=\"{}\"{accent}>\
+                 <div class=\"message-quote-body\">{}</div></div>",
                 super::escape_html_attribute(target),
                 body.html,
             )

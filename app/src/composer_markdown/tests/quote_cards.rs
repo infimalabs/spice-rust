@@ -98,10 +98,12 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
             },
             disposition: Some(wire::Disposition::Live),
             quotes: Vec::new(),
+            media_quotes: Vec::new(),
             packet: None,
             result: None,
             addressee: None,
         }],
+        media_quotes: Vec::new(),
         packet: None,
         result: None,
         addressee: None,
@@ -226,6 +228,7 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
             },
             disposition: Some(*disposition),
             quotes: Vec::new(),
+            media_quotes: Vec::new(),
             packet: None,
             result: None,
             addressee: None,
@@ -242,6 +245,7 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         },
         disposition: None,
         quotes: Vec::new(),
+        media_quotes: Vec::new(),
         packet: None,
         result: None,
         addressee: None,
@@ -317,6 +321,7 @@ fn quote_levels_name_their_own_task_badges_at_every_occurrence() {
         },
         disposition: None,
         quotes: Vec::new(),
+        media_quotes: Vec::new(),
         packet: None,
         result: None,
         addressee: None,
@@ -329,6 +334,7 @@ fn quote_levels_name_their_own_task_badges_at_every_occurrence() {
         },
         disposition: None,
         quotes: vec![inner],
+        media_quotes: Vec::new(),
         packet: None,
         result: None,
         addressee: None,
@@ -395,6 +401,7 @@ fn a_cards_quote_tasks_follow_only_the_directions_it_quotes() {
             },
             disposition: None,
             quotes,
+            media_quotes: Vec::new(),
             packet: None,
             result: None,
             addressee: None,
@@ -408,6 +415,7 @@ fn a_cards_quote_tasks_follow_only_the_directions_it_quotes() {
         start: 0,
         end: 1,
         quote_target: context,
+        media_quotes: Vec::new(),
         actor: wire::Actor::Operator,
         authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
         badge: None,
@@ -466,10 +474,12 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
             },
             disposition: Some(wire::Disposition::Live),
             quotes: Vec::new(),
+            media_quotes: Vec::new(),
             packet: None,
             result: None,
             addressee: None,
         }],
+        media_quotes: Vec::new(),
         packet: None,
         result: None,
         addressee: None,
@@ -560,6 +570,7 @@ fn attribution_hunks_restart_after_more_than_one_quote() {
             start: u32::try_from(start).expect("fixture offset fits"),
             end: u32::try_from(start + quoted.len()).expect("fixture offset fits"),
             quote_target: steering_target(key, quoted),
+            media_quotes: Vec::new(),
             actor: wire::Actor::Operator,
             authored: authored.parse().expect("fixture instant"),
             badge: None,
@@ -670,6 +681,7 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
             start: u32::try_from(start).expect("fixture offset fits"),
             end: u32::try_from(start + quoted.len()).expect("fixture offset fits"),
             quote_target: steering_target(key, quoted),
+            media_quotes: Vec::new(),
             actor: wire::Actor::Spice,
             authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
             badge,
@@ -741,6 +753,7 @@ fn packet_context_wears_its_kind_after_its_source() {
             start: u32::try_from(start).expect("fixture offset fits"),
             end: u32::try_from(start + quoted.len()).expect("fixture offset fits"),
             quote_target: steering_target(key, quoted),
+            media_quotes: Vec::new(),
             actor: wire::Actor::Operator,
             authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
             badge: None,
@@ -849,6 +862,7 @@ fn quoted_packet_cards_wear_their_kind_in_the_head() {
             },
             disposition: Some(wire::Disposition::Acked),
             quotes: Vec::new(),
+            media_quotes: Vec::new(),
             packet,
             result,
             addressee: packet.map(|_| kite),
@@ -912,6 +926,7 @@ fn a_quoted_msg_context_keeps_its_lane_identity_across_seats() {
         start: 0,
         end: u32::try_from(quoted.len()).expect("fixture offset fits"),
         quote_target: steering_target("dTVQdQfLx", quoted),
+        media_quotes: Vec::new(),
         actor: wire::Actor::Lane(lane),
         authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
         badge: None,
@@ -983,6 +998,7 @@ fn peer_context_destination_survives_badges_and_reseating() {
         start: 0,
         end: u32::try_from(body.len()).unwrap(),
         quote_target: steering_target("dTVQdQfLx", body),
+        media_quotes: Vec::new(),
         actor: wire::Actor::Lane(sender_lane),
         authored: "1970-01-01T00:00:01.000Z".parse().unwrap(),
         badge: None,
@@ -1056,6 +1072,7 @@ fn a_delivered_direction_names_every_receiver_in_the_first_receivers_accent() {
         start: 0,
         end: u32::try_from(body.len()).unwrap(),
         quote_target: steering_target("dTVQdQfLy", body),
+        media_quotes: Vec::new(),
         actor: wire::Actor::Operator,
         authored: "1970-01-01T00:00:01.000Z".parse().unwrap(),
         badge: None,
@@ -1272,4 +1289,42 @@ fn ask_and_ans_quotes_carry_typed_badges_and_the_answered_result() {
     assert!(html.contains("data-message-result=\"1kKRRsDR3\""), "{html}");
     assert!(html.contains(">ANS 1kKRRsDR3</span>"), "{html}");
     assert!(html.contains("data-quote-recipient=\"operator\""), "{html}");
+}
+
+#[test]
+fn retained_images_expose_their_exact_quote_target_without_replacing_preview_opening() {
+    let media = wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
+        .expect("fixture media");
+    let target = wire::QuoteTarget::SteeringMedia {
+        key: "dTVLR0qL0".to_owned(),
+        ordinal: 0,
+        digest: media.identity().expect("media identity"),
+    };
+    let media_quote = wire::MediaQuote {
+        target: target.clone(),
+        name: media.name.clone(),
+    };
+
+    let rendered = render_received_with_media_quotes(
+        &media.markdown().expect("fixture markdown"),
+        &[],
+        &[],
+        &[],
+        &QuoteAgents::new(),
+        &QuoteSources::new(),
+        std::slice::from_ref(&media_quote),
+    );
+
+    assert!(rendered.html.contains("data-image-preview=\"\""));
+    assert!(rendered.html.contains("data-image-quote-action=\"\""));
+    assert!(
+        rendered
+            .html
+            .contains(&format!("data-image-quote-target=\"{target}\""))
+    );
+    assert!(
+        rendered
+            .html
+            .contains("data-image-quote-name=\"capture.png\"")
+    );
 }
