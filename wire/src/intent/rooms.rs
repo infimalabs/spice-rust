@@ -229,7 +229,8 @@ pub struct RoomConversationText {
 }
 
 /// One conversation publication's text, or why its source cannot supply it,
-/// with the operator direction its operator route concerns.
+/// with the operator direction its operator route concerns and the principal
+/// its operator item reaches.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoomConversationTextAnswer {
@@ -244,6 +245,14 @@ pub struct RoomConversationTextAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub direction: Option<RoomConcernedDirection>,
+    /// The principal whose operator inbox this publication's operator item
+    /// reaches, absent when it opens none.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub recipient: Option<crate::Actor>,
 }
 
 /// One operator direction as its steering head reads at the read barrier.

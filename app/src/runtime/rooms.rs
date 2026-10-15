@@ -17,7 +17,7 @@ mod standing;
 
 pub use contributions::{Contribution, ContributionGroup};
 pub use conversation::{
-    Conversation, ConversationProjection, Delivery, OperatorItem, QuestionResult,
+    Conversation, ConversationProjection, Delivery, OperatorInboxItem, OperatorItem, QuestionResult,
 };
 pub use standing::{CoordinationStanding, Relevance, ResumeAutomation};
 

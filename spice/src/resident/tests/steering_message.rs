@@ -183,6 +183,16 @@ impl Lanes {
 
     /// Send `lane` one operator direction under command `id`, returning its key.
     fn direct(&self, lane: u8, id: u8, message: &str) -> String {
+        self.direct_as(Actor::Operator, lane, id, message)
+    }
+
+    /// Send `lane` one direction as `actor` under command `id`, admitted
+    /// under the current principal roles, returning its key.
+    fn direct_as(&self, actor: Actor, lane: u8, id: u8, message: &str) -> String {
+        let roles = self
+            .bus
+            .read(|read| read.principal_roles())
+            .expect("principal roles read");
         let sent = steering::send(
             &self.bus,
             self.epoch,
@@ -207,11 +217,11 @@ impl Lanes {
             .admit(
                 &wire::Accepted {
                     wire: wire::WireVersion::CURRENT,
-                    actor: Actor::Operator,
+                    actor,
                     epoch: self.epoch,
                     release: "1.2.3".parse().expect("fixture release"),
                 },
-                &wire::principal::PrincipalRoles::default(),
+                &roles,
             )
             .expect("operator send admits"),
             &wire::intent::SteerSend {

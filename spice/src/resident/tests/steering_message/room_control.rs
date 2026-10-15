@@ -6,8 +6,8 @@
 use serde_json::{Value, json};
 use wire::intent::{RoomClose, RoomControl};
 use wire::rooms::{
-    QuestionClosure, QuestionResultRef, QuestionResultState, RoomReceiptDisposition,
-    RoomReceiptRef, RoomReceiptState, RoomRelevanceVerdict,
+    QuestionClosure, QuestionResultRef, QuestionResultState, RoomAuthorityStamp,
+    RoomReceiptDisposition, RoomReceiptRef, RoomReceiptState, RoomRelevanceVerdict,
 };
 
 use super::conversation::asked;
@@ -190,6 +190,48 @@ impl Lanes {
                 .split_off(2);
         }
         panic!("paging did not finish: {items:?}");
+    }
+
+    /// Record `principal`'s birth holding the operator role.
+    fn admit_operator(&self, principal: CanonicalUuid) {
+        let roles = std::collections::BTreeSet::from([wire::principal::PrincipalRole::Operator]);
+        let mut write =
+            write(Actor::Spice, self.epoch, Producer::CommandDoor).expect("admission write starts");
+        let born = write
+            .fact(
+                wire::principal::PrincipalAdmitted {
+                    principal,
+                    profile: wire::principal::PrincipalProfile::default(),
+                    roles: roles.clone(),
+                    capability: None,
+                },
+                FactCause::Root,
+            )
+            .expect("principal birth fact builds");
+        write.principal_head(born, move |born| wire::principal::PrincipalHead {
+            principal,
+            born,
+            profile: wire::principal::PrincipalProfile::default(),
+            roles,
+            capability: None,
+        });
+        commit(&self.bus, write).expect("the birth commits");
+    }
+
+    /// The principal whose inbox `publication`'s operator item reaches, as
+    /// the resident's conversation text read answers it.
+    fn recipient(&self, publication: RoomAuthorityStamp) -> Option<Actor> {
+        match crate::room_command::conversation_text(
+            &self.bus,
+            &self.paths.tape,
+            &wire::intent::RoomConversationText { publication },
+        ) {
+            Outcome::Reply(Reply {
+                body: CommandAnswer::RoomConversationText(answer),
+                ..
+            }) => answer.recipient,
+            other => panic!("the conversation text read answered {other:?}"),
+        }
     }
 }
 
@@ -435,6 +477,38 @@ fn operator_items_page_and_settle_exactly() {
         RoomReceiptState::Acked { .. }
     ));
     assert!(lanes.inbox_items(&[]).is_empty());
+    lanes.finish();
+}
+
+/// Each operator item reaches only the principal that sent the direction a
+/// lane's `#KEY` names: a historical operator direction reaches the
+/// bootstrap principal, whom the local inbox reads as, and a second
+/// operator-role principal's direction reaches only that principal.
+#[test]
+fn operator_items_reach_only_the_directing_principal() {
+    let lanes = Lanes::new("control-recipients");
+    let second = test_uuid(90);
+    lanes.admit_operator(second);
+    let historical = lanes.direct(SENDER, 20, "ship when green");
+    let theirs = lanes.direct_as(Actor::Human(second), SENDER, 30, "and the docs");
+    lanes
+        .say(SENDER, &format!("MSG #{historical}: shipped"))
+        .expect("the reply publishes");
+    let question = asked(&lanes.say(SENDER, &format!("ASK #{theirs}: which docs?")));
+
+    let items = lanes.inbox_items(&[]);
+    assert_eq!(
+        items
+            .iter()
+            .map(|(_, verb)| verb.as_str())
+            .collect::<Vec<_>>(),
+        ["msg"],
+        "the local inbox holds only the bootstrap principal's item"
+    );
+    let reply: RoomAuthorityStamp = items[0].0.parse().expect("item key");
+    let asking = lanes.question(&question).0.question().clone();
+    assert_eq!(lanes.recipient(reply), Some(lanes.bootstrap()));
+    assert_eq!(lanes.recipient(asking), Some(Actor::Human(second)));
     lanes.finish();
 }
 

@@ -455,7 +455,9 @@ owns each rule summarized here.
 - **Delivery.** A directed route is a native steering directive bound to the
   logical lane: vacancy, resume, and renewal keep its key, body, and expiry for
   whichever occupant sits there next, while a replacement lane inherits
-  nothing. An operator route opens an operator item in `spice room inbox`.
+  nothing. An operator route opens an operator item in the inbox of the
+  principal it answers
+  ([routing](invariants/identity.md#identity-an-operator-item-reaches-the-principal-it-answers)).
   Room-only traffic reaches current listeners as one bounded catch-up aside at
   a safe boundary. Recording is not receipt.
 - **Receipt, answer, and authorization stay apart.** ACK/NAK settles a

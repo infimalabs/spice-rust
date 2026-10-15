@@ -109,9 +109,9 @@ impl ConversationProjection {
     }
 
     /// Operator items whose receipt or substantive answer duty remains open,
-    /// in immutable admission order. Receipt/result head moves never reorder
-    /// this catalog.
-    pub fn inbox_items(&self) -> Vec<OperatorInboxItem<'_>> {
+    /// whichever principal each reaches, in immutable admission order.
+    /// Receipt/result head moves never reorder this catalog.
+    pub fn open_items(&self) -> Vec<OperatorInboxItem<'_>> {
         let mut open = self
             .items
             .iter()

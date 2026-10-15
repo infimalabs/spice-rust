@@ -1,13 +1,15 @@
 //! Lane-authored conversation text the operator inbox shows. A lane's bytes
 //! stay in its transcript, so the runtime reads each open operator item's
 //! text once from the resident, with the operator direction the item
-//! concerns; a publication's bytes never change, so a settled read stands.
+//! concerns and the principal it reaches; a publication's bytes never
+//! change, so a settled read stands.
 
 use wire::intent::{RoomConcernedDirection, RoomConversationContent, RoomConversationTextAnswer};
 use wire::rooms::{RoomAnchor, RoomAuthorityStamp, RoomReceiptRecord};
-use wire::{Outcome, Response};
+use wire::{Actor, Outcome, Response};
 
 use super::AppRuntime;
+use super::rooms::OperatorInboxItem;
 use crate::socket::Admitted;
 
 /// One lane-authored conversation publication's text, read on demand from
@@ -17,10 +19,12 @@ pub enum ConversationText {
     /// A read is queued or in flight.
     Loading,
     /// What the owning source supplied at the read barrier, with the
-    /// operator direction the publication's operator route concerns.
+    /// operator direction the publication's operator route concerns and the
+    /// principal its operator item reaches.
     Read {
         content: RoomConversationContent,
         direction: Option<RoomConcernedDirection>,
+        recipient: Option<Actor>,
     },
     /// The resident refused or failed the read, with its stable reason.
     Failed(String),
@@ -75,21 +79,45 @@ impl AppRuntime {
         }
     }
 
-    /// Open operator items whose lane-authored text this runtime has not yet
-    /// asked for, each now marked loading. Operator-authored text arrives
-    /// with its fact and needs no read.
+    /// Open operator items that reach this runtime's principal, in the
+    /// catalog's admission order.
+    ///
+    /// An item shows once its read names this principal as its recipient,
+    /// or when the read failed and so cannot place it; until its read
+    /// answers it reaches no one here. This principal is matched as reads
+    /// name it, so the historical operator actor is the bootstrap principal.
+    #[must_use]
+    pub fn operator_inbox(&self) -> Vec<OperatorInboxItem<'_>> {
+        let me = self.rooms.author(self.principal.actor());
+        self.rooms
+            .conversation()
+            .open_items()
+            .into_iter()
+            .filter(|entry| {
+                match self
+                    .conversation_texts
+                    .get(entry.item.value.record.publication())
+                {
+                    Some(ConversationText::Read { recipient, .. }) => {
+                        recipient.as_ref().is_none_or(|recipient| *recipient == me)
+                    }
+                    Some(ConversationText::Failed(_)) => true,
+                    Some(ConversationText::Loading) | None => false,
+                }
+            })
+            .collect()
+    }
+
+    /// Open operator items whose text and recipient this runtime has not yet
+    /// asked for, each now marked loading.
     pub fn begin_operator_item_texts(&mut self) -> Vec<RoomAuthorityStamp> {
-        let projection = self.rooms.conversation();
-        let wanted = projection
-            .inbox_items()
+        let wanted = self
+            .rooms
+            .conversation()
+            .open_items()
             .into_iter()
             .map(|entry| entry.item.value.record.publication())
-            .filter(|publication| {
-                !self.conversation_texts.contains_key(publication)
-                    && projection
-                        .conversation(publication)
-                        .is_some_and(|conversation| conversation.text.is_none())
-            })
+            .filter(|publication| !self.conversation_texts.contains_key(publication))
             .cloned()
             .collect::<Vec<_>>();
         for publication in &wanted {
@@ -114,6 +142,7 @@ impl AppRuntime {
                 ConversationText::Read {
                     content: reply.body.content.clone(),
                     direction: reply.body.direction.clone(),
+                    recipient: reply.body.recipient.clone(),
                 }
             }
             Outcome::Reply(_) => {

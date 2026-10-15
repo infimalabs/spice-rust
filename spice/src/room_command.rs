@@ -813,7 +813,8 @@ fn transcript(tape: &Path, hunk: TranscriptHunk) -> Content {
 }
 
 /// One conversation publication's text, read from its owning source exactly
-/// as [`inbox`] reads it; an unknown publication is a missing source.
+/// as [`inbox`] reads it, with the principal its operator item reaches as
+/// [`inbox`] scopes it; an unknown publication is a missing source.
 pub(crate) fn conversation_text(
     bus: &bus::Bus,
     tape: &Path,
@@ -823,17 +824,21 @@ pub(crate) fn conversation_text(
 
     let publication = request.publication.clone();
     let read = bus.read(move |read| {
-        let (body, direction) = match read.room_conversation(&publication)? {
+        let (body, direction, recipient) = match read.room_conversation(&publication)? {
             Some((_, admitted)) => (
                 Some(conversation_body(read, &admitted).map_err(Failure::guard)?),
                 concerned_direction(read, &admitted).map_err(Failure::guard)?,
+                match read.room_operator_requester(&admitted)? {
+                    Some(requester) => Some(read.principal_roles()?.author(&requester)),
+                    None => None,
+                },
             ),
-            None => (None, None),
+            None => (None, None, None),
         };
-        Ok((read.cursor()?, body, direction))
+        Ok((read.cursor()?, body, direction, recipient))
     });
-    let (cursor, body, direction) = match read {
-        Ok((Some(cursor), body, direction)) => (cursor, body, direction),
+    let (cursor, body, direction, recipient) = match read {
+        Ok((Some(cursor), body, direction, recipient)) => (cursor, body, direction, recipient),
         Ok((None, ..)) => {
             return fault(
                 FaultClass::Store,
@@ -868,6 +873,7 @@ pub(crate) fn conversation_text(
                 publication: request.publication.clone(),
                 content,
                 direction,
+                recipient,
             },
         ),
     })

@@ -1,12 +1,14 @@
-//! `spice room inbox`: open operator items in key order.
+//! `spice room inbox`: the reader's open operator items in key order.
 //!
 //! Each item is the receipt the operator owes one publication, pending or
 //! lapsed, shown with what it concerns: the operator direction a lane's `#KEY`
-//! named. Retained pre-cutover routes remain readable with the task they named,
-//! or as unnamed when they named none. Its text comes from its owning source
-//! and, for an ASK, its question result. Items page whole in key order; a page
-//! that withholds any continues at the first withheld item. Reading settles
-//! nothing.
+//! named. An item reaches only the principal that sent that direction, or for
+//! an answer the principal that asked; the local reader is the bootstrap
+//! principal. Retained pre-cutover routes remain readable with the task they
+//! named, or as unnamed when they named none, and reach the bootstrap
+//! principal. Its text comes from its owning source and, for an ASK, its
+//! question result. Items page whole in key order; a page that withholds any
+//! continues at the first withheld item. Reading settles nothing.
 
 use std::fmt;
 use std::path::Path;
@@ -131,9 +133,16 @@ fn inbox(
                     "the admitted journal names no read position",
                 )
             })?;
-            let principals = super::principals(read)?;
+            let roles = read.principal_roles().map_err(store)?;
+            let principals = wire::principal::PrincipalDirectory::names(&roles);
+            // This read runs as the local owner, whom the surface
+            // authenticates as the bootstrap principal: the principal the
+            // historical operator actor reads as.
+            let reader = roles.author(&wire::Actor::Operator);
             let open = read
-                .open_room_items_page(from.as_ref(), retain)
+                .open_room_items_page(from.as_ref(), retain, |requester| {
+                    roles.author(requester) == reader
+                })
                 .map_err(store)?;
             let population = open.population;
             let recorded = open
