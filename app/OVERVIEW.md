@@ -275,12 +275,13 @@ A team is named by its lead agent, canonical member zero, with the label its
 messages carry: the configured name, else the worktree leaf. Only a team with
 no current members keeps its short id.
 
-Each team console takes its whole base from its place among the teams in the
-shared order: teams count up from the palette's start, so the first wears
-green, the next blue, then gold, and an unteamed agent takes no place. The lead
-wears that base and each later member the next slot up. Colours follow only
-that shared order, so swapping two teams swaps their colours, and opening,
-closing, or reordering consoles in one browser changes none.
+Each team console takes its whole base from its age among the teams: teams
+count up from the palette's start by when each became a team, so the oldest
+wears green, the next blue, then gold, and an unteamed agent takes no place. The
+lead wears that base and each later member the next slot up. Colours follow only
+that age, so swapping two teams, or opening, closing, or reordering consoles in
+one browser, changes none; only a team forming or an older one ending moves a
+colour.
 
 Pick up a team from its pip matrix: dropping on the middle of another team
 swaps the two teams' positions; dropping on either outer edge joins the source
