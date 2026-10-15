@@ -416,6 +416,13 @@ attachments leave. The shared attachment limits remain the submission
 authority: an attachment that does not fit is refused in the composer, never
 after Send.
 
+In the full-size image viewer, A activates **Annotate** when the image is a
+draft image the viewer can annotate, and D activates **Download**: each key
+does exactly what its button does, including a refusal, and nothing while the
+button is absent or disabled. Held-key repeats, modified keys, and keys typed
+into a field never trigger them, and inside the annotation editor A keeps its
+arrow-tool meaning.
+
 The image annotation editor closes immediately on Cancel, Escape, or backdrop
 while its marks equal the set it opened with; once they differ, those exits
 confirm before discarding, and undoing back to the opening set removes the

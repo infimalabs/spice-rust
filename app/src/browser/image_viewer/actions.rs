@@ -111,10 +111,10 @@ pub(super) fn actions(props: &ActionsProps) -> Html {
         <>
             <div class="image-lightbox-actions app-control-rail app-overlay-control">
                 if props.onedit.is_some() {
-                    <button ref={edit_button} type="button" data-image-edit="" aria-label="Annotate image">{"Annotate"}</button>
+                    <button ref={edit_button} type="button" data-image-edit="" aria-label="Annotate image" aria-keyshortcuts="A" title="Annotate image (A)">{"Annotate"}</button>
                 }
                 <button ref={copy_button} type="button" disabled={*busy} aria-disabled={copy_unavailable.to_string()} aria-label="Copy image" title="Copy image as PNG">{"Copy"}</button>
-                <button ref={download_button} type="button" disabled={*busy} aria-disabled={download_unavailable.to_string()} aria-label="Download image" title="Download original image">{"Download"}</button>
+                <button ref={download_button} type="button" data-image-download="" disabled={*busy} aria-disabled={download_unavailable.to_string()} aria-label="Download image" aria-keyshortcuts="D" title="Download original image (D)">{"Download"}</button>
                 <button ref={close_button} type="button" autofocus=true aria-label="Close full-size image">{"Close"}</button>
             </div>
             {toast::render_toast(message, visible, None)}
