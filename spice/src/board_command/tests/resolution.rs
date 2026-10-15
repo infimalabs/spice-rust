@@ -5,6 +5,7 @@ mod document;
 mod drain_guidance;
 mod plan_advance;
 mod review_pending;
+mod self_edit_completion;
 
 #[test]
 fn lane_claim_free_done_and_pending_review_finding_survive_restart() {
