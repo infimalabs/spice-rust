@@ -9,10 +9,11 @@ mod inspector;
 
 const HEADING: &str = "spice-jobs-heading";
 const REFRESH_MILLIS: u32 = 3_000;
-const KINDS: [(LaneJobKind, &str, &str, &str); 3] = [
+const KINDS: [(LaneJobKind, &str, &str, &str); 4] = [
     (LaneJobKind::Command, "▶", "▷", "commands"),
     (LaneJobKind::Service, "◆", "◇", "services"),
     (LaneJobKind::Watch, "●", "○", "watches"),
+    (LaneJobKind::WatchedService, "◈", "◇", "watched services"),
 ];
 
 #[derive(Clone, PartialEq)]

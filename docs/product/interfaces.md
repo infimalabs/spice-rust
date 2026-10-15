@@ -205,19 +205,34 @@ still holds the claim. A service never ends on its own and never keeps a lane
 idle. A service launched while a task is held runs while that exact claim win
 remains active or until `stop`, surviving occupant succession within the claim.
 A service launched by an unclaimed turn belongs to that turn instead and is
-stopped when the turn exits. Service readiness is read from logs or the served
-surface, never by waiting on its process. Every seat start lists the kept
-commands still running, and says nothing when none run. The lane read lists
-each kept job with its kind — `command` when deadline-bounded, `service`, or
-`watch` for a command with `events` — and its standing, `running` or `unheard`.
+stopped when the turn exits. Service readiness is read from its output or the
+served surface, never by waiting on its process: `wait` without a pattern
+answers a running service at once. Every seat start lists the kept commands
+still running, and says nothing when none run. The lane read lists each kept
+job with its kind — `command` when deadline-bounded, `service`, `watch` for a
+command with `events`, or `watched-service` for a service with `events` — and
+its standing, `running` or `unheard`.
+
+`wait` with an `until` regular expression follows any job, service included,
+until a line of its log matches, and answers with that line while the job keeps
+running. Lines written before the wait count, so a service that already
+announced its readiness is answered at once. The log is read once, in order,
+from where the wait last read, holding only the line still being written, and
+only the log's own growth wakes the next read; there is no timer. The wait
+otherwise answers at its timeout, when a message arrives, or when the job ends,
+then saying whether its last lines matched. A pattern that does not compile, or
+an `until` on any other operation, is refused before anything waits.
 
 A shell call with `events` is answered at once with the job's id; each stdout
 line becomes a background notice to the seated occupant, in order and exactly
 once, at the next step boundary, and stderr goes only to the job's log. A
 burst beyond the event bound ends the job's events with one notice while the
-command keeps running, and the ending is delivered after the last event. A
-service refuses `events`. An event nobody hears within the delivery grace
-wakes a vacant lane exactly as an unheard ending does.
+command keeps running, and the ending is delivered after the last event. An
+event of a deadline-bounded command that nobody hears within the delivery grace
+wakes a vacant lane exactly as an unheard ending does. A service may carry
+`events` too, but because a service never keeps a lane idle, its events reach
+only a seated occupant and never wake the lane; a later seat hears what earlier
+seats did not.
 
 ## Extension surfaces
 

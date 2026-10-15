@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant as Monotonic};
 
 use sill::{Environment, Spec};
-use vendor::omp::{JobCall, JobOp, Lifetime, ShellCall};
+use vendor::omp::{JobCall, JobOp, Lifetime, OutputPattern, ShellCall};
 use wire::intent::{LaneJob, LaneJobKind, LaneJobStanding};
 use wire::output::{Admission, Budget, ClippedText, Resume};
 
@@ -31,7 +31,7 @@ pub(in crate::resident) use job::{
     Control, Event, Handle, Job, Jobs, ServiceAuthority, reconcile_services,
     reconcile_turn_services,
 };
-use job::{Ended, Ending, Observed, Tail};
+use job::{Ended, Ending, Looked, Observed, Tail};
 
 /// How long after a stop is asked the lane waits for the keeper's ending
 /// before answering with the command still ending: the keeper's grace and
@@ -309,9 +309,17 @@ impl Terminal {
                 Some(ended) => told(&job, &ended),
                 None => snapshot(&job, None),
             },
-            (JobOp::Wait, Some(job)) => {
-                wait(&job, control, call.timeout, PROGRESS_CADENCE, progress)
-            }
+            (JobOp::Wait, Some(job)) => match &call.until {
+                Some(pattern) => wait_until(
+                    &job,
+                    control,
+                    call.timeout,
+                    pattern,
+                    PROGRESS_CADENCE,
+                    progress,
+                ),
+                None => wait(&job, control, call.timeout, PROGRESS_CADENCE, progress),
+            },
             (JobOp::Stop, Some(job)) => match stop(&job, control) {
                 Some(ended) => told(&job, &ended),
                 None => still(&job, "stop asked"),
@@ -435,13 +443,7 @@ pub(in crate::resident) fn unheard(jobs: &Jobs) -> Vec<LaneJob> {
             id: job.id().to_owned(),
             command: job.command().to_owned(),
             task: job.task().cloned(),
-            kind: if job.events() {
-                LaneJobKind::Watch
-            } else if job.timeout().is_none() {
-                LaneJobKind::Service
-            } else {
-                LaneJobKind::Command
-            },
+            kind: job.kind(),
             standing: if job.ended().is_some() {
                 LaneJobStanding::Unheard
             } else {
@@ -555,8 +557,96 @@ fn wait(
 
 /// Why a wait on a running service returned without following it.
 const SERVICE_WAIT: &str = "a service runs while its task claim remains active, so wait does \
-not follow it; read its logs or exercise its served surface for readiness, and stop it sooner \
-once no longer needed";
+not follow it to an ending; give wait an until pattern to block until a line of its output \
+matches, and stop it sooner once no longer needed";
+
+/// Follow a job's output, service included, until a line matches `pattern`,
+/// leaving the job running. Lines written before the wait count, so a
+/// service that announced its readiness earlier is answered at once.
+///
+/// The newest line read is reported as progress at most once per `cadence`;
+/// only the log's own growth wakes a look.
+fn wait_until(
+    job: &Job,
+    control: &Control,
+    bound: Duration,
+    pattern: &OutputPattern,
+    cadence: Duration,
+    progress: &mut dyn FnMut(&Report),
+) -> Report {
+    let mut lines = job.log_lines();
+    let mut reported: Option<Monotonic> = None;
+    let mut look = || {
+        let mut matched = None;
+        let mut latest = None;
+        if let Err(error) = lines.read(&mut |line| {
+            if matched.is_none() && pattern.is_match(&line) {
+                matched = Some(line);
+            } else {
+                latest = Some(line);
+            }
+        }) {
+            return Some(Err(error));
+        }
+        let now = Monotonic::now();
+        if let Some(latest) = latest.filter(|_| {
+            matched.is_none() && reported.is_none_or(|at| now.duration_since(at) >= cadence)
+        }) {
+            reported = Some(now);
+            progress(&Report::answered(format!(
+                "[job {}] {}\n{latest}",
+                job.id(),
+                job.command()
+            )));
+        }
+        matched.map(Ok)
+    };
+    let looked = job.observe_output(control, bound, &mut look);
+    match looked {
+        Ok(Looked::Found(Ok(line))) => match job.ended() {
+            Some(ended) => ended_until(job, &ended, pattern, Some(&line)),
+            None => Report::answered(format!(
+                "[job {}] {}\n{line}\n\nmatched {}; job {} keeps running",
+                job.id(),
+                job.command(),
+                pattern.as_str(),
+                job.id()
+            )),
+        },
+        Ok(Looked::Found(Err(error))) => {
+            Report::refused(&format!("job {} log could not be read: {error}", job.id()))
+        }
+        Ok(Looked::Observed(Observed::Ended(ended))) => {
+            let last = lines.finish().filter(|line| pattern.is_match(line));
+            ended_until(job, &ended, pattern, last.as_deref())
+        }
+        Ok(Looked::Observed(Observed::Elapsed)) => still(
+            job,
+            &format!(
+                "no line matched {} within {} seconds",
+                pattern.as_str(),
+                bound.as_secs()
+            ),
+        ),
+        Ok(Looked::Observed(Observed::Interrupted)) => {
+            still(job, "wait interrupted by an incoming message")
+        }
+        Ok(Looked::Observed(Observed::Cancelled)) => still(job, "wait cancelled"),
+        Err(error) => Report::refused(&format!("job {} could not be observed: {error}", job.id())),
+    }
+}
+
+/// A pattern wait whose job ended: how it ended, then whether its output
+/// matched.
+fn ended_until(job: &Job, ended: &Ended, pattern: &OutputPattern, line: Option<&str>) -> Report {
+    let mut report = told(job, ended);
+    let verdict = match line {
+        Some(line) => format!("matched {}: {line}", pattern.as_str()),
+        None => format!("no line matched {} before the job ended", pattern.as_str()),
+    };
+    append(&mut report.output, &verdict);
+    report
+}
 
 /// Ask the keeper to end the command and wait briefly for its ending.
 fn stop(job: &Job, control: &Control) -> Option<Ended> {
@@ -647,17 +737,21 @@ fn kept(job: &Job, notice: Option<&str>) -> Report {
         lines.extend(notices.iter().map(|notice| (*notice).to_owned()));
         lines.push(String::new());
     }
-    lines.push(if job.events() {
-        format!(
+    lines.push(match job.kind() {
+        LaneJobKind::Watch => format!(
             "Watching job {}: each line it prints on stdout will be delivered as a background \
              notice, and its result when it ends.",
             job.id()
-        )
-    } else {
-        format!(
+        ),
+        LaneJobKind::WatchedService => format!(
+            "Watching service {}: each line it prints on stdout will be delivered as a \
+             background notice while you are here; its events never wake the lane.",
+            job.id()
+        ),
+        LaneJobKind::Command | LaneJobKind::Service => format!(
             "Backgrounded as job {}; result will be delivered automatically.",
             job.id()
-        )
+        ),
     });
     Report {
         output: lines.join("\n"),

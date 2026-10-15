@@ -18,6 +18,7 @@
 //! event nobody hears within the grace wakes the lane, so its next occupant
 //! hears it.
 
+use std::convert::Infallible;
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind, Read, Seek, SeekFrom};
@@ -566,14 +567,14 @@ impl Job {
     pub(in crate::resident) fn state(&self) -> io::Result<Option<State>> {
         read_state(&self.directory)
     }
-    fn kind(&self) -> wire::intent::LaneJobKind {
+    /// How the command lives, as its call declared it.
+    pub(in crate::resident) fn kind(&self) -> wire::intent::LaneJobKind {
         use wire::intent::LaneJobKind;
-        if self.events {
-            LaneJobKind::Watch
-        } else if self.timeout.is_none() {
-            LaneJobKind::Service
-        } else {
-            LaneJobKind::Command
+        match (self.events, self.timeout.is_some()) {
+            (true, true) => LaneJobKind::Watch,
+            (true, false) => LaneJobKind::WatchedService,
+            (false, true) => LaneJobKind::Command,
+            (false, false) => LaneJobKind::Service,
         }
     }
 
@@ -774,23 +775,70 @@ impl Job {
         cadence: Duration,
         progress: &mut dyn FnMut(),
     ) -> io::Result<Observed> {
+        let looked = self.observe_until(control, bound, Looks::Every(cadence), &mut || {
+            progress();
+            None::<Infallible>
+        })?;
+        Ok(match looked {
+            Looked::Observed(observed) => observed,
+            Looked::Found(never) => match never {},
+        })
+    }
+
+    /// Observe the job's output until `look` finds what it seeks, the job
+    /// ends, the call is cancelled or interrupted, or `bound` elapses.
+    ///
+    /// `look` runs once the watches are armed, after every write to the log,
+    /// and once more on seeing the ending, when the log is complete. No look
+    /// runs on a timer: a watch on the log itself wakes each one, and a watch
+    /// that never fires holds its thread until this process ends.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of watching the job or of reading its state.
+    pub(in crate::resident) fn observe_output<T>(
+        &self,
+        control: &Control,
+        bound: Duration,
+        look: &mut dyn FnMut() -> Option<T>,
+    ) -> io::Result<Looked<T>> {
+        self.observe_until(control, bound, Looks::OnOutput, look)
+    }
+
+    fn observe_until<T>(
+        &self,
+        control: &Control,
+        bound: Duration,
+        looks: Looks,
+        look: &mut dyn FnMut() -> Option<T>,
+    ) -> io::Result<Looked<T>> {
         let mut keeper = self.keeper;
         let deadline = Monotonic::now() + bound;
         let mut observed_exit = false;
         let mut armed = false;
+        // Only an output observation watches the log; a timed one looks on
+        // its cadence instead.
+        let mut log_armed = matches!(looks, Looks::Every(_));
         loop {
             if !armed {
                 watch(&self.directory, &control.sender, Signal::woke)?;
                 armed = true;
             }
+            if !log_armed && self.log_path().try_exists()? {
+                watch(&self.log_path(), &control.sender, Signal::wrote)?;
+                log_armed = true;
+            }
             if let Some(state) = self.state()? {
                 if let Some(ended) = state.ended() {
-                    progress();
-                    return Ok(Observed::Ended(ended));
+                    return Ok(
+                        look().map_or(Looked::Observed(Observed::Ended(ended)), Looked::Found)
+                    );
                 }
                 keeper = keeper.or(Some(state.keeper));
             }
-            progress();
+            if let Some(found) = look() {
+                return Ok(Looked::Found(found));
+            }
             if let (Some(pid), false) = (keeper, observed_exit) {
                 observed_exit = true;
                 if pid != std::process::id() {
@@ -798,34 +846,114 @@ impl Job {
                 }
             }
             let remaining = deadline.saturating_duration_since(Monotonic::now());
-            let look = remaining.min(cadence);
-            match control.receiver.recv_timeout(look) {
-                Ok(Signal::Changed) => armed = false,
+            let wait = match looks {
+                Looks::Every(cadence) => remaining.min(cadence),
+                Looks::OnOutput => remaining,
+            };
+            let observed = match control.receiver.recv_timeout(wait) {
+                Ok(Signal::Changed) => {
+                    armed = false;
+                    continue;
+                }
+                Ok(Signal::Wrote) => {
+                    log_armed = false;
+                    continue;
+                }
                 Ok(Signal::KeeperExited) => {
-                    progress();
-                    if let Some(ended) = self.state()?.and_then(|state| state.ended()) {
-                        return Ok(Observed::Ended(ended));
+                    if let Some(found) = look() {
+                        return Ok(Looked::Found(found));
                     }
-                    return Ok(Observed::Ended(Ended {
-                        ending: Ending::Lost,
-                        wall: None,
-                    }));
+                    Observed::Ended(self.state()?.and_then(|state| state.ended()).unwrap_or(
+                        Ended {
+                            ending: Ending::Lost,
+                            wall: None,
+                        },
+                    ))
                 }
                 Ok(Signal::ObserverFailed(reason)) => return Err(io::Error::other(reason)),
-                Ok(Signal::Cancel) => return Ok(Observed::Cancelled),
-                Ok(Signal::Interrupt) => return Ok(Observed::Interrupted),
-                Err(mpsc::RecvTimeoutError::Timeout) if look == remaining => {
-                    return Ok(Observed::Elapsed);
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Ok(Signal::Cancel) => Observed::Cancelled,
+                Ok(Signal::Interrupt) => Observed::Interrupted,
+                Err(mpsc::RecvTimeoutError::Timeout) if wait == remaining => Observed::Elapsed,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err(io::Error::new(
                         ErrorKind::BrokenPipe,
                         "job observer disconnected",
                     ));
                 }
+            };
+            return Ok(Looked::Observed(observed));
+        }
+    }
+
+    /// The job's log as lines, each read once and in order.
+    pub(in crate::resident) fn log_lines(&self) -> LogLines {
+        LogLines {
+            path: self.log_path(),
+            file: None,
+            lines: events::Lines::default(),
+        }
+    }
+}
+
+/// What besides a change to its directory wakes a look at a running job.
+#[derive(Clone, Copy)]
+enum Looks {
+    /// A look after each span without a change.
+    Every(Duration),
+    /// A look after each write to the job's log.
+    OnOutput,
+}
+
+/// How an observation that looks for something ended.
+#[derive(Debug)]
+pub(in crate::resident) enum Looked<T> {
+    /// The look found what it sought; the job keeps whatever standing it had.
+    Found(T),
+    /// The observation ended without it.
+    Observed(Observed),
+}
+
+/// A job's log read line by line: every read resumes where the last one
+/// stopped, so each line is taken once and in order, and only the line
+/// still being written is held between reads.
+pub(in crate::resident) struct LogLines {
+    path: PathBuf,
+    file: Option<File>,
+    lines: events::Lines,
+}
+
+impl LogLines {
+    /// Hand each line completed since the last read to `line`, oldest
+    /// first. A log not yet created has no lines.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of opening or reading the log.
+    pub(in crate::resident) fn read(&mut self, line: &mut dyn FnMut(String)) -> io::Result<()> {
+        let file = match self.file.take() {
+            Some(file) => file,
+            None => match File::open(&self.path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error),
+            },
+        };
+        let file = self.file.insert(file);
+        let mut chunk = [0_u8; events::CHUNK];
+        loop {
+            match file.read(&mut chunk) {
+                Ok(0) => return Ok(()),
+                Ok(read) => self.lines.push(&chunk[..read], &mut *line),
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
             }
         }
+    }
+
+    /// The unterminated last line, read once the log is complete.
+    pub(in crate::resident) fn finish(self) -> Option<String> {
+        self.lines.finish()
     }
 }
 

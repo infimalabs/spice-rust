@@ -57,7 +57,8 @@ authorizes deleting a test; removal needs a reviewed purpose.
 ## Subsystem guides
 
 - Browser checks: [`app/BROWSER.md`](app/BROWSER.md); the always-chat team
-  console: [`app/CONSOLE.md`](app/CONSOLE.md); the task overview:
+  console: [`app/CONSOLE.md`](app/CONSOLE.md); Design rooms:
+  [`app/DESIGNS.md`](app/DESIGNS.md); the task overview:
   [`app/OVERVIEW.md`](app/OVERVIEW.md).
 - Firefox latency profiling: [`app/PROFILE.md`](app/PROFILE.md).
 - The frozen report study: [`xtask/REPORT.md`](xtask/REPORT.md).
