@@ -278,7 +278,7 @@ pub(super) fn task_taste_review(
     let model = seat
         .and_then(|seat| seat.session.as_ref())
         .map(|session| session.launch.model.as_str());
-    let role = if matches!(actor, Actor::Operator) {
+    let role = if wire::principal::ActingPrincipal::of(actor).is_some() {
         listen::ProseRole::Operator
     } else {
         listen::ProseRole::Assistant

@@ -71,7 +71,9 @@ pub(super) fn steering_during_claims(
     for envelope in facts.iter() {
         let kind = envelope.fact.kind();
         match kind {
-            wire::FactKind::SteerSent if envelope.actor == wire::Actor::Operator => {
+            wire::FactKind::SteerSent
+                if wire::principal::ActingPrincipal::of(&envelope.actor).is_some() =>
+            {
                 if let Some(sent) = envelope.fact.read::<body::SteerSent>() {
                     operator.insert(sent.key);
                 }

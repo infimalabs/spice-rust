@@ -264,7 +264,9 @@ pub(super) fn record_coverage(
         head: Some(candidate.position()),
     }];
     let authority = match command.actor() {
-        Actor::Operator => CoverageAuthority::Operator {},
+        _ if command.holds(wire::principal::PrincipalRole::Operator) => {
+            CoverageAuthority::Operator {}
+        }
         Actor::Lane(lane) => {
             let Some(residency) = residency else {
                 return refusal(
@@ -304,10 +306,10 @@ pub(super) fn record_coverage(
                 }
             }
         }
-        Actor::Spice => {
+        actor => {
             return refusal(
                 "preparation::reviewer-unavailable",
-                Some(Actor::Spice.to_string()),
+                Some(actor.to_string()),
                 "record coverage as the operator or a currently seated lane",
             );
         }

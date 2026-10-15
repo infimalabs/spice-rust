@@ -150,6 +150,15 @@ impl<'a> Runtime<'a> {
             reads,
         }
     }
+
+    /// Publish the journal's current principal role heads to this
+    /// generation's capabilities.
+    pub(super) fn publish_roles(&self, bus: &Bus) -> CommandResult<()> {
+        self.capabilities
+            .roles()
+            .publish(super::principal_surface::roles(bus)?)
+            .map_err(|error| Outcome::Fault(error.fault()))
+    }
 }
 
 /// Reconstruct every durable unfinished seat beneath the new resident epoch.
@@ -1117,7 +1126,7 @@ pub(super) fn recall(
     request: &LaneRecall,
 ) -> Outcome<CommandAnswer> {
     let selected = match command.actor() {
-        Actor::Operator => request.lane,
+        _ if command.holds(wire::principal::PrincipalRole::Operator) => request.lane,
         Actor::Lane(lane) if request.lane.is_none_or(|requested| requested == *lane) => Some(*lane),
         Actor::Lane(lane) => {
             return lane_refusal(
@@ -1127,7 +1136,7 @@ pub(super) fn recall(
                 "a lane may recall only its own continuity account",
             );
         }
-        Actor::Spice => return authority_refusal(command.actor(), "operator or lane"),
+        actor => return authority_refusal(actor, "operator or lane"),
     };
     let snapshot = match bus.task_snapshot() {
         Ok(snapshot) => snapshot,

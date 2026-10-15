@@ -33,7 +33,7 @@ fn a_closing_seat_presents_every_record_its_occupant_left_behind() {
             }),
         )
         .expect("the closing fixture occupant is seated");
-    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = message_source(bus.reader(), epoch);
     let publisher = source.message_publisher();
     let mut updates = source.subscribe_messages();
     let mut diagnostics = Vec::new();

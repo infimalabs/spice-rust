@@ -364,12 +364,15 @@ fn assert_unwitnessed_filing_refuses(
         })
         .expect("filing body encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    });
+    .admit(
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    );
     assert!(matches!(
         rejected,
         Err(wire::CommandRejection::Refusal(ref refusal))
@@ -410,12 +413,15 @@ fn assert_unrelated_filing_witness_refuses(
         })
         .expect("filing body encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    });
+    .admit(
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    );
     let Err(wire::CommandRejection::Refusal(refusal)) = rejected else {
         panic!("filing carrying only unrelated statement authority must refuse");
     };

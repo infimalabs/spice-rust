@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use journal::{FactCause, JournalWrite};
 use serde_json::Value;
 use wire::body::{SteerSent, SteeringStage, TranscriptLocus};
+use wire::principal::PrincipalRole;
 use wire::{Actor, Disposition, Origin, Producer, SteeringHead};
 
 use super::{admit_index, due_stage, mint_key_at, missing_stages, sent_wakes};
@@ -16,7 +17,7 @@ const KEY: &str = "1kJK6N3R";
 const OTHER_KEY: &str = "1kJK6N3S";
 
 #[test]
-fn only_operator_and_exact_withheld_packet_controls_wake_a_lane() {
+fn only_operator_role_holders_and_exact_withheld_packet_controls_wake_a_lane() {
     let lane = DIRECTIVE.parse().expect("fixture lane");
     let locus = TranscriptLocus {
         source: Some(OTHER_DIRECTIVE.parse().expect("fixture source")),
@@ -28,14 +29,18 @@ fn only_operator_and_exact_withheld_packet_controls_wake_a_lane() {
         column: 34,
     };
     let control = wire::packet_withheld_control(&locus).expect("sourced packet control");
+    let operator = crate::test_principal::bootstrap_holding(&[PrincipalRole::Operator]);
+    let revoked = crate::test_principal::bootstrap_holding(&[]);
 
-    assert!(sent_wakes(&Actor::Operator, None));
-    assert!(sent_wakes(&Actor::Spice, Some(&control)));
+    assert!(sent_wakes(&operator, &Actor::Operator, None));
+    assert!(!sent_wakes(&revoked, &Actor::Operator, None));
+    assert!(sent_wakes(&revoked, &Actor::Spice, Some(&control)));
     assert!(!sent_wakes(
+        &operator,
         &Actor::Spice,
         Some("review-feedback:PLAN-dV0000000:1")
     ));
-    assert!(!sent_wakes(&Actor::Lane(lane), Some(&control)));
+    assert!(!sent_wakes(&operator, &Actor::Lane(lane), Some(&control)));
     assert!(wire::parse_packet_withheld_control(&control).is_some());
     assert!(wire::parse_packet_withheld_control(&format!("{control}:extra")).is_none());
 }

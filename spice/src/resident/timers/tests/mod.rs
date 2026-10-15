@@ -1333,12 +1333,15 @@ fn capture_lapsed_task(
         })
         .expect("capture intent encodes"),
     }
-    .admit(&Accepted {
-        wire: WireVersion::CURRENT,
-        actor: Actor::Lane(fixture.authority.lane),
-        epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &Accepted {
+            wire: WireVersion::CURRENT,
+            actor: Actor::Lane(fixture.authority.lane),
+            epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("capture command admits");
     let capture = crate::board_command::dispatch_with_repository(
         &fixture.bus,

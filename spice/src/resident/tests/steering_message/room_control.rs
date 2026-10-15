@@ -33,12 +33,15 @@ impl Lanes {
             expected: Vec::new(),
             body: serde_json::to_value(body).expect("control encodes"),
         }
-        .admit(&wire::Accepted {
-            wire: wire::WireVersion::CURRENT,
-            actor,
-            epoch: self.epoch,
-            release: "1.2.3".parse().expect("fixture release"),
-        })
+        .admit(
+            &wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor,
+                epoch: self.epoch,
+                release: "1.2.3".parse().expect("fixture release"),
+            },
+            &wire::principal::PrincipalRoles::default(),
+        )
         .expect("control admits")
     }
 

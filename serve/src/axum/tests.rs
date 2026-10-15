@@ -23,6 +23,15 @@ type ClientSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 const ASSERTION_DEADLINE: Duration = Duration::from_secs(2);
 
+/// Capabilities whose operator actor resolves to a principal holding the
+/// operator role.
+fn operator_capabilities() -> Capabilities {
+    Capabilities {
+        principals: Arc::default(),
+        roles: crate::roles::operator_book(),
+    }
+}
+
 fn uuid(text: &str) -> wire::CanonicalUuid {
     text.parse().expect("canonical fixture UUID")
 }
@@ -99,6 +108,7 @@ fn app_message_ingress_refuses_invalid_media_without_retaining_or_broadcasting_i
         epoch(),
         8,
         QuotePresenter::new(|_| Vec::new()),
+        crate::roles::operator_book(),
     );
     let publisher = source.message_publisher();
     let mut updates = source.subscribe_messages();
@@ -441,7 +451,7 @@ async fn authenticated_socket_streams_bounded_bus_pages_updates_resume_and_typed
     commit_stream(&bus, "initial", true);
     let initial_lane_capability = identity(0xe8);
     commit_lane_stream(&bus, identity(0xe7), initial_lane_capability);
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -512,7 +522,7 @@ async fn a_liveness_probe_is_answered_per_probe_and_still_admits_its_generation(
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "probe horizon", false);
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -590,7 +600,7 @@ async fn a_held_recall_does_not_block_a_probe_or_sibling_recall_on_one_socket() 
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "concurrent command horizon", false);
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -694,7 +704,7 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "message horizon", false);
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -778,7 +788,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "initial", false);
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -829,7 +839,7 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "initial", false);
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");

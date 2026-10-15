@@ -15,6 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use wire::principal::ActingPrincipal;
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained,
     CandidateWithdrawal, CandidateWithdrawn, CoverageAuthority, DecisionOutcome,
@@ -850,8 +851,22 @@ pub(crate) fn require_packet_routes<'a>(
     Ok(())
 }
 
+/// Whether `actor` acts as a born principal. The fold replays immutable
+/// history, so authorship asks only the actor's principal resolution, never a
+/// role a later fact could change; the command door decides current roles.
+fn is_principal(actor: &Actor) -> bool {
+    ActingPrincipal::of(actor).is_some()
+}
+
+/// [`is_principal`] for a stored actor spelling.
+fn acts_as_principal(spelling: &str) -> bool {
+    spelling
+        .parse::<Actor>()
+        .is_ok_and(|actor| is_principal(&actor))
+}
+
 fn require_operator(actor: &Actor, what: &str) -> Result<(), Refusal> {
-    if *actor == Actor::Operator {
+    if is_principal(actor) {
         return Ok(());
     }
     unsound(format!("{what} is operator-owned, not written by {actor}"))
@@ -950,7 +965,7 @@ fn cover(
     require_proposal(authority, &assessed)?;
     let author = authority.proposal_author(&subject(&assessed)?)?;
     let admitted = match &coverage.authority {
-        CoverageAuthority::Operator {} => *actor == Actor::Operator,
+        CoverageAuthority::Operator {} => is_principal(actor),
         CoverageAuthority::Independent { lane, .. } => {
             *actor == Actor::Lane(*lane) && author.as_ref() != Some(actor)
         }

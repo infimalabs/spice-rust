@@ -1,3 +1,5 @@
+use wire::Actor;
+
 use super::*;
 
 fn sent(text: &str) -> SteerSent {

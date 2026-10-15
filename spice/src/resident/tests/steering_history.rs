@@ -99,12 +99,15 @@ impl Directions {
             expected,
             body: serde_json::to_value(body).expect("request encodes"),
         }
-        .admit(&wire::Accepted {
-            wire: wire::WireVersion::CURRENT,
-            actor,
-            epoch: self.epoch,
-            release: "1.2.3".parse().expect("fixture release"),
-        })
+        .admit(
+            &wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor,
+                epoch: self.epoch,
+                release: "1.2.3".parse().expect("fixture release"),
+            },
+            &wire::principal::PrincipalRoles::default(),
+        )
     }
 
     fn send(&self, id: u8, to: u8, fanout: u8, message: &str) {

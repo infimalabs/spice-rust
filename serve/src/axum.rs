@@ -45,10 +45,12 @@ const INLINE_MODULE_CLOSE: &str = "</script>";
 const SCRIPT_OPEN: &str = "<script";
 const DEFAULT_SCRIPT_HASH: &str = "B50SC8VLF+K2T0Re7VCfyZ3PqVhYIkg+OlhW+7PQyTU=";
 
-/// Closed capability-to-principal map for one resident generation.
+/// Closed capability-to-principal map for one resident generation, with the
+/// principal role heads its command door and operator lookups decide by.
 #[derive(Clone, Default)]
 pub struct Capabilities {
     principals: Arc<RwLock<BTreeMap<wire::CanonicalUuid, CapabilityBinding>>>,
+    roles: crate::RoleBook,
 }
 
 #[derive(Clone, Debug)]
@@ -176,11 +178,22 @@ impl Capabilities {
         })
     }
 
+    /// The principal role heads this generation decides authority by. The
+    /// resident publishes them before serving and after every principal
+    /// change, so a role change governs that principal's next request.
+    #[must_use]
+    pub fn roles(&self) -> &crate::RoleBook {
+        &self.roles
+    }
+
     fn is_operator(&self, capability: wire::CanonicalUuid) -> bool {
+        let Ok(roles) = self.roles.current() else {
+            return false;
+        };
         self.principals.read().ok().is_some_and(|principals| {
-            principals
-                .get(&capability)
-                .is_some_and(|binding| matches!(&binding.actor, wire::Actor::Operator))
+            principals.get(&capability).is_some_and(|binding| {
+                roles.holds(&binding.actor, wire::principal::PrincipalRole::Operator)
+            })
         })
     }
 
@@ -200,9 +213,12 @@ impl Capabilities {
     }
 
     fn operator(&self) -> Option<wire::CanonicalUuid> {
+        let roles = self.roles.current().ok()?;
         let principals = self.principals.read().ok()?;
         let mut operators = principals.iter().filter_map(|(capability, binding)| {
-            matches!(&binding.actor, wire::Actor::Operator).then_some(*capability)
+            roles
+                .holds(&binding.actor, wire::principal::PrincipalRole::Operator)
+                .then_some(*capability)
         });
         let operator = operators.next()?;
         operators.next().is_none().then_some(operator)
@@ -670,10 +686,11 @@ impl Server {
         quota: crate::stream::QuotaFeed,
     ) -> Result<(Self, Control), std::io::Error> {
         let epoch = generation.epoch;
+        let roles = generation.capabilities.roles().clone();
         Self::bind_with_capacity(
             binding,
             generation,
-            Some(crate::stream::Source::new(bus, epoch, rows, presenter).with_quota(quota)),
+            Some(crate::stream::Source::new(bus, epoch, rows, presenter, roles).with_quota(quota)),
             64,
         )
         .await

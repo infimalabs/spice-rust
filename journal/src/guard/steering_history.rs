@@ -69,7 +69,8 @@ fn read_direction_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DirectionColu
 }
 
 impl JournalRead<'_> {
-    /// Every operator-authored directive, newest creation first.
+    /// Every directive authored by an actor whose principal currently holds
+    /// the operator role, newest creation first.
     ///
     /// Authorship is the creating fact's actor, so peer tells, replies, and
     /// resident-authored directives never appear. `query` must already be
@@ -80,6 +81,7 @@ impl JournalRead<'_> {
         query: Option<&str>,
     ) -> Result<OperatorDirections, GuardError> {
         self.require_current_steering_index()?;
+        let operators = self.role_holder_spellings(wire::principal::PrincipalRole::Operator)?;
         let mut statement = self
             .connection
             .prepare(
@@ -92,15 +94,13 @@ impl JournalRead<'_> {
                  FROM steering_heads AS steering \
                  JOIN fact_envelopes AS creating ON creating.seq = steering.created_seq \
                  JOIN fact_envelopes AS head ON head.seq = steering.head_seq \
-                 WHERE creating.actor = ?1 ORDER BY steering.created_seq DESC",
+                 WHERE creating.actor IN (SELECT value FROM json_each(?1)) \
+                 ORDER BY steering.created_seq DESC",
             )
             .map_err(GuardError::Store)?;
         read_metrics::observe_query();
         let rows = statement
-            .query_map(
-                params![wire::Actor::Operator.to_string(), query],
-                read_direction_row,
-            )
+            .query_map(params![operators, query], read_direction_row)
             .map_err(GuardError::Store)?;
         let mut directions = Vec::new();
         for row in rows {

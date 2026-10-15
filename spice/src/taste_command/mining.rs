@@ -6,7 +6,7 @@ use serde::Serialize;
 use wire::body::{SteerAcked, SteerDeclined, SteerSent, TaskAdded, TranscriptLocus};
 use wire::intent::{CommandAnswer, TasteProposalAdd};
 use wire::{
-    Actor, CanonicalUuid, Digest, Domain, FaultClass, Origin, Outcome, Reply, ReplyPosition, Seq,
+    CanonicalUuid, Digest, Domain, FaultClass, Origin, Outcome, Reply, ReplyPosition, Seq,
     TaskHandle,
 };
 
@@ -310,7 +310,7 @@ fn corrections(
         if let Some(body) = opened {
             sent.entry(body.directive).or_insert((
                 envelope.seq,
-                envelope.actor == Actor::Operator,
+                wire::principal::ActingPrincipal::of(&envelope.actor).is_some(),
                 body,
             ));
         }

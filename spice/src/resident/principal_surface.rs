@@ -218,6 +218,12 @@ pub(super) fn role(
     finish(bus, proposal, epoch, command, request.clone(), standing)
 }
 
+/// The current role heads every principal authority decision reads.
+pub(super) fn roles(bus: &Bus) -> CommandResult<wire::principal::PrincipalRoles> {
+    bus.read(|read| read.principal_roles())
+        .map_err(|error| store_fault("principal::journal-unreadable", &error.to_string()))
+}
+
 /// On a journal holding no principal, bear the repository's human from its
 /// Git identity as the operator. Any born principal makes this a no-op, so
 /// restarts bear nothing more.

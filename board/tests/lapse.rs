@@ -697,6 +697,7 @@ fn lapse_replay(
             epoch: uuid(22),
             release: "1.2.3".parse().expect("fixture release"),
         },
+        &wire::principal::PrincipalRoles::default(),
     )
     .expect("the lapse request admits under its law");
     journal

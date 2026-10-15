@@ -107,7 +107,7 @@ fn a_silent_lane_is_prodded_and_falls_silent_once_it_speaks() {
         state: std::sync::Mutex::new(MessageState::default()),
         diagnostics: Vec::new(),
     };
-    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = message_source(bus.reader(), epoch);
     let publisher = source.message_publisher();
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();

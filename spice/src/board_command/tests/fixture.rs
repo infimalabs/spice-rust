@@ -227,12 +227,15 @@ pub(super) fn fixture_command<B: Serialize>(
         expected,
         body: serde_json::to_value(body).expect("fixture command body encodes"),
     }
-    .admit(&Accepted {
-        wire: WireVersion::CURRENT,
-        actor,
-        epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &Accepted {
+            wire: WireVersion::CURRENT,
+            actor,
+            epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("fixture command admits")
 }
 

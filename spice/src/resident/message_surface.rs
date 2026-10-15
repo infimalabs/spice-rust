@@ -581,7 +581,7 @@ pub(super) fn steering_ledger(
         PresentationDirectives::default()
     } else {
         let presentations = load_steering_presentations(&reader, &keys)?;
-        PresentationDirectives::from_presentations(&presentations)
+        PresentationDirectives::from_presentations(&presentations, load_principal_roles(&reader)?)
             .map_err(|error| store_fault("serve::message-steering-invalid", &error))?
     };
     ledger.prove_recipients(&reader, addresses)?;
@@ -643,6 +643,15 @@ pub(super) fn load_steering_presentations(
         );
     }
     Ok(presentations)
+}
+
+/// The role heads deciding which loaded directives the operator authored.
+pub(super) fn load_principal_roles(
+    reader: &bus::BusReader,
+) -> CommandResult<wire::principal::PrincipalRoles> {
+    reader
+        .principal_roles()
+        .map_err(|error| store_fault("serve::message-roles-unavailable", &error.to_string()))
 }
 
 fn present_steering_acknowledgements(
@@ -709,7 +718,8 @@ pub(super) fn present_acknowledged_prose(
         ));
     }
     let rows = load_steering_presentations(reader, &keys).map_err(|error| format!("{error:?}"))?;
-    let directives = PresentationDirectives::from_presentations(&rows)?;
+    let roles = load_principal_roles(reader).map_err(|error| format!("{error:?}"))?;
+    let directives = PresentationDirectives::from_presentations(&rows, roles)?;
     present_steering_acknowledgements(
         &prose.text,
         Some(&directives),
@@ -725,14 +735,15 @@ pub(super) fn present_acknowledged_prose(
 }
 
 /// The journal context one card's presentation reads: the steering directives
-/// its acknowledgement headers name and the occupant births its packet
-/// addresses name.
+/// its acknowledgement headers name, the occupant births its packet addresses
+/// name, and the role heads deciding which directives the operator sent.
 #[derive(Clone, Debug, Default)]
 pub(super) struct PresentationDirectives {
     directives: BTreeMap<steer::Key, PresentationDirective>,
     /// An address names one birth forever, so a proved recipient never
     /// changes and departure never redirects it to the lane's next occupant.
     recipients: BTreeMap<wire::OccupantAddress, wire::MessageRecipient>,
+    roles: wire::principal::PrincipalRoles,
 }
 
 #[derive(Clone, Debug)]
@@ -777,10 +788,21 @@ impl PresentationDirectives {
         Self {
             directives,
             recipients: BTreeMap::new(),
+            roles: wire::principal::PrincipalRoles::default(),
         }
     }
 
-    fn from_presentations(rows: &[bus::SteeringPresentation]) -> Result<Self, String> {
+    /// Whether `directive` was sent by an actor whose principal currently
+    /// holds the operator role.
+    fn operator_sent(&self, directive: &PresentationDirective) -> bool {
+        self.roles
+            .holds(&directive.actor, wire::principal::PrincipalRole::Operator)
+    }
+
+    fn from_presentations(
+        rows: &[bus::SteeringPresentation],
+        roles: wire::principal::PrincipalRoles,
+    ) -> Result<Self, String> {
         let mut directives = BTreeMap::new();
         for row in rows {
             let head = row.head().body();
@@ -856,12 +878,20 @@ impl PresentationDirectives {
                 },
             );
         }
-        Ok(Self::new(directives))
+        Ok(Self {
+            roles,
+            ..Self::new(directives)
+        })
     }
 
-    fn extend_presentations(&mut self, rows: &[bus::SteeringPresentation]) -> Result<(), String> {
-        self.directives
-            .extend(Self::from_presentations(rows)?.directives);
+    fn extend_presentations(
+        &mut self,
+        rows: &[bus::SteeringPresentation],
+        roles: wire::principal::PrincipalRoles,
+    ) -> Result<(), String> {
+        let loaded = Self::from_presentations(rows, roles)?;
+        self.directives.extend(loaded.directives);
+        self.roles = loaded.roles;
         Ok(())
     }
 
@@ -1048,7 +1078,7 @@ fn hydrate_directive_contexts(
                 sender: directive.sender,
                 recipient: directive.recipient.or_else(|| {
                     let operator_packet = directive.packet.is_some()
-                        && matches!(directive.actor, wire::Actor::Operator)
+                        && directives.operator_sent(directive)
                         && directive.lane == event.lane;
                     event.author.filter(|_| operator_packet).map(|occupant| {
                         wire::MessageDestination {

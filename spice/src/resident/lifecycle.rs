@@ -377,6 +377,8 @@ impl Runtime {
             })?;
             self.synchronize_holds(&snapshot, self.projection.cursor())?;
         }
+        self.projection
+            .observe_roles(super::principal_surface::roles(bus)?);
         loop {
             self.projection.advance(&snapshot, &config.projects)?;
             if !self.release_changed_vendor_hold(bus, epoch, &snapshot)? {

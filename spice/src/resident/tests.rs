@@ -57,6 +57,17 @@ fn quote_presenter() -> serve::stream::QuotePresenter {
     serve::stream::QuotePresenter::new(|_| Vec::new())
 }
 
+/// A message stream source over `reader` whose role book is unpublished.
+fn message_source(reader: bus::BusReader, epoch: CanonicalUuid) -> serve::stream::Source {
+    serve::stream::Source::new(
+        reader,
+        epoch,
+        8,
+        quote_presenter(),
+        serve::RoleBook::default(),
+    )
+}
+
 #[test]
 fn consent_initialization_resumes_across_small_materializer_steps() {
     let (root, paths) = resident_fixture("consent-page-resume");

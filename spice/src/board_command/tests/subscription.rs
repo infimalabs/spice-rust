@@ -220,12 +220,15 @@ fn team_lifetimes_use_immutable_creator_team_and_survive_restart() {
         })
         .expect("stale allocator command encodes"),
     }
-    .admit(&Accepted {
-        wire: WireVersion::CURRENT,
-        actor: lane.clone(),
-        epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &Accepted {
+            wire: WireVersion::CURRENT,
+            actor: lane.clone(),
+            epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("stale allocator command admits");
     configure_subscription(&bus, epoch, seat, wire::intent::TeamLife::Drain);
     let stale = dispatch(&bus, &stale_next).expect("board owns stale allocator command");

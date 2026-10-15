@@ -155,7 +155,7 @@ pub(super) fn observe_restored_claim(
             ));
         }
         found = true;
-        let actor_bound = matches!(claim.body().actor, Actor::Operator)
+        let actor_bound = wire::principal::ActingPrincipal::of(&claim.body().actor).is_some()
             || claim.body().actor == Actor::Lane(durable.lane);
         if !actor_bound || claim.body().lane != durable.lane || claim.body().occupant != ancestor {
             return Err(store_fault(

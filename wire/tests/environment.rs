@@ -342,6 +342,7 @@ fn requirement_edits_bind_statement_and_claim_witnesses_to_the_same_task() {
         epoch,
         release: "1.2.3".parse().expect("fixture release"),
     };
+    let roles = wire::principal::PrincipalRoles::default();
     let edit = wire::intent::TaskEdit {
         intent: None,
         evidence: None,
@@ -374,7 +375,7 @@ fn requirement_edits_bind_statement_and_claim_witnesses_to_the_same_task() {
     };
 
     assert!(matches!(
-        command(vec![task_witness.clone()]).admit(&accepted),
+        command(vec![task_witness.clone()]).admit(&accepted, &roles),
         Err(CommandRejection::Refusal(ref refusal)) if refusal.reason() == "command::witness-law"
     ));
     let foreign: wire::TaskStamp = "1kKRRsDQ".parse().expect("foreign task stamp");
@@ -386,7 +387,7 @@ fn requirement_edits_bind_statement_and_claim_witnesses_to_the_same_task() {
                 head: None,
             },
         ])
-        .admit(&accepted),
+        .admit(&accepted, &roles),
         Err(CommandRejection::Refusal(ref refusal)) if refusal.reason() == "command::witness-law"
     ));
     assert!(
@@ -398,12 +399,12 @@ fn requirement_edits_bind_statement_and_claim_witnesses_to_the_same_task() {
                 head: seq,
             },
         ])
-        .admit(&accepted)
+        .admit(&accepted, &roles)
         .is_ok()
     );
     assert!(
         command(vec![task_witness, claim_witness])
-            .admit(&accepted)
+            .admit(&accepted, &roles)
             .is_ok()
     );
 }

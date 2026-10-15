@@ -6,6 +6,8 @@ mod asset;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod axum;
 pub mod config;
+#[cfg(not(target_arch = "wasm32"))]
+mod roles;
 pub mod speech;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod stream;
@@ -18,4 +20,6 @@ pub use asset::{
     AppGeneration, AppSource, AppSourceError, Discovery, PublishError, ServedAsset,
 };
 pub use config::{Config, ConfigError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use roles::{RoleBook, RoleBookUnavailable};
 pub use speech::{SpeechBackend, SpeechConfig, SpeechConfigError};

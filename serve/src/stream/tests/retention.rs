@@ -79,7 +79,7 @@ fn complete_lane_history(
 #[test]
 fn one_batch_publishes_one_sorted_generation_with_every_lane_frontier() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     let first_lane = message(0xe5, 1).lane;
     let second_lane = message(0xe6, 1).lane;
@@ -139,7 +139,7 @@ fn one_batch_publishes_one_sorted_generation_with_every_lane_frontier() {
 #[test]
 fn terminal_revision_replaces_one_retained_message_and_broadcasts_the_change() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     let ordinary = message(0xe5, 7);
     publisher
@@ -197,7 +197,7 @@ fn terminal_revision_replaces_one_retained_message_and_broadcasts_the_change() {
 fn a_preserved_compaction_replaces_the_announcement_in_either_arrival_order() {
     for announcement_first in [true, false] {
         let bus = fixture(1);
-        let source = Source::new(bus.reader(), epoch(), 10, presenter());
+        let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
         let publisher = source.message_publisher();
         let mut announced = message(0xe5, 7);
         announced.activity = wire::AgentActivityKind::Compaction;
@@ -258,7 +258,7 @@ fn a_preserved_compaction_replaces_the_announcement_in_either_arrival_order() {
 #[test]
 fn presentation_revision_moves_only_semantics_and_keeps_the_final_state() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     let mut spoken = message(0xe5, 7);
     spoken.text = "> Keep the current path.\n\nApplied.".to_owned();
@@ -324,7 +324,7 @@ fn presentation_revision_moves_only_semantics_and_keeps_the_final_state() {
 #[test]
 fn retained_message_capacity_is_independent_for_each_lane() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     for lane in [0xe5, 0xe6] {
         for offset in 0..MESSAGE_CAPACITY {
@@ -385,7 +385,7 @@ fn retained_message_capacity_is_independent_for_each_lane() {
 #[test]
 fn retained_message_capacity_starts_at_the_oldest_complete_compaction_window() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     let busy_lane = message(0xe5, 0).lane;
     let quiet_lane = message(0xe6, 0).lane;
@@ -445,7 +445,7 @@ fn retained_message_capacity_starts_at_the_oldest_complete_compaction_window() {
 #[test]
 fn late_session_boundaries_are_inserted_before_retention_selects_its_floor() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     for offset in 0..HISTORY_LENGTH {
         if matches!(offset, FIRST_RETAINED_BOUNDARY | SECOND_RETAINED_BOUNDARY) {
@@ -577,7 +577,7 @@ fn page_offsets(generation: &wire::TranscriptGeneration) -> Vec<u64> {
 #[test]
 fn a_located_history_cursor_keeps_paging_across_live_publication() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     let head = message(0xe5, 100);
     publisher
@@ -684,7 +684,7 @@ fn quote_presentations_are_complete_on_bootstrap_and_history_and_refresh_from_au
             }]
         }
     });
-    let source = Source::new(bus.reader(), epoch(), 10, quote_presenter);
+    let source = Source::new(bus.reader(), epoch(), 10, quote_presenter, operator_book());
     let publisher = source.message_publisher();
     let mut older = message(0xe5, 5);
     older.text = target.markdown();
@@ -780,7 +780,7 @@ fn quote_presentations_are_complete_on_bootstrap_and_history_and_refresh_from_au
 #[test]
 fn coordinated_history_returns_one_bounded_globally_sorted_lane_interval() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     let lanes = [message(0xe5, 0).lane, message(0xe6, 0).lane];
     let history = Arc::new(FixtureHistory {
@@ -862,7 +862,7 @@ fn coordinated_history_returns_one_bounded_globally_sorted_lane_interval() {
 #[test]
 fn cold_readers_page_a_full_cache_without_reading_the_provider() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     let history = Arc::new(FixtureHistory {
         messages: Vec::new(),
@@ -906,7 +906,7 @@ fn cold_readers_page_a_full_cache_without_reading_the_provider() {
 #[test]
 fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     let lane = message(0xe5, 0).lane;
     let startup = (0..80)
@@ -998,7 +998,7 @@ fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
 #[test]
 fn short_provider_pages_continue_until_source_complete_with_bounded_reads() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     let lane = message(0xe5, 0).lane;
     let durable = (0..HISTORY_LENGTH)
@@ -1055,7 +1055,7 @@ fn short_provider_pages_continue_until_source_complete_with_bounded_reads() {
 #[test]
 fn explicit_history_hint_bootstraps_a_lane_without_an_initial_card() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     let lane = message(0xe5, 0).lane;
     let durable = (0..20)
@@ -1116,7 +1116,7 @@ fn explicit_history_hint_bootstraps_a_lane_without_an_initial_card() {
 #[test]
 fn cold_history_keeps_its_floor_across_a_compaction_inside_the_initial_window() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     for offset in 0..40 {
         let mut activity = message(0xe6, offset);
@@ -1166,7 +1166,7 @@ fn cold_history_keeps_its_floor_across_a_compaction_inside_the_initial_window() 
 #[test]
 fn retained_tool_status_does_not_consume_visible_lane_capacity() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     for offset in 0..MESSAGE_CAPACITY {
         publisher
@@ -1227,7 +1227,7 @@ fn retained_tool_status_does_not_consume_visible_lane_capacity() {
 #[test]
 fn interleaved_markers_do_not_spend_an_agents_message_floor() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     for offset in 0..60 {
         let mut card = message(0xe5, offset);
@@ -1270,7 +1270,7 @@ fn interleaved_markers_do_not_spend_an_agents_message_floor() {
 #[test]
 fn a_fresh_compaction_does_not_evict_an_agents_message_floor() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let publisher = source.message_publisher();
     for offset in 0..40 {
         publisher
@@ -1352,7 +1352,7 @@ fn prose_reconciliation_keeps_original_blocks_and_scopes_reused_provider_ids() {
     ];
     for streamed_first in [false, true] {
         let bus = fixture(1);
-        let source = Source::new(bus.reader(), epoch(), 20, presenter());
+        let source = Source::new(bus.reader(), epoch(), 20, presenter(), operator_book());
         let publisher = source.message_publisher();
         let cards = if streamed_first {
             vec![

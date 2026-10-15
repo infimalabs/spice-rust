@@ -7,12 +7,92 @@
 //! principal's head. Git configuration is at most the source an admission
 //! copies its profile from. No principal carries a short code or any other
 //! addressing route: humans are reached through concern pointers only.
+//!
+//! [`PrincipalRoles`] is the one predicate deciding what an actor may do as a
+//! principal: the resident's command door, its operator-only controls, lane
+//! selection, steering wake, operator-direction recognition, and review
+//! coverage all ask it rather than comparing an actor against the operator.
 
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CanonicalUuid, Seq};
+use crate::{Actor, CanonicalUuid, Seq};
+
+/// The born principal an actor acts as, before any role head is read.
+///
+/// Until human actors exist, only the operator actor acts as a principal, and
+/// it acts as the bootstrap principal: the repository's first-born human. A
+/// lane or the resident acts as no principal. This resolution alone is what
+/// immutable journal soundness checks consult, because a fact's author must
+/// stay valid whatever roles later change; current authority is
+/// [`PrincipalRoles`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActingPrincipal {
+    /// The repository's first-born principal.
+    Bootstrap,
+}
+
+impl ActingPrincipal {
+    /// The principal `actor` acts as, absent for a lane or the resident.
+    #[must_use]
+    pub const fn of(actor: &Actor) -> Option<Self> {
+        match actor {
+            Actor::Operator => Some(Self::Bootstrap),
+            Actor::Spice | Actor::Lane(_) => None,
+        }
+    }
+}
+
+/// Every born principal's current role head at one journal horizon: the one
+/// predicate deciding which actor holds which role.
+///
+/// A role change is a fact moving one head, so a predicate read after it
+/// answers the changed role for that principal's next command. A journal
+/// holding no principal has not yet recorded its bootstrap birth, which
+/// always bears the repository's human as the operator; until then the
+/// operator actor holds exactly that operator role.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PrincipalRoles {
+    /// Born principals, oldest birth first.
+    heads: Vec<PrincipalHead>,
+}
+
+impl PrincipalRoles {
+    /// The predicate over these principal heads, in any order.
+    #[must_use]
+    pub fn new(heads: impl IntoIterator<Item = PrincipalHead>) -> Self {
+        let mut heads: Vec<PrincipalHead> = heads.into_iter().collect();
+        heads.sort_by_key(|head| head.born);
+        Self { heads }
+    }
+
+    /// The roles `actor` currently holds as a principal, absent when it acts
+    /// as no principal.
+    #[must_use]
+    pub fn roles(&self, actor: &Actor) -> Option<BTreeSet<PrincipalRole>> {
+        match ActingPrincipal::of(actor)? {
+            ActingPrincipal::Bootstrap => Some(self.heads.first().map_or_else(
+                || BTreeSet::from([PrincipalRole::Operator]),
+                |head| head.roles.clone(),
+            )),
+        }
+    }
+
+    /// Whether the principal `actor` acts as currently holds `role`.
+    #[must_use]
+    pub fn holds(&self, actor: &Actor, role: PrincipalRole) -> bool {
+        self.roles(actor).is_some_and(|roles| roles.contains(&role))
+    }
+
+    /// Every actor whose principal currently holds `role`, in actor order.
+    #[must_use]
+    pub fn holders(&self, role: PrincipalRole) -> Vec<Actor> {
+        std::iter::once(Actor::Operator)
+            .filter(|actor| self.holds(actor, role))
+            .collect()
+    }
+}
 
 /// A principal's recorded display profile.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

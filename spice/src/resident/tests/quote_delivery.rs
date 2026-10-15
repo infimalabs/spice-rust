@@ -81,12 +81,15 @@ fn send(
         }],
         body: serde_json::to_value(&request).expect("steer request encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("operator send admits");
     let mut effects = CommandEffects::default();
     let Outcome::Reply(Reply {
@@ -126,12 +129,15 @@ fn read_inbox(
         expected: Vec::new(),
         body: serde_json::to_value(&request).expect("inbox request encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("operator inbox admits");
     let Outcome::Reply(Reply {
         body: CommandAnswer::Inbox(inbox),

@@ -189,7 +189,8 @@ pub(super) fn decode_opening(
     if let Ok(accepted) = wire::decode::<wire::Accepted>(bytes) {
         if accepted.wire.is_current()
             && accepted.epoch == discovery.epoch
-            && matches!(accepted.actor, Actor::Operator | Actor::Lane(_))
+            && (matches!(accepted.actor, Actor::Lane(_))
+                || wire::principal::ActingPrincipal::of(&accepted.actor).is_some())
         {
             return Ok(accepted);
         }

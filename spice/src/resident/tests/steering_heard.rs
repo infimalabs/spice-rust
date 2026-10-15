@@ -49,12 +49,15 @@ impl Heard {
             }],
             body: serde_json::to_value(&send).expect("steer request encodes"),
         }
-        .admit(&wire::Accepted {
-            wire: wire::WireVersion::CURRENT,
-            actor: Actor::Operator,
-            epoch,
-            release: "1.2.3".parse().expect("fixture release"),
-        })
+        .admit(
+            &wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor: Actor::Operator,
+                epoch,
+                release: "1.2.3".parse().expect("fixture release"),
+            },
+            &wire::principal::PrincipalRoles::default(),
+        )
         .expect("operator send admits");
         let mut effects = CommandEffects::default();
         let outcome = steering::send(
@@ -116,8 +119,7 @@ impl Heard {
                 }),
             )
             .expect("the fixture occupant is seated");
-        let source =
-            serve::stream::Source::new(self.bus.reader(), self.epoch, 8, quote_presenter());
+        let source = message_source(self.bus.reader(), self.epoch);
         let publisher = source.message_publisher();
         let message_state = std::sync::Mutex::new(MessageState::default());
         let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");

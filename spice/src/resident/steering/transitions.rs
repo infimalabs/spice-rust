@@ -365,7 +365,7 @@ pub(in crate::resident) fn resend(
     resend: &wire::intent::DirectiveRef,
     effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
-    if !matches!(command.actor(), Actor::Operator) {
+    if !command.holds(wire::principal::PrincipalRole::Operator) {
         return refusal(
             "steer::operator-required",
             Some("operator".to_owned()),
@@ -485,7 +485,7 @@ pub(in crate::resident) fn recover(
     recover: &wire::intent::DirectiveRef,
     effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
-    if !matches!(command.actor(), Actor::Operator) {
+    if !command.holds(wire::principal::PrincipalRole::Operator) {
         return refusal(
             "steer::operator-required",
             Some("operator".to_owned()),

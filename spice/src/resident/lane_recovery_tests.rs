@@ -1018,12 +1018,15 @@ fn admitted(fixture: &Fixture, request: &LaneState) -> wire::AdmittedCommand {
         expected: Vec::new(),
         body: serde_json::to_value(request).expect("lane intent encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch: fixture.new_epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: fixture.new_epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("operator lane intent admits")
 }
 

@@ -443,7 +443,14 @@ fn live_steering_pages_bound_rows_decode_work_and_preserve_continuation_order() 
         operator.overflow().expect("all lanes overflow").omitted,
         u64::try_from(total * 2 - MAX_STEERING_PAGE_ROWS).expect("omitted count fits")
     );
-    assert_eq!(crate::guard::indexed_read_metrics(), first_metrics);
+    assert_eq!(
+        crate::guard::indexed_read_metrics(),
+        crate::guard::IndexedReadMetrics {
+            queries: first_metrics.queries + 1,
+            ..first_metrics
+        },
+        "the operator page first reads the principal role heads"
+    );
 
     crate::guard::reset_indexed_read_metrics();
     let all_lanes = journal

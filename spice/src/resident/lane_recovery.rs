@@ -426,7 +426,7 @@ fn observe_carried_claim(
                 "one lane owns more than one active claim",
             ));
         }
-        let actor_bound = matches!(claim.body().actor, Actor::Operator)
+        let actor_bound = wire::principal::ActingPrincipal::of(&claim.body().actor).is_some()
             || claim.body().actor == Actor::Lane(lane);
         if !actor_bound || claim.body().lane != lane || claim.body().occupant != ancestor {
             return Err(store_fault(

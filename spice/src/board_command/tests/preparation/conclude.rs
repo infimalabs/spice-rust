@@ -90,12 +90,15 @@ fn fixture_command_admission(
         })
         .expect("conclusion encodes"),
     }
-    .admit(&Accepted {
-        wire: WireVersion::CURRENT,
-        actor,
-        epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &Accepted {
+            wire: WireVersion::CURRENT,
+            actor,
+            epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
 }
 
 #[test]

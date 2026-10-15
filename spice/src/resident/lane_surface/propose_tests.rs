@@ -283,6 +283,12 @@ fn seating_appends_the_lane_without_reordering_teams_or_members() {
         effort: None,
         resume: None,
     };
+    let operator = wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+        release: "1.2.3".parse().expect("fixture release"),
+    };
     let command = wire::Command {
         v: wire::WireVersion::CURRENT,
         id: uuid(70),
@@ -291,12 +297,7 @@ fn seating_appends_the_lane_without_reordering_teams_or_members() {
         expected: Vec::new(),
         body: serde_json::to_value(&request).expect("lane seat body encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(&operator, &wire::principal::PrincipalRoles::default())
     .expect("operator lane seat admits");
     let answer = LaneChangeAnswer {
         lane: seated,

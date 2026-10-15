@@ -42,7 +42,7 @@ impl Direction {
     /// The direction a stored steering head and its creating actor describe,
     /// absent unless the operator sent it with a coordination control.
     pub(crate) fn stored(head: &wire::SteeringHead, creator: &str, head_seq: u64) -> Option<Self> {
-        if creator != Actor::Operator.to_string() {
+        if !super::acts_as_principal(creator) {
             return None;
         }
         Some(Self {
@@ -95,7 +95,7 @@ fn direct(
     actor: &Actor,
     sent: &SteerSent,
 ) -> Result<(), Refusal> {
-    if *actor == Actor::Operator && sent.fanout.is_some() {
+    if super::is_principal(actor) && sent.fanout.is_some() {
         authority.set_operator_direction(&sent.key, sent.lane);
     }
     let Some(control) = sent.control.as_deref().and_then(|text| text.parse().ok()) else {

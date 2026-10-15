@@ -190,12 +190,15 @@ impl Lanes {
                     "attachments": [],
                 }),
             }
-            .admit(&wire::Accepted {
-                wire: wire::WireVersion::CURRENT,
-                actor: Actor::Operator,
-                epoch: self.epoch,
-                release: "1.2.3".parse().expect("fixture release"),
-            })
+            .admit(
+                &wire::Accepted {
+                    wire: wire::WireVersion::CURRENT,
+                    actor: Actor::Operator,
+                    epoch: self.epoch,
+                    release: "1.2.3".parse().expect("fixture release"),
+                },
+                &wire::principal::PrincipalRoles::default(),
+            )
             .expect("operator send admits"),
             &wire::intent::SteerSend {
                 fanout: test_uuid(id + 1),
@@ -314,12 +317,15 @@ impl Lanes {
             expected: Vec::new(),
             body: serde_json::to_value(&request).expect("inbox request encodes"),
         }
-        .admit(&wire::Accepted {
-            wire: wire::WireVersion::CURRENT,
-            actor: Actor::Lane(test_uuid(lane)),
-            epoch: self.epoch,
-            release: "1.2.3".parse().expect("fixture release"),
-        })
+        .admit(
+            &wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor: Actor::Lane(test_uuid(lane)),
+                epoch: self.epoch,
+                release: "1.2.3".parse().expect("fixture release"),
+            },
+            &wire::principal::PrincipalRoles::default(),
+        )
         .expect("inbox admits");
         let Outcome::Reply(Reply {
             body: CommandAnswer::Inbox(inbox),
@@ -566,12 +572,15 @@ impl Lanes {
             expected: vec![Witness::Recoverable { steer: directive }],
             body: serde_json::to_value(&recover).expect("recovery encodes"),
         }
-        .admit(&wire::Accepted {
-            wire: wire::WireVersion::CURRENT,
-            actor: Actor::Operator,
-            epoch: self.epoch,
-            release: "1.2.3".parse().expect("fixture release"),
-        })
+        .admit(
+            &wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor: Actor::Operator,
+                epoch: self.epoch,
+                release: "1.2.3".parse().expect("fixture release"),
+            },
+            &wire::principal::PrincipalRoles::default(),
+        )
         .expect("operator recovery admits");
         steering::recover(
             &self.bus,

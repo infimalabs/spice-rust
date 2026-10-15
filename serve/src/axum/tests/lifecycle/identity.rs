@@ -5,7 +5,7 @@ use super::*;
 #[tokio::test(flavor = "current_thread")]
 async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");

@@ -164,12 +164,15 @@ fn recalled_hold(fixture: &VendorExitFixture) -> Option<wire::intent::LaneHold> 
         expected: Vec::new(),
         body: serde_json::to_value(&request).expect("recall intent encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch: epoch(),
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: epoch(),
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("operator recall admits");
     let wire::Outcome::Reply(reply) = crate::resident::lane_surface::recall(
         &fixture.bus,

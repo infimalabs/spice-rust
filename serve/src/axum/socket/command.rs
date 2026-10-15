@@ -41,7 +41,13 @@ async fn route_command(
         }
     };
     let id = crossing.id;
-    let command = match crossing.admit(accepted) {
+    let admitted = state
+        .capabilities
+        .roles()
+        .current()
+        .map_err(|error| wire::CommandRejection::Fault(error.fault()))
+        .and_then(|roles| crossing.admit(accepted, &roles));
+    let command = match admitted {
         Ok(command) => command,
         Err(rejection) => {
             send_encoded(

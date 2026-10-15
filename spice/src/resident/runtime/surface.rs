@@ -132,7 +132,7 @@ async fn start_surface<'a>(
     launch: SurfaceLaunch<'a>,
 ) -> CommandResult<StartedSurface<'a>> {
     let operator = new_uuid();
-    let capabilities = capabilities::build(operator, residency)?;
+    let capabilities = capabilities::build(bus, operator, residency)?;
     let SurfaceLaunch {
         app,
         version,
