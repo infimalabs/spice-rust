@@ -1357,3 +1357,112 @@ fn room_snapshots_carry_conversation_and_delivery_heads() {
         assert!(rows.contains(&seq), "{what} at {seq} is in the snapshot");
     }
 }
+
+/// An operator item reaches the actor its authority records: the sender of
+/// the direction a lane's `#KEY` names, or the asker an answer returns to; a
+/// retained route naming no direction reaches the historical operator. The
+/// open-item page counts and retains only the items its reader admits.
+#[test]
+fn operator_items_reach_the_actor_their_authority_records() {
+    let mut room = Conversation::new();
+    let (asked, other) = (room.asked.clone(), room.other.clone());
+    let human = Actor::Human(uuid("018f82d4-6f59-7d06-92e3-bce9131163b0"));
+    let result = QuestionResultRef::new(authority(11));
+    Write::new(human.clone(), Producer::CommandDoor, minute(1))
+        .direct(
+            directive(10),
+            result.to_string(),
+            asked.lane,
+            Some(&room.room),
+        )
+        .record(RoomPosted {
+            publication: authority(10),
+            text: "which one?".to_owned(),
+            operation: ask_of(&result),
+            routes: vec![route(lane(&asked), Some(&room.room))],
+            directed: vec![directive(10)],
+            expires: minute(20),
+        })
+        .apply(&mut room.journal)
+        .expect("a principal asks a lane");
+    room.answer(12, &asked, &result, minute(2))
+        .expect("the lane answers its asker");
+    let direction = |micros: i64| SteerSent {
+        directive: directive(micros),
+        fanout: Some(directive(500 + micros)),
+        key: message_key(micros),
+        lane: other.lane,
+        text: "which first".to_owned(),
+        from: None,
+        room: None,
+        control: None,
+        attachments: Vec::new(),
+        expires: minute(25),
+    };
+    Write::new(human.clone(), Producer::CommandDoor, minute(3))
+        .send(direction(20))
+        .apply(&mut room.journal)
+        .expect("a principal directs a lane");
+    Write::operator(minute(3))
+        .send(direction(30))
+        .apply(&mut room.journal)
+        .expect("the historical operator directs a lane");
+    for (micros, key) in [(21, 20), (31, 30)] {
+        Write::lane(&other, minute(4))
+            .record(conversed(
+                micros,
+                &other,
+                RoomPublicationKind::Msg {},
+                vec![RoomRoute {
+                    direction: Some(message_key(key)),
+                    ..route(RoomDestination::Operator {}, None)
+                }],
+                Vec::new(),
+            ))
+            .apply(&mut room.journal)
+            .expect("a lane replies to its direction");
+    }
+    room.ask_operator(40);
+
+    let requesters = room
+        .journal
+        .read(|read| {
+            [10, 12, 21, 31, 40]
+                .into_iter()
+                .map(|micros| {
+                    let (_, publication) = read
+                        .room_conversation(&authority(micros))?
+                        .expect("the publication is admitted");
+                    read.room_operator_requester(&publication)
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .expect("requesters read");
+    assert_eq!(
+        requesters,
+        [
+            None,
+            Some(human.clone()),
+            Some(human.clone()),
+            Some(Actor::Operator),
+            Some(Actor::Operator),
+        ]
+    );
+
+    let page = |limit: usize, reader: &Actor| {
+        room.journal
+            .read(|read| read.open_room_items_page(None, limit, |actor| actor == reader))
+            .map(|page| {
+                let keys = page
+                    .rows
+                    .iter()
+                    .map(|(record, _)| record.receipt().clone())
+                    .collect::<Vec<_>>();
+                (keys, page.population)
+            })
+            .expect("open items page")
+    };
+    assert_eq!(page(1, &human), (vec![item(12)], 2));
+    assert_eq!(page(8, &human), (vec![item(12), item(21)], 2));
+    assert_eq!(page(8, &Actor::Operator), (vec![item(31), item(41)], 2));
+}

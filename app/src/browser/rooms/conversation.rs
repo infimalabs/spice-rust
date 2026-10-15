@@ -187,9 +187,9 @@ pub(super) fn face(
     })
 }
 
-/// Operator receipts and answer duties, each with the words it carries and
-/// its exact controls, as the open count and the inbox body. An ACKed ASK
-/// remains here until its separate result terminates.
+/// This principal's operator receipts and answer duties, each with the words
+/// it carries and its exact controls, as the open count and the inbox body.
+/// An ACKed ASK remains here until its separate result terminates.
 pub(super) fn render_inbox(
     runtime: &AppRuntime,
     report: &Callback<String>,
@@ -200,7 +200,7 @@ pub(super) fn render_inbox(
         controls: Some(CardControls { report, sender }),
     };
     let projection = runtime.room_projection().conversation();
-    let open = projection.inbox_items();
+    let open = runtime.operator_inbox();
     let count = open.len();
     let body = html! {
         <>

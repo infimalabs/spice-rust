@@ -149,7 +149,16 @@ fn ask_of_second_lane(position: u64) -> [serde_json::Value; 2] {
 }
 
 fn conversation_runtime(session: &Session, snapshot: &[serde_json::Value]) -> AppRuntime {
-    let accepted = acceptance(session, "operator", EPOCH);
+    conversation_runtime_as(session, "operator", snapshot)
+}
+
+/// [`conversation_runtime`] for the principal `actor` spells.
+fn conversation_runtime_as(
+    session: &Session,
+    actor: &str,
+    snapshot: &[serde_json::Value],
+) -> AppRuntime {
+    let accepted = acceptance(session, actor, EPOCH);
     let mut runtime = AppRuntime::new(&accepted);
     let horizon = snapshot.len() as u64;
     runtime.apply_stream(&operator_facts(session, horizon));
@@ -333,7 +342,7 @@ fn operator_items_lapse_recover_and_retire_with_the_answer() {
             .state
             .clone()
     };
-    let open = |runtime: &AppRuntime| runtime.room_projection().conversation().inbox_items().len();
+    let open = |runtime: &AppRuntime| runtime.room_projection().conversation().open_items().len();
     assert!(matches!(state(&runtime), RoomReceiptState::Pending { .. }));
     assert_eq!(open(&runtime), 1);
 
@@ -379,7 +388,7 @@ fn operator_items_lapse_recover_and_retire_with_the_answer() {
         ),
     );
     assert!(matches!(state(&runtime), RoomReceiptState::Acked { .. }));
-    let inbox = runtime.room_projection().conversation().inbox_items();
+    let inbox = runtime.room_projection().conversation().open_items();
     assert_eq!(
         inbox.len(),
         1,
@@ -448,7 +457,7 @@ fn operator_inbox_order_is_immutable_across_receipt_lapse_and_recovery() {
         runtime
             .room_projection()
             .conversation()
-            .inbox_items()
+            .open_items()
             .into_iter()
             .map(|entry| (entry.key.to_string(), entry.item.value.admitted))
             .collect::<Vec<_>>()
@@ -493,6 +502,7 @@ fn conversation_text_reply(
     publication: &str,
     content: wire::intent::RoomConversationContent,
     direction: Option<wire::intent::RoomConcernedDirection>,
+    recipient: Option<wire::Actor>,
 ) -> app::Admitted<Response<wire::intent::RoomConversationTextAnswer>> {
     let bytes = support::response(
         WireVersion::CURRENT,
@@ -504,6 +514,7 @@ fn conversation_text_reply(
                 publication: authority(publication),
                 content,
                 direction,
+                recipient,
             },
         }),
     );
@@ -512,12 +523,12 @@ fn conversation_text_reply(
         .expect("conversation text response is admitted")
 }
 
-/// A lane's operator MSG and ASK carry their words only in the author's
-/// transcript, so the runtime asks the resident for each exactly once and
-/// shows what it read; operator-authored text needs no read. Only the ASK
-/// carries an answer owed back to its requesting lane.
+/// Every open operator item's read names the principal it reaches, so the
+/// runtime asks the resident for each exactly once, operator-authored text
+/// included, and shows what it read. Only the ASK carries an answer owed
+/// back to its requesting lane.
 #[test]
-fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
+fn operator_items_read_once_and_only_asks_owe_an_answer() {
     const MSG_PACKET: &str = "dVsYdDj7v";
     const MSG: &str = "dVsYdDj7w";
     const OPERATOR_MSG: &str = "dVsYdDj7x";
@@ -550,7 +561,7 @@ fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
     ];
     let mut runtime = conversation_runtime(&session, &snapshot);
 
-    let inbox = runtime.room_projection().conversation().inbox_items();
+    let inbox = runtime.room_projection().conversation().open_items();
     let duty = |publication: &str| {
         inbox
             .iter()
@@ -576,8 +587,7 @@ fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
 
     assert_eq!(
         runtime.begin_operator_item_texts(),
-        vec![authority(ASK), authority(MSG)],
-        "only lane-authored items need their transcript read"
+        vec![authority(ASK), authority(MSG), authority(OPERATOR_MSG)],
     );
     assert!(runtime.begin_operator_item_texts().is_empty());
 
@@ -591,6 +601,7 @@ fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
                 text: asked_text.to_owned(),
             },
             None,
+            None,
         ),
     );
     assert_eq!(
@@ -600,15 +611,19 @@ fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
                 text: asked_text.to_owned()
             },
             direction: None,
+            recipient: None,
         })
     );
 
-    // A drop loses the MSG read in flight; the next subscription asks again
+    // A drop loses the reads in flight; the next subscription asks again
     // while the settled ASK text stands.
     runtime.reconnect(&acceptance(&session, "operator", EPOCH));
     runtime.apply_stream(&operator_facts(&session, snapshot.len() as u64));
     runtime.apply_stream(&room_page(&session, &snapshot, None, snapshot.len() as u64));
-    assert_eq!(runtime.begin_operator_item_texts(), vec![authority(MSG)]);
+    assert_eq!(
+        runtime.begin_operator_item_texts(),
+        vec![authority(MSG), authority(OPERATOR_MSG)]
+    );
 
     // A reply naming another publication never becomes this one's text.
     runtime.apply_conversation_text(
@@ -619,6 +634,7 @@ fn operator_items_read_lane_text_once_and_only_asks_owe_an_answer() {
             wire::intent::RoomConversationContent::Text {
                 text: asked_text.to_owned(),
             },
+            None,
             None,
         ),
     );
@@ -679,7 +695,7 @@ fn operator_items_concern_their_direction_and_retain_legacy_concerns() {
     let snapshot = [ask_packet, asked, msg_packet, messaged, bare_packet, bare];
     let mut runtime = conversation_runtime(&session, &snapshot);
     let concern = |runtime: &app::AppRuntime, publication: &str| {
-        let inbox = runtime.room_projection().conversation().inbox_items();
+        let inbox = runtime.room_projection().conversation().open_items();
         let entry = inbox
             .iter()
             .find(|entry| *entry.item.value.record.publication() == authority(publication))
@@ -709,6 +725,7 @@ fn operator_items_concern_their_direction_and_retain_legacy_concerns() {
                 key: DIRECTION.to_owned(),
                 text: "Which first?".to_owned(),
             }),
+            None,
         ),
     );
     assert_eq!(
@@ -717,5 +734,73 @@ fn operator_items_concern_their_direction_and_retain_legacy_concerns() {
             key: DIRECTION.to_owned(),
             text: Some("Which first?".to_owned())
         }
+    );
+}
+
+/// The inbox holds only the open operator items whose read names this
+/// principal as recipient, or whose read failed and so cannot place them;
+/// an item awaiting its read reaches no one yet.
+#[test]
+fn the_inbox_holds_only_items_that_reach_this_principal() {
+    const MINE_PACKET: &str = "dVsYdDj7v";
+    const MINE: &str = "dVsYdDj7w";
+    const THEIRS_PACKET: &str = "dVsYdDj7x";
+    const THEIRS: &str = "dVsYdDj7y";
+    const FAILED_PACKET: &str = "dVsYdDj7z";
+    const FAILED: &str = "dVsYdDj80";
+    let me = wire::Actor::Human(uuid("018f82d4-6f59-7d06-92e3-bce9131163b0"));
+    let them = wire::Actor::Human(uuid("018f82d4-6f59-7d06-92e3-bce9131163b1"));
+    let session = session(OPERATOR, EPOCH);
+    let mut snapshot = Vec::new();
+    for (position, publication) in [
+        (1, (MINE_PACKET, MINE)),
+        (3, (THEIRS_PACKET, THEIRS)),
+        (5, (FAILED_PACKET, FAILED)),
+    ] {
+        snapshot.extend(conversed(
+            position,
+            publication,
+            LANE,
+            RoomPublicationKind::Msg {},
+            operator_route(Some(room()), None),
+            &[],
+        ));
+    }
+    let mut runtime = conversation_runtime_as(&session, &me.to_string(), &snapshot);
+    let inbox = |runtime: &AppRuntime| {
+        runtime
+            .operator_inbox()
+            .iter()
+            .map(|entry| entry.item.value.record.publication().clone())
+            .collect::<Vec<_>>()
+    };
+    assert!(inbox(&runtime).is_empty());
+    assert_eq!(
+        runtime.begin_operator_item_texts(),
+        vec![authority(MINE), authority(THEIRS), authority(FAILED)]
+    );
+    assert!(
+        inbox(&runtime).is_empty(),
+        "a loading item reaches no one yet"
+    );
+
+    let text = || wire::intent::RoomConversationContent::Text {
+        text: "Started A.".to_owned(),
+    };
+    for (publication, recipient) in [(MINE, &me), (THEIRS, &them)] {
+        runtime.apply_conversation_text(
+            &authority(publication),
+            &conversation_text_reply(&session, publication, text(), None, Some(recipient.clone())),
+        );
+    }
+    runtime.apply_conversation_text(
+        &authority(FAILED),
+        &conversation_text_reply(&session, MINE, text(), None, Some(me.clone())),
+    );
+    assert_eq!(inbox(&runtime), [authority(MINE), authority(FAILED)]);
+    assert_eq!(
+        runtime.room_projection().conversation().open_items().len(),
+        3,
+        "the catalog still owes every principal's item"
     );
 }

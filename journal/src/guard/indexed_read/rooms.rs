@@ -4,9 +4,9 @@ use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
     CandidateCoverage, CandidateCritique, CandidateWithdrawal, ExecutionAuthorization,
     PreparationDecision, ProposalRef, QuestionResultHead, QuestionResultRecord, QuestionResultRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomHorizon,
-    RoomLeft, RoomMessaged, RoomPublication, RoomPublished, RoomPutAside, RoomReceiptHead,
-    RoomReceiptRecord, RoomReceiptRef, WorkingGroupPartition,
+    RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomDestination,
+    RoomHorizon, RoomLeft, RoomMessaged, RoomPublication, RoomPublicationKind, RoomPublished,
+    RoomPutAside, RoomReceiptHead, RoomReceiptRecord, RoomReceiptRef, WorkingGroupPartition,
 };
 
 use super::{
@@ -38,7 +38,8 @@ pub enum ProposalAuthority {
 pub struct OpenRoomItemPage {
     /// Open item records and their current guarded heads, in item order.
     pub rows: Vec<(RoomReceiptRecord, JournalHead<RoomReceiptHead>)>,
-    /// Number of open items at or after the requested cursor.
+    /// Number of open items at or after the requested cursor that reach the
+    /// reader.
     pub population: usize,
 }
 
@@ -624,38 +625,29 @@ impl JournalRead<'_> {
     }
 
     /// At most `limit` operator items still owing a disposition, pending or
-    /// lapsed, at or after `from` in item order, with how many such items lie
-    /// at or after `from` in all.
+    /// lapsed, at or after `from` in item order, that `reaches` admits by the
+    /// recorded actor each reaches, with how many such items lie at or after
+    /// `from` in all.
+    ///
+    /// Each open item costs a constant number of indexed point reads, and the
+    /// page retains at most `limit` of them.
     pub fn open_room_items_page(
         &self,
         from: Option<&RoomReceiptRef>,
         limit: usize,
+        mut reaches: impl FnMut(&wire::Actor) -> bool,
     ) -> Result<OpenRoomItemPage, GuardError> {
         let from = from.map_or_else(String::new, ToString::to_string);
-        let limit = i64::try_from(limit)
-            .map_err(|_| GuardError::Invalid("operator item page exceeds SQLite".to_owned()))?;
-        read_metrics::observe_query();
-        let population = self
-            .connection
-            .query_row(
-                "SELECT count(*) FROM room_items WHERE open = 1 AND item >= ?1",
-                [&from],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(GuardError::Store)?;
-        let population = usize::try_from(population).map_err(|_| {
-            GuardError::Invalid(format!("operator item count {population} is invalid"))
-        })?;
         read_metrics::observe_query();
         let mut statement = self
             .connection
             .prepare(
                 "SELECT item, head_seq, record, head FROM room_items \
-                 WHERE open = 1 AND item >= ?1 ORDER BY item LIMIT ?2",
+                 WHERE open = 1 AND item >= ?1 ORDER BY item",
             )
             .map_err(GuardError::Store)?;
         let rows = statement
-            .query_map(params![from, limit], |row| {
+            .query_map([from], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,
@@ -665,6 +657,7 @@ impl JournalRead<'_> {
             })
             .map_err(GuardError::Store)?;
         let mut items = Vec::new();
+        let mut population = 0_usize;
         for row in rows {
             let (key, position, record, head) = row.map_err(GuardError::Store)?;
             let (record, head) = self.conversation_row::<RoomReceiptRecord, RoomReceiptHead>(
@@ -680,7 +673,27 @@ impl JournalRead<'_> {
                     "operator item indexed as {key} names another item"
                 )));
             }
-            items.push((record, head));
+            let (_, publication) =
+                self.room_conversation(record.publication())?
+                    .ok_or_else(|| {
+                        GuardError::Invalid(format!(
+                            "operator item {key} names unadmitted publication {}",
+                            record.publication()
+                        ))
+                    })?;
+            let requester = self.room_operator_requester(&publication)?.ok_or_else(|| {
+                GuardError::Invalid(format!(
+                    "operator item {key} names publication {}, which reaches no operator",
+                    record.publication()
+                ))
+            })?;
+            if !reaches(&requester) {
+                continue;
+            }
+            population += 1;
+            if items.len() < limit {
+                items.push((record, head));
+            }
         }
         Ok(OpenRoomItemPage {
             rows: items,
@@ -764,6 +777,84 @@ impl JournalRead<'_> {
         };
         read_metrics::observe_row();
         Ok(Some(decode_bounded_fact(row, seq, 1, 2, 3)?.0))
+    }
+
+    /// The recorded actor whose operator inbox `publication`'s operator item
+    /// reaches, absent when it opens none.
+    ///
+    /// A lane's operator route reaches the sender of the direction it names,
+    /// and an answer returned to the operator reaches the actor that asked.
+    /// A retained operator route that names no direction reaches the
+    /// historical operator.
+    pub fn room_operator_requester(
+        &self,
+        publication: &RoomPublication,
+    ) -> Result<Option<wire::Actor>, GuardError> {
+        if let RoomPublicationKind::Ans { result, .. } = publication.kind() {
+            let (question, _) = self.question_result(result)?.ok_or_else(|| {
+                GuardError::Invalid(format!(
+                    "answer {} names unknown result {result}",
+                    publication.publication()
+                ))
+            })?;
+            if question.requester() != &(RoomDestination::Operator {}) {
+                return Ok(None);
+            }
+            return self
+                .recorded_actor(
+                    "SELECT f.actor FROM room_conversations c \
+                     JOIN fact_envelopes f ON f.seq = c.head_seq WHERE c.publication = ?1",
+                    &question.question().to_string(),
+                )?
+                .map(Some)
+                .ok_or_else(|| {
+                    GuardError::Invalid(format!(
+                        "result {result} names unadmitted question {}",
+                        question.question()
+                    ))
+                });
+        }
+        let Some(route) = publication
+            .routes()
+            .iter()
+            .find(|route| route.destination == RoomDestination::Operator {})
+        else {
+            return Ok(None);
+        };
+        let Some(key) = route.direction.as_deref() else {
+            return Ok(Some(wire::Actor::Operator));
+        };
+        self.require_current_steering_index()?;
+        self.recorded_actor(
+            "SELECT f.actor FROM steering_heads s \
+             JOIN fact_envelopes f ON f.seq = s.created_seq WHERE s.steer_key = ?1",
+            key,
+        )?
+        .map(Some)
+        .ok_or_else(|| {
+            GuardError::Invalid(format!(
+                "publication {} concerns direction {key}, which has no steering head",
+                publication.publication()
+            ))
+        })
+    }
+
+    /// The recording actor of the one fact `sql` selects by `key`.
+    fn recorded_actor(&self, sql: &str, key: &str) -> Result<Option<wire::Actor>, GuardError> {
+        read_metrics::observe_query();
+        let actor = self
+            .connection
+            .query_row(sql, [key], |row| row.get::<_, String>(0))
+            .optional()
+            .map_err(GuardError::Store)?;
+        let Some(actor) = actor else {
+            return Ok(None);
+        };
+        read_metrics::observe_row();
+        actor
+            .parse()
+            .map(Some)
+            .map_err(|error| GuardError::Invalid(format!("recorded actor {actor}: {error}")))
     }
 
     /// Every conversation head row of `table` meeting `condition`, keyed by
