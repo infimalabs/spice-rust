@@ -135,11 +135,13 @@ muted, line, ground, focus, and primitive roles from that base and the page's
 achromatic anchors; Lane and Design accent slots remain independent.
 
 Team consoles rank by durable formation instant, oldest first, and take bases
-counting up from the palette's first accent. Open working-group consoles rank
-by their identity's minting instant, oldest first, and take bases counting down
-from its last. Shared arrangement and browser-console order change neither
-rank; member and Design accents still step from the base in durable member
-order.
+counting up from the palette's first accent. A team forms at the commit that
+makes its identity teamed, including a lone member placed under another team's
+identity by **Create new team**, and keeps that instant until its identity is
+unteamed again. Open working-group consoles rank by their identity's minting
+instant, oldest first, and take bases counting down from its last. Shared
+arrangement and browser-console order change neither rank; member and Design
+accents still step from the base in durable member order.
 
 The task overview sheet, header and body, wears the base of what it shows. A
 team or working-group total opens it in that console's base, and the Design
