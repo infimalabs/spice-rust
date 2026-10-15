@@ -337,6 +337,74 @@ fn use_lane_navigation(
     (available, navigate)
 }
 
+/// The lightbox's single-letter shortcuts: A annotates and D downloads by
+/// activating the matching button, so each key does exactly what clicking
+/// does and nothing when that button is absent or disabled. The editor keeps
+/// its own letters, and typing in a field or with a modifier never triggers.
+#[hook]
+fn use_action_keys(host: NodeRef, editing: UseStateHandle<bool>) -> Callback<KeyboardEvent> {
+    use_callback((host, editing), |event: KeyboardEvent, (host, editing)| {
+        if **editing
+            || event.repeat()
+            || event.is_composing()
+            || event.alt_key()
+            || event.ctrl_key()
+            || event.meta_key()
+            || typing(&event)
+        {
+            return;
+        }
+        let selector = match event.key().as_str() {
+            "a" | "A" => "[data-image-edit]",
+            "d" | "D" => "[data-image-download]",
+            _ => return,
+        };
+        let Some(button) = host
+            .cast::<web_sys::HtmlDialogElement>()
+            .and_then(|dialog| dialog.query_selector(selector).ok().flatten())
+            .and_then(|button| button.dyn_into::<web_sys::HtmlElement>().ok())
+        else {
+            return;
+        };
+        event.prevent_default();
+        event.stop_propagation();
+        button.click();
+    })
+}
+
+/// The dialog's keyboard: lane navigation by arrows and the action letters.
+/// Says whether lane navigation is offered, for its description.
+#[hook]
+fn use_viewer_keys(
+    props: &ViewerProps,
+    host: NodeRef,
+    editing: UseStateHandle<bool>,
+) -> (bool, Callback<KeyboardEvent>) {
+    let (lane_navigation, navigate) = use_lane_navigation(props, editing.clone());
+    let action_keys = use_action_keys(host, editing);
+    let keydown = Callback::from(move |event: KeyboardEvent| {
+        navigate.emit(event.clone());
+        action_keys.emit(event);
+    });
+    (lane_navigation, keydown)
+}
+
+/// Whether the key lands in a field that takes typed text.
+fn typing(event: &KeyboardEvent) -> bool {
+    event
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| {
+            target
+                .closest(
+                    "input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])",
+                )
+                .ok()
+                .flatten()
+        })
+        .is_some()
+}
+
 #[function_component(Viewer)]
 fn viewer(props: &ViewerProps) -> Html {
     let host = use_node_ref();
@@ -401,7 +469,7 @@ fn viewer(props: &ViewerProps) -> Html {
             dialog.close();
         }
     });
-    let (lane_navigation, navigate) = use_lane_navigation(props, editing.clone());
+    let (lane_navigation, keydown) = use_viewer_keys(props, host.clone(), editing.clone());
     use_effect_with(
         (
             host.clone(),
@@ -440,7 +508,7 @@ fn viewer(props: &ViewerProps) -> Html {
             class="image-lightbox app-modal"
             aria-label="Full-size image"
             aria-describedby={lane_navigation.then_some("image-lightbox-navigation-help")}
-            onkeydown={navigate}
+            onkeydown={keydown}
         >
             if lane_navigation {
                 <span id="image-lightbox-navigation-help" class="visually-hidden">
