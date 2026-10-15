@@ -7,9 +7,10 @@ use std::sync::Arc;
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Parser, Tag, TagEnd};
 
 use bus::BusReader;
+use wire::principal::{NamedActor, PrincipalDirectory};
 use wire::{
-    CanonicalUuid, MediaQuote, QUOTE_DEPTH_LIMIT, QuoteAuthor, QuotePresentation, QuoteResolution,
-    QuoteTarget, QuoteUnavailable, ResolvedMediaQuote, ResolvedQuote,
+    Actor, CanonicalUuid, MediaQuote, QUOTE_DEPTH_LIMIT, QuoteAuthor, QuotePresentation,
+    QuoteResolution, QuoteTarget, QuoteUnavailable, ResolvedMediaQuote, ResolvedQuote,
 };
 
 /// One fixed-label Markdown quote link and its exact source range.
@@ -354,21 +355,56 @@ pub fn presenter(
     })
 }
 
-/// One resolution as a reader receives it: the recorded author, then the
-/// exact authenticated text.
+/// Every born principal's recorded name in the journal at `journal`, when a
+/// human directive authored `resolution`. A quote any other actor wrote, or
+/// none, needs no names and reads nothing.
+///
+/// # Errors
+///
+/// Returns why the journal or its principal index cannot be read.
+pub fn author_names(
+    journal: &Path,
+    resolution: &QuoteResolution,
+) -> Result<Option<PrincipalDirectory>, String> {
+    let author = match resolution {
+        QuoteResolution::Resolved(quote) => &quote.author,
+        QuoteResolution::Media(quote) => &quote.author,
+        QuoteResolution::Unavailable { .. } => return Ok(None),
+    };
+    if !matches!(
+        author,
+        QuoteAuthor::Directive {
+            actor: Actor::Operator | Actor::Human(_)
+        }
+    ) {
+        return Ok(None);
+    }
+    let reader = journal::JournalReader::open(journal)
+        .map_err(|error| format!("cannot open the journal to name the quote's author: {error}"))?;
+    reader
+        .read(|read| read.principal_roles())
+        .map(|roles| Some(PrincipalDirectory::names(&roles)))
+        .map_err(|error| format!("cannot read the principal names a quote's author takes: {error}"))
+}
+
+/// One resolution as a reader receives it: the recorded author, a human
+/// beside the name `principals` record, then the exact authenticated text.
 ///
 /// # Errors
 ///
 /// Returns the in-place refusal steering delivery renders when the target
 /// names no quotable source.
-pub fn render(resolution: &QuoteResolution) -> Result<String, String> {
+pub fn render(
+    resolution: &QuoteResolution,
+    principals: Option<&PrincipalDirectory>,
+) -> Result<String, String> {
     match resolution {
         QuoteResolution::Resolved(quote) => {
-            let author = render_author(&quote.author);
+            let author = render_author(&quote.author, principals);
             Ok(format!("Quoted from {author}:\n\n{}", quote.text))
         }
         QuoteResolution::Media(quote) => {
-            let author = render_author(&quote.author);
+            let author = render_author(&quote.author, principals);
             let markdown = quote.media.markdown().map_err(|error| error.to_string())?;
             Ok(format!("Quoted image from {author}:\n\n{markdown}"))
         }
@@ -380,12 +416,16 @@ pub fn render(resolution: &QuoteResolution) -> Result<String, String> {
     }
 }
 
-fn render_author(author: &QuoteAuthor) -> String {
+fn render_author(author: &QuoteAuthor, principals: Option<&PrincipalDirectory>) -> String {
     match author {
         QuoteAuthor::Agent { lane, occupant } => {
             format!("agent occupant {occupant} of lane {lane}")
         }
-        QuoteAuthor::Directive { actor } => actor.to_string(),
+        QuoteAuthor::Directive { actor } => principals
+            .map_or(NamedActor { actor, name: None }, |principals| {
+                principals.named(actor)
+            })
+            .to_string(),
     }
 }
 

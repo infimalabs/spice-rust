@@ -32,9 +32,10 @@ pub struct AppProtocolVersion(pub u32);
 impl AppProtocolVersion {
     /// The one app protocol this build speaks.
     ///
-    /// Version 14 admits the `human:<principal>` actor spelling a human
-    /// principal's own connection authors under.
-    pub const CURRENT: Self = Self(14);
+    /// Version 15 names each human by their principal's recorded profile: the
+    /// settings answer carries every born principal's display identity, and
+    /// the bootstrap carries no identity of its own.
+    pub const CURRENT: Self = Self(15);
 
     /// True when this is the app protocol this build speaks.
     #[must_use]
@@ -77,7 +78,7 @@ impl std::str::FromStr for AppProtocolVersion {
     }
 }
 
-/// Authenticated same-origin bootstrap for one embedded operator app.
+/// Authenticated same-origin bootstrap for one embedded app connection.
 ///
 /// The browser obtains this current generation document from the origin that
 /// served its exact embedded assets, then presents the capability only inside
@@ -88,29 +89,29 @@ impl std::str::FromStr for AppProtocolVersion {
 pub struct AppBootstrap {
     /// Current HTTP origin the asking browser used and no other endpoint.
     pub endpoint: String,
-    /// Operator capability for the immediately following opening.
+    /// The connecting principal's capability for the immediately following
+    /// opening.
     pub capability: CanonicalUuid,
     /// Resident generation the endpoint and capability address.
     pub epoch: CanonicalUuid,
     /// Product and build identity served at this bootstrap boundary.
     pub version: crate::reply::Version,
-    /// Operator identity resolved from repository Git configuration.
-    pub operator: OperatorIdentity,
 }
 
-/// Effective single-operator identity presented by the app, read from
-/// repository Git `user.name` and `user.email`.
+/// How the app presents one human: the name and email a principal's profile
+/// records, with the badge and Gravatar derived from them. Settings changes
+/// recorded while identity came from Git keep this shape in their bodies.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct OperatorIdentity {
-    /// Git `user.name`, absent when Git configures none.
+pub struct HumanIdentity {
+    /// Recorded display name, absent when none is recorded.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
     pub name: Option<String>,
-    /// Git `user.email`, absent when Git configures none.
+    /// Recorded email, absent when none is recorded.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

@@ -115,7 +115,7 @@ fn render_total(
 fn render_worker(render: &GroupRender<'_, '_>, lane: wire::CanonicalUuid) -> Html {
     let lanes = render.runtime.lanes();
     let member = lanes.and_then(|lanes| lanes.member(lane));
-    let label = crate::work::owner_label(&wire::Actor::Lane(lane), member);
+    let label = crate::work::owner_label(&wire::Actor::Lane(lane), member, None);
     let accent = lanes.and_then(|lanes| watchband::lane_accent(&lanes.lanes, lane));
     let attributes = classes!("app-horn-tab", "app-horn-tab--up", "app-horn-tab__handle");
     let focus_key = format!("group-lane:{lane}");

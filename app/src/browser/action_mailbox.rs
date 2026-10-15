@@ -133,6 +133,7 @@ impl ActionQueue {
             (stale.lanes(), CurrentRead::Lanes),
             (stale.inbox(), CurrentRead::Inbox),
             (stale.consent(), CurrentRead::Consent),
+            (stale.settings(), CurrentRead::Settings),
         ] {
             if invalidated {
                 mailbox.stale_current_reads.insert(read);

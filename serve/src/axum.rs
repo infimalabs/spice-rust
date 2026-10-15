@@ -73,7 +73,6 @@ struct SurfaceState {
     capabilities: Capabilities,
     version: wire::Version,
     app: crate::AppSource,
-    operator: wire::OperatorIdentity,
     history: history::HistoryLimits,
     admission: Mutex<Admission>,
     admission_changed: watch::Sender<Admission>,
@@ -420,14 +419,13 @@ pub struct Server {
     state: Arc<SurfaceState>,
 }
 
-/// Identity, capabilities, app, and operator presentation for one server generation.
+/// Identity, capabilities, and app for one server generation.
 #[derive(Debug)]
 pub struct Generation {
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
     version: wire::Version,
     app: crate::AppSource,
-    operator: wire::OperatorIdentity,
 }
 
 impl Generation {
@@ -444,15 +442,7 @@ impl Generation {
             capabilities,
             version,
             app,
-            operator: wire::OperatorIdentity::default(),
         }
-    }
-
-    /// Publish the effective operator identity through every bootstrap of this generation.
-    #[must_use]
-    pub fn with_operator_identity(mut self, operator: wire::OperatorIdentity) -> Self {
-        self.operator = operator;
-        self
     }
 }
 impl Server {
@@ -521,7 +511,6 @@ impl Server {
             capabilities,
             version,
             app,
-            operator,
         } = generation;
         if !requested.ip().is_loopback() && !access.allows_non_loopback() {
             return Err(std::io::Error::new(
@@ -557,7 +546,6 @@ impl Server {
                     capabilities,
                     version,
                     app,
-                    operator,
                     history: history::HistoryLimits::new(),
                     admission: Mutex::new(Admission::Open),
                     admission_changed,

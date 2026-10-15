@@ -68,7 +68,7 @@ mod tests {
                 &[],
                 &[],
                 &[],
-                &BTreeMap::new(),
+                &crate::composer_markdown::QuoteAgents::new(),
                 &BTreeMap::new(),
             )
             .html

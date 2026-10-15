@@ -12,12 +12,16 @@
 //! principal: the resident's command door, its operator-only controls, lane
 //! selection, steering wake, operator-direction recognition, and review
 //! coverage all ask it rather than comparing an actor against the operator.
+//! [`PrincipalDirectory`] is the display counterpart: every surface naming an
+//! acting or authoring human reads that principal's recorded profile through
+//! the same resolution, never Git configuration.
 
 use std::collections::BTreeSet;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Actor, CanonicalUuid, Digest, Domain, Seq};
+use crate::{Actor, CanonicalUuid, Digest, Domain, HumanIdentity, Seq};
 
 /// The born principal an actor acts as, before any role head is read.
 ///
@@ -48,6 +52,20 @@ impl ActingPrincipal {
     }
 }
 
+/// The entry, among `entries` in birth order, of the principal `actor` acts or
+/// authored as: the first for the historical operator actor, the one `born`
+/// names for a human actor, and none for a lane or the resident.
+fn acting_entry<'a, T>(
+    entries: &'a [T],
+    actor: &Actor,
+    born: impl Fn(&T) -> CanonicalUuid,
+) -> Option<&'a T> {
+    match ActingPrincipal::of(actor)? {
+        ActingPrincipal::Bootstrap => entries.first(),
+        ActingPrincipal::Born(principal) => entries.iter().find(|entry| born(entry) == principal),
+    }
+}
+
 /// Every born principal's current role head at one journal horizon: the one
 /// predicate deciding which actor holds which role.
 ///
@@ -71,20 +89,31 @@ impl PrincipalRoles {
         Self { heads }
     }
 
+    /// The current head of the principal `actor` acts as, or authored as: the
+    /// earliest-born principal for the historical operator actor, the named
+    /// principal for a human actor. Absent for a lane, the resident, a
+    /// principal never born, and the operator actor before any birth. Every
+    /// display of an acting or authoring human resolves through this alone.
+    #[must_use]
+    pub fn head(&self, actor: &Actor) -> Option<&PrincipalHead> {
+        acting_entry(&self.heads, actor, |head| head.principal)
+    }
+
+    /// Every born principal's current head, oldest birth first.
+    #[must_use]
+    pub fn heads(&self) -> &[PrincipalHead] {
+        &self.heads
+    }
+
     /// The roles `actor` currently holds as a principal, absent when it acts
     /// as no principal or names one never born.
     #[must_use]
     pub fn roles(&self, actor: &Actor) -> Option<BTreeSet<PrincipalRole>> {
-        match ActingPrincipal::of(actor)? {
-            ActingPrincipal::Bootstrap => Some(self.heads.first().map_or_else(
-                || BTreeSet::from([PrincipalRole::Operator]),
-                |head| head.roles.clone(),
-            )),
-            ActingPrincipal::Born(principal) => self
-                .heads
-                .iter()
-                .find(|head| head.principal == principal)
-                .map(|head| head.roles.clone()),
+        let acting = ActingPrincipal::of(actor)?;
+        match self.head(actor) {
+            Some(head) => Some(head.roles.clone()),
+            None => (acting == ActingPrincipal::Bootstrap)
+                .then(|| BTreeSet::from([PrincipalRole::Operator])),
         }
     }
 
@@ -126,6 +155,93 @@ impl PrincipalRoles {
                 .as_ref()
                 .map(|capability| (head.principal, capability))
         })
+    }
+}
+
+/// One born principal's display identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrincipalDisplay {
+    /// The principal displayed.
+    pub principal: CanonicalUuid,
+    /// How its recorded profile presents.
+    pub identity: HumanIdentity,
+}
+
+/// Every born principal's display identity, oldest birth first, at one
+/// journal horizon: the one source naming an acting or authoring human.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PrincipalDirectory(Vec<PrincipalDisplay>);
+
+impl PrincipalDirectory {
+    /// Each head of `roles` in birth order, presented by `present`.
+    #[must_use]
+    pub fn of(
+        roles: &PrincipalRoles,
+        present: impl Fn(&PrincipalProfile) -> HumanIdentity,
+    ) -> Self {
+        Self(
+            roles
+                .heads()
+                .iter()
+                .map(|head| PrincipalDisplay {
+                    principal: head.principal,
+                    identity: present(&head.profile),
+                })
+                .collect(),
+        )
+    }
+
+    /// Each head of `roles` named by its recorded profile alone, for a reader
+    /// that shows no badge or avatar.
+    #[must_use]
+    pub fn names(roles: &PrincipalRoles) -> Self {
+        Self::of(roles, |profile| HumanIdentity {
+            name: profile.name.clone(),
+            ..HumanIdentity::default()
+        })
+    }
+
+    /// How the principal `actor` acts or authored as presents, by the
+    /// resolution [`PrincipalRoles::head`] applies: the earliest-born
+    /// principal for the historical operator actor. Absent for a lane, the
+    /// resident, and a principal this directory does not hold.
+    #[must_use]
+    pub fn identity(&self, actor: &Actor) -> Option<&HumanIdentity> {
+        acting_entry(&self.0, actor, |display| display.principal).map(|display| &display.identity)
+    }
+
+    /// `actor` as a reader sees it: named when it resolves, by
+    /// [`Self::identity`], to a principal whose profile records a name.
+    #[must_use]
+    pub fn named<'a>(&'a self, actor: &'a Actor) -> NamedActor<'a> {
+        NamedActor {
+            actor,
+            name: self
+                .identity(actor)
+                .and_then(|identity| identity.name.as_deref()),
+        }
+    }
+}
+
+/// One actor as a reader sees it. A human whose principal's recorded profile
+/// carries a name reads `Name <actor>`, the name beside the identity it
+/// belongs to; every other actor reads as its identity alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NamedActor<'a> {
+    /// The actor itself.
+    pub actor: &'a Actor,
+    /// Its principal's recorded name, when it has one.
+    pub name: Option<&'a str>,
+}
+
+impl fmt::Display for NamedActor<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.name {
+            Some(name) => write!(formatter, "{name} <{}>", self.actor),
+            None => write!(formatter, "{}", self.actor),
+        }
     }
 }
 

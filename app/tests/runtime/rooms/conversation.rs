@@ -409,7 +409,9 @@ fn operator_items_lapse_recover_and_retire_with_the_answer() {
             .room(&room())
             .and_then(|state| state.events().get(&authority(ANS)))
             .map(|event| &event.kind),
-        Some(&RoomEventKind::Posted),
+        Some(&RoomEventKind::Posted {
+            author: wire::Actor::Operator
+        }),
         "the operator answer records in the question's room"
     );
 }

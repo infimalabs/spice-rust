@@ -26,7 +26,7 @@ pub(crate) fn render_task_text(
         &[],
         &[],
         &[],
-        &BTreeMap::new(),
+        &super::QuoteAgents::new(),
         &BTreeMap::new(),
         &[],
         Finish::TaskText {

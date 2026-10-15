@@ -240,18 +240,18 @@ pub(super) fn render_catalog(
     section("Working groups", body)
 }
 
-/// The operator's personal inbox, beneath their identity. Its heading follows
-/// the current identity on every render, so a refresh retitles the same
-/// surface without remounting its items.
+/// The connected principal's personal inbox, beneath their identity. Its
+/// heading follows that principal's recorded profile on every render, so a
+/// profile edit retitles the same surface without remounting its items.
 pub(super) fn render_inbox(
     runtime: Option<&AppRuntime>,
     controls: &Controls,
     sender: &SenderHandle,
 ) -> Html {
-    let unresolved = wire::OperatorIdentity::default();
+    let unresolved = wire::HumanIdentity::default();
     let operator = runtime
-        .and_then(AppRuntime::settings)
-        .map_or(&unresolved, |settings| &settings.operator);
+        .and_then(AppRuntime::own_identity)
+        .unwrap_or(&unresolved);
     let (count, body) = match runtime {
         None => (
             None,
@@ -647,17 +647,22 @@ fn event_summary(
     event: &crate::runtime::RoomEvent,
 ) -> (&'static str, String) {
     match &event.kind {
-        RoomEventKind::Published(wire::rooms::RoomPublicationContent::Linked { link }) => {
-            ("Source", format!("Linked source: {link:?}"))
-        }
-        RoomEventKind::Published(wire::rooms::RoomPublicationContent::OopsGroomed { grooming }) => {
-            ("OOPS", grooming_summary(runtime, grooming))
-        }
+        RoomEventKind::Published {
+            content: wire::rooms::RoomPublicationContent::Linked { link },
+            ..
+        } => ("Source", format!("Linked source: {link:?}")),
+        RoomEventKind::Published {
+            content: wire::rooms::RoomPublicationContent::OopsGroomed { grooming },
+            ..
+        } => ("OOPS", grooming_summary(runtime, grooming)),
         // Rendered by the conversation card family whenever its authority
         // is loaded.
-        RoomEventKind::Published(wire::rooms::RoomPublicationContent::Authored { .. })
+        RoomEventKind::Published {
+            content: wire::rooms::RoomPublicationContent::Authored { .. },
+            ..
+        }
         | RoomEventKind::Messaged { .. }
-        | RoomEventKind::Posted => (
+        | RoomEventKind::Posted { .. } => (
             "Conversation",
             "Conversation authority is unavailable.".to_owned(),
         ),

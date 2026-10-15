@@ -20,7 +20,7 @@ use wire::{
     Reply, ReplyPosition, Seq, SeqRange,
 };
 
-use super::settings_surface::{git_operator, malformed, normalize};
+use super::settings_surface::{git_profile, malformed, normalize};
 use super::{
     CommandResult, commit, new_uuid, seq, store_fault, typed_outcome, typed_store_fault, write,
 };
@@ -61,11 +61,8 @@ pub(super) fn admit(
     request: &PrincipalAdmit,
 ) -> Outcome<CommandAnswer> {
     let profile = if request.name.is_none() && request.email.is_none() {
-        match git_operator(repository) {
-            Ok(operator) => PrincipalProfile {
-                name: operator.name,
-                email: operator.email,
-            },
+        match git_profile(repository) {
+            Ok(profile) => profile,
             Err(outcome) => return typed_outcome(outcome),
         }
     } else {
@@ -290,13 +287,9 @@ pub(super) fn bootstrap(
     if born {
         return Ok(None);
     }
-    let operator = git_operator(repository)?;
     let standing = PrincipalStanding {
         principal: new_uuid(),
-        profile: PrincipalProfile {
-            name: operator.name,
-            email: operator.email,
-        },
+        profile: git_profile(repository)?,
         roles: BTreeSet::from([PrincipalRole::Operator]),
         capability: None,
     };

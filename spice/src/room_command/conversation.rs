@@ -9,6 +9,7 @@
 use std::fmt;
 
 use serde::Serialize;
+use wire::principal::PrincipalDirectory;
 use wire::rooms::{
     QuestionResultHead, QuestionResultRecord, QuestionResultRef, QuestionResultState, RoomAnchor,
     RoomAuthorityStamp, RoomDelivery, RoomDestination, RoomPublication, RoomPublicationKind,
@@ -16,7 +17,7 @@ use wire::rooms::{
 };
 use wire::{Actor, CanonicalUuid, Instant, Seq};
 
-use super::{Failure, Receipt, fault, store};
+use super::{Failure, Named, Receipt, fault, store};
 
 /// One operator item: the receipt the operator owes one publication.
 #[derive(Debug, Serialize)]
@@ -30,7 +31,7 @@ pub(crate) struct ItemView {
     state: RoomReceiptState,
     /// Who decided an acked, declined, or cancelled item.
     #[serde(skip_serializing_if = "Option::is_none")]
-    decided_by: Option<Actor>,
+    decided_by: Option<Named>,
 }
 
 /// One question's result and its parties.
@@ -48,7 +49,7 @@ pub(crate) struct ResultView {
     state: QuestionResultState,
     /// Who declined or cancelled the question.
     #[serde(skip_serializing_if = "Option::is_none")]
-    closed_by: Option<Actor>,
+    closed_by: Option<Named>,
     /// The operator closed it for a stored lane party.
     #[serde(rename = "override", skip_serializing_if = "std::ops::Not::not")]
     override_party: bool,
@@ -106,6 +107,7 @@ impl ResultView {
 /// The conversation `publication` belongs to, at the current heads.
 pub(super) fn conversation(
     read: &journal::JournalRead<'_>,
+    principals: &PrincipalDirectory,
     publication: &RoomPublication,
 ) -> Result<ConversationView, Failure> {
     let (verb, item, result) = match publication.kind() {
@@ -127,7 +129,7 @@ pub(super) fn conversation(
         Some(key) => read
             .room_item(&key)
             .map_err(store)?
-            .map(|(record, head)| item_view(read, record, head))
+            .map(|(record, head)| item_view(read, principals, record, head))
             .transpose()?,
         None => None,
     };
@@ -135,7 +137,7 @@ pub(super) fn conversation(
         Some(result) => read
             .question_result(result)
             .map_err(store)?
-            .map(|(record, head)| result_view(read, record, head))
+            .map(|(record, head)| result_view(read, principals, record, head))
             .transpose()?,
         None => None,
     };
@@ -144,6 +146,7 @@ pub(super) fn conversation(
 
 pub(super) fn item_view(
     read: &journal::JournalRead<'_>,
+    principals: &PrincipalDirectory,
     record: RoomReceiptRecord,
     head: journal::JournalHead<RoomReceiptHead>,
 ) -> Result<ItemView, Failure> {
@@ -161,12 +164,13 @@ pub(super) fn item_view(
         context: record.context().cloned(),
         position,
         state,
-        decided_by,
+        decided_by: decided_by.map(|actor| Named::of(principals, actor)),
     })
 }
 
 pub(super) fn result_view(
     read: &journal::JournalRead<'_>,
+    principals: &PrincipalDirectory,
     record: QuestionResultRecord,
     head: journal::JournalHead<QuestionResultHead>,
 ) -> Result<ResultView, Failure> {
@@ -191,7 +195,7 @@ pub(super) fn result_view(
             },
             RoomDelivery::Item { item } => match read.room_item(item).map_err(store)? {
                 Some((record, head)) => Returned::Item {
-                    item: Box::new(item_view(read, record, head)?),
+                    item: Box::new(item_view(read, principals, record, head)?),
                 },
                 None => Returned::Missing { item: item.clone() },
             },
@@ -207,7 +211,7 @@ pub(super) fn result_view(
         deadline: record.deadline(),
         position,
         state,
-        closed_by,
+        closed_by: closed_by.map(|actor| Named::of(principals, actor)),
         override_party,
         returned,
     })

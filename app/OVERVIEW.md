@@ -215,6 +215,20 @@ members can still reorder or leave, and the authority refuses a stale client's
 seventh member. Every change carries the revision the roster was drawn from.
 No roster gesture mounts, reorders, closes, or focuses a view.
 
+## Who the app names
+
+The app names each human by their principal's recorded profile, never by Git
+configuration. The operator panel's badge and the inbox heading show the
+connected principal's own name, initials, and Gravatar, so two humans connected
+at once each see themselves. Every authored item names its author's principal:
+a task's activity and steps, a room line, and a quote byline, which shows the
+author's initials with the full name as its accessible label. Facts the
+historical `operator` actor recorded read as the earliest-born principal. The
+principal directory rides the global settings read, and any `principal::` fact
+makes the app re-read it, so a profile edit reaches every open app without a
+reconnect. A human whose profile records no name reads as `human <id>`, and the
+historical actor as Operator.
+
 ## Jobs in the global menu
 
 Immediately after the operator panel and its inbox, the Spice view shows

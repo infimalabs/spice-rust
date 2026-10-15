@@ -310,14 +310,7 @@ impl<'a> Surface<'a> {
             return None;
         };
         let mut effects = CommandEffects::default();
-        let outcome = settings_surface::set(
-            self.bus,
-            self.repository,
-            self.epoch,
-            command,
-            settings,
-            &mut effects,
-        );
+        let outcome = settings_surface::set(self.bus, self.epoch, command, settings, &mut effects);
         Some(CommandDispatch::with_effects(outcome, effects))
     }
 
@@ -502,7 +495,7 @@ impl<'a> Surface<'a> {
     fn dispatch_policy(&self, command: &wire::AdmittedCommand) -> Option<Outcome<CommandAnswer>> {
         match (command.kind(), command.body()) {
             (CommandKind::GlobalSettingsRead, Intent::GlobalSettingsRead(_)) => {
-                Some(settings_surface::read(self.bus, self.repository))
+                Some(settings_surface::read(self.bus))
             }
             (CommandKind::VendorCatalog, Intent::VendorCatalog(_)) => {
                 Some(vendor_surface::catalog(self.bus, self.repository))

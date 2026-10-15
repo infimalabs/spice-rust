@@ -49,11 +49,43 @@ pub(crate) struct QuoteAgent {
     pub(crate) label: String,
 }
 
-/// Every team member's quote presentation, keyed by its lane and the occupant
-/// seated there now. A vacant member keys with no occupant, so a message its
-/// lane sent still names the member while nobody sits in the seat.
-pub(crate) type QuoteAgents =
-    BTreeMap<(wire::CanonicalUuid, Option<wire::CanonicalUuid>), QuoteAgent>;
+/// Everyone a quote byline can name. Each team member keys by its lane and the
+/// occupant seated there now; a vacant member keys with no occupant, so a
+/// message its lane sent still names the member while nobody sits in the seat.
+/// Each human principal is named by its recorded profile.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct QuoteAgents {
+    pub(crate) members: BTreeMap<(wire::CanonicalUuid, Option<wire::CanonicalUuid>), QuoteAgent>,
+    pub(crate) principals: wire::principal::PrincipalDirectory,
+}
+
+impl QuoteAgents {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl
+    FromIterator<(
+        (wire::CanonicalUuid, Option<wire::CanonicalUuid>),
+        QuoteAgent,
+    )> for QuoteAgents
+{
+    fn from_iter<I>(members: I) -> Self
+    where
+        I: IntoIterator<
+            Item = (
+                (wire::CanonicalUuid, Option<wire::CanonicalUuid>),
+                QuoteAgent,
+            ),
+        >,
+    {
+        Self {
+            members: members.into_iter().collect(),
+            principals: wire::principal::PrincipalDirectory::default(),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QuoteSource {
@@ -299,7 +331,7 @@ pub(crate) fn render_received_with_classifications(
         classifications,
         &[],
         &[],
-        &BTreeMap::new(),
+        &QuoteAgents::new(),
         &BTreeMap::new(),
     )
 }

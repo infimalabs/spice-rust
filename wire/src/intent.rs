@@ -168,7 +168,7 @@ pub struct GlobalSettingsRead {}
 
 /// Replace the durable global app settings.
 ///
-/// Operator identity is repository Git configuration, never a setting.
+/// Human identity is each principal's recorded profile, never a setting.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsSet {
@@ -182,9 +182,9 @@ pub struct GlobalSettingsSet {
 pub struct GlobalSettingsAnswer {
     /// Whether supported agent vendors launch in fast mode.
     pub fast_mode: bool,
-    /// Operator identity resolved from repository Git configuration when this
-    /// answer was produced.
-    pub operator: crate::OperatorIdentity,
+    /// Every born principal's display identity when this answer was produced,
+    /// naming the connected human and every human author.
+    pub principals: crate::principal::PrincipalDirectory,
 }
 
 /// Read the vendor choices this resident generation can seat.

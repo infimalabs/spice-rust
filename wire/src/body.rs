@@ -66,7 +66,7 @@ pub struct GlobalSettingsChanged {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    operator: Option<crate::OperatorIdentity>,
+    operator: Option<crate::HumanIdentity>,
 }
 
 impl GlobalSettingsChanged {

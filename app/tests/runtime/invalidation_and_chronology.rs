@@ -285,6 +285,51 @@ fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
 }
 
 #[test]
+fn a_principal_fact_rereads_the_settings_that_name_every_principal() {
+    let session = session(OPERATOR, EPOCH);
+    let profile = serde_json::json!({"name": "C Adams", "email": "c@example.invalid"});
+    for (fact, expected) in [
+        (
+            serde_json::json!({
+                "kind": "principal::admitted",
+                "principal": REQUEST,
+                "profile": profile,
+                "roles": [],
+            }),
+            true,
+        ),
+        (
+            serde_json::json!({
+                "kind": "principal::profiled",
+                "principal": REQUEST,
+                "from": {},
+                "profile": profile,
+            }),
+            true,
+        ),
+        (
+            serde_json::json!({"kind": "task::phased", "task": "1kKRRsDP", "phase": "verify"}),
+            false,
+        ),
+    ] {
+        let kind = fact["kind"]
+            .as_str()
+            .expect("fixture names its kind")
+            .to_owned();
+        let pushed = fact_frame(envelope(41, "operator", "thread:operator", &fact));
+        let stale = stale_reads(&admitted_stream(&session, &pushed));
+        assert_eq!(stale.settings(), expected, "{kind} moved settings wrongly");
+        if expected {
+            assert_eq!(
+                [stale.board(), stale.lanes(), stale.inbox(), stale.consent()],
+                [false; 4],
+                "{kind} invalidated a read no profile is drawn from"
+            );
+        }
+    }
+}
+
+#[test]
 fn an_authorization_rereads_the_controller_and_every_selected_output_detail() {
     let session = session(OPERATOR, EPOCH);
     let candidate = serde_json::json!({"controller": "1kKRRsDP", "candidate": "dVsYdDj7h"});

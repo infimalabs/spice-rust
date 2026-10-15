@@ -76,10 +76,10 @@ pub(super) fn spoken<'a>(
                 .and_then(|stamp| projection.conversation(stamp)),
             Some(directed.as_slice()),
         ),
-        RoomEventKind::Posted => {
+        RoomEventKind::Posted { author } => {
             let conversation = projection.conversation(publication)?;
             (
-                "Operator".to_owned(),
+                crate::work::owner_label(author, None, runtime.principals()),
                 None,
                 conversation.text.clone(),
                 Some(conversation),
@@ -87,9 +87,16 @@ pub(super) fn spoken<'a>(
             )
         }
         // A plain post is recorded in the room and directs no one.
-        RoomEventKind::Published(RoomPublicationContent::Authored { text }) => {
-            ("Operator".to_owned(), None, Some(text.clone()), None, None)
-        }
+        RoomEventKind::Published {
+            author,
+            content: RoomPublicationContent::Authored { text },
+        } => (
+            crate::work::owner_label(author, None, runtime.principals()),
+            None,
+            Some(text.clone()),
+            None,
+            None,
+        ),
         _ => return None,
     };
     // A lane's bytes stay in its transcript; absent its echo, the text its

@@ -14,7 +14,8 @@
 //! order through [`Page`]; a page that withholds any continues at the first
 //! withheld publication, and a shown page also groups its contributions by
 //! kind. `--contributions` pages only contributions. Every read also lists the
-//! anchor's operator decisions in decision order. Reading writes nothing.
+//! anchor's operator decisions in decision order. A human actor reads beside
+//! its principal's recorded name, read once per page. Reading writes nothing.
 
 pub(crate) mod awareness;
 mod conversation;
@@ -34,6 +35,7 @@ use clap::ArgMatches;
 use serde::Serialize;
 use spice::repository::Repository;
 use wire::output::{Bounded, Export};
+use wire::principal::{NamedActor, PrincipalDirectory};
 use wire::rooms::{
     RoomAuthorityStamp, RoomContributed, RoomContributionKind, RoomCoordinationStarted, RoomLeft,
     RoomMessaged, RoomPosted, RoomPublicationContent, RoomPublished, RoomPutAside, RoomSource,
@@ -50,6 +52,41 @@ use conversation::ConversationView;
 
 /// What a continuation's `--after` names.
 const CURSOR: &str = "a publication of this room";
+
+/// An actor a room read shows, beside the name its principal's recorded
+/// profile carries. It serializes as the actor alone, so JSON keeps the
+/// identity contract; text reads it as [`NamedActor`].
+#[derive(Debug, Serialize)]
+#[serde(transparent)]
+pub(crate) struct Named {
+    actor: Actor,
+    #[serde(skip)]
+    name: Option<String>,
+}
+
+impl Named {
+    fn of(principals: &PrincipalDirectory, actor: Actor) -> Self {
+        let name = principals.named(&actor).name.map(str::to_owned);
+        Self { actor, name }
+    }
+}
+
+impl fmt::Display for Named {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        NamedActor {
+            actor: &self.actor,
+            name: self.name.as_deref(),
+        }
+        .fmt(formatter)
+    }
+}
+
+/// Every born principal's recorded name inside `read`'s snapshot.
+fn principals(read: &journal::JournalRead<'_>) -> Result<PrincipalDirectory, Failure> {
+    read.principal_roles()
+        .map(|roles| PrincipalDirectory::names(&roles))
+        .map_err(store)
+}
 
 /// One page of a room, or the receipt of a page exported whole.
 #[derive(Debug, Serialize)]
@@ -80,7 +117,7 @@ pub(crate) struct Publication {
     seq: Seq,
     at: Instant,
     /// The operator, or the lane whose agent authored the packet.
-    actor: Actor,
+    actor: Named,
     /// Occupant whose transcript authored an agent packet.
     #[serde(skip_serializing_if = "Option::is_none")]
     author: Option<CanonicalUuid>,
@@ -320,9 +357,10 @@ pub(crate) fn project_publications(
 ) -> Result<Vec<Publication>, String> {
     let rows = bus
         .read(move |read| {
+            let principals = PrincipalDirectory::names(&read.principal_roles()?);
             envelopes
                 .into_iter()
-                .map(|envelope| row(read, envelope).map_err(Failure::guard))
+                .map(|envelope| row(read, &principals, envelope).map_err(Failure::guard))
                 .collect::<Result<Vec<_>, _>>()
         })
         .map_err(|error| error.to_string())?;
@@ -351,7 +389,7 @@ struct Row {
     publication: RoomAuthorityStamp,
     seq: Seq,
     at: Instant,
-    actor: Actor,
+    actor: Named,
     body: Record,
     directed: Vec<Route>,
     conversation: Option<ConversationView>,
@@ -390,6 +428,7 @@ fn recorded(
     selection: Selection,
 ) -> Result<Recorded, Failure> {
     let room = current_handle(read, anchor, projects)?;
+    let principals = principals(read)?;
     let cursor = read.cursor().map_err(store)?.ok_or_else(|| {
         fault(
             FaultClass::Store,
@@ -427,14 +466,14 @@ fn recorded(
         }
         .map_err(store)?;
         for envelope in fetched.rows.into_iter().take(retain - rows.len()) {
-            rows.push(row(read, envelope)?);
+            rows.push(row(read, &principals, envelope)?);
         }
         match fetched.continuation {
             Some(seq) => next = Some(seq),
             None => break,
         }
     }
-    let decisions = sections::decisions(read, anchor, &room)?;
+    let decisions = sections::decisions(read, &principals, anchor, &room)?;
     Ok(Recorded {
         cursor,
         room,
@@ -473,6 +512,7 @@ fn current_handle(
 
 fn row(
     read: &journal::JournalRead<'_>,
+    principals: &PrincipalDirectory,
     envelope: wire::Envelope<wire::AnyFact>,
 ) -> Result<Row, Failure> {
     let (publication, body, directives, conversed) =
@@ -566,13 +606,13 @@ fn row(
         })
         .collect::<Result<_, Failure>>()?;
     let conversation = conversed
-        .map(|publication| conversation::conversation(read, &publication))
+        .map(|publication| conversation::conversation(read, principals, &publication))
         .transpose()?;
     Ok(Row {
         publication,
         seq: envelope.seq,
         at: envelope.at,
-        actor: envelope.actor,
+        actor: Named::of(principals, envelope.actor),
         body,
         directed,
         conversation,
@@ -735,7 +775,7 @@ impl Publication {
     }
 
     pub(crate) fn author_lane(&self) -> Option<CanonicalUuid> {
-        match self.actor {
+        match self.actor.actor {
             Actor::Lane(lane) => Some(lane),
             _ => None,
         }

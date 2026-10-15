@@ -107,11 +107,15 @@ pub(crate) fn referenced_quote_agents(
         lanes.extend(addressee);
         pending.extend(quotes);
     }
-    agents
-        .iter()
-        .filter(|((lane, _), _)| lanes.contains(lane))
-        .map(|(key, agent)| (*key, agent.clone()))
-        .collect()
+    super::QuoteAgents {
+        members: agents
+            .members
+            .iter()
+            .filter(|((lane, _), _)| lanes.contains(lane))
+            .map(|(key, agent)| (*key, agent.clone()))
+            .collect(),
+        principals: agents.principals.clone(),
+    }
 }
 
 /// The source cards referenced by one card's quotes and directive contexts.
@@ -335,6 +339,7 @@ fn agent_author<'a>(
     occupant: wire::CanonicalUuid,
 ) -> Option<(&'a super::QuoteAgent, &'static str)> {
     agents
+        .members
         .get(&(lane, Some(occupant)))
         .map(|agent| (agent, "current"))
         .or_else(|| historical_agent(agents, source, lane).map(|agent| (agent, "historical")))
@@ -456,6 +461,7 @@ fn occupant_agent(
     occupant: wire::CanonicalUuid,
 ) -> Option<(&super::QuoteAgent, &'static str)> {
     agents
+        .members
         .get(&(lane, Some(occupant)))
         .map(|agent| (agent, "current"))
         .or_else(|| lane_member_agent(agents, lane).map(|agent| (agent, "historical")))
@@ -614,16 +620,28 @@ fn quote_author_name_html(
                 author_accent(author, agents, source),
             )
         }
-        // A human principal's directive takes the operator's slot until the
-        // app carries principal profiles to name its author.
+        // A human directive names its author by the initials of the
+        // principal profile it was authored as, and by nothing before that
+        // profile is known or when it records no name.
         QuoteAuthor::Directive {
-            actor: wire::Actor::Operator | wire::Actor::Human(_),
-        } => quote_name_html(
-            "",
-            " data-quote-author=\"directive\" data-quote-actor=\"operator\" role=\"img\" \
-             aria-label=\"Operator\"",
-            None,
-        ),
+            actor: actor @ (wire::Actor::Operator | wire::Actor::Human(_)),
+        } => agents
+            .principals
+            .identity(actor)
+            .and_then(|identity| {
+                let initials = identity.initials.as_deref()?;
+                let name = identity.name.as_deref().unwrap_or(initials);
+                Some(quote_name_html(
+                    initials,
+                    &format!(
+                        " data-quote-author=\"directive\" data-quote-actor=\"human\" \
+                         role=\"img\" aria-label=\"{}\"",
+                        super::escape_html_attribute(name),
+                    ),
+                    None,
+                ))
+            })
+            .unwrap_or_default(),
         QuoteAuthor::Directive {
             actor: wire::Actor::Spice,
         } => quote_name_html(
@@ -674,7 +692,7 @@ fn quote_age_slot_html(
 ) -> String {
     let mut data = match author {
         QuoteAuthor::Agent { lane, occupant } => {
-            let state = if agents.contains_key(&(*lane, Some(*occupant))) {
+            let state = if agents.members.contains_key(&(*lane, Some(*occupant))) {
                 "current"
             } else {
                 "historical"
@@ -726,6 +744,7 @@ fn lane_member_agent(
     lane: wire::CanonicalUuid,
 ) -> Option<&super::QuoteAgent> {
     agents
+        .members
         .iter()
         .find_map(|((agent_lane, _), agent)| (*agent_lane == lane).then_some(agent))
 }

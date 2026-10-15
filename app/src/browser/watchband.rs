@@ -126,8 +126,8 @@ pub(super) fn render_team(
     let can_configure = runtime.offers(CommandKind::TeamConfigure);
     let can_arrange_teams = runtime.offers(CommandKind::TeamArrange);
     let topology = Rc::new(watchband::topology(&lanes.lanes));
-    let quote_agents = Rc::new(
-        lanes
+    let quote_agents = Rc::new(crate::composer_markdown::QuoteAgents {
+        members: lanes
             .lanes
             .iter()
             .flat_map(|team| {
@@ -148,8 +148,9 @@ pub(super) fn render_team(
                         )
                     })
             })
-            .collect::<crate::composer_markdown::QuoteAgents>(),
-    );
+            .collect(),
+        principals: runtime.principals().cloned().unwrap_or_default(),
+    });
     let teams = lanes
         .lanes
         .iter()

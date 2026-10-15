@@ -347,7 +347,10 @@ fn render_publication(
     // Only authored words quote; the plane has no text for a lane's packet
     // until its transcript is read, and other events carry no words at all.
     let quote = match &event.kind {
-        RoomEventKind::Published(RoomPublicationContent::Authored { text }) => {
+        RoomEventKind::Published {
+            content: RoomPublicationContent::Authored { text },
+            ..
+        } => {
             let target = QuoteTarget::Room {
                 room: channel.stamp.clone(),
                 publication: publication.clone(),
@@ -588,8 +591,11 @@ fn design_composer_placeholder(runtime: &AppRuntime, channel: &Channel) -> Strin
             .filter(|event| {
                 matches!(
                     event.kind,
-                    RoomEventKind::Posted
-                        | RoomEventKind::Published(RoomPublicationContent::Authored { .. })
+                    RoomEventKind::Posted { .. }
+                        | RoomEventKind::Published {
+                            content: RoomPublicationContent::Authored { .. },
+                            ..
+                        }
                 )
             })
             .count()

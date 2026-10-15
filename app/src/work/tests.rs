@@ -489,16 +489,16 @@ fn owners_read_as_agent_names_and_unknown_lanes_stay_distinguishable() {
         jobs: Vec::new(),
     };
     let actor = Actor::Lane(lane);
-    assert_eq!(owner_label(&actor, Some(&member)), "spice-rust-h");
+    assert_eq!(owner_label(&actor, Some(&member), None), "spice-rust-h");
     member.name = Some("builder".to_owned());
-    assert_eq!(owner_label(&actor, Some(&member)), "builder");
-    assert_eq!(owner_label(&actor, None), "lane 11111111");
+    assert_eq!(owner_label(&actor, Some(&member), None), "builder");
+    assert_eq!(owner_label(&actor, None, None), "lane 11111111");
     assert_eq!(
-        owner_label(&Actor::Lane(other), Some(&member)),
+        owner_label(&Actor::Lane(other), Some(&member), None),
         "lane 44444444",
         "a member of another lane never lends its name"
     );
-    assert_eq!(owner_label(&Actor::Operator, None), "Operator");
+    assert_eq!(owner_label(&Actor::Operator, None, None), "Operator");
 
     let mut held = task(1, "alpha.core");
     held.workflow.body.assignment = Some(Actor::Spice);

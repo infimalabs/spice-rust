@@ -660,15 +660,7 @@ fn apply_scalar_response(
 ) -> Result<CommandApplication, String> {
     match kind {
         PendingKind::Board => runtime.apply_board(&admit_response(session, bytes)?),
-        PendingKind::Settings => {
-            let admitted: crate::Admitted<Response<wire::intent::GlobalSettingsAnswer>> =
-                admit_response(session, bytes)?;
-            if runtime.apply_settings(&admitted)
-                && let Some(settings) = runtime.settings()
-            {
-                super::publish_operator_identity(&settings.operator);
-            }
-        }
+        PendingKind::Settings => runtime.apply_settings(&admit_response(session, bytes)?),
         PendingKind::Vendors => runtime.apply_vendor_catalog(&admit_response(session, bytes)?),
         PendingKind::Consent => runtime.apply_consent_queue(&admit_response(session, bytes)?),
         _ => unreachable!("scalar response partition is closed"),

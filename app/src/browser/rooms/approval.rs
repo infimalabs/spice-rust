@@ -834,7 +834,7 @@ fn render_withdrawal(
     let record = &withdrawal.value;
     let author = match &record.author {
         wire::Actor::Lane(lane) => lane_label(runtime, *lane),
-        other => crate::work::owner_label(other, None),
+        other => crate::work::owner_label(other, None, runtime.principals()),
     };
     let fact = SequenceCode::new(withdrawal.position.get());
     html! {

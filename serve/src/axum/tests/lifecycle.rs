@@ -919,7 +919,6 @@ fn host_and_origin_must_name_the_published_endpoint() {
         capabilities: Capabilities::default(),
         version: app.version(),
         app: app.source(),
-        operator: wire::OperatorIdentity::default(),
         history: super::super::history::HistoryLimits::new(),
         admission: Mutex::new(Admission::Open),
         admission_changed: watch::channel(Admission::Open).0,

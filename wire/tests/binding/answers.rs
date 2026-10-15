@@ -280,12 +280,15 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
         AnswerShape::GlobalSettings,
         r#"{
   "fast_mode": true,
-  "operator": {
-    "name": "C Adams",
-    "email": "c@example.invalid",
-    "initials": "CA",
-    "gravatar": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-  }
+  "principals": [{
+    "principal": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+    "identity": {
+      "name": "C Adams",
+      "email": "c@example.invalid",
+      "initials": "CA",
+      "gravatar": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+  }]
 }"#,
     ),
     (
