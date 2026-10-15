@@ -42,12 +42,14 @@ moves no group, joins, acknowledges, authorizes, and wakes nothing, and commits
 no journal fact. Operator decision controls appear only on an open Design;
 lane sessions retain their typed contribution composer. For an open Design,
 the exact currently seated lane occupant named by a durable invitation also
-sees **Amend statement**. Preview compares its title and description with the
-current board statement, omits unchanged fields, and freezes that statement
-head; save sends the ordinary `TaskEdit`. A moved head refuses beside both
-retained inputs, while success rebases them to the accepted values. Another
-occupant, an operator session, an uninvited lane, and every settled Design see
-no amendment controls.
+sees **Amend statement**. The draft remembers the statement it was drawn
+from: preview sends only the title or description the occupant changed from
+it and freezes its head, and save sends the ordinary `TaskEdit`. A statement
+edit landing meanwhile therefore refuses beside both retained inputs rather
+than being reverted. After a save or refusal, the next preview rebases onto
+the current statement: untouched fields follow it and changed fields stay.
+Another occupant, an operator session, an uninvited lane, and every settled
+Design see no amendment controls.
 
 ## Concluding a Design
 

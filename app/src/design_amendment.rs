@@ -1,8 +1,10 @@
 //! One invited occupant's title and description amendment for an open Design.
 //!
-//! Editing and previewing are browser-local. A preview freezes the visible
-//! statement head into the ordinary `TaskEdit` witness, and a refusal returns
-//! to editing without changing either entered field.
+//! Editing and previewing are browser-local. A draft remembers the statement
+//! it was drawn from: preview sends only the fields the occupant changed from
+//! that base and witnesses its head, so a statement edit landing meanwhile
+//! refuses through the ordinary `TaskEdit` witness instead of being reverted.
+//! A refusal returns to editing without changing either entered field.
 
 use wire::intent::{BoardTask, TaskEdit};
 use wire::rooms::DesignNoticed;
@@ -101,7 +103,11 @@ impl StatementSnapshot {
 /// Browser-local amendment fields for one Design.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DesignAmendment {
-    design: TaskStamp,
+    /// The statement the entered fields were drawn from.
+    base: StatementSnapshot,
+    /// Set once a submission settles: the next preview first rebases onto the
+    /// statement current then.
+    rebase: bool,
     title: String,
     description: String,
     phase: DraftPhase,
@@ -118,7 +124,8 @@ impl DesignAmendment {
     #[must_use]
     pub(crate) fn from_snapshot(statement: &StatementSnapshot) -> Self {
         Self {
-            design: statement.design.clone(),
+            base: statement.clone(),
+            rebase: false,
             title: statement.title.clone(),
             description: statement.description.clone(),
             phase: DraftPhase::Editing,
@@ -175,6 +182,9 @@ impl DesignAmendment {
         if self.is_pending() {
             return;
         }
+        if self.rebase && statement.design == self.base.design {
+            self.rebase_onto(statement);
+        }
         match self.submission(statement) {
             Ok(submission) => {
                 self.phase = DraftPhase::Previewing(submission);
@@ -203,26 +213,43 @@ impl DesignAmendment {
         Some(submission)
     }
 
-    /// Settle the pending edit. Success rebases the local fields to the exact
-    /// trimmed values submitted; refusal retains the entered values verbatim.
+    /// Settle the pending edit. Success records the exact trimmed values
+    /// submitted; refusal retains the entered values verbatim. Either way the
+    /// next preview rebases onto the statement current then.
     pub fn settle(&mut self, outcome: Result<(), String>) {
         let DraftPhase::Pending(submission) = &self.phase else {
             return;
         };
         let submission = submission.clone();
         self.phase = DraftPhase::Editing;
+        self.rebase = true;
         match outcome {
             Ok(()) => {
                 if let Some(title) = submission.request.title {
+                    self.base.title.clone_from(&title);
                     self.title = title;
                 }
                 if let Some(description) = submission.request.description {
+                    self.base.description.clone_from(&description);
                     self.description = description;
                 }
                 self.notice = Some(DraftNotice::Saved);
             }
             Err(reason) => self.notice = Some(DraftNotice::Refused(reason)),
         }
+    }
+
+    /// Adopt `statement` as the base: a field still equal to the old base
+    /// follows the statement, while a changed field keeps its entered text.
+    fn rebase_onto(&mut self, statement: &StatementSnapshot) {
+        if self.title.trim() == self.base.title {
+            self.title.clone_from(&statement.title);
+        }
+        if self.description.trim() == self.base.description {
+            self.description.clone_from(&statement.description);
+        }
+        self.base = statement.clone();
+        self.rebase = false;
     }
 
     fn edit(&mut self, change: impl FnOnce(&mut Self)) {
@@ -234,8 +261,11 @@ impl DesignAmendment {
         change(self);
     }
 
+    /// Changed fields relative to the base, witnessed at the base head. Only
+    /// the current statement's design and standing are consulted.
     fn submission(&self, statement: &StatementSnapshot) -> Result<Submission, String> {
-        if statement.design != self.design {
+        let base = &self.base;
+        if statement.design != base.design {
             return Err(
                 "task::edit-design-mismatch: preview the Design this draft names".to_owned(),
             );
@@ -248,14 +278,14 @@ impl DesignAmendment {
             return Err("task::title-empty: write a title".to_owned());
         }
         let description = self.description.trim();
-        let title = (title != statement.title).then(|| title.to_owned());
-        let description = (description != statement.description).then(|| description.to_owned());
+        let title = (title != base.title).then(|| title.to_owned());
+        let description = (description != base.description).then(|| description.to_owned());
         if title.is_none() && description.is_none() {
             return Err("task::edit-empty: change the title or description".to_owned());
         }
         Ok(Submission {
             request: TaskEdit {
-                task: statement.handle.clone(),
+                task: base.handle.clone(),
                 title,
                 description,
                 acceptance: Vec::new(),
@@ -267,8 +297,8 @@ impl DesignAmendment {
                 flow: None,
             },
             expected: vec![Witness::Task {
-                task: statement.design.clone(),
-                head: statement.head,
+                task: base.design.clone(),
+                head: base.head,
             }],
         })
     }
