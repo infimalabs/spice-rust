@@ -809,9 +809,10 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// purpose, drops none. The lane's record of the last event heard moves
     /// past each event only once its notice is written, under the input's
     /// lock, so a closed seat hears nothing and the next seat's catch-up owes
-    /// exactly what this one did not say.
+    /// exactly what this one did not say. Until the first prompt is written
+    /// the events wait behind it.
     fn deliver_events(&self, job: &Job) {
-        if !job.events() {
+        if !job.events() || self.hold_job(job, None) {
             return;
         }
         let mut stdin = self.stdin.lock().unwrap_or_else(PoisonError::into_inner);
@@ -845,8 +846,12 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// input's lock, so a closed seat claims nothing and the next seat's
     /// catch-up owes the ending, and a notice that fails to write gives the
     /// claim back. A stopped job has nothing to deliver; whoever stopped it
-    /// was answered.
+    /// was answered. Until the first prompt is written the ending waits
+    /// behind it, unclaimed.
     fn deliver(&self, job: &Job, report: Option<&Report>) {
+        if self.hold_job(job, Some(report)) {
+            return;
+        }
         let mut stdin = self.stdin.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(stream) = stdin.as_mut() else {
             return;
