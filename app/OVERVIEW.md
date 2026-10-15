@@ -23,7 +23,11 @@ The admitted-board graph renders first, including every selected root, roots
 with no edges, and explicit outside-board or outside-selection neighbors. The
 same graph offers Dependency, Lineage, Reviews, and Lifecycle lenses. A
 Dependency edge points from each prerequisite to every dependent it blocks and
-reads **then**.
+reads **then**. The same lens draws a **then** arrow from each task's
+preparation controller, such as a Design to each Plan it prepared, to that
+output, so a Design's work flows from it rather than stacking; a selected
+output's controller outside the selection joins as an outside neighbor. That
+arrow presents the recorded preparation and is never a dependency.
 Direction and depth/node controls bound only optional resident enrichment,
 never the local selection; first-load, unavailable, retry, and truncation or
 frontier states never replace or silently omit a selected root. A node the
