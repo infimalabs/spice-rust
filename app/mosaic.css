@@ -475,9 +475,6 @@ path.image-annotation-hit { fill: none; }
   grid-area: status; display: grid; grid-template-columns: var(--app-total-tab-inline-size) minmax(0, 1fr);
   box-sizing: border-box; min-width: 0; padding-inline: var(--team-toolbar-inline-inset);
 }
-/* Touching consoles round their meeting top corners, like lane-top tabs, into the shared dividing rule; browser edges stay square. */
-.team-surface:has(+ .team-surface) > .team-toolbar > .team-status-row { border-start-end-radius: var(--app-radius-card); }
-.team-surface + .team-surface > .team-toolbar > .team-status-row { border-start-start-radius: var(--app-radius-card); }
 .team-toolbar > .team-status-row:not(:has(> .team-lights)) { grid-template-columns: minmax(0, 1fr); }
 .team-status-row > .team-lights {
   --team-pip-columns: 3; --team-pip-rows: 2; display: grid;
