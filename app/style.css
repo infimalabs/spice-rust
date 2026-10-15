@@ -347,11 +347,6 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .group-design-pip:is(.done, .collapsed, .deleted, .unavailable) { --app-presence-color: var(--muted); --app-presence-opacity: .35; box-shadow: none; }
 .group-surface .ticker-age.unselected { color: var(--warning); }
 .group-surface .ticker-age:is(.done, .collapsed, .deleted, .unavailable) { color: var(--app-anchor-muted); opacity: .7; }
-/* The rail mirrors the Design globals: the total closes it and the lanes
-   working the group stack toward the start beside it. */
-.group-surface > .team-toolbar > .team-task-rail { grid-template-columns: minmax(0, 1fr) var(--app-total-tab-inline-size); }
-.group-surface .team-task-rail > [data-work-scope="group"] { grid-column: 2; }
-.group-surface .team-task-rail > .team-tasks { grid-column: 1; flex-direction: row-reverse; }
 
 .app-presence-pip--work {
   width: var(--app-presence-pip-size);

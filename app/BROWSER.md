@@ -129,9 +129,9 @@ its clause, which alone yields width; the label's title keeps the whole
 sentence. As on a team toolbar, the status band shows the newest thing said in
 any of the group's designs and no group name.
 
-As on the command bar's Design rail, the group's total closes its tab rail and
-opens the group's work overview. Beside it, toward the start, the rail lists
-each lane that holds an active claim on an open task
+As on a team's rail, the group's total leads its tab rail and opens the group's
+work overview. After it, toward the end, the rail lists each lane that holds an
+active claim on an open task
 associated with any of the group's designs: the design itself, or a task
 whose preparation parent, controller, or construction is that design. A lane
 enters and leaves the rail exactly as a task enters and leaves a team's rail
