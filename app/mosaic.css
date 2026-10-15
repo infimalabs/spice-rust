@@ -743,6 +743,9 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   -webkit-mask-image: linear-gradient(90deg, var(--app-mask-opaque) calc(100% - 18px), transparent);
   mask-image: linear-gradient(90deg, var(--app-mask-opaque) calc(100% - 18px), transparent);
 }
+/* The trailing menu owns the last column, so a heading without an image
+   strip, such as a Design composer's, still pins it to the right edge. */
+.composer-shard-heading > .agent-menu { grid-column: -2; }
 .composer-shard-link {
   color: var(--accent);
   font-variant-numeric: tabular-nums;
@@ -762,10 +765,8 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 /* Edge-to-edge cover crops fill the heading band from the trailing control
    toward the age. The bounded strip scrolls, so attachments never push the
-   prose out of the row. An empty strip stays laid out at zero width rather
-   than `display: none`: it owns the third heading column, and dropping out of
-   the grid would slide the final control a whole column left until the first
-   image arrives. */
+   prose out of the row. An empty strip stays laid out at zero width in the
+   third heading column. */
 .composer-shard-image-indicators {
   display: flex;
   flex-direction: row-reverse;
