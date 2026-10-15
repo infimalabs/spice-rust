@@ -12,9 +12,10 @@ and replaces itself with `#/chat`.
 
 Wide, narrow, short, empty, one-member, and multi-member consoles keep a usable
 header, composer, and stream without a nested vertical scroller. Side-by-side
-consoles share one faint dividing edge, the same stroke as the status band's
-top rule: it begins on that rule, leaving the tab row above it open, and runs
-unbroken to the consoles' bottom.
+consoles share one faint dividing edge in the soft shared edge tone, painted on
+the earlier console's end edge above its controls, so those controls read as in
+front of the next console: it begins at the foot of the task band, leaving the
+tab row above it open, and runs unbroken to the consoles' bottom.
 
 ## Working groups and teams
 
