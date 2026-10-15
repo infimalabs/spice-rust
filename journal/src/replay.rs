@@ -656,6 +656,16 @@ fn verify_heads(
                 .ok_or_else(|| "finding identity disagrees with the row".to_owned())
         },
     )?;
+    count += verify_keyed_heads::<wire::principal::PrincipalHead>(
+        connection,
+        "principal_heads",
+        violations,
+        |key, seq, head| {
+            (head.principal.to_string() == key && head.born.get() <= seq)
+                .then_some(())
+                .ok_or_else(|| "principal identity or birth disagrees with the row".to_owned())
+        },
+    )?;
     count += verify_transcript_heads(connection, violations)?;
     count += verify_residency(connection, violations)?;
     Ok(count)
@@ -1095,6 +1105,7 @@ fn head_key(table: &str) -> &'static str {
         "witness_heads" => "name",
         "trust_heads" => "digest",
         "finding_heads" => "identity",
+        "principal_heads" => "principal",
         "transcript_source_heads" => "stream",
         _ => unreachable!("head table inventory is closed"),
     }

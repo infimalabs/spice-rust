@@ -898,6 +898,17 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
         (&["group", "list"][..], CommandKind::WorkingGroupRead),
         (&["group", "move"][..], CommandKind::WorkingGroupMove),
         (&["group", "arrange"][..], CommandKind::WorkingGroupArrange),
+        (&["principal", "list"][..], CommandKind::PrincipalRead),
+        (&["principal", "admit"][..], CommandKind::PrincipalAdmit),
+        (&["principal", "profile"][..], CommandKind::PrincipalEdit),
+        (
+            &["principal", "role", "grant"][..],
+            CommandKind::PrincipalGrant,
+        ),
+        (
+            &["principal", "role", "revoke"][..],
+            CommandKind::PrincipalRevoke,
+        ),
         (&["doc"][..], CommandKind::DocApply),
         (&["doc", "ledger"][..], CommandKind::DocLedger),
         (&["taste", "add"][..], CommandKind::TaskAdd),
@@ -927,7 +938,15 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
         .filter(|contract| {
             matches!(
                 contract.path[0],
-                "lane" | "board" | "room" | "group" | "preparation" | "task" | "doc" | "taste"
+                "lane"
+                    | "board"
+                    | "room"
+                    | "group"
+                    | "principal"
+                    | "preparation"
+                    | "task"
+                    | "doc"
+                    | "taste"
             )
         })
         .filter(|contract| kind_for(contract.path).is_some())

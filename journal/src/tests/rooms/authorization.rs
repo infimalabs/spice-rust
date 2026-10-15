@@ -500,6 +500,7 @@ fn retained_two_step_selection_crosses_to_one_exact_decision() {
                      '1'
                  ))
              ) AS BLOB);
+             DROP TABLE principal_heads;
              UPDATE journal_schema SET version = 55 WHERE singleton = 1;
              PRAGMA user_version = 55;",
         )
@@ -576,6 +577,7 @@ fn retained_two_step_return_gains_an_explicit_migration_reason() {
                  '$.outcome.reason'
              ) AS BLOB)
              WHERE json_type(CAST(body AS TEXT), '$.outcome.kind') IS NOT NULL;
+             DROP TABLE principal_heads;
              UPDATE journal_schema SET version = 55 WHERE singleton = 1;
              PRAGMA user_version = 55;",
         )
@@ -650,6 +652,7 @@ fn candidate_less_retained_decision_refuses_with_its_owning_release() {
                  '$.outcome.reason'
              ) AS BLOB)
              WHERE json_type(CAST(body AS TEXT), '$.outcome.kind') IS NOT NULL;
+             DROP TABLE principal_heads;
              UPDATE journal_schema SET version = 55 WHERE singleton = 1;
              PRAGMA user_version = 55;",
         )

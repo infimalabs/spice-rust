@@ -1,15 +1,23 @@
 //! Closed command body and answer bindings.
 
+mod answer;
+mod principal;
 mod rooms;
 
 use serde::Serialize;
 
 use crate::QuoteResolution;
 use crate::command::CommandKind;
+use crate::principal::{
+    PrincipalAdmit, PrincipalEdit, PrincipalRead, PrincipalRoleRef, PrincipalStanding,
+    PrincipalsAnswer,
+};
 use crate::rooms::{
     CandidateCoverageRecord, CandidateCritiqueRecord, CandidateRetain, CandidateWithdraw,
     OutputAdopt, PreparationDecide, RoomPost, RoomPostAnswer,
 };
+
+use answer::AnswerSource;
 
 use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
@@ -193,6 +201,14 @@ pub enum BodyShape {
     ReleasePublish,
     /// [`UpChange`]
     UpChange,
+    /// [`PrincipalRead`]
+    PrincipalRead,
+    /// [`PrincipalAdmit`]
+    PrincipalAdmit,
+    /// [`PrincipalEdit`]
+    PrincipalEdit,
+    /// [`PrincipalRoleRef`]
+    PrincipalRoleRef,
 }
 
 /// Which answer DTO a command kind's reply carries.
@@ -272,6 +288,10 @@ pub enum AnswerShape {
     Recognition,
     /// [`QuoteResolution`]
     Quote,
+    /// [`PrincipalsAnswer`]
+    Principals,
+    /// [`PrincipalStanding`]
+    Principal,
 }
 
 /// One decoded successful reply body, tagged by the shape its command selected.
@@ -352,6 +372,10 @@ pub enum CommandAnswer {
     Recognition(RecognitionAnswer),
     /// [`AnswerShape::Quote`]
     Quote(QuoteResolution),
+    /// [`AnswerShape::Principals`]
+    Principals(PrincipalsAnswer),
+    /// [`AnswerShape::Principal`]
+    Principal(PrincipalStanding),
 }
 
 impl CommandAnswer {
@@ -395,6 +419,8 @@ impl CommandAnswer {
             Self::Taste(_) => AnswerShape::Taste,
             Self::Recognition(_) => AnswerShape::Recognition,
             Self::Quote(_) => AnswerShape::Quote,
+            Self::Principals(_) => AnswerShape::Principals,
+            Self::Principal(_) => AnswerShape::Principal,
         }
     }
     const fn board_answer_shape(&self) -> AnswerShape {
@@ -438,141 +464,6 @@ impl CommandAnswer {
     }
 }
 
-impl AnswerShape {
-    /// Decode a successful reply body into the answer this shape names.
-    ///
-    /// # Errors
-    ///
-    /// Returns the decoder error when the bytes are not that shape. Answers
-    /// refuse unknown fields, so a body spelled for the wrong command is a
-    /// decode failure rather than a silently truncated value.
-    pub fn decode(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
-        self.decode_from(bytes)
-    }
-
-    /// Decode a reply body that was already parsed as part of its envelope.
-    ///
-    /// Equivalent to [`Self::decode`] of the value's encoding, without
-    /// serializing a possibly megabyte-sized body only to parse it again.
-    ///
-    /// # Errors
-    ///
-    /// Returns the decoder error when the value is not that shape.
-    pub fn decode_value(
-        self,
-        value: serde_json::Value,
-    ) -> Result<CommandAnswer, serde_json::Error> {
-        self.decode_from(value)
-    }
-
-    fn decode_from(self, source: impl AnswerSource) -> Result<CommandAnswer, serde_json::Error> {
-        match self {
-            Self::LaneJobs => Ok(CommandAnswer::LaneJobs(Box::new(source.read()?))),
-            Self::LaneJob => Ok(CommandAnswer::LaneJob(Box::new(source.read()?))),
-            Self::WorkingGroupPage | Self::WorkingGroupChange => self.decode_working_group(source),
-            Self::RoomPost
-            | Self::RoomCoordination
-            | Self::RoomLeave
-            | Self::RoomContribute
-            | Self::RoomContributionSources
-            | Self::RoomControl
-            | Self::RoomConversationText => self.decode_room(source),
-            Self::Board
-            | Self::Report
-            | Self::TaskDetail
-            | Self::TaskRelations
-            | Self::TaskTimeline
-            | Self::Text
-            | Self::Task
-            | Self::Claim
-            | Self::Doc
-            | Self::Directive
-            | Self::Inbox
-            | Self::Consent
-            | Self::ConsentQueue => self.decode_primary(source),
-            Self::ConsentPolicy
-            | Self::GlobalSettings
-            | Self::VendorCatalog
-            | Self::Trust
-            | Self::Lane
-            | Self::LaneChange
-            | Self::LaneRenewal
-            | Self::State
-            | Self::Recall
-            | Self::Taste
-            | Self::Recognition
-            | Self::DirectionHistory
-            | Self::Quote => self.decode_secondary(source),
-        }
-    }
-
-    fn decode_primary(self, body: impl AnswerSource) -> Result<CommandAnswer, serde_json::Error> {
-        Ok(match self {
-            Self::Board => CommandAnswer::Board(Box::new(body.read()?)),
-            Self::Report => CommandAnswer::Report(Box::new(body.read()?)),
-            Self::TaskDetail => CommandAnswer::TaskDetail(Box::new(body.read()?)),
-            Self::TaskRelations => CommandAnswer::TaskRelations(Box::new(body.read()?)),
-            Self::TaskTimeline => CommandAnswer::TaskTimeline(Box::new(body.read()?)),
-            Self::Text => CommandAnswer::Text(body.read()?),
-            Self::Task => CommandAnswer::Task(body.read()?),
-            Self::Claim => CommandAnswer::Claim(Box::new(body.read()?)),
-            Self::Doc => CommandAnswer::Doc(body.read()?),
-            Self::Directive => CommandAnswer::Directive(body.read()?),
-            Self::Inbox => CommandAnswer::Inbox(body.read()?),
-            Self::Consent => CommandAnswer::Consent(body.read()?),
-            Self::ConsentQueue => CommandAnswer::ConsentQueue(body.read()?),
-            _ => unreachable!("answer-shape decode partition is closed"),
-        })
-    }
-
-    fn decode_secondary(self, body: impl AnswerSource) -> Result<CommandAnswer, serde_json::Error> {
-        Ok(match self {
-            Self::ConsentPolicy => CommandAnswer::ConsentPolicy(body.read()?),
-            Self::GlobalSettings => CommandAnswer::GlobalSettings(body.read()?),
-            Self::VendorCatalog => CommandAnswer::VendorCatalog(body.read()?),
-            Self::Trust => CommandAnswer::Trust(body.read()?),
-            Self::Lane => CommandAnswer::Lane(Box::new(body.read()?)),
-            Self::LaneChange => CommandAnswer::LaneChange(Box::new(body.read()?)),
-            Self::LaneRenewal => CommandAnswer::LaneRenewal(Box::new(body.read()?)),
-            Self::State => CommandAnswer::State(body.read()?),
-            Self::Recall => CommandAnswer::Recall(Box::new(body.read()?)),
-            Self::Taste => CommandAnswer::Taste(body.read()?),
-            Self::Recognition => CommandAnswer::Recognition(body.read()?),
-            Self::DirectionHistory => CommandAnswer::DirectionHistory(Box::new(body.read()?)),
-            Self::Quote => CommandAnswer::Quote(body.read()?),
-            _ => unreachable!("answer-shape decode partition is closed"),
-        })
-    }
-    fn decode_working_group(
-        self,
-        body: impl AnswerSource,
-    ) -> Result<CommandAnswer, serde_json::Error> {
-        Ok(match self {
-            Self::WorkingGroupPage => CommandAnswer::WorkingGroupPage(body.read()?),
-            Self::WorkingGroupChange => CommandAnswer::WorkingGroupChange(body.read()?),
-            _ => unreachable!("working-group answer decode partition is closed"),
-        })
-    }
-}
-
-/// Where one answer body's JSON comes from: received bytes, or a value its
-/// envelope already parsed.
-trait AnswerSource {
-    fn read<T: serde::de::DeserializeOwned>(self) -> Result<T, serde_json::Error>;
-}
-
-impl AnswerSource for &[u8] {
-    fn read<T: serde::de::DeserializeOwned>(self) -> Result<T, serde_json::Error> {
-        crate::decode(self)
-    }
-}
-
-impl AnswerSource for serde_json::Value {
-    fn read<T: serde::de::DeserializeOwned>(self) -> Result<T, serde_json::Error> {
-        serde_json::from_value(self)
-    }
-}
-
 /// The body and answer a command kind selects.
 ///
 /// WIRE binds these together with the witness schema and the transition, so
@@ -608,6 +499,11 @@ impl CommandKind {
             | Self::WorkingGroupMove
             | Self::WorkingGroupArrange
             | Self::WorkingGroupFast => self.working_group_binding(),
+            Self::PrincipalRead
+            | Self::PrincipalAdmit
+            | Self::PrincipalEdit
+            | Self::PrincipalGrant
+            | Self::PrincipalRevoke => self.principal_binding(),
             Self::RoomPost
             | Self::RoomCoordinationRead
             | Self::RoomConversationText
@@ -993,6 +889,14 @@ pub enum Intent {
     ReleasePublish(ReleasePublish),
     /// [`BodyShape::UpChange`]
     UpChange(UpChange),
+    /// [`BodyShape::PrincipalRead`]
+    PrincipalRead(PrincipalRead),
+    /// [`BodyShape::PrincipalAdmit`]
+    PrincipalAdmit(PrincipalAdmit),
+    /// [`BodyShape::PrincipalEdit`]
+    PrincipalEdit(PrincipalEdit),
+    /// [`BodyShape::PrincipalRoleRef`]
+    PrincipalRoleRef(PrincipalRoleRef),
 }
 
 impl Intent {
@@ -1006,6 +910,10 @@ impl Intent {
             | Self::WorkingGroupMove(_)
             | Self::WorkingGroupArrange(_)
             | Self::WorkingGroupFast(_) => self.working_group_shape(),
+            Self::PrincipalRead(_)
+            | Self::PrincipalAdmit(_)
+            | Self::PrincipalEdit(_)
+            | Self::PrincipalRoleRef(_) => self.principal_shape(),
             Self::RoomPost(_)
             | Self::RoomCoordinationRead(_)
             | Self::RoomConversationText(_)
@@ -1461,6 +1369,10 @@ impl BodyShape {
     fn decode_runtime_control_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::LaneRecall => Intent::LaneRecall(crate::decode(bytes)?),
+            Self::PrincipalRead
+            | Self::PrincipalAdmit
+            | Self::PrincipalEdit
+            | Self::PrincipalRoleRef => return self.decode_principal_body(bytes),
             Self::TasteRecord => Intent::TasteRecord(crate::decode(bytes)?),
             Self::Recognize => Intent::Recognize(crate::decode(bytes)?),
             Self::ReleasePublish => Intent::ReleasePublish(crate::decode(bytes)?),

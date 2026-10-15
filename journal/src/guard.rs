@@ -770,6 +770,25 @@ impl JournalWrite {
         ));
     }
 
+    /// Replace one human principal's head at the assigned fact position.
+    pub fn principal_head<F>(&mut self, fact: PendingFact, build: F)
+    where
+        F: FnOnce(wire::Seq) -> wire::principal::PrincipalHead + Send + 'static,
+    {
+        self.heads.push(HeadUpdate::new(
+            fact,
+            HeadUpdateKind::Ordinary,
+            move |seq| {
+                let head = build(seq);
+                if head.born > seq {
+                    return Err("principal head is born after its assigned fact".to_owned());
+                }
+                let key = head.principal.to_string();
+                HeadRow::text("principal_heads", "principal", key, seq, &head)
+            },
+        ));
+    }
+
     /// Replace one gate finding head at the assigned fact position.
     pub fn finding_head<F>(&mut self, fact: PendingFact, build: F)
     where

@@ -2,6 +2,7 @@ use super::*;
 
 mod group;
 mod preparation;
+mod principal;
 mod requirements;
 use group::{client_group_arrange, client_group_list, client_group_move};
 use requirements::{client_require, environment_requirements};
@@ -49,7 +50,9 @@ fn dispatch_client(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    if let Some(outcome) = dispatch_room_client(repository, contract, matches) {
+    if let Some(outcome) = dispatch_room_client(repository, contract, matches)
+        .or_else(|| principal::dispatch_principal_client(repository, contract, matches))
+    {
         return outcome;
     }
     match contract.path {

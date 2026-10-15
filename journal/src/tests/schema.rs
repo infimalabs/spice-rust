@@ -9,6 +9,7 @@
 use super::*;
 
 mod designs;
+mod principals;
 mod probe;
 mod retained;
 mod vendor_holds;
@@ -111,11 +112,16 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
+    let principals = if predecessor < crate::migrate::PRINCIPAL_HEADS_SCHEMA {
+        "DROP TABLE principal_heads;"
+    } else {
+        ""
+    };
     journal
         .connection
         .execute_batch(&format!(
             "{rooms} {groups} {cursors} {coordination} {horizons} {conversations} {evidence} \
-             {relevance}
+             {relevance} {principals}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",
         ))
@@ -125,7 +131,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
     for predecessor in [
-        33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 56,
+        33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 56, 58,
     ] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");

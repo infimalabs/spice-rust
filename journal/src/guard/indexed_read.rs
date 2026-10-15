@@ -15,6 +15,7 @@ mod decisions;
 mod head_page;
 mod hold;
 mod origin;
+mod principal;
 mod rooms;
 mod taste;
 mod thread;

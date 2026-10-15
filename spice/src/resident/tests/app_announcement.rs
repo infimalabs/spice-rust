@@ -7,7 +7,7 @@ use super::*;
 
 pub(super) fn resident_fixture(name: &str) -> (PathBuf, RuntimePaths) {
     let root = fixture(name);
-    fs::create_dir_all(root.join(".git")).expect("git directory");
+    crate::test_repository::initialize(&root);
     let root = fs::canonicalize(root).expect("fixture root canonicalizes");
     let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
     fs::create_dir_all(&paths.data).expect("data directory");

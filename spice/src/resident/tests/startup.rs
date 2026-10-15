@@ -418,7 +418,7 @@ fn startup_surface_captures_configured_hidden_project_policy_once() {
 #[test]
 fn a_fresh_repository_startup_surface_stays_current_after_its_runtime_directory_appears() {
     let root = fixture("fresh-runtime");
-    fs::create_dir_all(root.join(".git")).expect("git directory");
+    crate::test_repository::initialize(&root);
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let paths = RuntimePaths::discover(&root).expect("runtime paths resolve");
     assert!(!paths.runtime.exists(), "the repository has never started");

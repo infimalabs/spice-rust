@@ -67,6 +67,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["group", "list"] => CommandKind::WorkingGroupRead,
         ["group", "move"] => CommandKind::WorkingGroupMove,
         ["group", "arrange"] => CommandKind::WorkingGroupArrange,
+        ["principal", verb @ ..] => return principal_kind_for(verb),
         ["task", verb] => return task_kind_for(verb),
         ["taste", "add"] | ["taste", "drop"] => CommandKind::TaskAdd,
         ["taste", "mine"] => CommandKind::TasteProposalAdd,
@@ -94,6 +95,17 @@ fn task_kind_for(verb: &str) -> Option<CommandKind> {
         "modify" | "require" => CommandKind::TaskEdit,
         "delete" => CommandKind::TaskDelete,
         "conclude" => CommandKind::TaskConclude,
+        _ => return None,
+    })
+}
+
+fn principal_kind_for(verb: &[&str]) -> Option<CommandKind> {
+    Some(match verb {
+        ["list"] => CommandKind::PrincipalRead,
+        ["admit"] => CommandKind::PrincipalAdmit,
+        ["profile"] => CommandKind::PrincipalEdit,
+        ["role", "grant"] => CommandKind::PrincipalGrant,
+        ["role", "revoke"] => CommandKind::PrincipalRevoke,
         _ => return None,
     })
 }
