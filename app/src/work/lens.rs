@@ -492,7 +492,8 @@ fn compact_title(title: &str) -> String {
 fn compact_actor(actor: &Actor) -> String {
     match actor {
         Actor::Lane(lane) => format!("lane {}", compact_identity(lane)),
-        Actor::Operator | Actor::Human(_) => "operator".to_owned(),
+        Actor::Operator => "operator".to_owned(),
+        Actor::Human(principal) => format!("human {}", compact_identity(principal)),
         Actor::Spice => "spice".to_owned(),
     }
 }

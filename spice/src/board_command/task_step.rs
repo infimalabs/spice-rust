@@ -16,8 +16,9 @@ pub(super) fn stamp_name(board: &BoardAnswer, stamp: &TaskStamp) -> String {
         )
 }
 
-/// The step's position, commit time, author, and what it recorded.
-pub(super) fn step_heading(step: &TaskDetailStep) -> String {
+/// The step's position, commit time, author as `author` spells it, and what
+/// it recorded.
+pub(super) fn step_heading(step: &TaskDetailStep, author: &dyn std::fmt::Display) -> String {
     let recorded = match &step.step {
         TaskStep::Done { phase, .. } => format!("done {phase}"),
         TaskStep::Phased { phase } => format!("phased {phase}"),
@@ -33,7 +34,7 @@ pub(super) fn step_heading(step: &TaskDetailStep) -> String {
             wire::body::DesignConclusion::Collapsed { .. } => "concluded collapsed".to_owned(),
         },
     };
-    format!("{} {} {} {recorded}", step.position, step.at, step.author)
+    format!("{} {} {author} {recorded}", step.position, step.at)
 }
 
 /// A completion's validation, a verdict's finding or note, or a collapse's
@@ -73,7 +74,7 @@ pub(super) fn step_annotation(
     step: &TaskDetailStep,
     name: impl Fn(&TaskStamp) -> String,
 ) -> String {
-    let mut annotation = format!("workflow {}", step_heading(step));
+    let mut annotation = format!("workflow {}", step_heading(step, &step.author));
     if let Some(text) = step_text(step) {
         annotation.push_str("\n\n");
         annotation.push_str(text);

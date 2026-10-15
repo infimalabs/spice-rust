@@ -110,7 +110,7 @@ impl RoomProjection {
                         latest.insert(source.head.lane, publication);
                         (directed.as_slice(), conversation.as_ref())
                     }
-                    RoomEventKind::Posted => (
+                    RoomEventKind::Posted { .. } => (
                         self.conversation
                             .conversation(publication)
                             .map_or(&[][..], |posted| posted.directed.as_slice()),

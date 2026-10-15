@@ -341,8 +341,8 @@ fn team_name(team: &crate::runtime::LaneRow) -> String {
     format!("{host} team")
 }
 
-pub(super) fn render_operator_avatar(operator: &wire::OperatorIdentity) -> Html {
-    let label = operator.name.as_deref().unwrap_or("Operator");
+pub(super) fn render_operator_avatar(operator: &wire::HumanIdentity) -> Html {
+    let label = operator.name.as_deref().unwrap_or("Your");
     match operator.gravatar.as_ref() {
         Some(gravatar) => html! {
             <span class="operator-avatar" data-avatar-source="gravatar">

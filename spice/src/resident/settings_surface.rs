@@ -1,7 +1,9 @@
 //! Durable global app settings and their command surface.
 //!
-//! Operator identity is repository Git configuration, resolved on every read;
-//! settings never carry or change it.
+//! The settings answer carries every born principal's display identity,
+//! derived from that principal's recorded profile at the answer's horizon;
+//! settings never carry or change it. Git configuration only seeds the profile
+//! an admission records.
 
 use bus::Bus;
 use gix::bstr::ByteSlice as _;
@@ -9,7 +11,8 @@ use journal::FactCause;
 use sha2::{Digest as _, Sha256};
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, GlobalSettingsAnswer, GlobalSettingsSet};
-use wire::{Command, OperatorIdentity, Outcome, Producer, Reply, ReplyPosition, SeqRange};
+use wire::principal::{PrincipalDirectory, PrincipalProfile, PrincipalRoles};
+use wire::{Command, HumanIdentity, Outcome, Producer, Reply, ReplyPosition, SeqRange};
 
 use super::shutdown::current_residency;
 use super::{
@@ -47,23 +50,27 @@ fn initials(name: Option<&str>) -> Option<String> {
     (!badge.is_empty()).then_some(badge)
 }
 
-fn identity(name: Option<String>, email: Option<String>) -> OperatorIdentity {
-    let gravatar = email.as_ref().map(|email| {
+/// How one recorded profile presents: its name and email, the badge from the
+/// name's first one or two words, and the Gravatar of the email.
+fn identity(profile: &PrincipalProfile) -> HumanIdentity {
+    let gravatar = profile.email.as_ref().map(|email| {
         format!("{:x}", Sha256::digest(email.to_lowercase().as_bytes()))
             .parse()
             .expect("a SHA-256 lowercase hex spelling is a Gravatar hash")
     });
-    OperatorIdentity {
-        initials: initials(name.as_deref()),
-        name,
-        email,
+    HumanIdentity {
+        initials: initials(profile.name.as_deref()),
+        name: profile.name.clone(),
+        email: profile.email.clone(),
         gravatar,
     }
 }
 
-pub(super) fn git_operator(repository: &Repository) -> CommandResult<OperatorIdentity> {
+/// The profile the repository's Git `user.name` and `user.email` describe,
+/// which an admission copies when it is given none.
+pub(super) fn git_profile(repository: &Repository) -> CommandResult<PrincipalProfile> {
     let git = gix::open(repository.worktree_root()).map_err(|error| {
-        super::environment_fault("serve::operator-identity-unavailable", &error.to_string())
+        super::environment_fault("principal::git-profile-unavailable", &error.to_string())
     })?;
     let config = git.config_snapshot();
     let read = |key| {
@@ -72,22 +79,17 @@ pub(super) fn git_operator(repository: &Repository) -> CommandResult<OperatorIde
             .and_then(|value| value.to_str().ok().and_then(|value| normalize(Some(value))))
             .filter(|value| !malformed(Some(value)))
     };
-    Ok(identity(read("user.name"), read("user.email")))
-}
-
-fn answer(repository: &Repository, fast_mode: bool) -> CommandResult<GlobalSettingsAnswer> {
-    Ok(GlobalSettingsAnswer {
-        fast_mode,
-        operator: git_operator(repository)?,
+    Ok(PrincipalProfile {
+        name: read("user.name"),
+        email: read("user.email"),
     })
 }
 
-/// Resolve the current settings and effective operator identity for bootstrap.
-pub(super) fn current(bus: &Bus, repository: &Repository) -> CommandResult<GlobalSettingsAnswer> {
-    let fact = bus
-        .read(|read| read.latest_fact(wire::FactKind::GlobalSettingsChanged))
-        .map_err(|error| store_fault("settings::journal-unreadable", &error.to_string()))?;
-    answer(repository, stored_fast_mode(fact.as_ref()))
+fn answer(fast_mode: bool, roles: &PrincipalRoles) -> GlobalSettingsAnswer {
+    GlobalSettingsAnswer {
+        fast_mode,
+        principals: PrincipalDirectory::of(roles, identity),
+    }
 }
 
 /// The fast-mode levels a residency head does not hold: the global setting
@@ -167,11 +169,12 @@ pub(super) fn lane_fast_mode(
 }
 
 /// Read the current global settings at one immutable journal horizon.
-pub(super) fn read(bus: &Bus, repository: &Repository) -> Outcome<CommandAnswer> {
-    let (cursor, fact) = match bus.read(|read| {
+pub(super) fn read(bus: &Bus) -> Outcome<CommandAnswer> {
+    let (cursor, fact, roles) = match bus.read(|read| {
         Ok((
             read.cursor()?,
             read.latest_fact(wire::FactKind::GlobalSettingsChanged)?,
+            read.principal_roles()?,
         ))
     }) {
         Ok(snapshot) => snapshot,
@@ -185,10 +188,7 @@ pub(super) fn read(bus: &Bus, repository: &Repository) -> Outcome<CommandAnswer>
             "a running resident has no startup authority fact",
         );
     };
-    let answer = match answer(repository, stored_fast_mode(fact.as_ref())) {
-        Ok(answer) => answer,
-        Err(outcome) => return typed_outcome(outcome),
-    };
+    let answer = answer(stored_fast_mode(fact.as_ref()), &roles);
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(cursor),
         body: CommandAnswer::GlobalSettings(answer),
@@ -200,14 +200,13 @@ pub(super) fn read(bus: &Bus, repository: &Repository) -> Outcome<CommandAnswer>
 /// change.
 pub(super) fn set(
     bus: &Bus,
-    repository: &Repository,
     epoch: wire::CanonicalUuid,
     command: &wire::AdmittedCommand,
     request: &GlobalSettingsSet,
     effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
-    let answer = match answer(repository, request.fast_mode) {
-        Ok(answer) => answer,
+    let answer = match super::principal_surface::roles(bus) {
+        Ok(roles) => answer(request.fast_mode, &roles),
         Err(outcome) => return typed_outcome(outcome),
     };
     let (levels, residency) = match FastLevels::read(bus).and_then(|levels| {
@@ -266,15 +265,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn initials_take_the_first_two_words_of_the_git_name() {
-        let one_word = identity(Some("c".to_owned()), None);
+    fn initials_take_the_first_two_words_of_the_recorded_name() {
+        let one_word = identity(&PrincipalProfile {
+            name: Some("c".to_owned()),
+            email: None,
+        });
         assert_eq!(one_word.initials.as_deref(), Some("C"));
         assert_eq!(one_word.gravatar, None);
 
-        let three_words = identity(
-            Some("céline adams third".to_owned()),
-            Some("git@example.invalid".to_owned()),
-        );
+        let three_words = identity(&PrincipalProfile {
+            name: Some("céline adams third".to_owned()),
+            email: Some("git@example.invalid".to_owned()),
+        });
         assert_eq!(three_words.initials.as_deref(), Some("CA"));
         assert!(three_words.gravatar.is_some());
     }

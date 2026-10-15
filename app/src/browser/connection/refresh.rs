@@ -115,6 +115,9 @@ pub(super) async fn send_stale(
     if actions.take_ready_current_read(CurrentRead::Consent) {
         send_consent(principal, writer, actions).await?;
     }
+    if actions.take_ready_current_read(CurrentRead::Settings) {
+        send_settings(principal, writer, actions).await?;
+    }
     Ok(())
 }
 

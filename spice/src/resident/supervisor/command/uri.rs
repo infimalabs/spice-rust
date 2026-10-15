@@ -33,9 +33,11 @@ impl Uris {
 
 /// Serve `spice://` URLs as `lane`, whose checkout is `worktree` and whose
 /// occupant's session state is `environment`, resolving quote targets, CLI
-/// reads, and task text writes through the resident.
+/// reads, and task text writes through the resident. A human-authored quote
+/// names its author from the principal index of the journal at `journal`.
 pub(super) fn resident_server(
     discovery: PathBuf,
+    journal: PathBuf,
     lane: CanonicalUuid,
     worktree: PathBuf,
     environment: crate::session_command::Environment,
@@ -51,7 +53,10 @@ pub(super) fn resident_server(
             url,
             access,
             |target| match crate::command_client::read_lane_quote(&discovery, lane, target) {
-                Ok(resolution) => spice::quote::render(&resolution),
+                Ok(resolution) => {
+                    let principals = spice::quote::author_names(&journal, &resolution)?;
+                    spice::quote::render(&resolution, principals.as_ref())
+                }
                 Err(wire::Outcome::Refusal(refusal)) => Err(format!(
                     "spice refused the quote read: {}",
                     refusal.reason()

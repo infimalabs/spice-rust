@@ -47,7 +47,7 @@ fn assert_historical_agent_name_survives_reseating(
     source: wire::CanonicalUuid,
 ) {
     let successor = quote_fixture_id("e9");
-    let agents = BTreeMap::from([(
+    let agents = QuoteAgents::from_iter([(
         (lane, Some(successor)),
         QuoteAgent {
             accent: 4,
@@ -109,21 +109,17 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         addressee: None,
     }];
 
-    let agents = BTreeMap::from([(
-        (lane, Some(source)),
-        QuoteAgent {
-            accent: 3,
-            label: "spice-rust-k".to_owned(),
-        },
-    )]);
-    let sources = nested_quote_sources(
-        &outer_target,
-        &inner_target,
-        agents
-            .get(&(lane, Some(source)))
-            .expect("fixture agent exists")
-            .clone(),
-    );
+    let agent = QuoteAgent {
+        accent: 3,
+        label: "spice-rust-k".to_owned(),
+    };
+    let mut agents = QuoteAgents::from_iter([((lane, Some(source)), agent.clone())]);
+    agents.principals = serde_json::from_value(serde_json::json!([{
+        "principal": quote_fixture_id("f1"),
+        "identity": {"name": "C Adams", "initials": "CA"},
+    }]))
+    .expect("fixture principal directory decodes");
+    let sources = nested_quote_sources(&outer_target, &inner_target, agent);
     assert_eq!(referenced_quote_sources(&quotes, &[], &sources), sources);
     let rendered = render_received_with_quotes(
         &outer_target.markdown(),
@@ -151,6 +147,12 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         "the outer source leads both hunks around the nested quote"
     );
     assert_eq!(rendered.html.matches("message-quote-name").count(), 3);
+    assert!(
+        rendered
+            .html
+            .contains("data-quote-actor=\"human\" role=\"img\" aria-label=\"C Adams\">CA</span>"),
+        "the operator's quote names the earliest principal by its recorded initials"
+    );
     assert_eq!(rendered.html.matches("data-quote-source=").count(), 2);
     assert!(!rendered.html.contains("Original"));
     assert!(rendered.html.contains(inner_text));
@@ -259,7 +261,7 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         &[],
         &[],
         &quotes,
-        &BTreeMap::new(),
+        &QuoteAgents::new(),
         &sources,
     );
     let html = rendered.html;
@@ -354,7 +356,7 @@ fn quote_levels_name_their_own_task_badges_at_every_occurrence() {
         &[],
         &[],
         &[outer.clone(), outer],
-        &BTreeMap::new(),
+        &QuoteAgents::new(),
         &sources,
     );
 
@@ -488,7 +490,7 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
         accent: 2,
         label: label.to_owned(),
     };
-    let roster = BTreeMap::from([
+    let roster = QuoteAgents::from_iter([
         ((quoted, Some(successor)), agent("quoted")),
         ((directing, Some(id("2b"))), agent("directing")),
         ((unrelated, Some(id("2c"))), agent("unrelated")),
@@ -509,9 +511,13 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
     assert_eq!(render(&projection), render(&roster));
 
     let mut reseated = roster.clone();
-    reseated.remove(&(unrelated, Some(id("2c"))));
-    reseated.insert((unrelated, Some(id("3c"))), agent("unrelated"));
-    reseated.insert((arriving, Some(id("3d"))), agent("arriving"));
+    reseated.members.remove(&(unrelated, Some(id("2c"))));
+    reseated
+        .members
+        .insert((unrelated, Some(id("3c"))), agent("unrelated"));
+    reseated
+        .members
+        .insert((arriving, Some(id("3d"))), agent("arriving"));
     assert_eq!(
         referenced_quote_agents(&quotes, &[], &[], &reseated),
         projection
@@ -531,7 +537,7 @@ fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_pros
         &[],
         &[],
         &unavailable,
-        &BTreeMap::new(),
+        &QuoteAgents::new(),
         &BTreeMap::new(),
     );
 
@@ -868,7 +874,7 @@ fn quoted_packet_cards_wear_their_kind_in_the_head() {
             addressee: packet.map(|_| kite),
         });
     }
-    let agents = BTreeMap::from([(
+    let agents = QuoteAgents::from_iter([(
         (kite, Some(seat)),
         QuoteAgent {
             accent: 3,
@@ -961,15 +967,15 @@ fn a_quoted_msg_context_keeps_its_lane_identity_across_seats() {
 
     for (agents, state) in [
         (
-            BTreeMap::from([((lane, Some(author)), agent("lane-name"))]),
+            QuoteAgents::from_iter([((lane, Some(author)), agent("lane-name"))]),
             "current",
         ),
         (
-            BTreeMap::from([((lane, Some(successor)), agent("lane-name"))]),
+            QuoteAgents::from_iter([((lane, Some(successor)), agent("lane-name"))]),
             "historical",
         ),
         (
-            BTreeMap::from([((lane, None), agent("lane-name"))]),
+            QuoteAgents::from_iter([((lane, None), agent("lane-name"))]),
             "historical",
         ),
     ] {
@@ -1030,7 +1036,7 @@ fn peer_context_destination_survives_badges_and_reseating() {
             (None, "historical"),
             (Some(successor), "historical"),
         ] {
-            let roster = BTreeMap::from([
+            let roster = QuoteAgents::from_iter([
                 ((sender_lane, Some(sender)), agent("sender")),
                 ((recipient_lane, seat), agent("recipient-lane")),
             ]);
@@ -1102,7 +1108,7 @@ fn a_delivered_direction_names_every_receiver_in_the_first_receivers_accent() {
         accent,
         label: label.to_owned(),
     };
-    let roster = BTreeMap::from([
+    let roster = QuoteAgents::from_iter([
         ((first_lane, Some(first)), agent(3, "first")),
         ((second_lane, Some(second)), agent(5, "second")),
     ]);
@@ -1174,7 +1180,7 @@ fn a_sent_msg_names_every_destination_without_its_protocol_header() {
         accent,
         label: label.to_owned(),
     };
-    let agents = BTreeMap::from([
+    let agents = QuoteAgents::from_iter([
         ((sender_lane, Some(sender)), agent(1, "sender-agent")),
         ((seated_lane, Some(seated)), agent(2, "seated-agent")),
         ((departed_lane, Some(successor)), agent(3, "departed-lane")),
@@ -1264,7 +1270,7 @@ fn ask_and_ans_quotes_carry_typed_badges_and_the_answered_result() {
             result: Some(result),
         },
     ];
-    let agents = BTreeMap::from([(
+    let agents = QuoteAgents::from_iter([(
         (lane, Some(sender)),
         QuoteAgent {
             accent: 1,

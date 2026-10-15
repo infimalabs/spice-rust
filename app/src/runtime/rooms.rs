@@ -147,8 +147,13 @@ pub struct RoomEvent {
 /// Authority carried by one room-timeline event.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoomEventKind {
-    /// Operator-authored or source-linked publication.
-    Published(authority::RoomPublicationContent),
+    /// Human-authored or source-linked publication.
+    Published {
+        /// The actor that published it.
+        author: wire::Actor,
+        /// What it published.
+        content: authority::RoomPublicationContent,
+    },
     /// Agent-authored source link and exact author/directed delivery identities.
     Messaged {
         /// Exact transcript-owned bytes.
@@ -160,8 +165,11 @@ pub enum RoomEventKind {
         /// The MSG, ASK, or ANS conversation this packet admitted, if any.
         conversation: Option<RoomAuthorityStamp>,
     },
-    /// Operator MSG, ASK, or ANS; its publication is its conversation.
-    Posted,
+    /// A human's MSG, ASK, or ANS; its publication is its conversation.
+    Posted {
+        /// The human that posted it.
+        author: wire::Actor,
+    },
     /// Scoped request linked to ordinary steering.
     Coordination {
         /// Human steering key.
@@ -646,7 +654,10 @@ impl RoomProjection {
                         body.publication,
                         RoomEvent {
                             position: fact.seq(),
-                            kind: RoomEventKind::Published(body.content),
+                            kind: RoomEventKind::Published {
+                                author: fact.actor().clone(),
+                                content: body.content,
+                            },
                         },
                     )
                 }))
@@ -809,7 +820,9 @@ impl RoomProjection {
                 stamp,
                 RoomEvent {
                     position: fact.seq(),
-                    kind: RoomEventKind::Posted,
+                    kind: RoomEventKind::Posted {
+                        author: fact.actor().clone(),
+                    },
                 },
             )
         });

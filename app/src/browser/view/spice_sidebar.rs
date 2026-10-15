@@ -198,18 +198,20 @@ pub(super) fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
     }
 }
 
-/// The operator's avatar beside the Git `user.name` and `user.email` it is
-/// drawn from, as read-only reference rows, then their personal inbox. Until
-/// settings arrive both rows say they are loading, so later admission moves
-/// no section below them.
+/// The connected principal's avatar beside the name and email its recorded
+/// profile carries, as read-only reference rows, then their personal inbox.
+/// Until settings arrive both rows say they are loading, so later admission
+/// moves no section below them.
 pub(super) fn render_operator(runtime: Option<&AppRuntime>, inbox: Html) -> Html {
     let settings = runtime.and_then(AppRuntime::settings);
-    let unresolved = wire::OperatorIdentity::default();
-    let operator = settings.map_or(&unresolved, |settings| &settings.operator);
+    let unresolved = wire::HumanIdentity::default();
+    let operator = runtime
+        .and_then(AppRuntime::own_identity)
+        .unwrap_or(&unresolved);
     let fact = |label: &'static str, key: &'static str, value: Option<&String>| {
         let (state, text) = match (settings, value) {
             (None, _) => ("loading", "loading".to_owned()),
-            (Some(_), None) => ("unset", format!("Git {key} is not set")),
+            (Some(_), None) => ("unset", format!("Your profile records no {key}")),
             (Some(_), Some(value)) => ("ready", value.clone()),
         };
         html! {
@@ -225,8 +227,8 @@ pub(super) fn render_operator(runtime: Option<&AppRuntime>, inbox: Html) -> Html
             <div class="app-spice-operator-identity">
                 {super::render_operator_avatar(operator)}
                 <dl class="app-spice-operator-facts">
-                    {fact("Name", "user.name", operator.name.as_ref())}
-                    {fact("Email", "user.email", operator.email.as_ref())}
+                    {fact("Name", "name", operator.name.as_ref())}
+                    {fact("Email", "email", operator.email.as_ref())}
                 </dl>
             </div>
             {inbox}

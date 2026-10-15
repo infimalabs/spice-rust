@@ -103,7 +103,7 @@ pub use head::{
 };
 pub use hello::{
     Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,
-    OperatorIdentity, Rejected, SpeechPlayback,
+    HumanIdentity, Rejected, SpeechPlayback,
 };
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant};
 pub use media::{AgentMediaReference, MarkdownImageBinding, Media, MediaError};

@@ -131,6 +131,7 @@ fn inbox(
                     "the admitted journal names no read position",
                 )
             })?;
+            let principals = super::principals(read)?;
             let open = read
                 .open_room_items_page(from.as_ref(), retain)
                 .map_err(store)?;
@@ -163,7 +164,7 @@ fn inbox(
                         Some(result) => read
                             .question_result(result)
                             .map_err(store)?
-                            .map(|(record, head)| result_view(read, record, head))
+                            .map(|(record, head)| result_view(read, &principals, record, head))
                             .transpose()?,
                         None => None,
                     };
@@ -175,7 +176,7 @@ fn inbox(
                         },
                     };
                     Ok(Recorded {
-                        receipt: item_view(read, record, head)?,
+                        receipt: item_view(read, &principals, record, head)?,
                         verb,
                         author: publication.author().clone(),
                         concerns,

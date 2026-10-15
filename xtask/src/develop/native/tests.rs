@@ -530,7 +530,6 @@ fn serve_bootstraps(
                     app_protocol: wire::AppProtocolVersion::CURRENT,
                     app: Digest::compute(wire::Domain::DistInventory, b"fixture app"),
                 },
-                operator: wire::OperatorIdentity::default(),
             };
             let body = wire::encode(&bootstrap).expect("fixture bootstrap encodes");
             let (mut stream, _) = listener.accept().expect("bootstrap connection arrives");

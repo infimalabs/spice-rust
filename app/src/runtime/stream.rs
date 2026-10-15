@@ -203,8 +203,8 @@ impl AppRuntime {
         StreamApplication::new(continuation(ViewSubject::Facts, epoch, packed), true)
     }
 
-    /// Advance global fast mode from `settings::changed` rows. Identity is not
-    /// journal state, so a row never touches it.
+    /// Advance global fast mode from `settings::changed` rows. Principal
+    /// identities move only through a settings re-read a principal fact owes.
     fn observe_settings_rows(&mut self, rows: &[wire::StreamFact]) -> bool {
         let mut changed = false;
         for row in rows {

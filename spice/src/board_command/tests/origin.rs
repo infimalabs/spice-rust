@@ -543,8 +543,7 @@ fn task_show_follows_every_acknowledged_key_to_the_session_that_answered_it() {
         TaskShowHistory {
             notes: &answer.notes[&born],
             acknowledgments,
-            closure: None,
-            steps: &[],
+            ..TaskShowHistory::default()
         },
         Some(&context),
     );
@@ -695,8 +694,7 @@ fn rendered_task(answer: &BoardAnswer, task: &TaskHandle, origin_context: Option
         TaskShowHistory {
             notes: &[],
             acknowledgments: &answer.acknowledgments[&born],
-            closure: None,
-            steps: &[],
+            ..TaskShowHistory::default()
         },
         origin_context,
     )

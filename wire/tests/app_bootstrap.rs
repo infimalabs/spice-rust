@@ -11,13 +11,14 @@ const APP_BOOTSTRAP: &str = r#"{
     "journal": 20,
     "app_protocol": 10,
     "app": "2222222222222222222222222222222222222222222222222222222222222222"
-  },
-  "operator": {
-    "name": "C Adams",
-    "email": "c@example.invalid",
-    "initials": "CA",
-    "gravatar": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
+}"#;
+
+const HUMAN_IDENTITY: &str = r#"{
+  "name": "C Adams",
+  "email": "c@example.invalid",
+  "initials": "CA",
+  "gravatar": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 }"#;
 
 fn uuid(value: &str) -> CanonicalUuid {
@@ -51,7 +52,7 @@ fn app_bootstrap_has_one_strict_body_shape() {
     assert_eq!(bootstrap.version.product.as_str(), "1.2.3");
     assert_eq!(bootstrap.version.app.as_str(), "2".repeat(64));
 
-    for field in ["endpoint", "capability", "epoch", "version", "operator"] {
+    for field in ["endpoint", "capability", "epoch", "version"] {
         let mut value: serde_json::Value =
             serde_json::from_str(APP_BOOTSTRAP).expect("bootstrap fixture is JSON");
         value
@@ -80,25 +81,19 @@ fn app_bootstrap_has_one_strict_body_shape() {
 }
 
 #[test]
-fn operator_identity_crosses_with_one_strict_gravatar_hash() {
-    let bootstrap = round_trip(APP_BOOTSTRAP);
-    assert_eq!(bootstrap.operator.name.as_deref(), Some("C Adams"));
+fn human_identity_crosses_with_one_strict_gravatar_hash() {
+    let identity: wire::HumanIdentity =
+        wire::decode(HUMAN_IDENTITY.as_bytes()).expect("identity decodes");
+    assert_eq!(identity.name.as_deref(), Some("C Adams"));
+    assert_eq!(identity.email.as_deref(), Some("c@example.invalid"));
+    assert_eq!(identity.initials.as_deref(), Some("CA"));
     assert_eq!(
-        bootstrap.operator.email.as_deref(),
-        Some("c@example.invalid")
-    );
-    assert_eq!(bootstrap.operator.initials.as_deref(), Some("CA"));
-    assert_eq!(
-        bootstrap
-            .operator
-            .gravatar
-            .as_ref()
-            .map(wire::GravatarHash::as_str),
+        identity.gravatar.as_ref().map(wire::GravatarHash::as_str),
         Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
     );
 
     let mut value: serde_json::Value =
-        serde_json::from_str(APP_BOOTSTRAP).expect("bootstrap fixture is JSON");
+        serde_json::from_str(HUMAN_IDENTITY).expect("identity fixture is JSON");
     for malformed in [
         serde_json::Value::Null,
         serde_json::Value::String("0123456789ABCDEF".repeat(4)),
@@ -106,11 +101,13 @@ fn operator_identity_crosses_with_one_strict_gravatar_hash() {
         serde_json::Value::String(format!("{}\")", "0".repeat(62))),
         serde_json::Value::String("anthony@example.invalid".to_owned()),
     ] {
-        value["operator"]["gravatar"] = malformed.clone();
+        value["gravatar"] = malformed.clone();
         assert!(
-            wire::decode::<AppBootstrap>(&serde_json::to_vec(&value).expect("shape encodes"))
-                .is_err(),
-            "malformed operator Gravatar was admitted: {malformed}"
+            wire::decode::<wire::HumanIdentity>(
+                &serde_json::to_vec(&value).expect("shape encodes")
+            )
+            .is_err(),
+            "malformed Gravatar was admitted: {malformed}"
         );
     }
 }

@@ -565,7 +565,7 @@ pub struct AppRuntime {
     /// Operator consent requests, read whenever a `consent::` fact streams.
     consent: ScopedValue<ConsentQueueAnswer>,
     consent_rulings: consent::ConsentRulings,
-    /// The latest settings read; its operator identity is Git reference data.
+    /// The latest settings read, carrying every principal's display identity.
     settings: ScopedValue<GlobalSettingsAnswer>,
     vendors: ScopedValue<VendorCatalogAnswer>,
     /// Newest journal position that set global fast mode, and its value.
@@ -910,6 +910,18 @@ impl AppRuntime {
         self.settings.get(&self.principal)
     }
 
+    /// Every born principal's display identity, absent until settings land.
+    #[must_use]
+    pub fn principals(&self) -> Option<&wire::principal::PrincipalDirectory> {
+        self.settings().map(|settings| &settings.principals)
+    }
+
+    /// How the connected principal presents, absent until settings name it.
+    #[must_use]
+    pub fn own_identity(&self) -> Option<&wire::HumanIdentity> {
+        self.principals()?.identity(self.principal.actor())
+    }
+
     /// Vendors this resident generation can seat, absent until the read lands.
     #[must_use]
     pub fn vendor_catalog(&self) -> Option<&VendorCatalogAnswer> {
@@ -1107,10 +1119,10 @@ impl AppRuntime {
         });
     }
 
-    /// Apply a global settings read or mutation. Its operator identity always
-    /// replaces the last read's, while fast mode never moves behind a newer
-    /// journal position already observed.
-    pub fn apply_settings(&mut self, admitted: &Admitted<Response<GlobalSettingsAnswer>>) -> bool {
+    /// Apply a global settings read or mutation. Its principal identities
+    /// always replace the last read's, while fast mode never moves behind a
+    /// newer journal position already observed.
+    pub fn apply_settings(&mut self, admitted: &Admitted<Response<GlobalSettingsAnswer>>) {
         let position = match &admitted.get().outcome {
             Outcome::Reply(reply) => match reply.position {
                 wire::ReplyPosition::Committed(range) => Some(range.last),
@@ -1120,7 +1132,6 @@ impl AppRuntime {
 
             Outcome::Refusal(_) | Outcome::Fault(_) => None,
         };
-        let mut applied = false;
         self.apply_response(admitted, |runtime, answer| {
             let Some(position) = position else {
                 return;
@@ -1130,9 +1141,8 @@ impl AppRuntime {
                 Some((newer, fast_mode)) if newer > position => answer.fast_mode = fast_mode,
                 _ => runtime.fast_mode_at = Some((position, answer.fast_mode)),
             }
-            applied = runtime.settings.replace(admitted.scope(), answer);
+            runtime.settings.replace(admitted.scope(), answer);
         });
-        applied
     }
 
     /// Apply the resident's vendor catalogue read.
@@ -1314,6 +1324,7 @@ pub struct Stale {
     lanes: bool,
     inbox: bool,
     consent: bool,
+    settings: bool,
     task_details: BTreeSet<wire::TaskStamp>,
     task_relations: Vec<TaskRelationInvalidation>,
 }
@@ -1353,6 +1364,8 @@ impl Stale {
                 self.inbox = true;
             }
             Some(("consent", _)) => self.consent = true,
+            // The settings read carries every principal's display identity.
+            Some(("principal", _)) => self.settings = true,
             Some(("task", _)) => self.board = true,
             // A claim binds a task to a lane, so both sides of that join move.
             Some(("claim", _)) => {
@@ -1437,6 +1450,13 @@ impl Stale {
         self.consent
     }
 
+    /// Whether the settings read, and the principal identities it carries,
+    /// went stale.
+    #[must_use]
+    pub const fn settings(&self) -> bool {
+        self.settings
+    }
+
     /// Whether anything needs re-reading at all.
     #[must_use]
     pub fn any(&self) -> bool {
@@ -1444,6 +1464,7 @@ impl Stale {
             || self.lanes
             || self.inbox
             || self.consent
+            || self.settings
             || !self.task_details.is_empty()
             || !self.task_relations.is_empty()
     }

@@ -907,14 +907,10 @@
 .markdown-body .message-quote-name[data-accent] {
   --message-quote-name-accent: var(--accent-slot);
 }
-/* Operator quotes use the same in-flow author slot as agent names. */
-.markdown-body .message-quote-name[data-quote-actor="operator"] { display: none; }
-:root[data-operator-identity] .markdown-body .message-quote-name[data-quote-actor="operator"] {
-  display: inline-flex;
+/* A human quote names its author's recorded initials in the same in-flow
+   author slot as agent names. */
+.markdown-body .message-quote-name[data-quote-actor="human"] {
   color: var(--accent-neutral);
-}
-:root[data-operator-identity] .markdown-body .message-quote-name[data-quote-actor="operator"]::before {
-  content: var(--operator-initials);
 }
 .markdown-body .message-quote-age {
   color: var(--muted);

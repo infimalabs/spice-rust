@@ -387,6 +387,7 @@ pub(in crate::resident::supervisor) fn run(lane: &OsString, worktree: &OsString)
     let environment = crate::session_environment();
     let server = uri::resident_server(
         paths.serve,
+        paths.journal,
         lane,
         repository.worktree_root().to_path_buf(),
         environment,

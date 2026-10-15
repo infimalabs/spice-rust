@@ -86,7 +86,7 @@ fn result(
                 .question_result(&result)
                 .map_err(store)?
                 .ok_or_else(|| unknown(named, None))?;
-            let view = result_view(read, record, head)?;
+            let view = result_view(read, &super::principals(read)?, record, head)?;
             let body = |stamp: &RoomAuthorityStamp| -> Result<Option<Body>, Failure> {
                 read.room_conversation(stamp)
                     .map_err(store)?

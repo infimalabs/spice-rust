@@ -348,7 +348,7 @@ fn render_activity(
             </div>
             {task_detail::render_closure_record(
                 answer.closure.as_ref(),
-                |actor| actor_name(actor, render.lanes),
+                |actor| actor_name(actor, render),
                 |task| selection_has(render.selection, task),
             )}
             {task_detail::render_note_composer(
@@ -375,7 +375,7 @@ fn render_activity(
                         <li class="work-note-card" key={note.position.to_string()} data-note-position={note.position.to_string()}>
                             <header>
                                 <strong title={note.author.to_string()}>
-                                    {actor_name(&note.author, render.lanes)}
+                                    {actor_name(&note.author, render)}
                                 </strong>
                                 {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
                             </header>
@@ -503,19 +503,23 @@ fn actor_fact(
     };
     linked_identity_fact(
         label,
-        actor_name(actor, render.lanes),
+        actor_name(actor, render),
         actor.to_string(),
         suffix,
         destination,
     )
 }
 
-fn actor_name(actor: &wire::Actor, lanes: Option<&LaneView>) -> String {
+fn actor_name(actor: &wire::Actor, render: &WorkDetailRender<'_, '_>) -> String {
     let member = match actor {
-        wire::Actor::Lane(lane) => lanes.and_then(|lanes| lanes.member(*lane)),
+        wire::Actor::Lane(lane) => render.lanes.and_then(|lanes| lanes.member(*lane)),
         wire::Actor::Operator | wire::Actor::Spice | wire::Actor::Human(_) => None,
     };
-    crate::work::owner_label(actor, member)
+    crate::work::owner_label(
+        actor,
+        member,
+        render.runtime.and_then(AppRuntime::principals),
+    )
 }
 
 fn priority_fact(tags: &[String]) -> Html {

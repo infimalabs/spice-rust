@@ -11,12 +11,13 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use serde::Serialize;
+use wire::principal::PrincipalDirectory;
 use wire::rooms::{
     DecisionOutcome, OutputVerdict, PreparationDecided, RoomAuthorityStamp, RoomContributionKind,
 };
-use wire::{Actor, Instant, Seq, SequenceCode, TaskHandle, TaskStamp};
+use wire::{Instant, Seq, SequenceCode, TaskHandle, TaskStamp};
 
-use super::{Content, Failure, Publication, fault, store};
+use super::{Content, Failure, Named, Publication, fault, store};
 
 /// Most decisions one room read shows, newest kept.
 pub(crate) const DECISION_ROWS: usize = 32;
@@ -73,7 +74,7 @@ struct Decision {
     decision: SequenceCode,
     seq: Seq,
     at: Instant,
-    actor: Actor,
+    actor: Named,
     outcome: DecisionOutcome,
 }
 
@@ -90,6 +91,7 @@ impl Decisions {
 pub(super) fn decisions(
     read: &journal::JournalRead<'_>,
     roles: &wire::principal::PrincipalRoles,
+    principals: &PrincipalDirectory,
     anchor: &TaskStamp,
     room: &TaskHandle,
 ) -> Result<Decisions, Failure> {
@@ -119,7 +121,7 @@ pub(super) fn decisions(
             decision: decided.decision.decision.decision,
             seq: envelope.seq,
             at: envelope.at,
-            actor: roles.author(&envelope.actor),
+            actor: Named::of(principals, roles.author(&envelope.actor)),
             outcome: decided.decision.outcome,
         });
     }

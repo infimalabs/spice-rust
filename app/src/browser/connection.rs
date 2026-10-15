@@ -769,7 +769,6 @@ async fn open_socket(
         &generation,
         loaded_generation,
     )?));
-    publish_operator_identity(&discovery.operator);
     let session = Session::open(discovery.capability, discovery.epoch);
     let endpoint = discovery
         .endpoint
@@ -809,32 +808,6 @@ fn admit_bootstrap_identity(
         version: discovery.version.clone(),
         loaded_app,
     })
-}
-
-/// Publish the operator initials used by quote bylines.
-fn publish_operator_identity(operator: &wire::OperatorIdentity) {
-    let Some(root) = web_sys::window()
-        .and_then(|window| window.document())
-        .and_then(|document| document.document_element())
-        .and_then(|root| root.dyn_into::<web_sys::HtmlElement>().ok())
-    else {
-        return;
-    };
-    let style = root.style();
-    match operator.initials.as_deref() {
-        Some(initials) => {
-            let escaped = initials.replace('\\', "\\\\").replace('"', "\\\"");
-            style
-                .set_property("--operator-initials", &format!("\"{escaped}\""))
-                .expect("operator initials form a valid CSS string");
-            root.set_attribute("data-operator-identity", "")
-                .expect("the operator identity root attribute is valid");
-        }
-        None => {
-            let _ = style.remove_property("--operator-initials");
-            let _ = root.remove_attribute("data-operator-identity");
-        }
-    }
 }
 
 pub(super) fn loaded_app_generation() -> Result<wire::Digest, String> {

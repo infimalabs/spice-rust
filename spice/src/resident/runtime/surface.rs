@@ -127,7 +127,6 @@ async fn start_surface<'a>(
     epoch: CanonicalUuid,
     residency: &ResidencyHead,
     config: &SurfaceConfig,
-    operator_identity: wire::OperatorIdentity,
     quota: serve::stream::QuotaFeed,
     launch: SurfaceLaunch<'a>,
 ) -> CommandResult<StartedSurface<'a>> {
@@ -150,8 +149,7 @@ async fn start_surface<'a>(
         kind,
         token,
     } = access;
-    let generation = serve::axum::Generation::new(epoch, capabilities.clone(), version, app)
-        .with_operator_identity(operator_identity);
+    let generation = serve::axum::Generation::new(epoch, capabilities.clone(), version, app);
     let quote_presenter =
         spice::quote::presenter(paths.tape.clone(), bus.reader(), quote_agent_prose);
     let (server, control) = serve::axum::Server::bind_streaming(
@@ -265,7 +263,6 @@ pub(super) async fn run_surface(
 ) -> CommandResult<()> {
     let residency = current_residency(bus, epoch)?;
     let mut backgrounds = SurfaceRuntimes::start(bus, config, paths)?;
-    let operator = settings_surface::current(bus, repository)?.operator;
     let StartedSurface {
         capabilities,
         discovery,
@@ -281,7 +278,6 @@ pub(super) async fn run_surface(
         epoch,
         residency.body(),
         config,
-        operator,
         backgrounds.quota.feed(),
         launch,
     )

@@ -1,4 +1,5 @@
 use super::*;
+use wire::principal::{NamedActor, PrincipalDirectory};
 
 mod list;
 pub(super) use list::actor_route_matches;
@@ -132,6 +133,14 @@ pub(super) fn client_show(
             } else {
                 None
             };
+            let principals = if options.history {
+                match task_show_principals(repository) {
+                    Ok(principals) => Some(principals),
+                    Err(outcome) => return outcome,
+                }
+            } else {
+                None
+            };
             let text = match task_show_bounded(
                 &board,
                 task,
@@ -147,6 +156,7 @@ pub(super) fn client_show(
                         .steps
                         .get(&task.statement.body.born)
                         .map_or(&[], Vec::as_slice),
+                    principals: principals.as_ref(),
                 },
                 origin_context.as_deref(),
                 &options,
@@ -317,14 +327,38 @@ fn task_show_origin_context(
     Ok(Some(blocks.join("\n").into_boxed_str()))
 }
 
+/// Every born principal's recorded name, read from the local journal, so a
+/// task's history names its human authors.
+fn task_show_principals(
+    repository: &Repository,
+) -> Result<PrincipalDirectory, Outcome<CommandAnswer>> {
+    let state = repository
+        .admit_state()
+        .map_err(|error| repository_state_failure(&error))?;
+    let unreadable = |error: &dyn std::fmt::Display| {
+        store_fault(
+            "task::principal-names-unreadable",
+            &format!("cannot read principal names: {error}"),
+        )
+    };
+    let reader =
+        journal::JournalReader::open(state.journal()).map_err(|error| unreadable(&error))?;
+    reader
+        .read(|read| read.principal_roles())
+        .map(|roles| PrincipalDirectory::names(&roles))
+        .map_err(|error| unreadable(&error))
+}
+
 /// Durable history shown with one task: its notes, its closure, its workflow
-/// steps, and every acknowledged steering key on its record.
+/// steps, every acknowledged steering key on its record, and the principal
+/// names its human authors read under.
 #[derive(Clone, Copy, Default)]
 pub(in crate::board_command) struct TaskShowHistory<'a> {
     pub(in crate::board_command) notes: &'a [wire::intent::TaskDetailNote],
     pub(in crate::board_command) acknowledgments: &'a [wire::intent::TaskAcknowledgment],
     pub(in crate::board_command) closure: Option<&'a wire::intent::TaskDetailClosure>,
     pub(in crate::board_command) steps: &'a [wire::intent::TaskDetailStep],
+    pub(in crate::board_command) principals: Option<&'a PrincipalDirectory>,
 }
 
 fn task_flow_line(flow: &[wire::Phase]) -> String {
@@ -608,7 +642,7 @@ fn bounded_detail_lines(
             rows.push(TaskShowDetailRow {
                 cursor: format!("closure:{}", closure.position),
                 section: TaskShowDetailSection::Closure,
-                text: closure_lines_bounded(closure, budget).join("\n"),
+                text: closure_lines_bounded(closure, history.principals, budget).join("\n"),
             });
         }
         let mut steps = history.steps.iter().collect::<Vec<_>>();
@@ -616,14 +650,14 @@ fn bounded_detail_lines(
         rows.extend(steps.into_iter().map(|step| TaskShowDetailRow {
             cursor: format!("step:{}", step.position),
             section: TaskShowDetailSection::Step,
-            text: render_task_step(board, step, budget),
+            text: render_task_step(board, step, history.principals, budget),
         }));
         let mut notes = history.notes.iter().collect::<Vec<_>>();
         notes.sort_by_key(|note| std::cmp::Reverse(note.position));
         rows.extend(notes.into_iter().map(|note| TaskShowDetailRow {
             cursor: note.position.to_string(),
             section: TaskShowDetailSection::Note,
-            text: render_task_note(note, history.acknowledgments, budget),
+            text: render_task_note(note, history.acknowledgments, history.principals, budget),
         }));
     }
     if let Some(after) = &options.after {
@@ -671,9 +705,11 @@ fn bounded_detail_lines(
 fn render_task_step(
     board: &BoardAnswer,
     step: &wire::intent::TaskDetailStep,
+    principals: Option<&PrincipalDirectory>,
     budget: wire::output::Budget,
 ) -> String {
-    let mut rendered = format!("  {}", step_heading(step));
+    let author = named(principals, &step.author);
+    let mut rendered = format!("  {}", step_heading(step, &author));
     if let Some(text) = step_text(step) {
         let text = budget.clip(text);
         push_indented(&mut rendered, &text.text);
@@ -698,9 +734,17 @@ fn push_indented(rendered: &mut String, text: &str) {
     }
 }
 
+/// `actor` named by `principals` when they were read, else its identity alone.
+fn named<'a>(principals: Option<&'a PrincipalDirectory>, actor: &'a wire::Actor) -> NamedActor<'a> {
+    principals.map_or(NamedActor { actor, name: None }, |principals| {
+        principals.named(actor)
+    })
+}
+
 fn render_task_note(
     note: &wire::intent::TaskDetailNote,
     acknowledgments: &[wire::intent::TaskAcknowledgment],
+    principals: Option<&PrincipalDirectory>,
     budget: wire::output::Budget,
 ) -> String {
     let origin = acknowledgments
@@ -708,7 +752,8 @@ fn render_task_note(
         .find(|row| row.position == note.position)
         .map_or_else(String::new, |row| format!(" ack:{}", row.key));
     let text = budget.clip(&note.text);
-    let mut rendered = format!("  {} {} {}{origin}", note.position, note.at, note.author);
+    let author = named(principals, &note.author);
+    let mut rendered = format!("  {} {} {author}{origin}", note.position, note.at);
     push_indented(&mut rendered, &text.text);
     if let Some(withheld) = text.withheld_bytes {
         rendered.push_str(&format!("\n    … [+{withheld} bytes]"));
@@ -718,6 +763,7 @@ fn render_task_note(
 
 fn closure_lines_bounded(
     closure: &wire::intent::TaskDetailClosure,
+    principals: Option<&PrincipalDirectory>,
     budget: wire::output::Budget,
 ) -> Vec<String> {
     let displaced = closure
@@ -726,7 +772,10 @@ fn closure_lines_bounded(
         .map_or_else(String::new, |actor| format!(" claim-freed={actor}"));
     let mut lines = vec![format!(
         "closed {} {} {} phase={}{displaced}",
-        closure.position, closure.at, closure.author, closure.phase
+        closure.position,
+        closure.at,
+        named(principals, &closure.author),
+        closure.phase
     )];
     let validation = budget.clip(&closure.validation);
     lines.extend(validation.text.lines().map(|line| {
