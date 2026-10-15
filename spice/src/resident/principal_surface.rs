@@ -13,7 +13,7 @@ use wire::intent::CommandAnswer;
 use wire::principal::{
     PrincipalAdmit, PrincipalAdmitted, PrincipalEdit, PrincipalGranted, PrincipalHead,
     PrincipalProfile, PrincipalProfiled, PrincipalRevoked, PrincipalRole, PrincipalRoleRef,
-    PrincipalStanding, PrincipalsAnswer,
+    PrincipalRoles, PrincipalStanding, PrincipalsAnswer,
 };
 use wire::{
     Actor, CanonicalUuid, Command, CommandKind, Outcome, Producer, Refusal, RefusalDiagnostic,
@@ -148,7 +148,8 @@ pub(super) fn edit(
     finish(bus, proposal, epoch, command, request.clone(), standing)
 }
 
-/// Grant or revoke one role. The operator role never leaves its last holder.
+/// Grant or revoke one role. The operator role never leaves the last actor
+/// able to exercise it.
 pub(super) fn role(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -171,7 +172,7 @@ pub(super) fn role(
     }
     let last = !grant && role == PrincipalRole::Operator;
     if last {
-        match bus.read(move |read| other_holder(read, principal, role)) {
+        match bus.read(move |read| still_held(read, principal, role)) {
             Ok(true) => {}
             Ok(false) => return last_operator(principal),
             Err(error) => {
@@ -197,7 +198,7 @@ pub(super) fn role(
     proposal.guard(unmoved(principal, position));
     if last {
         proposal.guard(JournalGuard::new(move |read| {
-            if other_holder(read, principal, role)? {
+            if still_held(read, principal, role)? {
                 Ok(())
             } else {
                 Err(GuardError::refused(LAST_OPERATOR))
@@ -329,15 +330,22 @@ fn current(
     }
 }
 
-fn other_holder(
+/// Whether some actor would still hold `role` through the authority predicate
+/// once `principal` no longer holds it. A principal no actor can act as
+/// keeps no one able to exercise the role.
+fn still_held(
     read: &journal::JournalRead<'_>,
     principal: CanonicalUuid,
     role: PrincipalRole,
 ) -> Result<bool, GuardError> {
-    Ok(read
-        .principal_heads()?
-        .iter()
-        .any(|head| head.body().principal != principal && head.body().holds(role)))
+    let heads = read.principal_heads()?.into_iter().map(|head| {
+        let mut head = head.into_body();
+        if head.principal == principal {
+            head.roles.remove(&role);
+        }
+        head
+    });
+    Ok(!PrincipalRoles::new(heads).holders(role).is_empty())
 }
 
 fn unmoved(principal: CanonicalUuid, position: Seq) -> JournalGuard {
@@ -351,7 +359,7 @@ fn last_operator(principal: CanonicalUuid) -> Outcome<CommandAnswer> {
     refused(
         LAST_OPERATOR,
         principal,
-        "another principal holding the operator role",
+        "another actor holding the operator role",
         Some("none".to_owned()),
     )
 }

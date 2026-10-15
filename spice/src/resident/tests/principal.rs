@@ -159,7 +159,7 @@ fn first_start_bears_one_git_profiled_operator_and_restarts_bear_nothing_more() 
 }
 
 #[test]
-fn the_operator_role_never_leaves_its_last_holder() {
+fn the_operator_role_never_leaves_the_last_actor_able_to_exercise_it() {
     let seated = seated("principal-last-operator");
     let first = heads(&seated.bus)[0].principal;
     let revoke_first = PrincipalRoleRef {
@@ -185,37 +185,41 @@ fn the_operator_role_never_leaves_its_last_holder() {
         11,
     );
     let before = heads(&seated.bus);
+    let refused = role(&seated, CommandKind::PrincipalRevoke, revoke_first, 12);
+    assert_eq!(
+        refusal_reason(&refused),
+        "principal::last-operator",
+        "a principal no actor can act as leaves no one able to exercise the role"
+    );
+    assert_eq!(
+        heads(&seated.bus),
+        before,
+        "a refused revocation writes nothing"
+    );
+
     assert!(matches!(
-        role(&seated, CommandKind::PrincipalRevoke, revoke_first, 12),
+        role(
+            &seated,
+            CommandKind::PrincipalRevoke,
+            PrincipalRoleRef {
+                principal: second,
+                role: PrincipalRole::Operator,
+            },
+            13,
+        ),
         Outcome::Reply(_)
     ));
     let after = heads(&seated.bus);
     assert!(
-        after[0].roles.is_empty(),
+        after[1].roles.is_empty(),
         "the revoked holder keeps no role"
     );
     assert_eq!(
-        (after[0].principal, after[0].born, &after[0].profile),
-        (before[0].principal, before[0].born, &before[0].profile),
+        (after[1].principal, after[1].born, &after[1].profile),
+        (before[1].principal, before[1].born, &before[1].profile),
         "a role change moves only the role"
     );
-    assert_eq!(after[1], before[1], "the other principal is untouched");
-
-    let refused = role(
-        &seated,
-        CommandKind::PrincipalRevoke,
-        PrincipalRoleRef {
-            principal: second,
-            role: PrincipalRole::Operator,
-        },
-        13,
-    );
-    assert_eq!(refusal_reason(&refused), "principal::last-operator");
-    assert_eq!(
-        heads(&seated.bus),
-        after,
-        "a refused revocation writes nothing"
-    );
+    assert_eq!(after[0], before[0], "the other principal is untouched");
 }
 
 #[test]
@@ -297,11 +301,11 @@ fn lanes_cannot_list_admit_profile_or_change_principal_roles() {
 }
 
 /// The command door admits each command under the generation's current role
-/// book, and a role change republishes that book, so revoking the operator
-/// role refuses the principal's very next operator command on the same
-/// connection while its connected commands still admit.
+/// book. Admitting another operator principal no actor can act as leaves the
+/// operator's own revocation refused, and the operator's next operator
+/// command on the same connection still admits.
 #[test]
-fn a_revoked_operator_role_refuses_the_principals_next_operator_command() {
+fn the_door_refuses_a_revocation_that_would_leave_no_actor_operating() {
     let seated = seated("principal-role-book");
     let startup = crate::resident::load_startup_surface(&seated.repository)
         .expect("fixture startup policy resolves");
@@ -329,16 +333,17 @@ fn a_revoked_operator_role_refuses_the_principals_next_operator_command() {
     let mut seats = Seats::new();
     let mut door = |kind, body: serde_json::Value, id| {
         let roles = capabilities.roles().current().expect("the role book reads");
-        let command = command_under(kind, &body, Actor::Operator, id, &roles)?;
+        let command = command_under(kind, &body, Actor::Operator, id, &roles)
+            .expect("the operator's command admits");
         match surface.dispatch_fresh(&mut seats, &command) {
-            CommandDispatch::Complete { outcome, .. } => Ok(outcome),
+            CommandDispatch::Complete { outcome, .. } => outcome,
             CommandDispatch::Launch(_) => panic!("a principal command launches nothing"),
         }
     };
     let read = || serde_json::to_value(PrincipalRead {}).expect("read encodes");
     assert!(matches!(
         door(CommandKind::PrincipalRead, read(), 10),
-        Ok(Outcome::Reply(_))
+        Outcome::Reply(_)
     ));
     let bootstrap = heads(&seated.bus)[0].principal;
     let admit = PrincipalAdmit {
@@ -352,40 +357,23 @@ fn a_revoked_operator_role_refuses_the_principals_next_operator_command() {
             serde_json::to_value(admit).expect("admission encodes"),
             11
         ),
-        Ok(Outcome::Reply(_))
+        Outcome::Reply(_)
     ));
     let revoke = PrincipalRoleRef {
         principal: bootstrap,
         role: PrincipalRole::Operator,
     };
-    assert!(matches!(
-        door(
-            CommandKind::PrincipalRevoke,
-            serde_json::to_value(revoke).expect("revocation encodes"),
-            12
-        ),
-        Ok(Outcome::Reply(_))
-    ));
-
-    let Err(wire::CommandRejection::Refusal(refusal)) =
-        door(CommandKind::PrincipalRead, read(), 13)
-    else {
-        panic!("the revoked principal's next operator command must refuse");
-    };
-    assert_eq!(refusal.reason(), "command::authority");
-    let roles = capabilities.roles().current().expect("the role book reads");
+    let refused = door(
+        CommandKind::PrincipalRevoke,
+        serde_json::to_value(revoke).expect("revocation encodes"),
+        12,
+    );
+    assert_eq!(refusal_reason(&refused), "principal::last-operator");
     assert!(
-        command_under(
-            CommandKind::SteerInbox,
-            &wire::intent::SteerInbox {
-                lane: None,
-                retired: false,
-            },
-            Actor::Operator,
-            14,
-            &roles,
-        )
-        .is_ok(),
-        "a born principal without the operator role still holds connected authority"
+        matches!(
+            door(CommandKind::PrincipalRead, read(), 13),
+            Outcome::Reply(_)
+        ),
+        "the operator keeps operator authority on the same connection"
     );
 }
