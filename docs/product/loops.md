@@ -511,15 +511,17 @@ owns each rule summarized here.
   lane `task done` refuses it, so its holder checkpoints and runs `task free`.
   Only `task conclude HANDLE --done` or `--collapse REASON`, or a collapse
   decision staging that same conclusion, ends an unheld Design; `task close`
-  refuses Designs. Each Design output waits, gated, until
-  the operator's exact `preparation decide` selection records its immutable
-  decision and execution authorization together, releases only that subset,
-  and leaves the Design open. Selection belongs to the operator; the Design's
-  holders do not infer it, review coverage never gates it, and working-group
-  membership grants no authorization. A return or collapse authorizes nothing
-  and keeps every output gated. A Design's newest return is
-  [told once to its active holder](invariants/identity.md#identity-a-designs-newest-return-is-told-once-to-its-active-holder)
-  as its next input, and `room history` lists every decision.
+  refuses Designs. Each Design output waits, gated, until one exact operator
+  `preparation decide` decision assigns every output in the candidate version
+  an accepted or rejected verdict. The decision and execution authorization
+  for exactly the accepted outputs record together; rejected outputs remain
+  gated, and the Design remains open. Per-output comments and an optional
+  overall comment explain the decision. Rejecting every output authorizes
+  nothing, like a historical return. Resolution belongs to the operator; the
+  Design's holders do not infer it, review coverage never gates it, and
+  working-group membership grants no authorization. Rejected-output and
+  overall feedback is [told once to its active holder](invariants/identity.md#identity-a-designs-newest-return-is-told-once-to-its-active-holder)
+  as its next input, and `room history` lists every verdict and comment.
 
   A Plan is an ordinary reviewed task constructor. It creates its
   acceptance-bearing executable tasks under itself; those tasks wait for its

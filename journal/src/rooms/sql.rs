@@ -165,6 +165,16 @@ impl Authority for Stored<'_> {
             .transpose()
     }
 
+    fn candidate_decided(&self, candidate: &wire::rooms::CandidateRef) -> Result<bool, Refusal> {
+        self.exists(
+            "SELECT 1 FROM proposal_heads \
+             WHERE controller = ?1 \
+             AND json_extract(CAST(body AS TEXT), '$.outcome.candidate.candidate') = ?2 \
+             LIMIT 1",
+            params![candidate.controller.as_str(), candidate.candidate.as_str()],
+        )
+    }
+
     fn output_authorized(&self, output: &str) -> Result<bool, Refusal> {
         self.exists(
             "SELECT 1 FROM authorization_heads WHERE output = ?1",

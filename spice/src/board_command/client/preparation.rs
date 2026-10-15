@@ -5,8 +5,8 @@ use serde::de::DeserializeOwned;
 use wire::intent::{BoardAnswer, BoardRead, BoardTask};
 use wire::rooms::{
     CandidateCoverage, CandidateCoverageRecord, CandidateCritique, CandidateCritiqueRecord,
-    CandidateRef, CandidateRetain, CoverageAuthority, DecisionOutcome, OutputAdopt,
-    PreparationDecide, PreparationDecision, ProposalRef, RetainedCandidate, RoomSource,
+    CandidateRef, CandidateRetain, CoverageAuthority, OutputAdopt, PreparationDecide,
+    PreparationDecision, ProposalRef, RetainedCandidate, RoomSource,
 };
 
 use super::*;
@@ -64,7 +64,7 @@ const COVERAGE_JSON: JsonOperand<CoverageInput> = JsonOperand::new(
 );
 const DECISION_JSON: JsonOperand<PreparationDecision> = JsonOperand::new(
     "DECISION_JSON",
-    r#"{"decision":{"controller":"dVzdhh8Nx","decision":"1"},"source":{"kind":"journal","fact":"6dth"},"outcome":{"kind":"selected","candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"selected_outputs":["dVzfwWPSh"]}}"#,
+    r#"{"decision":{"controller":"dVzdhh8Nx","decision":"1"},"source":{"kind":"journal","fact":"6dth"},"outcome":{"kind":"resolved","candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"outputs":[{"output":"dVzfwWPSh","verdict":"accepted","comment":"This boundary is ready."},{"output":"dVzfwgs7d","verdict":"rejected","comment":"Keep the retry contract explicit."}],"comment":"Proceed with the accepted output."}}"#,
 );
 
 #[derive(Deserialize)]
@@ -195,13 +195,11 @@ pub(super) fn client_preparation_decide(
             Ok(candidate) => candidate,
             Err(outcome) => return outcome,
         };
+    let accepts_outputs = decision.outcome.accepted_outputs().next().is_some();
     let mut tasks = vec![decision.decision.controller.clone()];
-    if let DecisionOutcome::Selected {
-        selected_outputs, ..
-    } = &decision.outcome
-    {
+    if accepts_outputs {
         tasks.extend(candidate.governed_inputs.iter().cloned());
-        tasks.extend(selected_outputs.iter().cloned());
+        tasks.extend(decision.outcome.accepted_outputs().cloned());
     }
     submit_with_tasks(repository, contract, tasks, true, |board| {
         let mut expected = transition_witnesses(task(board, &decision.decision.controller)?);
@@ -217,14 +215,11 @@ pub(super) fn client_preparation_decide(
             },
             head: Some(candidate_head),
         });
-        if let DecisionOutcome::Selected {
-            selected_outputs, ..
-        } = &decision.outcome
-        {
+        if accepts_outputs {
             for input in &candidate.governed_inputs {
                 expected.push(statement_witness(task(board, input)?));
             }
-            for output in selected_outputs {
+            for output in decision.outcome.accepted_outputs() {
                 expected.extend(transition_witnesses(task(board, output)?));
                 expected.push(Witness::Authorization {
                     output: output.clone(),

@@ -177,37 +177,41 @@ question result absent from the current projection is shown as unavailable;
 an exact source identity is shown as an unresolved link rather than being
 called available. Concluded Designs keep the same cards read-only.
 
-On an open Design, an operator chooses one action for an exact version:
+On an open Design, an operator chooses one action for an exact undecided
+version:
 
-- **Select outputs** checks any nonempty subset. Its preview states that only
-  those checked outputs are released, unchecked outputs stay gated, and the
-  Design remains open.
-- **Return** requires a reason naming what another proposal must change. It
-  releases nothing and leaves the Design open.
+- **Resolve outputs** assigns **Accept** or **Reject** to every output. Each
+  output may carry its own comment, and the version may carry an optional
+  overall comment. Only accepted outputs are released; rejected outputs stay
+  gated, and the Design remains open. Rejecting every output releases nothing,
+  like a historical Return decision.
 - **Collapse** requires a reason naming why this version's premise did not
   hold. It atomically records the decision and concludes the Design collapsed.
 
 **Preview decision** mutates nothing. **Submit decision** sends one
 `preparation decide` command witnessing the Design's statement, workflow, and
 claim heads, the exact retained candidate fact, governed input statements,
-selected output transitions, and absence of the new decision and output
-authorizations. Selection atomically records its decision and authorization;
-there is no coverage-record prerequisite, Accept stage, post-Accept checkbox,
-or separate Authorize action. Coverage remains readable evidence.
+accepted output transitions, and absence of the new decision and output
+authorizations. Resolution atomically records every verdict and comment plus
+authorization for exactly the accepted outputs; there is no coverage-record
+prerequisite, later Accept stage, or separate Authorize action. Coverage
+remains readable evidence. Rejected-output comments and the overall comment
+become input to the Design's current or next holder.
 
 The first click marks that exact version pending before the socket write, so a
 double activation cannot submit twice. While it is pending, every other
 proposal version's decision controls stay disabled; its exact reply settles
-before those controls unlock. Each proposal version keeps its own local choice,
-reason, preview, and resident refusal while the operator edits or previews
-another version. Editing that version again clears its notice. A successful
-reply reports only that the write landed: standing, selected outputs, and
-conclusion continue to come from committed room and board authority. A stale
-candidate, moved head, live claim, concluded Design, foreign output, or
-mismatched version refusal stays beside the unchanged choice and reason and
-requires a fresh preview.
-Passive versus active working-group standing changes no operator decision authority.
-Native radio, checkbox, text, and button controls preserve keyboard order in
+before those controls unlock. Each proposal version keeps its own local
+verdicts, comments, action, preview, and resident refusal while the operator
+edits or previews another version. Editing that version again clears its
+notice. A successful reply reports only that the write landed: standing,
+accepted outputs, and conclusion continue to come from committed room and
+board authority. A decided version shows its immutable decision and offers no
+second submission. A stale candidate, moved head, live claim, concluded
+Design, foreign output, incomplete verdict set, or mismatched version refusal
+stays beside the unchanged draft and requires a fresh preview.
+Passive versus active working-group standing changes no operator decision
+authority. Native radio, text, and button controls preserve keyboard order in
 normal and narrow layouts.
 
 ## Preparation authority
@@ -215,9 +219,11 @@ normal and narrow layouts.
 A room for a controlling task also exposes its retained candidate, critique,
 review coverage, decision, and execution-authorization records in immutable
 journal order. Each record preserves exact outputs, governed inputs, source
-link, decision outcome, and selected outputs; review evidence and execution
-authorization remain distinct. The same authority is available through bounded
-`spice preparation show HANDLE` and `spice://task/HANDLE/preparation` pages.
+link, every output verdict and comment, the overall comment, and accepted
+outputs; review evidence and execution authorization remain distinct. Legacy
+Select, Return, and Collapse records remain readable. The same authority is
+available through bounded `spice preparation show HANDLE` and
+`spice://task/HANDLE/preparation` pages.
 Reading or opening these records joins, acknowledges, and changes nothing.
 
 ## Room coordination

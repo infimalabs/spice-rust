@@ -99,8 +99,8 @@ pub(in crate::resident) fn reconcile(
     Ok(())
 }
 
-/// The private notice carrying one return to the Design's holder, its reason
-/// clipped until it fits one datagram; the room keeps the reason whole.
+/// The private notice carrying one decision's feedback to the Design holder,
+/// clipped until it fits one datagram; room history keeps the text whole.
 pub(in crate::resident) fn return_notice(owed: &ReturnOwed) -> BackgroundNotice {
     let mut reason = owed.reason.clone();
     loop {
@@ -108,8 +108,8 @@ pub(in crate::resident) fn return_notice(owed: &ReturnOwed) -> BackgroundNotice 
             occupant: owed.occupant,
             purpose: format!("design-return:{}", owed.design),
             text: format!(
-                "<system-notice>\nThe operator returned candidate {} of your Design {} \
-                 (decision {}): {reason}\nThis reason is the Design's newest input: revise its \
+                "<system-notice>\nThe operator recorded feedback on candidate {} of your Design {} \
+                 (decision {}):\n{reason}\nThis feedback is the Design's newest input: revise its \
                  proposal with it. `spice room history {}` lists every decision. This is a \
                  private background notice: it needs no acknowledgment key or visible ACK/NAK.\n\
                  </system-notice>",

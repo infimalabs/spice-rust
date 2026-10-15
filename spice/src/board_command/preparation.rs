@@ -58,9 +58,9 @@ pub(super) fn require_no_pending_controlled_outputs(
         "preparation::controlled-outputs-pending",
         Some(outputs.join(", ")),
         &format!(
-            "select each intended output of {} in an exact candidate decision with `spice \
-             preparation decide DECISION_JSON`, or close or delete every unselected output before \
-             concluding it",
+            "accept each intended output of {} in one exact resolved candidate decision with \
+             `spice preparation decide DECISION_JSON`, or close or delete every unaccepted output \
+             before concluding it",
             controller.handle()
         ),
     ))
@@ -348,6 +348,16 @@ pub(super) fn decide_preparation(
     if let Err(outcome) = require_proposal_absence(command, &subject) {
         return outcome;
     }
+    if matches!(
+        &decision.outcome,
+        DecisionOutcome::Selected { .. } | DecisionOutcome::Returned { .. }
+    ) {
+        return refusal(
+            "preparation::decision-retired",
+            Some(decision.outcome.candidate().candidate.to_string()),
+            "submit one resolved decision with an accepted or rejected verdict for every output",
+        );
+    }
     let candidate_ref = decision.outcome.candidate();
     let candidate = match retained_candidate(bus, command, candidate_ref) {
         Ok(candidate) => candidate,
@@ -365,20 +375,38 @@ pub(super) fn decide_preparation(
         return outcome;
     }
     let consequence = match &decision.outcome {
-        DecisionOutcome::Selected {
-            selected_outputs, ..
-        } => match prepare_selection(
-            &snapshot,
-            command,
-            controller,
-            decision,
-            &candidate,
-            selected_outputs,
-        ) {
-            Ok((outputs, authorization)) => Consequence::Authorize(outputs, authorization),
-            Err(outcome) => return outcome,
-        },
-        DecisionOutcome::Returned { .. } => Consequence::Record,
+        DecisionOutcome::Selected { .. } | DecisionOutcome::Returned { .. } => {
+            unreachable!("legacy decision shapes refuse before authority reads")
+        }
+        DecisionOutcome::Resolved { outputs, .. } => {
+            if outputs.len() != candidate.outputs.len()
+                || outputs
+                    .iter()
+                    .zip(&candidate.outputs)
+                    .any(|(decision, candidate)| decision.output != *candidate)
+            {
+                return refusal(
+                    "preparation::decision-output-mismatch",
+                    Some(candidate_ref.candidate.to_string()),
+                    "accept or reject every output of the exact candidate version in shown order",
+                );
+            }
+            let accepted = decision
+                .outcome
+                .accepted_outputs()
+                .cloned()
+                .collect::<Vec<_>>();
+            if accepted.is_empty() {
+                Consequence::Record
+            } else {
+                match prepare_selection(
+                    &snapshot, command, controller, decision, &candidate, &accepted,
+                ) {
+                    Ok((outputs, authorization)) => Consequence::Authorize(outputs, authorization),
+                    Err(outcome) => return outcome,
+                }
+            }
+        }
         DecisionOutcome::Collapse { reason, .. } => Consequence::Conclude {
             design: TaskHandle::for_project(
                 &controller.statement().body().project,

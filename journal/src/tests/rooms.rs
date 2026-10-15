@@ -2,9 +2,10 @@ use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued, CandidateRef,
     CandidateReference, CandidateRetained, CoverageAuthority, CoverageRef, CritiqueRef,
     CritiqueStanding, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorized,
-    OutputControlled, PreparationDecided, PreparationDecision, ProposalRef, RetainedCandidate,
-    RoomAuthorityStamp, RoomPublicationContent, RoomPublished, RoomSource, TextRange,
-    TranscriptHunk, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
+    OutputControlled, OutputDecision, OutputVerdict, PreparationDecided, PreparationDecision,
+    ProposalRef, RetainedCandidate, RoomAuthorityStamp, RoomPublicationContent, RoomPublished,
+    RoomSource, TextRange, TranscriptHunk, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
+    WorkingGroupsArranged,
 };
 use wire::{Producer, SequenceCode, TaskPreparation};
 
@@ -1131,7 +1132,7 @@ fn transcript_links_stay_within_the_accounted_generation_and_extent() {
 }
 
 #[test]
-fn newest_decisions_page_backward_strictly_before_the_cursor() {
+fn a_candidate_accepts_one_complete_decision_and_refuses_another() {
     let mut journal = Journal::in_memory().expect("journal");
     let preparation = Preparation::new(&mut journal);
     commit(
@@ -1139,13 +1140,90 @@ fn newest_decisions_page_backward_strictly_before_the_cursor() {
         preparation.retained(1, vec![preparation.output.clone()]),
     )
     .expect("candidate retained");
+    commit(
+        &mut journal,
+        preparation.decision(
+            1,
+            DecisionOutcome::Resolved {
+                candidate: preparation.candidate(1),
+                outputs: vec![OutputDecision {
+                    output: preparation.output.clone(),
+                    verdict: OutputVerdict::Rejected,
+                    comment: Some("not this boundary".to_owned()),
+                }],
+                comment: Some("keep the Design open".to_owned()),
+            },
+        ),
+    )
+    .expect("first decision recorded");
+    let before = fact_bytes(&journal);
+    let duplicate = commit(
+        &mut journal,
+        preparation.decision(
+            2,
+            DecisionOutcome::Resolved {
+                candidate: preparation.candidate(1),
+                outputs: vec![OutputDecision {
+                    output: preparation.output.clone(),
+                    verdict: OutputVerdict::Accepted,
+                    comment: None,
+                }],
+                comment: None,
+            },
+        ),
+    );
+    refused(&journal, duplicate);
+    assert_eq!(fact_bytes(&journal), before);
+}
+
+#[test]
+fn duplicate_legacy_returns_remain_replayable_but_are_not_the_current_write_path() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = Preparation::new(&mut journal);
+    commit(
+        &mut journal,
+        preparation.retained(1, vec![preparation.output.clone()]),
+    )
+    .expect("candidate retained");
+    for (sequence, reason) in [(1, "first return"), (2, "repeated return")] {
+        commit(
+            &mut journal,
+            preparation.decision(
+                sequence,
+                DecisionOutcome::Returned {
+                    candidate: preparation.candidate(1),
+                    reason: reason.to_owned(),
+                },
+            ),
+        )
+        .expect("retained legacy return remains admissible");
+    }
+
+    let expected = projection(&journal);
+    journal.verify().expect("legacy returns verify");
+    journal.reindex().expect("legacy returns rebuild");
+    assert_eq!(projection(&journal), expected);
+}
+
+#[test]
+fn newest_decisions_page_backward_strictly_before_the_cursor() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = Preparation::new(&mut journal);
     for sequence in 1..=5 {
+        commit(
+            &mut journal,
+            preparation.retained(sequence, vec![preparation.output.clone()]),
+        )
+        .expect("candidate retained");
         let returned = DecisionOutcome::Returned {
-            candidate: preparation.candidate(1),
+            candidate: preparation.candidate(sequence),
             reason: format!("reason {sequence}"),
         };
-        commit(&mut journal, preparation.decision(sequence, returned)).expect("return recorded");
-        commit(&mut journal, preparation.coverage(1, sequence)).expect("coverage between returns");
+        commit(
+            &mut journal,
+            preparation.decision(sequence as u64, returned),
+        )
+        .expect("return recorded");
     }
     let budget = crate::FactReadBudget::new(2, crate::FactReadBudget::RETAINED.decoded_bytes())
         .expect("budget");

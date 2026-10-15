@@ -214,6 +214,8 @@ pub(crate) trait Authority {
     fn proposal(&self, subject: &str) -> Result<Option<Vec<u8>>, Refusal>;
     /// The actor that recorded one proposal head.
     fn proposal_author(&self, subject: &str) -> Result<Option<Actor>, Refusal>;
+    /// Whether this exact candidate already has an operator decision.
+    fn candidate_decided(&self, candidate: &wire::rooms::CandidateRef) -> Result<bool, Refusal>;
     /// Whether this output already carries an authorization.
     fn output_authorized(&self, output: &str) -> Result<bool, Refusal>;
     /// Whether this decision already authorized a selection.
@@ -469,6 +471,17 @@ impl Authority for History {
             .get(subject)
             .and_then(|row| self.authors.get(&row.seq))
             .cloned())
+    }
+
+    fn candidate_decided(&self, candidate: &wire::rooms::CandidateRef) -> Result<bool, Refusal> {
+        for row in self.projection.proposals.values() {
+            if let Ok(decision) = wire::decode::<PreparationDecision>(&row.body)
+                && decision.outcome.candidate() == candidate
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn output_authorized(&self, output: &str) -> Result<bool, Refusal> {
@@ -1024,12 +1037,35 @@ fn decide(
 ) -> Result<(), Refusal> {
     let controller = &decision.decision.controller;
     require_task(authority, controller, "decision controller")?;
-    require_proposal(
+    let candidate: RetainedCandidate = wire::decode(&require_proposal(
         authority,
         &ProposalRef::Candidate {
             candidate: decision.outcome.candidate().clone(),
         },
-    )?;
+    )?)?;
+    if let DecisionOutcome::Resolved { outputs, .. } = &decision.outcome
+        && (outputs.len() != candidate.outputs.len()
+            || outputs
+                .iter()
+                .zip(&candidate.outputs)
+                .any(|(decision, candidate)| decision.output != *candidate))
+    {
+        return unsound("output resolution must name every candidate output in retained order");
+    }
+    // `Selected` and `Returned` are retained journal shapes and remain
+    // replayable even when an old release admitted more than one for a
+    // candidate. Current commands cannot emit either shape. Every current
+    // decision refuses against any previously recorded decision.
+    if matches!(
+        &decision.outcome,
+        DecisionOutcome::Resolved { .. } | DecisionOutcome::Collapse { .. }
+    ) && authority.candidate_decided(decision.outcome.candidate())?
+    {
+        return unsound(format!(
+            "candidate {} already has an operator decision",
+            decision.outcome.candidate().candidate
+        ));
+    }
     require_source(authority, seq, &decision.source)?;
     let proposal = ProposalRef::Decision {
         decision: decision.decision.clone(),
@@ -1049,15 +1085,17 @@ fn authorize(
         decision: authorization.decision.clone(),
     };
     let decision: PreparationDecision = wire::decode(&require_proposal(authority, &decision_ref)?)?;
-    let selected = match &decision.outcome {
-        DecisionOutcome::Selected {
-            candidate,
-            selected_outputs,
-        } if *candidate == authorization.candidate => selected_outputs,
-        _ => {
-            return unsound("authorization requires the exact selection recorded by its decision");
-        }
-    };
+    if decision.outcome.candidate() != &authorization.candidate {
+        return unsound("authorization requires the exact candidate recorded by its decision");
+    }
+    let selected = decision
+        .outcome
+        .accepted_outputs()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if selected.is_empty() {
+        return unsound("authorization requires a decision that accepts an output");
+    }
     let candidate: RetainedCandidate = wire::decode(&require_proposal(
         authority,
         &ProposalRef::Candidate {
@@ -1068,8 +1106,8 @@ fn authorize(
     if set(&authorization.governed_inputs) != set(&candidate.governed_inputs) {
         return unsound("authorization governed inputs differ from the candidate's");
     }
-    if set(&authorization.selected_outputs) != set(selected) {
-        return unsound("authorization outputs differ from the decision's exact selection");
+    if set(&authorization.selected_outputs) != selected {
+        return unsound("authorization outputs differ from the decision's exact acceptance");
     }
     if let Some(output) = authorization
         .selected_outputs
