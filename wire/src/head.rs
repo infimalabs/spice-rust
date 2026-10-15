@@ -979,8 +979,8 @@ pub struct LaneResidency {
 pub struct TeamSubscription {
     /// Stable app team identifying the subscribed team.
     pub team: CanonicalUuid,
-    /// Commit instant when this identity most recently crossed from a lone seat
-    /// into a team. Absent while the identity holds exactly one member.
+    /// Commit instant when this identity most recently became [`teamed`].
+    /// Absent exactly while the identity is unteamed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub formed_at: Option<Instant>,
     /// Authoritative task-selection policy for the entire team.

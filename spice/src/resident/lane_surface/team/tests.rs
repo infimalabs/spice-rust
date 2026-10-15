@@ -42,11 +42,12 @@ fn head(rows: &[(u8, u8)]) -> wire::ResidencyHead {
             .into_iter()
             .map(|team| wire::TeamSubscription {
                 team: uuid(team),
-                formed_at: (rows
-                    .iter()
-                    .filter(|(_, candidate)| *candidate == team)
-                    .count()
-                    > 1)
+                formed_at: wire::head::teamed(
+                    uuid(team),
+                    rows.iter()
+                        .filter(|(_, candidate)| *candidate == team)
+                        .map(|(member, _)| uuid(*member)),
+                )
                 .then(|| {
                     "2030-04-12T18:44:09.271Z"
                         .parse()
@@ -278,28 +279,65 @@ fn removing_a_host_mints_an_identity_when_every_remaining_member_name_is_taken()
 }
 
 #[test]
-fn formation_reconciliation_tracks_only_singleton_boundaries() {
-    let observed = head(&[(1, 1)]);
-    let mut formed = head(&[(1, 1), (2, 1)]);
-    formed.subscriptions[0].formed_at = None;
-    let first: wire::Instant = "2030-04-12T18:44:09.271Z"
-        .parse()
-        .expect("first formation instant");
-    reconcile_formations(&observed, &mut formed, first);
-    assert_eq!(formed.subscriptions[0].formed_at, Some(first));
+fn formation_instants_follow_the_teamed_predicate_through_singleton_teams() {
+    let instant = |text: &str| -> wire::Instant { text.parse().expect("fixture instant") };
+    let (first, later, reformed) = (
+        instant("2031-01-01T00:00:01.000Z"),
+        instant("2031-01-01T00:00:02.000Z"),
+        instant("2031-01-01T00:00:03.000Z"),
+    );
+    let formed_at = |head: &wire::ResidencyHead, team: u8| {
+        head.subscriptions
+            .iter()
+            .find(|subscription| subscription.team == uuid(team))
+            .expect("team subscription")
+            .formed_at
+    };
+    let step = |observed: &wire::ResidencyHead, rows: &[(u8, u8)], at| {
+        let mut next = head(rows);
+        for subscription in &mut next.subscriptions {
+            subscription.formed_at = None;
+        }
+        reconcile_formations(observed, &mut next, at);
+        next
+    };
 
-    let before_reorder = formed.clone();
-    formed.lanes.reverse();
-    let later: wire::Instant = "2030-04-12T18:44:10.271Z".parse().expect("later instant");
-    reconcile_formations(&before_reorder, &mut formed, later);
+    let lone = head(&[(1, 1), (2, 2)]);
     assert_eq!(
-        formed.subscriptions[0].formed_at,
+        formed_at(&lone, 1),
+        None,
+        "a self-identified seat is unteamed"
+    );
+    let split = step(&lone, &[(1, 7), (2, 2)], first);
+    assert_eq!(
+        formed_at(&split, 7),
         Some(first),
-        "member order does not reform the team"
+        "one member under another identity forms a team at that commit"
+    );
+    let grown = step(&split, &[(2, 7), (1, 7)], later);
+    assert_eq!(
+        formed_at(&grown, 7),
+        Some(first),
+        "growth and order keep it"
+    );
+    let shrunk = step(&grown, &[(2, 7), (1, 1)], later);
+    assert_eq!(
+        formed_at(&shrunk, 7),
+        Some(first),
+        "one remaining member under another identity keeps the team formed"
     );
 
-    let before_split = formed.clone();
-    formed.lanes.pop();
-    reconcile_formations(&before_split, &mut formed, later);
-    assert_eq!(formed.subscriptions[0].formed_at, None);
+    let pair = head(&[(1, 1), (2, 1)]);
+    let unteamed = step(&pair, &[(1, 1), (2, 2)], later);
+    assert_eq!(
+        formed_at(&unteamed, 1),
+        None,
+        "the self-identified seat clears it"
+    );
+    let reteamed = step(&unteamed, &[(1, 1), (3, 1)], reformed);
+    assert_eq!(
+        formed_at(&reteamed, 1),
+        Some(reformed),
+        "reforming mints a new instant"
+    );
 }

@@ -9,6 +9,7 @@
 use super::*;
 
 mod designs;
+mod formations;
 mod principals;
 mod probe;
 mod retained;
@@ -131,7 +132,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
     for predecessor in [
-        33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 56, 58,
+        33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 56, 58, 59,
     ] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
@@ -333,7 +334,7 @@ fn residency_lane(lane: &str, team: &str, life: &str) -> LaneResidency {
 }
 
 /// Plant predecessor residency authority and the immutable facts that prove
-/// when each retained team crossed from one member to two.
+/// when each retained team became teamed.
 fn plant_omitted_subscriptions(journal: &mut Journal, lanes: Vec<LaneResidency>) {
     let mut head = ResidencyHead {
         lanes: lanes.clone(),
@@ -423,7 +424,7 @@ fn an_omitted_residency_subscription_table_crosses_once_to_its_explicit_form() {
             ],
             vec![
                 subscription(EARLY, true, wire::intent::TeamLife::Drive, false),
-                subscription(LATE, false, wire::intent::TeamLife::Steer, false),
+                subscription(LATE, true, wire::intent::TeamLife::Steer, false),
             ],
         ),
         (Vec::new(), Vec::new()),

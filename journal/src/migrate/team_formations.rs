@@ -4,8 +4,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::{MigrationError, OpenError, TEAM_FORMATIONS_RELEASE};
 
-/// Recover every live team's first multi-member instant from immutable topology
-/// facts, then persist it in the residency authority.
+/// Recover every live team's latest unteamed-to-teamed instant, under the one
+/// [`wire::head::teamed`] predicate, from immutable topology facts, then
+/// persist exactly those instants in the residency authority.
 pub(super) fn cross(connection: &Connection) -> Result<(), OpenError> {
     let Some((head_seq, body)) = connection
         .query_row(
@@ -26,7 +27,9 @@ pub(super) fn cross(connection: &Connection) -> Result<(), OpenError> {
     }
     let mut unresolved = memberships
         .iter()
-        .filter_map(|(team, members)| (members.len() > 1).then_some(*team))
+        .filter_map(|(team, members)| {
+            wire::head::teamed(*team, members.iter().copied()).then_some(*team)
+        })
         .collect::<BTreeSet<_>>();
     let mut formations = BTreeMap::new();
     let mut query = connection
@@ -97,9 +100,9 @@ fn rewind_memberships(
 ) {
     unresolved.retain(|team| {
         let after = memberships.remove(team).unwrap_or_default();
-        let was_formed = after.len() > 1;
+        let was_formed = wire::head::teamed(*team, after.iter().copied());
         let before = membership_before(*team, after, &envelope.fact);
-        let formed_here = was_formed && before.len() < 2;
+        let formed_here = was_formed && !wire::head::teamed(*team, before.iter().copied());
         memberships.insert(*team, before);
         if formed_here {
             formations.insert(*team, envelope.at);
