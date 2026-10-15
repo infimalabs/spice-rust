@@ -1412,3 +1412,6 @@ fn named_output_with(
 
 #[path = "coordination/late.rs"]
 mod late;
+
+#[path = "coordination/design_wait.rs"]
+mod design_wait;

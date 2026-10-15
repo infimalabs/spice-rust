@@ -15,7 +15,8 @@ use crate::urgency::{Urgency, declared_priority};
 /// concludes it, so each known preparation parent records whether it is a
 /// Design and whether the working-group partition holds it. Each Design that
 /// still has a live output awaiting that selection is recorded too, so it
-/// waits on the operator rather than a lane.
+/// waits on the operator rather than a lane, as is each controller whose
+/// released work is still in progress, so its Design waits on that work.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResolvedTasks {
     settled: BTreeMap<TaskStamp, bool>,
@@ -23,6 +24,7 @@ pub struct ResolvedTasks {
     active_designs: BTreeSet<TaskStamp>,
     unselected: BTreeSet<TaskStamp>,
     released: BTreeSet<TaskStamp>,
+    working: BTreeSet<TaskStamp>,
 }
 
 impl ResolvedTasks {
@@ -56,6 +58,28 @@ impl ResolvedTasks {
         }
     }
 
+    /// Record each controller whose released work is still in progress among
+    /// `entries`: a filed, pending, undeferred task, never a gather task,
+    /// whose control allocation already treats as satisfied. Call it once
+    /// every readiness fact those entries read has been recorded.
+    pub fn hold_released_work<'a>(&mut self, entries: impl IntoIterator<Item = &'a Entry>) {
+        let working = entries
+            .into_iter()
+            .filter(|entry| {
+                let workflow = entry.workflow();
+                entry.is_filed()
+                    && workflow.status == "pending"
+                    && workflow.completion.is_none()
+                    && workflow.deferral.is_none()
+                    && !gather_task(entry.statement(), workflow)
+                    && control_satisfied(entry.statement(), false, self)
+            })
+            .filter_map(|entry| entry.statement().preparation.as_ref())
+            .map(|preparation| preparation.controller.clone())
+            .collect::<Vec<_>>();
+        self.working.extend(working);
+    }
+
     /// Whether this task state is an open Design waiting for one of the
     /// observed outputs to receive the operator's selection.
     #[must_use]
@@ -68,6 +92,20 @@ impl ResolvedTasks {
             && workflow.status == "pending"
             && workflow.completion.is_none()
             && self.unselected.contains(&statement.born)
+    }
+
+    /// Whether this task state is an open Design whose released work is still
+    /// in progress: a filed, pending, undeferred task under its control.
+    #[must_use]
+    pub fn awaits_authorized_work(
+        &self,
+        statement: &wire::TaskHead,
+        workflow: &wire::WorkflowHead,
+    ) -> bool {
+        statement.intent == Some(TaskIntent::Design)
+            && workflow.status == "pending"
+            && workflow.completion.is_none()
+            && self.working.contains(&statement.born)
     }
 
     fn settled(&self, task: &TaskStamp) -> bool {
@@ -208,6 +246,15 @@ pub fn unselected_output_of<'a>(
 pub fn awaits_selection(entry: &Entry, satisfied: &ResolvedTasks) -> bool {
     satisfied.awaits_selection(entry.statement(), entry.workflow())
 }
+
+/// Whether an open Design waits on work it already released: until that
+/// settles a lane has nothing new to judge, so the Design follows normal
+/// workflow rather than being handed out. Settling the last such task makes it
+/// assignable again for follow-up.
+#[must_use]
+pub fn awaits_authorized_work(entry: &Entry, satisfied: &ResolvedTasks) -> bool {
+    satisfied.awaits_authorized_work(entry.statement(), entry.workflow())
+}
 /// Why one open task's allocation gate is closed.
 ///
 /// Possession, deferral, environmental holds, passive Designs, hidden filing,
@@ -317,6 +364,10 @@ fn progress(
     if awaits_selection(entry, resolved) {
         states[task] = Progress::Selection;
         return Progress::Selection;
+    }
+    if awaits_authorized_work(entry, resolved) {
+        states[task] = Progress::Neutral;
+        return Progress::Neutral;
     }
     if dependencies_satisfied(entry, resolved) {
         states[task] = Progress::Moving;
@@ -1030,6 +1081,7 @@ fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool 
             .is_none_or(|assignment| assignment == actor || assignment_lapsed(entry, assignment))
         && dependencies_satisfied(entry, completed)
         && !awaits_selection(entry, completed)
+        && !awaits_authorized_work(entry, completed)
         && !passive_design(entry)
 }
 
@@ -1064,6 +1116,7 @@ fn operational_without_assignment(entry: &Entry, completed: &ResolvedTasks) -> b
         && workflow.deferral.is_none()
         && dependencies_satisfied(entry, completed)
         && !awaits_selection(entry, completed)
+        && !awaits_authorized_work(entry, completed)
         && !passive_design(entry)
 }
 
@@ -1238,7 +1291,8 @@ pub fn stealable_entry(
 }
 
 /// Each settled task with whether its conclusion is positive, whether each
-/// entry is a Design, and which preparations still own an unselected output.
+/// entry is a Design, which preparations still own an unselected output, and
+/// which controllers' released work is still in progress.
 ///
 /// Closing or deleting a task resolves ordinary prerequisites. Neither approves
 /// execution controlled by that task. All readiness surfaces use these facts.
@@ -1260,5 +1314,6 @@ pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
         resolved.observe(candidate.statement(), candidate.workflow());
     }
     resolved.released = crate::control::released_tasks(entries);
+    resolved.hold_released_work(entries);
     resolved
 }
