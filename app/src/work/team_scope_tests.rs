@@ -180,9 +180,15 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
     plan.statement.body.intent = Some(wire::TaskIntent::Plan);
     plan.statement.body.preparation = Some(preparation(design_born.clone()));
 
+    // A Plan-created task inherits its Plan's Design as selection controller,
+    // as task creation binds it, while its direct parent is the Plan.
     let mut execution = task(4, "app.execute");
     execution.creator_team = Some(executor);
-    execution.statement.body.preparation = Some(preparation(plan_born));
+    execution.statement.body.preparation = Some(wire::TaskPreparation {
+        parent: plan_born,
+        controller: design_born.clone(),
+        construction: stamp(4),
+    });
 
     let mut rehomed = task(5, "app.rehomed");
     rehomed.creator_team = Some(dissolved);

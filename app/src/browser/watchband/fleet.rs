@@ -326,7 +326,7 @@ fn render_team_total(
             key="team-total"
             class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
             data-work-scope="team"
-            data-blocked={view::chrome::blocked_mark(counts)}
+            data-needs-operator={view::chrome::operator_mark(counts)}
         >
             <button
                 class="app-horn-tab__target"
