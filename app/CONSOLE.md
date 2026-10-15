@@ -150,11 +150,12 @@ empty fleet reserves no pips and invents no status.
 
 ## Task strips
 
-The command bar has two mirrored global strips and each team has one local
-strip. Every strip uses the same horned-tab construction and leads with a
-badge-only total. The global strips keep equal, small browser-edge insets,
-including the platform safe area: execution at the left and Design at the
-right. The left global total opens all current execution work. The right global
+The command bar has two mirrored global strips, and each team and each open
+working group has one local strip. Every strip uses the same horned-tab
+construction and leads with a badge-only total. The global strips keep equal,
+small browser-edge insets, including the platform safe area: execution at the
+left and Design at the right. The left global total opens all current execution
+work. The right global
 total opens all current Design-owned work: each Design root and each open task
 directly controlled by a Design. Global membership is the stable namespace;
 active local docking does not remove a task from its global strip. A team total
@@ -209,8 +210,9 @@ resident's offer order and may be explicitly empty.
 
 ## Group toolbar
 
-A working group's toolbar keeps team-console geometry and maps each team
-element to a design-side analog:
+A working group's toolbar keeps team-console geometry: its total leads the rail
+at the start and its lane tabs follow toward the end, exactly as a team's task
+tabs do. It maps each team element to a design-side analog:
 
 | Team toolbar | Group toolbar |
 | --- | --- |
