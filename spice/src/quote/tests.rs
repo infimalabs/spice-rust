@@ -330,7 +330,7 @@ fn every_authority_kind_resolves_with_recorded_authorship() {
     store.tape.insert(
         format!("{}/{}/3/5/8/13", uuid(1), uuid(2)),
         SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text: "agent text".to_owned(),
             author: QuoteAuthor::Agent {
                 lane: uuid(1),
@@ -345,7 +345,7 @@ fn every_authority_kind_resolves_with_recorded_authorship() {
     store.steering.insert(
         "dTVLR0qL0".to_owned(),
         SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text: "operator text".to_owned(),
             author: QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
@@ -384,7 +384,7 @@ fn every_authority_kind_resolves_with_recorded_authorship() {
     store.room.insert(
         format!("{room}/{publication}"),
         SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text: "room post".to_owned(),
             author: QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
@@ -427,7 +427,7 @@ fn agent_quote_presentation_carries_authenticated_directive_context() {
     store.tape.insert(
         format!("{}/{}/3/5/8/13", uuid(1), uuid(2)),
         SourceQuote {
-            identity: Some(authored.to_owned()),
+            identity: TextIdentity::Authored(authored.to_owned()),
             text: presented.clone(),
             author: QuoteAuthor::Agent {
                 lane: uuid(1),
@@ -441,7 +441,7 @@ fn agent_quote_presentation_carries_authenticated_directive_context() {
     store.steering.insert(
         "dTVLR0qL0".to_owned(),
         SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text: operator.to_owned(),
             author: QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
@@ -490,7 +490,7 @@ fn nested_quote_presentation_inlines_each_sources_own_media() {
         store.steering.insert(
             key.to_owned(),
             SourceQuote {
-                identity: None,
+                identity: TextIdentity::Presented,
                 text: text.clone(),
                 author: QuoteAuthor::Directive {
                     actor: wire::Actor::Operator,
@@ -531,7 +531,7 @@ fn media_targets_select_one_authenticated_ordinal_and_present_it_as_media() {
     store.steering.insert(
         "dTVLR0qL0".to_owned(),
         SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text: "source prose is not selected".to_owned(),
             author: QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
@@ -583,6 +583,63 @@ fn media_targets_select_one_authenticated_ordinal_and_present_it_as_media() {
 }
 
 #[test]
+fn a_media_only_tape_source_answers_only_its_media_targets() {
+    let image =
+        wire::Media::from_base64("shot.png", "image/png", "iVBORw0KGgo=").expect("fixture media");
+    let mut store = MemoryStore::default();
+    store.tape.insert(
+        format!("{}/{}/3/5/8/13", uuid(1), uuid(2)),
+        SourceQuote {
+            identity: TextIdentity::Absent,
+            text: String::new(),
+            author: QuoteAuthor::Agent {
+                lane: uuid(1),
+                occupant: uuid(3),
+            },
+            disposition: None,
+            media: vec![image.clone()],
+            packet: None,
+        },
+    );
+
+    // The digest of the empty text a media-only event presents still names
+    // no prose: resolution, presentation, and delivery all refuse it.
+    let text = tape_target("");
+    let spelled = text.to_string();
+    assert_eq!(
+        resolve_with(&store, &spelled, 0),
+        unavailable(&spelled, QuoteUnavailable::Unknown)
+    );
+    assert_eq!(
+        present_with(&store, &text.markdown(), 0),
+        [QuotePresentation::Unavailable {
+            target: spelled.clone(),
+            reason: QuoteUnavailable::Unknown,
+        }]
+    );
+    let mut stub = String::new();
+    render_unavailable(&mut stub, &spelled, QuoteUnavailable::Unknown);
+    assert_eq!(expand_with(&store, &text.markdown(), 0), stub);
+
+    let media = QuoteTarget::TapeMedia {
+        lane: uuid(1),
+        source: uuid(2),
+        locus: wire::MessageLocus {
+            member: 3,
+            offset: 5,
+            length: 8,
+            event: 13,
+        },
+        ordinal: 0,
+        digest: image.identity().expect("media identity"),
+    };
+    assert!(matches!(
+        resolve_with(&store, &media.to_string(), 0),
+        QuoteResolution::Media(ResolvedMediaQuote { media, .. }) if media == image
+    ));
+}
+
+#[test]
 fn refusals_name_the_original_target_without_synthesized_values() {
     let store = MemoryStore::default();
     let unknown = tape_target("missing").to_string();
@@ -617,7 +674,7 @@ fn refusals_name_the_original_target_without_synthesized_values() {
     store.steering.insert(
         "dTVLR0qL0".to_owned(),
         SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text: "forged".to_owned(),
             author: QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
@@ -644,7 +701,7 @@ fn presentation_expands_nested_quotes_and_preserves_the_depth_boundary_target() 
         store.steering.insert(
             key,
             SourceQuote {
-                identity: None,
+                identity: TextIdentity::Presented,
                 text: returned_text,
                 author: QuoteAuthor::Directive {
                     actor: wire::Actor::Operator,
@@ -732,7 +789,7 @@ fn presentation_reloads_current_directive_disposition() {
     store.steering.insert(
         key.to_owned(),
         SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text: text.to_owned(),
             author: QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
@@ -775,7 +832,7 @@ fn delivery_expands_nested_quotes_and_names_unavailable_sources() {
     store.steering.insert(
         "dTVLR0qL0".to_owned(),
         SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text: inner_text.to_owned(),
             author: QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
@@ -790,7 +847,7 @@ fn delivery_expands_nested_quotes_and_names_unavailable_sources() {
     store.steering.insert(
         "dTVLR0qL1".to_owned(),
         SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text: outer_text,
             author: QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
@@ -824,7 +881,7 @@ fn delivery_depth_limit_leaves_one_explicit_source_stub() {
         store.steering.insert(
             key,
             SourceQuote {
-                identity: None,
+                identity: TextIdentity::Presented,
                 text: returned_text,
                 author: QuoteAuthor::Directive {
                     actor: wire::Actor::Operator,
