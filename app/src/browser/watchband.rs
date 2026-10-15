@@ -132,7 +132,6 @@ pub(super) fn render_team(
             .lanes
             .iter()
             .flat_map(|team| {
-                let members = team.members.len();
                 team.members
                     .iter()
                     .enumerate()
@@ -140,7 +139,7 @@ pub(super) fn render_team(
                         (
                             (member.lane, member.occupant),
                             crate::composer_markdown::QuoteAgent {
-                                accent: watchband::accent(members, position),
+                                accent: team.accent(position),
                                 label: watchband::agent_message_label(
                                     &member.worktree,
                                     member.name.as_deref(),
@@ -480,7 +479,7 @@ fn activity_cards(
                 .enumerate()
                 .find(|(_, member)| member.lane == message.lane)?;
             Some(ActivityCard::Agent {
-                accent: watchband::accent(team.members.len(), position),
+                accent: team.accent(position),
                 member: member.clone(),
                 quote_agents: if message.quotes.is_empty()
                     && message.directive_contexts.is_empty()
@@ -531,7 +530,7 @@ fn activity_cards(
                     .enumerate()
                     .find(|(_, member)| member.lane == boundary.lane())?;
                 Some(ActivityCard::Lifecycle {
-                    accent: watchband::accent(team.members.len(), position),
+                    accent: team.accent(position),
                     member: member.clone(),
                     boundary: boundary.clone(),
                 })

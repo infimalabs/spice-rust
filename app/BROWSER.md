@@ -105,12 +105,13 @@ intent and `group::partition-moved` for a partition that changed since the
 browser read it, each leave every group unchanged.
 
 Each opened group is a console in the team fleet, after the teams, read exactly
-as a team console with tasks and agents swapped, its whole console rebuilt on
-the palette's final accent through the
-[base-flavor contract](CONSOLE.md#design-standing). A team's composers target
+as a team console with tasks and agents swapped, its whole console rebuilt
+through the [base-flavor contract](CONSOLE.md#design-standing) on the base its
+place in the shared group order deals: groups count down from the palette's
+end, so the first wears plum, the next teal, then red. A team's composers target
 its lanes and its tabs are tasks; a group's composers target its designs and
-its tabs are lanes. The group's designs, in their shared order, each take the
-accent a lane in that position takes in a team: the design's composer, its
+its tabs are lanes. The group's lead design wears its base and each later
+design, in their shared order, the next slot down: the design's composer, its
 light in the status band, and every one of its room cards carry it. All
 designs' publications interleave newest first in one packed plane, so no room
 is paged or opened separately; durable task and publication stamps key the
@@ -365,6 +366,13 @@ accounts never share or aggregate it, and Spice never infers it.
 A team is named by its lead agent, canonical member zero, with the label its
 messages carry: the configured name, else the worktree leaf. Only a team with
 no current members keeps its short id.
+
+Each team console takes its whole base from its place among the teams in the
+shared order: teams count up from the palette's start, so the first wears
+green, the next blue, then gold, and an unteamed agent takes no place. The lead
+wears that base and each later member the next slot up. Colours follow only
+that shared order, so swapping two teams swaps their colours, and opening,
+closing, or reordering consoles in one browser changes none.
 
 Pick up a team from its pip matrix: dropping on the middle of another team
 swaps the two teams' positions; dropping on either outer edge joins the source

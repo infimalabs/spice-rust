@@ -82,6 +82,9 @@ pub struct LaneRow {
     pub fast_mode: bool,
     /// Members in canonical resident seat order.
     pub members: Vec<LaneMember>,
+    /// This team's place among the teams, in the resident's durable team
+    /// order, which decides its base accent; a lone seat stands in no console.
+    pub console: Option<usize>,
 }
 
 /// One independently steerable worktree and occupant inside an app lane.
@@ -219,6 +222,17 @@ impl LaneRow {
     pub fn teamed(&self) -> bool {
         wire::head::teamed(self.lane, self.members.iter().map(|member| member.lane))
     }
+
+    /// The accent slot this row deals member `position`. A team's lead wears
+    /// its console's base; a lone seat stands in no console and wears the
+    /// page's own base, slot zero.
+    #[must_use]
+    pub const fn accent(&self, position: usize) -> usize {
+        match self.console {
+            Some(console) => crate::watchband::team_accent(console, position),
+            None => crate::watchband::team_accent(0, position),
+        }
+    }
 }
 
 impl From<&LaneAnswer> for LaneView {
@@ -273,6 +287,7 @@ impl From<&LaneAnswer> for LaneView {
                     subscription: subscription.policy,
                     fast_mode: subscription.fast_mode,
                     members: vec![member],
+                    console: None,
                 });
             }
         }
@@ -281,6 +296,9 @@ impl From<&LaneAnswer> for LaneView {
             teams.len(),
             "an admitted lane answer names no orphan team policy"
         );
+        for (console, team) in teams.iter_mut().filter(|team| team.teamed()).enumerate() {
+            team.console = Some(console);
+        }
         Self {
             epoch: answer.epoch,
             state: answer.state,
@@ -312,12 +330,14 @@ mod tests {
                     subscription: wire::intent::TeamLife::Steer,
                     fast_mode: false,
                     members: vec![member(first), member(second)],
+                    console: Some(0),
                 },
                 LaneRow {
                     lane: independent,
                     subscription: wire::intent::TeamLife::Steer,
                     fast_mode: false,
                     members: vec![member(independent)],
+                    console: None,
                 },
             ],
             refresh_after_millis: None,

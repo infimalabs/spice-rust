@@ -80,6 +80,8 @@ pub(super) fn render_populated_fleet(
                         key={team.lane.to_string()}
                         class="team-surface"
                         data-team={team.lane.to_string()}
+                        data-base-flavor="console"
+                        data-base-accent={team.accent(0).to_string()}
                         data-team-weight={watchband::team_visual_weight(team.members.len()).to_string()}
                     >
                         {render_team_toolbar(

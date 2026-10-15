@@ -311,7 +311,7 @@ pub(super) fn team_quote_sources(
                     card_id: Some(card_id.clone()),
                     display_millis,
                     agent: Some(crate::composer_markdown::QuoteAgent {
-                        accent: watchband::accent(team.members.len(), position),
+                        accent: team.accent(position),
                         label: watchband::agent_message_label(
                             &member.worktree,
                             member.name.as_deref(),

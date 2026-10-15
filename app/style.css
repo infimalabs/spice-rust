@@ -90,9 +90,6 @@
   --accent-3: #b3402a;
   --accent-4: #007c89;
   --accent-5: #8a4fbf;
-  /* Surfaces that ask for the end of the configured palette never name its
-     current colour or ordinal themselves. */
-  --accent-final: var(--accent-5);
   /* Object-level surface roles. The inherited first base is an exact identity;
      an individual object bearing a base flavor replaces them together. */
   --app-base-accent: var(--accent-0);
@@ -788,15 +785,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 [data-accent="5"] { --accent-slot: var(--accent-5); }
 
 /* Accent slots are convenient inputs, not the boundary of the base-flavor
-   contract. Any object may instead provide its own --app-base-accent, and
-   `final` names the end of the configured palette without wearing its slot,
-   so slotless descendants keep their own speaker accents. */
+   contract. Any object may instead provide its own --app-base-accent, and a
+   console names its dealt palette index as its base without wearing that
+   slot, so slotless descendants keep their own speaker accents. */
 [data-base-flavor][data-accent] {
   --app-base-accent: var(--accent-slot);
 }
-[data-base-flavor="final"] {
-  --app-base-accent: var(--accent-final);
-}
+[data-base-accent="0"] { --app-base-accent: var(--accent-0); }
+[data-base-accent="1"] { --app-base-accent: var(--accent-1); }
+[data-base-accent="2"] { --app-base-accent: var(--accent-2); }
+[data-base-accent="3"] { --app-base-accent: var(--accent-3); }
+[data-base-accent="4"] { --app-base-accent: var(--accent-4); }
+[data-base-accent="5"] { --app-base-accent: var(--accent-5); }
 
 /* Rebuild every semantic role from its achromatic anchor and one object-owned
    base, then bind the object's primitives to those roles, so everything in
@@ -804,7 +804,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    role. Lane accent slots stay the page's. No hue from the product-green
    defaults can leak into another flavor. Accent zero is the exact identity
    because the defaults already wear it. */
-[data-base-flavor]:not([data-base-flavor="identity"]):not([data-accent="0"]) {
+[data-base-flavor]:not([data-base-flavor="identity"]):not([data-accent="0"]):not([data-base-accent="0"]) {
   --app-base-panel: color-mix(in oklch, var(--app-base-accent) 3%, oklch(from var(--app-anchor-panel) l 0 none));
   --app-base-control: color-mix(in oklch, var(--app-base-accent) 3%, oklch(from var(--app-anchor-control) l 0 none));
   --app-base-ink: color-mix(in oklch, var(--app-base-accent) 12%, oklch(from var(--app-anchor-ink) l 0 none));
