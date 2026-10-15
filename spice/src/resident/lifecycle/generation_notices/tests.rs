@@ -149,10 +149,32 @@ fn resident_minted_claim_projects_one_occupant_scoped_assignment() {
         "stable authority can be retried until the occupant driver receives it",
     );
 
+    let observed = bus.cursor().expect("cursor reads");
     end_claim(&bus, &task);
+    let released = bus.task_snapshot().expect("released snapshot reads");
     assert!(
-        assignment_notices(&bus.task_snapshot().expect("released snapshot reads")).is_empty(),
+        assignment_notices(&released).is_empty(),
         "ended possession is not announced as an assignment",
+    );
+    assert_eq!(
+        assignment_ends(&released, observed),
+        [(
+            fixture.lane,
+            TaskAssignmentEnd {
+                occupant: fixture.occupant,
+                task: TaskHandle::for_project("task.claim", &task).to_string(),
+                claim: claim.claimed.get(),
+            },
+        )],
+        "an ending after the previous pass is told to the occupant that held the claim",
+    );
+    assert!(
+        assignment_ends(&released, bus.cursor().expect("cursor reads")).is_empty(),
+        "an ending the previous pass already observed is not told again",
+    );
+    assert!(
+        assignment_ends(&released, None).is_empty(),
+        "a first pass has no earlier observation to tell endings against",
     );
     finish(bus);
 }

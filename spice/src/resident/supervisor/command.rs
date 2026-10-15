@@ -95,7 +95,7 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Latest claimed-task generation privately delivered to this occupant.
     task_generation: Mutex<Option<(String, u64, u64)>>,
     /// Latest proactive task assignment privately delivered to this occupant.
-    task_assignment: Mutex<Option<(String, u64)>>,
+    task_assignment: Mutex<Option<TaskAssignmentNotice>>,
     /// Latest claim lapse privately delivered to this occupant.
     claim_lapse: Mutex<Option<ClaimLapseNotice>>,
     /// Latest renewal state observed by this exact occupant.
@@ -198,6 +198,9 @@ pub(in crate::resident) enum Kick {
     TaskGeneration(TaskGenerationNotice),
     /// A task the resident proactively assigned to this exact occupant.
     TaskAssignment(TaskAssignmentNotice),
+    /// A claim this exact occupant held ended; an assignment notice for it
+    /// that is still queued is withdrawn rather than delivered stale.
+    TaskAssignmentEnded(TaskAssignmentEnd),
     /// A private best-effort background notice for this exact occupant.
     Background(crate::resident::design_input::BackgroundNotice),
     /// A private background notice whose exact occupant must confirm enqueue.
@@ -224,40 +227,6 @@ pub(in crate::resident) enum Kick {
     },
     /// The lane is being drained: interrupt the turn and end the input.
     Abort,
-}
-
-/// One private task-authority reminder, scoped to the claim's exact occupant.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(in crate::resident) struct TaskGenerationNotice {
-    pub(in crate::resident) occupant: CanonicalUuid,
-    pub(in crate::resident) task: String,
-    pub(in crate::resident) claim: u64,
-    pub(in crate::resident) generation: u64,
-    pub(in crate::resident) change: String,
-    pub(in crate::resident) editor: String,
-    pub(in crate::resident) position: u64,
-}
-
-/// One private proactive-assignment notice, scoped to the claim's exact occupant.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(in crate::resident) struct TaskAssignmentNotice {
-    pub(in crate::resident) occupant: CanonicalUuid,
-    pub(in crate::resident) task: String,
-    pub(in crate::resident) claim: u64,
-    pub(in crate::resident) phase: String,
-}
-
-/// One private lapse notice for the lane that held the expired claim, scoped to
-/// that lane's current occupant: a restart may have re-seated the lane since
-/// the claim was won.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(in crate::resident) struct ClaimLapseNotice {
-    pub(in crate::resident) occupant: CanonicalUuid,
-    pub(in crate::resident) task: String,
-    pub(in crate::resident) expiry: wire::Instant,
 }
 
 impl<W: Write + Send + 'static> Driver<W> {
@@ -561,123 +530,6 @@ impl<W: Write + Send + 'static> Driver<W> {
             prod.moments, prod.count,
         );
         let _sent = self.background("narration", &message);
-    }
-
-    /// Replace a stale-claim reminder without interrupting current work.
-    fn deliver_task_generation(&self, notice: &TaskGenerationNotice) {
-        let previous = {
-            let mut delivered = self
-                .task_generation
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if delivered.as_ref().is_some_and(|(task, claim, generation)| {
-                task == &notice.task && *claim == notice.claim && *generation >= notice.generation
-            }) {
-                return;
-            }
-            delivered.replace((notice.task.clone(), notice.claim, notice.generation))
-        };
-        let message = format!(
-            "<system-notice>\nTask {} changed after this claim last acknowledged it: \
-             generation {} is {} by {} at position {}. Run `spice task reclaim {}` \
-             to take the current task before continuing. Completion and review remain \
-             refused until the reclaim succeeds. This is a private authority reminder; \
-             no acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
-            notice.task,
-            notice.generation,
-            notice.change,
-            notice.editor,
-            notice.position,
-            notice.task,
-        );
-        if self
-            .background(&format!("task:{}", notice.task), &message)
-            .is_err()
-        {
-            let mut delivered = self
-                .task_generation
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if delivered.as_ref().is_some_and(|(task, claim, generation)| {
-                task == &notice.task && *claim == notice.claim && *generation == notice.generation
-            }) {
-                *delivered = previous;
-            }
-        }
-    }
-
-    /// Tell this exact occupant about one resident-minted assignment.
-    fn deliver_task_assignment(&self, notice: &TaskAssignmentNotice) {
-        let previous = {
-            let mut delivered = self
-                .task_assignment
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if delivered
-                .as_ref()
-                .is_some_and(|(task, claim)| task == &notice.task && *claim == notice.claim)
-            {
-                return;
-            }
-            delivered.replace((notice.task.clone(), notice.claim))
-        };
-        let message = format!(
-            "<system-notice>\nTask {} was assigned to this lane in phase {}. Continue \
-             this task now; run `spice task show {}` for its contract before asking \
-             the allocator for work. This is a private assignment notice; no \
-             acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
-            notice.task, notice.phase, notice.task,
-        );
-        if self
-            .background(&format!("task:{}", notice.task), &message)
-            .is_err()
-        {
-            let mut delivered = self
-                .task_assignment
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if delivered
-                .as_ref()
-                .is_some_and(|(task, claim)| task == &notice.task && *claim == notice.claim)
-            {
-                *delivered = previous;
-            }
-        }
-    }
-
-    /// Tell this occupant that a claim its lane held lapsed, once per lapse.
-    fn deliver_claim_lapse(&self, notice: &ClaimLapseNotice) {
-        let previous = {
-            let mut delivered = self
-                .claim_lapse
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if delivered.as_ref() == Some(notice) {
-                return;
-            }
-            delivered.replace(notice.clone())
-        };
-        let message = format!(
-            "<system-notice>\nThe claim this lane held on task {} lapsed: its lease expired at \
-             {} and the resident released it. This lane no longer holds that task; stop \
-             working on it. Commits made for it and not yet published are loose and cannot \
-             complete it; run `spice task show {}` for its current holder before asking the \
-             allocator for work. This is a private lapse notice; no acknowledgment key or \
-             visible ACK/NAK is required.\n</system-notice>",
-            notice.task, notice.expiry, notice.task,
-        );
-        if self
-            .background(&format!("task:{}", notice.task), &message)
-            .is_err()
-        {
-            let mut delivered = self
-                .claim_lapse
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            if delivered.as_ref() == Some(notice) {
-                *delivered = previous;
-            }
-        }
     }
 
     /// Tell this exact occupant which addresses an MSG packet it authored missed.
@@ -1157,24 +1009,6 @@ pub(in crate::resident) fn answer(
     send(paths, lane, &Kick::Answer { request, confirmed });
 }
 
-/// Privately notify the exact claimant occupant that its task authority moved.
-pub(in crate::resident) fn task_generation(
-    paths: &RuntimePaths,
-    lane: CanonicalUuid,
-    notice: TaskGenerationNotice,
-) {
-    send(paths, lane, &Kick::TaskGeneration(notice));
-}
-
-/// Privately notify the exact occupant about a resident-minted assignment.
-pub(in crate::resident) fn task_assignment(
-    paths: &RuntimePaths,
-    lane: CanonicalUuid,
-    notice: TaskAssignmentNotice,
-) {
-    send(paths, lane, &Kick::TaskAssignment(notice));
-}
-
 /// Privately tell the exact occupant one keyless background notice.
 pub(in crate::resident) fn background_notice(
     paths: &RuntimePaths,
@@ -1197,15 +1031,6 @@ pub(in crate::resident) fn confirmed_background_notice(
     notice: crate::resident::design_input::BackgroundNotice,
 ) -> io::Result<bool> {
     confirmed_background::send(paths, lane, notice)
-}
-
-/// Privately tell the lane that held a lapsed claim, at its current occupant.
-pub(in crate::resident) fn claim_lapse(
-    paths: &RuntimePaths,
-    lane: CanonicalUuid,
-    notice: ClaimLapseNotice,
-) {
-    send(paths, lane, &Kick::ClaimLapse(notice));
 }
 
 /// Privately tell the exact authoring occupant which addresses its MSG packet
@@ -1394,6 +1219,10 @@ pub(in crate::resident) fn listen_for_kicks(
                             driver.deliver_task_assignment(&notice);
                         }
                         Ok(Kick::TaskAssignment(_)) => {}
+                        Ok(Kick::TaskAssignmentEnded(ended)) if ended.occupant == occupant => {
+                            driver.withdraw_task_assignment(&ended);
+                        }
+                        Ok(Kick::TaskAssignmentEnded(_)) => {}
                         Ok(Kick::Background(notice)) if notice.occupant == occupant => {
                             let _ = driver.background(&notice.purpose, &notice.text);
                         }
@@ -1462,6 +1291,11 @@ pub(in crate::resident::supervisor) mod inbox;
 mod registration;
 pub(in crate::resident) use registration::FirstTurn;
 pub(in crate::resident) mod renewal;
+mod task_notices;
+pub(in crate::resident) use task_notices::{
+    ClaimLapseNotice, TaskAssignmentEnd, TaskAssignmentNotice, TaskGenerationNotice, claim_lapse,
+    task_assignment, task_assignment_ended, task_generation,
+};
 mod steering;
 #[cfg(test)]
 mod steering_tests;

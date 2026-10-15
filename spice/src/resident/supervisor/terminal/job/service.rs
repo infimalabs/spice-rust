@@ -115,7 +115,7 @@ impl ServiceAuthority {
     /// its exact claim. Being seated is required even when there is no claim:
     /// only a live turn can launch.
     fn claim(&self, service: bool) -> io::Result<(Option<TaskStamp>, Option<ServiceClaim>)> {
-        let reader = JournalReader::open(&self.journal).map_err(io::Error::other)?;
+        let reader = open_reader(&self.journal)?;
         reader
             .read_with(|read| {
                 let residency = read
@@ -165,7 +165,7 @@ impl ServiceAuthority {
     }
 
     fn seated(&self) -> io::Result<bool> {
-        let reader = JournalReader::open(&self.journal).map_err(io::Error::other)?;
+        let reader = open_reader(&self.journal)?;
         reader
             .read_with(|read| {
                 Ok::<bool, io::Error>(
@@ -182,7 +182,7 @@ impl ServiceAuthority {
     }
 
     fn owns(&self, claim: &ServiceClaim) -> io::Result<bool> {
-        let reader = JournalReader::open(&self.journal).map_err(io::Error::other)?;
+        let reader = open_reader(&self.journal)?;
         reader
             .read_with(|read| {
                 let heads = read.task_heads_for(&claim.task).map_err(io::Error::other)?;
@@ -190,4 +190,28 @@ impl ServiceAuthority {
             })
             .map_err(io::Error::other)
     }
+}
+
+/// Open the journal this occupant's commands are admitted against.
+///
+/// A supervisor keeps running the release that launched it across a resident
+/// replacement, so a newer install can carry the journal past this build's
+/// schema. Its commands then cannot be admitted for the rest of the turn; the
+/// lane's next turn launches on the installed release and keeps its claim.
+fn open_reader(journal: &std::path::Path) -> io::Result<JournalReader> {
+    JournalReader::open(journal).map_err(|error| match error {
+        journal::OpenError::Migration(journal::MigrationError::ForwardSchema {
+            found,
+            current,
+        }) => io::Error::new(
+            ErrorKind::Unsupported,
+            format!(
+                "this seat still runs the release it started on (journal schema {current}), \
+                 and a restart installed a newer one (journal schema {found}); end this turn \
+                 now with a short handoff: the lane's next turn starts on the installed \
+                 release and keeps its claim and lease"
+            ),
+        ),
+        error => io::Error::other(error),
+    })
 }

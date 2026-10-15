@@ -94,17 +94,20 @@ fn adoption_rebinds_claim_epoch_without_restarting_the_occupant() {
     bus.shutdown().expect("fixture bus stops");
 }
 
-#[test]
-fn startup_seating_carries_claim_without_an_observable_epoch_gap() {
-    let lane = uuid(30);
-    let occupant = uuid(31);
-    let old_epoch = uuid(32);
-    let new_epoch = uuid(33);
+/// Seat one lane holding `task` on a lease spanning `start..expiry`, restart
+/// the resident through the atomic startup transaction, and return the
+/// carried lease after checking the claim moved with residency in one step.
+fn restart_with_lease(
+    seed: u8,
+    start: wire::Instant,
+    expiry: wire::Instant,
+    maximum: wire::Instant,
+) -> wire::LeaseHead {
+    let lane = uuid(seed);
+    let occupant = uuid(seed + 1);
+    let old_epoch = uuid(seed + 2);
+    let new_epoch = uuid(seed + 3);
     let task: wire::TaskStamp = "1kQpV9Gt".parse().expect("fixture task");
-    let now = wire::Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
-    let start = shifted(now, -60);
-    let expiry = shifted(now, 60 * 60);
-    let maximum = shifted(now, 2 * 60 * 60);
     let durable = wire::LaneResidency {
         lane,
         team: lane,
@@ -117,7 +120,7 @@ fn startup_seating_carries_claim_without_an_observable_epoch_gap() {
         fast_mode: false,
         occupant: Some(occupant),
         lineage: vec![occupant],
-        capabilities: vec![uuid(34)],
+        capabilities: vec![uuid(seed + 4)],
         session: None,
         disposition: OCCUPIED.to_owned(),
     };
@@ -162,14 +165,49 @@ fn startup_seating_carries_claim_without_an_observable_epoch_gap() {
     let claim = heads.claim().expect("claim remains active");
     let lease = heads.lease().expect("lease remains present");
     let residency = snapshot.residency().expect("residency remains present");
+    assert_eq!(claim.body().disposition, wire::ClaimDisposition::Active);
     assert_eq!(claim.position(), lease.position());
     assert_eq!(claim.position(), residency.position());
     assert_eq!(claim.body().occupant, occupant);
     assert_eq!(claim.body().epoch, new_epoch);
     assert_eq!(lease.body().epoch, new_epoch);
     assert_eq!(residency.body().epoch, new_epoch);
+    let lease = lease.body().clone();
     bus.verify().expect("atomic restart authority verifies");
     bus.shutdown().expect("fixture bus stops");
+    lease
+}
+
+#[test]
+fn startup_seating_carries_claim_without_an_observable_epoch_gap() {
+    let now = wire::Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+    let expiry = shifted(now, 60 * 60);
+    let maximum = shifted(now, 2 * 60 * 60);
+    let lease = restart_with_lease(30, shifted(now, -60), expiry, maximum);
+    assert_eq!(
+        (lease.expiry, lease.maximum),
+        (expiry, maximum),
+        "a lease already reaching past one rolling window keeps its horizon"
+    );
+}
+
+#[test]
+fn startup_restores_a_claim_whose_lease_ran_out_while_no_resident_ran() {
+    let before = wire::Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+    let lease = restart_with_lease(
+        40,
+        shifted(before, -60 * 60),
+        shifted(before, -10 * 60),
+        shifted(before, -5 * 60),
+    );
+    let window = shifted(before, crate::board_command::AUTOMATIC_ROLLING_SECONDS);
+    assert!(
+        lease.expiry >= window,
+        "downtime must not count against the holder: {} < {window}",
+        lease.expiry
+    );
+    assert!(lease.renewal >= before && lease.renewal <= lease.expiry);
+    assert!(lease.expiry <= lease.maximum);
 }
 
 #[test]

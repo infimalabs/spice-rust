@@ -71,6 +71,59 @@ fn task_assignment_notices_are_private_and_deduplicated_by_claim() {
 }
 
 #[test]
+fn an_ended_claim_withdraws_only_its_own_queued_assignment_notice() {
+    let sink = Sink::default();
+    let driver = driver(&sink);
+    let notice = TaskAssignmentNotice {
+        occupant: crate::resident::new_uuid(),
+        task: "CLAIM-1kKRRsDP".to_owned(),
+        claim: 33,
+        phase: "plan".to_owned(),
+    };
+    let ended = |claim| TaskAssignmentEnd {
+        occupant: notice.occupant,
+        task: notice.task.clone(),
+        claim,
+    };
+    driver.deliver_task_assignment(&notice);
+
+    driver.withdraw_task_assignment(&ended(34));
+    assert_eq!(
+        sink.answered(1).len(),
+        1,
+        "another claim on the same task leaves the queued assignment alone"
+    );
+    driver.withdraw_task_assignment(&ended(33));
+    let frames = sink.answered(2);
+    assert_eq!(frames.len(), 2);
+    assert_eq!(frames[1]["purpose"], "task:CLAIM-1kKRRsDP");
+    assert_eq!(
+        frames[1]["message"], "",
+        "the ended claim's queued assignment is withdrawn before delivery"
+    );
+    driver.deliver_task_assignment(&notice);
+    assert_eq!(
+        sink.answered(2).len(),
+        2,
+        "a withdrawn assignment is never announced again for the same claim"
+    );
+
+    driver.deliver_claim_lapse(&ClaimLapseNotice {
+        occupant: notice.occupant,
+        task: notice.task.clone(),
+        expiry: "2026-10-12T17:25:28.368Z".parse().expect("fixture instant"),
+    });
+    driver.withdraw_task_assignment(&ended(33));
+    let frames = sink.answered(3);
+    assert_eq!(
+        frames.len(),
+        3,
+        "a different notice queued under the task's purpose is never withdrawn"
+    );
+    assert_ne!(frames[2]["message"], "");
+}
+
+#[test]
 fn claim_lapse_notices_are_private_and_deduplicated_by_lapse() {
     let sink = Sink::default();
     let driver = driver(&sink);
