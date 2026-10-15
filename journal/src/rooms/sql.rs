@@ -179,6 +179,28 @@ impl Authority for Stored<'_> {
         )
     }
 
+    fn candidate_decided(
+        &self,
+        controller: &str,
+        candidate: &wire::rooms::CandidateRef,
+    ) -> Result<bool, Refusal> {
+        let mut statement = self.connection.prepare(
+            "SELECT heads.body FROM proposal_heads AS heads \
+             JOIN fact_envelopes AS facts ON facts.seq = heads.head_seq \
+             WHERE heads.controller = ?1 AND facts.kind = ?2",
+        )?;
+        let mut rows = statement.query(params![
+            controller,
+            wire::FactKind::PreparationDecided.as_str()
+        ])?;
+        while let Some(row) = rows.next()? {
+            if super::decides(&row.get::<_, Vec<u8>>(0)?, candidate)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal> {
         if let Some(direction) = self.directions.get(key) {
             return Ok(Some(direction.clone()));

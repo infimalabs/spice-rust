@@ -5,8 +5,9 @@ use serde::de::DeserializeOwned;
 use wire::intent::{BoardAnswer, BoardRead, BoardTask};
 use wire::rooms::{
     CandidateCoverage, CandidateCoverageRecord, CandidateCritique, CandidateCritiqueRecord,
-    CandidateRef, CandidateRetain, CoverageAuthority, DecisionOutcome, OutputAdopt,
-    PreparationDecide, PreparationDecision, ProposalRef, RetainedCandidate, RoomSource,
+    CandidateRef, CandidateRetain, CandidateWithdraw, CandidateWithdrawal, CoverageAuthority,
+    DecisionOutcome, OutputAdopt, PreparationDecide, PreparationDecision, ProposalRef,
+    RetainedCandidate, RoomSource,
 };
 
 use super::*;
@@ -66,6 +67,10 @@ const DECISION_JSON: JsonOperand<PreparationDecision> = JsonOperand::new(
     "DECISION_JSON",
     r#"{"decision":{"controller":"dVzdhh8Nx","decision":"1"},"source":{"kind":"journal","fact":"6dth"},"outcome":{"kind":"selected","candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"selected_outputs":["dVzfwWPSh"]}}"#,
 );
+const WITHDRAWAL_JSON: JsonOperand<CandidateWithdrawal> = JsonOperand::new(
+    "WITHDRAWAL_JSON",
+    r#"{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"reason":"cites another Design's facts; candidate dVzfC0001 corrects it"}"#,
+);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -85,6 +90,7 @@ pub(super) fn dispatch_client(
         "critique" => client_candidate_critique(repository, contract, matches),
         "cover" => client_candidate_cover(repository, contract, matches),
         "decide" => client_preparation_decide(repository, contract, matches),
+        "withdraw" => client_candidate_withdraw(repository, contract, matches),
         "adopt" => client_output_adopt(repository, contract, matches),
         _ => unreachable!("preparation CLI partition is closed"),
     }
@@ -240,19 +246,95 @@ pub(super) fn client_preparation_decide(
     })
 }
 
-fn retained_candidate(
+pub(super) fn client_candidate_withdraw(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let withdrawal = match WITHDRAWAL_JSON.argument(matches) {
+        Ok(withdrawal) => withdrawal,
+        Err(outcome) => return outcome,
+    };
+    let candidate = ProposalRef::Candidate {
+        candidate: withdrawal.candidate.clone(),
+    };
+    let withdrawn = ProposalRef::Withdrawal {
+        candidate: withdrawal.candidate.clone(),
+    };
+    let (candidate_head, withdrawn_head) =
+        match proposal_heads(repository, &withdrawal.candidate, &candidate, &withdrawn) {
+            Ok(heads) => heads,
+            Err(outcome) => return outcome,
+        };
+    let Some(candidate_head) = candidate_head else {
+        return refusal(
+            "preparation::candidate-missing",
+            Some(withdrawal.candidate.candidate.to_string()),
+            "retain the exact candidate before withdrawing it",
+        );
+    };
+    let tasks = vec![withdrawal.candidate.controller.clone()];
+    submit_with_tasks(repository, contract, tasks, false, |board| {
+        let mut expected = task_witnesses(board)?;
+        expected.push(Witness::Proposal {
+            proposal: candidate,
+            head: Some(candidate_head),
+        });
+        expected.push(Witness::Proposal {
+            proposal: withdrawn,
+            head: withdrawn_head,
+        });
+        Ok((
+            CommandKind::CandidateWithdraw,
+            expected,
+            CandidateWithdraw { withdrawal },
+        ))
+    })
+}
+
+/// Current heads of two proposal subjects, read at one journal position.
+fn proposal_heads(
     repository: &Repository,
     candidate: &CandidateRef,
-) -> Result<(RetainedCandidate, Seq), Outcome<CommandAnswer>> {
+    first: &ProposalRef,
+    second: &ProposalRef,
+) -> Result<(Option<Seq>, Option<Seq>), Outcome<CommandAnswer>> {
+    let reader = candidate_reader(repository, candidate)?;
+    reader
+        .read(|read| {
+            Ok::<_, journal::GuardError>((
+                read.proposal_head(first)?.map(|head| head.position()),
+                read.proposal_head(second)?.map(|head| head.position()),
+            ))
+        })
+        .map_err(|error| {
+            store_fault(
+                "preparation::authority-unreadable",
+                &format!("cannot inspect candidate {}: {error}", candidate.candidate),
+            )
+        })
+}
+
+fn candidate_reader(
+    repository: &Repository,
+    candidate: &CandidateRef,
+) -> Result<journal::JournalReader, Outcome<CommandAnswer>> {
     let state = repository
         .admit_state()
         .map_err(|error| repository_state_failure(&error))?;
-    let reader = journal::JournalReader::open(state.journal()).map_err(|error| {
+    journal::JournalReader::open(state.journal()).map_err(|error| {
         store_fault(
             "preparation::journal-unreadable",
             &format!("cannot inspect candidate {}: {error}", candidate.candidate),
         )
-    })?;
+    })
+}
+
+fn retained_candidate(
+    repository: &Repository,
+    candidate: &CandidateRef,
+) -> Result<(RetainedCandidate, Seq), Outcome<CommandAnswer>> {
+    let reader = candidate_reader(repository, candidate)?;
     let subject = ProposalRef::Candidate {
         candidate: candidate.clone(),
     };

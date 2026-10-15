@@ -85,6 +85,10 @@ enum RoomSourceAuthority<'a> {
     Artifact {
         digest: &'a Digest,
     },
+    Contribution {
+        room: &'a RoomAnchor,
+        publication: &'a RoomAuthorityStamp,
+    },
 }
 
 impl FromStr for RoomContributionKind {
@@ -108,6 +112,7 @@ impl RoomSource {
             (Self::Transcript(left), Self::Transcript(right)) => left.same_bytes(right),
             (Self::Journal { fact: left }, Self::Journal { fact: right }) => left == right,
             (Self::Artifact { digest: left }, Self::Artifact { digest: right }) => left == right,
+            (Self::Contribution { .. }, Self::Contribution { .. }) => self == other,
             _ => false,
         }
     }
@@ -126,6 +131,9 @@ impl RoomSource {
             },
             Self::Journal { fact } => RoomSourceAuthority::Journal { fact },
             Self::Artifact { digest } => RoomSourceAuthority::Artifact { digest },
+            Self::Contribution { room, publication } => {
+                RoomSourceAuthority::Contribution { room, publication }
+            }
         };
         let canonical = crate::encode(&authority).expect("a typed room source authority encodes");
         Digest::compute(Domain::RoomSource, &canonical)
@@ -322,5 +330,41 @@ mod tests {
             RoomContributed::admit("Evidence.", &[first, advanced]),
             Err(RoomContributionError::DuplicateSource)
         );
+    }
+
+    #[test]
+    fn a_contribution_answer_carries_the_source_that_cites_it() {
+        let stamp = "1kKRRsDR0".parse().expect("room stamp");
+        let room = crate::TaskHandle::for_project("rooms.test", &stamp);
+        let publication: RoomAuthorityStamp = "1kKRRsDR2".parse().expect("publication");
+        let answer = crate::intent::RoomContributeAnswer::new(
+            room,
+            publication.clone(),
+            RoomContributionKind::Evidence,
+        )
+        .expect("answer");
+        let own = RoomSource::Contribution {
+            room: stamp,
+            publication,
+        };
+        assert_eq!(answer.source, own);
+        let encoded = serde_json::to_value(&answer).expect("answer encodes");
+        assert_eq!(
+            serde_json::from_value::<RoomSource>(encoded["source"].clone()).expect("source"),
+            own
+        );
+        let mut stored = encoded.clone();
+        stored
+            .as_object_mut()
+            .expect("answer object")
+            .remove("source");
+        assert_eq!(
+            serde_json::from_value::<crate::intent::RoomContributeAnswer>(stored)
+                .expect("a receipt written before sources decodes"),
+            answer
+        );
+        let mut forged = encoded;
+        forged["source"]["publication"] = "1kKRRsDR3".into();
+        assert!(serde_json::from_value::<crate::intent::RoomContributeAnswer>(forged).is_err());
     }
 }

@@ -392,6 +392,7 @@ const fn source_kind(source: &RoomSource) -> &'static str {
         RoomSource::Transcript(_) => "transcript",
         RoomSource::Journal { .. } => "journal",
         RoomSource::Artifact { .. } => "artifact",
+        RoomSource::Contribution { .. } => "contribution",
     }
 }
 
@@ -403,5 +404,6 @@ fn typed_label(source: &RoomSource) -> String {
         ),
         RoomSource::Journal { fact } => format!("Journal fact {fact}"),
         RoomSource::Artifact { digest } => format!("Artifact {digest}"),
+        RoomSource::Contribution { publication, .. } => format!("Contribution {publication}"),
     }
 }

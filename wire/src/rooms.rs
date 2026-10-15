@@ -17,12 +17,14 @@ mod conversation;
 mod coordination;
 mod notice;
 mod relevance;
+mod withdrawal;
 
 pub use contribution::*;
 pub use conversation::*;
 pub use coordination::*;
 pub use notice::*;
 pub use relevance::*;
+pub use withdrawal::*;
 
 use crate::{
     CanonicalUuid, Digest, MessageLocus, Name, Origin, SequenceCode, TaskHandle, TaskPreparation,
@@ -188,6 +190,8 @@ pub enum ProposalRef {
     Coverage { coverage: CoverageRef },
     /// One decision under a controlling task.
     Decision { decision: DecisionRef },
+    /// The author's withdrawal of one exact undecided candidate.
+    Withdrawal { candidate: CandidateRef },
 }
 
 /// Half-open UTF-8 byte range within one decoded event's text.
@@ -249,6 +253,14 @@ pub enum RoomSource {
     Artifact {
         /// Content digest of the retained artifact.
         digest: Digest,
+    },
+    /// One lane contribution recorded in a Design room; the contribution's
+    /// own fact owns its text and cited sources.
+    Contribution {
+        /// The Design anchor whose room holds the contribution.
+        room: RoomAnchor,
+        /// Native identity the contribution answered with.
+        publication: RoomAuthorityStamp,
     },
 }
 

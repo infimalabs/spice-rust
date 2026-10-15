@@ -1,6 +1,8 @@
 //! Every immutable proposal version and the operator's exact decision surface.
 //! Selection, Return, and Collapse are previewed before one atomic
 //! `preparation decide`; no browser-local standing is invented from a reply.
+//! A version its author withdrew stays in history, apart from the open
+//! versions, and offers no decision.
 
 use std::rc::Rc;
 
@@ -16,12 +18,13 @@ use yew::prelude::*;
 
 use super::{Controls, conversation::lane_label};
 use crate::AppRuntime;
+use crate::browser::clock::Age;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, PreparationRequest};
 use crate::preparation_decision::{
     DecisionChoice, DecisionComposer, DecisionDraft, DraftNotice, DraftPhase, Submission,
 };
-use crate::runtime::{PreparationProjection, RoomPositioned};
+use crate::runtime::{CandidateWithdrawalRecord, PreparationProjection, RoomPositioned};
 
 type DraftChange = Rc<dyn Fn(&mut DecisionDraft)>;
 type DraftCommand = Box<dyn Fn()>;
@@ -55,6 +58,7 @@ enum Standing<'a> {
     Collapse,
     Selected(&'a wire::rooms::DecisionRef),
     Authorized(&'a ExecutionAuthorization),
+    Withdrawn,
 }
 
 impl Standing<'_> {
@@ -69,6 +73,7 @@ impl Standing<'_> {
                 authorization.selected_outputs.len(),
                 authorization.decision.decision
             ),
+            Self::Withdrawn => "Withdrawn by its author".to_owned(),
         }
     }
 }
@@ -118,6 +123,11 @@ pub(super) fn render_approval(
     if candidates.is_empty() {
         return Html::default();
     }
+    let (withdrawn, open): (Vec<_>, Vec<_>) = candidates.into_iter().partition(|candidate| {
+        preparation
+            .withdrawals
+            .contains_key(&candidate.value.candidate)
+    });
     let context = Context {
         runtime,
         controls,
@@ -133,12 +143,24 @@ pub(super) fn render_approval(
         <section class="room-approval" aria-label="Proposal versions" data-room-proposals="">
             <header>
                 <strong>{"Proposal versions"}</strong>
-                <span>{candidates.len()}</span>
+                <span>{open.len()}</span>
             </header>
             <p class="room-notice">
                 {"Every retained version is immutable. Select an exact output subset, Return it for another pass, or Collapse the Design; every choice is previewed before it records authority."}
             </p>
-            {for candidates.into_iter().rev().map(|candidate| render_candidate(&context, candidate))}
+            {for open.into_iter().rev().map(|candidate| render_candidate(&context, candidate))}
+            if !withdrawn.is_empty() {
+                <section class="room-approval-withdrawn" aria-label="Withdrawn versions" data-room-withdrawn="">
+                    <header>
+                        <strong>{"Withdrawn versions"}</strong>
+                        <span>{withdrawn.len()}</span>
+                    </header>
+                    <p class="room-notice">
+                        {"Their authors withdrew these versions before any decision. They stay in history and accept no decision."}
+                    </p>
+                    {for withdrawn.into_iter().rev().map(|candidate| render_candidate(&context, candidate))}
+                </section>
+            }
         </section>
     }
 }
@@ -178,7 +200,8 @@ fn render_candidate(context: &Context<'_>, positioned: &RoomPositioned<RetainedC
     let code = candidate.candidate.candidate.to_string();
     let fact = SequenceCode::new(positioned.position.get());
     let pending = draft.is_pending();
-    let interactive = context.interactive();
+    let withdrawal = context.preparation.withdrawals.get(&candidate.candidate);
+    let interactive = context.interactive() && withdrawal.is_none();
     let edit = editor(context.controls, &candidate.candidate);
     html! {
         <article
@@ -192,6 +215,7 @@ fn render_candidate(context: &Context<'_>, positioned: &RoomPositioned<RetainedC
                 <span data-approval-standing="">{standing.label()}</span>
                 <code title="Retaining journal fact">{fact.to_string()}</code>
             </header>
+            {withdrawal.map_or_else(Html::default, |withdrawal| render_withdrawal(context.runtime, withdrawal))}
             {render_inputs(context, candidate)}
             {render_references(candidate)}
             {render_evidence(context, candidate)}
@@ -210,7 +234,7 @@ fn render_candidate(context: &Context<'_>, positioned: &RoomPositioned<RetainedC
                         {"Another proposal decision is pending; wait for it to settle before editing this version."}
                     </p>
                 }
-            } else if context.controller.is_none() {
+            } else if withdrawal.is_none() && context.controller.is_none() {
                 <p class="room-notice">{"This Design is concluded; its proposal history is read-only."}</p>
             }
             {render_notice(draft.notice())}
@@ -711,7 +735,35 @@ fn render_notice(notice: Option<&DraftNotice>) -> Html {
     }
 }
 
+/// One author's recorded withdrawal: who withdrew the version, when, and why.
+fn render_withdrawal(
+    runtime: &AppRuntime,
+    withdrawal: &RoomPositioned<CandidateWithdrawalRecord>,
+) -> Html {
+    let record = &withdrawal.value;
+    let author = match &record.author {
+        wire::Actor::Lane(lane) => lane_label(runtime, *lane),
+        other => crate::work::owner_label(other, None),
+    };
+    let fact = SequenceCode::new(withdrawal.position.get());
+    html! {
+        <p class="room-approval-withdrawal" data-approval-withdrawal="">
+            {format!("Withdrawn by {author} ")}
+            <Age
+                authored={record.at.get().as_millisecond()}
+                class="relative-age"
+                title={fact.to_string()}
+            />
+            {": "}{record.withdrawal.reason.clone()}
+            {" "}<code title="Withdrawing journal fact">{fact.to_string()}</code>
+        </p>
+    }
+}
+
 fn standing<'a>(preparation: &'a PreparationProjection, candidate: &CandidateRef) -> Standing<'a> {
+    if preparation.withdrawals.contains_key(candidate) {
+        return Standing::Withdrawn;
+    }
     if let Some(authorized) = preparation
         .authorizations
         .values()
@@ -769,6 +821,9 @@ fn source_label(source: &RoomSource) -> String {
         ),
         RoomSource::Journal { fact } => format!("journal fact {fact}"),
         RoomSource::Artifact { digest } => format!("artifact {digest}"),
+        RoomSource::Contribution { room, publication } => {
+            format!("contribution {publication} in room {room}")
+        }
     }
 }
 

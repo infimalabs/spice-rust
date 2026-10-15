@@ -228,7 +228,7 @@ fn decider(read: &journal::JournalRead<'_>, source: &RoomSource) -> Result<Optio
                 .map_err(store)?
                 .map(|envelope| envelope.actor))
         }
-        RoomSource::Artifact { .. } => Ok(None),
+        RoomSource::Artifact { .. } | RoomSource::Contribution { .. } => Ok(None),
     }
 }
 

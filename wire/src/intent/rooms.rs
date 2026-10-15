@@ -108,7 +108,10 @@ pub struct RoomContribute {
 
 /// The recorded contribution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(
+    try_from = "RoomContributeAnswerWire",
+    into = "RoomContributeAnswerWire"
+)]
 pub struct RoomContributeAnswer {
     /// Current rendered Design anchor handle.
     pub room: TaskHandle,
@@ -116,6 +119,75 @@ pub struct RoomContributeAnswer {
     pub publication: RoomAuthorityStamp,
     /// What the contribution offers.
     pub kind: RoomContributionKind,
+    /// The contribution as the exact [`RoomSource`] a candidate reference
+    /// cites verbatim.
+    pub source: RoomSource,
+}
+
+impl RoomContributeAnswer {
+    /// The answer for `publication` in `room`, citing itself as a contribution.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a handle that carries no birth stamp.
+    pub fn new(
+        room: TaskHandle,
+        publication: RoomAuthorityStamp,
+        kind: RoomContributionKind,
+    ) -> Result<Self, crate::TaskStampError> {
+        let source = RoomSource::Contribution {
+            room: room.born()?,
+            publication: publication.clone(),
+        };
+        Ok(Self {
+            room,
+            publication,
+            kind,
+            source,
+        })
+    }
+}
+
+/// Receipts recorded before answers carried their source derive it from the
+/// room and publication; a carried source must be exactly that derivation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoomContributeAnswerWire {
+    room: TaskHandle,
+    publication: RoomAuthorityStamp,
+    kind: RoomContributionKind,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    source: Option<RoomSource>,
+}
+
+impl TryFrom<RoomContributeAnswerWire> for RoomContributeAnswer {
+    type Error = String;
+
+    fn try_from(value: RoomContributeAnswerWire) -> Result<Self, Self::Error> {
+        let answer = Self::new(value.room, value.publication, value.kind)
+            .map_err(|error| format!("contribution answer room: {error}"))?;
+        match value.source {
+            Some(source) if source != answer.source => {
+                Err("contribution answer source names another contribution".to_owned())
+            }
+            _ => Ok(answer),
+        }
+    }
+}
+
+impl From<RoomContributeAnswer> for RoomContributeAnswerWire {
+    fn from(value: RoomContributeAnswer) -> Self {
+        Self {
+            room: value.room,
+            publication: value.publication,
+            kind: value.kind,
+            source: Some(value.source),
+        }
+    }
 }
 
 /// Resolve one recorded contribution's cited sources at its own position.

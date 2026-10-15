@@ -129,11 +129,12 @@ fn a_previewed_contribution_submits_once_and_a_refusal_keeps_the_draft() {
     assert_eq!(draft.begin_submit(), Some(submitted.clone()));
     let publication: wire::rooms::RoomAuthorityStamp =
         "dVsYdDj7d".parse().expect("fixture publication");
-    draft.settle(Ok(RoomContributeAnswer {
-        room: submitted.request.room,
-        publication: publication.clone(),
-        kind: RoomContributionKind::Evidence,
-    }));
+    draft.settle(Ok(RoomContributeAnswer::new(
+        submitted.request.room,
+        publication.clone(),
+        RoomContributionKind::Evidence,
+    )
+    .expect("fixture room handle")));
     assert_eq!(draft.notice(), Some(&DraftNotice::Contributed(publication)));
     assert!(draft.text().is_empty() && draft.sources().is_empty());
     assert_eq!(draft.kind(), Some(RoomContributionKind::Evidence));

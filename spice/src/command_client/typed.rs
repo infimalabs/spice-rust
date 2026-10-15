@@ -62,6 +62,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["preparation", "critique"] => CommandKind::CandidateCritiqueRecord,
         ["preparation", "cover"] => CommandKind::CandidateCoverageRecord,
         ["preparation", "decide"] => CommandKind::PreparationDecide,
+        ["preparation", "withdraw"] => CommandKind::CandidateWithdraw,
         ["preparation", "adopt"] => CommandKind::OutputAdopt,
         ["group", "list"] => CommandKind::WorkingGroupRead,
         ["group", "move"] => CommandKind::WorkingGroupMove,

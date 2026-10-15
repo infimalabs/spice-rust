@@ -4,10 +4,11 @@
 use super::*;
 use serde::Serialize;
 use wire::rooms::{
-    CandidateRef, CandidateReference, CandidateRetained, CoverageRef, DecisionOutcome, DecisionRef,
-    ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
-    RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomMessaged, RoomPutAside,
-    RoomSource, RoomStopRequest, TextRange, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
+    CandidateRef, CandidateReference, CandidateRetained, CandidateWithdrawal, CandidateWithdrawn,
+    CoverageRef, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorized,
+    PreparationDecided, PreparationDecision, RetainedCandidate, RoomAuthorityStamp,
+    RoomCoordinationStarted, RoomMessaged, RoomPutAside, RoomSource, RoomStopRequest, TextRange,
+    WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
 };
 
 #[path = "rooms/contributions.rs"]
@@ -522,6 +523,63 @@ fn proposal_projection_keeps_every_version_and_each_versions_decision_history() 
                 seq(5),
             ),
         ]
+    );
+}
+
+#[test]
+fn a_withdrawn_version_stays_in_history_with_its_author_reason_and_time() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    runtime.apply_stream(&operator_facts(&session, 4));
+    let mistaken = CandidateRef {
+        controller: room(),
+        candidate: authority(CANDIDATE),
+    };
+    let mut withdrawn = envelope(
+        4,
+        "proposal::withdrawn",
+        &CandidateWithdrawn {
+            withdrawal: CandidateWithdrawal {
+                candidate: mistaken.clone(),
+                reason: "the next version corrects its sources".to_owned(),
+            },
+        },
+    );
+    withdrawn["actor"] = format!("lane:{LANE}").into();
+    runtime.apply_stream(&room_page(
+        &session,
+        &[
+            room_message(1),
+            retained(2, CANDIDATE, "HIDDEN-oops1"),
+            retained(3, SECOND_CANDIDATE, "PUBLIC-work2"),
+            withdrawn,
+        ],
+        None,
+        4,
+    ));
+
+    let preparation = runtime.room_projection().preparation();
+    assert_eq!(
+        preparation.candidates.len(),
+        2,
+        "withdrawal keeps the version"
+    );
+    assert_eq!(
+        preparation.withdrawals.keys().collect::<Vec<_>>(),
+        [&mistaken],
+        "only the withdrawn version leaves operator choice"
+    );
+    let record = &preparation.withdrawals[&mistaken];
+    assert_eq!(record.position, seq(4));
+    assert_eq!(record.value.author, wire::Actor::Lane(uuid(LANE)));
+    assert_eq!(
+        record.value.withdrawal.reason,
+        "the next version corrects its sources"
+    );
+    assert_eq!(
+        serde_json::to_value(record.value.at).expect("instant encodes"),
+        "2030-04-12T18:44:09.271Z"
     );
 }
 

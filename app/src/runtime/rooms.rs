@@ -278,6 +278,19 @@ pub struct PreparationProjection {
     /// Positive authorizations by their selected decision identity.
     pub authorizations:
         BTreeMap<authority::DecisionRef, RoomPositioned<authority::ExecutionAuthorization>>,
+    /// Author withdrawals by the exact candidate each withdraws.
+    pub withdrawals: BTreeMap<authority::CandidateRef, RoomPositioned<CandidateWithdrawalRecord>>,
+}
+
+/// One author's withdrawal of a retained candidate, with who and when.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CandidateWithdrawalRecord {
+    /// The withdrawn candidate and the author's reason.
+    pub withdrawal: authority::CandidateWithdrawal,
+    /// The authenticated author that withdrew it.
+    pub author: wire::Actor,
+    /// When the journal admitted the withdrawal.
+    pub at: wire::Instant,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -880,6 +893,21 @@ impl RoomProjection {
                             body.authorization.decision.clone(),
                             fact.seq(),
                             body.authorization,
+                        )
+                    }),
+            ),
+            FactKind::CandidateWithdrawn => Some(
+                fact.read::<authority::CandidateWithdrawn>()
+                    .is_some_and(|body| {
+                        replace(
+                            &mut self.preparation.withdrawals,
+                            body.withdrawal.candidate.clone(),
+                            fact.seq(),
+                            CandidateWithdrawalRecord {
+                                withdrawal: body.withdrawal,
+                                author: fact.actor().clone(),
+                                at: *fact.at(),
+                            },
                         )
                     }),
             ),

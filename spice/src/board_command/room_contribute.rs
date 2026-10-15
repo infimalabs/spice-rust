@@ -68,6 +68,9 @@ pub(crate) fn room_contribute(
     if let Some(refused) = unavailable_source(&mut sources, &contribute.sources, before) {
         return refused;
     }
+    if let Some(refused) = unpublished_contribution(bus, &contribute.sources, before) {
+        return refused;
+    }
     let now = jiff::Timestamp::now();
     let at = match Instant::new(now) {
         Ok(at) => at,
@@ -81,10 +84,13 @@ pub(crate) fn room_contribute(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    let answer = RoomContributeAnswer {
-        room: anchor.handle().clone(),
-        publication: publication.clone(),
-        kind: contribute.kind,
+    let answer = match RoomContributeAnswer::new(
+        anchor.handle().clone(),
+        publication.clone(),
+        contribute.kind,
+    ) {
+        Ok(answer) => answer,
+        Err(error) => return store_fault("room::contribution-answer", &error.to_string()),
     };
     let mut write = JournalWrite::new(Actor::Lane(lane), origin, at, Producer::CommandDoor);
     guard(&mut write, expected);
@@ -199,4 +205,49 @@ fn unavailable_source(
             "cite only journal facts, transcript hunks, or Design artifacts that exist now",
         ))
     })
+}
+
+/// The refusal naming the first cited contribution that no room contribution
+/// before `before` answers.
+fn unpublished_contribution(
+    bus: &Bus,
+    cited: &[RoomSource],
+    before: Seq,
+) -> Option<Outcome<CommandAnswer>> {
+    let contributions = cited
+        .iter()
+        .filter_map(|source| match source {
+            RoomSource::Contribution { room, publication } => {
+                Some((source.clone(), room.clone(), publication.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if contributions.is_empty() {
+        return None;
+    }
+    let missing = bus.read(move |read| {
+        for (source, room, publication) in contributions {
+            let contributed = match read.room_publication_seq(&room, &publication)? {
+                Some(seq) if seq < before => read
+                    .room_fact(seq)?
+                    .and_then(|envelope| envelope.fact.read::<RoomContributed>())
+                    .is_some_and(|contributed| contributed.publication == publication),
+                _ => false,
+            };
+            if !contributed {
+                return Ok::<_, GuardError>(Some(source));
+            }
+        }
+        Ok(None)
+    });
+    match missing {
+        Ok(None) => None,
+        Ok(Some(source)) => Some(refusal(
+            "room::contribution-source-unavailable",
+            Some(serde_json::to_string(&source).unwrap_or_default()),
+            "cite a contribution by the `source` its `spice room contribute` answer returned",
+        )),
+        Err(error) => Some(store_fault("room::journal-unreadable", &error.to_string())),
+    }
 }

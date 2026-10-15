@@ -705,6 +705,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "preparation::cover"
     ),
+    row!(
+        ["preparation", "withdraw"],
+        "preparation withdraw WITHDRAWAL_JSON",
+        OperatorOrLane,
+        Command => SnapshotOrCommitted,
+        [CandidateWithdrawn],
+        [Resident],
+        Reply,
+        "preparation::withdraw"
+    ),
     operator!(
         ["preparation", "decide"],
         "preparation decide DECISION_JSON",

@@ -28,4 +28,5 @@ fn each_json_operand_refusal_shows_a_body_its_command_accepts() {
     assert_operand_teaches_its_shape(&CRITIQUE_JSON);
     assert_operand_teaches_its_shape(&COVERAGE_JSON);
     assert_operand_teaches_its_shape(&DECISION_JSON);
+    assert_operand_teaches_its_shape(&WITHDRAWAL_JSON);
 }

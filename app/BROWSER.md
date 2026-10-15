@@ -175,7 +175,11 @@ native radios, output checkboxes, and a reason field to preview then submit one
 exact Select, Return, or Collapse decision. Selection and authorization are
 one command; the UI has no review-coverage prerequisite or later authorization
 stage. While a command is pending the version cannot submit again, and only
-committed room and board authority changes its standing.
+committed room and board authority changes its standing. A version its author
+withdrew leaves the open list and the open count for a separate **Withdrawn
+versions** history that names its author, age, reason, and withdrawal fact and
+offers no decision control, so the remaining open version is the one to decide;
+the view never picks among open versions by recency.
 
 The operator's inbox sits in the Spice sidebar directly beneath their avatar,
 name, and email and above Jobs, not in the shared Working groups catalog. Its

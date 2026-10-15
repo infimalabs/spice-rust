@@ -41,11 +41,12 @@ pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 pub use publication::AppSurface;
 pub use rooms::{
-    Contribution, ContributionGroup, Conversation, ConversationProjection, CoordinationStanding,
-    Delivery, DesignStanding, OperatorItem, ParticipantReason, PreparationProjection,
-    QuestionResult, Relevance, ResumeAutomation, RoomAnchorAuthority, RoomAnchorSettlement,
-    RoomEvent, RoomEventKind, RoomParticipant, RoomPositioned, RoomProjection,
-    RoomProjectionStatus, RoomState, associated, prepared_open_count,
+    CandidateWithdrawalRecord, Contribution, ContributionGroup, Conversation,
+    ConversationProjection, CoordinationStanding, Delivery, DesignStanding, OperatorItem,
+    ParticipantReason, PreparationProjection, QuestionResult, Relevance, ResumeAutomation,
+    RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomParticipant,
+    RoomPositioned, RoomProjection, RoomProjectionStatus, RoomState, associated,
+    prepared_open_count,
 };
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};

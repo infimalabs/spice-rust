@@ -64,11 +64,11 @@ commands mean; this section fixes their operand bodies and bounds.
 
 ### Preparation command bodies
 
-`preparation retain`, `critique`, `cover`, and `decide` each take one canonical
-JSON object. Unknown fields refuse, nothing is lenient, and a malformed body
-refuses with `preparation::argument-invalid`, giving the parse detail and a
-complete body that command accepts. `preparation adopt` takes two task handles
-instead.
+`preparation retain`, `critique`, `cover`, `decide`, and `withdraw` each take
+one canonical JSON object. Unknown fields refuse, nothing is lenient, and a
+malformed body refuses with `preparation::argument-invalid`, giving the parse
+detail and a complete body that command accepts. `preparation adopt` takes two
+task handles instead.
 
 - **Values.** A task is its bare nine-character birth stamp, without the
   project prefix (`dVzdhh8Nx` for `REPOSIT-dVzdhh8Nx`). A candidate is
@@ -78,12 +78,16 @@ instead.
   sequences (`"1"`, `"2"`, …), new within their candidate or, for a decision,
   within its controller. A source is
   `{"kind": "journal", "fact": POSITION}` (a position `preparation show`
-  prints), `{"kind": "artifact", "digest": HEX}`, or a transcript hunk.
+  prints), `{"kind": "contribution", "room": STAMP, "publication": STAMP}`
+  (the `source` a `room contribute` answer prints, pasted unchanged),
+  `{"kind": "artifact", "digest": HEX}`, or a transcript hunk.
 - **`retain CANDIDATE_JSON`.** `candidate`, `governed_inputs` (tasks the
   candidate assumes), `outputs` (at least one gated output), `references`
   (at least one `{"relation": NAME, "source": SOURCE}`), and optional
   `evidence` (question results retained with the candidate). Inputs and outputs
-  are unique and disjoint.
+  are unique and disjoint. Every reference must lie in the controlling Design's
+  scope: a contribution in its room, or a journal fact of its room, the Design,
+  a governed input, an output, or a task prepared under it.
 - **`critique CRITIQUE_JSON`.** `critique` (`{"candidate": …, "critique":
   SEQUENCE}`), `category`, `source`, and `standing` (`clean` or
   `material-finding`).
@@ -98,6 +102,9 @@ instead.
   nonempty and unique; return and collapse reasons are nonblank. A collapse
   concludes the Design as `task conclude --collapse REASON` would, refusing a
   held Design with `task::conclude-claimed`.
+- **`withdraw WITHDRAWAL_JSON`.** `candidate` (`{"controller": STAMP,
+  "candidate": STAMP}`) names the author's own undecided candidate and
+  `reason` is nonblank, such as which version corrects it.
 
 ### Limits and their repairs
 
