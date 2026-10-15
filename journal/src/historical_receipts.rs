@@ -2,7 +2,9 @@
 //!
 //! A retired kind's receipts stay verifiable evidence after its command is
 //! gone. `gate::findings` receipts stand in their own table; `steer::tell`
-//! receipts stay among the command receipts they were committed with.
+//! and `preparation::authorize` receipts stay among the command receipts they
+//! were committed with. The retained registry never makes these kinds
+//! executable again.
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -14,6 +16,8 @@ use crate::replay::{ReceiptRow, VerifyError, Violation, ViolationClass};
 enum HistoricalKind {
     #[serde(rename = "gate::findings")]
     GateFindings,
+    #[serde(rename = "preparation::authorize")]
+    PreparationAuthorize,
     #[serde(rename = "steer::tell")]
     SteerTell,
 }
@@ -22,6 +26,7 @@ impl HistoricalKind {
     const fn as_str(self) -> &'static str {
         match self {
             Self::GateFindings => "gate::findings",
+            Self::PreparationAuthorize => "preparation::authorize",
             Self::SteerTell => "steer::tell",
         }
     }
@@ -29,13 +34,13 @@ impl HistoricalKind {
     /// Whether receipts of this kind stand among the command receipts rather
     /// than in the historical table.
     const fn in_place(self) -> bool {
-        matches!(self, Self::SteerTell)
+        matches!(self, Self::PreparationAuthorize | Self::SteerTell)
     }
 }
 
 /// Whether a command receipt row carries a retired kind that stays in place.
 pub(crate) fn retired_in_place(kind: &str) -> bool {
-    kind == HistoricalKind::SteerTell.as_str()
+    matches!(kind, "preparation::authorize" | "steer::tell")
 }
 
 #[derive(Deserialize, Serialize)]
