@@ -926,16 +926,13 @@ fn unfocused_document() -> bool {
         })
 }
 
-fn room_post_notice(outcome: &RoomPostOutcome) -> String {
+/// What a landed room post still needs to say: nothing when current
+/// listeners heard it, since the cleared composer already confirms it.
+fn room_post_notice(outcome: &RoomPostOutcome) -> Option<&'static str> {
     match outcome {
-        RoomPostOutcome::RecordedWithListeners { listeners } => {
-            format!(
-                "Recorded in room for {} current listener(s).",
-                listeners.len()
-            )
-        }
+        RoomPostOutcome::RecordedWithListeners { .. } => None,
         RoomPostOutcome::RecordedNoCurrentListener { .. } => {
-            "Recorded in room; no current listener. Start or direct a lane explicitly.".into()
+            Some("Recorded in room; no current listener. Start or direct a lane explicitly.")
         }
     }
 }

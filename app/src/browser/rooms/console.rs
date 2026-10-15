@@ -892,7 +892,9 @@ fn design_post(
                                 text: snapshot.body.trim().to_owned(),
                             });
                         }
-                        report(&room_post_notice(&answer.outcome));
+                        if let Some(notice) = room_post_notice(&answer.outcome) {
+                            report(notice);
+                        }
                     }
                     Err(issue) => report(&issue),
                 }
