@@ -171,32 +171,34 @@ fn a_successor_hears_what_its_vacated_predecessor_did_not_then_the_ending() {
 }
 
 #[test]
-fn a_seated_lane_hears_each_event_once_in_order_while_the_job_runs() {
-    let scratch = Scratch::new("seated");
-    let (jobs, terminal) = terminal(&scratch);
-    let job = jobs.record_for_tests("watch the build", true, Some(60_000));
-    let printed = [lines(&["one"]), lines(&["two", "three"]), lines(&["four"])];
+fn a_seated_lane_hears_each_event_once_in_order_while_the_job_or_service_runs() {
+    for timeout_millis in [Some(60_000), None] {
+        let scratch = Scratch::new("seated");
+        let (jobs, terminal) = terminal(&scratch);
+        let job = jobs.record_for_tests("watch the build", true, timeout_millis);
+        let printed = [lines(&["one"]), lines(&["two", "three"]), lines(&["four"])];
 
-    let sink = Sink::default();
-    let seated = seat(&sink, &terminal);
-    let follower = {
-        let (seated, terminal, job) = (Arc::clone(&seated), terminal.clone(), job.clone());
-        std::thread::spawn(move || seated.hear(&terminal, &job, &Control::new()))
-    };
-    for (number, event) in (1..).zip(&printed) {
-        job.print_for_tests(number, event);
+        let sink = Sink::default();
+        let seated = seat(&sink, &terminal);
+        let follower = {
+            let (seated, terminal, job) = (Arc::clone(&seated), terminal.clone(), job.clone());
+            std::thread::spawn(move || seated.hear(&terminal, &job, &Control::new()))
+        };
+        for (number, event) in (1..).zip(&printed) {
+            job.print_for_tests(number, event);
+        }
+        job.end_for_tests(Ending::Exited { code: 0 });
+        follower.join().expect("follower ends with the job");
+
+        let notices = sink.notices();
+        let expected: Vec<_> = (1..)
+            .zip(&printed)
+            .map(|(number, event)| told(&job, number, event))
+            .collect();
+        assert_eq!(notices[..printed.len()], expected[..], "{timeout_millis:?}");
+        assert_eq!(notices.len(), printed.len() + 1);
+        assert_eq!(notices[printed.len()].0, ending_purpose(&job));
     }
-    job.end_for_tests(Ending::Exited { code: 0 });
-    follower.join().expect("follower ends with the job");
-
-    let notices = sink.notices();
-    let expected: Vec<_> = (1..)
-        .zip(&printed)
-        .map(|(number, event)| told(&job, number, event))
-        .collect();
-    assert_eq!(notices[..printed.len()], expected[..]);
-    assert_eq!(notices.len(), printed.len() + 1);
-    assert_eq!(notices[printed.len()].0, ending_purpose(&job));
 }
 
 #[test]
@@ -231,6 +233,7 @@ fn a_blocked_wait_is_restated_after_another_call_settles_until_its_own_answer() 
             op: JobOp::Wait,
             id: Some(job.id().to_owned()),
             timeout: Duration::from_secs(30),
+            until: None,
         });
         std::thread::spawn(move || seated.resolve(&terminal, "wait-1", &call, &Control::new()))
     };

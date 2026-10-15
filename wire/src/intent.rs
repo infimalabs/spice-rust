@@ -1005,6 +1005,8 @@ pub enum LaneJobKind {
     Service,
     /// A deadline-bounded command whose output lines reach the lane as events.
     Watch,
+    /// A service whose output lines reach the seated occupant as events.
+    WatchedService,
 }
 
 impl LaneJobKind {
@@ -1015,6 +1017,7 @@ impl LaneJobKind {
             Self::Command => "command",
             Self::Service => "service",
             Self::Watch => "watch",
+            Self::WatchedService => "watched-service",
         }
     }
 }

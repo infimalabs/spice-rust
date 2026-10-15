@@ -274,6 +274,7 @@ fn a_job_call_names_its_op_and_the_job_every_op_but_a_listing_needs() {
             op: omp::JobOp::List,
             id: None,
             timeout: Duration::from_secs(omp::SHELL_FOREGROUND),
+            until: None,
         })
     );
     assert_eq!(
@@ -284,6 +285,7 @@ fn a_job_call_names_its_op_and_the_job_every_op_but_a_listing_needs() {
             op: omp::JobOp::Wait,
             id: Some("0badcafe".to_owned()),
             timeout: Duration::from_secs(omp::SHELL_TIMEOUT_MAX),
+            until: None,
         })
     );
     assert_eq!(
@@ -297,6 +299,21 @@ fn a_job_call_names_its_op_and_the_job_every_op_but_a_listing_needs() {
     assert_eq!(
         omp::JobCall::parse(&arguments(serde_json::json!({"id": "1"}))),
         Err("job needs an op".to_owned())
+    );
+    let until = |json| omp::JobCall::parse(&arguments(json)).map(|call| call.until);
+    assert_eq!(
+        until(serde_json::json!({"op": "wait", "id": "0badcafe", "until": "endpoint=\\S+"})),
+        Ok(Some(
+            omp::OutputPattern::new("endpoint=\\S+").expect("pattern compiles")
+        ))
+    );
+    assert!(
+        until(serde_json::json!({"op": "wait", "id": "0badcafe", "until": "endpoint=("})).is_err(),
+        "a pattern that does not compile is refused before any wait"
+    );
+    assert!(
+        until(serde_json::json!({"op": "logs", "id": "0badcafe", "until": "ready"})).is_err(),
+        "only wait looks for a line"
     );
 }
 
@@ -398,10 +415,15 @@ fn a_shell_call_always_has_a_bounded_deadline_unless_it_is_asked_for_as_a_servic
         }),
         "events ride a deadline-bounded command"
     );
-    assert!(
-        parse(serde_json::json!({"command": "cargo test", "service": true, "events": true}))
-            .is_err(),
-        "a service has no deadline to bound its events"
+    assert_eq!(
+        parse(serde_json::json!({"command": "app-demo", "service": true, "events": true})),
+        Ok(omp::ShellCall {
+            command: "app-demo".to_owned(),
+            lifetime: omp::Lifetime::Service,
+            notices: Vec::new(),
+            events: true,
+        }),
+        "a service may carry events"
     );
     assert_eq!(
         omp::job_delivery("0badcafe", "done\n\nWall time: 0.10 seconds"),

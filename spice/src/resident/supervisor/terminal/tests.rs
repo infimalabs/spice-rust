@@ -6,11 +6,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use sill::Environment;
-use vendor::omp::{JobCall, JobOp};
+use vendor::omp::{JobCall, JobOp, OutputPattern};
 use wire::intent::{LaneJobKind, LaneJobStanding};
 
 use super::job::Ending;
-use super::{Control, Jobs, Terminal, unheard, wait};
+use super::{Control, Jobs, Terminal, unheard, wait, wait_until};
 
 fn scratch(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
@@ -39,6 +39,7 @@ fn a_lane_lists_each_kept_job_by_how_it_lives_and_whether_it_ended() {
     let command = jobs.record_for_tests("cargo test", false, Some(600_000));
     let service = jobs.record_for_tests("serve --port 8080", false, None);
     let watch = jobs.record_for_tests("tail -f build.log", true, Some(600_000));
+    let watched = jobs.record_for_tests("app-demo", true, None);
     command.end_for_tests(Ending::Exited { code: 1 });
 
     let mut listed = unheard(&jobs)
@@ -62,6 +63,11 @@ fn a_lane_lists_each_kept_job_by_how_it_lives_and_whether_it_ended() {
             LaneJobKind::Watch,
             LaneJobStanding::Running,
         ),
+        (
+            watched.id().to_owned(),
+            LaneJobKind::WatchedService,
+            LaneJobStanding::Running,
+        ),
     ];
     expected.sort();
     let _ = std::fs::remove_dir_all(&root);
@@ -83,6 +89,7 @@ fn a_finite_wait_reports_the_job_and_latest_output_while_it_remains_blocked() {
         op: JobOp::Wait,
         id: Some(job.id().to_owned()),
         timeout: Duration::ZERO,
+        until: None,
     };
     let mut progress = Vec::new();
 
@@ -178,6 +185,145 @@ fn a_finite_wait_reports_at_most_once_per_cadence_however_often_its_job_changes(
             .windows(2)
             .all(|pair| pair[1] - pair[0] >= cadence / 2),
         "{reported:?}"
+    );
+}
+
+fn pattern(text: &str) -> OutputPattern {
+    OutputPattern::new(text).expect("pattern compiles")
+}
+
+#[test]
+fn a_pattern_wait_on_a_service_answers_from_output_written_before_it_began() {
+    let root = scratch("until-before");
+    let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
+    let service = jobs.record_for_tests("app-demo", false, None);
+    fs::write(
+        service.log_path(),
+        "staging\n[app-demo] endpoint=http://127.0.0.1:4000\nserving\n",
+    )
+    .expect("job output");
+
+    let report = wait_until(
+        &service,
+        &Control::new(),
+        Duration::ZERO,
+        &pattern(r"endpoint=\S+"),
+        Duration::ZERO,
+        &mut |_| {},
+    );
+
+    let running = service.ended().is_none();
+    let _ = fs::remove_dir_all(&root);
+    assert!(!report.failed);
+    assert!(running, "a matched wait leaves the service running");
+    assert!(
+        report
+            .output
+            .contains("[app-demo] endpoint=http://127.0.0.1:4000\n\nmatched"),
+        "{}",
+        report.output
+    );
+}
+
+#[test]
+fn a_pattern_wait_wakes_on_output_written_after_it_began() {
+    let root = scratch("until-after");
+    let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
+    let service = jobs.record_for_tests("app-demo", false, None);
+    fs::write(service.log_path(), "staging\n").expect("job output");
+    let mut progress = Vec::new();
+
+    // Only the log grows, and a pattern wait has no timer, so nothing but
+    // the log's own growth can answer before the bound.
+    let report = wait_until(
+        &service,
+        &Control::new(),
+        Duration::from_secs(30),
+        &pattern("^ready on (\\d+)$"),
+        Duration::ZERO,
+        &mut |report| {
+            progress.push(report.output.clone());
+            append(&service.log_path(), "still staging\nready on 8080\n");
+        },
+    );
+
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(
+        progress,
+        [format!("[job {}] app-demo\nstaging", service.id())],
+        "the line before the match is progress, and the match ends the wait"
+    );
+    assert!(
+        report.output.contains("ready on 8080\n\nmatched"),
+        "{}",
+        report.output
+    );
+}
+
+#[test]
+fn a_pattern_wait_that_sees_no_match_answers_at_its_bound_with_the_job_running() {
+    let root = scratch("until-elapsed");
+    let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
+    let service = jobs.record_for_tests("app-demo", false, None);
+    fs::write(service.log_path(), "staging\n").expect("job output");
+
+    let report = wait_until(
+        &service,
+        &Control::new(),
+        Duration::ZERO,
+        &pattern("endpoint="),
+        Duration::ZERO,
+        &mut |_| {},
+    );
+
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        report
+            .output
+            .contains("no line matched endpoint= within 0 seconds"),
+        "{}",
+        report.output
+    );
+    assert!(report.output.contains("Command still running"));
+}
+
+#[test]
+fn a_pattern_wait_on_an_ended_job_matches_its_unterminated_last_line() {
+    let root = scratch("until-ended");
+    let jobs = Jobs::beneath(&root, crate::resident::new_uuid());
+    let job = jobs.record_for_tests("build", false, Some(600_000));
+    fs::write(job.log_path(), "compiling\nready").expect("job output");
+    job.end_for_tests(Ending::Exited { code: 0 });
+
+    let matched = wait_until(
+        &job,
+        &Control::new(),
+        Duration::from_secs(30),
+        &pattern("^ready$"),
+        Duration::ZERO,
+        &mut |_| {},
+    );
+    let unmatched = wait_until(
+        &job,
+        &Control::new(),
+        Duration::from_secs(30),
+        &pattern("^failed"),
+        Duration::ZERO,
+        &mut |_| {},
+    );
+
+    let _ = fs::remove_dir_all(&root);
+    assert!(
+        matched.output.ends_with("matched ^ready$: ready"),
+        "{}",
+        matched.output
+    );
+    assert!(
+        unmatched
+            .output
+            .ends_with("no line matched ^failed before the job ended"),
+        "{}",
+        unmatched.output
     );
 }
 

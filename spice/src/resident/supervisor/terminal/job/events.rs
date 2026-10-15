@@ -41,8 +41,8 @@ const LINE_BYTES: usize = 1024;
 /// room for JSON escaping.
 const EVENT_BYTES: u64 = 1024 * 1024;
 
-/// Bytes one read of the command's stdout takes.
-const CHUNK: usize = 8 * 1024;
+/// Bytes one read of the command's stdout, or of a job's log, takes.
+pub(super) const CHUNK: usize = 8 * 1024;
 
 /// The record of the last event the lane heard.
 const HEARD: &str = "events-heard.json";
@@ -103,13 +103,13 @@ pub(super) fn after(directory: &Path, through: u64) -> io::Result<Vec<(u64, Even
 /// carriage return before it, and keeps at most [`LINE_BYTES`] bytes,
 /// marked when clipped. An unterminated last line is still a line.
 #[derive(Default)]
-struct Lines {
+pub(super) struct Lines {
     partial: Vec<u8>,
     clipped: bool,
 }
 
 impl Lines {
-    fn push(&mut self, bytes: &[u8], mut line: impl FnMut(String)) {
+    pub(super) fn push(&mut self, bytes: &[u8], mut line: impl FnMut(String)) {
         for piece in bytes.split_inclusive(|byte| *byte == b'\n') {
             let (body, ended) = match piece.strip_suffix(b"\n") {
                 Some(body) => (body, true),
@@ -125,7 +125,7 @@ impl Lines {
         }
     }
 
-    fn finish(mut self) -> Option<String> {
+    pub(super) fn finish(mut self) -> Option<String> {
         (!self.partial.is_empty() || self.clipped).then(|| self.take())
     }
 

@@ -213,11 +213,12 @@ when a message arrives for you, is kept as a \
 job: you get its output so far at once, it keeps running, and its result is delivered \
 automatically when it ends. A long-lived development service (a dev server, a watcher) \
 is the one thing that runs without a deadline: set `service` and it is kept as a job at \
-once; inspect it with `logs`, and end it with `stop` once you no longer need it. Set \
-`events` to watch a deadline-bounded command instead of waiting on it: each line it prints \
-on stdout reaches you as a background notice while you keep working. Holding a claim, you \
-may end your turn while a deadline-bounded job runs: the lane wakes you, still holding the \
-claim, when it ends or emits an event. A service never keeps the lane idle.";
+once; wait for its readiness with `wait` and an `until` pattern, inspect it with `logs`, \
+and end it with `stop` once you no longer need it. Set `events` to watch a command or \
+service instead of waiting on it: each line it prints on stdout reaches you as a \
+background notice while you keep working. Holding a claim, you may end your turn while a \
+deadline-bounded job runs: the lane wakes you, still holding the claim, when it ends or \
+emits an event. A service never keeps the lane idle, and its events never wake it.";
 
 /// What the model reads about the command parameter.
 const SHELL_COMMAND_DESCRIPTION: &str = "command to execute";
@@ -235,8 +236,8 @@ fn shell_events_description() -> String {
          background notice naming the job, in order, without interrupting your work; stderr \
          goes only to its log. More than {SHELL_EVENT_FLOOD_LINES} lines within \
          {SHELL_EVENT_FLOOD_SECONDS} seconds stops its events with a notice while the command \
-         keeps running. Its ending is delivered after its last event. Needs a deadline, so a \
-         service refuses it"
+         keeps running. Its ending is delivered after its last event. A service's events reach \
+         you only while you are here: they never wake the lane"
     )
 }
 
@@ -245,13 +246,14 @@ const JOB_DESCRIPTION: &str = "Follows the commands the shell kept as jobs. A jo
 is delivered automatically when it ends, so you never need to poll: use `list` to see every \
 job still running or ended but not yet delivered to you, `history` to page through jobs \
 already delivered, newest first, `logs` to read what one has said so far, and `stop` to end \
-one. Use `wait` only when blocked on a finite job: it passively follows that job until it \
-ends, the timeout elapses, or a message arrives. A running service never ends on its own, \
-so `wait` on one returns at once and leaves it running; inspect its logs or exercise its \
-served surface for readiness. A job started with `events` delivers its stdout lines as \
-background notices before its ending. Holding a claim, you may end your turn instead of \
-waiting while a deadline-bounded job runs: the lane wakes you, still holding the claim, \
-when it ends or emits an event. A service never keeps the lane idle.";
+one. Use `wait` only when blocked: it passively follows a finite job until it ends, the \
+timeout elapses, or a message arrives. Give `wait` an `until` pattern to block instead until \
+a line of the job's output matches, which works on a service too: it answers with that line \
+and leaves the job running. A running service never ends on its own, so `wait` without \
+`until` returns at once and leaves it running. A job started with `events` delivers its \
+stdout lines as background notices before its ending. Holding a claim, you may end your turn \
+instead of waiting while a deadline-bounded job runs: the lane wakes you, still holding the \
+claim, when it ends or emits an event. A service never keeps the lane idle.";
 
 /// What the model reads about the job operation parameter.
 const JOB_OP_DESCRIPTION: &str = "what to do: list, history, logs, wait, or stop";
@@ -259,6 +261,11 @@ const JOB_OP_DESCRIPTION: &str = "what to do: list, history, logs, wait, or stop
 /// What the model reads about the job identity parameter.
 const JOB_ID_DESCRIPTION: &str = "the job, as the shell named it; required for logs, wait, \
 and stop; with history, where a withheld page continues, as its continuation names it";
+
+/// What the model reads about the wait pattern parameter.
+const JOB_UNTIL_DESCRIPTION: &str = "with wait only: a regular expression; wait answers as soon \
+as a line of the job's output, written before or during the wait, matches it, naming that line, \
+and the job keeps running; a pattern that does not compile is refused";
 
 /// Width of the fixed title slot that opens every omp session file.
 const TITLE_SLOT_BYTES: usize = 256;
@@ -893,6 +900,7 @@ pub fn host_tools_request() -> Vec<u8> {
                     },
                     "id": {"type": "string", "description": JOB_ID_DESCRIPTION},
                     "timeout": wait,
+                    "until": {"type": "string", "description": JOB_UNTIL_DESCRIPTION},
                     "limit": limit,
                 },
                 "required": ["op"],
@@ -933,6 +941,44 @@ pub enum JobOp {
     Stop,
 }
 
+/// The pattern a wait looks for in a job's output, compiled when the call is
+/// read so a pattern that does not compile is refused before any wait.
+#[derive(Clone, Debug)]
+pub struct OutputPattern(regex::Regex);
+
+impl OutputPattern {
+    /// Compile the pattern the model wrote.
+    ///
+    /// # Errors
+    ///
+    /// Returns the refusal text when the pattern does not compile.
+    pub fn new(pattern: &str) -> Result<Self, String> {
+        regex::Regex::new(pattern)
+            .map(Self)
+            .map_err(|error| format!("job until is not a valid regular expression: {error}"))
+    }
+
+    /// Whether `line` contains a match.
+    #[must_use]
+    pub fn is_match(&self, line: &str) -> bool {
+        self.0.is_match(line)
+    }
+
+    /// The pattern as the model wrote it.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl PartialEq for OutputPattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for OutputPattern {}
+
 /// One request on the lane's jobs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobCall {
@@ -942,6 +988,8 @@ pub struct JobCall {
     pub id: Option<String>,
     /// How long a wait may last before it answers with the job still running.
     pub timeout: Duration,
+    /// The output line a wait looks for instead of the job's ending.
+    pub until: Option<OutputPattern>,
 }
 
 impl JobCall {
@@ -950,7 +998,8 @@ impl JobCall {
     /// # Errors
     ///
     /// Returns the refusal text when the operation is unknown, the job it
-    /// needs is unnamed, or a history limit is zero or above its maximum.
+    /// needs is unnamed, a history limit is zero or above its maximum, or a
+    /// wait pattern is given to another operation or does not compile.
     pub fn parse(arguments: &serde_json::Map<String, serde_json::Value>) -> Result<Self, String> {
         let op = match arguments.get("op").and_then(serde_json::Value::as_str) {
             Some("list") => JobOp::List,
@@ -975,6 +1024,17 @@ impl JobCall {
         if matches!(op, JobOp::Logs | JobOp::Wait | JobOp::Stop) && id.is_none() {
             return Err(format!("job {} needs an id", op.name()));
         }
+        let until = match arguments.get("until") {
+            None => None,
+            Some(_) if op != JobOp::Wait => {
+                return Err(format!("job {} takes no until; only wait does", op.name()));
+            }
+            Some(until) => Some(OutputPattern::new(
+                until
+                    .as_str()
+                    .ok_or_else(|| "job until must be a string".to_owned())?,
+            )?),
+        };
         let timeout = arguments
             .get("timeout")
             .and_then(serde_json::Value::as_u64)
@@ -984,6 +1044,7 @@ impl JobCall {
             op,
             id,
             timeout: Duration::from_secs(timeout),
+            until,
         })
     }
 }
@@ -1053,7 +1114,7 @@ pub struct ShellCall {
     /// a deadline granted other than the one asked.
     pub notices: Vec<String>,
     /// Whether each line the command prints on stdout is delivered as an
-    /// event while it runs; only a deadline-bounded command carries events.
+    /// event while it runs; a service's events reach only a seated occupant.
     pub events: bool,
 }
 
@@ -1068,7 +1129,7 @@ impl ShellCall {
     /// # Errors
     ///
     /// Returns the refusal text when the arguments name no command, ask for
-    /// a zero deadline, give a service a timeout, or ask a service for events.
+    /// a zero deadline, or give a service a timeout.
     pub fn parse(arguments: &serde_json::Map<String, serde_json::Value>) -> Result<Self, String> {
         let command = arguments
             .get("command")
@@ -1083,13 +1144,6 @@ impl ShellCall {
             .get("events")
             .and_then(serde_json::Value::as_bool)
             .is_some_and(|events| events);
-        if service && events {
-            return Err(
-                "events need a deadline-bounded command, and a service runs without one; \
-                 drop service, or follow the service with job op=logs"
-                    .to_owned(),
-            );
-        }
         let (lifetime, notices) = match (service, asked) {
             (true, Some(_)) => {
                 return Err(

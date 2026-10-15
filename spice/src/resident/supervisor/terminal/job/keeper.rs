@@ -107,6 +107,13 @@ fn unheard(directory: &Path, grace: Duration, heard: impl Fn(&Path) -> bool) -> 
     }
 }
 
+/// The lane an event nobody hears wakes: a deadline-bounded command's. A
+/// service never keeps a lane idle, so its events reach only a seated
+/// occupant and wake nobody.
+pub(super) fn event_lane(request: &Request) -> Option<CanonicalUuid> {
+    request.timeout_millis.and(request.lane)
+}
+
 /// What the keeper does with each event it publishes: with a lane to wake,
 /// the latest event nobody hears within the grace wakes it, as an unheard
 /// ending does, so its next occupant hears the events it missed.
@@ -179,7 +186,7 @@ fn spawn(
         .map_err(|error| format!("log unavailable: {error}"))?;
     let published = if request.events {
         Some(
-            waker(request.lane, directory)
+            waker(event_lane(request), directory)
                 .map_err(|error| format!("waker unavailable: {error}"))?,
         )
     } else {
@@ -328,14 +335,14 @@ pub(super) fn detach(command: &mut ProcessCommand) {
 #[cfg(not(unix))]
 pub(super) fn detach(_command: &mut ProcessCommand) {}
 
-/// Send what `signal` makes of the directory's next change; the watch is
-/// armed before the reader looks.
+/// Send what `signal` makes of the next change to `path`, a directory or a
+/// file; the watch is armed before the reader looks.
 pub(super) fn watch<T: Send + 'static>(
-    directory: &Path,
+    path: &Path,
     sender: &mpsc::Sender<T>,
     signal: impl FnOnce(io::Result<()>) -> T + Send + 'static,
 ) -> io::Result<()> {
-    let observer = observer::DirectObserver::arm(directory)?;
+    let observer = observer::DirectObserver::arm(path)?;
     observer::wait_for_change(observer, sender.clone(), signal);
     Ok(())
 }
@@ -344,7 +351,10 @@ pub(super) fn watch<T: Send + 'static>(
 /// word on the call that is observing it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::resident) enum Signal {
+    /// The job's directory changed.
     Changed,
+    /// The job's log was written.
+    Wrote,
     KeeperExited,
     ObserverFailed(String),
     /// The call this observation answers was withdrawn.
@@ -358,6 +368,13 @@ impl Signal {
         woke.map_or_else(
             |error| Self::ObserverFailed(error.to_string()),
             |()| Self::Changed,
+        )
+    }
+
+    pub(super) fn wrote(wrote: io::Result<()>) -> Self {
+        wrote.map_or_else(
+            |error| Self::ObserverFailed(error.to_string()),
+            |()| Self::Wrote,
         )
     }
 }

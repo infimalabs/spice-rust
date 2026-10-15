@@ -1,9 +1,10 @@
 use std::fs;
 use std::path::PathBuf;
 
+use super::keeper::event_lane;
 use super::reconcile::reconcile_services_beneath;
 use super::service::ServiceClaim;
-use super::{Ending, Jobs, REQUEST, STOP, ServiceIndex};
+use super::{Ending, Job, Jobs, REQUEST, REQUEST_BYTES, Request, STOP, ServiceIndex, read_json};
 
 fn scratch() -> PathBuf {
     std::env::temp_dir().join(format!(
@@ -117,6 +118,25 @@ fn an_entry_without_a_record_is_retired() {
         diagnostic.is_empty(),
         "a vanished record was reported: {diagnostic}"
     );
+}
+
+/// A service never keeps a lane idle: an event nobody hears wakes the lane
+/// of a deadline-bounded command, and a service's events wake nobody.
+#[test]
+fn only_a_deadline_bounded_commands_unheard_events_wake_its_lane() {
+    let root = scratch();
+    let lane = crate::resident::new_uuid();
+    let jobs = Jobs::beneath(&root, lane);
+    let request = |job: &Job| -> Request {
+        read_json(&job.log_path().with_file_name(REQUEST), REQUEST_BYTES).expect("request")
+    };
+    let watch = jobs.record_for_tests("tail -f build.log", true, Some(60_000));
+    let service = jobs.record_for_tests("app-demo", true, None);
+
+    let woken = (event_lane(&request(&watch)), event_lane(&request(&service)));
+
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(woken, (Some(lane), None));
 }
 
 #[test]
