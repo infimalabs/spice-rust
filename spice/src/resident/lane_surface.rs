@@ -1177,6 +1177,12 @@ pub(super) fn recall(
             .map(|head| head.map(|head| StableRoot::from(head.body())))
             .map_err(|error| store_fault("recall::steering-index-unreadable", &error.to_string()))
     };
+    let roles = match bus.read(|read| read.principal_roles()) {
+        Ok(roles) => roles,
+        Err(error) => {
+            return typed_store_fault("recall::principal-roles-unreadable", &error.to_string());
+        }
+    };
     let mut recent = Vec::new();
     for fact in snapshot
         .facts()
@@ -1193,7 +1199,7 @@ pub(super) fn recall(
         recent.push(RecallEntry {
             seq: fact.seq,
             kind: fact.fact.kind(),
-            actor: fact.actor.clone(),
+            actor: roles.author(&fact.actor),
             origin: fact.origin.clone(),
             lane: fact_lane(fact),
             provenance,

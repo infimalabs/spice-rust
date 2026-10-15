@@ -166,7 +166,8 @@ fn room_history_projects_each_publication_from_its_owning_source() {
     );
     assert_eq!(
         (&rows[2]["actor"], &rows[2]["author"]),
-        (&json!("operator"), &Value::Null)
+        (&json!(lanes.bootstrap().to_string()), &Value::Null),
+        "an operator post names the bootstrap principal"
     );
     assert!(page["page"]["omission"].is_null());
 

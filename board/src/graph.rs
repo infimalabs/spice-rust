@@ -75,6 +75,19 @@ impl ReviewEdge {
             reviewed,
         }
     }
+
+    /// This edge with its phase author and reviewer named as `roles`
+    /// resolves them.
+    #[must_use]
+    pub fn resolved(self, roles: &wire::principal::PrincipalRoles) -> Self {
+        Self {
+            implemented: self
+                .implemented
+                .map(|(phase, author)| (phase, roles.author(&author))),
+            reviewer: roles.author(&self.reviewer),
+            ..self
+        }
+    }
 }
 
 /// A completed review contradicts its authenticated fact actor.

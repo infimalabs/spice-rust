@@ -118,6 +118,19 @@ impl PrincipalRoles {
         self.heads.first().map(|head| head.principal)
     }
 
+    /// The actor a read names as the author of a fact recorded under
+    /// `actor`. The historical operator actor names the bootstrap principal's
+    /// human actor once that principal is born, so its history and that
+    /// principal's own later facts name one person; later births never move
+    /// it. Every other actor names itself. Facts keep the actor they recorded.
+    #[must_use]
+    pub fn author(&self, actor: &Actor) -> Actor {
+        match (actor, self.bootstrap()) {
+            (Actor::Operator, Some(bootstrap)) => Actor::Human(bootstrap),
+            _ => actor.clone(),
+        }
+    }
+
     /// Each principal holding an issued capability, with that capability's
     /// digest.
     pub fn issued(&self) -> impl Iterator<Item = (CanonicalUuid, &Digest)> {

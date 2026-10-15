@@ -218,6 +218,7 @@ fn recorded(
         journal::FactReadBudget::RETAINED.decoded_bytes(),
     )
     .map_err(store)?;
+    let roles = read.principal_roles().map_err(store)?;
     let mut rows = Vec::with_capacity(retain);
     let mut next = start;
     while rows.len() < retain {
@@ -225,7 +226,7 @@ fn recorded(
             .preparation_authority_page(anchor, next, budget)
             .map_err(store)?;
         for envelope in fetched.rows.into_iter().take(retain - rows.len()) {
-            rows.push(record(read, envelope)?);
+            rows.push(record(read, &roles, envelope)?);
         }
         match fetched.continuation {
             Some(position) => next = Some(position),
@@ -249,8 +250,11 @@ fn recorded(
     })
 }
 
+/// One preparation authority envelope as a page row, naming a withdrawal's
+/// author as `roles` resolves it.
 fn record(
     read: &journal::JournalRead<'_>,
+    roles: &wire::principal::PrincipalRoles,
     envelope: wire::Envelope<wire::AnyFact>,
 ) -> Result<PreparationRecord, Failure> {
     let authority = if let Some(body) = envelope.fact.read::<CandidateRetained>() {
@@ -267,7 +271,7 @@ fn record(
     } else if let Some(body) = envelope.fact.read::<CandidateWithdrawn>() {
         PreparationAuthority::Withdrawal {
             withdrawal: body.withdrawal,
-            author: envelope.actor.clone(),
+            author: roles.author(&envelope.actor),
             at: envelope.at,
         }
     } else if let Some(body) = envelope.fact.read::<CandidateCritiqued>() {

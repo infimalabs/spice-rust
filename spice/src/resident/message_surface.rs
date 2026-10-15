@@ -1078,7 +1078,7 @@ fn hydrate_directive_contexts(
                     .map_err(|_| "directive context end exceeds the wire range".to_owned())?,
                 quote_target: directive.quote_target.clone(),
                 media_quotes: directive.media_quotes.clone(),
-                actor: directive.actor.clone(),
+                actor: directives.roles.author(&directive.actor),
                 authored: directive.published,
                 badge: directive.badge(),
                 sender: directive.sender,

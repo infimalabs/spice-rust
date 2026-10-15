@@ -6,6 +6,8 @@ use super::*;
 struct DocPlan {
     preview: board::Preview,
     snapshot: ValidatedSnapshot,
+    /// The roles the exported ledger named step authors through.
+    roles: wire::principal::PrincipalRoles,
     touched: Vec<TaskHandle>,
     handles: std::collections::BTreeMap<usize, TaskHandle>,
 }
@@ -65,6 +67,7 @@ fn validate_doc_plan(
             &format!("apply the document digest {}", preview.digest()),
         ));
     }
+    let roles = principal_roles(bus)?;
     let snapshot = validated_snapshot(bus, command.actor().clone(), projects, allocation)?;
     require_doc_barrier(command, apply, &snapshot)?;
     let project = preview
@@ -102,6 +105,7 @@ fn validate_doc_plan(
     Ok(DocPlan {
         preview,
         snapshot,
+        roles,
         touched,
         handles,
     })
@@ -382,9 +386,14 @@ fn append_doc_annotations(
         .map(|noted| noted.note)
         .collect::<std::collections::BTreeSet<_>>();
     retained.extend(
-        ledger_step_annotations(&plan.snapshot.facts, &plan.snapshot.answer, task)
-            .into_iter()
-            .map(|(_, annotation)| annotation),
+        ledger_step_annotations(
+            &plan.snapshot.facts,
+            &plan.snapshot.answer,
+            task,
+            &plan.roles,
+        )
+        .into_iter()
+        .map(|(_, annotation)| annotation),
     );
     for note in annotations {
         if !retained.insert(note.clone()) {

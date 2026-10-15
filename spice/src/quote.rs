@@ -499,12 +499,16 @@ impl QuoteStore for ResidentStore<'_> {
                     .read::<wire::body::SteerQueued>()
                     .map(|message| (message.from, message.sender))
             });
-        let author = peer.map_or_else(
-            || QuoteAuthor::Directive {
-                actor: presentation.created().actor.clone(),
+        let author = match peer {
+            Some((lane, occupant)) => QuoteAuthor::Agent { lane, occupant },
+            None => QuoteAuthor::Directive {
+                actor: self
+                    .bus
+                    .principal_roles()
+                    .map_err(|_| SourceError::Unreadable)?
+                    .author(&presentation.created().actor),
             },
-            |(lane, occupant)| QuoteAuthor::Agent { lane, occupant },
-        );
+        };
         Ok(SourceQuote {
             identity: TextIdentity::Presented,
             text: head.text.clone(),
@@ -528,11 +532,16 @@ impl QuoteStore for ResidentStore<'_> {
             .room_publication(room.clone(), publication.clone())
             .map_err(|_| SourceError::Unreadable)?
             .ok_or(SourceError::Unknown)?;
+        let actor = self
+            .bus
+            .principal_roles()
+            .map_err(|_| SourceError::Unreadable)?
+            .author(&envelope.actor);
         let authored = |text, packet| SourceQuote {
             identity: TextIdentity::Presented,
             text,
             author: QuoteAuthor::Directive {
-                actor: envelope.actor.clone(),
+                actor: actor.clone(),
             },
             disposition: None,
             media: Vec::new(),

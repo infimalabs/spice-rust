@@ -57,6 +57,15 @@ pub(super) fn validated_snapshot(
     validated_snapshot_from(&observed, principal, projects, allocation)
 }
 
+/// The principal role heads an author-naming read resolves fact actors
+/// through.
+pub(super) fn principal_roles(
+    bus: &Bus,
+) -> Result<wire::principal::PrincipalRoles, Outcome<CommandAnswer>> {
+    bus.read(|read| read.principal_roles())
+        .map_err(|error| store_fault("board::principal-roles-unreadable", &error.to_string()))
+}
+
 pub(super) fn validated_snapshot_from(
     observed: &bus::TaskSnapshot,
     principal: wire::Actor,
@@ -778,7 +787,11 @@ pub(super) fn read_board(
             .filter(|born| tasks.contains(born))
             .cloned()
             .collect();
-        let record = task_detail::task_record(observed.facts(), &named);
+        let roles = match principal_roles(bus) {
+            Ok(roles) => roles,
+            Err(outcome) => return outcome,
+        };
+        let record = task_detail::task_record(observed.facts(), &named, &roles);
         snapshot.answer.notes = record.notes;
         snapshot.answer.acknowledgments = record.acknowledgments;
         snapshot.answer.closures = record.closures;
@@ -857,7 +870,7 @@ pub(super) fn read_graph(
         Err(outcome) => return outcome,
     };
     let reviews = if view == View::Review {
-        match review_history(&snapshot) {
+        match review_history(bus, &snapshot) {
             Ok(reviews) => reviews,
             Err(outcome) => return outcome,
         }
@@ -907,7 +920,7 @@ pub(super) fn read_handout(
         Ok(entries) => entries,
         Err(outcome) => return outcome,
     };
-    let reviews = match review_history(&snapshot) {
+    let reviews = match review_history(bus, &snapshot) {
         Ok(reviews) => reviews,
         Err(outcome) => return outcome,
     };
@@ -920,13 +933,20 @@ pub(super) fn read_handout(
 }
 
 /// Join every completed review the snapshot's visible tasks carry to the
-/// phase author it followed. This scans the whole fact log, so only the reads
-/// that render reviews pay for it.
+/// phase author it followed, naming each author and reviewer as the
+/// principal roles resolve it. This scans the whole fact log, so only the
+/// reads that render reviews pay for it.
 fn review_history(
+    bus: &Bus,
     snapshot: &ValidatedSnapshot,
 ) -> Result<Vec<board::graph::ReviewEdge>, Outcome<CommandAnswer>> {
-    board::graph::review_history(snapshot.facts.iter(), &snapshot.entries)
-        .map_err(|error| store_fault("board::review-history-invalid", &error.to_string()))
+    let roles = principal_roles(bus)?;
+    let reviews = board::graph::review_history(snapshot.facts.iter(), &snapshot.entries)
+        .map_err(|error| store_fault("board::review-history-invalid", &error.to_string()))?;
+    Ok(reviews
+        .into_iter()
+        .map(|review| review.resolved(&roles))
+        .collect())
 }
 
 pub(super) fn read_ledger(
@@ -937,6 +957,10 @@ pub(super) fn read_ledger(
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     let lane_reader = matches!(principal, Actor::Lane(_));
+    let roles = match principal_roles(bus) {
+        Ok(roles) => roles,
+        Err(outcome) => return outcome,
+    };
     let snapshot = match validated_snapshot(bus, principal, projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -994,6 +1018,7 @@ pub(super) fn read_ledger(
         &snapshot.facts,
         &snapshot.answer,
         &statement.born,
+        &roles,
     ));
     annotations.sort_by_key(|(position, _)| *position);
     node.annotations = annotations.into_iter().map(|(_, text)| text).collect();
@@ -1011,9 +1036,10 @@ pub(super) fn ledger_step_annotations(
     facts: &bus::TaskFacts,
     board: &BoardAnswer,
     task: &wire::TaskStamp,
+    roles: &wire::principal::PrincipalRoles,
 ) -> Vec<(wire::Seq, String)> {
     let named = std::collections::BTreeSet::from([task.clone()]);
-    let mut record = task_detail::task_record(facts, &named);
+    let mut record = task_detail::task_record(facts, &named, roles);
     record
         .steps
         .remove(task)
