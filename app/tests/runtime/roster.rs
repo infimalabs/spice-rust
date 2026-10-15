@@ -30,6 +30,8 @@ fn design(label: &str) -> wire::intent::BoardTask {
         wire::EnvironmentRequirements::default(),
     );
     task.statement.body.intent = Some(wire::TaskIntent::Design);
+    task.workflow.body.flow = vec!["design".parse().expect("fixture phase")];
+    task.workflow.body.phase = "design".parse().expect("fixture phase");
     task
 }
 
@@ -62,7 +64,19 @@ fn the_ungrouped_list_holds_only_members_no_formed_group_holds() {
         None,
         wire::EnvironmentRequirements::default(),
     );
-    let tasks = [design("D-one"), plain, design("D-two"), design("D-three")];
+    let mut intake = design("D-intake");
+    intake.workflow.body.flow = vec![
+        "plan".parse().expect("fixture phase"),
+        "design".parse().expect("fixture phase"),
+    ];
+    intake.workflow.body.phase = "plan".parse().expect("fixture phase");
+    let tasks = [
+        design("D-one"),
+        plain,
+        intake,
+        design("D-two"),
+        design("D-three"),
+    ];
     let roster = working_groups(&partition(&[(GROUP_A, &["D-two"])]), &tasks);
     assert_eq!(
         roster.ungrouped(),

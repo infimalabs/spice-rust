@@ -1,7 +1,7 @@
 //! Build bounded Design maturity and per-Design notice indexes from immutable facts.
 
 use rusqlite::{OptionalExtension, Transaction, params};
-use wire::rooms::{DesignMaturity, DesignNoticeProvenance, DesignNoticed, RoomContributed};
+use wire::rooms::{DesignMaturity, DesignNoticed, RoomContributed};
 use wire::{AnyFact, Envelope, FactKind};
 
 use super::{MigrationError, OpenError};
@@ -45,9 +45,6 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
                 notice_insert
                     .execute(params![notice.design.as_str(), seq])
                     .map_err(OpenError::Sqlite)?;
-                if notice.provenance != DesignNoticeProvenance::Organic {
-                    continue;
-                }
                 (notice.design.clone(), Some(notice), None)
             } else if let Some(contribution) = envelope.fact.read::<RoomContributed>() {
                 (contribution.room.clone(), None, Some(contribution))

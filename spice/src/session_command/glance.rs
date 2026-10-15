@@ -47,7 +47,13 @@ pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardErro
             if held
                 || workflow.status != "pending"
                 || statement.project.starts_with('.')
-                || speculative_design_work(read, statement, &mut resolved, &mut resolved_authority)?
+                || speculative_design_work(
+                    read,
+                    statement,
+                    workflow,
+                    &mut resolved,
+                    &mut resolved_authority,
+                )?
             {
                 continue;
             }
@@ -75,6 +81,7 @@ pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardErro
 fn speculative_design_work(
     read: &JournalRead<'_>,
     statement: &wire::TaskHead,
+    workflow: &wire::WorkflowHead,
     resolved: &mut board::ResolvedTasks,
     loaded: &mut BTreeSet<wire::TaskStamp>,
 ) -> Result<bool, GuardError> {
@@ -82,7 +89,7 @@ fn speculative_design_work(
         resolve_authority_task(read, &preparation.parent, resolved, loaded)?;
         resolve_authority_task(read, &preparation.controller, resolved, loaded)?;
     }
-    Ok(resolved.speculative_design_work(statement))
+    Ok(resolved.speculative_design_work(statement, workflow))
 }
 
 fn resolve_authority_task(

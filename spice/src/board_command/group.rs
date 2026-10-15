@@ -86,15 +86,14 @@ fn working_group_view(
             let task = read.task_head(born)?;
             let workflow = read.workflow_head(born)?;
             Ok(match (task, workflow) {
-                (Some(task), Some(workflow))
-                    if workflow.body().status != "deleted"
-                        && task.body().intent == Some(wire::TaskIntent::Design) =>
-                {
-                    WorkingGroupAnchor::Available {
-                        born: born.clone(),
-                        handle: TaskHandle::for_project(&task.body().project, born),
-                        design: DesignStanding::of(task.body().intent, workflow.body(), true, None)
-                            .expect("a Design anchor has a standing"),
+                (Some(task), Some(workflow)) if workflow.body().status != "deleted" => {
+                    match DesignStanding::of(task.body().intent, workflow.body(), true, None) {
+                        Some(design) => WorkingGroupAnchor::Available {
+                            born: born.clone(),
+                            handle: TaskHandle::for_project(&task.body().project, born),
+                            design,
+                        },
+                        None => WorkingGroupAnchor::Unavailable { born: born.clone() },
                     }
                 }
                 _ => WorkingGroupAnchor::Unavailable { born: born.clone() },
@@ -151,16 +150,21 @@ pub(crate) fn move_working_group(
     allocation: &board::NextConfig,
 ) -> (Outcome<CommandAnswer>, Option<wire::CanonicalUuid>) {
     let design = request.design.clone();
-    let (current, head) =
-        match bus.read(move |read| Ok((current_partition(read)?, read.task_head(&design)?))) {
-            Ok(observed) => observed,
-            Err(error) => {
-                return (
-                    store_fault("group::read-unavailable", &error.to_string()),
-                    None,
-                );
-            }
-        };
+    let (current, head, workflow) = match bus.read(move |read| {
+        Ok((
+            current_partition(read)?,
+            read.task_head(&design)?,
+            read.workflow_head(&design)?,
+        ))
+    }) {
+        Ok(observed) => observed,
+        Err(error) => {
+            return (
+                store_fault("group::read-unavailable", &error.to_string()),
+                None,
+            );
+        }
+    };
     let revision = match next_revision(command, current.revision) {
         Ok(revision) => revision,
         Err(outcome) => return (outcome, None),
@@ -173,8 +177,16 @@ pub(crate) fn move_working_group(
         );
         return (missing, None);
     };
+    let Some(workflow) = workflow else {
+        let missing = refusal(
+            "group::design-missing",
+            Some(request.design.to_string()),
+            "read the board and retry with a current Design task",
+        );
+        return (missing, None);
+    };
     let task = head.body();
-    let (fact, status) = match moved_fact(&current, task, request, revision) {
+    let (fact, status) = match moved_fact(&current, task, workflow.body(), request, revision) {
         Ok(moved) => moved,
         Err(outcome) => return (outcome, None),
     };
@@ -191,13 +203,21 @@ pub(crate) fn move_working_group(
         Ok(origin) => origin.unwrap_or_else(working_group_origin),
         Err(outcome) => return (outcome, None),
     };
-    // The statement witness keeps a concurrent intent edit from slipping a
-    // withdrawn Design into a group. Group membership changes organization
-    // only; execution authorization is an explicit preparation decision.
-    let witnesses = vec![Witness::Task {
-        task: task.born.clone(),
-        head: head.position(),
-    }];
+    // Statement and workflow witnesses keep an intent edit or phase transition
+    // from slipping a pre-Design row into a group. Group membership changes
+    // organization only; execution authorization is an explicit preparation
+    // decision.
+    let witnesses = vec![
+        Witness::Task {
+            task: task.born.clone(),
+            head: head.position(),
+        },
+        Witness::Workflow {
+            task: task.born.clone(),
+            head: workflow.position(),
+            phase: workflow.body().phase.clone(),
+        },
+    ];
     let mut parked = None;
     let outcome = change_partition(
         bus,
@@ -232,11 +252,14 @@ pub(crate) fn move_working_group(
 fn moved_fact(
     current: &WorkingGroupPartition,
     task: &wire::TaskHead,
+    workflow: &wire::WorkflowHead,
     request: &WorkingGroupMove,
     revision: u64,
 ) -> Result<(WorkingGroupMoved, WorkingGroupChangeStatus), Outcome<CommandAnswer>> {
+    let admitted = task.intent == Some(wire::TaskIntent::Design)
+        && (request.to.is_none() || wire::intent::is_open_design(task.intent, workflow));
     let kind = DesignKind {
-        admitted: (task.intent == Some(wire::TaskIntent::Design)).then_some(&request.design),
+        admitted: admitted.then_some(&request.design),
     };
     let destination = request
         .to
@@ -249,8 +272,7 @@ fn moved_fact(
             return Err(refusal(
                 "group::design-only",
                 Some(TaskHandle::for_project(&task.project, &task.born).to_string()),
-                "a working group holds only Design tasks; choose a Design or declare this \
-                 task's Design intent",
+                "a working group admits only a Design in its open design phase",
             ));
         }
         Err(GroupingError::Unchanged) => {
@@ -397,9 +419,11 @@ pub(crate) fn group_fast_lanes(
             continue;
         }
         for born in &group.anchors {
-            let design = read
-                .task_head(born)?
-                .is_some_and(|task| task.body().intent == Some(wire::TaskIntent::Design));
+            let task = read.task_head(born)?;
+            let workflow = read.workflow_head(born)?;
+            let design = task.zip(workflow).is_some_and(|(task, workflow)| {
+                wire::intent::is_open_design(task.body().intent, workflow.body())
+            });
             if !design {
                 continue;
             }

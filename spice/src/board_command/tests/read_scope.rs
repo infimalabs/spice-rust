@@ -27,14 +27,6 @@ pub(super) fn append_terminal_tasks(
     append_terminal(bus, count, None)
 }
 
-/// Terminal tasks declaring Design intent, as working groups anchor.
-pub(super) fn append_terminal_designs(
-    bus: &Bus,
-    count: usize,
-) -> std::collections::BTreeSet<TaskStamp> {
-    append_terminal(bus, count, Some(wire::TaskIntent::Design))
-}
-
 fn append_terminal(
     bus: &Bus,
     count: usize,

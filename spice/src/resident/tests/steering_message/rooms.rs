@@ -24,7 +24,13 @@ impl Lanes {
         holder: Option<CanonicalUuid>,
     ) -> wire::TaskHandle {
         let task: wire::TaskStamp = stamp.parse().expect("fixture stamp");
-        let phase: wire::Phase = "todo".parse().expect("fixture phase");
+        let phase: wire::Phase = if intent == Some(wire::TaskIntent::Design) {
+            "design"
+        } else {
+            "todo"
+        }
+        .parse()
+        .expect("fixture phase");
         let creation = wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::SpiceActor,
         );

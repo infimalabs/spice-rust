@@ -305,11 +305,11 @@ pub fn working_groups(
     )
 }
 
-/// Every Design task a working group could hold, in board order.
+/// Every open Design task a working group could hold, in board order.
 pub fn designs(tasks: &[BoardTask]) -> impl Iterator<Item = &BoardTask> {
-    tasks
-        .iter()
-        .filter(|task| task.statement.body.intent == Some(wire::TaskIntent::Design))
+    tasks.iter().filter(|task| {
+        wire::intent::is_open_design(task.statement.body.intent, &task.workflow.body)
+    })
 }
 
 /// The lanes holding a live claim on each working group's Design tasks: the
@@ -328,7 +328,9 @@ pub fn claimants(
                 .anchors
                 .iter()
                 .filter_map(|design| board.row(design))
-                .filter(|row| row.statement.body.intent == Some(wire::TaskIntent::Design))
+                .filter(|row| {
+                    wire::intent::is_open_design(row.statement.body.intent, &row.workflow.body)
+                })
                 .filter_map(|row| row.claim.as_ref())
                 .filter(|claim| claim.body.disposition == wire::ClaimDisposition::Active)
                 .map(|claim| claim.body.lane)

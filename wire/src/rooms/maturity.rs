@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{DesignNoticeProvenance, DesignNoticed, RoomContributed, RoomContributionKind};
+use super::{DesignNoticed, RoomContributed, RoomContributionKind};
 use crate::{CanonicalUuid, Seq};
 
 /// Statement heads retained individually in one maturity projection.
@@ -193,12 +193,8 @@ pub enum DesignMaturityState {
 }
 
 impl DesignMaturity {
-    /// Fold one admitted notice. Seeded notices are deliberately excluded: the
-    /// readout describes organic reach only.
+    /// Fold one admitted organic notice.
     pub fn observe_notice(&mut self, notice: &DesignNoticed) {
-        if notice.provenance != DesignNoticeProvenance::Organic {
-            return;
-        }
         self.organic_notices = self.organic_notices.saturating_add(1);
         insert_bounded(
             &mut self.organic_lanes,
@@ -347,24 +343,19 @@ mod tests {
         TaskStamp::for_micros(micros).expect("fixture task")
     }
 
-    fn notice(statement: u64, lane: u8, provenance: DesignNoticeProvenance) -> DesignNoticed {
+    fn notice(statement: u64, lane: u8) -> DesignNoticed {
         DesignNoticed {
             design: task(1),
             statement: Seq::new(statement).expect("statement"),
-            provenance,
             lane: self::lane(lane),
             occupant: self::lane(lane.saturating_add(100)),
             task: task(2),
             claim: SequenceCode::new(statement.saturating_add(100)),
-            terms: matches!(provenance, DesignNoticeProvenance::Organic)
-                .then(|| {
-                    vec![
-                        "design".to_owned(),
-                        "maturity".to_owned(),
-                        "measure".to_owned(),
-                    ]
-                })
-                .unwrap_or_default(),
+            terms: vec![
+                "design".to_owned(),
+                "maturity".to_owned(),
+                "measure".to_owned(),
+            ],
         }
     }
 
@@ -391,9 +382,8 @@ mod tests {
     fn substantive_breadth_alone_crosses_steeped() {
         let mut maturity = DesignMaturity::default();
         for lane in 1..=12 {
-            maturity.observe_notice(&notice(10, lane, DesignNoticeProvenance::Organic));
+            maturity.observe_notice(&notice(10, lane));
         }
-        maturity.observe_notice(&notice(10, 20, DesignNoticeProvenance::Seeded));
         assert_eq!(maturity.state(), DesignMaturityState::Fresh);
         assert_eq!(maturity.organic_notices, 12);
         assert_eq!(maturity.organic_lanes.len(), 12);
@@ -426,8 +416,8 @@ mod tests {
     fn head_yield_history_and_memory_are_bounded() {
         let mut maturity = DesignMaturity::default();
         for statement in 1..=6 {
-            maturity.observe_notice(&notice(statement, 1, DesignNoticeProvenance::Organic));
-            maturity.observe_notice(&notice(statement, 2, DesignNoticeProvenance::Organic));
+            maturity.observe_notice(&notice(statement, 1));
+            maturity.observe_notice(&notice(statement, 2));
             maturity.observe_contribution(&contribution(
                 Some(statement),
                 2,
@@ -456,7 +446,7 @@ mod tests {
         assert_eq!(maturity.unrecorded_head.contributions, 1);
         assert_eq!(maturity.unrecorded_head.contributing_lanes, vec![lane(9)]);
         for lane in 10..=100 {
-            maturity.observe_notice(&notice(6, lane, DesignNoticeProvenance::Organic));
+            maturity.observe_notice(&notice(6, lane));
             maturity.observe_contribution(&contribution(
                 Some(6),
                 lane,

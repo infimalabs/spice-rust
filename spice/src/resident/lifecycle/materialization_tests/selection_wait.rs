@@ -10,8 +10,10 @@ fn a_held_design_awaiting_selection_wakes_its_lane_only_for_operator_direction()
         &bus,
         &projects,
         &mut projection,
-        held_claim_write(&bus, instant(2), |statement| {
+        held_claim_write(&bus, instant(2), |statement, workflow| {
             statement.intent = Some(wire::TaskIntent::Design);
+            workflow.flow = vec!["design".parse().expect("fixture phase")];
+            workflow.phase = "design".parse().expect("fixture phase");
         }),
     );
     assert_eq!(

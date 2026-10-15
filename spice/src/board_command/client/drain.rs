@@ -79,7 +79,8 @@ impl ParkedCounts {
                         entry.is_oops()
                             && entry.workflow().status == "pending"
                             && entry.workflow().completion.is_none()
-                            && !satisfied.speculative_design_work(entry.statement())
+                            && !satisfied
+                                .speculative_design_work(entry.statement(), entry.workflow())
                     })
                     .count()
             },

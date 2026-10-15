@@ -130,15 +130,37 @@ fn refused(journal: &Journal, result: Commit) {
     assert_eq!(cursor(journal), before);
 }
 
+fn design_task(journal: &mut Journal, offset: i64) -> TaskStamp {
+    task_with_intent(journal, offset, None, Some(wire::TaskIntent::Design))
+}
+
 fn task(journal: &mut Journal, offset: i64, preparation: Option<TaskPreparation>) -> TaskStamp {
+    task_with_intent(journal, offset, preparation, None)
+}
+
+fn task_with_intent(
+    journal: &mut Journal,
+    offset: i64,
+    preparation: Option<TaskPreparation>,
+    intent: Option<wire::TaskIntent>,
+) -> TaskStamp {
     let task = TaskStamp::for_micros(20_000 + offset).expect("task stamp");
-    let flow = vec![phase("todo"), phase("review")];
+    let current = if intent == Some(wire::TaskIntent::Design) {
+        phase("design")
+    } else {
+        phase("todo")
+    };
+    let flow = if intent == Some(wire::TaskIntent::Design) {
+        vec![current.clone()]
+    } else {
+        vec![current.clone(), phase("review")]
+    };
     let mut write = write();
     let fact = write
         .fact(
             wire::body::TaskAdded {
                 preparation: preparation.clone(),
-                intent: None,
+                intent,
                 task: task.clone(),
                 title: format!("Room task {offset}"),
                 description: None,
@@ -149,7 +171,7 @@ fn task(journal: &mut Journal, offset: i64, preparation: Option<TaskPreparation>
                 tags: Vec::new(),
                 depends: Vec::new(),
                 flow: flow.clone(),
-                phase: phase("todo"),
+                phase: current.clone(),
                 creation: wire::body::TaskCreationContext::unavailable(
                     wire::body::TaskCreationUnavailable::OperatorActor,
                 ),
@@ -164,7 +186,7 @@ fn task(journal: &mut Journal, offset: i64, preparation: Option<TaskPreparation>
         authorization: None,
         engagement: None,
         evidence: Vec::new(),
-        intent: None,
+        intent,
         born,
         queue_origin: revision,
         title: format!("Room task {offset}"),
@@ -184,7 +206,7 @@ fn task(journal: &mut Journal, offset: i64, preparation: Option<TaskPreparation>
     let workflow = task.clone();
     write.workflow_head(workflow, fact, move |_| WorkflowHead {
         flow,
-        phase: phase("todo"),
+        phase: current,
         status: "pending".to_owned(),
         review: "none".to_owned(),
         assignment: None,
@@ -359,7 +381,7 @@ struct Preparation {
 
 impl Preparation {
     fn new(journal: &mut Journal) -> Self {
-        let controller = task(journal, 1, None);
+        let controller = design_task(journal, 1);
         let output = task(journal, 2, Some(prepared_by(&controller)));
         let spare = task(journal, 3, None);
         let input = task(journal, 4, None);

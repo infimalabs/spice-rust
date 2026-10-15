@@ -249,20 +249,18 @@ fn retain(
         candidate: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_101)
             .expect("candidate identity"),
     };
-    let mut expected = vec![
-        Witness::Proposal {
-            proposal: wire::rooms::ProposalRef::Candidate {
-                candidate: candidate.clone(),
-            },
-            head: None,
+    let mut expected = super::super::preparation::transition_witnesses(at(&current, controller));
+    for output in outputs {
+        expected.extend(super::super::preparation::transition_witnesses(at(
+            &current, output,
+        )));
+    }
+    expected.push(Witness::Proposal {
+        proposal: wire::rooms::ProposalRef::Candidate {
+            candidate: candidate.clone(),
         },
-        statement_witness(at(&current, controller)),
-    ];
-    expected.extend(
-        outputs
-            .iter()
-            .map(|output| statement_witness(at(&current, output))),
-    );
+        head: None,
+    });
     issue(
         bus,
         epoch,

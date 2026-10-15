@@ -230,45 +230,6 @@ fn assert_anchor_resolution_and_group_end(
 }
 
 #[test]
-fn open_board_retains_only_terminal_tasks_anchored_by_current_groups() {
-    let (root, bus, epoch, _seats) = fixture("grouped-terminal-open", 0);
-    let terminal = super::read_scope::append_terminal_designs(&bus, 2)
-        .into_iter()
-        .collect::<Vec<_>>();
-    let open_stamps = |bus: &Bus| {
-        let Outcome::Reply(Reply {
-            body: CommandAnswer::Board(answer),
-            ..
-        }) = issue(
-            bus,
-            epoch,
-            Actor::Operator,
-            CommandKind::BoardRead,
-            Vec::new(),
-            &BoardRead::Open,
-        )
-        else {
-            panic!("open board fixture answers");
-        };
-        answer
-            .tasks
-            .iter()
-            .map(|task| task.statement.body.born.clone())
-            .collect::<std::collections::BTreeSet<_>>()
-    };
-    assert!(open_stamps(&bus).is_empty());
-
-    let group = group_stamp(9);
-    assert_committed(move_design(&bus, epoch, &terminal[0], Some(&group)));
-    assert_eq!(open_stamps(&bus), [terminal[0].clone()].into());
-
-    assert_committed(move_design(&bus, epoch, &terminal[1], Some(&group)));
-    assert_committed(move_design(&bus, epoch, &terminal[0], None));
-    assert_eq!(open_stamps(&bus), [terminal[1].clone()].into());
-    clean(&root, bus);
-}
-
-#[test]
 fn a_design_moves_between_groups_and_a_group_lives_only_while_it_holds_one() {
     let (root, bus, epoch, _) = fixture("working-groups", 0);
     let first = add_design_room(&bus, epoch, stamp("group-first"), "First room");

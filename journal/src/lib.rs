@@ -8,8 +8,9 @@
 /// name the release that last migrated them; newer schemas refuse because this
 /// build cannot know what their owning release added. Schema 61 admits the
 /// `human:<principal>` actor spelling and principal capability digests, which
-/// an older release cannot read. Schema 62 binds every retained Design notice
-/// to its statement and selection provenance. Schema 63 adds the bounded
+/// an older release cannot read. Schema 62 bound every retained Design notice
+/// to its statement and selection provenance; schema 63 retires that
+/// provenance while preserving exact statement evidence and adds the bounded
 /// per-Design maturity and notice projections. Schema 64 crosses retained
 /// settings answers from their single operator identity to a principal directory.
 pub const SCHEMA_VERSION: u32 = 64;

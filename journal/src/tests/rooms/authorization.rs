@@ -395,8 +395,7 @@ fn a_controller_concluded_without_authorization_never_authorizes() {
         ),
     );
     assert!(
-        matches!(&result, Err(CommitError::Refused(refusal))
-            if refusal.to_string().contains("already concluded")),
+        matches!(&result, Err(CommitError::Refused(_))),
         "authorization cannot follow completion: {result:?}"
     );
     refused(&journal, result);

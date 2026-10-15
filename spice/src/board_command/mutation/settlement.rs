@@ -518,6 +518,15 @@ fn admitted_entry<'a>(
         }
         _ => {}
     }
+    if matches!(settlement, Settlement::Conclude(_))
+        && !wire::intent::is_open_design(entry.statement().intent, entry.workflow())
+    {
+        return Err(refusal(
+            "task::conclude-not-open",
+            Some(entry.handle().to_string()),
+            "conclude a Design only after it reaches its open design phase",
+        ));
+    }
     if let Some(claim) = entry
         .claim()
         .filter(|claim| claim.disposition == ClaimDisposition::Active)

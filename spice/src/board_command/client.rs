@@ -427,7 +427,7 @@ fn existing_next_claim_reply(board: &BoardAnswer, task: &NextWorkTask) -> Reply<
         format!(
             "next: spice task review {handle} --finding clean --note \"description current; ...\""
         )
-    } else if task.statement.body.intent == Some(wire::TaskIntent::Design) {
+    } else if wire::intent::is_open_design(task.statement.body.intent, &task.workflow.body) {
         format!("next: spice task free {handle} (only the operator concludes a Design)")
     } else {
         "next: spice task done --validation \"...\"".to_owned()
