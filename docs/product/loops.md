@@ -109,17 +109,23 @@ flowchart LR
   A peer's deferral changes scheduling only and never takes possession.
 - A failed guarded write is an atomic refusal: the claim and lane return to
   their prior state, including the staged and worktree split.
-- Dirty-handoff recovery has two ownership boundaries. `task recover HANDLE`
-  seals a dirty generation before claiming an existing ready task; `task add
-  --recover` creates the target and its recovery claim in one transaction, so no
-  board read can select the row between creation and possession. After a
-  restart the exact recovery claim replays once; if another claim moved the
-  target first, `task recover --restore` restores the sealed generation and
-  leaves the task unchanged, refusing rather than deleting the quarantine on any
-  mismatch.
-- Claim-boundary and `task capture` dirty-worktree refusals name these lossless
-  recovery commands when the generation belongs to no claim; they never reduce
-  recovery guidance to discarding the reported paths.
+- `task capture` is the single adoption boundary. With `HANDLE` it claims that
+  ready execution task; with `--title TITLE --project PROJECT` it creates and
+  claims one execution/review task. The existing-task form can adopt no local
+  work; either form adopts loose commits, dirty paths, or both. A new-task
+  capture requires work to adopt and otherwise directs the caller to `task add
+  TITLE --project PROJECT --claim`; its title defaults to the newest loose
+  commit subject when one exists.
+- Dirty paths are sealed and quarantined before the guarded claim. The
+  synchronized boundary retains any loose commits, and a successful claim
+  replays the exact staged, unstaged, and non-ignored untracked generation.
+  An interrupted adoption resumes only through `task capture` for its sealed
+  target; `task capture --restore` restores the exact pre-claim generation.
+  A moved target or mismatched generation refuses without deleting quarantine.
+- Every unowned-path or loose-commit refusal names the same two choices:
+  `task capture HANDLE` for an existing ready execution task or `task capture
+  --title TITLE --project PROJECT` for new execution work. Planning, Design,
+  and gather claims refuse implementation adoption before quarantine or claim.
 - Every phase transition is a journal fact visible on the board, including one
   that changes no tree. A landing commit carries the task's key, project, phase,
   and session trailers; first-parent history records mutating landings, not

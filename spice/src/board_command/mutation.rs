@@ -719,14 +719,16 @@ fn task_flow_for_dependencies(
     snapshot: &ValidatedSnapshot,
 ) -> Result<(Vec<wire::Phase>, Vec<Witness>), Outcome<CommandAnswer>> {
     let requested = planning::default_flow(add.intent, add.flow.as_deref());
-    let requested = if captures_implementation(command) && requested.is_none() {
+    let adopts_implementation =
+        captures_implementation(command) || recovers_implementation(command);
+    let requested = if adopts_implementation && requested.is_none() {
         Some("todo,review")
     } else {
         requested
     };
     let mut flow = task_flow(requested, &add.acceptance)?;
     planning::admit_design_flow(add.intent, &flow)?;
-    if (captures_implementation(command) || recovers_implementation(command))
+    if adopts_implementation
         && (add.intent.is_some() || gate::lacks_commit_authority(flow[0].as_str()))
     {
         return Err(refusal(

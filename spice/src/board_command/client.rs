@@ -67,7 +67,6 @@ fn dispatch_client(
         ["task", "status"] => client_status(repository, contract),
         ["task", "show"] => client_show(repository, contract, matches),
         ["task", "next"] => client_next(repository, contract).outcome,
-        ["task", "recover"] => client_recover(repository, contract, matches),
         ["task", "reclaim"] => client_reclaim(repository, contract, matches),
         ["task", "add" | "plan" | "design"] => client_add(repository, contract, matches),
         ["task", "capture"] => client_capture(repository, contract, matches),
@@ -149,7 +148,10 @@ pub(super) use drain::{actor_drafts, actor_rows};
 mod recovery;
 #[cfg(test)]
 pub(super) use recovery::{RecoveryBoardState, recovery_board_state, recovery_preflight};
-use recovery::{client_add_recovery, client_recover};
+use recovery::{
+    client_add_recovery, client_capture_recovery, restore_client_recovery,
+    resume_pending_client_capture,
+};
 mod completion;
 use completion::{client_done, client_review};
 mod submission;

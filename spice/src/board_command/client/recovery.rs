@@ -44,26 +44,9 @@ pub(super) fn client_add_recovery(
         Err(error) => return task_git_outcome(error),
     };
     let recovery = match pending {
-        Some(recovery) => match spice::task_git::recovery_claim(repository, &recovery) {
-            Ok(Some(claim)) if claim.fresh => {
-                let Some(task) = claim.handle.clone() else {
-                    return protocol_fault(
-                        "git::recovery-fresh-handle-missing",
-                        "atomic recovery claim has no sealed public handle",
-                    );
-                };
-                return reconcile_client_recovery(repository, &task, recovery, claim, None, true);
-            }
-            Ok(Some(_)) => {
-                return refusal(
-                    "git::recovery-target-mismatch",
-                    Some(recovery.transaction().to_owned()),
-                    "resume the retained existing-target recovery or restore it explicitly",
-                );
-            }
-            Ok(None) => recovery,
-            Err(error) => return task_git_outcome(error),
-        },
+        Some(recovery) => {
+            return resume_pending_client_capture(repository, None, recovery);
+        }
         None => match spice::task_git::quarantine_for_recovery(repository) {
             Ok(recovery) => recovery,
             Err(error) => return task_git_outcome(error),
@@ -99,38 +82,18 @@ pub(super) fn client_add_recovery(
     reconcile_client_recovery(repository, &task, recovery, claim, Some(outcome), true)
 }
 
-pub(super) fn client_recover(
+pub(super) fn client_capture_recovery(
     repository: &Repository,
     contract: &Contract,
-    matches: &ArgMatches,
+    task: &TaskHandle,
+    stealing: bool,
 ) -> Outcome<CommandAnswer> {
-    if matches.get_flag("restore") {
-        if matches.get_one::<String>("HANDLE").is_some() {
-            return refusal(
-                "git::recovery-restore-shape",
-                None,
-                "use `spice task recover --restore` without a task handle",
-            );
-        }
-        return restore_client_recovery(repository);
-    }
-    let Some(written) = matches.get_one::<String>("HANDLE").cloned() else {
-        return refusal(
-            "git::recovery-task-missing",
-            None,
-            "name the existing task to recover or use --restore",
-        );
-    };
-    let task = match written.parse::<TaskHandle>() {
-        Ok(task) => task,
-        Err(error) => return refusal("task::handle-invalid", Some(written), &error.to_string()),
-    };
     let pending = match spice::task_git::pending_recovery(repository) {
         Ok(pending) => pending,
         Err(error) => return task_git_outcome(error),
     };
     if let Some(recovery) = pending {
-        return resume_client_recovery(repository, &task, recovery);
+        return resume_pending_client_capture(repository, Some(task), recovery);
     }
     let board = match current_board(
         repository,
@@ -147,7 +110,7 @@ pub(super) fn client_recover(
         Ok(board) => board,
         Err(outcome) => return outcome,
     };
-    let preflight = match recovery_preflight(&board, &task) {
+    let preflight = match capture_recovery_preflight(&board, task, stealing) {
         Ok(preflight) => preflight,
         Err(outcome) => return outcome,
     };
@@ -163,12 +126,13 @@ pub(super) fn client_recover(
     let claim = preflight.seal(boundary);
     if let Err(error) = spice::task_git::bind_recovery_claim(repository, &recovery, claim.clone()) {
         // A failed durable bind can mean another writer sealed a different
-        // intent. Preserve that evidence; restoring here would destroy the
-        // ambiguity the manifest exists to make inspectable.
+        // intent. Preserve that evidence rather than destroying its authority.
         return task_git_outcome(error);
     }
     let transaction = recovery.transaction().to_owned();
-    let rule = "recover".parse::<Name>().expect("recover is a wire name");
+    let rule = if stealing { "recover-steal" } else { "recover" }
+        .parse::<Name>()
+        .expect("recovery possession rules are wire names");
     let outcome = crate::command_client::execute_typed(
         repository,
         contract,
@@ -179,12 +143,21 @@ pub(super) fn client_recover(
             recovery: Some(transaction),
         },
     );
-    reconcile_client_recovery(repository, &task, recovery, claim, Some(outcome), false)
+    reconcile_client_recovery(repository, task, recovery, claim, Some(outcome), false)
 }
 
+#[cfg(test)]
 pub(in crate::board_command) fn recovery_preflight(
     board: &BoardAnswer,
     task: &TaskHandle,
+) -> Result<RecoveryPreflight, Outcome<CommandAnswer>> {
+    capture_recovery_preflight(board, task, false)
+}
+
+fn capture_recovery_preflight(
+    board: &BoardAnswer,
+    task: &TaskHandle,
+    stealing: bool,
 ) -> Result<RecoveryPreflight, Outcome<CommandAnswer>> {
     let entries = actor_entries(board)?;
     if let Some(active) = entries.iter().find(|entry| {
@@ -196,7 +169,7 @@ pub(in crate::board_command) fn recovery_preflight(
             "claim::active-exists",
             Some(active.handle().to_string()),
             &format!(
-                "run spice task reclaim {} before recovering another task",
+                "run spice task reclaim {} before capturing another task",
                 active.handle()
             ),
         ));
@@ -208,21 +181,35 @@ pub(in crate::board_command) fn recovery_preflight(
         .expect("actor entries retain every board task");
     planning::admit_capture(entry)?;
     let satisfied = board::resolved_tasks(&entries);
-    if !board::eligible_entry(&satisfied, entry, &board.principal, &board.environment()) {
+    let eligible = if stealing {
+        board::stealable_entry(&satisfied, entry, &board.principal, &board.environment())
+    } else {
+        board::eligible_entry(&satisfied, entry, &board.principal, &board.environment())
+    };
+    if !eligible {
         return Err(refusal(
-            "git::recovery-task-ineligible",
+            if stealing {
+                "claim::steal-ineligible"
+            } else {
+                "claim::capture-ineligible"
+            },
             Some(heads.statement.body.handle.to_string()),
-            "recover only an unclaimed, ready, pending task",
+            if stealing {
+                "capture --steal only a ready, pending task held by another actor"
+            } else {
+                "capture only an unclaimed, ready, pending task"
+            },
         ));
     }
     let (lane, occupant) = actor_seat(board)?;
+    let rule = if stealing { "recover-steal" } else { "recover" }
+        .parse::<Name>()
+        .expect("recovery possession rules are wire names");
     let expected = vec![
         statement_witness(heads),
         workflow_witness(heads),
         claim_witness(heads),
-        Witness::Eligibility {
-            rule: "recover".parse::<Name>().expect("recover is a wire name"),
-        },
+        Witness::Eligibility { rule },
         residency_witness(board, lane, occupant),
     ];
     Ok(RecoveryPreflight {
@@ -239,7 +226,7 @@ pub(in crate::board_command) fn recovery_preflight(
     })
 }
 
-fn restore_client_recovery(repository: &Repository) -> Outcome<CommandAnswer> {
+pub(super) fn restore_client_recovery(repository: &Repository) -> Outcome<CommandAnswer> {
     let recovery = match spice::task_git::pending_recovery(repository) {
         Ok(Some(recovery)) => recovery,
         Ok(None) => {
@@ -273,6 +260,14 @@ fn restore_client_recovery(repository: &Repository) -> Outcome<CommandAnswer> {
                 && active.claim().and_then(|head| head.recovery.as_deref())
                     == Some(recovery.transaction())
         });
+        let remedy = if exact {
+            format!(
+                "resume the sealed target with `spice task capture {}`",
+                active.handle()
+            )
+        } else {
+            "release or complete the active claim before restoring unrelated dirty work".to_owned()
+        };
         return refusal(
             if exact {
                 "git::recovery-postclaim-active"
@@ -280,11 +275,7 @@ fn restore_client_recovery(repository: &Repository) -> Outcome<CommandAnswer> {
                 "claim::active-exists"
             },
             Some(active.handle().to_string()),
-            if exact {
-                "resume the exact recovery with `spice task recover HANDLE`"
-            } else {
-                "release or complete the active claim before restoring unrelated dirty work"
-            },
+            &remedy,
         );
     }
     if let Some(claim) = &sealed {
@@ -320,25 +311,42 @@ fn restore_client_recovery(repository: &Repository) -> Outcome<CommandAnswer> {
     })
 }
 
-fn resume_client_recovery(
+pub(super) fn resume_pending_client_capture(
     repository: &Repository,
-    task: &TaskHandle,
+    requested: Option<&TaskHandle>,
     recovery: spice::task_git::Recovery,
 ) -> Outcome<CommandAnswer> {
     let claim = match spice::task_git::recovery_claim(repository, &recovery) {
         Ok(Some(claim)) => claim,
         Ok(None) => {
-            return match spice::task_git::restore_recovery(repository, &recovery) {
-                Ok(()) => refusal(
-                    "git::recovery-preclaim-restored",
-                    Some(recovery.transaction().to_owned()),
-                    "the interrupted pre-claim generation was restored; retry task recover",
-                ),
-                Err(error) => task_git_outcome(error),
-            };
+            return refusal(
+                "git::recovery-target-unbound",
+                Some(recovery.transaction().to_owned()),
+                "restore the interrupted adoption with `spice task capture --restore`",
+            );
         }
         Err(error) => return task_git_outcome(error),
     };
+    let exact =
+        requested.is_some_and(|task| task.born().is_ok_and(|requested| requested == claim.task));
+    if !exact {
+        let target = claim
+            .handle
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| claim.task.to_string());
+        return refusal(
+            "git::recovery-target-mismatch",
+            Some(format!(
+                "retained adoption {} is sealed for {target}",
+                recovery.transaction()
+            )),
+            &format!(
+                "resume the sealed target with `spice task capture {target}` or restore it with `spice task capture --restore`"
+            ),
+        );
+    }
+    let task = requested.expect("exact pending capture has a requested task");
     reconcile_client_recovery(repository, task, recovery, claim, None, false)
 }
 
@@ -537,7 +545,7 @@ fn reconcile_client_recovery(
                 refusal(
                     "git::recovery-preclaim-restored",
                     Some(recovery.transaction().to_owned()),
-                    "the interrupted pre-claim generation was restored; retry task recover",
+                    "the interrupted pre-claim generation was restored; retry task capture",
                 )
             })
         }
@@ -580,7 +588,7 @@ fn reconcile_client_recovery(
         RecoveryBoardState::Restorable(detail) => refusal(
             "git::recovery-preclaim-moved",
             Some(detail),
-            "restore the exact quarantined generation with `spice task recover --restore`",
+            "restore the exact quarantined generation with `spice task capture --restore`",
         ),
         RecoveryBoardState::Ambiguous(detail) => refusal(
             "git::recovery-board-ambiguous",
