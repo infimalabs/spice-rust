@@ -116,6 +116,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     let mut agents = QuoteAgents::from_iter([((lane, Some(source)), agent.clone())]);
     agents.principals = serde_json::from_value(serde_json::json!([{
         "principal": quote_fixture_id("f1"),
+        "code": "6wB",
         "identity": {"name": "C Adams", "initials": "CA"},
     }]))
     .expect("fixture principal directory decodes");

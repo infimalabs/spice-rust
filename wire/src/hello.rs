@@ -32,10 +32,9 @@ pub struct AppProtocolVersion(pub u32);
 impl AppProtocolVersion {
     /// The one app protocol this build speaks.
     ///
-    /// Version 15 names each human by their principal's recorded profile: the
-    /// settings answer carries every born principal's display identity, and
-    /// the bootstrap carries no identity of its own.
-    pub const CURRENT: Self = Self(15);
+    /// Version 16 carries each born principal's code in its display identity,
+    /// beside the recorded profile that names that human.
+    pub const CURRENT: Self = Self(16);
 
     /// True when this is the app protocol this build speaks.
     #[must_use]

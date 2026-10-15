@@ -736,9 +736,13 @@ fn push_indented(rendered: &mut String, text: &str) {
 
 /// `actor` named by `principals` when they were read, else its identity alone.
 fn named<'a>(principals: Option<&'a PrincipalDirectory>, actor: &'a wire::Actor) -> NamedActor<'a> {
-    principals.map_or(NamedActor { actor, name: None }, |principals| {
-        principals.named(actor)
-    })
+    principals.map_or(
+        NamedActor {
+            actor,
+            principal: None,
+        },
+        |principals| principals.named(actor),
+    )
 }
 
 fn render_task_note(

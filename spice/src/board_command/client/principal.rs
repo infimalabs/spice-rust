@@ -120,8 +120,9 @@ fn render(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
             for listing in &answer.principals {
                 let head = &listing.head;
                 text.push_str(&format!(
-                    "{} born {} admitted {} {} {}\n",
+                    "{} code {} born {} admitted {} {} {}\n",
                     head.principal,
+                    wire::principal::PrincipalCode::of(head),
                     head.born,
                     listing.admitted,
                     roles(&head.roles),

@@ -282,6 +282,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
   "fast_mode": true,
   "principals": [{
     "principal": "018f82d4-6f59-7d06-92e3-bce9131163c3",
+    "code": "6wB",
     "identity": {
       "name": "C Adams",
       "email": "c@example.invalid",
