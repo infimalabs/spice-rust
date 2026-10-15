@@ -1027,11 +1027,12 @@ fn board_order(
 ///
 /// A seated lane reads as its agent's configured name or worktree, exactly as
 /// its message cards sign themselves. A lane absent from the current topology
-/// keeps a short identity prefix, since no name for it is known. A human reads
-/// as the name its principal's recorded profile carries, else as that
-/// principal's code; a human of no known principal reads as its role or a
-/// short principal prefix. The full actor spelling remains the caller's to
-/// expose for disambiguation.
+/// keeps a short identity prefix, since no name for it is known. A born human
+/// and the historical operator share [`wire::principal::NamedActor`]'s
+/// principal-directory presentation: `Name <code>`, or the code alone when
+/// unnamed. An unresolved human keeps its full actor spelling; an unresolved
+/// operator keeps its role label. The full actor spelling remains the caller's
+/// hover text for every owner.
 #[must_use]
 pub fn owner_label(
     actor: &Actor,
@@ -1039,21 +1040,17 @@ pub fn owner_label(
     principals: Option<&wire::principal::PrincipalDirectory>,
 ) -> String {
     match actor {
-        Actor::Operator | Actor::Human(_) => principals
-            .and_then(|principals| principals.principal(actor))
-            .map_or_else(
-                || match actor {
-                    Actor::Human(principal) => format!("human {}", watchband::short(*principal)),
-                    _ => "Operator".to_owned(),
-                },
-                |display| {
-                    display
-                        .identity
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| display.code.to_string())
-                },
-            ),
+        Actor::Operator => principals
+            .and_then(|principals| {
+                principals
+                    .principal(actor)
+                    .map(|_| principals.named(actor).to_string())
+            })
+            .unwrap_or_else(|| "Operator".to_owned()),
+        Actor::Human(_) => principals.map_or_else(
+            || actor.to_string(),
+            |principals| principals.named(actor).to_string(),
+        ),
         Actor::Spice => "Spice".to_owned(),
         Actor::Lane(lane) => member.filter(|member| member.lane == *lane).map_or_else(
             || format!("lane {}", watchband::short(*lane)),

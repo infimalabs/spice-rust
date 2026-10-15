@@ -527,6 +527,58 @@ fn owners_read_as_agent_names_and_unknown_lanes_stay_distinguishable() {
     assert_eq!(projection.tasks[1].working_claimant(), None);
     assert_eq!(projection.tasks[2].working_claimant(), None);
 }
+#[test]
+fn human_owners_share_the_principal_directory_name_and_code() {
+    let named_principal = "018f82d4-6f59-7d06-92e3-bce913116391"
+        .parse::<CanonicalUuid>()
+        .expect("fixture named principal");
+    let unnamed_principal = "018f82d4-6f59-7d06-92e3-bce913116392"
+        .parse::<CanonicalUuid>()
+        .expect("fixture unnamed principal");
+    let unresolved_principal = "018f82d4-6f59-7d06-92e3-bce913116393"
+        .parse::<CanonicalUuid>()
+        .expect("fixture unresolved principal");
+    let named = wire::principal::PrincipalHead {
+        principal: named_principal,
+        born: seq(18_730),
+        profile: wire::principal::PrincipalProfile {
+            name: Some("Ada Example".to_owned()),
+            ..wire::principal::PrincipalProfile::default()
+        },
+        roles: BTreeSet::new(),
+        capability: None,
+    };
+    let unnamed = wire::principal::PrincipalHead {
+        principal: unnamed_principal,
+        born: seq(18_731),
+        profile: wire::principal::PrincipalProfile::default(),
+        roles: BTreeSet::new(),
+        capability: None,
+    };
+    let named_code = wire::principal::PrincipalCode::of(&named);
+    let unnamed_code = wire::principal::PrincipalCode::of(&unnamed);
+    let principals = wire::principal::PrincipalDirectory::display(&[named, unnamed]);
+
+    assert_eq!(
+        owner_label(&Actor::Human(named_principal), None, Some(&principals)),
+        format!("Ada Example <{named_code}>"),
+    );
+    assert_eq!(
+        owner_label(&Actor::Operator, None, Some(&principals)),
+        format!("Ada Example <{named_code}>"),
+        "the historical operator shares the bootstrap principal's presentation",
+    );
+    assert_eq!(
+        owner_label(&Actor::Human(unnamed_principal), None, Some(&principals),),
+        unnamed_code.to_string(),
+    );
+    let unresolved = Actor::Human(unresolved_principal);
+    assert_eq!(
+        owner_label(&unresolved, None, Some(&principals)),
+        unresolved.to_string(),
+    );
+    assert_eq!(owner_label(&unresolved, None, None), unresolved.to_string(),);
+}
 
 #[test]
 fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
