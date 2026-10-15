@@ -40,7 +40,14 @@ current handle, with the permalink beside the heading. Room history and
 proposal versions stay readable in every standing. Opening or reading the view
 moves no group, joins, acknowledges, authorizes, and wakes nothing, and commits
 no journal fact. Operator decision controls appear only on an open Design;
-lane sessions retain their typed contribution composer.
+lane sessions retain their typed contribution composer. For an open Design,
+the exact currently seated lane occupant named by a durable invitation also
+sees **Amend statement**. Preview compares its title and description with the
+current board statement, omits unchanged fields, and freezes that statement
+head; save sends the ordinary `TaskEdit`. A moved head refuses beside both
+retained inputs, while success rebases them to the accepted values. Another
+occupant, an operator session, an uninvited lane, and every settled Design see
+no amendment controls.
 
 ## Concluding a Design
 
@@ -219,4 +226,8 @@ again, and the contribution appears only when the room fact arrives. A
 concluded Design stays readable with no form. The lane's **Design
 invitations**, in the Spice sidebar, list the resident's notices of open
 Designs matching its claimed work, newest first; following one opens that
-Design's view and form without joining its group or acquiring it.
+Design's view and form without joining its group or acquiring it. The private
+notice says that its exact occupant joined the early statement sample, names
+the statement revision and optional `task modify --title`,
+`task modify --description`, and typed `room contribute` commands, and makes
+explicit that the invitation creates no assignment and requires no response.

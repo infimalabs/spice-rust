@@ -277,6 +277,65 @@ fn a_correction_publishes_a_new_revision_and_names_each_editor() {
 }
 
 #[test]
+fn a_correction_cannot_overwrite_a_competing_statement_head() {
+    let (_root, bus, epoch, seats) = fixture("task-edit-stale-head", 1);
+    let lane = Actor::Lane(seats[0].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "EDITED-1kKfYW09",
+        "Original title",
+        Some("todo"),
+    );
+    let filed = board(&bus, epoch, lane.clone());
+    let stale = statement_witness(at(&filed, &task));
+    assert_eq!(
+        edited_status(correct(
+            &bus,
+            epoch,
+            Actor::Operator,
+            &TaskEdit {
+                title: Some("Competing title".to_owned()),
+                ..only(&task)
+            },
+        )),
+        "edited"
+    );
+
+    let outcome = issue(
+        &bus,
+        epoch,
+        lane,
+        CommandKind::TaskEdit,
+        vec![stale],
+        &TaskEdit {
+            description: Some("The stale editor's description".to_owned()),
+            ..only(&task)
+        },
+    );
+    assert!(
+        matches!(
+            &outcome,
+            Outcome::Refusal(refusal) if refusal.reason() == "board::witness-moved"
+        ),
+        "a stale TaskEdit must refuse: {outcome:?}"
+    );
+    let current = board(&bus, epoch, Actor::Operator);
+    let current = at(&current, &task);
+    assert_eq!(current.presentation_title(), "Competing title");
+    assert_eq!(
+        current.statement.body.description, None,
+        "the stale edit cannot overwrite any statement field"
+    );
+    assert_eq!(
+        edit_facts(&bus, &task).len(),
+        1,
+        "only the competing edit was recorded"
+    );
+}
+
+#[test]
 fn a_live_claimed_correction_moves_neither_claim_nor_lease() {
     let (_root, bus, epoch, seats) = fixture("task-edit-claim-notice", 1);
     let lane = Actor::Lane(seats[0].lane);

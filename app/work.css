@@ -856,8 +856,28 @@
 .room-card-face p.room-contribution-sources-failed { color: var(--danger); }
 .room-card-face p.room-contribution-sources-none { color: var(--muted); font-size: var(--app-type-meta); }
 
+.room-amendment,
 .room-contribute,
 .room-invitations { display: grid; gap: 8px; font-size: var(--app-type-detail); }
+.room-amendment {
+  padding: 8px;
+  border: var(--app-edge);
+  border-radius: var(--app-radius-compact);
+}
+.room-amendment > header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  color: var(--muted);
+}
+.room-amendment > header strong { color: var(--ink); }
+.room-amendment label { display: grid; gap: 4px; }
+.room-amendment :is(button, input, textarea) { font: inherit; }
+.room-amendment :is(input, textarea) { width: 100%; box-sizing: border-box; }
+.room-amendment textarea { resize: vertical; min-height: 6em; }
+.room-amendment-preview { display: grid; gap: 6px; margin: 0; white-space: pre-wrap; }
+.room-amendment-preview span { overflow-wrap: anywhere; }
 .room-contribute:focus { outline: none; }
 .room-contribute :is(button, input, textarea) { font: inherit; }
 .room-contribute fieldset {
