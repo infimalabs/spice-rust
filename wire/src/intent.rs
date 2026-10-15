@@ -71,8 +71,8 @@ pub use rooms::{
     RoomCoordinateAction, RoomCoordinationRead, RoomCoordinationRequest, RoomCoordinationStop,
     RoomCoordinationView, RoomItemMove, RoomLeave, RoomLeaveAnswer, RoomListeningDuty,
     RoomPutAside, RoomResultMove, RoomResumeBudget, WorkingGroupAnchor, WorkingGroupArrange,
-    WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupMove, WorkingGroupPage,
-    WorkingGroupRead, WorkingGroupView,
+    WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupFast, WorkingGroupMove,
+    WorkingGroupPage, WorkingGroupRead, WorkingGroupView,
 };
 
 mod task;

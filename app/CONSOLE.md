@@ -69,26 +69,44 @@ Beside the design drafts, the group console keeps the team control panel's
 frame and geometry, mapping each team control to its group analog or to
 none:
 
-- **SEND** becomes **POST**. One press posts every design composer holding
-  text or a drafted quote, each to its own room. Its rim shows those designs in
-  their accents, it becomes the `FULL POST` lockup exactly when every open design
-  in a multi-design group is drafted, and it stays disabled while no room takes a
-  post. A settled design takes no post and has no place on it. Command or
-  Control and Enter posts one composer alone, as it sends one member's draft.
+- **SEND** stays **SEND**. One press posts every design composer holding text
+  or a drafted quote, each to its own room. Its rim shows those designs in their
+  accents, it becomes the `FULL SEND` lockup exactly when every open design in a
+  multi-design group is drafted, and it stays disabled while no room takes a
+  post. Its accessible name and title say SEND. A settled design takes no post
+  and has no place on it. Command or Control and Enter posts one composer alone,
+  as it sends one member's draft.
 - **Idle** follows the team rule. With no composer holding text, no quote
-  drafted, and no post in flight, the panel rests dark with POST as flush glass.
+  drafted, and no post in flight, the panel rests dark with SEND as flush glass.
 - **Team arrangement menu** becomes the group arrangement menu, in the same
   place and with the same menu, focus, and Escape behavior. It moves this
   browser's console left or right or closes it. Swap and join have no analog:
   membership moves one design at a time through its own menu or the Working
   groups roster, never by merging groups.
-- **Team TURBO** has none: fast mode configures the lanes a team runs, and a
-  group runs no lane.
-- **The speech slider** has none: it voices a team's live agent prose, and
-  room publications are records.
-- **The allocation slider** has none: Steer, Drive, and Drain set how a team's
-  lanes take allocator work, and a working group allocates and authorizes
-  nothing.
+- **Team TURBO** becomes group TURBO, in the same place. It shows the group's
+  durable resident fast-mode flag, off until engaged, and a press sends the
+  admitted `group::fast` command naming the group at the partition revision it
+  read, showing the request until the resident answers. While the flag is on,
+  every lane holding a live claim on one of the group's Design tasks runs in
+  fast mode; a claim on a Plan or other task a Design controls does not count.
+  Fast mode stays additive: a lane is fast when its own, its team's, or the
+  global flag is on, or a flagged group covers it, and no level switches
+  another off. A claim starting or ending, a design moving into or out of the
+  group, or the flag changing takes effect at the next occupant launch and
+  live for a running OMP occupant, exactly as team TURBO does, and only when
+  the lane's effective fast mode changes. Its title names the lanes it runs fast
+  or says no lane holds a claim on the group's designs, and it is disabled when
+  the resident cannot configure the group.
+- **The speech slider** reads Quiet / Speak / Narrate with the team rules,
+  browser-local and stored per group, applied in the input that selects it. It
+  covers each lane holding a live claim on one of the group's designs: that
+  lane's live agent prose, drawn in its team's console, is voiced at the louder
+  of its team's mode and every covering group's mode, each line at most once.
+  Room publications stay records and are never voiced.
+- **The allocation slider** becomes a mock stance slider with stops Hold /
+  Explore / Converge, keyboard-operable like the team sliders and browser-local.
+  It sends no command and changes no authority; its title and accessible label
+  say it does nothing yet. A working group allocates and authorizes nothing.
 - **Keyboard broadcast and waking** have none: a post reaches only its own
   room and wakes no lane.
 

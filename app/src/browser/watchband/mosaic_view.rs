@@ -554,7 +554,7 @@ pub(in crate::browser) struct MosaicPlaneProps {
     pub(in crate::browser) open_message_task: Callback<(wire::TaskStamp, web_sys::Element)>,
     pub(in crate::browser) speak: Callback<SpeechRequest>,
     pub(in crate::browser) narrate: Callback<NarrationBatch>,
-    pub(in crate::browser) speech: TeamSpeech,
+    pub(in crate::browser) speech: crate::speech_queue::LaneSpeech,
     pub(in crate::browser) speech_owner: Option<SpeechOwner>,
     pub(in crate::browser) history_targets:
         BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
@@ -757,7 +757,7 @@ pub(in crate::browser) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     use_narration(
         &properties.owner,
         properties.cards.clone(),
-        properties.speech,
+        properties.speech.clone(),
         properties.narrate.clone(),
         narration_cursor.clone(),
     );
@@ -898,7 +898,7 @@ fn scroll_anchor_offset(scroller: &web_sys::Element, key: &str) -> Option<f64> {
 fn use_narration(
     owner: &PlaneOwner,
     cards: Vec<ActivityCard>,
-    speech: TeamSpeech,
+    speech: crate::speech_queue::LaneSpeech,
     narrate: Callback<NarrationBatch>,
     narration_cursor: UseStateHandle<Option<String>>,
 ) {
@@ -940,7 +940,7 @@ fn use_narration(
         narrate.emit(NarrationBatch {
             team: team.to_string(),
             materialization: first,
-            mode: *speech,
+            mode: speech.clone(),
             messages: messages.clone(),
         });
         narration_cursor.set(messages.first().map(|message| message.key.clone()));

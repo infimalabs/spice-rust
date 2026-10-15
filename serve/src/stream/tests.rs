@@ -433,6 +433,7 @@ fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
                 partition: wire::rooms::WorkingGroupPartition {
                     revision: current.revision + 1,
                     groups,
+                    fast: Vec::new(),
                 },
             },
             FactCause::Root,

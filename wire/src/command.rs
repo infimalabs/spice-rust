@@ -69,6 +69,8 @@ pub enum CommandKind {
     WorkingGroupMove,
     /// Restate the whole working-group partition at the observed revision.
     WorkingGroupArrange,
+    /// Set one working group's fast-mode flag at the observed revision.
+    WorkingGroupFast,
     /// Retain one exact preparation candidate.
     CandidateRetain,
     /// Record one source-backed critique of a retained candidate.

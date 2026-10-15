@@ -485,6 +485,7 @@ fn moved(journal: &Journal, design: &TaskStamp, to: Option<i64>) -> WorkingGroup
         partition: WorkingGroupPartition {
             revision: current.revision + 1,
             groups,
+            fast: Vec::new(),
         },
     }
 }
@@ -502,6 +503,7 @@ fn arranged(journal: &Journal, groups: Vec<(i64, Vec<TaskStamp>)>) -> WorkingGro
                     anchors,
                 })
                 .collect(),
+            fast: Vec::new(),
         },
         from,
     }

@@ -604,7 +604,8 @@ impl From<WorkingGroup> for WorkingGroupWire {
 ///
 /// A group stands only while it holds a design, no design stands in two
 /// groups, and no group appears twice. Revision zero is the empty partition
-/// before any grouping write.
+/// before any grouping write. A group's fast-mode flag is off until engaged
+/// and ends with the group.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     try_from = "WorkingGroupPartitionWire",
@@ -615,6 +616,8 @@ pub struct WorkingGroupPartition {
     pub revision: u64,
     /// Current groups in operator order.
     pub groups: Vec<WorkingGroup>,
+    /// Standing groups whose fast-mode flag is on, in ascending identity order.
+    pub fast: Vec<RoomAuthorityStamp>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -622,6 +625,8 @@ pub struct WorkingGroupPartition {
 struct WorkingGroupPartitionWire {
     revision: u64,
     groups: Vec<WorkingGroup>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    fast: Vec<RoomAuthorityStamp>,
 }
 
 impl TryFrom<WorkingGroupPartitionWire> for WorkingGroupPartition {
@@ -645,9 +650,20 @@ impl TryFrom<WorkingGroupPartitionWire> for WorkingGroupPartition {
                 }
             }
         }
+        if value.fast.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err("fast working groups must be unique and ascending");
+        }
+        if value
+            .fast
+            .iter()
+            .any(|fast| !value.groups.iter().any(|group| &group.group == fast))
+        {
+            return Err("only a standing working group carries a fast-mode flag");
+        }
         Ok(Self {
             revision: value.revision,
             groups: value.groups,
+            fast: value.fast,
         })
     }
 }
@@ -657,6 +673,7 @@ impl From<WorkingGroupPartition> for WorkingGroupPartitionWire {
         Self {
             revision: value.revision,
             groups: value.groups,
+            fast: value.fast,
         }
     }
 }
@@ -668,6 +685,34 @@ impl WorkingGroupPartition {
         self.groups
             .iter()
             .find(|group| group.anchors.contains(design))
+    }
+
+    /// Whether `group`'s fast-mode flag is on.
+    #[must_use]
+    pub fn is_fast(&self, group: &RoomAuthorityStamp) -> bool {
+        self.fast.binary_search(group).is_ok()
+    }
+
+    /// Turn `group`'s fast-mode flag on or off, saying whether it changed.
+    pub fn set_fast(&mut self, group: &RoomAuthorityStamp, fast_mode: bool) -> bool {
+        match (self.fast.binary_search(group), fast_mode) {
+            (Err(at), true) => self.fast.insert(at, group.clone()),
+            (Ok(at), false) => {
+                self.fast.remove(at);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Keep the fast-mode flags of `previous` whose groups still stand here.
+    pub fn carry_fast(&mut self, previous: &Self) {
+        self.fast = previous
+            .fast
+            .iter()
+            .filter(|fast| self.groups.iter().any(|group| &group.group == *fast))
+            .cloned()
+            .collect();
     }
 }
 
@@ -694,6 +739,16 @@ pub struct WorkingGroupMove {
 pub struct WorkingGroupArrange {
     /// Every current group in intended order.
     pub groups: Vec<WorkingGroup>,
+}
+
+/// Turn one standing working group's fast-mode flag on or off.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkingGroupFast {
+    /// The flagged group.
+    pub group: RoomAuthorityStamp,
+    /// Whether its fast-mode flag is on.
+    pub fast_mode: bool,
 }
 
 /// Immutable fact body recording one design's move and the resulting partition.

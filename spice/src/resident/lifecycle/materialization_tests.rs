@@ -929,7 +929,11 @@ fn move_write(
                 design: design.clone(),
                 from,
                 to,
-                partition: wire::rooms::WorkingGroupPartition { revision, groups },
+                partition: wire::rooms::WorkingGroupPartition {
+                    revision,
+                    groups,
+                    fast: Vec::new(),
+                },
             },
             FactCause::Root,
         )

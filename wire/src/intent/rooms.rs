@@ -7,7 +7,7 @@ use crate::rooms::{
     RoomReceiptDisposition, RoomReceiptRef, RoomRelevanceVerdict, RoomSource,
     RoomSourceUnavailable, RoomSourceView,
 };
-pub use crate::rooms::{WorkingGroupArrange, WorkingGroupMove};
+pub use crate::rooms::{WorkingGroupArrange, WorkingGroupFast, WorkingGroupMove};
 use crate::{OccupantAddress, SequenceCode, TaskHandle, TaskStamp};
 
 /// Start or resume one bounded preparation contribution in an anchor room.
@@ -475,4 +475,6 @@ pub enum WorkingGroupChangeStatus {
     Ended,
     /// The whole partition was restated.
     Arranged,
+    /// One group's fast-mode flag was set.
+    Retuned,
 }

@@ -851,6 +851,7 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
                         group,
                         anchors: vec![batch.clone()],
                     }],
+                    fast: Vec::new(),
                 },
             },
             FactCause::Root,
