@@ -477,11 +477,6 @@ fn apply_task_mutation_response(
             refresh: true,
             ..apply_callback_reply(session, bytes, "Conclusion failed", &respond)?
         },
-        // The recorded contribution renders from its live room fact, never
-        // from this answer, so nothing is re-read.
-        PendingKind::Contribute { respond } => {
-            apply_callback_reply(session, bytes, "Contribution failed", &respond)?
-        }
         _ => unreachable!("read and mutation response partitions are closed"),
     })
 }

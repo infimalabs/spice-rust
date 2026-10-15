@@ -906,11 +906,11 @@ async fn dispatch_action(
                 .await
                 .map(Some)
         }
-        action @ (ClientAction::Draft { .. }
-        | ClientAction::Conclude { .. }
-        | ClientAction::Contribute { .. }) => send_task_change(principal, writer, actions, action)
-            .await
-            .map(Some),
+        action @ (ClientAction::Draft { .. } | ClientAction::Conclude { .. }) => {
+            send_task_change(principal, writer, actions, action)
+                .await
+                .map(Some)
+        }
         ClientAction::DrainSubmissions => {
             drain_submissions(principal, writer, actions, submissions)
                 .await

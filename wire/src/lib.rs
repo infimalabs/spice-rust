@@ -86,8 +86,7 @@ pub use doctor::{
     DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, SpiceVariable,
 };
 pub use envelope::{
-    Actor, ActorError, Envelope, JournalCursor, MAX_DURABLE_FACT_ENVELOPE_BYTES, Origin,
-    OriginError, Seq, WireVersion,
+    Actor, ActorError, Envelope, JournalCursor, Origin, OriginError, Seq, WireVersion,
 };
 pub use environment::{
     Environment, EnvironmentFact, EnvironmentObservation, EnvironmentRequirement,

@@ -279,7 +279,7 @@ pub(crate) fn admit_send_envelope(proposal: &JournalWrite) -> Result<(), Outcome
     let bytes = proposal
         .envelope_byte_bound()
         .map_err(|error| typed_store_fault("steer::fact-invalid", &error.to_string()))?;
-    let maximum = wire::MAX_DURABLE_FACT_ENVELOPE_BYTES;
+    let maximum = journal::MAX_DURABLE_FACT_ENVELOPE_BYTES;
     if bytes > maximum {
         return Err(refusal(
             "steer::envelope-too-large",

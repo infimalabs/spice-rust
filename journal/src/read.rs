@@ -189,12 +189,12 @@ fn read_fact_row(row: &rusqlite::Row<'_>) -> Result<(i64, String, Vec<u8>), Snap
         seq: u64::try_from(indexed_seq).ok(),
         detail: format!("fact envelope has invalid length {length}"),
     })?;
-    if length > wire::MAX_DURABLE_FACT_ENVELOPE_BYTES {
+    if length > crate::MAX_DURABLE_FACT_ENVELOPE_BYTES {
         return Err(SnapshotError::Invalid {
             seq: u64::try_from(indexed_seq).ok(),
             detail: format!(
                 "fact envelope has {length} bytes, exceeding the {}-byte durable limit",
-                wire::MAX_DURABLE_FACT_ENVELOPE_BYTES,
+                crate::MAX_DURABLE_FACT_ENVELOPE_BYTES,
             ),
         });
     }

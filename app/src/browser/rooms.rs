@@ -20,8 +20,7 @@ mod conversation;
 use super::roster::{self, RosterView, Wording};
 use super::sender::{SenderHandle, admit_action};
 use crate::AppRuntime;
-use crate::client_action::{ClientAction, DraftRequest, GroupChange};
-use crate::design_amendment::{DesignAmendment, StatementSnapshot, Submission};
+use crate::client_action::{ClientAction, GroupChange};
 use crate::room_views::{GroupView, RoomViewAction, RoomViews};
 use crate::roster::{Change, Destination};
 use crate::runtime::{RoomAnchorAuthority, RoomEventKind, RoomProjectionStatus};
@@ -32,11 +31,9 @@ mod console;
 mod contribute;
 mod contributions;
 mod coordination;
-mod invitations;
 mod reading;
 mod standing;
 pub(super) use console::{GroupRender, group_base, render_group_surfaces};
-pub(super) use invitations::render_invitations;
 pub(super) use reading::render_design_room;
 
 const STORAGE: &str = "spice:room-views:v2";
@@ -54,77 +51,6 @@ impl Reducible for RoomViews {
         Rc::new(views)
     }
 }
-/// Draft transitions are reducer-ordered because the resident may settle a
-/// submission before the browser rerenders its preceding pending transition.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct Amendments(BTreeMap<TaskStamp, DesignAmendment>);
-
-enum AmendmentAction {
-    Edit {
-        design: TaskStamp,
-        seed: Option<StatementSnapshot>,
-        edit: AmendmentEdit,
-    },
-    Preview(StatementSnapshot),
-    Begin(TaskStamp),
-    Settle {
-        design: TaskStamp,
-        outcome: Result<(), String>,
-    },
-}
-
-enum AmendmentEdit {
-    Title(String),
-    Description(String),
-    Revise,
-}
-
-impl Reducible for Amendments {
-    type Action = AmendmentAction;
-
-    fn reduce(self: Rc<Self>, action: AmendmentAction) -> Rc<Self> {
-        let mut amendments = Rc::unwrap_or_clone(self);
-        match action {
-            AmendmentAction::Edit { design, seed, edit } => {
-                if !amendments.0.contains_key(&design)
-                    && let Some(seed) = seed
-                {
-                    amendments
-                        .0
-                        .insert(design.clone(), DesignAmendment::from_snapshot(&seed));
-                }
-                if let Some(draft) = amendments.0.get_mut(&design) {
-                    match edit {
-                        AmendmentEdit::Title(title) => draft.set_title(title),
-                        AmendmentEdit::Description(description) => {
-                            draft.set_description(description);
-                        }
-                        AmendmentEdit::Revise => draft.revise(),
-                    }
-                }
-            }
-            AmendmentAction::Preview(statement) => {
-                let design = statement.design().clone();
-                let draft = amendments
-                    .0
-                    .entry(design)
-                    .or_insert_with(|| DesignAmendment::from_snapshot(&statement));
-                draft.preview_snapshot(&statement);
-            }
-            AmendmentAction::Begin(design) => {
-                if let Some(draft) = amendments.0.get_mut(&design) {
-                    let _ = draft.begin_submit();
-                }
-            }
-            AmendmentAction::Settle { design, outcome } => {
-                if let Some(draft) = amendments.0.get_mut(&design) {
-                    draft.settle(outcome);
-                }
-            }
-        }
-        Rc::new(amendments)
-    }
-}
 
 #[derive(Clone)]
 pub(super) struct Controls {
@@ -138,12 +64,6 @@ pub(super) struct Controls {
     deciding: Rc<RefCell<BTreeSet<wire::rooms::CandidateRef>>>,
     /// The read view's Design conclusion preview and last outcome.
     conclusion: UseStateHandle<Option<conclusion::Conclusion>>,
-    /// The read view's lane contribution draft.
-    composer: UseReducerHandle<contribute::Composer>,
-    /// Browser-local statement amendments, one per noticed Design.
-    amendments: UseReducerHandle<Amendments>,
-    /// Designs whose contribution awaits the resident's answer.
-    contributing: Rc<RefCell<BTreeSet<TaskStamp>>>,
     /// Last authoritative name of each group seen in this page's memory, shown
     /// while room authority reloads so a reconnect does not retitle consoles.
     names: Rc<RefCell<BTreeMap<RoomAuthorityStamp, String>>>,
@@ -167,7 +87,6 @@ pub(super) fn use_controls() -> Controls {
     let requested = use_mut_ref(|| None);
     let drawn = use_mut_ref(BTreeMap::new);
     let posting = use_mut_ref(BTreeSet::new);
-    let contributing = use_mut_ref(BTreeSet::new);
     let deciding = use_mut_ref(BTreeSet::new);
     let arranging = use_state_eq(|| None);
     let slots = super::watchband::ComposerSlots(use_mut_ref(std::collections::HashMap::new));
@@ -180,9 +99,6 @@ pub(super) fn use_controls() -> Controls {
         decision: use_reducer(approval::Composer::default),
         deciding,
         conclusion: use_state(|| None),
-        composer: use_reducer(contribute::Composer::default),
-        amendments: use_reducer(Amendments::default),
-        contributing,
         names,
         requested,
         drawn,
@@ -241,62 +157,6 @@ impl Controls {
             .entry((view.group.clone(), design.clone()))
             .or_insert_with(|| view.draft(design).to_owned())
             .clone()
-    }
-
-    fn amendment(&self, design: &wire::intent::BoardTask) -> DesignAmendment {
-        self.amendments
-            .0
-            .get(&design.statement.body.born)
-            .cloned()
-            .unwrap_or_else(|| DesignAmendment::new(design))
-    }
-
-    fn amend_title(&self, design: &wire::intent::BoardTask, title: String) {
-        let born = design.statement.body.born.clone();
-        let seed = (!self.amendments.0.contains_key(&born)).then(|| StatementSnapshot::new(design));
-        self.amendments.dispatch(AmendmentAction::Edit {
-            design: born,
-            seed,
-            edit: AmendmentEdit::Title(title),
-        });
-    }
-
-    fn amend_description(&self, design: &wire::intent::BoardTask, description: String) {
-        let born = design.statement.body.born.clone();
-        let seed = (!self.amendments.0.contains_key(&born)).then(|| StatementSnapshot::new(design));
-        self.amendments.dispatch(AmendmentAction::Edit {
-            design: born,
-            seed,
-            edit: AmendmentEdit::Description(description),
-        });
-    }
-
-    fn preview_amendment(&self, design: &wire::intent::BoardTask) {
-        self.amendments
-            .dispatch(AmendmentAction::Preview(StatementSnapshot::new(design)));
-    }
-
-    fn revise_amendment(&self, design: &wire::intent::BoardTask) {
-        self.amendments.dispatch(AmendmentAction::Edit {
-            design: design.statement.body.born.clone(),
-            seed: None,
-            edit: AmendmentEdit::Revise,
-        });
-    }
-
-    fn begin_amendment(&self, design: &wire::intent::BoardTask) -> Option<Submission> {
-        let mut draft = self.amendment(design);
-        let submission = draft.begin_submit()?;
-        self.amendments
-            .dispatch(AmendmentAction::Begin(design.statement.body.born.clone()));
-        Some(submission)
-    }
-
-    fn settle_amendment(&self, design: &TaskStamp, outcome: Result<(), String>) {
-        self.amendments.dispatch(AmendmentAction::Settle {
-            design: design.clone(),
-            outcome,
-        });
     }
 }
 

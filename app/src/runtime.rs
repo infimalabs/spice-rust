@@ -123,16 +123,6 @@ impl Seats {
             .filter_map(|seat| Some((seat.lane, self.addresses.get(&seat.lane)?.address()?)))
     }
 
-    /// Current occupant UUID for one occupied lane.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    pub(crate) fn occupant(&self, lane: CanonicalUuid) -> Option<CanonicalUuid> {
-        self.residency
-            .lanes
-            .iter()
-            .find(|seat| seat.lane == lane && seat.disposition == "occupied")
-            .and_then(|seat| seat.occupant)
-    }
-
     /// The residency witness of the occupied seat `target` names, which room
     /// coordination requires.
     ///

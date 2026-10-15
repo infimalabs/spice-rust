@@ -66,15 +66,7 @@ fn attributed(
 }
 
 fn contribution_runtime(session: &Session, snapshot: &[serde_json::Value]) -> AppRuntime {
-    contribution_runtime_as(session, "operator", snapshot)
-}
-
-fn contribution_runtime_as(
-    session: &Session,
-    actor: &str,
-    snapshot: &[serde_json::Value],
-) -> AppRuntime {
-    let accepted = acceptance(session, actor, EPOCH);
+    let accepted = acceptance(session, "operator", EPOCH);
     let mut runtime = AppRuntime::new(&accepted);
     let horizon = snapshot.len() as u64;
     runtime.apply_stream(&operator_facts(session, horizon));
@@ -366,47 +358,6 @@ fn shown_designs_resolve_each_cited_contributions_sources_once() {
     );
 }
 
-/// The lane session that holds the contribution form resolves its shown
-/// Design's sources too, so a lane's cited source settles to a link or a typed
-/// unavailability instead of resolving forever.
-#[test]
-fn a_lane_session_resolves_its_shown_designs_contribution_sources() {
-    let session = session(LANE_CAPABILITY, EPOCH);
-    let [first, ..] = stamps();
-    let snapshot = [contributed(
-        1,
-        &first,
-        LANE,
-        RoomContributionKind::Evidence,
-        vec![journal(1), artifact()],
-    )];
-    let mut runtime = contribution_runtime_as(&session, &format!("lane:{LANE}"), &snapshot);
-    assert!(!runtime.principal().is_human());
-    assert!(runtime.offers(CommandKind::RoomContributionSources));
-
-    runtime.show_task_details([room()]);
-    assert_eq!(
-        runtime.take_contribution_source_reads(8),
-        vec![(room(), first.clone())]
-    );
-    let views = vec![
-        RoomSourceView::Available { source: journal(1) },
-        RoomSourceView::Unavailable {
-            source: artifact(),
-            unavailable: RoomSourceUnavailable::Missing {},
-        },
-    ];
-    runtime.apply_contribution_sources(&first, &sources_reply(&session, &first, views.clone()));
-    assert_eq!(
-        runtime.contribution_sources(&first),
-        Some(&ContributionSources::Read(views))
-    );
-}
-
-fn noticed(position: u64, design: &wire::TaskStamp, lane: &str) -> serde_json::Value {
-    noticed_at(position, position, design, lane)
-}
-
 fn noticed_at(
     position: u64,
     statement: u64,
@@ -426,95 +377,6 @@ fn noticed_at(
             terms: vec!["rooms".to_owned()],
         },
     )
-}
-
-/// The fixture board with the room anchor as a Design, optionally settled.
-fn design_board(
-    session: &Session,
-    settled: bool,
-) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
-    let original = board_response(session, "hidden");
-    let Outcome::Reply(reply) = &original.get().outcome else {
-        panic!("fixture board reply");
-    };
-    let mut body = reply.body.clone();
-    let task = body
-        .tasks
-        .iter_mut()
-        .find(|task| task.statement.body.born == room())
-        .expect("room anchor is on the fixture board");
-    task.statement.body.intent = Some(wire::TaskIntent::Design);
-    task.workflow.body.flow = vec!["design".parse().expect("fixture phase")];
-    task.workflow.body.phase = "design".parse().expect("fixture phase");
-    if settled {
-        task.workflow.body.status = "completed".to_owned();
-        task.workflow.body.completion =
-            Some("2025-01-01T00:00:00.000Z".parse().expect("fixture instant"));
-    }
-    let bytes = support::response(
-        WireVersion::CURRENT,
-        uuid(REQUEST),
-        uuid(EPOCH),
-        Outcome::Reply(Reply {
-            position: ReplyPosition::Snapshot(seq(4)),
-            body,
-        }),
-    );
-    session
-        .admit_frame(&bytes)
-        .expect("design board response is admitted")
-}
-
-/// A lane sees the notices told to it, newest first, only while the board
-/// shows their Design open; another lane's notice and a settled Design show
-/// nothing, and the notices survive a reconnect from the room snapshot.
-#[test]
-fn invitations_show_a_lanes_notices_for_open_designs_newest_first() {
-    let session = session(OPERATOR, EPOCH);
-    let unknown = fixture_stamp("PUBLIC-work9");
-    let snapshot = [
-        noticed(1, &room(), LANE),
-        noticed(2, &room(), SECOND_LANE),
-        noticed(3, &unknown, LANE),
-        noticed(4, &room(), LANE),
-    ];
-    let mut runtime = contribution_runtime(&session, &snapshot);
-    let shown = |runtime: &AppRuntime, lane: &str| {
-        runtime
-            .room_projection()
-            .invitations(uuid(lane), runtime.board())
-            .into_iter()
-            .map(|notice| notice.position.get())
-            .collect::<Vec<_>>()
-    };
-    assert!(
-        shown(&runtime, LANE).is_empty(),
-        "without a board nothing proves a Design open"
-    );
-
-    runtime.apply_board(&design_board(&session, false));
-    assert_eq!(
-        shown(&runtime, LANE),
-        [4, 1],
-        "this lane's notices for the open Design, newest first"
-    );
-    assert_eq!(shown(&runtime, SECOND_LANE), [2]);
-
-    runtime.reconnect(&acceptance(&session, "operator", EPOCH));
-    runtime.apply_stream(&operator_facts(&session, snapshot.len() as u64));
-    runtime.apply_stream(&room_page(&session, &snapshot, None, snapshot.len() as u64));
-    runtime.apply_board(&design_board(&session, false));
-    assert_eq!(
-        shown(&runtime, LANE),
-        [4, 1],
-        "the room snapshot restores them"
-    );
-
-    runtime.apply_board(&design_board(&session, true));
-    assert!(
-        shown(&runtime, LANE).is_empty(),
-        "a settled Design invites no contribution"
-    );
 }
 
 #[test]

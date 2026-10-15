@@ -39,17 +39,10 @@ room history newest first, resolved through the Design's birth stamp under its
 current handle, with the permalink beside the heading. Room history and
 proposal versions stay readable in every standing. Opening or reading the view
 moves no group, joins, acknowledges, authorizes, and wakes nothing, and commits
-no journal fact. Operator decision controls appear only on an open Design;
-lane sessions retain their typed contribution composer. For an open Design,
-the exact currently seated lane occupant named by a durable invitation also
-sees **Amend statement**. The draft remembers the statement it was drawn
-from: preview sends only the title or description the occupant changed from
-it and freezes its head, and save sends the ordinary `TaskEdit`. A statement
-edit landing meanwhile therefore refuses beside both retained inputs rather
-than being reverted. After a save or refusal, the next preview rebases onto
-the current statement: untouched fields follow it and changed fields stay.
-Another occupant, an operator session, an uninvited lane, and every settled
-Design see no amendment controls.
+no journal fact. Operator decision controls appear only on an open Design.
+Lanes refine a Design's statement through ordinary task edit authority, `spice
+task modify` or a `spice://task/HANDLE/description` write, never from the
+browser, which hosts only principal sessions.
 
 ## Concluding a Design
 
@@ -206,30 +199,21 @@ a reason for, a reason against, evidence, or a question, with its text and
 the transcript, journal, or artifact sources it cites. A contribution is
 lane-authored evidence for the operator's judgment, never authority: it
 moves no task, claim, working group, candidate, decision, or authorization,
-and it wakes nobody. Only a lane session can contribute; the operator reads
-contributions and decides through the ordinary Design controls.
+and it wakes nobody. Lanes contribute with `spice room contribute` from their
+own sessions; the operator reads contributions and decides through the
+ordinary Design controls.
 
 The Design read view groups contributions by kind, each with its lane,
 time, text, and every cited source, while room history keeps them in journal
 order among the ordinary conversation. The resident resolves each cited
-source for the shown Design, in operator and lane sessions alike, and the
-card says whether it is available or why not (missing, hidden, changed,
-unreadable, or retained in an unsupported shape), the same states any actor's
-`spice room history` prints.
+source for the shown Design, and the card says whether it is available or
+why not (missing, hidden, changed, unreadable, or retained in an unsupported
+shape), the same states any actor's `spice room history` prints.
 
-A lane session's open Design view carries the contribution form: choose a
-kind, write nonempty text, cite this room's recent publications or a typed
-artifact digest or journal fact code, then **Preview contribution** to see
-the non-authorizing effect before **Submit contribution**. The submission
-witnesses the Design's statement and workflow heads and each cited source, so
-a concluded Design or a changed source refuses beside the kept draft and
-leaves every other surface as it was. A pending submission cannot be sent
-again, and the contribution appears only when the room fact arrives. A
-concluded Design stays readable with no form. The lane's **Design
-invitations**, in the Spice sidebar, list the resident's notices of open
-Designs matching its claimed work, newest first; following one opens that
-Design's view and form without joining its group or acquiring it. The private
-notice says that its exact occupant joined the early statement sample, names
-the statement revision and optional `task modify --title`,
-`task modify --description`, and typed `room contribute` commands, and makes
-explicit that the invitation creates no assignment and requires no response.
+An open Design's view says what a contribution is and offers the reader no
+contribution control. A lane learns of an open Design matching its claimed
+work from the resident's private notice and `spice room awareness`. Each names
+the claimed task and its matched terms, each distinct term once and at most
+six, along with the statement revision, the optional `task modify --title`,
+`task modify --description`, and typed `room contribute` commands, and states
+that the invitation creates no assignment and requires no response.

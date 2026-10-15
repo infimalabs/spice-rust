@@ -31,16 +31,6 @@ impl WireVersion {
     }
 }
 
-/// Repository-owned hard ceiling for one durable fact envelope.
-///
-/// The journal holds every write, read, and verification to it, so it also
-/// independently bounds the exceptional first row a retained-fact page may
-/// decode. Text that can only land inside one fact, such as a client's
-/// statement draft, is bounded by it too.
-pub const MAX_DURABLE_FACT_ENVELOPE_BYTES: usize = 4 * 1024 * 1024;
-
-const _: () = assert!(crate::media::MAX_MEDIA_DATA_URL_BYTES < MAX_DURABLE_FACT_ENVELOPE_BYTES);
-
 impl fmt::Display for WireVersion {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}", self.0)

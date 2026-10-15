@@ -1,11 +1,10 @@
 //! Typed task changes on the live socket: creation, statement revision,
-//! filing, a Design's conclusion, and a lane's Design contribution.
+//! filing, and a Design's conclusion.
 
 use super::*;
 
 /// Send one typed task change under the heads its control was drawn from:
-/// task creation, statement revision or filing, a Design's conclusion, or a
-/// lane's contribution to an open Design.
+/// task creation, statement revision or filing, or a Design's conclusion.
 pub(super) async fn send_task_change(
     principal: &Principal,
     writer: &mut SocketWriter,
@@ -29,24 +28,6 @@ pub(super) async fn send_task_change(
                     respond: respond.clone(),
                 },
                 CommandKind::TaskConclude,
-                expected.clone(),
-                request,
-            )
-            .await
-        }
-        ClientAction::Contribute {
-            request,
-            expected,
-            respond,
-        } => {
-            send_typed(
-                principal,
-                writer,
-                actions,
-                PendingKind::Contribute {
-                    respond: respond.clone(),
-                },
-                CommandKind::RoomContribute,
                 expected.clone(),
                 request,
             )
