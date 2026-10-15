@@ -1171,6 +1171,7 @@ impl JournalRead<'_> {
         let directed = wire::FactKind::RoomCoordinationStarted.as_str();
         let noticed = wire::FactKind::DesignNoticed.as_str();
         let admitted = wire::FactKind::PrincipalAdmitted.as_str();
+        read_metrics::observe_query();
         let mut statement = self
             .connection
             .prepare(ROOM_AUTHORITY_PAGE)
