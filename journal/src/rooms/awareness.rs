@@ -3,7 +3,8 @@
 
 use rusqlite::{Connection, OptionalExtension};
 use wire::rooms::{
-    DESIGN_NOTICE_TERMS, DesignNoticed, DesignReturnDelivered, PreparationDecision, ProposalRef,
+    DESIGN_NOTICE_TERMS, DesignNoticeProvenance, DesignNoticed, DesignReturnDelivered,
+    PreparationDecision, ProposalRef,
 };
 use wire::{Actor, AnyFact, ClaimDisposition, ClaimHead};
 
@@ -102,9 +103,25 @@ fn notice(authority: &impl Authority, actor: &Actor, body: &DesignNoticed) -> Re
     }
     require_task(authority, &body.design, "noticed design")?;
     require_task(authority, &body.task, "noticed claim task")?;
-    if body.terms.is_empty() || body.terms.len() > DESIGN_NOTICE_TERMS {
+    let current = authority.task_statement(&body.design)?.ok_or_else(|| {
+        Refusal::Unsound(format!("noticed Design {} has no statement", body.design))
+    })?;
+    if current != body.statement {
         return unsound(format!(
-            "design awareness for {} carries {} terms outside 1..={DESIGN_NOTICE_TERMS}",
+            "design awareness for {} names statement {} while its current head is {current}",
+            body.design, body.statement
+        ));
+    }
+    let terms_valid = match body.provenance {
+        DesignNoticeProvenance::Organic => {
+            !body.terms.is_empty() && body.terms.len() <= DESIGN_NOTICE_TERMS
+        }
+        DesignNoticeProvenance::Seeded => body.terms.is_empty(),
+    };
+    if !terms_valid {
+        return unsound(format!(
+            "{} design awareness for {} carries {} terms",
+            body.provenance,
             body.design,
             body.terms.len()
         ));

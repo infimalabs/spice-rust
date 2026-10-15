@@ -1,7 +1,6 @@
-//! A lane session's Design invitations: the resident's private notices that
-//! an open Design matches the lane's claimed work. Following one opens that
-//! exact Design's read view and its contribution affordance; it joins no
-//! working group, acquires nothing, and answers no steering.
+//! A lane session's organic and bounded early Design invitations. Following
+//! one opens that exact Design's read view and its contribution affordance; it
+//! joins no working group, acquires nothing, and answers no steering.
 
 use wire::Actor;
 use yew::prelude::*;
@@ -37,16 +36,24 @@ pub(in crate::browser) fn render_invitations(runtime: Option<&AppRuntime>) -> Ht
                         class="room-card room-invitation-card"
                         key={notice.position.get()}
                         data-invitation={design.to_string()}
+                        data-invitation-provenance={notice.value.provenance.as_str()}
+                        data-invitation-statement={notice.value.statement.get().to_string()}
                     >
                         <a href={crate::view::design_href(design)}>
                             {format!("Contribute to {label}")}
                         </a>
                         <p>
-                            {format!(
-                                "Matches {} on {}. Opening it joins no group and claims nothing.",
-                                super::anchor_label(runtime, &notice.value.task),
-                                notice.value.terms.join(", "),
-                            )}
+                            {match notice.value.provenance {
+                                wire::rooms::DesignNoticeProvenance::Organic => format!(
+                                    "Organic match with {} on {}. Opening it joins no group and claims nothing.",
+                                    super::anchor_label(runtime, &notice.value.task),
+                                    notice.value.terms.join(", "),
+                                ),
+                                wire::rooms::DesignNoticeProvenance::Seeded => format!(
+                                    "Early sample with {}; no term match was required. Opening it joins no group and claims nothing.",
+                                    super::anchor_label(runtime, &notice.value.task),
+                                ),
+                            }}
                         </p>
                     </article>
                 }
