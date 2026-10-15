@@ -151,7 +151,7 @@ admitted reply clears the composer only while it still holds exactly the posted
 text and shards; a refusal keeps everything and shows in the composer toast.
 The design's menu carries its
 [standing](CONSOLE.md#design-standing), the
-[coordination controls](CONSOLE.md#room-coordination) that ask a seated lane
+[coordination controls](DESIGNS.md#room-coordination) that ask a seated lane
 for a contribution or put the room aside while the Design is active, and its
 preparation authority.
 
@@ -167,7 +167,7 @@ answer is its own ANS card whose return carries a separate receipt. None of
 these is styled as review evidence or output authorization, which stay on
 their exact proposal version and in immutable preparation authority.
 
-A Design's read view groups its [typed contributions](CONSOLE.md#design-contributions)
+A Design's read view groups its [typed contributions](DESIGNS.md#design-contributions)
 by kind above the room history, which keeps them in journal order among the
 conversation. Each cited source's availability comes from the
 `room::contribution-sources` read, which any authenticated session may issue
