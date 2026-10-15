@@ -657,6 +657,7 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
     };
     let subscription = |policy| wire::TeamSubscription {
         team: lane,
+        formed_at: None,
         policy,
         fast_mode: false,
     };

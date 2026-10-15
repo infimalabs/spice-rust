@@ -104,40 +104,20 @@ posted again.
 
 ## Design standing
 
-Every read agrees on one standing for a Design, derived from its workflow and
-the working-group partition alone. Board rows, `spice task show`, `spice group
-list`, `spice room status`, and the browser all render it:
+The shared workflow-derived standing and activity rules live with the
+[Design-room contract](DESIGNS.md#design-standing). Design tabs share the
+global execution tabs' structure and interactions, with their count before the
+stem and their whole surface bound to the palette's final accent rather than
+its first. The object-level base-flavor contract rebuilds panel, control, ink,
+muted, line, ground, focus, and primitive roles from that base and the page's
+achromatic anchors; Lane and Design accent slots remain independent.
 
-- **open, passive**: open and in no working group. No lane can claim it or be
-  coordinated onto it until the operator moves it into a group.
-- **open, active**: open and in a working group, so allocation, capture, and
-  room coordination may reach it.
-- **concluded done**: the operator concluded it done.
-- **concluded collapsed**: the operator collapsed it, with the durable reason
-  that collapse recorded.
-- **deleted**.
-
-A concluded or deleted Design keeps its standing while a saved group still
-holds it: group membership decides activity only for an open Design. The
-command bar's Design rail names how many open Designs each stem holds active
-and passive without dimming or changing the tab edge for passive standing.
-Design tabs share the global execution tabs' structure and interactions, with
-their count before the stem and their whole surface bound to the palette's
-final accent rather than its first. This uses the object-level base-flavor
-contract: an unselected object is an exact identity over the existing
-green-flavored roles, while a selected object rebuilds panel, control, ink,
-muted, line, ground, and focus roles from one arbitrary base color and the
-page's achromatic anchors, then binds its subtree's primitive neutrals, focus,
-and accent to them. Everything the subtree derives from those primitives follows,
-so relationships among its objects hold under any base. Lane and Design accent
-slots stay the page's. Accent slots are convenient inputs to that contract, not
-its boundary; no old green is tinted underneath the selected base. Each team
-and open working group console takes its whole base from the slot its place in
-the shared order deals, teams counting up from the palette's first accent and
-groups down from its last, without wearing that slot. In the
-work overview and on dependency cards a passive Design reads **Passive**,
-waiting on the operator.
-
+Team consoles rank by durable formation instant, oldest first, and take bases
+counting up from the palette's first accent. Open working-group consoles rank
+by their identity's minting instant, oldest first, and take bases counting down
+from its last. Shared arrangement and browser-console order change neither
+rank; member and Design accents still step from the base in durable member
+order.
 
 ## Toolbar
 

@@ -2,8 +2,29 @@
 
 A Design's room carries its read view, operator conclusion and proposal
 decisions, coordination, and lane contributions. Its
-[standing](CONSOLE.md#design-standing) and its place in working-group consoles
-belong to the [team console](CONSOLE.md).
+[standing](#design-standing) and its place in working-group consoles belong to
+the [team console](CONSOLE.md).
+
+## Design standing
+
+Every read derives one standing from the Design's workflow and the
+working-group partition alone. Board rows, `spice task show`, `spice group
+list`, `spice room status`, and the browser agree:
+
+- **open, passive**: open and in no working group. No lane can claim it or be
+  coordinated onto it until the operator moves it into a group.
+- **open, active**: open and in a working group, so allocation, capture, and
+  room coordination may reach it.
+- **concluded done**: the operator concluded it done.
+- **concluded collapsed**: the operator collapsed it, with the durable reason
+  that collapse recorded.
+- **deleted**.
+
+A concluded or deleted Design keeps its standing while a saved group still
+holds it: group membership decides activity only for an open Design. The
+command bar's Design rail counts open active and passive Designs without
+dimming or changing the tab edge for passive standing. The work overview and
+dependency cards label a passive Design **Passive**, waiting on the operator.
 
 ## Reading a Design
 
@@ -11,7 +32,7 @@ Any Design, open, completed, or closed, opens for reading in its task
 overview: the **Read** action on each design tile in the Spice menu's Working
 groups catalog, a Design-intent task's detail, and a Design permalink all open
 the same view. Below the task's state, its **Design room** section shows the
-room's [standing](CONSOLE.md#design-standing), its positive
+room's [standing](#design-standing), its positive
 [conclusion control](#concluding-a-design), every immutable
 [proposal version and decision](#deciding-a-design-proposal), and its full
 room history newest first, resolved through the Design's birth stamp under its
