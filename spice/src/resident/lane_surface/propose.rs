@@ -56,7 +56,6 @@ pub(super) fn propose_seat(
         session: None,
         disposition: VACANT.to_owned(),
     });
-    next.lanes.sort_by_key(|row| row.lane);
     let mut write = write(
         command.actor().clone(),
         epoch,

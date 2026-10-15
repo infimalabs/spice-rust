@@ -1216,7 +1216,8 @@ pub struct LaneAnswer {
     pub state: ResidentState,
     /// Monotonic authority for this exact topology and policy snapshot.
     pub topology_revision: u64,
-    /// Current lane rows in stable lane order.
+    /// Current lane rows in the residency head's durable placement order: a
+    /// seated lane appends, and team moves keep each team's member order.
     pub lanes: Vec<LaneAnswerRow>,
     /// One authoritative task-allocation lifetime per returned team.
     pub subscriptions: Vec<crate::TeamSubscription>,
