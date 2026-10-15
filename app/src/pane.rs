@@ -16,9 +16,11 @@
 //! the acceptance that produced it, and a [`Principal`] exists only by way of
 //! a frame the resident sent and this session admitted.
 
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
+use wire::principal::PrincipalRole;
 use wire::{
     Accepted, Actor, Authority, CanonicalUuid, Command, CommandKind, Fault, FaultClass, FoldName,
     LawError, Outcome, Overflow, Response, Seq, WireVersion, Witness,
@@ -31,20 +33,22 @@ use crate::state::{Answer, BrowserState};
 /// with.
 const ANSWER_MISMATCH: &str = "pane::answer-mismatch";
 
-/// Who this session acts as, in the generation it acts in.
+/// Who this session acts as, with the roles the resident last reported for it,
+/// in the generation it acts in.
 ///
 /// An actor is bound to the unrendered session scope that admitted it, so the
 /// two travel together here as well. There is no constructor from text, from
 /// a bare [`Actor`], or from anything the app rendered. The only door is
 /// [`Principal::admitted`], which needs a frame the resident sent and
-/// [`Session::admit_accepted`] let through, because the resident derives actor
-/// and rights when it accepts the connection and caller fields may describe
-/// provenance but cannot grant it.
+/// [`Session::admit_accepted`] let through. Current roles then come only from
+/// the connected-readable principal snapshot; neither source lets caller text
+/// grant authority.
 ///
 /// [`Session::admit_accepted`]: crate::Session::admit_accepted
 #[derive(Clone, PartialEq, Eq)]
 pub struct Principal {
     actor: Actor,
+    roles: BTreeSet<PrincipalRole>,
     scope: SessionScope,
 }
 
@@ -53,6 +57,7 @@ impl fmt::Debug for Principal {
         formatter
             .debug_struct("Principal")
             .field("actor", &self.actor)
+            .field("roles", &self.roles)
             .field("epoch", &self.epoch())
             .finish()
     }
@@ -65,6 +70,9 @@ impl Principal {
         let scope = accepted.scope();
         let accepted = accepted.get();
         Self {
+            roles: matches!(accepted.actor, Actor::Operator)
+                .then(|| BTreeSet::from([PrincipalRole::Operator]))
+                .unwrap_or_default(),
             actor: accepted.actor.clone(),
             scope,
         }
@@ -74,6 +82,20 @@ impl Principal {
     #[must_use]
     pub const fn actor(&self) -> &Actor {
         &self.actor
+    }
+
+    /// Replace current roles from one authority snapshot, returning whether
+    /// this principal's command affordances changed.
+    pub(crate) fn apply_roles(&mut self, roles: &BTreeSet<PrincipalRole>) -> bool {
+        let changed = &self.roles != roles;
+        self.roles.clone_from(roles);
+        changed
+    }
+
+    /// Whether this principal currently holds operator authority.
+    #[must_use]
+    pub fn is_operator(&self) -> bool {
+        self.roles.contains(&PrincipalRole::Operator)
     }
 
     /// The generation this principal was accepted into.
@@ -258,10 +280,10 @@ impl<'a> SteerPane<'a> {
     /// restated here, so this pane cannot come to disagree with the law the
     /// resident will apply.
     #[must_use]
-    pub const fn offers(&self, kind: CommandKind) -> bool {
+    pub fn offers(&self, kind: CommandKind) -> bool {
         match kind.law().authority {
             Authority::Connected => true,
-            Authority::Operator => self.principal.is_human(),
+            Authority::Operator => self.principal.is_operator(),
         }
     }
 
@@ -301,12 +323,12 @@ impl<'a> SteerPane<'a> {
     }
 }
 
-/// A pane that presents the decisions the operator capability carries.
+/// A pane that presents the decisions the operator role carries.
 ///
-/// It opens for the operator and for nobody else. A lane-scoped principal has
-/// no path to one: [`GrantPane::over`] is the only constructor, the field is
-/// private, and a [`Principal`] can only come from an admitted acceptance, so
-/// neither caller text nor anything the app rendered can produce one.
+/// It opens for a current operator and for nobody else. A connected human
+/// without that role has no path to one: [`GrantPane::over`] is the only
+/// constructor, the field is private, and current roles come from a resident
+/// principal snapshot.
 ///
 /// The pane presents; the [`SteerPane`] it wraps submits. Keeping those
 /// separate means there is exactly one way to build a command, and reading a
@@ -319,8 +341,8 @@ pub struct GrantPane<'a> {
 impl<'a> GrantPane<'a> {
     /// Open a grant pane, or `None` for a principal without the capability.
     #[must_use]
-    pub const fn over(principal: &'a Principal) -> Option<Self> {
-        if principal.is_human() {
+    pub fn over(principal: &'a Principal) -> Option<Self> {
+        if principal.is_operator() {
             Some(Self {
                 steer: SteerPane::over(principal),
             })

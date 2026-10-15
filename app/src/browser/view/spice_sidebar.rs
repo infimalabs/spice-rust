@@ -200,16 +200,16 @@ pub(super) fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
 
 /// The connected principal's avatar beside the name and email its recorded
 /// profile carries, as read-only reference rows, then their personal inbox.
-/// Until settings arrive both rows say they are loading, so later admission
-/// moves no section below them.
+/// Until the principal directory arrives both rows say they are loading, so
+/// later admission moves no section below them.
 pub(super) fn render_operator(runtime: Option<&AppRuntime>, inbox: Html) -> Html {
-    let settings = runtime.and_then(AppRuntime::settings);
+    let directory = runtime.and_then(AppRuntime::principals);
     let unresolved = wire::HumanIdentity::default();
     let operator = runtime
         .and_then(AppRuntime::own_identity)
         .unwrap_or(&unresolved);
     let fact = |label: &'static str, key: &'static str, value: Option<&String>| {
-        let (state, text) = match (settings, value) {
+        let (state, text) = match (directory, value) {
             (None, _) => ("loading", "loading".to_owned()),
             (Some(_), None) => ("unset", format!("Your profile records no {key}")),
             (Some(_), Some(value)) => ("ready", value.clone()),

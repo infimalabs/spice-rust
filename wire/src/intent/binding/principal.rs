@@ -8,6 +8,9 @@ impl CommandKind {
         use BodyShape as B;
 
         match self {
+            Self::PrincipalDirectoryRead => {
+                Binding::of(B::PrincipalDirectoryRead, A::PrincipalDirectory)
+            }
             Self::PrincipalRead => Binding::of(B::PrincipalRead, A::Principals),
             Self::PrincipalAdmit => Binding::of(B::PrincipalAdmit, A::Principal),
             Self::PrincipalEdit => Binding::of(B::PrincipalEdit, A::Principal),
@@ -23,6 +26,7 @@ impl CommandKind {
 impl Intent {
     pub(super) const fn principal_shape(&self) -> BodyShape {
         match self {
+            Self::PrincipalDirectoryRead(_) => BodyShape::PrincipalDirectoryRead,
             Self::PrincipalRead(_) => BodyShape::PrincipalRead,
             Self::PrincipalAdmit(_) => BodyShape::PrincipalAdmit,
             Self::PrincipalEdit(_) => BodyShape::PrincipalEdit,
@@ -36,6 +40,7 @@ impl Intent {
 impl BodyShape {
     pub(super) fn decode_principal_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
+            Self::PrincipalDirectoryRead => Intent::PrincipalDirectoryRead(crate::decode(bytes)?),
             Self::PrincipalRead => Intent::PrincipalRead(crate::decode(bytes)?),
             Self::PrincipalAdmit => Intent::PrincipalAdmit(crate::decode(bytes)?),
             Self::PrincipalEdit => Intent::PrincipalEdit(crate::decode(bytes)?),

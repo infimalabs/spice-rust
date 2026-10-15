@@ -285,7 +285,7 @@ fn a_live_fact_invalidates_exactly_the_reads_its_namespace_moves() {
 }
 
 #[test]
-fn a_principal_fact_rereads_the_settings_that_name_every_principal() {
+fn a_principal_fact_rereads_each_principal_directory() {
     let session = session(OPERATOR, EPOCH);
     let profile = serde_json::json!({"name": "C Adams", "email": "c@example.invalid"});
     for (fact, expected) in [
@@ -318,12 +318,16 @@ fn a_principal_fact_rereads_the_settings_that_name_every_principal() {
             .to_owned();
         let pushed = fact_frame(envelope(41, "operator", "thread:operator", &fact));
         let stale = stale_reads(&admitted_stream(&session, &pushed));
-        assert_eq!(stale.settings(), expected, "{kind} moved settings wrongly");
+        assert_eq!(
+            [stale.principals(), stale.settings()],
+            [expected; 2],
+            "{kind} moved a principal directory wrongly"
+        );
         if expected {
             assert_eq!(
                 [stale.board(), stale.lanes(), stale.inbox(), stale.consent()],
                 [false; 4],
-                "{kind} invalidated a read no profile is drawn from"
+                "{kind} invalidated an unrelated read"
             );
         }
     }

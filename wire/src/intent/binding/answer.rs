@@ -32,6 +32,7 @@ impl AnswerShape {
     fn decode_from(self, source: impl AnswerSource) -> Result<CommandAnswer, serde_json::Error> {
         match self {
             Self::LaneJobs => Ok(CommandAnswer::LaneJobs(Box::new(source.read()?))),
+            Self::PrincipalDirectory => Ok(CommandAnswer::PrincipalDirectory(source.read()?)),
             Self::Principals => Ok(CommandAnswer::Principals(source.read()?)),
             Self::Principal => Ok(CommandAnswer::Principal(source.read()?)),
             Self::LaneJob => Ok(CommandAnswer::LaneJob(Box::new(source.read()?))),
