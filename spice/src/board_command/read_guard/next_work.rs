@@ -276,7 +276,7 @@ fn dry_counts(
                 entry.is_oops()
                     && entry.workflow().status == "pending"
                     && entry.workflow().completion.is_none()
-                    && !satisfied.speculative_design_work(entry.statement())
+                    && !satisfied.speculative_design_work(entry.statement(), entry.workflow())
             })
             .count(),
     };
@@ -292,7 +292,7 @@ fn dry_counts(
             Some(board::WorkWait::Selection) => counts.selection += 1,
             None => {}
         }
-        if satisfied.speculative_design_work(entry.statement()) {
+        if satisfied.speculative_design_work(entry.statement(), entry.workflow()) {
             continue;
         }
         match entry.claim().map(|claim| claim.disposition) {

@@ -296,11 +296,11 @@ fn done_transition(
     Ok((at, active.lane(), transition))
 }
 
-/// Refuse a lane step on a Design: a Design walks one open phase that no lane
-/// step advances or concludes. Its holder checkpoints and frees it; only the
-/// operator concludes it.
+/// Refuse a lane step only after a Design reaches its open phase. An intake
+/// plan advances with `task done`; an intake review advances through its
+/// assigned native verdict.
 fn require_lane_progress(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
-    if entry.statement().intent != Some(wire::TaskIntent::Design) {
+    if !wire::intent::is_open_design(entry.statement().intent, entry.workflow()) {
         return Ok(());
     }
     Err(refusal(
@@ -320,6 +320,14 @@ fn admit_plan_transition(
     command: &wire::AdmittedCommand,
     transition: &board::Transition,
 ) -> Result<(), Outcome<CommandAnswer>> {
+    if entry.statement().intent == Some(wire::TaskIntent::Design)
+        && matches!(
+            transition.kind(),
+            board::TransitionKind::Advance { to, .. } if to.as_str() == "design"
+        )
+    {
+        return Ok(());
+    }
     let owner = planning::construction_owner(entry.born(), entry.statement().preparation.as_ref());
     let task = visible_task(snapshot, owner)?;
     let construction_required = task.workflow.body.status == "pending"

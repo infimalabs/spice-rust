@@ -3,8 +3,6 @@
 //! Each record is the durable read of who was told what; none is a room
 //! publication, so none adds room attention, participation, steering, or wake.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 
 use super::DecisionRef;
@@ -13,38 +11,10 @@ use crate::{CanonicalUuid, Seq, SequenceCode, TaskStamp};
 /// Most matched terms one Design awareness record carries.
 pub const DESIGN_NOTICE_TERMS: usize = 12;
 
-/// Why the resident selected one Design awareness recipient.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum DesignNoticeProvenance {
-    /// The Design and claimed task shared enough distinctive terms.
-    Organic,
-    /// The recipient belonged to the Design's bounded early cohort.
-    Seeded,
-}
-
-impl DesignNoticeProvenance {
-    /// Stable lower-case spelling shared by command and browser surfaces.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Organic => "organic",
-            Self::Seeded => "seeded",
-        }
-    }
-}
-
-impl fmt::Display for DesignNoticeProvenance {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
 /// The resident invited one lane occupant, at most once, to a passive Design.
 ///
-/// Organic notices record the terms shared with the claimed task. Seeded
-/// notices belong to the Design's bounded early cohort and require no term
-/// match. The record is background information only: it is no room
+/// The exact statement and matched terms record the organic relevance
+/// decision. The record is background information only: it is no room
 /// publication, so it adds no room attention, participation, steering, claim,
 /// or wake.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,8 +24,6 @@ pub struct DesignNoticed {
     pub design: TaskStamp,
     /// Exact Design statement head evaluated for this invitation.
     pub statement: Seq,
-    /// Whether term matching or bounded early seeding selected the recipient.
-    pub provenance: DesignNoticeProvenance,
     /// Logical lane told.
     pub lane: CanonicalUuid,
     /// Occupant invited; each Design invites one occupant at most once.
@@ -64,8 +32,7 @@ pub struct DesignNoticed {
     pub task: TaskStamp,
     /// Fact that won that claim.
     pub claim: SequenceCode,
-    /// Matched terms in ascending order for an organic notice; empty when
-    /// [`DesignNoticeProvenance::Seeded`] required no term match.
+    /// Matched terms in ascending order.
     pub terms: Vec<String>,
 }
 

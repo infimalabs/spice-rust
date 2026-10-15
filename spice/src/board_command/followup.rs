@@ -394,15 +394,40 @@ fn prepare_followup_policy(
 ) -> Result<FollowupPolicy, Outcome<CommandAnswer>> {
     validate_acceptance(&add.acceptance)?;
     let reviewed_statement = &context.reviewed_task.statement.body;
-    let intent = add.intent.or(reviewed_statement.intent);
-    if reviewed_statement.intent.is_some() && intent != reviewed_statement.intent {
+    let reviewed_workflow = &context.reviewed_task.workflow.body;
+    let design_intake = reviewed_statement.intent == Some(wire::TaskIntent::Design)
+        && reviewed_workflow.status == "pending"
+        && reviewed_workflow.completion.is_none()
+        && reviewed_workflow.phase.as_str() == "review"
+        && reviewed_workflow
+            .flow
+            .iter()
+            .position(|phase| phase == &reviewed_workflow.phase)
+            .and_then(|current| reviewed_workflow.flow.get(current + 1))
+            .is_some_and(|next| next.as_str() == "design");
+    let intent = if design_intake {
+        add.intent
+    } else {
+        add.intent.or(reviewed_statement.intent)
+    };
+    if design_intake && intent.is_some() {
+        return Err(refusal(
+            "review::planning-correction-intent",
+            None,
+            "a Design intake finding creates an ordinary correction for re-review",
+        ));
+    }
+    if !design_intake && reviewed_statement.intent.is_some() && intent != reviewed_statement.intent
+    {
         return Err(refusal(
             "review::planning-correction-intent",
             None,
             "a planning correction must retain the reviewed declared intent",
         ));
     }
-    let preparation = planning::correction_preparation(context.reviewed_task);
+    let preparation = (!design_intake)
+        .then(|| planning::correction_preparation(context.reviewed_task))
+        .flatten();
     let mut flow = if add.flow.is_none() && preparation.is_some() {
         context.reviewed_task.workflow.body.flow.clone()
     } else {

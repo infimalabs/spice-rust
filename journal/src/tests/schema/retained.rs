@@ -66,7 +66,7 @@ fn residual_rows(journal: &Journal) -> (Vec<u8>, Vec<u8>) {
 }
 
 #[test]
-fn writable_open_binds_retained_design_notices_to_recovered_statements() {
+fn writable_open_binds_retained_design_notices_and_retires_provenance() {
     let scratch = Scratch::new();
     let path = scratch.path().join("retained-design-notice.sqlite3");
     let journal = authority_file_fixture(&path);
@@ -79,7 +79,6 @@ fn writable_open_binds_retained_design_notices_to_recovered_statements() {
             json!({
                 "design": "1kKRRsDP",
                 "statement": 1,
-                "provenance": "organic",
                 "lane": FIXTURE_LANE,
                 "occupant": FIXTURE_LANE,
                 "task": "1kKRRsDQ",
@@ -92,13 +91,14 @@ fn writable_open_binds_retained_design_notices_to_recovered_statements() {
         .connection
         .execute_batch(
             "UPDATE fact_envelopes SET envelope = CAST(json_remove(
-                 CAST(envelope AS TEXT), '$.fact.statement', '$.fact.provenance'
+                 json_set(CAST(envelope AS TEXT), '$.fact.provenance', 'organic'),
+                 '$.fact.statement'
              ) AS BLOB) WHERE seq = 3;
              UPDATE cursor_head SET seq = 3, wake = 3 WHERE singleton = 1;
              UPDATE steering_index SET indexed_seq = 3 WHERE singleton = 1;",
         )
         .expect("retained notice cursor is planted");
-    restore_predecessor(&journal, 60);
+    restore_predecessor(&journal, 62);
     drop(journal);
 
     let crossed = Journal::open(&path).expect("retained notice crosses");
@@ -116,10 +116,6 @@ fn writable_open_binds_retained_design_notices_to_recovered_statements() {
         .read::<wire::rooms::DesignNoticed>()
         .expect("crossed fact remains a notice");
     assert_eq!(notice.statement, seq(1));
-    assert_eq!(
-        notice.provenance,
-        wire::rooms::DesignNoticeProvenance::Organic
-    );
     assert_eq!(notice.terms, ["rooms", "state", "tasks"]);
 }
 
@@ -137,7 +133,6 @@ fn writable_open_refuses_a_retained_notice_without_a_provable_statement() {
             json!({
                 "design": "1kKRRsDQ",
                 "statement": 1,
-                "provenance": "organic",
                 "lane": FIXTURE_LANE,
                 "occupant": FIXTURE_LANE,
                 "task": "1kKRRsDP",
@@ -150,12 +145,13 @@ fn writable_open_refuses_a_retained_notice_without_a_provable_statement() {
         .connection
         .execute(
             "UPDATE fact_envelopes SET envelope = CAST(json_remove(
-                 CAST(envelope AS TEXT), '$.fact.statement', '$.fact.provenance'
+                 json_set(CAST(envelope AS TEXT), '$.fact.provenance', 'organic'),
+                 '$.fact.statement'
              ) AS BLOB) WHERE seq = 3",
             [],
         )
         .expect("unproved retained notice shape is planted");
-    restore_predecessor(&journal, 60);
+    restore_predecessor(&journal, 62);
     drop(journal);
 
     let error = Journal::open(&path).expect_err("an unproved notice must refuse");
@@ -164,7 +160,7 @@ fn writable_open_refuses_a_retained_notice_without_a_provable_statement() {
         OpenError::Migration(MigrationError::RetainedRow {
             table: "fact_envelopes",
             row,
-            release: "ROOMS-dW4XHbhwK",
+            release: "ROOMS-dW6GpYK65",
             ..
         }) if row == "3"
     ));

@@ -364,9 +364,11 @@ impl Law {
         authority: Authority::Operator,
     };
     /// Immutable proposal subject at its current head, or witnessed absence.
+    /// Proposal writes may also depend on every named task's exact statement,
+    /// workflow, and claim heads.
     pub const PROPOSAL_RECORD: Self = Self {
         required: &[WitnessKind::Proposal],
-        optional: &[WitnessKind::Task],
+        optional: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
         authority: Authority::Connected,
     };
     /// Exact operator disposition of one immutable candidate. Every decision

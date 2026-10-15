@@ -453,11 +453,11 @@ fn task<'a>(
 }
 
 fn task_witnesses(board: &BoardAnswer) -> Result<Vec<Witness>, Outcome<CommandAnswer>> {
-    board
+    Ok(board
         .tasks
         .iter()
-        .map(|task| Ok(statement_witness(task)))
-        .collect()
+        .flat_map(|task| [statement_witness(task), workflow_witness(task)])
+        .collect())
 }
 
 fn transition_witnesses(task: &BoardTask) -> Vec<Witness> {

@@ -43,8 +43,8 @@ const PREPARED: &str = "prepared";
 /// creating facts into steering heads, moves each open Design onto its one
 /// open phase and drops its pending outputs' ordinary dependency on it,
 /// restates every live team's formation instant from immutable topology facts,
-/// binds retained Design notices to their exact statement and organic
-/// selection provenance, and creates the room-authority projection, per-lane
+/// binds retained Design notices to their exact statement while retiring
+/// superseded selection provenance, and creates the room-authority projection,
 /// room catch-up cursors and horizons, room coordination heads, room
 /// conversation heads, operator items, required task evidence, relevance
 /// shadow records, the working-group partition, the empty principal head

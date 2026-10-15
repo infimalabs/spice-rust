@@ -78,7 +78,21 @@ fn declared_planning_defaults_give_each_purpose_its_flow() {
             flow
         );
     }
-    for flow in ["design,review", "review", "todo"] {
+    for flow in ["design", "plan,design", "review,design"] {
+        let task = add_planning(
+            &bus,
+            epoch,
+            &format!("Admitted Design flow {flow}"),
+            wire::TaskIntent::Design,
+            Some(flow),
+        );
+        let view = board(&bus, epoch, Actor::Operator);
+        assert_eq!(
+            at(&view, &task).workflow.body.phase.as_str(),
+            flow.split(',').next().expect("flow has a first phase"),
+        );
+    }
+    for flow in ["design,review", "review", "plan", "todo", "plan,review"] {
         let born = stamp(&format!("Design flow {flow}"));
         let result = issue(
             &bus,
@@ -106,6 +120,256 @@ fn declared_planning_defaults_give_each_purpose_its_flow() {
             "a Design with flow {flow} must refuse: {result:?}"
         );
     }
+    clean(&root, bus);
+}
+#[test]
+fn plan_intake_releases_its_claim_into_a_passive_design() {
+    let (root, bus, epoch, seats) = fixture("planning-design-plan-intake", 1);
+    let design = add_planning(
+        &bus,
+        epoch,
+        "Plan the Design statement",
+        wire::TaskIntent::Design,
+        Some("plan,design"),
+    );
+    let lane = Actor::Lane(seats[0].lane);
+    assert_eq!(
+        allocated(&bus, epoch, &lane).map(|(handle, _)| handle),
+        Some(design.to_string()),
+        "plan intake remains ordinary allocatable work",
+    );
+    let premature = stamp("Premature Design output");
+    let view = board(&bus, epoch, Actor::Operator);
+    let parent = at(&view, &design);
+    let refused = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![
+            Witness::Absence {
+                task: premature.clone(),
+            },
+            statement_witness(parent),
+            workflow_witness(parent),
+        ],
+        &TaskAdd {
+            preparation: Some(design.clone()),
+            title: "Premature Design output".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: vec!["The output is executable".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("fixture:planning".parse().expect("origin")),
+            flow: Some("todo".to_owned()),
+            depends: Vec::new(),
+            intent: None,
+            claim: false,
+            draft: false,
+        },
+    );
+    assert!(
+        matches!(&refused, Outcome::Refusal(refusal)
+            if refusal.reason() == "task::preparation-refused"),
+        "a Design intake cannot control an output: {refused:?}",
+    );
+    assert!(
+        board(&bus, epoch, Actor::Operator)
+            .tasks
+            .iter()
+            .all(|task| task.statement.body.born != premature),
+        "refused pre-Design preparation wrote no task",
+    );
+    assert_committed(done(&bus, epoch, &seats[0], &design));
+
+    assert_eq!(
+        allocated(&bus, epoch, &lane).map(|(handle, _)| handle),
+        None,
+        "the transitioned passive Design leaves allocation",
+    );
+    let view = board(&bus, epoch, Actor::Operator);
+    let heads = at(&view, &design);
+    assert_eq!(heads.workflow.body.phase.as_str(), "design");
+    assert_eq!(heads.workflow.body.status, "pending");
+    assert_eq!(heads.workflow.body.completion, None);
+    assert_eq!(
+        heads.claim.as_ref().map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Freed),
+    );
+    assert_eq!(
+        heads.design_standing(),
+        Some(wire::intent::DesignStanding::Passive),
+    );
+    bus.verify()
+        .expect("transitioned Design authority verifies before restart");
+    bus.shutdown().expect("planning bus stops");
+    let reopened =
+        journal::Journal::open(root.join("authority.sqlite3")).expect("planning journal reopens");
+    let reopened = Bus::start(reopened).expect("planning bus restarts");
+    let restarted = board(&reopened, epoch, Actor::Operator);
+    assert_eq!(
+        at(&restarted, &design).design_standing(),
+        Some(wire::intent::DesignStanding::Passive),
+    );
+    clean(&root, reopened);
+}
+
+#[test]
+fn clean_review_intake_releases_its_claim_into_a_passive_design() {
+    let (root, bus, epoch, seats) = fixture("planning-design-review-intake", 1);
+    let seat = &seats[0];
+    let actor = Actor::Lane(seat.lane);
+    let design = add_planning(
+        &bus,
+        epoch,
+        "Review the Design statement",
+        wire::TaskIntent::Design,
+        Some("review,design"),
+    );
+    claim_task(&bus, epoch, seat, &actor, &design);
+    let view = board(&bus, epoch, actor.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        actor,
+        CommandKind::TaskReview,
+        progress_witnesses(&view, at(&view, &design), seat.lane, seat.occupant, true)
+            .expect("review intake witnesses"),
+        &TaskReview {
+            task: design.clone(),
+            finding: "clean".to_owned(),
+            note: None,
+            then: Vec::new(),
+            followup: Vec::new(),
+        },
+    ));
+
+    let view = board(&bus, epoch, Actor::Operator);
+    let design = at(&view, &design);
+    assert_eq!(design.workflow.body.phase.as_str(), "design");
+    assert_eq!(design.workflow.body.review, "clean");
+    assert_eq!(
+        design.claim.as_ref().map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Freed),
+    );
+    assert_eq!(
+        design.design_standing(),
+        Some(wire::intent::DesignStanding::Passive),
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn finding_review_intake_enters_design_with_its_correction_recorded() {
+    let (root, bus, epoch, seats) = fixture("planning-design-review-finding", 1);
+    let seat = &seats[0];
+    let actor = Actor::Lane(seat.lane);
+    authorize_lane_creation(&bus, epoch, seat);
+    let design = add_planning(
+        &bus,
+        epoch,
+        "Review a Design that needs correction",
+        wire::TaskIntent::Design,
+        Some("review,design"),
+    );
+    claim_task(&bus, epoch, seat, &actor, &design);
+    let view = board(&bus, epoch, actor.clone());
+    let correction = stamp("Correct the Design statement");
+    let mut expected =
+        progress_witnesses(&view, at(&view, &design), seat.lane, seat.occupant, true)
+            .expect("finding intake witnesses");
+    expected.push(Witness::Absence {
+        task: correction.clone(),
+    });
+    assert_committed(issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::TaskReview,
+        expected,
+        &TaskReview {
+            task: design.clone(),
+            finding: "The failure boundary is underspecified".to_owned(),
+            note: None,
+            then: vec![wire::intent::ReviewFollowup {
+                task: correction.clone(),
+                add: TaskAdd {
+                    preparation: None,
+                    title: "Correct the Design statement".to_owned(),
+                    project: Some("board.test".to_owned()),
+                    description: None,
+                    acceptance: vec!["The failure boundary is explicit".to_owned()],
+                    requirements: wire::EnvironmentRequirements::default(),
+                    origin: None,
+                    flow: None,
+                    depends: Vec::new(),
+                    intent: None,
+                    claim: false,
+                    draft: false,
+                },
+            }],
+            followup: Vec::new(),
+        },
+    ));
+
+    let finding_view = board(&bus, epoch, Actor::Operator);
+    let finding_design = at(&finding_view, &design);
+    assert_eq!(finding_design.workflow.body.phase.as_str(), "review");
+    assert_eq!(finding_design.workflow.body.review, "unassigned");
+    assert_eq!(
+        finding_design
+            .claim
+            .as_ref()
+            .map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Freed),
+    );
+    assert!(
+        finding_design
+            .statement
+            .body
+            .dependencies
+            .contains(&correction),
+        "the finding remains an explicit input until its correction completes",
+    );
+    assert_eq!(finding_design.design_standing(), None);
+
+    let correction = TaskHandle::for_project("board.test", &correction);
+    claim_and_complete_task(&bus, epoch, seat, &actor, &correction);
+    claim_task(&bus, epoch, seat, &actor, &design);
+    let assigned = board(&bus, epoch, actor.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        actor,
+        CommandKind::TaskReview,
+        progress_witnesses(
+            &assigned,
+            at(&assigned, &design),
+            seat.lane,
+            seat.occupant,
+            true,
+        )
+        .expect("re-review witnesses"),
+        &TaskReview {
+            task: design.clone(),
+            finding: "clean".to_owned(),
+            note: Some("the correction is ready".to_owned()),
+            then: Vec::new(),
+            followup: Vec::new(),
+        },
+    ));
+    let view = board(&bus, epoch, Actor::Operator);
+    let design = at(&view, &design);
+    assert_eq!(design.workflow.body.phase.as_str(), "design");
+    assert_eq!(design.workflow.body.review, "clean");
+    assert_eq!(
+        design.claim.as_ref().map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Freed),
+    );
+    assert_eq!(
+        design.design_standing(),
+        Some(wire::intent::DesignStanding::Passive),
+    );
     clean(&root, bus);
 }
 

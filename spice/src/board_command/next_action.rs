@@ -85,9 +85,9 @@ pub(super) fn accepted_transition(
         {
             return NextTransition::Review;
         }
-        // A Design stays open until the operator concludes it, so its holder
-        // ends a pass by freeing it rather than completing it.
-        if entry.statement().intent == Some(wire::TaskIntent::Design) {
+        // Only the open Design phase stays operator-owned. Intake phases use
+        // their ordinary plan/review transitions.
+        if wire::intent::is_open_design(entry.statement().intent, entry.workflow()) {
             return NextTransition::Free;
         }
         return NextTransition::Done;

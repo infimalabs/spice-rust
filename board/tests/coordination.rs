@@ -1086,6 +1086,10 @@ fn planning(name: &str, intent: wire::TaskIntent, standing: Standing) -> Entry {
         ..workflow("review")
     };
     let workflow = match standing {
+        Standing::Open if intent == wire::TaskIntent::Design => WorkflowHead {
+            flow: vec![phase("design")],
+            ..workflow("design")
+        },
         Standing::Open => workflow("todo"),
         Standing::Positive => settled("completed", "clean"),
         Standing::Closed => settled("completed", "closed"),
@@ -1205,7 +1209,7 @@ fn a_design_output_is_eligible_only_under_that_designs_selection() {
 
 #[test]
 fn speculative_design_work_ends_at_exact_execution_authorization() {
-    let design = planning("BOARD-design", wire::TaskIntent::Design, Standing::Positive);
+    let design = planning("BOARD-design", wire::TaskIntent::Design, Standing::Open);
     let plan = planning("BOARD-plan", wire::TaskIntent::Plan, Standing::Open);
     let resolved = board::resolved_tasks(&[design.clone(), plan.clone()]);
     let speculative = constructed("BOARD-design", "BOARD-design", None, None, Vec::new());
@@ -1231,25 +1235,28 @@ fn speculative_design_work_ends_at_exact_execution_authorization() {
         None,
         vec![stamp("BOARD-plan"), stamp("BOARD-design")],
     );
+    let remains =
+        |entry: &Entry| resolved.speculative_design_work(entry.statement(), entry.workflow());
+    let ordinary = entry("BOARD-ordinary");
+    assert!(remains(&design));
+    assert!(remains(&speculative));
+    assert!(remains(&mismatched));
+    assert!(!remains(&authorized));
+    assert!(!remains(&plan));
+    assert!(!remains(&plan_output));
+    assert!(!remains(&ordinary));
+    assert!(remains(&nested_output));
 
-    assert!(resolved.speculative_design_work(design.statement()));
-    assert!(resolved.speculative_design_work(speculative.statement()));
-    assert!(resolved.speculative_design_work(mismatched.statement()));
-    assert!(!resolved.speculative_design_work(authorized.statement()));
-    assert!(!resolved.speculative_design_work(plan.statement()));
-    assert!(!resolved.speculative_design_work(plan_output.statement()));
-    assert!(!resolved.speculative_design_work(entry("BOARD-ordinary").statement()));
-    assert!(resolved.speculative_design_work(nested_output.statement()));
-
+    let released_design = planning("BOARD-design", wire::TaskIntent::Design, Standing::Positive);
     let released = board::resolved_tasks(&[
-        design.clone(),
+        released_design.clone(),
         planning("BOARD-plan", wire::TaskIntent::Plan, Standing::Positive),
     ]);
-    assert!(!released.speculative_design_work(nested_output.statement()));
+    assert!(!released.speculative_design_work(nested_output.statement(), nested_output.workflow()));
     assert!(
         first_eligible(&[
             nested_output,
-            design,
+            released_design,
             planning("BOARD-plan", wire::TaskIntent::Plan, Standing::Positive),
         ]),
         "the summary boundary releases a nested output exactly when allocation does"

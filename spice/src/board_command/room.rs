@@ -148,11 +148,11 @@ fn validate_oops_grooming(
     command: &wire::AdmittedCommand,
     grooming: &OopsGrooming,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    if anchor.statement().intent != Some(wire::TaskIntent::Design) {
+    if !wire::intent::is_open_design(anchor.statement().intent, anchor.workflow()) {
         return Err(refusal(
             "room::oops-batch-not-open",
             Some(anchor.handle().to_string()),
-            "record grooming under a Design room",
+            "record grooming under an open Design room",
         ));
     }
     if grooming.reports.is_empty() {
