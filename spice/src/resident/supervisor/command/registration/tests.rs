@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::{Driver, FirstTurn};
@@ -238,4 +238,76 @@ fn launches_that_never_deliver_and_fresh_seats_read_no_resume_authority() {
     assert_eq!(message.matches("held claim").count(), 1, "{message}");
     assert!(message.contains("held claim: none"), "{message}");
     assert_eq!(authority.reads(), 1);
+}
+
+#[test]
+fn a_first_turn_waits_for_both_the_registration_answer_and_seating_in_either_order() {
+    for answered_first in [true, false] {
+        let seated = Arc::new(AtomicBool::new(false));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let driver = {
+            let (seated, reads) = (Arc::clone(&seated), Arc::clone(&reads));
+            Driver::seating(
+                Vec::new(),
+                move || {
+                    reads.fetch_add(1, Ordering::SeqCst);
+                    "held claim: TASK-1 in phase todo".to_owned()
+                },
+                move || seated.load(Ordering::SeqCst),
+            )
+        };
+        driver
+            .open(OPENING, Some(FirstTurn::Resumed(NEUTRAL.to_owned())))
+            .expect("opening writes");
+        driver
+            .background("task:TASK-1", "assigned")
+            .expect("a held notice queues");
+
+        if answered_first {
+            answer(&driver, &registration(true));
+            // A kick before the start commits, or after another occupant
+            // took the seat, finds this occupant unseated.
+            driver.deliver_inbox();
+            assert_eq!(frames(&driver).len(), 1, "an unseated turn stays held");
+            seated.store(true, Ordering::SeqCst);
+            driver.deliver_inbox();
+        } else {
+            seated.store(true, Ordering::SeqCst);
+            driver.deliver_inbox();
+            assert_eq!(frames(&driver).len(), 1, "an unanswered turn stays held");
+            answer(&driver, &registration(true));
+        }
+        driver.deliver_inbox();
+        answer(&driver, &registration(true));
+
+        let frames = frames(&driver);
+        assert_eq!(
+            frames.len(),
+            3,
+            "one prompt, then its held notice: {frames:?}"
+        );
+        assert_eq!(frames[1]["id"], vendor::omp::PROMPT_REQUEST_ID);
+        let aside = frames[2]["message"].as_str().expect("an aside message");
+        assert!(aside.contains(r#""purpose":"task:TASK-1""#), "{aside}");
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            1,
+            "one delivery reads authority"
+        );
+    }
+}
+
+#[test]
+fn a_turn_whose_occupant_is_never_seated_is_never_written() {
+    let driver = Driver::seating(Vec::new(), String::new, || false);
+    driver
+        .open(OPENING, Some(FirstTurn::Fresh(PROMPT.to_owned())))
+        .expect("opening writes");
+    driver
+        .background("renewal", "held")
+        .expect("a held notice queues");
+    answer(&driver, &registration(true));
+    driver.deliver_inbox();
+    driver.deliver_inbox();
+    assert_eq!(frames(&driver).len(), 1, "only the opening is written");
 }

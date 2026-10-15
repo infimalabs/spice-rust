@@ -167,6 +167,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             read_inbox,
             read_briefing,
             String::new,
+            || true,
             server,
             seal,
             terminal,
@@ -179,12 +180,22 @@ impl<W: Write + Send + 'static> Driver<W> {
         stdin: W,
         read_resume: impl Fn() -> String + Send + Sync + 'static,
     ) -> Arc<Self> {
+        Self::seating(stdin, read_resume, || true)
+    }
+
+    /// A resuming driver whose occupant is seated whenever `read_seated` says.
+    pub(super) fn seating(
+        stdin: W,
+        read_resume: impl Fn() -> String + Send + Sync + 'static,
+        read_seated: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> Arc<Self> {
         let server: UriServer = Box::new(|_, _| Err(vendor::omp::URI_SERVED.to_owned()));
         Self::with_server(
             stdin,
             || None,
             || None,
             read_resume,
+            read_seated,
             server,
             steer::Key::for_identity(crate::resident::new_uuid()),
             None,

@@ -33,6 +33,7 @@ fn driver(
         || None,
         || None,
         String::new,
+        || true,
         Box::new(move |url: &str, access: Access<'_>| {
             ANSWERING.with(|answering| *answering.borrow_mut() = Some(Ended(ended.clone())));
             serve(url, access)

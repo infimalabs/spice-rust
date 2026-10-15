@@ -164,7 +164,8 @@ impl ServiceAuthority {
             .map_err(io::Error::other)
     }
 
-    fn seated(&self) -> io::Result<bool> {
+    /// Whether the journal's residency head seats this exact occupant.
+    pub(in crate::resident) fn seated(&self) -> io::Result<bool> {
         let reader = open_reader(&self.journal)?;
         reader
             .read_with(|read| {

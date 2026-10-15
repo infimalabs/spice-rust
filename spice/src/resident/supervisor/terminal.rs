@@ -120,6 +120,18 @@ impl Terminal {
         self
     }
 
+    /// Whether job admission would seat this terminal's occupant now. A
+    /// terminal without admission authority refuses no ordinary job, so its
+    /// occupant counts as seated; an unreadable journal does not.
+    pub(in crate::resident::supervisor) fn seated(&self) -> bool {
+        self.service_authority.as_ref().is_none_or(|authority| {
+            authority.seated().unwrap_or_else(|error| {
+                eprintln!("spice supervisor: seating unread: {error}");
+                false
+            })
+        })
+    }
+
     /// Apply the occupant's exact command environment to an internal helper.
     pub(in crate::resident::supervisor) fn configure_process(
         &self,

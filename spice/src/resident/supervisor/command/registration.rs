@@ -1,10 +1,12 @@
-//! The first turn, held until omp answers the `spice` scheme registration:
-//! only a seat that serves the scheme is told about it and handed URLs to
-//! read. A resumed seat's notice is read from current authority only then.
-//! Background notices and steering wait behind that turn: omp runs whatever
-//! reaches an idle session first as a turn of its own, so anything written
-//! ahead of the first prompt would leave the prompt's authority stale by its
-//! delivery.
+//! The first turn, held until omp answers the `spice` scheme registration and
+//! the resident has seated this occupant, whichever is later. Only a seat that
+//! serves the scheme is told about it and handed URLs to read, and only a
+//! seated occupant's commands pass job admission, so a turn written before
+//! the start commits would open with refusals. A resumed seat's notice is
+//! read from current authority only at that release. Background notices and
+//! steering wait behind that turn: omp runs whatever reaches an idle session
+//! first as a turn of its own, so anything written ahead of the first prompt
+//! would leave the prompt's authority stale by its delivery.
 
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,7 +29,8 @@ pub(in crate::resident) enum FirstTurn {
     Resumed(String),
 }
 
-/// Whether omp serves `spice://`, and the first turn awaiting that answer.
+/// Whether omp serves `spice://`, and the first turn awaiting that answer and
+/// the occupant's seating.
 #[derive(Default)]
 pub(super) struct Registration {
     /// Settled by omp's answer; until then nothing has named a read.
@@ -78,12 +81,8 @@ impl<W: Write + Send + 'static> Driver<W> {
     }
 
     /// Settle whether this seat serves `spice://` from omp's answer to the
-    /// registration, then start the first turn as that answer decides. The
-    /// first answer alone takes the turn, so a resumed seat's authority is
-    /// read once, at this delivery. Background notices held meanwhile follow
-    /// the prompt, then the inbox as it stands now, so omp starts the
-    /// prompt's turn before any of theirs and the direction it counts
-    /// arrives after it.
+    /// registration, then release the first turn if the occupant is already
+    /// seated. The first answer alone settles it.
     pub(super) fn observe_uri_registration(&self, decoded: &Decoded) {
         let Some(response) = decoded
             .context()
@@ -96,14 +95,32 @@ impl<W: Write + Send + 'static> Driver<W> {
         {
             return;
         }
-        let Some(turn) = self
-            .registration
-            .first_turn
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
-        else {
-            return;
+        self.release_first_turn();
+    }
+
+    /// Start the held first turn once omp has answered the registration and
+    /// the journal seats this occupant; returns whether this call started it.
+    /// Only one call takes the turn, so a resumed seat's authority is read
+    /// once, at this delivery. Background notices held meanwhile follow the
+    /// prompt, then the inbox as it stands now, so omp starts the prompt's
+    /// turn before any of theirs and the direction it counts arrives after it.
+    pub(super) fn release_first_turn(&self) -> bool {
+        if self.registration.serves.get().is_none() {
+            return false;
+        }
+        let turn = {
+            let mut held = self
+                .registration
+                .first_turn
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if held.is_none() || !(self.read_seated)() {
+                return false;
+            }
+            held.take()
+        };
+        let Some(turn) = turn else {
+            return false;
         };
         let prompt = match turn {
             FirstTurn::Fresh(prompt) => prompt,
@@ -131,6 +148,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
         drop(queued);
         self.interject(super::steering::InboxDelivery::Update);
+        true
     }
 
     /// `text` as this seat should read it: with `spice://` URLs and the scheme
