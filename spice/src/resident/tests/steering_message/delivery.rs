@@ -333,53 +333,6 @@ fn startup_recovery_publishes_only_unpublished_packets_after_the_declaration() {
     lanes.finish();
 }
 
-#[test]
-fn startup_recovery_gives_each_session_lane_a_fresh_wall_allowance() {
-    let lanes = Lanes::new("msg-recover-each-lane");
-    let recipient = lanes.address(FIRST);
-    lanes.declare(SECOND);
-    lanes.author(SECOND, &format!("MSG {recipient}: recovered from second"));
-    lanes.declare(SENDER);
-    lanes.author(SENDER, &format!("MSG {recipient}: recovered from sender"));
-
-    let base = std::time::Instant::now();
-    let mut times = [
-        base,
-        base + std::time::Duration::from_millis(500),
-        base + std::time::Duration::from_secs(2),
-        base + std::time::Duration::from_millis(2_500),
-    ]
-    .into_iter();
-    let mut diagnostics = Vec::new();
-    steering::publish_at_startup_with_clock(
-        &lanes.bus,
-        &lanes.paths,
-        lanes.epoch,
-        &steer::Config::default(),
-        &mut diagnostics,
-        || times.next().expect("two clock reads per recovered lane"),
-    )
-    .expect("startup recovery reads");
-    assert!(
-        diagnostics.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&diagnostics)
-    );
-    assert_eq!(
-        lanes
-            .messages()
-            .into_iter()
-            .map(|(_, body)| body.text)
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from([
-            "recovered from second".to_owned(),
-            "recovered from sender".to_owned(),
-        ]),
-        "each lane's unpublished packet is recovered"
-    );
-    lanes.finish();
-}
-
 /// Partial delivery and grammar refusal retain the background-only path.
 #[test]
 fn partial_and_grammar_refusals_open_no_author_directive() {

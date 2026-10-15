@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io;
 use std::ops::{ControlFlow, Range};
-use std::time::{Duration, Instant as Clock};
+use std::time::Duration;
 
 use steer::ack::scan::{Audience, Request, Route, Verb};
 use wire::rooms::{
@@ -69,7 +69,8 @@ const RECOVERY_WINDOW_BYTES: u64 = 64 * 1024 * 1024;
 const RECOVERY_SOURCE_BYTES: u64 = RECOVERY_WINDOW_BYTES + 64 * 1024 * 1024;
 const RECOVERY_RECORDS: usize = 4096;
 const RECOVERY_PASSES: usize = 4096;
-/// Shared by every lane one startup recovery reads.
+/// Each lane's own wall-time allowance; its tail scan measures it from that
+/// scan's start, so no lane spends another's.
 const RECOVERY_DURATION: Duration = Duration::from_secs(1);
 
 /// Bytes of header and detail one private refusal notice repeats, so the
@@ -280,17 +281,6 @@ pub(in crate::resident) fn publish_at_startup(
     config: &steer::Config,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    publish_at_startup_with_clock(bus, paths, epoch, config, diagnostic, Clock::now)
-}
-
-pub(in crate::resident) fn publish_at_startup_with_clock(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    config: &steer::Config,
-    diagnostic: &mut dyn io::Write,
-    mut now: impl FnMut() -> Clock,
-) -> CommandResult<()> {
     let residency = current_residency(bus, epoch)?;
     let view = bus
         .task_snapshot()
@@ -303,9 +293,9 @@ pub(in crate::resident) fn publish_at_startup_with_clock(
         else {
             continue;
         };
-        if let Err(detail) = recover_lane(
-            bus, paths, epoch, config, &view, row, session, &mut now, diagnostic,
-        ) {
+        if let Err(detail) =
+            recover_lane(bus, paths, epoch, config, &view, row, session, diagnostic)
+        {
             let _ = writeln!(
                 diagnostic,
                 "lane {} MSG recovery incomplete: {detail}",
@@ -328,7 +318,6 @@ fn recover_lane(
     view: &bus::TaskSnapshot,
     row: &wire::LaneResidency,
     session: &wire::LaneSession,
-    now: &mut impl FnMut() -> Clock,
     diagnostic: &mut dyn io::Write,
 ) -> Result<(), String> {
     // An occupant with no birth on its lane authors nothing publishable.
@@ -347,14 +336,12 @@ fn recover_lane(
     let Some(vendor) = registry.vendor(row.vendor.as_str()) else {
         return Ok(());
     };
-    let deadline = now() + RECOVERY_DURATION;
-    let remaining = deadline.saturating_duration_since(now());
     let budget = listen::TailBudget::new(
         RECOVERY_WINDOW_BYTES,
         RECOVERY_SOURCE_BYTES,
         RECOVERY_RECORDS,
         RECOVERY_PASSES,
-        remaining,
+        RECOVERY_DURATION,
     )
     .map_err(|error| error.to_string())?;
     let declared = (session.locus.member, session.locus.offset);
