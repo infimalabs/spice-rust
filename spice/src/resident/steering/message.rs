@@ -271,7 +271,8 @@ fn publish_record(
 ///
 /// Recovery runs before this resident seats any new occupant, so a packet a
 /// crash left unjudged resolves against no occupant born after the previous
-/// resident stopped.
+/// resident stopped. Each lane owns a fresh wall-time allowance; work on one
+/// tape never spends another tape's scan budget.
 pub(in crate::resident) fn publish_at_startup(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -279,11 +280,21 @@ pub(in crate::resident) fn publish_at_startup(
     config: &steer::Config,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
+    publish_at_startup_with_clock(bus, paths, epoch, config, diagnostic, Clock::now)
+}
+
+pub(in crate::resident) fn publish_at_startup_with_clock(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    config: &steer::Config,
+    diagnostic: &mut dyn io::Write,
+    mut now: impl FnMut() -> Clock,
+) -> CommandResult<()> {
     let residency = current_residency(bus, epoch)?;
     let view = bus
         .task_snapshot()
         .map_err(|error| store_fault("steer::residency-unreadable", &error.to_string()))?;
-    let deadline = Clock::now() + RECOVERY_DURATION;
     for row in &residency.body().lanes {
         let Some(session) = row
             .session
@@ -293,7 +304,7 @@ pub(in crate::resident) fn publish_at_startup(
             continue;
         };
         if let Err(detail) = recover_lane(
-            bus, paths, epoch, config, &view, row, session, deadline, diagnostic,
+            bus, paths, epoch, config, &view, row, session, &mut now, diagnostic,
         ) {
             let _ = writeln!(
                 diagnostic,
@@ -317,7 +328,7 @@ fn recover_lane(
     view: &bus::TaskSnapshot,
     row: &wire::LaneResidency,
     session: &wire::LaneSession,
-    deadline: Clock,
+    now: &mut impl FnMut() -> Clock,
     diagnostic: &mut dyn io::Write,
 ) -> Result<(), String> {
     // An occupant with no birth on its lane authors nothing publishable.
@@ -336,7 +347,8 @@ fn recover_lane(
     let Some(vendor) = registry.vendor(row.vendor.as_str()) else {
         return Ok(());
     };
-    let remaining = deadline.saturating_duration_since(Clock::now());
+    let deadline = now() + RECOVERY_DURATION;
+    let remaining = deadline.saturating_duration_since(now());
     let budget = listen::TailBudget::new(
         RECOVERY_WINDOW_BYTES,
         RECOVERY_SOURCE_BYTES,
