@@ -924,13 +924,18 @@ fn render_agent_markdown<'m>(
     )
     .expect("message media passed admission before browser rendering");
     let rendered = if is_prose {
+        let card = crate::composer_markdown::QuoteSource {
+            card_id: Some(agent_message_source_id(message)),
+            display_millis: crate::runtime::agent_message_display_millis(message),
+            agent: None,
+        };
         crate::composer_markdown::render_prose_card_with_media_quotes(
             &shown.markdown,
             &shown.classifications,
             &shown.directives,
             &shown.sends,
             &message.quotes,
-            crate::composer_markdown::QuoteRenderContext::new(quote_agents, quote_sources),
+            crate::composer_markdown::QuoteRenderContext::new(quote_agents, quote_sources, &card),
             &message.media_quotes,
         )
     } else {

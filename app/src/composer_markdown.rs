@@ -106,16 +106,26 @@ impl QuoteSource {
 
 pub(crate) type QuoteSources = BTreeMap<String, QuoteSource>;
 
-/// Borrowed identity and source authority used while presenting quotes.
+/// Borrowed identity and source authority used while presenting quotes, and
+/// the presented card's own source.
 #[derive(Clone, Copy)]
 pub(crate) struct QuoteRenderContext<'a> {
     agents: &'a QuoteAgents,
     sources: &'a QuoteSources,
+    card: &'a QuoteSource,
 }
 
 impl<'a> QuoteRenderContext<'a> {
-    pub(crate) const fn new(agents: &'a QuoteAgents, sources: &'a QuoteSources) -> Self {
-        Self { agents, sources }
+    pub(crate) const fn new(
+        agents: &'a QuoteAgents,
+        sources: &'a QuoteSources,
+        card: &'a QuoteSource,
+    ) -> Self {
+        Self {
+            agents,
+            sources,
+            card,
+        }
     }
 }
 
@@ -382,6 +392,14 @@ pub(crate) fn render_received_with_media_quotes(
     )
 }
 
+/// The source a test prose card stands for when its own age is not at issue.
+#[cfg(test)]
+const PROSE_CARD_FIXTURE: QuoteSource = QuoteSource {
+    card_id: None,
+    display_millis: 0,
+    agent: None,
+};
+
 /// Render one assistant prose card: received text as
 /// [`render_received_with_quotes`] renders it, except that terminal prose gains
 /// a period when unpunctuated and presents a terminal colon as a period, the
@@ -403,7 +421,7 @@ pub(crate) fn render_prose_card(
         directives,
         sends,
         quotes,
-        QuoteRenderContext::new(quote_agents, quote_sources),
+        QuoteRenderContext::new(quote_agents, quote_sources, &PROSE_CARD_FIXTURE),
         &[],
     )
 }
@@ -427,7 +445,9 @@ pub(crate) fn render_prose_card_with_media_quotes(
         quote_context.agents,
         quote_context.sources,
         media_quotes,
-        Finish::ProseCard,
+        Finish::ProseCard {
+            card: quote_context.card,
+        },
     )
 }
 
@@ -461,8 +481,9 @@ fn render_quote_card_body(
 enum Finish<'r> {
     /// Received text as written.
     Received,
-    /// Assistant prose split into attributed hunks around every quote.
-    ProseCard,
+    /// Assistant prose split into attributed hunks around every quote, led
+    /// where it sent an MSG by `card`, its own source.
+    ProseCard { card: &'r QuoteSource },
     /// A quote card split into hunks attributed to its authenticated source.
     QuoteCard {
         attribution: image_flow::Attribution,
@@ -497,23 +518,27 @@ fn render(
     let math = math::normalize(markdown, classifications, directives, sends, OPTIONS);
     let markdown = math.markdown;
     let mut media_quotes = media_quotes::Matcher::new(media_quotes, &math.directives);
+    let card = match &finish {
+        Finish::ProseCard { card } => Some(*card),
+        Finish::Received | Finish::QuoteCard { .. } | Finish::TaskText { .. } => None,
+    };
     let (events, outer_quotes) = parse_events(
         &markdown,
-        OPTIONS,
         math.classifications,
         math.directives,
         math.sends,
         quote_agents,
         quote_sources,
+        card,
     );
     let events = coalesce_text_events(events);
     let quote_depth = match &finish {
         Finish::QuoteCard { quote_depth, .. } => *quote_depth,
-        Finish::Received | Finish::ProseCard | Finish::TaskText { .. } => 0,
+        Finish::Received | Finish::ProseCard { .. } | Finish::TaskText { .. } => 0,
     };
     let resolves: &dyn Fn(&wire::TaskHandle) -> bool = match &finish {
         Finish::TaskText { resolves } => *resolves,
-        Finish::Received | Finish::ProseCard | Finish::QuoteCard { .. } => &|_| true,
+        Finish::Received | Finish::ProseCard { .. } | Finish::QuoteCard { .. } => &|_| true,
     };
     let heading = matches!(finish, Finish::TaskText { .. }).then_some(TASK_TEXT_HEADING);
     let events = quotes::expand(events, quotes, quote_agents, quote_sources, quote_depth);
@@ -526,7 +551,7 @@ fn render(
         decorate_markdown_images(events, image_only && !has_diagrams, &mut media_quotes);
     let attribution = match finish {
         Finish::Received | Finish::TaskText { .. } => None,
-        Finish::ProseCard => {
+        Finish::ProseCard { .. } => {
             terminal::period(&mut events);
             Some(image_flow::Attribution {
                 controls_target: String::new(),
@@ -604,14 +629,15 @@ struct OuterQuote {
 
 /// Parse sanitized Markdown, inline each exact classification as its pill, and
 /// record every outermost directive context's and sent MSG's hunk attribution.
+/// `card` is the prose card whose age leads each MSG it sent.
 fn parse_events<'m>(
     markdown: &'m str,
-    options: Options,
     classifications: Vec<MessageClassification>,
     directives: Vec<MessageDirective>,
     sends: Vec<MessageSend>,
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
+    card: Option<&QuoteSource>,
 ) -> (Vec<MarkdownEvent<'m>>, Vec<OuterQuote>) {
     let mut remaining = classifications
         .into_iter()
@@ -632,7 +658,7 @@ fn parse_events<'m>(
     let mut skipped_marker = None;
     let mut code_block = false;
     let mut events = Vec::new();
-    for (event, source) in Parser::new_ext(markdown, options).into_offset_iter() {
+    for (event, source) in Parser::new_ext(markdown, OPTIONS).into_offset_iter() {
         match &event {
             MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
             MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
@@ -651,7 +677,7 @@ fn parse_events<'m>(
                                 },
                                 |delivery| quotes::delivery_accent(delivery, quote_agents),
                             ),
-                            attribution: Some(directive_attribution(
+                            attribution: Some(quotes::directive_attribution(
                                 &context,
                                 quote_agents,
                                 quote_sources,
@@ -660,7 +686,7 @@ fn parse_events<'m>(
                     } else if let Some(send) = sends.remove(&source.start) {
                         OuterQuote {
                             accent: quotes::send_accent(&send, quote_agents),
-                            attribution: Some(send_attribution(&send, quote_agents)),
+                            attribution: Some(quotes::send_attribution(&send, quote_agents, card)),
                         }
                     } else {
                         OuterQuote {
@@ -736,81 +762,6 @@ fn context_author(context: &MessageDirective) -> wire::QuoteAuthor {
             actor: actor.clone(),
         },
     }
-}
-
-/// A sent MSG's body reads as the card author's own words, so its hunks keep
-/// the containing message's controls under an outgoing sender-to-recipient
-/// lead.
-fn send_attribution(send: &MessageSend, quote_agents: &QuoteAgents) -> image_flow::Attribution {
-    image_flow::Attribution {
-        controls_target: String::new(),
-        signoff: quotes::send_signoff_html(send, quote_agents),
-        disposition: String::new(),
-        badge: String::new(),
-        task_tail: quotes::send_contexts_html(send),
-    }
-}
-
-fn directive_attribution(
-    context: &MessageDirective,
-    quote_agents: &QuoteAgents,
-    quote_sources: &QuoteSources,
-) -> image_flow::Attribution {
-    let target = context.quote_target.to_string();
-    image_flow::Attribution {
-        controls_target: target.clone(),
-        signoff: quotes::directive_signoff_html(context, &target, quote_agents, quote_sources),
-        disposition: String::new(),
-        badge: directive_badges_html(context),
-        task_tail: quotes::task_tail_html(&target),
-    }
-}
-
-/// The quoted directive's classification, then the kind of the MSG, ASK, or
-/// ANS packet that delivered it, in the card head's own pill group.
-fn directive_badges_html(context: &MessageDirective) -> String {
-    let mut badges = context.badge.map_or_else(String::new, directive_badge_html);
-    badges.push_str(&packet_group_html(context.packet, context.result.as_ref()));
-    badges
-}
-
-/// The pill group naming the MSG, ASK, or ANS packet that delivered a quoted
-/// directive; empty when no packet delivered it or an MSG wears none.
-fn packet_group_html(
-    packet: Option<wire::MessageSendKind>,
-    result: Option<&wire::rooms::QuestionResultRef>,
-) -> String {
-    let pill = packet.map_or_else(String::new, |kind| quotes::packet_kind_html(kind, result));
-    if pill.is_empty() {
-        return pill;
-    }
-    format!(
-        "<span class=\"message-classification-group\" role=\"group\" \
-         aria-label=\"Packet kind\">{pill}</span>"
-    )
-}
-
-/// The quoted directive's own kind, where its source marker once stood.
-fn directive_badge_html(badge: wire::DirectiveBadge) -> String {
-    let (class, classification, label, text) = match badge {
-        wire::DirectiveBadge::Review => (
-            "message-review-pill",
-            "review",
-            "Review classification",
-            "REVIEW",
-        ),
-        wire::DirectiveBadge::Taste => (
-            "message-taste-pill",
-            "taste",
-            "Taste classification",
-            "TASTE",
-        ),
-    };
-    format!(
-        "<span class=\"message-classification-group\" role=\"group\" \
-         aria-label=\"Directive classification\"><span class=\"{class}\" \
-         data-message-classification=\"{classification}\" aria-label=\"{label}\">{text}</span></span>"
-    )
 }
 
 fn coalesce_text_events(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>> {
