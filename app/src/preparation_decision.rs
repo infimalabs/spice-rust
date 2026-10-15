@@ -1,6 +1,6 @@
-//! One operator decision over one immutable retained proposal version: choose
-//! an exact output subset, return it with a reason, or collapse its Design with
-//! a reason; preview the effect at current heads; then submit exactly once.
+//! One operator decision over one immutable retained proposal version: record
+//! an accept-or-reject verdict and optional comment for every output, or
+//! collapse its Design with a reason; preview the effect; then submit once.
 //!
 //! The draft never changes rendered authority. A successful command answer
 //! only reports that the write landed; proposal standing moves when the
@@ -10,19 +10,17 @@ use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 
 use wire::intent::{BoardTask, TextAnswer};
 use wire::rooms::{
-    CandidateRef, DecisionOutcome, DecisionRef, PreparationDecide, PreparationDecision,
-    ProposalRef, RetainedCandidate, RoomSource,
+    CandidateRef, DecisionOutcome, DecisionRef, OutputDecision, OutputVerdict, PreparationDecide,
+    PreparationDecision, ProposalRef, RetainedCandidate, RoomSource,
 };
 use wire::{Seq, SequenceCode, TaskStamp, Witness};
 
 /// The operator's chosen disposition.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DecisionChoice {
-    /// Release one exact nonempty output subset.
+    /// Resolve every candidate output independently.
     #[default]
     Selected,
-    /// Return this version for another preparation pass.
-    Returned,
     /// Collapse the Design because this version's premise did not hold.
     Collapse,
 }
@@ -54,7 +52,9 @@ pub enum DraftNotice {
 pub struct DecisionDraft {
     candidate: CandidateRef,
     choice: DecisionChoice,
-    selected: BTreeSet<TaskStamp>,
+    accepted: BTreeSet<TaskStamp>,
+    rejected: BTreeSet<TaskStamp>,
+    output_comments: BTreeMap<TaskStamp, String>,
     reason: String,
     phase: DraftPhase,
     notice: Option<DraftNotice>,
@@ -116,7 +116,9 @@ impl DecisionDraft {
         Self {
             candidate,
             choice: DecisionChoice::Selected,
-            selected: BTreeSet::new(),
+            accepted: BTreeSet::new(),
+            rejected: BTreeSet::new(),
+            output_comments: BTreeMap::new(),
             reason: String::new(),
             phase: DraftPhase::Editing,
             notice: None,
@@ -134,8 +136,19 @@ impl DecisionDraft {
     }
 
     #[must_use]
-    pub fn selected(&self, output: &TaskStamp) -> bool {
-        self.selected.contains(output)
+    pub fn verdict(&self, output: &TaskStamp) -> Option<OutputVerdict> {
+        if self.accepted.contains(output) {
+            Some(OutputVerdict::Accepted)
+        } else if self.rejected.contains(output) {
+            Some(OutputVerdict::Rejected)
+        } else {
+            None
+        }
+    }
+
+    #[must_use]
+    pub fn output_comment(&self, output: &TaskStamp) -> &str {
+        self.output_comments.get(output).map_or("", String::as_str)
     }
 
     #[must_use]
@@ -162,20 +175,27 @@ impl DecisionDraft {
         self.edit(|draft| draft.choice = choice);
     }
 
-    pub fn toggle_output(&mut self, output: TaskStamp) {
-        self.edit(|draft| {
-            if !draft.selected.remove(&output) {
-                draft.selected.insert(output);
+    pub fn set_output_verdict(&mut self, output: TaskStamp, verdict: OutputVerdict) {
+        self.edit(|draft| match verdict {
+            OutputVerdict::Accepted => {
+                draft.rejected.remove(&output);
+                draft.accepted.insert(output);
             }
+            OutputVerdict::Rejected => {
+                draft.accepted.remove(&output);
+                draft.rejected.insert(output);
+            }
+        });
+    }
+
+    pub fn set_output_comment(&mut self, output: TaskStamp, comment: String) {
+        self.edit(|draft| {
+            draft.output_comments.insert(output, comment);
         });
     }
 
     pub fn set_reason(&mut self, reason: String) {
         self.edit(|draft| draft.reason = reason);
-    }
-
-    pub fn revise(&mut self) {
-        self.edit(|_| {});
     }
 
     /// Preview against the exact candidate fact and current board heads.
@@ -216,6 +236,12 @@ impl DecisionDraft {
         self.phase = DraftPhase::Pending(submission.clone());
         self.notice = None;
         Some(submission)
+    }
+
+    /// Leave preview mode without changing the drafted verdicts or comments.
+    #[cfg(target_arch = "wasm32")]
+    pub fn revise(&mut self) {
+        self.edit(|_| {});
     }
 
     /// Settle only an in-flight request. Success leaves standing to committed
@@ -294,60 +320,59 @@ impl DecisionDraft {
         match self.choice {
             DecisionChoice::Selected => {
                 if self
-                    .selected
+                    .accepted
                     .iter()
+                    .chain(&self.rejected)
                     .any(|output| !candidate.outputs.contains(output))
                 {
                     return Err(
-                        "preparation::selection-foreign-output: select only outputs in this proposal version"
+                        "preparation::decision-foreign-output: decide only outputs in this proposal version"
                             .to_owned(),
                     );
                 }
-                let selected_outputs = candidate
+                let outputs = candidate
                     .outputs
                     .iter()
-                    .filter(|output| self.selected.contains(*output))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if selected_outputs.is_empty() {
+                    .map(|output| {
+                        let verdict = self.verdict(output).ok_or_else(|| {
+                            format!(
+                                "preparation::output-undecided: accept or reject output {output}"
+                            )
+                        })?;
+                        let comment = trimmed(self.output_comment(output));
+                        Ok(OutputDecision {
+                            output: output.clone(),
+                            verdict,
+                            comment,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                Ok(DecisionOutcome::Resolved {
+                    candidate: candidate.candidate.clone(),
+                    outputs,
+                    comment: trimmed(&self.reason),
+                })
+            }
+            DecisionChoice::Collapse => {
+                let reason = self.reason.trim();
+                if reason.is_empty() {
                     return Err(
-                        "preparation::selection-empty: select at least one output to release"
+                        "preparation::collapse-reason-empty: state why the Design premise did not hold"
                             .to_owned(),
                     );
                 }
-                Ok(DecisionOutcome::Selected {
+                Ok(DecisionOutcome::Collapse {
                     candidate: candidate.candidate.clone(),
-                    selected_outputs,
-                })
-            }
-            DecisionChoice::Returned | DecisionChoice::Collapse => {
-                let reason = self.reason.trim();
-                if reason.is_empty() {
-                    return Err(match self.choice {
-                        DecisionChoice::Returned => {
-                            "preparation::return-reason-empty: state what another proposal must change"
-                        }
-                        DecisionChoice::Collapse => {
-                            "preparation::collapse-reason-empty: state why the Design premise did not hold"
-                        }
-                        DecisionChoice::Selected => unreachable!(),
-                    }
-                    .to_owned());
-                }
-                Ok(match self.choice {
-                    DecisionChoice::Returned => DecisionOutcome::Returned {
-                        candidate: candidate.candidate.clone(),
-                        reason: reason.to_owned(),
-                    },
-                    DecisionChoice::Collapse => DecisionOutcome::Collapse {
-                        candidate: candidate.candidate.clone(),
-                        reason: reason.to_owned(),
-                    },
-                    DecisionChoice::Selected => unreachable!(),
+                    reason: reason.to_owned(),
                 })
             }
         }
     }
+}
+
+fn trimmed(text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
 fn decision_witnesses(
@@ -371,12 +396,9 @@ fn decision_witnesses(
         },
         head: Some(candidate_position),
     });
-    let DecisionOutcome::Selected {
-        selected_outputs, ..
-    } = outcome
-    else {
+    if outcome.accepted_outputs().next().is_none() {
         return Ok(expected);
-    };
+    }
     for input in &candidate.governed_inputs {
         expected.push(statement_witness(find_task(tasks, input).ok_or_else(
             || {
@@ -386,9 +408,9 @@ fn decision_witnesses(
             },
         )?));
     }
-    for output in selected_outputs {
+    for output in outcome.accepted_outputs() {
         let task = find_task(tasks, output).ok_or_else(|| {
-            format!("preparation::output-unavailable: selected output {output} is not on the board")
+            format!("preparation::output-unavailable: accepted output {output} is not on the board")
         })?;
         expected.extend(transition_witnesses(task));
         expected.push(Witness::Authorization {

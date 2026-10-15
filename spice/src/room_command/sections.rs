@@ -11,7 +11,9 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use serde::Serialize;
-use wire::rooms::{DecisionOutcome, PreparationDecided, RoomAuthorityStamp, RoomContributionKind};
+use wire::rooms::{
+    DecisionOutcome, OutputVerdict, PreparationDecided, RoomAuthorityStamp, RoomContributionKind,
+};
 use wire::{Actor, Instant, Seq, SequenceCode, TaskHandle, TaskStamp};
 
 use super::{Content, Failure, Publication, fault, store};
@@ -150,6 +152,27 @@ impl fmt::Display for Decisions {
                 DecisionOutcome::Returned { candidate, reason } => {
                     write!(formatter, "returned candidate {}", candidate.candidate)?;
                     write_reason(formatter, reason)?;
+                }
+                DecisionOutcome::Resolved {
+                    candidate,
+                    outputs,
+                    comment,
+                } => {
+                    write!(formatter, "resolved candidate {}", candidate.candidate)?;
+                    for output in outputs {
+                        let verdict = match output.verdict {
+                            OutputVerdict::Accepted => "accepted",
+                            OutputVerdict::Rejected => "rejected",
+                        };
+                        write!(formatter, "\n  {verdict} output {}", output.output)?;
+                        if let Some(comment) = &output.comment {
+                            write_reason(formatter, comment)?;
+                        }
+                    }
+                    if let Some(comment) = comment {
+                        write!(formatter, "\n  overall")?;
+                        write_reason(formatter, comment)?;
+                    }
                 }
                 DecisionOutcome::Collapse { candidate, reason } => {
                     write!(formatter, "collapsed on candidate {}", candidate.candidate)?;

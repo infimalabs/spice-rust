@@ -165,6 +165,16 @@ impl Authority for Stored<'_> {
             .transpose()
     }
 
+    fn candidate_decided(&self, candidate: &wire::rooms::CandidateRef) -> Result<bool, Refusal> {
+        self.exists(
+            "SELECT 1 FROM proposal_heads \
+             WHERE controller = ?1 \
+             AND json_extract(CAST(body AS TEXT), '$.outcome.candidate.candidate') = ?2 \
+             LIMIT 1",
+            params![candidate.controller.as_str(), candidate.candidate.as_str()],
+        )
+    }
+
     fn output_authorized(&self, output: &str) -> Result<bool, Refusal> {
         self.exists(
             "SELECT 1 FROM authorization_heads WHERE output = ?1",
@@ -177,28 +187,6 @@ impl Authority for Stored<'_> {
             "SELECT 1 FROM authorization_heads WHERE decision = ?1 LIMIT 1",
             [decision],
         )
-    }
-
-    fn candidate_decided(
-        &self,
-        controller: &str,
-        candidate: &wire::rooms::CandidateRef,
-    ) -> Result<bool, Refusal> {
-        let mut statement = self.connection.prepare(
-            "SELECT heads.body FROM proposal_heads AS heads \
-             JOIN fact_envelopes AS facts ON facts.seq = heads.head_seq \
-             WHERE heads.controller = ?1 AND facts.kind = ?2",
-        )?;
-        let mut rows = statement.query(params![
-            controller,
-            wire::FactKind::PreparationDecided.as_str()
-        ])?;
-        while let Some(row) = rows.next()? {
-            if super::decides(&row.get::<_, Vec<u8>>(0)?, candidate)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
 
     fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal> {

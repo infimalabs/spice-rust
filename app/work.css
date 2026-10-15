@@ -924,6 +924,25 @@
   align-items: baseline;
   gap: 6px;
 }
+.room-approval-output-title,
+.room-output-verdict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+.room-output-decision {
+  display: grid;
+  grid-template-columns: auto minmax(12rem, 1fr);
+  gap: 6px 12px;
+  margin-top: 6px;
+}
+.room-output-comment { display: grid; gap: 4px; min-width: 0; }
+.room-output-comment input { width: 100%; min-width: 0; box-sizing: border-box; }
+
+@media (max-width: 560px) {
+  .room-output-decision { grid-template-columns: minmax(0, 1fr); }
+}
 
 .room-approval-outputs label > span,
 .room-approval-acceptance,

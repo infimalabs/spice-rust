@@ -1,18 +1,17 @@
-//! The operator's newest return decision as an active Design's next input.
+//! The operator's newest candidate feedback as an active Design's next input.
 //!
-//! A return records why the operator sent one exact candidate version back.
-//! Each active Design (open and standing in a working group) whose claim an
-//! occupied lane holds is owed its newest return until that exact occupant's
-//! supervisor confirms enqueue and the resident commits `room::relayed` for
-//! the still-current claim. Failed or stale attempts remain owed. A holder
-//! present at the return hears it, a Design returned while unheld is told to
-//! its next claimant, a passive Design wakes and tells no one until a later
-//! group entry leads to a claim, and a completed delivery survives restart.
-//! Only the newest return is input; older ones stay history.
-
-use std::collections::{BTreeMap, BTreeSet};
+//! Legacy returns and output-by-output decisions record what the operator sent
+//! back or accepted on one exact candidate version. Each active Design (open
+//! and standing in a working group) whose claim an occupied lane holds is owed
+//! its newest feedback until that exact occupant's supervisor confirms enqueue
+//! and the resident commits `room::relayed` for the still-current claim.
+//! Failed or stale attempts remain owed. A holder present at the decision hears
+//! it; an unheld Design tells its next claimant. Completed delivery survives
+//! restart. Only the newest feedback is input; older decisions stay history.
 
 use super::*;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use wire::CanonicalUuid;
 use wire::rooms::{
     DecisionOutcome, DecisionRef, DesignReturnDelivered, PreparationDecided, PreparationDecision,
@@ -60,20 +59,18 @@ pub(crate) fn owed_returns(
         {
             continue;
         }
-        let Some((seq, decision)) = newest_return(bus, &statement.born)? else {
+        let Some((seq, decision, candidate, reason)) = newest_feedback(bus, &statement.born)?
+        else {
             continue;
         };
         since = Some(since.map_or(seq, |since| since.min(seq)));
-        let DecisionOutcome::Returned { candidate, reason } = decision.outcome else {
-            unreachable!("newest_return yields only returns");
-        };
         owed.push(ReturnOwed {
             lane: claim.lane,
             occupant: *occupant,
             claim: claim.claimed,
             design: TaskHandle::for_project(&statement.project, &statement.born),
             decision: decision.decision,
-            candidate: candidate.candidate,
+            candidate,
             reason,
         });
     }
@@ -116,13 +113,13 @@ pub(crate) fn record_return(bus: &Bus, owed: &ReturnOwed) -> Result<(), Outcome<
     }
 }
 
-/// `design`'s newest return decision and its position, if any, read
-/// newest-first so the work stops at that return instead of walking the
-/// Design's whole decision history.
-fn newest_return(
+/// `design`'s newest decision carrying holder input and its position, read
+/// newest-first so the work stops there instead of walking all history.
+fn newest_feedback(
     bus: &Bus,
     design: &TaskStamp,
-) -> Result<Option<(Seq, PreparationDecision)>, Outcome<CommandAnswer>> {
+) -> Result<Option<(Seq, PreparationDecision, RoomAuthorityStamp, String)>, Outcome<CommandAnswer>>
+{
     let design = design.clone();
     bus.read(move |read| {
         let mut before = None;
@@ -133,10 +130,11 @@ fn newest_return(
                 journal::FactReadBudget::RETAINED,
             )?;
             for envelope in page.rows {
-                if let Some(decided) = envelope.fact.read::<PreparationDecided>()
-                    && matches!(decided.decision.outcome, DecisionOutcome::Returned { .. })
-                {
-                    return Ok(Some((envelope.seq, decided.decision)));
+                if let Some(decided) = envelope.fact.read::<PreparationDecided>() {
+                    let decision = decided.decision;
+                    if let Some((candidate, feedback)) = feedback(&decision.outcome) {
+                        return Ok(Some((envelope.seq, decision, candidate, feedback)));
+                    }
                 }
             }
             match page.continuation {
@@ -146,6 +144,39 @@ fn newest_return(
         }
     })
     .map_err(|error| store_fault("room::return-unreadable", &error.to_string()))
+}
+
+fn feedback(outcome: &DecisionOutcome) -> Option<(RoomAuthorityStamp, String)> {
+    match outcome {
+        DecisionOutcome::Returned { candidate, reason } => {
+            Some((candidate.candidate.clone(), reason.clone()))
+        }
+        DecisionOutcome::Resolved {
+            candidate,
+            outputs,
+            comment,
+        } if outcome.carries_feedback() => {
+            let mut text = String::new();
+            for output in outputs {
+                let verdict = match output.verdict {
+                    wire::rooms::OutputVerdict::Accepted => "accepted",
+                    wire::rooms::OutputVerdict::Rejected => "rejected",
+                };
+                let _ = write!(text, "{verdict} output {}", output.output);
+                if let Some(comment) = &output.comment {
+                    let _ = write!(text, ": {comment}");
+                }
+                text.push('\n');
+            }
+            if let Some(comment) = comment {
+                let _ = write!(text, "overall: {comment}");
+            } else {
+                text.pop();
+            }
+            Some((candidate.candidate.clone(), text))
+        }
+        _ => None,
+    }
 }
 
 /// Every return decision already delivered at or after `since`.

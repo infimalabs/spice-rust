@@ -96,12 +96,15 @@ task handles instead.
   the reviewer authority itself.
 - **`decide DECISION_JSON`.** `decision` (`{"controller": STAMP, "decision":
   SEQUENCE}`), `source`, and one outcome over an exact candidate under that
-  controller: `{"kind": "selected", "candidate": …, "selected_outputs": […]}`,
-  `{"kind": "returned", "candidate": …, "reason": TEXT}`, or
-  `{"kind": "collapse", "candidate": …, "reason": TEXT}`. A selected subset is
-  nonempty and unique; return and collapse reasons are nonblank. A collapse
-  concludes the Design as `task conclude --collapse REASON` would, refusing a
-  held Design with `task::conclude-claimed`.
+  controller. Current writes use `{"kind": "resolved", "candidate": …,
+  "outputs": [{"output": STAMP, "verdict": "accepted"|"rejected", "comment":
+  TEXT?}, …], "comment": TEXT?}` and name every candidate output exactly once.
+  Comments are optional but nonblank when present. Exactly the accepted outputs
+  receive execution authorization; rejecting all outputs authorizes nothing.
+  `{"kind": "collapse", "candidate": …, "reason": TEXT}` concludes the Design
+  as `task conclude --collapse REASON` would, refusing a held Design with
+  `task::conclude-claimed`. Historical `selected` and `returned` outcomes
+  remain readable.
 - **`withdraw WITHDRAWAL_JSON`.** `candidate` (`{"controller": STAMP,
   "candidate": STAMP}`) names the author's own undecided candidate and
   `reason` is nonblank, such as which version corrects it.
