@@ -317,12 +317,12 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 }
 .app-presence-pip.queued { --app-presence-color: var(--warning); }
 .app-presence-pip.waiting {
-  --app-presence-color: var(--muted);
+  --app-presence-color: var(--app-anchor-muted);
   --app-presence-opacity: .7;
 }
 .app-presence-pip.bound,
 .app-presence-pip.unbound {
-  --app-presence-color: var(--muted);
+  --app-presence-color: var(--app-anchor-muted);
   --app-presence-opacity: .35;
 }
 .app-presence-pip--member {
@@ -346,7 +346,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .group-design-pip.unselected { --app-presence-color: var(--warning); }
 .group-design-pip:is(.done, .collapsed, .deleted, .unavailable) { --app-presence-color: var(--muted); --app-presence-opacity: .35; box-shadow: none; }
 .group-surface .ticker-age.unselected { color: var(--warning); }
-.group-surface .ticker-age:is(.done, .collapsed, .deleted, .unavailable) { color: var(--muted); opacity: .7; }
+.group-surface .ticker-age:is(.done, .collapsed, .deleted, .unavailable) { color: var(--app-anchor-muted); opacity: .7; }
 /* The rail mirrors the Design globals: the total closes it and the lanes
    working the group stack toward the start beside it. */
 .group-surface > .team-toolbar > .team-task-rail { grid-template-columns: minmax(0, 1fr) var(--app-total-tab-inline-size); }

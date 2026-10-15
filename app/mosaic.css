@@ -558,7 +558,7 @@ path.image-annotation-hit { fill: none; }
   opacity: var(--inactive-lane-opacity);
 }
 .team-surface .ticker-age { display: inline-block; width: 3ch; color: var(--app-semantic-live); text-align: right; }
-.team-surface .ticker-age.queued { color: var(--warning); } .team-surface .ticker-age.bound, .team-surface .ticker-age.unbound { color: var(--muted); opacity: .7; }
+.team-surface .ticker-age.queued { color: var(--warning); } .team-surface .ticker-age.bound, .team-surface .ticker-age.unbound { color: var(--app-anchor-muted); opacity: .7; }
 .team-surface .ticker-prefix { color: color-mix(in srgb, var(--accent-slot, var(--muted)) 70%, var(--ink)); font-weight: 700; }
 .team-pane {
   position: relative;
@@ -760,7 +760,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .composer-shard-age.queued { color: var(--warning); }
 .composer-shard-age.bound,
 .composer-shard-age.unbound {
-  color: var(--muted);
+  color: var(--app-anchor-muted);
   opacity: .7;
 }
 /* Edge-to-edge cover crops fill the heading band from the trailing control
