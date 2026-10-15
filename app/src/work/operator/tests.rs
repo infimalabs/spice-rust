@@ -14,7 +14,7 @@ fn queued(queue: &OperatorQueue<'_>) -> Vec<usize> {
 }
 
 #[test]
-fn every_task_waiting_on_the_operator_appears_once_in_board_order() {
+fn only_execution_walls_wait_in_the_operator_danger_queue() {
     let mut claimed_design = task(1, "queue.design");
     claimed_design.claim = Some(claim(&claimed_design, ClaimDisposition::Active));
     let mut deferred_design = task(2, "queue.design");
@@ -49,24 +49,24 @@ fn every_task_waiting_on_the_operator_appears_once_in_board_order() {
     let work = WorkProjection::from_board(&board);
     let queue = OperatorQueue::new(&work);
 
-    assert_eq!(queued(&queue), [0, 1, 2, 5]);
+    assert_eq!(queued(&queue), [2, 5]);
     let waits = queue.waits();
-    assert!(
-        waits[0].selection() && waits[1].selection(),
-        "a Design awaiting selection waits on the operator whatever its standing or claim"
-    );
-    assert!(waits[2].environment());
+    assert!(waits[0].environment());
     assert_eq!(
-        waits[2].holds(),
+        waits[0].holds(),
         [3, 4],
         "a held task reached directly and through another wall is one wait"
     );
     assert!(
-        !waits[3].environment(),
+        !waits[1].environment(),
         "set-aside work waits on nothing for its own sake"
     );
-    assert_eq!(waits[3].wall(), Some(DependencyWall::Deferred(&stamp(6))));
-    assert_eq!(waits[3].holds(), [6]);
+    assert_eq!(waits[1].wall(), Some(DependencyWall::Deferred(&stamp(6))));
+    assert_eq!(waits[1].holds(), [6]);
+    assert!(
+        !queued(&queue).contains(&0) && !queued(&queue).contains(&1),
+        "selection stays visible through Work without entering the red danger queue"
+    );
 }
 
 #[test]
@@ -74,9 +74,11 @@ fn next_steps_through_the_queue_in_order_and_wraps() {
     let mut first = task(1, "queue.next");
     first.statement.body.requirements = upgrade();
     let ready = task(2, "queue.next");
-    let second = task(3, "queue.next");
-    let mut board = board(vec![first, ready, second]);
-    board.awaiting_selection.insert(stamp(3));
+    let mut second = task(3, "queue.next");
+    second.statement.body.requirements = upgrade();
+    let selection = task(4, "queue.next");
+    let mut board = board(vec![first, ready, second, selection]);
+    board.awaiting_selection.insert(stamp(4));
     let work = WorkProjection::from_board(&board);
     let queue = OperatorQueue::new(&work);
 

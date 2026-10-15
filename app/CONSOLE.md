@@ -182,6 +182,15 @@ button. Its title and accessible name then lead with that blocked count. The
 dot is out of flow, so marking or clearing a tab never moves its box, badge,
 label, or focus ring; local team and group strips carry no mark.
 
+The resident classifies each closed allocation gate once as blocked execution
+trouble, neutral workflow waiting, or awaiting Design selection. Dependency
+graphs, detail standings, counts, operator attention, and tab marks consume that
+same partition. A healthy Plan sequence and work waiting under an open Plan or
+Design use the neutral Waiting treatment; a Design waiting for output selection
+uses Awaiting selection. Neither creates a danger dot or the red Needs attention
+band. Only a dependency or controller wall with no advancing workflow path is
+Blocked and danger-coloured.
+
 Each global stem tab opens its complete visibility-qualified stem within its
 own partition. A local strip has no stem roll-ups: past its total, a team strip
 gives each actively worked task its own tab in the projection's deterministic

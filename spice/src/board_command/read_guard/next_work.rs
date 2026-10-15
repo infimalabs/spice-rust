@@ -81,6 +81,7 @@ pub(super) fn read_next_work(
                 &satisfied,
                 &origin_threads,
                 &actor_route(&principal, residency.body())?,
+                &environment,
             ),
             team: subscription.policy,
         }
@@ -109,6 +110,7 @@ pub(super) fn read_next_work(
         tasks: Vec::new(),
         offer: Vec::new(),
         blocked: Vec::new(),
+        workflow_waiting: Vec::new(),
         awaiting_selection: Vec::new(),
         origins: Default::default(),
         history: None,
@@ -253,6 +255,7 @@ fn dry_counts(
     satisfied: &board::ResolvedTasks,
     origin_threads: &[String],
     route: &wire::intent::BoardActorRoute,
+    environment: &wire::Environment,
 ) -> NextWorkCounts {
     let visible = entries
         .iter()
@@ -263,7 +266,9 @@ fn dry_counts(
         active: 0,
         stale: 0,
         blocked: 0,
-        waiting: 0,
+        workflow_waiting: 0,
+        selection: 0,
+        deferred: 0,
         oops: entries
             .iter()
             .filter(|entry| {
@@ -274,22 +279,28 @@ fn dry_counts(
             })
             .count(),
     };
+    let waits = board::work_waits(entries, environment);
     for entry in visible.filter(|entry| {
         entry.is_filed()
             && entry.workflow().status == "pending"
             && entry.workflow().completion.is_none()
-            && !satisfied.speculative_design_work(entry.statement())
     }) {
+        match waits.get(entry.born()) {
+            Some(board::WorkWait::Blocked) => counts.blocked += 1,
+            Some(board::WorkWait::Workflow) => counts.workflow_waiting += 1,
+            Some(board::WorkWait::Selection) => counts.selection += 1,
+            None => {}
+        }
+        if satisfied.speculative_design_work(entry.statement()) {
+            continue;
+        }
         match entry.claim().map(|claim| claim.disposition) {
             Some(ClaimDisposition::Active) => counts.active += 1,
             Some(ClaimDisposition::Lapsed) => counts.stale += 1,
             _ => {}
         }
-        if !board::dependencies_satisfied(entry, satisfied) {
-            counts.blocked += 1;
-        }
         if entry.workflow().deferral.is_some() {
-            counts.waiting += 1;
+            counts.deferred += 1;
         }
     }
     counts

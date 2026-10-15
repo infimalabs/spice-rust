@@ -114,6 +114,7 @@ pub(crate) fn board(tasks: Vec<BoardTask>) -> BoardView {
         room_anchors: Vec::new(),
         offer: Vec::new(),
         blocked: std::collections::BTreeSet::new(),
+        workflow_waiting: std::collections::BTreeSet::new(),
         awaiting_selection: std::collections::BTreeSet::new(),
         quote_tasks: std::rc::Rc::default(),
         environment: Environment::journal_schema(1).expect("fixture schema"),
@@ -184,6 +185,8 @@ fn lifecycle_precedence_follows_task_status_standings() {
     held.statement.body.requirements = upgrade();
 
     let ready = task(8, "alpha.lifecycle");
+    let workflow_waiting = task(9, "alpha.lifecycle");
+    let selection = task(10, "alpha.lifecycle");
     let mut board = board(vec![
         terminal,
         in_flight,
@@ -193,9 +196,14 @@ fn lifecycle_precedence_follows_task_status_standings() {
         held_review,
         held,
         ready,
+        workflow_waiting,
+        selection,
     ]);
-    // The resident's gate holds back the stale, deferred, and gated rows.
-    board.blocked.extend([3, 4, 5].map(stamp));
+    // Distinct lifecycle evidence always wins if a malformed snapshot also
+    // repeats those rows in the generic blocker set.
+    board.blocked.extend([3, 4, 5, 9, 10].map(stamp));
+    board.workflow_waiting.insert(stamp(9));
+    board.awaiting_selection.insert(stamp(10));
     let projection = WorkProjection::from_board(&board);
 
     assert_eq!(
@@ -213,6 +221,8 @@ fn lifecycle_precedence_follows_task_status_standings() {
             WorkAvailability::Review,
             WorkAvailability::Held,
             WorkAvailability::Ready,
+            WorkAvailability::Waiting,
+            WorkAvailability::Selection,
         ]
     );
     let counts = projection.counts();
@@ -224,7 +234,7 @@ fn lifecycle_precedence_follows_task_status_standings() {
             counts.blocked(),
             counts.waiting(),
         ],
-        [1, 1, 1, 1, 2],
+        [1, 1, 1, 1, 4],
         "each open category counts exactly its own rows"
     );
     assert_eq!(projection.tasks[0].working_claimant(), None);

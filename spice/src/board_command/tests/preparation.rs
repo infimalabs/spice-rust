@@ -95,7 +95,7 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
     let _coverage = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
     authorize_test_output(&bus, epoch, &controller, &output, &spare, candidate);
     assert_eq!(
-        open_blocked(&bus, epoch),
+        open_workflow_waiting(&bus, epoch),
         [spare.born().expect("spare output stamp")].into(),
         "the authorized controller releases only its selected output"
     );
@@ -187,9 +187,9 @@ fn operator_selection_releases_outputs_and_leaves_a_held_design_open() {
         retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
     record_test_critique(&bus, epoch, &seats, &controller, &candidate, &source);
     let _coverage = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
-    assert_eq!(
-        open_awaiting_selection(&bus, epoch),
-        [controller.born().expect("controller stamp")].into()
+    assert!(
+        open_awaiting_selection(&bus, epoch).is_empty(),
+        "the active claim retains its in-flight standing"
     );
 
     authorize_test_output(&bus, epoch, &controller, &output, &spare, candidate);
@@ -202,16 +202,15 @@ fn operator_selection_releases_outputs_and_leaves_a_held_design_open() {
         ),
         "selection never takes a Design from its holder"
     );
-    let blocked = open_blocked(&bus, epoch);
+    let gated = open_gated(&bus, epoch);
     assert!(
-        !blocked.contains(&output.born().expect("output stamp")),
+        !gated.contains(&output.born().expect("output stamp")),
         "the selected output runs while its Design stays open"
     );
-    assert!(blocked.contains(&spare.born().expect("spare stamp")));
-    assert_eq!(
-        open_awaiting_selection(&bus, epoch),
-        [controller.born().expect("controller stamp")].into(),
-        "the unselected spare still waits on the operator"
+    assert!(gated.contains(&spare.born().expect("spare stamp")));
+    assert!(
+        open_awaiting_selection(&bus, epoch).is_empty(),
+        "the held Design remains in flight while its spare waits neutrally"
     );
     clean(&root, bus);
 }
@@ -1072,6 +1071,7 @@ fn a_design_awaiting_selection_waits_on_the_operator_until_its_outputs_settle() 
         wire::TaskIntent::Design,
         None,
     );
+    group_design(&bus, epoch, &design);
     let lane = Actor::Lane(seats[0].lane);
 
     // An open Design with an unselected output waits on the operator: no lane
@@ -1164,7 +1164,10 @@ fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
     );
     let task = add_output(&bus, epoch, &plan, "Constructed task");
     let task_stamp = task.born().expect("task stamp");
-    assert_eq!(open_blocked(&bus, epoch), [task_stamp.clone()].into());
+    assert_eq!(
+        open_workflow_waiting(&bus, epoch),
+        [task_stamp.clone()].into()
+    );
 
     let current = board(&bus, epoch, Actor::Lane(seats[0].lane));
     let candidate = CandidateRef {
@@ -1231,7 +1234,7 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
             .collect::<std::collections::BTreeSet<_>>()
     };
     assert_eq!(
-        open_blocked(&bus, epoch),
+        open_workflow_waiting(&bus, epoch),
         stamps(&[&selected, &sibling]),
         "a Design's Plans wait for its selection"
     );
@@ -1241,7 +1244,7 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
     authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
     assert_eq!(
-        open_blocked(&bus, epoch),
+        open_workflow_waiting(&bus, epoch),
         stamps(&[&sibling]),
         "the unselected sibling Plan stays gated"
     );
@@ -1250,7 +1253,7 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     claim_task(&bus, epoch, &seats[0], &planner, &selected);
     let task = add_output(&bus, epoch, &selected, "Selected plan task");
     assert_eq!(
-        open_blocked(&bus, epoch),
+        open_workflow_waiting(&bus, epoch),
         stamps(&[&sibling, &task]),
         "the selected Plan holds its task until its own review"
     );
@@ -1263,7 +1266,7 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
         None
     );
     assert_eq!(
-        open_blocked(&bus, epoch),
+        open_workflow_waiting(&bus, epoch),
         stamps(&[&sibling]),
         "the selected Plan's clean review releases its task without another selection"
     );

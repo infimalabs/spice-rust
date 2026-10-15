@@ -203,7 +203,7 @@ fn quota_level(runtime: Option<&AppRuntime>) -> Option<QuotaLevel<'_>> {
     })
 }
 
-/// One neutral open-task count badge shared by global and team-local roll-ups.
+/// One neutral open-task count badge shared by global and local roll-ups.
 pub(in crate::browser) fn render_task_count(counts: WorkCounts) -> Html {
     html! {
         <span class="app-count-badge">{counts.open().to_string()}</span>
@@ -213,7 +213,7 @@ pub(in crate::browser) fn render_task_count(counts: WorkCounts) -> Html {
 /// Every open category a Work count title names, in task status's terms.
 fn count_breakdown(counts: WorkCounts) -> String {
     format!(
-        "{} ready, {} review, {} active or in flight, {} stale, {} blocked, {} held, deferred, or parked",
+        "{} ready, {} review, {} active or in flight, {} stale, {} blocked, {} waiting or set aside",
         counts.ready(),
         counts.review(),
         counts.in_flight(),
@@ -223,15 +223,21 @@ fn count_breakdown(counts: WorkCounts) -> String {
     )
 }
 
-/// Whether a global tab marks blocked work: exactly when the partition it
-/// opens counts a blocked task, the same count its title names.
-fn blocked_mark(counts: WorkCounts) -> Option<&'static str> {
+/// Whether a Work tab marks blocked work: exactly when the partition it opens
+/// counts blocked execution trouble.
+pub(in crate::browser) fn blocked_mark(counts: WorkCounts) -> Option<&'static str> {
     (counts.blocked() > 0).then_some("true")
 }
 
-/// A global tab's title and accessible name, led by its blocked count when it
+/// A Work tab's title and accessible name, led by its blocked count when it
 /// carries the mark, so the state never rests on the dot alone.
-fn lead_with_blocked(counts: WorkCounts, title: String) -> String {
+pub(in crate::browser) fn task_count_title(label: &str, counts: WorkCounts) -> String {
+    let open = counts.open();
+    let title = format!(
+        "{label}: {open} {}; {}",
+        if open == 1 { "task" } else { "tasks" },
+        count_breakdown(counts),
+    );
     match counts.blocked() {
         0 => title,
         blocked => format!("{blocked} blocked; {title}"),
@@ -366,16 +372,10 @@ fn render_aggregate_pill(
     navigate: &Callback<navigation::Intent>,
     rail: GlobalWorkRail,
 ) -> Html {
-    let open = counts.open();
-    let title = lead_with_blocked(
-        counts,
-        format!(
-            "{}: {open} {}; {}{}",
-            rail.aggregate_title(),
-            if open == 1 { "task" } else { "tasks" },
-            count_breakdown(counts),
-            designs.map(DesignSplit::title).unwrap_or_default(),
-        ),
+    let title = format!(
+        "{}{}",
+        task_count_title(rail.aggregate_title(), counts),
+        designs.map(DesignSplit::title).unwrap_or_default(),
     );
     let focus_key = rail.focus_prefix();
     let scope = rail.scope();
@@ -410,13 +410,10 @@ fn render_stem_pill(
     let counts = group.counts();
     let scope = rail.stem_scope(identity.clone());
     let focus_key = format!("{}:{identity}", rail.focus_prefix());
-    let title = lead_with_blocked(
-        counts,
-        format!(
-            "{identity}: {}{}",
-            count_breakdown(counts),
-            designs.map(DesignSplit::title).unwrap_or_default(),
-        ),
+    let title = format!(
+        "{}{}",
+        task_count_title(&identity.to_string(), counts),
+        designs.map(DesignSplit::title).unwrap_or_default(),
     );
     let navigate = navigate.clone();
     let label = html! { <span class="app-horn-tab__label">{identity.stem().to_owned()}</span> };

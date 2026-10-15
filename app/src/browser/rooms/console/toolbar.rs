@@ -84,11 +84,7 @@ fn render_total(
     channels: &[Channel],
     counts: WorkCounts,
 ) -> Html {
-    let open = counts.open();
-    let title = format!(
-        "Open work active in this group: {open} {}",
-        if open == 1 { "task" } else { "tasks" }
-    );
+    let title = view::chrome::task_count_title("Open work active in this group", counts);
     let open_group = {
         let navigate = render.navigate.clone();
         let scope = scope(view, channels);
@@ -99,6 +95,7 @@ fn render_total(
             key="group-total"
             class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
             data-work-scope="group"
+            data-blocked={view::chrome::blocked_mark(counts)}
         >
             <button
                 class="app-horn-tab__target"
@@ -106,6 +103,7 @@ fn render_total(
                 title={title.clone()}
                 aria-label={title}
                 data-sidebar-focus-key={format!("group-work:{}:all", view.group)}
+                data-blocked={view::chrome::blocked_mark(counts)}
                 onclick={open_group}
             >
                 {view::chrome::render_task_count(counts)}

@@ -72,7 +72,9 @@ fn next_read_classifies_peer_only_parked_work_without_board_rows() {
             active: 1,
             stale: 1,
             blocked: 1,
-            waiting: 1,
+            workflow_waiting: 0,
+            selection: 0,
+            deferred: 1,
             oops: 1,
         }
     );
@@ -162,14 +164,24 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
             active: 0,
             stale: 0,
             blocked: 1,
-            waiting: 0,
+            workflow_waiting: 1,
+            selection: 0,
+            deferred: 0,
             oops: 0,
         },
         "the Design and its unauthorized output stay on Design surfaces"
     );
     let status =
         task_status(&board(&bus, epoch, Actor::Lane(seats[0].lane))).expect("task status renders");
-    for summary in ["active 0", "ready 1", "review 0", "blocked 1", "waiting 0"] {
+    for summary in [
+        "active 0",
+        "ready 1",
+        "review 0",
+        "selection 0",
+        "blocked 1",
+        "waiting 1",
+        "deferred 0",
+    ] {
         assert!(
             status.lines().any(|line| line == summary),
             "{summary:?} is absent from:\n{status}"
@@ -438,7 +450,9 @@ fn next_read_returns_each_authoritative_team_policy() {
                 active: 0,
                 stale: 0,
                 blocked: 0,
-                waiting: 0,
+                workflow_waiting: 0,
+                selection: 0,
+                deferred: 0,
                 oops: 0,
             }
         );

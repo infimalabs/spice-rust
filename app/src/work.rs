@@ -52,6 +52,9 @@ pub enum WorkAvailability {
     /// Open and unclaimed, held back by the allocator's prerequisite and
     /// controller gate.
     Blocked,
+    /// Open and unclaimed, following normal Plan/Design control or a
+    /// prerequisite chain that still reaches advancing work.
+    Waiting,
     /// Open and unclaimed, a Design outside every working group: no lane can
     /// acquire it until the operator moves it into one.
     Passive,
@@ -83,6 +86,7 @@ impl WorkAvailability {
             Self::Review => "review",
             Self::Stale => "stale",
             Self::Blocked => "blocked",
+            Self::Waiting => "waiting",
             Self::Passive => "passive",
             Self::Selection => "selection",
             Self::Held => "held",
@@ -246,6 +250,7 @@ pub struct WorkCounts {
     review: usize,
     stale: usize,
     blocked: usize,
+    workflow_waiting: usize,
     passive: usize,
     selection: usize,
     held: usize,
@@ -262,6 +267,7 @@ impl WorkCounts {
             WorkAvailability::Review => self.review += 1,
             WorkAvailability::Stale => self.stale += 1,
             WorkAvailability::Blocked => self.blocked += 1,
+            WorkAvailability::Waiting => self.workflow_waiting += 1,
             WorkAvailability::Passive => self.passive += 1,
             WorkAvailability::Selection => self.selection += 1,
             WorkAvailability::Held => self.held += 1,
@@ -295,6 +301,10 @@ impl WorkCounts {
     pub const fn blocked(self) -> usize {
         self.blocked
     }
+    #[must_use]
+    pub const fn workflow_waiting(self) -> usize {
+        self.workflow_waiting
+    }
 
     /// Open Designs outside every working group.
     #[must_use]
@@ -312,12 +322,17 @@ impl WorkCounts {
         self.terminal
     }
 
-    /// Open work no agent is offered until the operator acts: environment
-    /// held, a passive Design, awaiting a Design selection, deferred, or
-    /// parked in a hidden project.
+    /// Open work no agent is offered until its workflow or the operator moves:
+    /// neutral Plan/Design sequencing, environment holds, a passive Design,
+    /// selection, deferral, or hidden parked work.
     #[must_use]
     pub const fn waiting(self) -> usize {
-        self.held + self.passive + self.selection + self.deferred + self.parked
+        self.workflow_waiting
+            + self.held
+            + self.passive
+            + self.selection
+            + self.deferred
+            + self.parked
     }
     #[must_use]
     pub const fn open(self) -> usize {
@@ -688,17 +703,20 @@ impl<'a> WorkProjection<'a> {
     }
 
     /// One scope's open tasks in strip order: in-flight, ready, review,
-    /// stale, blocked, passive, selection, held, deferred, then parked, with
-    /// each availability retaining resident offer order.
+    /// stale, blocked, neutral workflow waiting, passive, selection, held,
+    /// deferred, then parked, with each availability retaining resident offer
+    /// order.
     #[must_use]
     pub fn scope_strip<'p>(&'p self, scope: &WorkScope) -> Vec<&'p WorkTask<'a>> {
         use WorkAvailability::{
             Blocked, Deferred, Held, InFlight, Parked, Passive, Ready, Review, Selection, Stale,
+            Waiting,
         };
 
         let mut strip = Vec::new();
         for availability in [
-            InFlight, Ready, Review, Stale, Blocked, Passive, Selection, Held, Deferred, Parked,
+            InFlight, Ready, Review, Stale, Blocked, Waiting, Passive, Selection, Held, Deferred,
+            Parked,
         ] {
             strip.extend(
                 self.offered
@@ -1068,12 +1086,11 @@ fn stem_key(task: &BoardTask) -> StemKey<'_> {
     }
 }
 
-/// Task status's standing precedence: possession, then a Design's passivity,
-/// then deferral, then the allocator's prerequisite and controller gate, then
-/// a Design's wait for the operator's selection, then the review phase, then
-/// the environment. The resident judges the gate and the selection wait over
-/// terminal evidence the open board does not carry, and the allocator never
-/// offers a hidden row.
+/// Task status's standing precedence: possession and distinct set-aside
+/// states, then the resident-owned selection/workflow/blocker partition, then
+/// review and environment readiness. The resident judges closed gates over
+/// terminal evidence the open board does not carry; this surface only consumes
+/// that answer, and the allocator never offers a hidden row.
 fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> WorkAvailability {
     let workflow = &task.workflow.body;
     if workflow.status != "pending" || workflow.completion.is_some() {
@@ -1097,10 +1114,12 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
     }
     if workflow.deferral.is_some() {
         WorkAvailability::Deferred
-    } else if board.blocked.contains(&task.statement.body.born) {
-        WorkAvailability::Blocked
     } else if board.awaiting_selection.contains(&task.statement.body.born) {
         WorkAvailability::Selection
+    } else if board.workflow_waiting.contains(&task.statement.body.born) {
+        WorkAvailability::Waiting
+    } else if board.blocked.contains(&task.statement.body.born) {
+        WorkAvailability::Blocked
     } else if workflow.phase.as_str() == "review" {
         WorkAvailability::Review
     } else if environment_blocked {

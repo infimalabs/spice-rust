@@ -67,8 +67,8 @@ fn closing_a_selected_plan_settles_its_unreviewed_work_and_collapse_leaves_it_to
     } = selected_plan_with_task("preparation-selected-plan-close");
     let task_stamp = task.born().expect("task stamp");
     assert!(
-        open_blocked(&bus, epoch).contains(&task_stamp),
-        "the Design's selection does not release work its Plan has not reviewed"
+        open_workflow_waiting(&bus, epoch).contains(&task_stamp),
+        "the task waits neutrally for its Plan's review"
     );
 
     let CommandAnswer::Task(collapsed) = assert_committed(issue(
@@ -91,7 +91,7 @@ fn closing_a_selected_plan_settles_its_unreviewed_work_and_collapse_leaves_it_to
         vec![sibling],
         "collapse leaves the selected Plan's work to that Plan"
     );
-    assert!(open_blocked(&bus, epoch).contains(&task_stamp));
+    assert!(open_workflow_waiting(&bus, epoch).contains(&task_stamp));
     assert!(
         at(&board(&bus, epoch, Actor::Operator), &task)
             .stranded

@@ -1210,14 +1210,14 @@ pub(in crate::board_command) fn task_status(
         .copied()
         .filter(|entry| !satisfied.speculative_design_work(entry.statement()))
         .collect::<Vec<_>>();
-    let parked = ParkedCounts::measure(&entries, &satisfied, &execution_rows);
+    let parked = ParkedCounts::measure(board, &entries, &execution_rows, &rows);
     let review = execution_rows
         .iter()
         .copied()
         .filter(|entry| {
             entry.workflow().phase.as_str() == "review"
                 && !active(entry)
-                && !board::awaits_selection(entry, &satisfied)
+                && !board.awaiting_selection.contains(entry.born())
         })
         .count();
     let status = environment_status(&execution_rows, &environment);
@@ -1255,7 +1255,8 @@ pub(in crate::board_command) fn task_status(
         "claim {claim}\ntaste-review {taste_review}\nactor {}\nfilter {}\n\
          public task project depth {}..{} dotted segments\n\
          active {active}\nready {ready}\n\
-         review {review}\nblocked {blocked}\nwaiting {waiting}\n\
+         review {review}\nselection {selection}\nblocked {blocked}\n\
+         waiting {workflow_waiting}\ndeferred {deferred}\n\
          environment journal-schema required={} observed={} \
          trust-grant required={} \
          appliance-version after={} observed={} \
@@ -1273,8 +1274,10 @@ pub(in crate::board_command) fn task_status(
         status.satisfied,
         status.blocked,
         active = parked.active,
+        selection = parked.selection,
         blocked = parked.blocked,
-        waiting = parked.waiting,
+        workflow_waiting = parked.workflow_waiting,
+        deferred = parked.deferred,
         stale = parked.stale,
         oops = parked.oops,
         drafts = actor_drafts(board, &entries),

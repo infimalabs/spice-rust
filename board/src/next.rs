@@ -208,6 +208,200 @@ pub fn unselected_output_of<'a>(
 pub fn awaits_selection(entry: &Entry, satisfied: &ResolvedTasks) -> bool {
     satisfied.awaits_selection(entry.statement(), entry.workflow())
 }
+/// Why one open task's allocation gate is closed.
+///
+/// Possession, deferral, environmental holds, passive Designs, hidden filing,
+/// and stale claims are separate standings and therefore do not appear here.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkWait {
+    /// An unresolved gate has no route through current open work.
+    Blocked,
+    /// The task follows normal Plan/Design control or an advancing prerequisite.
+    Workflow,
+    /// An open Design waits for the operator to select one of its outputs.
+    Selection,
+}
+
+/// Classify every open allocator gate from one exact task generation.
+///
+/// This is presentation evidence only: allocation continues to use
+/// [`dependencies_satisfied`]. A Plan-constructed dependency sequence is a
+/// normal workflow wait only when every unresolved edge reaches active, ready,
+/// review, selection, or another normal wait. Ordinary dependency gates,
+/// missing authority, cycles, and distinct parked states terminate the chain
+/// as blocked execution trouble.
+#[must_use]
+pub fn work_waits<'a>(
+    entries: &'a [Entry],
+    environment: &wire::Environment,
+) -> BTreeMap<&'a TaskStamp, WorkWait> {
+    let resolved = resolved_tasks(entries);
+    let index = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.born(), index))
+        .collect::<BTreeMap<_, _>>();
+    let mut states = vec![Progress::Unknown; entries.len()];
+    for task in 0..entries.len() {
+        progress(task, entries, &index, &resolved, environment, &mut states);
+    }
+    entries
+        .iter()
+        .zip(states)
+        .filter_map(|(entry, state)| {
+            let wait = match state {
+                Progress::Neutral => WorkWait::Workflow,
+                Progress::Blocked => WorkWait::Blocked,
+                Progress::Selection => WorkWait::Selection,
+                Progress::Unknown | Progress::Visiting | Progress::Moving | Progress::Distinct => {
+                    return None;
+                }
+            };
+            Some((entry.born(), wait))
+        })
+        .collect()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Progress {
+    Unknown,
+    Visiting,
+    Moving,
+    Neutral,
+    Blocked,
+    Selection,
+    Distinct,
+}
+
+fn progress(
+    task: usize,
+    entries: &[Entry],
+    index: &BTreeMap<&TaskStamp, usize>,
+    resolved: &ResolvedTasks,
+    environment: &wire::Environment,
+    states: &mut [Progress],
+) -> Progress {
+    match states[task] {
+        Progress::Unknown => {}
+        known => return known,
+    }
+    let entry = &entries[task];
+    let workflow = entry.workflow();
+    if workflow.status != "pending" || workflow.completion.is_some() {
+        states[task] = Progress::Distinct;
+        return Progress::Distinct;
+    }
+    if !environment_satisfied(entry, environment) {
+        states[task] = Progress::Distinct;
+        return Progress::Distinct;
+    }
+    if entry
+        .claim()
+        .is_some_and(|claim| claim.disposition == ClaimDisposition::Active)
+    {
+        states[task] = Progress::Moving;
+        return Progress::Moving;
+    }
+    if entry.is_oops()
+        || !entry.is_filed()
+        || entry.project().visibility().is_hidden()
+        || workflow.deferral.is_some()
+        || passive_design(entry)
+        || entry
+            .claim()
+            .is_some_and(|claim| claim.disposition == ClaimDisposition::Lapsed)
+    {
+        states[task] = Progress::Distinct;
+        return Progress::Distinct;
+    }
+    if awaits_selection(entry, resolved) {
+        states[task] = Progress::Selection;
+        return Progress::Selection;
+    }
+    if dependencies_satisfied(entry, resolved) {
+        states[task] = Progress::Moving;
+        return Progress::Moving;
+    }
+
+    states[task] = Progress::Visiting;
+    let control_wait = !control_satisfied(
+        entry.statement(),
+        gather_task(entry.statement(), entry.workflow()),
+        resolved,
+    );
+    let normal_control = control_wait && normal_control_wait(entry, entries, index);
+    if control_wait && !normal_control {
+        states[task] = Progress::Blocked;
+        return Progress::Blocked;
+    }
+    let unresolved_dependencies = entry
+        .statement()
+        .dependencies
+        .iter()
+        .filter(|dependency| !resolved.settled(dependency));
+    if !entry.statement().dependencies.is_empty()
+        && !normal_control
+        && !plan_constructed(entry, entries, index)
+    {
+        states[task] = Progress::Blocked;
+        return Progress::Blocked;
+    }
+    for dependency in unresolved_dependencies {
+        let Some(dependency) = index.get(dependency).copied() else {
+            states[task] = Progress::Blocked;
+            return Progress::Blocked;
+        };
+        if !matches!(
+            progress(dependency, entries, index, resolved, environment, states),
+            Progress::Moving | Progress::Neutral | Progress::Selection
+        ) {
+            states[task] = Progress::Blocked;
+            return Progress::Blocked;
+        }
+    }
+    states[task] = Progress::Neutral;
+    Progress::Neutral
+}
+
+fn plan_constructed(entry: &Entry, entries: &[Entry], index: &BTreeMap<&TaskStamp, usize>) -> bool {
+    let Some(preparation) = &entry.statement().preparation else {
+        return false;
+    };
+    preparation.construction == entry.statement().born
+        && index
+            .get(&preparation.parent)
+            .is_some_and(|parent| entries[*parent].statement().intent == Some(TaskIntent::Plan))
+}
+
+fn normal_control_wait(
+    entry: &Entry,
+    entries: &[Entry],
+    index: &BTreeMap<&TaskStamp, usize>,
+) -> bool {
+    let Some(preparation) = &entry.statement().preparation else {
+        return false;
+    };
+    if preparation.construction != entry.statement().born
+        || gather_task(entry.statement(), entry.workflow())
+    {
+        return false;
+    }
+    let planning_open = |task: &TaskStamp| {
+        let task = index.get(task).map(|index| &entries[*index]);
+        task.is_some_and(|task| {
+            matches!(
+                task.statement().intent,
+                Some(TaskIntent::Plan | TaskIntent::Design)
+            ) && task.workflow().status == "pending"
+                && task.workflow().completion.is_none()
+        })
+    };
+    let parent_open = planning_open(&preparation.parent);
+    let parent_is_plan = index
+        .get(&preparation.parent)
+        .is_some_and(|parent| entries[*parent].statement().intent == Some(TaskIntent::Plan));
+    parent_open && (parent_is_plan || planning_open(&preparation.controller))
+}
 
 /// Deterministic answer from the board's sole allocation query.
 #[derive(Clone, Copy, Debug)]

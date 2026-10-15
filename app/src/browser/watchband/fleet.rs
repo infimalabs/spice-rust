@@ -316,11 +316,7 @@ fn render_team_total(
         .iter()
         .map(|task| task.availability())
         .collect::<WorkCounts>();
-    let open = counts.open();
-    let title = format!(
-        "Open work active on this team: {open} {}",
-        if open == 1 { "task" } else { "tasks" }
-    );
+    let title = view::chrome::task_count_title("Open work active on this team", counts);
     let navigate = navigate.clone();
     let open_team = Callback::from(move |_| {
         navigate.emit(navigation::Intent::Work(WorkScope::Team { team }));
@@ -330,6 +326,7 @@ fn render_team_total(
             key="team-total"
             class="app-horn-tab app-horn-tab--up app-horn-tab--wide app-horn-tab--group"
             data-work-scope="team"
+            data-blocked={view::chrome::blocked_mark(counts)}
         >
             <button
                 class="app-horn-tab__target"
@@ -337,6 +334,7 @@ fn render_team_total(
                 title={title.clone()}
                 aria-label={title}
                 data-sidebar-focus-key={format!("team-work:{team}:all")}
+                data-blocked={view::chrome::blocked_mark(counts)}
                 onclick={open_team}
             >
                 {view::chrome::render_task_count(counts)}

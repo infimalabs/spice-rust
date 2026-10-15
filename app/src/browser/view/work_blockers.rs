@@ -261,9 +261,6 @@ impl<'view, 'board> BlockerPresentation<'view, 'board> {
                 <div class="work-blocker-list">
                     {for requirements.into_iter().flatten()
                         .map(|requirement| render_requirement(statement, requirement, runtime, can_grant, grant))}
-                    if wait.selection() {
-                        {render_wall(DependencyWall::Selection(&statement.born))}
-                    }
                     if let Some(wall) = wait.wall() {
                         {render_wall(wall)}
                     }
