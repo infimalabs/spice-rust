@@ -188,6 +188,16 @@ pub struct RoomContributed {
     pub lane: CanonicalUuid,
     /// What the contribution offers.
     pub contribution: RoomContributionKind,
+    /// Design statement head already guarded by contribution admission.
+    ///
+    /// Historical contributions predate this attribution and decode into the
+    /// maturity projection's explicit unrecorded-head bucket.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub statement: Option<crate::Seq>,
     /// The lane's complete contributed text.
     pub text: String,
     /// Exact sources cited, in the author's order.
@@ -258,11 +268,12 @@ impl RoomContributed {
         answer: &crate::intent::RoomContributeAnswer,
     ) -> bool {
         let mut tasks = expected.iter().filter_map(|witness| match witness {
-            crate::Witness::Task { task, .. } => Some(task),
+            crate::Witness::Task { task, head } => Some((task, *head)),
             _ => None,
         });
-        let task_matches =
-            tasks.next().is_some_and(|task| task == &self.room) && tasks.next().is_none();
+        let task_matches = tasks.next().is_some_and(|(task, head)| {
+            task == &self.room && self.statement.is_none_or(|statement| statement == head)
+        }) && tasks.next().is_none();
         let mut workflows = expected.iter().filter_map(|witness| match witness {
             crate::Witness::Workflow { task, .. } => Some(task),
             _ => None,

@@ -357,6 +357,8 @@ pub struct RoomProjection {
     relevance: BTreeMap<RoomAuthorityStamp, RoomPositioned<Relevance>>,
     /// Every Design notice, keyed by the position that recorded it.
     invitations: BTreeMap<Seq, RoomPositioned<authority::DesignNoticed>>,
+    /// Bounded maturity evidence incrementally folded per Design.
+    maturity: BTreeMap<TaskStamp, authority::DesignMaturity>,
 }
 
 impl Default for RoomProjection {
@@ -380,6 +382,7 @@ impl Default for RoomProjection {
             shelved: BTreeMap::new(),
             relevance: BTreeMap::new(),
             invitations: BTreeMap::new(),
+            maturity: BTreeMap::new(),
         }
     }
 }
@@ -400,6 +403,20 @@ impl RoomProjection {
     /// One durable task room, when any timeline authority exists for it.
     pub fn room(&self, room: &TaskStamp) -> Option<&RoomState> {
         self.rooms.get(room)
+    }
+    /// One Design's bounded advisory maturity evidence.
+    #[must_use]
+    pub fn maturity(&self, design: &TaskStamp) -> Option<&authority::DesignMaturity> {
+        self.maturity.get(design)
+    }
+
+    /// Designs whose contribution evidence has crossed the advisory maturity
+    /// threshold. This is operator attention input only; it changes no task or
+    /// room standing.
+    pub fn maturity_attention(&self) -> impl Iterator<Item = &TaskStamp> {
+        self.maturity.iter().filter_map(|(design, maturity)| {
+            matches!(maturity.state(), authority::DesignMaturityState::Steeped).then_some(design)
+        })
     }
 
     /// Preparation, decision, and authorization authority.
@@ -698,6 +715,10 @@ impl RoomProjection {
             FactKind::RoomContributed => Some(
                 fact.read::<authority::RoomContributed>()
                     .is_some_and(|body| {
+                        self.maturity
+                            .entry(body.room.clone())
+                            .or_default()
+                            .observe_contribution(&body);
                         self.insert_event(
                             body.room,
                             body.publication,

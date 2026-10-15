@@ -37,8 +37,30 @@ fn contributed(
             publication: publication.clone(),
             lane: uuid(lane),
             contribution,
+            statement: None,
             text: format!("{} at {position}", contribution.as_str()),
             sources,
+        },
+    )
+}
+fn attributed(
+    position: u64,
+    statement: u64,
+    publication: &RoomAuthorityStamp,
+    lane: &str,
+    contribution: RoomContributionKind,
+) -> serde_json::Value {
+    envelope(
+        position,
+        "room::contributed",
+        &RoomContributed {
+            room: room(),
+            publication: publication.clone(),
+            lane: uuid(lane),
+            contribution,
+            statement: wire::Seq::new(statement),
+            text: format!("{} at {position}", contribution.as_str()),
+            sources: Vec::new(),
         },
     )
 }
@@ -382,12 +404,21 @@ fn a_lane_session_resolves_its_shown_designs_contribution_sources() {
 }
 
 fn noticed(position: u64, design: &wire::TaskStamp, lane: &str) -> serde_json::Value {
+    noticed_at(position, position, design, lane)
+}
+
+fn noticed_at(
+    position: u64,
+    statement: u64,
+    design: &wire::TaskStamp,
+    lane: &str,
+) -> serde_json::Value {
     envelope(
         position,
         "room::noticed",
         &DesignNoticed {
             design: design.clone(),
-            statement: wire::Seq::new(position).expect("fixture statement"),
+            statement: wire::Seq::new(statement).expect("fixture statement"),
             provenance: wire::rooms::DesignNoticeProvenance::Organic,
             lane: uuid(lane),
             occupant: uuid(REQUEST),
@@ -482,5 +513,41 @@ fn invitations_show_a_lanes_notices_for_open_designs_newest_first() {
     assert!(
         shown(&runtime, LANE).is_empty(),
         "a settled Design invites no contribution"
+    );
+}
+
+#[test]
+fn maturity_projection_is_incremental_bounded_and_attention_only() {
+    const THIRD: &str = "33333333-3333-4333-8333-333333333333";
+    let session = session(OPERATOR, EPOCH);
+    let [first, second, third, ..] = stamps();
+    let snapshot = [
+        noticed_at(1, 10, &room(), LANE),
+        noticed_at(2, 10, &room(), SECOND_LANE),
+        noticed_at(3, 10, &room(), THIRD),
+        attributed(4, 10, &first, LANE, RoomContributionKind::ReasonFor),
+        attributed(
+            5,
+            10,
+            &second,
+            SECOND_LANE,
+            RoomContributionKind::ReasonAgainst,
+        ),
+        attributed(6, 10, &third, THIRD, RoomContributionKind::Evidence),
+    ];
+    let runtime = contribution_runtime(&session, &snapshot);
+    let projection = runtime.room_projection();
+    let maturity = projection.maturity(&room()).expect("maturity projects");
+
+    assert_eq!(maturity.state(), wire::rooms::DesignMaturityState::Steeped);
+    assert_eq!(maturity.recent_heads.len(), 1);
+    assert_eq!(maturity.recent_heads[0].invited_contributors(), 3);
+    assert_eq!(
+        projection.maturity_attention().cloned().collect::<Vec<_>>(),
+        vec![room()]
+    );
+    assert!(
+        projection.room(&room()).is_some(),
+        "attention evidence does not alter ordinary room standing"
     );
 }

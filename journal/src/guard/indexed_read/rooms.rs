@@ -908,6 +908,107 @@ impl JournalRead<'_> {
     ) -> Result<SelectedFactPage, GuardError> {
         self.publication_page(room, after, budget, Some(wire::FactKind::RoomContributed))
     }
+    /// Current bounded maturity evidence for one Design.
+    pub fn design_maturity(
+        &self,
+        design: &wire::TaskStamp,
+    ) -> Result<wire::rooms::DesignMaturity, GuardError> {
+        read_metrics::observe_query();
+        let body = self
+            .connection
+            .query_row(
+                "SELECT body FROM design_maturity WHERE design = ?1",
+                [design.as_str()],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        let Some(body) = body else {
+            return Ok(wire::rooms::DesignMaturity::default());
+        };
+        read_metrics::observe_row();
+        read_metrics::observe_decode(body.len());
+        wire::decode(&body).map_err(|error| {
+            GuardError::Invalid(format!(
+                "maturity indexed for {design} does not decode: {error}"
+            ))
+        })
+    }
+
+    /// One bounded page of a Design's notice records, using the per-Design
+    /// index rather than scanning notices for every Design.
+    pub fn design_notices(
+        &self,
+        design: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+        budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
+        let Some(horizon) = self.cursor else {
+            return Ok(SelectedFactPage {
+                rows: Vec::new(),
+                continuation: None,
+                horizon: None,
+            });
+        };
+        let after = after.map_or(Ok(0), |seq| i64::try_from(seq.get()));
+        let horizon_sql = i64::try_from(horizon.get());
+        let (Ok(after), Ok(horizon_sql)) = (after, horizon_sql) else {
+            return Err(GuardError::Invalid(
+                "Design notice cursor exceeds SQLite".to_owned(),
+            ));
+        };
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT facts.seq, facts.kind, length(facts.envelope), facts.envelope \
+                 FROM design_notices AS noticed \
+                 JOIN fact_envelopes AS facts ON facts.seq = noticed.seq \
+                 WHERE noticed.design = ?1 AND noticed.seq > ?2 AND noticed.seq <= ?3 \
+                 ORDER BY noticed.seq LIMIT ?4",
+            )
+            .map_err(GuardError::Store)?;
+        let mut rows = statement
+            .query(params![
+                design.as_str(),
+                after,
+                horizon_sql,
+                probe_limit(budget)?
+            ])
+            .map_err(GuardError::Store)?;
+        let mut facts = Vec::new();
+        let mut decoded = 0usize;
+        let mut continuation = None;
+        while let Some(row) = rows.next().map_err(GuardError::Store)? {
+            let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            let length =
+                admitted_envelope_length(seq, row.get::<_, i64>(2).map_err(GuardError::Store)?)?;
+            if facts.len() == budget.rows()
+                || (!facts.is_empty() && decoded.saturating_add(length) > budget.decoded_bytes())
+            {
+                continuation = facts
+                    .last()
+                    .map(|fact: &wire::Envelope<wire::AnyFact>| fact.seq);
+                break;
+            }
+            let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
+            let indexed = fact.fact.read::<wire::rooms::DesignNoticed>();
+            if indexed.as_ref().map(|notice| &notice.design) != Some(design) {
+                return Err(GuardError::Invalid(format!(
+                    "Design notice index for {design} names {} fact {seq}",
+                    fact.fact.kind()
+                )));
+            }
+            decoded = decoded.saturating_add(length);
+            facts.push(fact);
+        }
+        Ok(SelectedFactPage {
+            rows: facts,
+            continuation,
+            horizon: Some(horizon),
+        })
+    }
 
     /// [`Self::room_publications`] restricted to facts of kind `only`.
     fn publication_page(

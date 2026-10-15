@@ -605,6 +605,7 @@ fn the_journal_admits_only_a_lane_own_bounded_contribution_to_an_open_design() {
                     publication,
                     lane: author,
                     contribution: RoomContributionKind::Evidence,
+                    statement: None,
                     text: text.to_owned(),
                     sources,
                 },

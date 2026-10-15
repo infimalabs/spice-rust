@@ -13,16 +13,22 @@ impl RoomProjection {
     /// Fold one Design notice, or `None` when `fact` is not one.
     pub(super) fn apply_notice(&mut self, fact: &StreamFact) -> Option<bool> {
         (fact.kind() == FactKind::DesignNoticed).then(|| {
+            if self.invitations.contains_key(&fact.seq()) {
+                return false;
+            }
             fact.read::<DesignNoticed>().is_some_and(|value| {
-                self.invitations
-                    .insert(
-                        fact.seq(),
-                        RoomPositioned {
-                            position: fact.seq(),
-                            value,
-                        },
-                    )
-                    .is_none()
+                self.maturity
+                    .entry(value.design.clone())
+                    .or_default()
+                    .observe_notice(&value);
+                self.invitations.insert(
+                    fact.seq(),
+                    RoomPositioned {
+                        position: fact.seq(),
+                        value,
+                    },
+                );
+                true
             })
         })
     }

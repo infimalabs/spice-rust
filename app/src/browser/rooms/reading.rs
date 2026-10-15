@@ -7,7 +7,8 @@ use std::rc::Rc;
 
 use web_sys::{HtmlInputElement, HtmlTextAreaElement};
 use wire::intent::{BoardTask, TaskAnswer};
-use wire::{Actor, CommandKind};
+use wire::rooms::{DesignMaturity, DesignMaturityState};
+use wire::{Actor, CommandKind, TaskStamp};
 use yew::prelude::*;
 
 use super::{ClientAction, Controls, DraftRequest, RoomProjectionStatus, admit_action, card};
@@ -42,6 +43,7 @@ pub(in crate::browser) fn render_design_room(
             html! {
                 <>
                     {super::standing::render_standing(runtime, design, Some(row))}
+                    {render_maturity(projection.maturity(design), design)}
                     {render_amendment(runtime, controls, sender, row)}
                     {super::conclusion::render_conclusion(runtime, controls, sender, row)}
                     {super::approval::render_approval(runtime, controls, sender, design)}
@@ -73,6 +75,130 @@ pub(in crate::browser) fn render_design_room(
             {body}
         </section>
     }
+}
+
+fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Html {
+    let empty = DesignMaturity::default();
+    let maturity = maturity.unwrap_or(&empty);
+    let (state, summary, attention) = match maturity.state() {
+        DesignMaturityState::Fresh => (
+            "fresh",
+            "No contribution has been recorded.".to_owned(),
+            false,
+        ),
+        DesignMaturityState::Steeped => (
+            "steeped",
+            "Substantive evidence spans three or more contributors.".to_owned(),
+            true,
+        ),
+        DesignMaturityState::Steeping { unmet } => (
+            "steeping",
+            format!(
+                "Still needs {}.",
+                unmet
+                    .into_iter()
+                    .map(|requirement| requirement.label())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            false,
+        ),
+    };
+    html! {
+        <section
+            class="room-maturity"
+            aria-label="Design maturity"
+            data-design={design.to_string()}
+            data-maturity-state={state}
+            data-operator-attention={attention.then_some("true")}
+        >
+            <header>
+                <strong>{"Maturity"}</strong>
+                <span class="room-maturity-state">{state}</span>
+            </header>
+            <p>{summary}</p>
+            if attention {
+                <p class="room-maturity-attention">{"Ready for operator attention."}</p>
+            }
+            <dl>
+                <div>
+                    <dt>{"Contributors"}</dt>
+                    <dd>{bounded_count(maturity.contributing_lanes.len(), maturity.contributing_lanes_truncated)}</dd>
+                </div>
+                <div>
+                    <dt>{"For"}</dt>
+                    <dd>{maturity.contributions.reason_for}</dd>
+                </div>
+                <div>
+                    <dt>{"Against"}</dt>
+                    <dd>{maturity.contributions.reason_against}</dd>
+                </div>
+                <div>
+                    <dt>{"Evidence"}</dt>
+                    <dd>{maturity.contributions.evidence}</dd>
+                </div>
+                <div>
+                    <dt>{"Questions"}</dt>
+                    <dd>{maturity.contributions.question}</dd>
+                </div>
+                <div>
+                    <dt>{"Organic reach"}</dt>
+                    <dd>
+                        {format!(
+                            "{} notices · {} lanes",
+                            maturity.organic_notices,
+                            bounded_count(
+                                maturity.organic_lanes.len(),
+                                maturity.organic_lanes_truncated,
+                            ),
+                        )}
+                    </dd>
+                </div>
+            </dl>
+            if !maturity.recent_heads.is_empty() {
+                <div class="room-maturity-heads" aria-label="Maturity by statement">
+                    {for maturity.recent_heads.iter().rev().map(|head| html! {
+                        <p>
+                            <code>{head.statement.to_string()}</code>
+                            <span>
+                                {format!(
+                                    "{} of {} invited lanes contributed{}",
+                                    head.invited_contributors(),
+                                    bounded_count(
+                                        head.invited_lanes.len(),
+                                        head.invited_lanes_truncated,
+                                    ),
+                                    if head.yield_truncated() { " (bounded)" } else { "" },
+                                )}
+                            </span>
+                        </p>
+                    })}
+                </div>
+            }
+            if maturity.older_heads.statement_heads > 0 {
+                <p class="room-maturity-folded">
+                    {format!(
+                        "{} older statement heads folded · {} invited/contributor lane-head matches",
+                        maturity.older_heads.statement_heads,
+                        maturity.older_heads.invited_contributor_lane_heads,
+                    )}
+                </p>
+            }
+            if maturity.unrecorded_head.contributions > 0 {
+                <p class="room-maturity-folded">
+                    {format!(
+                        "{} historical contributions have an unrecorded statement head",
+                        maturity.unrecorded_head.contributions,
+                    )}
+                </p>
+            }
+            <small>{"Advisory only; this neither blocks nor authorizes a Design decision."}</small>
+        </section>
+    }
+}
+
+fn bounded_count(count: usize, truncated: bool) -> String {
+    format!("{count}{}", if truncated { "+" } else { "" })
 }
 
 fn render_amendment(

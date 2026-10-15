@@ -362,6 +362,116 @@ fn surface(lanes: &Lanes) -> SurfaceConfig {
         .expect("fixture surface loads")
         .config
 }
+fn assert_awareness_projection(
+    lanes: &Lanes,
+    passive: &wire::TaskHandle,
+    unrelated: &wire::TaskHandle,
+    noticed: &[DesignNoticed],
+    task: &wire::TaskHandle,
+) {
+    let read = lanes.room_read(&["awareness", passive.as_str()]);
+    let rows = read["page"]["rows"].as_array().expect("awareness rows");
+    assert_eq!(
+        rows.iter()
+            .map(|row| {
+                (
+                    row["lane"].clone(),
+                    row["provenance"].clone(),
+                    row["statement"].clone(),
+                    row["terms"].clone(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        noticed
+            .iter()
+            .filter(|told| told.design == stamp(passive))
+            .map(|told| {
+                (
+                    serde_json::json!(told.lane),
+                    serde_json::json!(told.provenance),
+                    serde_json::json!(told.statement),
+                    serde_json::json!(told.terms),
+                )
+            })
+            .collect::<Vec<_>>(),
+        "the operator reads provenance and exact statement with every invitation"
+    );
+    assert_eq!(rows[0]["task"], serde_json::json!(task));
+    let read = lanes.room_read(&["awareness", unrelated.as_str()]);
+    let seeded = read["page"]["rows"]
+        .as_array()
+        .expect("seeded awareness rows");
+    assert!(!seeded.is_empty());
+    assert!(
+        seeded
+            .iter()
+            .all(|row| { row["provenance"] == "seeded" && row["terms"] == serde_json::json!([]) })
+    );
+}
+fn assert_planned_invitation(lanes: &Lanes, config: &SurfaceConfig, passive: &wire::TaskHandle) {
+    let occupied = BTreeMap::from([
+        (test_uuid(FIRST), test_uuid(FIRST + 1)),
+        (test_uuid(SECOND), test_uuid(SECOND + 1)),
+    ]);
+    let planning =
+        crate::resident::room_catch_up::Planning::load(&lanes.bus, config).expect("planning loads");
+    let planned = crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied)
+        .expect("invitations plan");
+    let invitation = planned
+        .iter()
+        .find(|told| told.lane == test_uuid(FIRST) && told.design == stamp(passive))
+        .expect("passive Design invitation");
+    let current_revision = {
+        let design = stamp(passive);
+        lanes
+            .bus
+            .read(move |read| read.task_head(&design))
+            .expect("statement reads")
+            .expect("Design statement exists")
+            .body()
+            .revision
+    };
+    assert_eq!(
+        invitation.notice.revision,
+        wire::SequenceCode::new(current_revision.get()),
+        "the private invitation is constructed from the current statement revision"
+    );
+    let background = invitation.notice.background();
+    assert_eq!(background.occupant, test_uuid(FIRST + 1));
+    assert_eq!(background.purpose, format!("design:{passive}"));
+    assert!(background.fits(), "the complete invitation fits one kick");
+}
+
+fn assert_notice_identity(
+    lanes: &Lanes,
+    noticed: &[DesignNoticed],
+    task: &wire::TaskHandle,
+    passive: &wire::TaskHandle,
+    held: &wire::TaskHandle,
+) {
+    let row = &noticed[0];
+    assert_eq!(row.task, stamp(task));
+    assert_eq!(row.terms, TERMS);
+    assert_eq!(
+        row.provenance,
+        wire::rooms::DesignNoticeProvenance::Organic,
+        "term matching keeps its organic provenance"
+    );
+    let passive_stamp = stamp(passive);
+    let passive_statement = lanes
+        .bus
+        .read(move |read| read.task_head(&passive_stamp))
+        .expect("Design statement reads")
+        .expect("Design exists")
+        .position();
+    assert_eq!(row.statement, passive_statement);
+    assert!(
+        noticed
+            .iter()
+            .all(|row| !(row.lane == test_uuid(SECOND) && row.design == stamp(held))),
+        "a lane is never invited to the Design it holds"
+    );
+}
 
 #[test]
 fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
@@ -387,37 +497,7 @@ fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
     let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
     let claim = lanes.claim_head(&task);
     let pending = lanes.pending(FIRST);
-    let occupied = BTreeMap::from([
-        (test_uuid(FIRST), test_uuid(FIRST + 1)),
-        (test_uuid(SECOND), test_uuid(SECOND + 1)),
-    ]);
-    let planning = crate::resident::room_catch_up::Planning::load(&lanes.bus, &config)
-        .expect("planning loads");
-    let planned = crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied)
-        .expect("invitations plan");
-    let invitation = planned
-        .iter()
-        .find(|told| told.lane == test_uuid(FIRST) && told.design == stamp(&passive))
-        .expect("passive Design invitation");
-    let current_revision = {
-        let design = stamp(&passive);
-        lanes
-            .bus
-            .read(move |read| read.task_head(&design))
-            .expect("statement reads")
-            .expect("Design statement exists")
-            .body()
-            .revision
-    };
-    assert_eq!(
-        invitation.notice.revision,
-        wire::SequenceCode::new(current_revision.get()),
-        "the private invitation is constructed from the current statement revision"
-    );
-    let background = invitation.notice.background();
-    assert_eq!(background.occupant, test_uuid(FIRST + 1));
-    assert_eq!(background.purpose, format!("design:{passive}"));
-    assert!(background.fits(), "the complete invitation fits one kick");
+    assert_planned_invitation(&lanes, &config, &passive);
 
     let mut seated = claimant_seats();
     lanes.reconcile(&config, &seated);
@@ -428,28 +508,7 @@ fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
         "matching Designs stay organic, while one unrelated passive Design is seeded; not \
          {concluded}, {active}, or {listened}"
     );
-    let row = &noticed[0];
-    assert_eq!(row.task, stamp(&task));
-    assert_eq!(row.terms, TERMS);
-    assert_eq!(
-        row.provenance,
-        wire::rooms::DesignNoticeProvenance::Organic,
-        "term matching keeps its organic provenance"
-    );
-    let passive_stamp = stamp(&passive);
-    let passive_statement = lanes
-        .bus
-        .read(move |read| read.task_head(&passive_stamp))
-        .expect("Design statement reads")
-        .expect("Design exists")
-        .position();
-    assert_eq!(row.statement, passive_statement);
-    assert!(
-        noticed
-            .iter()
-            .all(|row| !(row.lane == test_uuid(SECOND) && row.design == stamp(&held))),
-        "a lane is never invited to the Design it holds"
-    );
+    assert_notice_identity(&lanes, &noticed, &task, &passive, &held);
     assert_eq!(
         lanes.claim_head(&task),
         claim,
@@ -472,44 +531,7 @@ fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
         noticed,
         "a restarted resident reads every invitation back and repeats none"
     );
-    let read = lanes.room_read(&["awareness", passive.as_str()]);
-    let rows = read["page"]["rows"].as_array().expect("awareness rows");
-    assert_eq!(
-        rows.iter()
-            .map(|row| {
-                (
-                    row["lane"].clone(),
-                    row["provenance"].clone(),
-                    row["statement"].clone(),
-                    row["terms"].clone(),
-                )
-            })
-            .collect::<Vec<_>>(),
-        noticed
-            .iter()
-            .filter(|told| told.design == stamp(&passive))
-            .map(|told| {
-                (
-                    serde_json::json!(told.lane),
-                    serde_json::json!(told.provenance),
-                    serde_json::json!(told.statement),
-                    serde_json::json!(told.terms),
-                )
-            })
-            .collect::<Vec<_>>(),
-        "the operator reads provenance and exact statement with every invitation"
-    );
-    assert_eq!(rows[0]["task"], serde_json::json!(task));
-    let read = lanes.room_read(&["awareness", unrelated.as_str()]);
-    let seeded = read["page"]["rows"]
-        .as_array()
-        .expect("seeded awareness rows");
-    assert!(!seeded.is_empty());
-    assert!(
-        seeded
-            .iter()
-            .all(|row| { row["provenance"] == "seeded" && row["terms"] == serde_json::json!([]) })
-    );
+    assert_awareness_projection(&lanes, &passive, &unrelated, &noticed, &task);
     seated.release_all();
     restarted.release_all();
     lanes.finish();

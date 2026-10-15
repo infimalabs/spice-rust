@@ -505,6 +505,17 @@ owns each rule summarized here.
   to the Design. Being invited is not listening, grants no claim, and owes no
   acknowledgment; `spice room awareness HANDLE` shows provenance, statement,
   recipient, claimed task, and any organic matched terms.
+- **Design maturity.** One bounded projection per Design folds admitted organic
+  awareness and typed contributions in journal order. It reports contribution
+  counts by kind, distinct contributing lanes, organic reach, and same-statement
+  invited/contributing lane intersections. Fresh means no contribution;
+  steeped requires reason-for, reason-against, evidence, and three distinct
+  contributing lanes; every other contributed Design is steeping and names
+  every missing dimension. Questions and invitation reach are evidence but do
+  not satisfy maturity. `spice room awareness HANDLE`, the browser room, and
+  operator-attention input read that projection. The state is advisory: it
+  never changes standing, possession, grouping, selection, or authorization.
+
 - **Preparation.** `task plan` declares a Plan with a `plan,review` flow and
   `task design` declares a Design with its one open `design` phase; active Plan
   and Design claims refuse implementation commits. A Design plans Plans; a
