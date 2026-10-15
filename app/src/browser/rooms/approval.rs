@@ -246,7 +246,7 @@ fn render_candidate(context: &Context<'_>, positioned: &RoomPositioned<RetainedC
             } else if withdrawal.is_none() && context.controller.is_none() {
                 <p class="room-notice">{"This Design is concluded; its proposal history is read-only."}</p>
             }
-            else {
+            else if !matches!(&standing, Standing::Undecided | Standing::Withdrawn) {
                 <p class="room-notice">{"This proposal version already has a recorded decision; its controls are read-only."}</p>
             }
             {render_notice(draft.notice())}
