@@ -4,16 +4,41 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use journal::{FactCause, JournalWrite};
 use serde_json::Value;
-use wire::body::{SteerSent, SteeringStage};
+use wire::body::{SteerSent, SteeringStage, TranscriptLocus};
 use wire::{Actor, Disposition, Origin, Producer, SteeringHead};
 
-use super::{admit_index, due_stage, mint_key_at, missing_stages};
+use super::{admit_index, due_stage, mint_key_at, missing_stages, sent_wakes};
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 const DIRECTIVE: &str = "018f82d4-6f59-7d06-92e3-bce913116399";
 const OTHER_DIRECTIVE: &str = "018f82d4-6f59-7d06-92e3-bce913116398";
 const KEY: &str = "1kJK6N3R";
 const OTHER_KEY: &str = "1kJK6N3S";
+
+#[test]
+fn only_operator_and_exact_withheld_packet_controls_wake_a_lane() {
+    let lane = DIRECTIVE.parse().expect("fixture lane");
+    let locus = TranscriptLocus {
+        source: Some(OTHER_DIRECTIVE.parse().expect("fixture source")),
+        member: 3,
+        offset: 5,
+        length: 8,
+        event: 13,
+        line: 21,
+        column: 34,
+    };
+    let control = wire::packet_withheld_control(&locus).expect("sourced packet control");
+
+    assert!(sent_wakes(&Actor::Operator, None));
+    assert!(sent_wakes(&Actor::Spice, Some(&control)));
+    assert!(!sent_wakes(
+        &Actor::Spice,
+        Some("review-feedback:PLAN-dV0000000:1")
+    ));
+    assert!(!sent_wakes(&Actor::Lane(lane), Some(&control)));
+    assert!(wire::parse_packet_withheld_control(&control).is_some());
+    assert!(wire::parse_packet_withheld_control(&format!("{control}:extra")).is_none());
+}
 
 #[test]
 fn steering_key_clock_mints_current_microseconds_and_advances_one_collision() {

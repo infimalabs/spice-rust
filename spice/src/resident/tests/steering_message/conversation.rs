@@ -63,7 +63,9 @@ pub(super) fn asked(outcome: &Result<Published, Unpublished>) -> QuestionResultR
 
 fn refused(outcome: &Result<Published, Unpublished>) -> &str {
     match outcome {
-        Err(Unpublished::Refused { reason, .. }) => reason,
+        Err(Unpublished::Refused { reason, .. } | Unpublished::AuthorDirected { reason, .. }) => {
+            reason
+        }
         other => panic!("the packet refused: {other:?}"),
     }
 }
@@ -204,8 +206,8 @@ fn an_ask_to_a_vacant_lane_keeps_its_result_key_and_deadline_until_seated() {
 }
 
 /// Only the named respondent answers, only while the result is pending, and
-/// an asserted context must equal the stored one; a refused ANS changes
-/// nothing.
+/// an asserted context must equal the stored one. A refused ANS leaves the
+/// question unchanged and directs its author with the refusal.
 #[test]
 fn only_the_named_respondent_answers_a_pending_result_in_its_context() {
     let lanes = Lanes::new("conv-respondent");
@@ -224,7 +226,7 @@ fn only_the_named_respondent_answers_a_pending_result_in_its_context() {
         lanes.question(&result).1.state(),
         &QuestionResultState::Pending {}
     );
-    assert_eq!(lanes.pending(FIRST).len(), 1);
+    assert_eq!(lanes.pending(FIRST).len(), 3);
     assert_eq!(lanes.conversations().len(), 1);
 
     assert!(lanes.say(FIRST, &format!("ANS {result}: because")).is_ok());

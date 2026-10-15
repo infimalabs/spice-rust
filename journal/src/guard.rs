@@ -589,7 +589,7 @@ impl JournalWrite {
     ///
     /// # Errors
     ///
-    /// Refuses a fact whose registered producer differs from this write, or a
+    /// Refuses a fact whose kind does not admit this write's producer, or a
     /// body that cannot cross the current wire encoder.
     pub fn fact<F>(&mut self, body: F, cause: FactCause) -> Result<PendingFact, BuildError>
     where
@@ -601,7 +601,7 @@ impl JournalWrite {
             return Err(BuildError::ForeignPendingFact);
         }
         let fact = wire::Fact::new(body);
-        if fact.producer() != self.producer {
+        if !fact.kind().admits_producer(self.producer, &self.actor) {
             return Err(BuildError::WrongProducer {
                 kind: fact.kind(),
                 expected: self.producer,

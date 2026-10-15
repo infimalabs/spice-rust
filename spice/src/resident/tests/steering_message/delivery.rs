@@ -38,13 +38,21 @@ fn a_packet_reaches_each_seated_recipient_and_names_each_unavailable_address() {
     let reasons = outcomes[2..]
         .iter()
         .map(|outcome| match outcome {
-            Err(steering::Unpublished::Refused { reason, .. }) => reason.as_str(),
+            Err(
+                steering::Unpublished::AuthorDirected { reason, .. }
+                | steering::Unpublished::Refused { reason, .. },
+            ) => reason.as_str(),
             other => panic!("the packet refuses whole: {other:?}"),
         })
         .collect::<Vec<_>>();
     assert_eq!(reasons, ["msg::recipient-self", "msg::recipient-repeated"]);
     assert_eq!(delivered(&lanes, FIRST).text, "departed");
     assert_eq!(lanes.messages().len(), 1);
+    assert_eq!(
+        lanes.pending(SENDER).len(),
+        1,
+        "only the semantic self-address refusal wakes its author"
+    );
 
     let (reread, _) = lanes.hear(SENDER, test_uuid(SENDER + 1));
     assert_eq!(
@@ -285,7 +293,8 @@ fn a_packet_is_attributed_to_its_author_and_retires_nothing() {
     assert!(
         matches!(
             outcomes.last(),
-            Some(Err(steering::Unpublished::Refused { reason, .. })) if reason == "msg::sender-unproved"
+            Some(Err(steering::Unpublished::AuthorDirected { reason, .. }))
+                if reason == "msg::sender-unproved"
         ),
         "{outcomes:?}"
     );
@@ -324,19 +333,57 @@ fn startup_recovery_publishes_only_unpublished_packets_after_the_declaration() {
     lanes.finish();
 }
 
-/// A refusal is the packet's settled judgment: once the residency refused it,
-/// recovery publishes nothing even after the refused address names a seated
-/// occupant.
+/// Partial delivery and grammar refusal retain the background-only path.
 #[test]
-fn a_refused_packet_stays_unpublished_after_its_refusal_stops_holding() {
+fn partial_and_grammar_refusals_open_no_author_directive() {
+    let lanes = Lanes::new("msg-partial");
+    let first = lanes.address(FIRST);
+    let unrecorded = OccupantAddress::from(wire::Seq::new(9_999_999).expect("nonzero position"));
+
+    lanes.author(
+        SENDER,
+        &format!("MSG {first} {unrecorded}: partly delivered"),
+    );
+    let (_, partial) = lanes.hear_newest(SENDER);
+    assert!(matches!(
+        partial.as_slice(),
+        [Ok(steering::Published::Sent { unreached, .. })] if unreached.len() == 1
+    ));
+    lanes.author(SENDER, &format!("MSG {first}:"));
+    let (_, malformed) = lanes.hear_newest(SENDER);
+    assert!(matches!(
+        malformed.as_slice(),
+        [Err(steering::Unpublished::Refused { .. })]
+    ));
+    let facts = lanes.bus.fact_snapshot().expect("facts read");
+    assert!(
+        facts
+            .facts()
+            .iter()
+            .all(|envelope| envelope.fact.read::<wire::body::SteerWithheld>().is_none())
+    );
+    assert!(facts.facts().iter().all(|envelope| {
+        envelope
+            .fact
+            .read::<wire::body::SteerSent>()
+            .and_then(|sent| sent.control)
+            .and_then(|control| wire::parse_packet_withheld_control(&control))
+            .is_none()
+    }));
+    lanes.finish();
+}
+
+/// A fully withheld packet atomically wakes its author once, while a partial
+/// miss and grammar refusal retain their non-waking paths.
+#[test]
+fn a_withheld_packet_wakes_its_author_once_and_rereads_nothing() {
     let lanes = Lanes::new("msg-withheld");
     let (first, second) = (lanes.address(FIRST), lanes.address(SECOND));
+
     // Each seating writes the same facts, so the next birth lands as far past
     // the cursor the seating starts from as the last one did.
     let stride = second.birth().get() - first.birth().get();
     let lag = lanes.cursor() - second.birth().get();
-    lanes.declare(SENDER);
-    // Judging the packet journals its one refusal before the next seating.
     let unborn = OccupantAddress::from(
         wire::Seq::new(lanes.cursor() + 1 + stride - lag).expect("nonzero position"),
     );
@@ -346,20 +393,88 @@ fn a_refused_packet_stays_unpublished_after_its_refusal_stops_holding() {
     assert!(
         matches!(
             outcomes.as_slice(),
-            [Err(steering::Unpublished::Refused { reason, .. })] if reason == "msg::recipient-unavailable"
+            [Err(steering::Unpublished::AuthorDirected { reason, .. })]
+                if reason == "msg::recipient-unavailable"
         ),
         "{outcomes:?}"
     );
-    lanes.seat(THIRD);
+    let snapshot = lanes.bus.fact_snapshot().expect("facts read");
     assert_eq!(
-        lanes.address(THIRD),
-        unborn,
-        "the refused address now seats"
+        snapshot
+            .facts()
+            .iter()
+            .filter(|envelope| envelope.fact.read::<wire::body::SteerWithheld>().is_some())
+            .count(),
+        1
+    );
+    assert_eq!(
+        snapshot
+            .facts()
+            .iter()
+            .filter(|envelope| {
+                envelope
+                    .fact
+                    .read::<wire::body::SteerSent>()
+                    .and_then(|body| body.control)
+                    .and_then(|control| wire::parse_packet_withheld_control(&control))
+                    .is_some()
+            })
+            .count(),
+        1
+    );
+    let withheld = snapshot
+        .facts()
+        .iter()
+        .find_map(|envelope| {
+            envelope
+                .fact
+                .read::<wire::body::SteerWithheld>()
+                .map(|body| (envelope, body))
+        })
+        .expect("the refusal is durable");
+    let directed = snapshot
+        .facts()
+        .iter()
+        .find_map(|envelope| {
+            let body = envelope.fact.read::<wire::body::SteerSent>()?;
+            wire::parse_packet_withheld_control(body.control.as_deref()?)
+                .map(|locus| (envelope, body, locus))
+        })
+        .expect("the author directive is durable");
+    assert_eq!(directed.0.actor, Actor::Spice);
+    assert_eq!(directed.0.cause, Some(withheld.0.seq));
+    assert_eq!(directed.2, withheld.1.locus);
+    assert!(directed.1.text.contains(&format!("MSG {unborn}")));
+    assert!(directed.1.text.contains("msg::recipient-unavailable"));
+    assert!(directed.1.text.contains(&unborn.to_string()));
+    assert_eq!(lanes.pending(SENDER).len(), 1);
+
+    let (_, reread) = lanes.hear_newest(SENDER);
+    assert_eq!(reread, [Err(steering::Unpublished::Withheld)]);
+    let after = lanes.bus.fact_snapshot().expect("facts read after reread");
+    assert_eq!(
+        after.horizon(),
+        snapshot.horizon(),
+        "the reread writes nothing"
     );
 
     lanes.recover();
     lanes.recover();
-    assert!(lanes.messages().is_empty());
-    assert!(lanes.pending(THIRD).is_empty());
+    let recovered = lanes
+        .bus
+        .fact_snapshot()
+        .expect("facts read after recovery rereads");
+    assert_eq!(
+        recovered.horizon(),
+        after.horizon(),
+        "startup rereads write nothing"
+    );
+    assert_eq!(lanes.pending(SENDER).len(), 1);
+    assert!(
+        lanes
+            .messages()
+            .iter()
+            .all(|(_, body)| body.text != "not yet born")
+    );
     lanes.finish();
 }

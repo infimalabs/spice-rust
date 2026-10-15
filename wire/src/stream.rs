@@ -22,6 +22,40 @@ pub use annotation::{
 pub const BROADCAST_MARKER: &str = "[BROADCAST]";
 /// Canonical control prefix carried by resident-generated peer-review feedback.
 pub const REVIEW_FEEDBACK_CONTROL_PREFIX: &str = "review-feedback:";
+/// Canonical control prefix carried by a resident-generated withheld-packet
+/// directive.
+pub const PACKET_WITHHELD_CONTROL_PREFIX: &str = "packet-withheld:";
+
+/// Name the exact source-qualified transcript locus of one withheld packet.
+#[must_use]
+pub fn packet_withheld_control(locus: &crate::body::TranscriptLocus) -> Option<String> {
+    let source = locus.source?;
+    Some(format!(
+        "{PACKET_WITHHELD_CONTROL_PREFIX}{source}:{}:{}:{}:{}:{}:{}",
+        locus.member, locus.offset, locus.length, locus.event, locus.line, locus.column
+    ))
+}
+
+/// Decode the exact source-qualified transcript locus of a withheld packet.
+#[must_use]
+pub fn parse_packet_withheld_control(control: &str) -> Option<crate::body::TranscriptLocus> {
+    let mut fields = control
+        .strip_prefix(PACKET_WITHHELD_CONTROL_PREFIX)?
+        .split(':');
+    let locus = crate::body::TranscriptLocus {
+        source: Some(fields.next()?.parse().ok()?),
+        member: fields.next()?.parse().ok()?,
+        offset: fields.next()?.parse().ok()?,
+        length: fields.next()?.parse().ok()?,
+        event: fields.next()?.parse().ok()?,
+        line: fields.next()?.parse().ok()?,
+        column: fields.next()?.parse().ok()?,
+    };
+    if fields.next().is_some() || packet_withheld_control(&locus).as_deref() != Some(control) {
+        return None;
+    }
+    Some(locus)
+}
 
 /// Name the reviewed task and review fact behind one feedback directive.
 #[must_use]

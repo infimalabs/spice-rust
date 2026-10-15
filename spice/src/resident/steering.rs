@@ -55,19 +55,31 @@ pub(super) fn is_legacy_task_generation_control(control: Option<&str>) -> bool {
     control.is_some_and(|control| control.starts_with(LEGACY_TASK_GENERATION_CONTROL_PREFIX))
 }
 
-/// The directive an operator send opened, the only steering that wakes a lane.
+/// The directive a send opened when its authority is allowed to wake a lane.
 ///
-/// Peer messages, peer replies, and resident reminders also stay pending, but
-/// wait for the lane's next seat. The lifecycle resolver and the inbox's
-/// `wakes` flag both answer from this one predicate.
+/// Operator sends retain universal wake authority. Resident sends have none
+/// except the exact source-locus control that tells a packet author their
+/// packet was wholly withheld. The lifecycle resolver and the inbox's `wakes`
+/// flag both answer from this one predicate.
 pub(super) fn operator_sent(envelope: &wire::Envelope<wire::AnyFact>) -> Option<CanonicalUuid> {
-    if envelope.actor != Actor::Operator {
-        return None;
-    }
-    envelope
-        .fact
-        .read::<wire::body::SteerSent>()
-        .map(|body| body.directive)
+    let sent = envelope.fact.read::<wire::body::SteerSent>()?;
+    sent_wakes(&envelope.actor, sent.control.as_deref()).then_some(sent.directive)
+}
+
+fn sent_wakes(actor: &Actor, control: Option<&str>) -> bool {
+    *actor == Actor::Operator
+        || (*actor == Actor::Spice
+            && control
+                .and_then(wire::parse_packet_withheld_control)
+                .is_some())
+}
+
+/// Stable identity for one resident-owned control directive.
+pub(super) fn internal_directive_identity(control: &str) -> CanonicalUuid {
+    let hash = blake3::hash(format!("spice:{control}").as_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&hash.as_bytes()[..16]);
+    CanonicalUuid::new(uuid::Uuid::from_bytes(bytes))
 }
 
 pub(super) struct InternalDirective {

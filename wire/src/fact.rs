@@ -5,9 +5,10 @@
 //! spelling absent from this enum is not a fact.
 //!
 //! The vocabulary is declared once, as a table. The discriminant, its wire
-//! spelling, its body DTO, and the producer class permitted to mint it all come
-//! from the same row, so a kind cannot be added without a body and a producer:
-//! there is no arm of the table to write one in.
+//! spelling, its body DTO, and its canonical producer class all come from the
+//! same row, so a kind cannot be added without them. A narrow additional
+//! producer is named explicitly where one atomic cross-plane transaction
+//! requires it.
 
 use std::fmt;
 
@@ -15,7 +16,7 @@ use serde::de::{Deserializer, Error as DeError};
 use serde::ser::{Error as SerError, Serializer};
 use serde::{Deserialize, Serialize};
 
-/// A closed class of appenders. Every kind names exactly one.
+/// A closed class of appenders. Every kind names one canonical producer.
 ///
 /// A kind with no producer class is as dead as a kind with no fold: a bus timer
 /// that never fires is a generated-check failure, not a quiet stall.
@@ -207,6 +208,20 @@ macro_rules! vocabulary {
                 match self {
                     $(Self::$variant => Producer::$producer,)+
                 }
+            }
+
+            /// Whether this actor and producer may append the kind.
+            ///
+            /// A packet refusal is recognized by the transcript scanner and
+            /// atomically opens resident steering to its author, so that one
+            /// Spice-authored `steer::sent` shares the scanner's transaction.
+            #[must_use]
+            pub fn admits_producer(self, producer: Producer, actor: &crate::Actor) -> bool {
+                self.producer() == producer
+                    || matches!(
+                        (self, producer, actor),
+                        (Self::SteerSent, Producer::AckScanner, crate::Actor::Spice)
+                    )
             }
 
             /// Decode an opaque body through the DTO registered for this kind.
