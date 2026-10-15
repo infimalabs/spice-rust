@@ -11,6 +11,49 @@ fn detail(bus: &Bus, epoch: CanonicalUuid, task: wire::TaskStamp) -> Outcome<Com
     )
 }
 
+/// Record one principal's birth holding the operator role.
+fn admit(bus: &Bus, epoch: CanonicalUuid, principal: CanonicalUuid) {
+    let origin = format!("resident:{epoch}")
+        .parse()
+        .expect("resident fixture origin");
+    let now = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
+    let mut write = JournalWrite::new(Actor::Spice, origin, now, Producer::CommandDoor);
+    let roles = std::collections::BTreeSet::from([wire::principal::PrincipalRole::Operator]);
+    let born = write
+        .fact(
+            wire::principal::PrincipalAdmitted {
+                principal,
+                profile: wire::principal::PrincipalProfile::default(),
+                roles: roles.clone(),
+                capability: None,
+            },
+            FactCause::Root,
+        )
+        .expect("principal birth fact builds");
+    write.principal_head(born, move |born| wire::principal::PrincipalHead {
+        principal,
+        born,
+        profile: wire::principal::PrincipalProfile::default(),
+        roles,
+        capability: None,
+    });
+    assert!(matches!(
+        bus.commit(write).expect("principal birth commits"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
+fn note_authors(bus: &Bus, epoch: CanonicalUuid, task: &wire::TaskStamp) -> Vec<Actor> {
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::TaskDetail(answer),
+        ..
+    }) = detail(bus, epoch, task.clone())
+    else {
+        panic!("task detail did not return a snapshot")
+    };
+    answer.notes.into_iter().map(|note| note.author).collect()
+}
+
 fn detail_with_repository(
     bus: &Bus,
     repository: &Repository,
@@ -86,6 +129,24 @@ fn task_detail_returns_one_task_and_ordered_attributed_notes() {
     assert_eq!(answer.notes[1].author, Actor::Lane(seats[0].lane));
     assert!(answer.notes[0].position < answer.notes[1].position);
     assert!(answer.notes[0].at <= answer.notes[1].at);
+
+    // The recorded operator note names the first-born principal once it is
+    // born, and a later admission holding the same role never moves it.
+    let lane = Actor::Lane(seats[0].lane);
+    let bootstrap: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163f0"
+        .parse()
+        .expect("fixture principal");
+    admit(&bus, epoch, bootstrap);
+    let resolved = vec![Actor::Human(bootstrap), lane];
+    assert_eq!(note_authors(&bus, epoch, &born), resolved);
+    admit(
+        &bus,
+        epoch,
+        "018f82d4-6f59-7d06-92e3-bce9131163a0"
+            .parse()
+            .expect("fixture principal"),
+    );
+    assert_eq!(note_authors(&bus, epoch, &born), resolved);
 
     clean(&root, bus);
 }

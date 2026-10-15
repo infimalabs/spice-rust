@@ -63,7 +63,7 @@ fn an_operator_answer_presents_as_ans_without_its_header() {
     let (words, context) = lanes.acknowledged(SENDER, &key);
     assert_eq!(context.packet, Some(wire::MessageSendKind::Ans));
     assert_eq!(context.result, Some(result.clone()));
-    assert_eq!(context.actor, wire::Actor::Operator);
+    assert_eq!(context.actor, lanes.bootstrap());
     assert_eq!(
         context.recipient,
         Some(wire::MessageDestination {

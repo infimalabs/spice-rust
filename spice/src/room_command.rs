@@ -320,9 +320,10 @@ pub(crate) fn project_publications(
 ) -> Result<Vec<Publication>, String> {
     let rows = bus
         .read(move |read| {
+            let roles = read.principal_roles()?;
             envelopes
                 .into_iter()
-                .map(|envelope| row(read, envelope).map_err(Failure::guard))
+                .map(|envelope| row(read, &roles, envelope).map_err(Failure::guard))
                 .collect::<Result<Vec<_>, _>>()
         })
         .map_err(|error| error.to_string())?;
@@ -418,6 +419,7 @@ fn recorded(
         journal::FactReadBudget::RETAINED.decoded_bytes(),
     )
     .map_err(store)?;
+    let roles = read.principal_roles().map_err(store)?;
     let mut rows = Vec::with_capacity(retain);
     let mut next = start;
     while rows.len() < retain {
@@ -427,7 +429,7 @@ fn recorded(
         }
         .map_err(store)?;
         for envelope in fetched.rows.into_iter().take(retain - rows.len()) {
-            rows.push(row(read, envelope)?);
+            rows.push(row(read, &roles, envelope)?);
         }
         match fetched.continuation {
             Some(seq) => next = Some(seq),
@@ -471,8 +473,11 @@ fn current_handle(
     .clone())
 }
 
+/// One publication envelope as a history row, naming its actor as `roles`
+/// resolves it.
 fn row(
     read: &journal::JournalRead<'_>,
+    roles: &wire::principal::PrincipalRoles,
     envelope: wire::Envelope<wire::AnyFact>,
 ) -> Result<Row, Failure> {
     let (publication, body, directives, conversed) =
@@ -572,7 +577,7 @@ fn row(
         publication,
         seq: envelope.seq,
         at: envelope.at,
-        actor: envelope.actor,
+        actor: roles.author(&envelope.actor),
         body,
         directed,
         conversation,

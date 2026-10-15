@@ -93,11 +93,15 @@ pub(in crate::board_command) fn read_task_relations(
             "read the board and request current durable task identities visible to this principal",
         );
     }
-    let review_records = match review_records(observed.facts().iter(), &tasks) {
+    let roles = match principal_roles(bus) {
+        Ok(roles) => roles,
+        Err(outcome) => return outcome,
+    };
+    let review_records = match review_records(observed.facts().iter(), &tasks, &roles) {
         Ok(records) => records,
         Err(detail) => return store_fault("task::relations-review-invalid", &detail),
     };
-    let lifecycle = lifecycle_records(observed.facts().iter(), &tasks);
+    let lifecycle = lifecycle_records(observed.facts().iter(), &tasks, &roles);
     let reverse_dependencies = reverse_dependencies(&tasks);
     let reverse_origins = reverse_origins(&tasks);
     let mut nodes = BTreeMap::<TaskRelationNodeRef, TaskRelationNode>::new();
@@ -123,6 +127,11 @@ pub(in crate::board_command) fn read_task_relations(
             &review_records,
             &lifecycle,
         );
+        for candidate in &mut candidates {
+            if let TaskRelationNode::Claim { actor, .. } = &mut candidate.target {
+                *actor = roles.author(actor);
+            }
+        }
         candidates.sort_by(|left, right| left.edge.cmp(&right.edge));
         candidates.dedup_by(|left, right| left.edge == right.edge);
         for candidate in candidates {
@@ -465,6 +474,7 @@ fn reverse_dependencies(
 fn lifecycle_records<'a>(
     facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
     tasks: &BTreeMap<TaskStamp, &BoardTask>,
+    roles: &wire::principal::PrincipalRoles,
 ) -> BTreeMap<TaskStamp, Vec<TaskRelationNode>> {
     let mut records = BTreeMap::<TaskStamp, Vec<TaskRelationNode>>::new();
     let mut ordered = facts.into_iter().collect::<Vec<_>>();
@@ -483,7 +493,7 @@ fn lifecycle_records<'a>(
                 task,
                 position: envelope.seq,
                 at: envelope.at,
-                actor: envelope.actor.clone(),
+                actor: roles.author(&envelope.actor),
                 event,
             });
     }
@@ -547,9 +557,12 @@ fn lifecycle_event(
     Some((task, event))
 }
 
+/// Each named task's reviews, naming authors and reviewers as `roles`
+/// resolves them once the recorded reviewer is proved to be the fact actor.
 fn review_records<'a>(
     facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
     tasks: &BTreeMap<TaskStamp, &BoardTask>,
+    roles: &wire::principal::PrincipalRoles,
 ) -> Result<BTreeMap<TaskStamp, Vec<ReviewRecord>>, String> {
     let mut ordered = facts.into_iter().collect::<Vec<_>>();
     ordered.sort_by_key(|envelope| envelope.seq);
@@ -573,7 +586,7 @@ fn review_records<'a>(
                     .read::<body::TaskDone>()
                     .expect("registered task-done fact decodes");
                 if let Some(phase) = phases.get(&done.task).cloned() {
-                    authors.insert(done.task, (phase, envelope.actor.clone()));
+                    authors.insert(done.task, (phase, roles.author(&envelope.actor)));
                 }
             }
             wire::FactKind::TaskPhased => {
@@ -607,7 +620,7 @@ fn review_records<'a>(
                         task: reviewed.task,
                         position: envelope.seq,
                         implemented,
-                        reviewer: reviewed.reviewer,
+                        reviewer: roles.author(&reviewed.reviewer),
                         verdict: reviewed.verdict,
                     });
             }

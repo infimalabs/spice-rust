@@ -199,6 +199,8 @@ pub(super) fn task_steering_origin_output(
 /// One steering key's source directive and the transcript locus that answered it.
 pub(super) struct SteeringProvenance {
     presentation: bus::SteeringPresentation,
+    /// The directive's author as the principal roles resolve it.
+    author: wire::Actor,
     answer: SteeringAnswer,
 }
 
@@ -244,8 +246,12 @@ pub(super) fn read_steering_provenance(
         },
         None => SteeringAnswer::Unanswered(presentation.head().body().disposition.as_str()),
     };
+    let author = read
+        .principal_roles()?
+        .author(&presentation.created().actor);
     Ok(Some(SteeringProvenance {
         presentation,
+        author,
         answer,
     }))
 }
@@ -347,7 +353,7 @@ pub(super) fn render_task_steering_origin(
          origin_steering_text:\n{}\n\
          origin_steering_attachments {attachments}\n\
          {answer}",
-        head.directive, head.lane, created.actor, created.at, head.text
+        head.directive, head.lane, provenance.author, created.at, head.text
     )
     .into_boxed_str()
 }

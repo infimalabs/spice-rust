@@ -45,7 +45,11 @@ pub(in crate::board_command) fn read_task_detail(
         Ok(media) => media,
         Err(outcome) => return outcome,
     };
-    let mut record = task_record(observed.facts(), &selected);
+    let roles = match super::principal_roles(bus) {
+        Ok(roles) => roles,
+        Err(outcome) => return outcome,
+    };
+    let mut record = task_record(observed.facts(), &selected, &roles);
     let notes = record.notes.remove(&detail.task).unwrap_or_default();
     let closure = record.closures.remove(&detail.task);
     snapshot_reply(
@@ -79,10 +83,11 @@ pub(super) struct TaskRecord {
 }
 
 /// Read the named tasks' notes, closures, workflow steps, and acknowledgments
-/// from the snapshot's facts.
+/// from the snapshot's facts, naming each author as `roles` resolves it.
 pub(super) fn task_record(
     facts: &bus::TaskFacts,
     tasks: &std::collections::BTreeSet<wire::TaskStamp>,
+    roles: &wire::principal::PrincipalRoles,
 ) -> TaskRecord {
     let mut record = TaskRecord::default();
     // The phase each named task's workflow holds, so a completion names the
@@ -97,7 +102,7 @@ pub(super) fn task_record(
                 .push(wire::intent::TaskDetailStep {
                     position: envelope.seq,
                     at: envelope.at,
-                    author: envelope.actor.clone(),
+                    author: roles.author(&envelope.actor),
                     step,
                 });
         }
@@ -111,7 +116,7 @@ pub(super) fn task_record(
                 .push(wire::intent::TaskDetailNote {
                     position: envelope.seq,
                     at: envelope.at,
-                    author: envelope.actor.clone(),
+                    author: roles.author(&envelope.actor),
                     text: noted.note,
                 });
         }
@@ -123,7 +128,7 @@ pub(super) fn task_record(
                 wire::intent::TaskDetailClosure {
                     position: envelope.seq,
                     at: envelope.at,
-                    author: envelope.actor.clone(),
+                    author: roles.author(&envelope.actor),
                     validation: closed.validation,
                     phase: closed.phase,
                     claimed: closed.claimed,

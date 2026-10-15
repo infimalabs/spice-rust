@@ -74,6 +74,20 @@ impl Lanes {
         lanes
     }
 
+    /// The human actor of the bootstrap principal resident startup bore,
+    /// which every read names as the author of an operator-recorded fact.
+    fn bootstrap(&self) -> wire::Actor {
+        let roles = self
+            .bus
+            .read(|read| read.principal_roles())
+            .expect("principal roles read");
+        wire::Actor::Human(
+            roles
+                .bootstrap()
+                .expect("startup bears the bootstrap principal"),
+        )
+    }
+
     /// Seat one more lane whose occupant is born on it now.
     fn seat(&self, lane: u8) {
         seed_vendor_lane_in_worktree(
