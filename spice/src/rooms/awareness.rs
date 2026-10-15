@@ -9,10 +9,11 @@
 //! stem is folded away so `designs` and `design` agree. A Design's terms come
 //! from its title and description; a task's from its title, description, and
 //! acceptance. The task matches the Design when they share at least
-//! [`MIN_SHARED_TERMS`] distinct terms and at least one of them is a term of
+//! [`MIN_SHARED_TERMS`] distinct terms that are not [common](CommonTerms)
+//! across the board's open statements, and at least one of them is a term of
 //! the Design's title.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use wire::rooms::DESIGN_NOTICE_TERMS;
 
@@ -22,6 +23,11 @@ pub const MIN_TERM_CHARS: usize = 4;
 pub const MIN_SHARED_TERMS: usize = 3;
 /// Most characters of a Design's one-line pitch.
 pub const PITCH_CHARS: usize = 160;
+/// Fewest open statements a board needs before any term can be common.
+pub const COMMON_TERM_MIN_STATEMENTS: usize = 8;
+/// A term in more than this fraction, numerator over denominator, of the
+/// board's open statements is common.
+pub const COMMON_TERM_SHARE: (usize, usize) = (1, 4);
 
 /// Common words that say nothing about what a statement concerns.
 const STOP: &[&str] = &[
@@ -50,11 +56,16 @@ impl DesignTerms {
         Self { title, all }
     }
 
-    /// The shared terms, ascending and at most [`DESIGN_NOTICE_TERMS`], when
-    /// `task` matches this Design; `None` otherwise.
+    /// The shared terms that are not `common`, ascending and at most
+    /// [`DESIGN_NOTICE_TERMS`], when `task` matches this Design; `None`
+    /// otherwise.
     #[must_use]
-    pub fn matched(&self, task: &BTreeSet<String>) -> Option<Vec<String>> {
-        let shared = self.all.intersection(task).collect::<Vec<_>>();
+    pub fn matched(&self, task: &BTreeSet<String>, common: &CommonTerms) -> Option<Vec<String>> {
+        let shared = self
+            .all
+            .intersection(task)
+            .filter(|term| !common.0.contains(*term))
+            .collect::<Vec<_>>();
         let titled = shared.iter().any(|term| self.title.contains(*term));
         (shared.len() >= MIN_SHARED_TERMS && titled).then(|| {
             shared
@@ -63,6 +74,40 @@ impl DesignTerms {
                 .cloned()
                 .collect()
         })
+    }
+}
+
+/// Terms so widespread across the board's open statements that sharing them
+/// says nothing about what a task and a Design have in common.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CommonTerms(BTreeSet<String>);
+
+impl CommonTerms {
+    /// The terms found in more than [`COMMON_TERM_SHARE`] of `statements`,
+    /// each one open statement's terms. A board with fewer than
+    /// [`COMMON_TERM_MIN_STATEMENTS`] open statements has none. Memory is
+    /// bounded by the statements' distinct terms.
+    #[must_use]
+    pub fn of(statements: impl IntoIterator<Item = BTreeSet<String>>) -> Self {
+        let mut counts = BTreeMap::<String, usize>::new();
+        let mut total = 0_usize;
+        for statement in statements {
+            total += 1;
+            for term in statement {
+                *counts.entry(term).or_default() += 1;
+            }
+        }
+        if total < COMMON_TERM_MIN_STATEMENTS {
+            return Self::default();
+        }
+        let (numerator, denominator) = COMMON_TERM_SHARE;
+        Self(
+            counts
+                .into_iter()
+                .filter(|(_, count)| count * denominator > total * numerator)
+                .map(|(term, _)| term)
+                .collect(),
+        )
     }
 }
 
@@ -139,6 +184,20 @@ mod tests {
         task_terms(title, Some(description), &[])
     }
 
+    /// `count` open statements each holding `generic` plus its own filler.
+    fn board(count: usize, generic: &str) -> CommonTerms {
+        let filler = [
+            "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+        ];
+        CommonTerms::of(
+            filler
+                .iter()
+                .cycle()
+                .take(count)
+                .map(|word| task(&format!("{generic} {word}"), "")),
+        )
+    }
+
     #[test]
     fn a_task_matches_on_enough_shared_terms_including_a_title_term() {
         let design = DesignTerms::new(
@@ -146,10 +205,13 @@ mod tests {
             Some("Lanes page retained publications through bounded cursors."),
         );
         let matched = design
-            .matched(&task(
-                "Page room catch-up",
-                "Bound the cursor of retained publications per lane.",
-            ))
+            .matched(
+                &task(
+                    "Page room catch-up",
+                    "Bound the cursor of retained publications per lane.",
+                ),
+                &CommonTerms::default(),
+            )
             .expect("shared title and statement terms match");
         assert_eq!(
             matched,
@@ -172,17 +234,98 @@ mod tests {
             Some("Retained publications page through bounded cursors."),
         );
         assert_eq!(
-            design.matched(&task(
-                "Cursor paging",
-                "Retained publications and bounded cursors."
-            )),
+            design.matched(
+                &task(
+                    "Cursor paging",
+                    "Retained publications and bounded cursors."
+                ),
+                &CommonTerms::default()
+            ),
             None,
             "no shared term names what the Design's title is about"
         );
         assert_eq!(
-            design.matched(&task("Working groups", "Arrange the board.")),
+            design.matched(
+                &task("Working groups", "Arrange the board."),
+                &CommonTerms::default()
+            ),
             None,
             "two shared terms are below the threshold"
+        );
+    }
+
+    #[test]
+    fn board_common_terms_neither_count_nor_satisfy_the_title_requirement() {
+        let common = board(8, "lane room work");
+        let generic = DesignTerms::new("Lane room work", None);
+        let claimed = task("Lane room work", "");
+        assert!(generic.matched(&claimed, &CommonTerms::default()).is_some());
+        assert_eq!(
+            generic.matched(&claimed, &common),
+            None,
+            "an overlap of only board-common terms invites nothing"
+        );
+
+        let titled_by_common = DesignTerms::new(
+            "Room lanes",
+            Some("Retained publications page through bounded cursors."),
+        );
+        let paging = task(
+            "Paging",
+            "Retained publications and bounded cursors in rooms.",
+        );
+        assert!(
+            titled_by_common
+                .matched(&paging, &CommonTerms::default())
+                .is_some()
+        );
+        assert_eq!(
+            titled_by_common.matched(&paging, &common),
+            None,
+            "a common title term does not satisfy the title requirement"
+        );
+
+        let specific = DesignTerms::new(
+            "Room catch-up pagination",
+            Some("Lanes page retained publications through bounded cursors."),
+        );
+        assert_eq!(
+            specific
+                .matched(
+                    &task(
+                        "Page room catch-up",
+                        "Bound the cursor of retained publications per lane.",
+                    ),
+                    &common,
+                )
+                .expect("specific shared terms still match"),
+            ["catch", "cursor", "page", "publication", "retained"],
+            "matched terms omit the common ones"
+        );
+    }
+
+    #[test]
+    fn a_term_is_common_only_above_its_share_of_a_large_enough_board() {
+        assert_eq!(
+            board(COMMON_TERM_MIN_STATEMENTS - 1, "lane room work"),
+            CommonTerms::default(),
+            "a small board discounts nothing"
+        );
+        let (numerator, denominator) = COMMON_TERM_SHARE;
+        let at_share = COMMON_TERM_MIN_STATEMENTS * numerator / denominator;
+        let mut statements = (0..COMMON_TERM_MIN_STATEMENTS)
+            .map(|_| task("Lane", ""))
+            .collect::<Vec<_>>();
+        for statement in &mut statements[..at_share] {
+            statement.insert("page".to_owned());
+        }
+        for statement in &mut statements[..=at_share] {
+            statement.insert("cursor".to_owned());
+        }
+        assert_eq!(
+            CommonTerms::of(statements),
+            CommonTerms(BTreeSet::from(["cursor".to_owned(), "lane".to_owned()])),
+            "exactly the share is not common; one statement more is"
         );
     }
 
