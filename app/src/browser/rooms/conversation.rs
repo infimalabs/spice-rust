@@ -18,6 +18,7 @@ use wire::rooms::{
 use wire::{CanonicalUuid, CommandKind, Disposition};
 use yew::prelude::*;
 
+use super::card::{Badge, Face, Packet, Speaker};
 use crate::AppRuntime;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::client_action::{ClientAction, RoomControlRequest};
@@ -42,9 +43,11 @@ pub(super) struct CardControls<'a> {
 }
 
 /// Who spoke one conversation-family event, the words it carried when this
-/// browser holds them, and the authority its card's routes read.
+/// browser holds them, and the authority its card's routes read. A lane
+/// speaker names its lane; the operator names none.
 pub(super) struct Spoken<'a> {
     pub(super) author: String,
+    pub(super) lane: Option<CanonicalUuid>,
     pub(super) text: Option<String>,
     conversation: Option<&'a Conversation>,
     packet: Option<&'a [CanonicalUuid]>,
@@ -58,7 +61,7 @@ pub(super) fn spoken<'a>(
     event: &'a RoomEvent,
 ) -> Option<Spoken<'a>> {
     let projection = runtime.room_projection().conversation();
-    let (author, echoed, conversation, packet) = match &event.kind {
+    let (author, lane, echoed, conversation, packet) = match &event.kind {
         RoomEventKind::Messaged {
             source,
             directed,
@@ -66,6 +69,7 @@ pub(super) fn spoken<'a>(
             ..
         } => (
             lane_label(runtime, source.head.lane),
+            Some(source.head.lane),
             echo(runtime, source),
             conversation
                 .as_ref()
@@ -76,6 +80,7 @@ pub(super) fn spoken<'a>(
             let conversation = projection.conversation(publication)?;
             (
                 "Operator".to_owned(),
+                None,
                 conversation.text.clone(),
                 Some(conversation),
                 None,
@@ -83,7 +88,7 @@ pub(super) fn spoken<'a>(
         }
         // A plain post is recorded in the room and directs no one.
         RoomEventKind::Published(RoomPublicationContent::Authored { text }) => {
-            ("Operator".to_owned(), Some(text.clone()), None, None)
+            ("Operator".to_owned(), None, Some(text.clone()), None, None)
         }
         _ => return None,
     };
@@ -111,38 +116,40 @@ pub(super) fn spoken<'a>(
     });
     Some(Spoken {
         author,
+        lane,
         text,
         conversation,
         packet,
     })
 }
 
-/// One room publication card, or `None` for an event outside this family.
-/// Its controls' outcomes and refusals go to their `report`; without
-/// controls the card only reads.
-pub(super) fn render_card(
+/// One room publication's card face, or `None` for an event outside this
+/// family. Its controls' outcomes and refusals go to their `report`; without
+/// controls the face only reads.
+pub(super) fn face(
     runtime: &AppRuntime,
     controls: Option<CardControls<'_>>,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
-) -> Option<Html> {
+) -> Option<Face> {
     let act = Act { runtime, controls };
     let Spoken {
         author,
+        lane,
         text,
         conversation,
         packet,
     } = spoken(runtime, publication, event)?;
-    let (verb, routes, result) = match conversation {
+    let (badge, routes, result) = match conversation {
         Some(conversation) => (
-            Some(verb(conversation)),
+            packet_badge(conversation),
             routes(act, conversation),
             result(act, conversation),
         ),
         // A packet that admitted no conversation still delivers its directed
         // messages under native steering receipts.
         None => (
-            packet.map(|_| "MSG"),
+            None,
             packet
                 .unwrap_or_default()
                 .iter()
@@ -151,40 +158,25 @@ pub(super) fn render_card(
             Html::default(),
         ),
     };
-    let destinations = routes
+    let receivers = routes
         .iter()
-        .map(|route| route.destination.clone())
+        .map(|route| route.destination.as_str())
         .collect::<Vec<_>>()
         .join(", ");
-    Some(html! {
-        <article
-            class="room-card room-flow-card"
-            key={publication.to_string()}
-            data-publication={publication.to_string()}
-            data-verb={verb}
-            tabindex="0"
-        >
-            <header>
-                <strong class="room-flow-route">
-                    {author}
-                    if !destinations.is_empty() {
-                        {" → "}{destinations}
-                    }
-                </strong>
-                if let Some(verb) = verb {
-                    <span class="room-flow-verb">{verb}</span>
-                }
-                <code>{publication.to_string()}</code>
-            </header>
-            <p class="room-flow-text">
-                {text.unwrap_or_else(|| "Source remains in the author's lane transcript.".to_owned())}
-            </p>
-            <ul class="room-flow-statuses" aria-label="Delivery status">
-                <li class="room-chip" data-status="recorded">{"Recorded in room"}</li>
-                {for routes.into_iter().map(|route| route.html)}
-            </ul>
-            {result}
-        </article>
+    Some(Face {
+        speaker: Some(Speaker { name: author, lane }),
+        receivers,
+        badge: badge.map(Badge::Packet),
+        words: text.unwrap_or_else(|| "Source remains in the author's lane transcript.".to_owned()),
+        tail: html! {
+            <>
+                <ul class="room-flow-statuses" aria-label="Delivery status">
+                    <li class="room-chip" data-status="recorded">{"Recorded in room"}</li>
+                    {for routes.into_iter().map(|route| route.html)}
+                </ul>
+                {result}
+            </>
+        },
     })
 }
 
@@ -331,6 +323,15 @@ fn verb(conversation: &Conversation) -> &'static str {
         RoomPublicationKind::Msg {} => "MSG",
         RoomPublicationKind::Ask { .. } => "ASK",
         RoomPublicationKind::Ans { .. } => "ANS",
+    }
+}
+
+/// The badge a question or its answer wears; a MSG wears none, as in a team.
+fn packet_badge(conversation: &Conversation) -> Option<Packet> {
+    match conversation.publication.kind() {
+        RoomPublicationKind::Msg {} => None,
+        RoomPublicationKind::Ask { .. } => Some(Packet::Ask),
+        RoomPublicationKind::Ans { .. } => Some(Packet::Ans),
     }
 }
 
@@ -769,7 +770,12 @@ fn acting_card(event: &Event) -> Option<HtmlElement> {
     let target = event.target()?.dyn_into::<Element>().ok()?;
     let inbox = target.closest("[data-room-inbox]").ok().flatten();
     inbox
-        .or_else(|| target.closest(".room-flow-card").ok().flatten())?
+        .or_else(|| {
+            target
+                .closest(".room-card, .mosaic-room-card")
+                .ok()
+                .flatten()
+        })?
         .dyn_into::<HtmlElement>()
         .ok()
 }

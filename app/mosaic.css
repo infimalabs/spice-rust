@@ -1292,11 +1292,7 @@ a.relative-age {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.team-surface .message-ack-pill,
-.team-surface .message-taste-pill,
-.team-surface .message-broadcast-pill,
-.team-surface .message-review-pill,
-.team-surface .message-final-pill {
+.team-surface :is(.message-ack-pill, .message-taste-pill, .message-broadcast-pill, .message-review-pill, .message-final-pill, .message-room-pill) {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .team-surface .message-agent-name {
@@ -1330,11 +1326,7 @@ a.relative-age {
   text-decoration: underline; text-underline-offset: 2px;
 }
 .team-surface .message-actions { flex: 0 0 auto; margin-left: 0; }
-.team-surface .message-ack-pill,
-.team-surface .message-taste-pill,
-.team-surface .message-broadcast-pill,
-.team-surface .message-review-pill,
-.team-surface .message-final-pill {
+.team-surface :is(.message-ack-pill, .message-taste-pill, .message-broadcast-pill, .message-review-pill, .message-final-pill, .message-room-pill) {
   --message-inline-pill-accent: var(--ink);
   display: inline-flex;
   min-height: 17px;
@@ -1362,7 +1354,8 @@ a.relative-age {
   .message-final-pill,
   .message-taste-pill,
   .message-review-pill,
-  .message-broadcast-pill
+  .message-broadcast-pill,
+  .message-room-pill
 ) {
   border-radius: 0;
 }
@@ -1400,7 +1393,8 @@ a.relative-age {
   .message-final-pill,
   .message-taste-pill,
   .message-review-pill,
-  .message-broadcast-pill
+  .message-broadcast-pill,
+  .message-room-pill
 ) {
   background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
   color: var(--message-inline-pill-accent);
