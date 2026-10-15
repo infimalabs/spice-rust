@@ -145,6 +145,27 @@ fn a_competing_edit_after_preview_refuses_and_resubmission_reads_the_new_head() 
 }
 
 #[test]
+fn a_refusal_retains_both_edited_fields() {
+    let design = design();
+    let mut draft = DesignAmendment::new(&design);
+    draft.set_title("  Proposed title  ".to_owned());
+    draft.set_description("  Proposed description  ".to_owned());
+    draft.preview(&design);
+    assert!(draft.begin_submit().is_some());
+
+    draft.settle(Err(
+        "board::witness-moved: the statement changed first".to_owned()
+    ));
+    assert_eq!(refusal(&draft), "board::witness-moved");
+    assert_eq!(draft.title(), "  Proposed title  ");
+    assert_eq!(draft.description(), "  Proposed description  ");
+    assert!(
+        draft.begin_submit().is_none(),
+        "a refusal needs a new preview"
+    );
+}
+
+#[test]
 fn visibility_requires_the_noticed_current_occupant_and_an_open_design() {
     let design = design();
     let lane = uuid(1);
