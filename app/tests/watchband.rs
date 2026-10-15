@@ -2,11 +2,11 @@ use app::Session;
 use app::runtime::{AppRuntime, LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop, UNKNOWN_AGENT_LABEL,
-    accent, arrangement, badge, elapsed_label, elapsed_label_deadline_millis,
-    first_nonquoted_prose, history_frontier_request_due, job_matches_tasks, jobs_kept,
-    latest_lane_prose, leaf, member_presence, one_line, remaining_label,
-    remaining_label_deadline_millis, reported_tasks, short, standing_title, standings,
-    task_mentions, team_jobs, teams, ticker_chunks, ticker_line, topology, truncate,
+    arrangement, badge, elapsed_label, elapsed_label_deadline_millis, first_nonquoted_prose,
+    group_accent, history_frontier_request_due, job_matches_tasks, jobs_kept, latest_lane_prose,
+    leaf, member_presence, one_line, remaining_label, remaining_label_deadline_millis,
+    reported_tasks, short, standing_title, standings, task_mentions, team_accent, team_jobs, teams,
+    ticker_chunks, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::head::TEAM_MEMBER_LIMIT;
@@ -131,6 +131,7 @@ fn standing_for(member: &LaneMember) -> app::watchband::Standing {
         subscription: wire::intent::TeamLife::Steer,
         fast_mode: false,
         members: vec![member.clone()],
+        console: None,
     };
     standings(&[team], &[], &[])
         .into_iter()
@@ -144,6 +145,7 @@ fn lane(id: &str, worktree: &str) -> LaneRow {
         subscription: wire::intent::TeamLife::Steer,
         fast_mode: false,
         members: vec![member(id, worktree)],
+        console: None,
     }
 }
 
@@ -410,6 +412,7 @@ fn one_team_emits_one_standing_per_member_without_losing_the_teamentity() {
         subscription: wire::intent::TeamLife::Steer,
         fast_mode: false,
         members: vec![member(LANE_A, "main-a"), member(LANE_B, "main-b")],
+        console: Some(0),
     };
 
     let rows = standings(&[team], &[], &[]);
@@ -528,19 +531,37 @@ fn team_members_receive_the_complete_palette_from_the_main_right_edge() {
         second[5].accent, 5,
         "a member reordered to the far left receives that position's accent"
     );
-    for members in 1..=ACCENTS + 1 {
-        assert_eq!(
-            accent(members, 0),
-            0,
-            "the canonical main member starts at green for a team of {members}"
-        );
-    }
     assert_eq!(
         (0..=ACCENTS)
-            .map(|position| accent(ACCENTS + 1, position))
+            .map(|position| team_accent(0, position))
             .collect::<Vec<_>>(),
         vec![0, 1, 2, 3, 4, 5, 0],
         "the seventh member wraps at the far left without moving the right anchor"
+    );
+}
+
+#[test]
+fn teams_and_working_groups_deal_their_bases_from_opposite_palette_ends() {
+    assert_eq!(
+        (0..=ACCENTS)
+            .map(|console| team_accent(console, 0))
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 4, 5, 0],
+        "each later team's lead starts one slot further up the palette"
+    );
+    assert_eq!(
+        (0..=ACCENTS)
+            .map(|console| group_accent(console, 0))
+            .collect::<Vec<_>>(),
+        vec![5, 4, 3, 2, 1, 0, 5],
+        "each later working group's lead design starts one slot further down"
+    );
+    assert_eq!(
+        (0..=ACCENTS)
+            .map(|position| group_accent(1, position))
+            .collect::<Vec<_>>(),
+        vec![4, 3, 2, 1, 0, 5, 4],
+        "a group's later designs count down from its base and wrap"
     );
 }
 
@@ -1117,6 +1138,7 @@ fn seated(id: &str, members: &[(&str, &str)]) -> LaneRow {
             .iter()
             .map(|(lane, worktree)| member(lane, worktree))
             .collect(),
+        console: Some(0),
     }
 }
 

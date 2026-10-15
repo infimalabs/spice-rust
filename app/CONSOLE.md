@@ -147,9 +147,10 @@ page's achromatic anchors, then binds its subtree's primitive neutrals, focus,
 and accent to them. Everything the subtree derives from those primitives follows,
 so relationships among its objects hold under any base. Lane and Design accent
 slots stay the page's. Accent slots are convenient inputs to that contract, not
-its boundary; no old green is tinted underneath the selected base. An open
-working group's console takes the palette's final accent as its whole base
-without wearing that slot. In the
+its boundary; no old green is tinted underneath the selected base. Each team
+and open working group console takes its whole base from the slot its place in
+the shared order deals, teams counting up from the palette's first accent and
+groups down from its last, without wearing that slot. In the
 work overview and on dependency cards a passive Design reads **Passive**,
 waiting on the operator.
 

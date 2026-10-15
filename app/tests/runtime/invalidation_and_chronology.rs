@@ -579,6 +579,49 @@ fn one_team_groups_multiple_steerable_worktrees_without_losing_member_order() {
 }
 
 #[test]
+fn teams_count_up_the_palette_in_resident_order_while_lone_seats_take_no_console() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    let bytes = lane_response(&[
+        (THIRD_LANE, THIRD_LANE, None, false),
+        (LANE, EPOCH, None, false),
+        (SECOND_LANE, EPOCH, None, false),
+        (SECRET_LANE_CAPABILITY, SECRET_LANE_CAPABILITY, None, false),
+        (REQUEST, NEXT_EPOCH, None, false),
+        (NEXT_CAPABILITY, NEXT_EPOCH, None, false),
+    ]);
+    let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
+        .admit_frame(&bytes)
+        .expect("mixed team answer is admitted");
+
+    runtime.apply_lanes(&admitted);
+
+    let lanes = &runtime.lanes().expect("the roster is retained").lanes;
+    assert_eq!(
+        lanes.iter().map(|team| team.console).collect::<Vec<_>>(),
+        vec![None, Some(0), None, Some(1)],
+        "a lone seat between teams does not shift the next team's base"
+    );
+    let accents = |team: &app::runtime::LaneRow| {
+        (0..team.members.len())
+            .map(|position| team.accent(position))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(accents(&lanes[1]), vec![0, 1]);
+    assert_eq!(
+        accents(&lanes[3]),
+        vec![1, 2],
+        "the second team's lead wears its base and members count up from it"
+    );
+    assert_eq!(
+        accents(&lanes[0]),
+        vec![0],
+        "a lone seat wears the page base"
+    );
+}
+
+#[test]
 fn every_distinct_team_forms_one_console_even_when_members_have_no_name() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);

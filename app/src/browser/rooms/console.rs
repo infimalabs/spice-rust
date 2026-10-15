@@ -72,25 +72,32 @@ pub(in crate::browser) fn render_group_surfaces(render: &GroupRender<'_, '_>) ->
 fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) -> Html {
     let projection = render.runtime.room_projection();
     let loaded = projection.status() == RoomProjectionStatus::Available;
+    // The durable partition order, never this browser's console order, deals
+    // the group's base, so opening or arranging consoles here recolours none.
     let authoritative = projection
         .partition()
         .groups
         .iter()
-        .find(|group| group.group == view.group);
+        .enumerate()
+        .find(|(_, group)| group.group == view.group);
     // Absence is shown only once a completed snapshot lacks the group; while
     // authority reloads, the console keeps its last name and its geometry.
     let absent = loaded && authoritative.is_none();
+    let base = authoritative.map(|(console, _)| watchband::group_accent(console, 0));
+    let channels = authoritative.map_or_else(Vec::new, |(console, group)| {
+        group
+            .anchors
+            .iter()
+            .enumerate()
+            .map(|(position, stamp)| Channel {
+                stamp: stamp.clone(),
+                accent: watchband::group_accent(console, position),
+                label: anchor_label(render.runtime, stamp),
+            })
+            .collect::<Vec<_>>()
+    });
+    let authoritative = authoritative.map(|(_, group)| group);
     let name = group_name(render.runtime, render.controls, view, authoritative, absent);
-    let anchors = authoritative.map_or(&[][..], |group| group.anchors.as_slice());
-    let channels = anchors
-        .iter()
-        .enumerate()
-        .map(|(position, stamp)| Channel {
-            stamp: stamp.clone(),
-            accent: watchband::accent(anchors.len(), position),
-            label: anchor_label(render.runtime, stamp),
-        })
-        .collect::<Vec<_>>();
     let slot = render.controls.slots.slot(view.group.clone());
     let cards = plane_cards(render, &view.group, &channels);
     let empty = cards.is_empty();
@@ -131,7 +138,8 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
             key={view.group.to_string()}
             class="team-surface group-surface"
             data-group={view.group.to_string()}
-            data-base-flavor="final"
+            data-base-flavor={base.map(|_| "console")}
+            data-base-accent={base.map(|base| base.to_string())}
             data-team-weight={watchband::team_visual_weight(channels.len()).to_string()}
             onclick={panel::dismissal(render.controls, &view.group)}
         >

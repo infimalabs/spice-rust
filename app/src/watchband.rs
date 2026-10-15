@@ -485,7 +485,7 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
                 phase: held.map(|task| task.workflow.body.phase.to_string()),
                 held_since: held.and_then(|task| lease_instant(task, |lease| lease.start)),
                 expires_at: held.and_then(|task| lease_instant(task, |lease| lease.expiry)),
-                accent: accent(team.members.len(), position),
+                accent: team.accent(position),
             }
         })
         .collect()
@@ -520,29 +520,42 @@ fn lease_instant(
         .map(|lease| pick(&lease.body).get().as_millisecond())
 }
 
-/// The accent slot dealt to one canonical team-member position.
+/// The accent slot dealt to member `position` of the `console`-th team.
 ///
-/// Canonical member zero is the main, control-adjacent member and receives
-/// green. Moving left advances through the six slots, and a seventh member
-/// intentionally returns to green. Color decorates visible attribution; lane
-/// identity and accessible labels remain authoritative.
+/// Teams count up through the palette: each team's base is one slot after
+/// the team before it, so the first team's lead wears green, the second's
+/// blue, the third's gold. A team's lead, canonical member zero at the
+/// control edge, wears that base, and moving left each member takes the next
+/// slot; a seventh member returns to the base. Color decorates visible
+/// attribution; lane identity and accessible labels remain authoritative.
 #[must_use]
-pub const fn accent(members: usize, position: usize) -> usize {
-    assert!(position < members, "member position belongs to its team");
-    position % ACCENTS
+pub const fn team_accent(console: usize, position: usize) -> usize {
+    (console + position) % ACCENTS
+}
+
+/// The accent slot dealt to member `position` of the `console`-th working
+/// group.
+///
+/// Working groups deal the palette from its other end so they rarely share a
+/// base with a team: the first group's lead design wears plum, the second's
+/// teal, the third's red, and each group's later designs count down from its
+/// base as a team's count up.
+#[must_use]
+pub const fn group_accent(console: usize, position: usize) -> usize {
+    ACCENTS - 1 - (console + position) % ACCENTS
 }
 
 /// Resolve the accent slot currently dealt to one independently steerable lane.
 ///
-/// Agent color follows canonical team position, so every surface that names a
-/// lane uses the same right-edge palette deal.
+/// Agent color follows its team's console and canonical position, so every
+/// surface that names a lane uses the same deal.
 #[must_use]
 pub fn lane_accent(lanes: &[LaneRow], lane: CanonicalUuid) -> Option<usize> {
     lanes.iter().find_map(|team| {
         team.members
             .iter()
             .position(|member| member.lane == lane)
-            .map(|position| accent(team.members.len(), position))
+            .map(|position| team.accent(position))
     })
 }
 
@@ -1135,12 +1148,14 @@ mod tests {
                 subscription: wire::intent::TeamLife::Steer,
                 fast_mode: false,
                 members: vec![lead, member(1)],
+                console: Some(0),
             },
             crate::runtime::LaneRow {
                 lane: id(20),
                 subscription: wire::intent::TeamLife::Steer,
                 fast_mode: false,
                 members: Vec::new(),
+                console: None,
             },
         ];
 

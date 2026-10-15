@@ -21,7 +21,7 @@ pub(super) fn render(lanes: &[LaneRow], tasks: &[wire::TaskStamp]) -> Html {
                         .filter(move |job| crate::watchband::job_matches_tasks(job, tasks))
                         .map(move |job| ResidentJob {
                             member,
-                            accent: crate::watchband::accent(team.members.len(), position),
+                            accent: team.accent(position),
                             job,
                         })
                 })
