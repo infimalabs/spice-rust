@@ -227,24 +227,49 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 }
 .app-horn-tab {
   --app-horn-tab-tint: var(--app-base-muted);
+  --app-horn-tab-fill: color-mix(in srgb, var(--app-horn-tab-tint) 5%, var(--app-base-control));
+  --app-horn-tab-rail: var(--app-base-line);
+  --app-horn-tab-rail-width: var(--quote-rail);
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 4px;
   min-height: var(--app-horn-tab-block-size);
   padding: 0 var(--app-horn-tab-inset);
-  overflow: clip;
   border: 0;
-  border-inline: var(--quote-rail) solid var(--app-base-line);
-  background: var(--app-base-control);
+  border-inline: var(--app-horn-tab-rail-width) solid var(--app-horn-tab-rail);
+  background: var(--app-horn-tab-fill);
   color: var(--app-base-muted);
   font: 500 var(--app-type-status)/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
   text-decoration: none;
 }
 a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-horn-tab--down { border-radius: 0 0 var(--app-radius-card) var(--app-radius-card); }
-.app-horn-tab--up { border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
-.app-horn-tab--wide { border-inline-width: var(--message-rail); }
+.app-horn-tab--up {
+  position: relative;
+  border-radius: var(--app-radius-card) var(--app-radius-card) 0 0;
+}
+.app-horn-tab--wide { --app-horn-tab-rail-width: var(--message-rail); }
+/* An up tab rises from its lane's top rule like a browser tab: a small concave
+   flare on each side curves its rail and fill out to meet the rule. */
+.app-horn-tab--up::before,
+.app-horn-tab--up::after {
+  --app-horn-tab-flare: calc(var(--app-radius-card) + var(--app-horn-tab-rail-width));
+  position: absolute;
+  bottom: 0;
+  width: var(--app-horn-tab-flare);
+  height: var(--app-horn-tab-flare);
+  background: radial-gradient(
+    circle at var(--app-horn-tab-flare-origin) 0,
+    transparent calc(var(--app-radius-card) - .5px),
+    var(--app-horn-tab-rail) calc(var(--app-radius-card) + .5px) calc(var(--app-horn-tab-flare) - .5px),
+    var(--app-horn-tab-fill) calc(var(--app-horn-tab-flare) + .5px)
+  );
+  content: "";
+  pointer-events: none;
+}
+.app-horn-tab--up::before { --app-horn-tab-flare-origin: 0; right: 100%; }
+.app-horn-tab--up::after { --app-horn-tab-flare-origin: 100%; left: 100%; }
 /* Work only the operator can move marks a tab with a small danger dot seated
    on its count badge's top inline-end corner, as the renewal dot sits on a
    lane menu's corner. Out of flow, it never changes the tab's box, badge,
@@ -273,6 +298,8 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   padding: 0 8px;
   border: 0;
   border-radius: 0;
+  background: transparent;
+  color: inherit;
   font: inherit;
 }
 .app-horn-tab__target {
@@ -296,15 +323,13 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   padding-inline: 0;
   text-align: center;
 }
-:is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button) {
-  background: color-mix(in srgb, var(--app-horn-tab-tint) 5%, var(--app-base-control));
-  color: var(--app-base-muted);
+/* Hover deepens every horn tab's fill and strengthens its rails within the
+   object's base flavor. */
+.app-horn-tab:hover {
+  --app-horn-tab-fill: color-mix(in srgb, var(--app-horn-tab-tint) 10%, var(--app-base-control));
+  --app-horn-tab-rail: color-mix(in srgb, var(--app-base-muted) 35%, var(--app-base-line));
+  border-color: var(--app-horn-tab-rail);
 }
-:is(.app-horn-tab:not(.app-horn-tab--group), .app-horn-tab--group > button):hover {
-  background: color-mix(in srgb, var(--app-horn-tab-tint) 10%, var(--app-base-control));
-}
-/* Hover strengthens every horn tab's rails within the object's base flavor. */
-.app-horn-tab:hover { border-color: color-mix(in srgb, var(--app-base-muted) 35%, var(--app-base-line)); }
 .app-horn-tab__handle.dormant {
   color: color-mix(in srgb, var(--app-base-muted) 62%, transparent);
 }
