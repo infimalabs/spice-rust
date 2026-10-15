@@ -363,14 +363,20 @@ pub(super) fn retire_recovery(root: &Path) -> Result<(), Error> {
     sync_directory(parent)
 }
 
-pub(super) fn retain_conflicted_recovery(root: &Path, transaction: &str) -> Result<PathBuf, Error> {
+/// Move the pending store to `<recovery>-KIND-TRANSACTION`, where it keeps its
+/// sealed bytes but no longer counts as a pending adoption.
+pub(super) fn retain_recovery(
+    root: &Path,
+    kind: &str,
+    transaction: &str,
+) -> Result<PathBuf, Error> {
     let parent = root.parent().expect("recovery root has Git-dir parent");
-    let retained = parent.join(format!("{RECOVERY_DIRECTORY}-conflict-{transaction}"));
+    let retained = parent.join(format!("{RECOVERY_DIRECTORY}-{kind}-{transaction}"));
     match fs::symlink_metadata(&retained) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Ok(_) => {
             return Err(recovery_refusal(
-                "git::recovery-conflict-storage-exists",
+                "git::recovery-retained-storage-exists",
                 format!("{} already exists", retained.display()),
                 "preserve both recovery generations and inspect them before retrying",
             ));
@@ -384,7 +390,7 @@ pub(super) fn retain_conflicted_recovery(root: &Path, transaction: &str) -> Resu
         }
     }
     fs::rename(root, &retained)
-        .map_err(|error| recovery_filesystem("retain conflicted recovery", &retained, error))?;
+        .map_err(|error| recovery_filesystem("retain recovery", &retained, error))?;
     sync_directory(parent)?;
     Ok(retained)
 }

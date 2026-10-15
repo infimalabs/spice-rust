@@ -297,17 +297,23 @@ pub(super) fn restore_client_recovery(repository: &Repository) -> Outcome<Comman
             );
         }
     }
-    if let Err(error) = spice::task_git::restore_recovery(repository, &recovery) {
-        return task_git_outcome(error);
-    }
-    Outcome::Reply(Reply {
-        position: ReplyPosition::Direct {},
-        body: CommandAnswer::Text(wire::intent::TextAnswer {
-            text: format!(
+    let text = match spice::task_git::restore_recovery(repository, &recovery) {
+        Ok(spice::task_git::RestoreOutcome::Restored) => {
+            format!(
                 "restored dirty-handoff transaction {}",
                 recovery.transaction()
-            ),
-        }),
+            )
+        }
+        Ok(spice::task_git::RestoreOutcome::Landed { retained }) => format!(
+            "dirty-handoff transaction {} already landed on HEAD; nothing was replayed and the sealed recovery objects are retained at {}",
+            recovery.transaction(),
+            retained.display()
+        ),
+        Err(error) => return task_git_outcome(error),
+    };
+    Outcome::Reply(Reply {
+        position: ReplyPosition::Direct {},
+        body: CommandAnswer::Text(wire::intent::TextAnswer { text }),
     })
 }
 
@@ -605,7 +611,7 @@ fn rollback_recovery_error(
 ) -> Outcome<CommandAnswer> {
     let outcome = task_git_outcome(error);
     match spice::task_git::restore_recovery(repository, recovery) {
-        Ok(()) => outcome,
+        Ok(_) => outcome,
         Err(restore) => task_git_outcome(restore),
     }
 }
