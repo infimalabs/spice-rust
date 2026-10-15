@@ -95,39 +95,49 @@ fn preview_freezes_the_shown_head_and_omits_unchanged_fields() {
 }
 
 #[test]
-fn a_refusal_keeps_both_fields_and_resubmission_reads_the_new_head() {
+fn a_competing_edit_after_preview_refuses_and_resubmission_reads_the_new_head() {
     let design = design();
     let mut draft = DesignAmendment::new(&design);
-    draft.set_title("  Proposed title  ".to_owned());
     draft.set_description("  Proposed description  ".to_owned());
     draft.preview(&design);
-    assert!(draft.begin_submit().is_some());
+    let first = draft.begin_submit().expect("the amendment submits");
     assert!(draft.is_pending());
     draft.set_title("lost while pending".to_owned());
+    assert_eq!(draft.title(), "Current title", "pending input is frozen");
+
+    let competing = moved(&design, 10, |competing| {
+        competing.presentation_title = "Competing title".to_owned();
+    });
     assert_eq!(
-        draft.title(),
-        "  Proposed title  ",
-        "pending input is frozen"
+        first.expected,
+        [witness(&design)],
+        "the in-flight edit remains bound to the head it previewed"
+    );
+    assert_eq!(
+        first.request.title, None,
+        "the untouched title is absent even after it changes concurrently"
+    );
+    assert_eq!(
+        first.request.description.as_deref(),
+        Some("Proposed description")
     );
 
     draft.settle(Err(
         "board::witness-moved: the statement changed first".to_owned()
     ));
     assert_eq!(refusal(&draft), "board::witness-moved");
-    assert_eq!(draft.title(), "  Proposed title  ");
+    assert_eq!(draft.title(), "Current title");
     assert_eq!(draft.description(), "  Proposed description  ");
     assert!(
         draft.begin_submit().is_none(),
         "a refusal needs a new preview"
     );
 
-    let competing = moved(&design, 10, |competing| {
-        competing.presentation_title = "Competing title".to_owned();
-    });
     draft.preview(&competing);
+    assert_eq!(draft.title(), "Competing title");
     let second = draft.begin_submit().expect("retained fields resubmit");
     assert_eq!(second.expected, [witness(&competing)]);
-    assert_eq!(second.request.title.as_deref(), Some("Proposed title"));
+    assert_eq!(second.request.title, None);
     assert_eq!(
         second.request.description.as_deref(),
         Some("Proposed description")
