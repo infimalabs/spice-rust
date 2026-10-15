@@ -97,6 +97,9 @@ enum RecoveryState {
     Synchronized {
         boundary: GitBoundary,
     },
+    Restoring {
+        boundary: GitBoundary,
+    },
     Replaying {
         boundary: GitBoundary,
     },
@@ -239,6 +242,7 @@ fn resume_quarantine(repository: &Repository, recovery: Recovery) -> Result<Reco
         RecoveryState::Quarantined
         | RecoveryState::Syncing { .. }
         | RecoveryState::Synchronized { .. }
+        | RecoveryState::Restoring { .. }
         | RecoveryState::Replaying { .. }
         | RecoveryState::Conflict { .. } => Ok(recovery),
     }
@@ -305,6 +309,7 @@ pub fn recovery_claim(
 fn synchronized_boundary(manifest: &Manifest) -> Result<GitBoundary, Error> {
     match &manifest.state {
         RecoveryState::Synchronized { boundary }
+        | RecoveryState::Restoring { boundary }
         | RecoveryState::Replaying { boundary }
         | RecoveryState::Conflict { boundary, .. } => Ok(boundary.clone()),
         RecoveryState::Captured | RecoveryState::Quarantined | RecoveryState::Syncing { .. } => {
@@ -329,6 +334,13 @@ pub fn synchronize_recovery(
         RecoveryState::Synchronized { boundary }
         | RecoveryState::Replaying { boundary }
         | RecoveryState::Conflict { boundary, .. } => return Ok(boundary),
+        RecoveryState::Restoring { .. } => {
+            return Err(recovery_refusal(
+                "git::recovery-restore-in-progress",
+                "the sealed generation is being restored on its synchronized boundary",
+                "resume the restore with `spice task capture --restore`",
+            ));
+        }
         RecoveryState::Syncing { boundary } => {
             return resume_synchronization(repository, &root, manifest, boundary);
         }
@@ -425,38 +437,144 @@ fn resume_synchronization(
     Ok(boundary)
 }
 
-/// Restore the exact pre-claim dirty generation and retire its quarantine.
+/// Restore the sealed pre-claim dirty generation without rewinding synchronized history.
 pub fn restore_recovery(repository: &Repository, recovery: &Recovery) -> Result<(), Error> {
     let root = recovery_root(repository);
-    let manifest = read_expected(&root, recovery)?;
-    refuse_post_replay_restore(&manifest)?;
+    let mut manifest = read_expected(&root, recovery)?;
+    let current = current_head(repository.worktree_root())?;
+    let ancestry = restore_boundary(&manifest.state)
+        .filter(|boundary| current == boundary.head && current != manifest.payload.head)
+        .map(|boundary| {
+            is_ancestor(
+                repository.worktree_root(),
+                &manifest.payload.head,
+                &boundary.head,
+            )
+        })
+        .transpose()?;
+    let mode = restore_mode(&manifest.state, &manifest.payload.head, &current, ancestry)?;
     recover_pending(repository.worktree_root())?;
     verify_rollback_surface(repository, &manifest)?;
-    clean_manifest_paths(repository.worktree_root(), &manifest.payload)?;
-    restore_original_head(repository.worktree_root(), &manifest)?;
-    restore_index(repository.worktree_root(), &root, &manifest.payload.index)?;
-    restore_paths(repository.worktree_root(), &root, &manifest.payload.tracked)?;
-    restore_paths(
-        repository.worktree_root(),
-        &root,
-        &manifest.payload.untracked,
-    )?;
-    verify_original(repository, &root, &manifest)?;
-    retire_recovery(&root)
+    match mode {
+        RestoreMode::Exact => {
+            clean_manifest_paths(repository.worktree_root(), &manifest.payload)?;
+            restore_index(repository.worktree_root(), &root, &manifest.payload.index)?;
+            restore_paths(repository.worktree_root(), &root, &manifest.payload.tracked)?;
+            restore_paths(
+                repository.worktree_root(),
+                &root,
+                &manifest.payload.untracked,
+            )?;
+            verify_original(repository, &root, &manifest)?;
+            retire_recovery(&root)
+        }
+        RestoreMode::Forward(boundary) => {
+            restore_forward(repository, &root, &mut manifest, &boundary)
+        }
+    }
 }
 
-fn refuse_post_replay_restore(manifest: &Manifest) -> Result<(), Error> {
-    match &manifest.state {
-        RecoveryState::Replaying { .. } | RecoveryState::Conflict { .. } => Err(recovery_refusal(
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RestoreMode {
+    Exact,
+    Forward(GitBoundary),
+}
+
+fn restore_boundary(state: &RecoveryState) -> Option<&GitBoundary> {
+    match state {
+        RecoveryState::Syncing { boundary }
+        | RecoveryState::Synchronized { boundary }
+        | RecoveryState::Restoring { boundary } => Some(boundary),
+        RecoveryState::Captured
+        | RecoveryState::Quarantined
+        | RecoveryState::Replaying { .. }
+        | RecoveryState::Conflict { .. } => None,
+    }
+}
+
+fn restore_mode(
+    state: &RecoveryState,
+    sealed: &str,
+    observed: &str,
+    sealed_is_ancestor: Option<bool>,
+) -> Result<RestoreMode, Error> {
+    if matches!(
+        state,
+        RecoveryState::Replaying { .. } | RecoveryState::Conflict { .. }
+    ) {
+        return Err(recovery_refusal(
             "git::recovery-already-claimed",
             "replay has begun and may contain claimed conflict state",
             "resume replay under the exact active claim instead of rolling back",
-        )),
-        RecoveryState::Captured
-        | RecoveryState::Quarantined
-        | RecoveryState::Syncing { .. }
-        | RecoveryState::Synchronized { .. } => Ok(()),
+        ));
     }
+    if observed == sealed {
+        return Ok(RestoreMode::Exact);
+    }
+    let Some(boundary) = restore_boundary(state) else {
+        return Err(recovery_refusal(
+            "git::recovery-head-moved",
+            format!("sealed HEAD {sealed}; observed {observed}"),
+            "inspect the retained quarantine and moved branch before retrying",
+        ));
+    };
+    if observed == boundary.head && sealed_is_ancestor == Some(true) {
+        return Ok(RestoreMode::Forward(boundary.clone()));
+    }
+    Err(recovery_refusal(
+        "git::recovery-head-moved",
+        format!(
+            "sealed HEAD {sealed}; synchronized HEAD {}; observed {observed}",
+            boundary.head
+        ),
+        "inspect the retained quarantine and moved branch before retrying",
+    ))
+}
+
+fn restore_forward(
+    repository: &Repository,
+    root: &Path,
+    manifest: &mut Manifest,
+    boundary: &GitBoundary,
+) -> Result<(), Error> {
+    let worktree = repository.worktree_root();
+    clean_manifest_paths(worktree, &manifest.payload)?;
+    if let Err(error) = refuse_untracked_collisions(worktree, &manifest.payload.untracked) {
+        return retain_restore_conflict(root, manifest, boundary, &error);
+    }
+    manifest.state = RecoveryState::Restoring {
+        boundary: boundary.clone(),
+    };
+    write_manifest(root, manifest)?;
+    if let Err(error) = apply_replay_patches(worktree, root, manifest, boundary) {
+        return retain_restore_conflict(root, manifest, boundary, &error);
+    }
+    restore_paths(worktree, root, &manifest.payload.untracked)?;
+    verify_replayed(repository, root, manifest, boundary)?;
+    retire_recovery(root)
+}
+
+fn retain_restore_conflict(
+    root: &Path,
+    manifest: &mut Manifest,
+    boundary: &GitBoundary,
+    error: &Error,
+) -> Result<(), Error> {
+    manifest.state = RecoveryState::Conflict {
+        boundary: boundary.clone(),
+        detail: error.detail().to_owned(),
+    };
+    write_manifest(root, manifest)?;
+    let retained = retain_conflicted_recovery(root, &manifest.transaction)?;
+    Err(recovery_refusal(
+        "git::recovery-restore-conflict",
+        format!(
+            "{}; sealed recovery objects retained at {}",
+            error.detail(),
+            retained.display()
+        ),
+        UNOWNED_WORK_REMEDY,
+    ))
 }
 
 /// Replay a synchronized quarantine, retaining all data on any conflict.
@@ -507,6 +625,11 @@ fn replay_boundary(manifest: &Manifest) -> Result<GitBoundary, Error> {
             "git::recovery-not-synchronized",
             "the clean lane has no completed synchronized boundary",
             "synchronize this recovery before replaying it",
+        )),
+        RecoveryState::Restoring { .. } => Err(recovery_refusal(
+            "git::recovery-restore-in-progress",
+            "the sealed generation is being restored on its synchronized boundary",
+            "resume the restore with `spice task capture --restore`",
         )),
     }
 }
@@ -1145,33 +1268,6 @@ fn current_dirty_paths(worktree: &Path) -> Result<BTreeSet<String>, Error> {
         .collect())
 }
 
-fn restore_original_head(worktree: &Path, manifest: &Manifest) -> Result<(), Error> {
-    let current = current_head(worktree)?;
-    if current == manifest.payload.head {
-        return Ok(());
-    }
-    let allowed = match &manifest.state {
-        RecoveryState::Syncing { boundary } | RecoveryState::Synchronized { boundary } => {
-            current == boundary.head
-        }
-        RecoveryState::Captured | RecoveryState::Quarantined => false,
-        RecoveryState::Replaying { .. } | RecoveryState::Conflict { .. } => false,
-    };
-    if !allowed {
-        return Err(recovery_refusal(
-            "git::recovery-head-moved",
-            format!("sealed HEAD {}; observed {current}", manifest.payload.head),
-            "inspect the retained quarantine and moved branch before retrying",
-        ));
-    }
-    materialize_and_update(
-        worktree,
-        &manifest.payload.head,
-        &current,
-        "restore pre-claim recovery HEAD",
-    )
-}
-
 fn restore_index(worktree: &Path, root: &Path, blob: &StoredBlob) -> Result<(), Error> {
     let bytes = read_blob(root, blob)?;
     let path = git_state_path(worktree, "index")?;
@@ -1444,5 +1540,94 @@ fn base_changed(worktree: &Path, old: &str, new: &str, paths: &[String]) -> Resu
             "git::recovery-verify-failed",
             output.detail("compare replay bases"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn boundary(head: &str) -> GitBoundary {
+        GitBoundary {
+            head: head.to_owned(),
+            integrated: head.to_owned(),
+            upstream: Some("origin/main".to_owned()),
+            upstream_head: Some(head.to_owned()),
+            local_commits: 0,
+        }
+    }
+
+    #[test]
+    fn restore_mode_preserves_exact_and_forward_boundaries() {
+        for state in [
+            RecoveryState::Captured,
+            RecoveryState::Quarantined,
+            RecoveryState::Syncing {
+                boundary: boundary("published"),
+            },
+            RecoveryState::Synchronized {
+                boundary: boundary("published"),
+            },
+            RecoveryState::Restoring {
+                boundary: boundary("published"),
+            },
+        ] {
+            assert_eq!(
+                restore_mode(&state, "sealed", "sealed", Some(false)).unwrap(),
+                RestoreMode::Exact
+            );
+        }
+
+        for state in [
+            RecoveryState::Syncing {
+                boundary: boundary("published"),
+            },
+            RecoveryState::Synchronized {
+                boundary: boundary("published"),
+            },
+            RecoveryState::Restoring {
+                boundary: boundary("published"),
+            },
+        ] {
+            assert_eq!(
+                restore_mode(&state, "sealed", "published", Some(true)).unwrap(),
+                RestoreMode::Forward(boundary("published"))
+            );
+            assert_eq!(
+                restore_mode(&state, "sealed", "published", Some(false))
+                    .unwrap_err()
+                    .reason(),
+                "git::recovery-head-moved"
+            );
+            assert_eq!(
+                restore_mode(&state, "sealed", "moved", Some(true))
+                    .unwrap_err()
+                    .reason(),
+                "git::recovery-head-moved"
+            );
+        }
+
+        assert_eq!(
+            restore_mode(&RecoveryState::Quarantined, "sealed", "other", None)
+                .unwrap_err()
+                .reason(),
+            "git::recovery-head-moved"
+        );
+        for state in [
+            RecoveryState::Replaying {
+                boundary: boundary("sealed"),
+            },
+            RecoveryState::Conflict {
+                boundary: boundary("sealed"),
+                detail: "conflict".to_owned(),
+            },
+        ] {
+            assert_eq!(
+                restore_mode(&state, "sealed", "sealed", Some(true))
+                    .unwrap_err()
+                    .reason(),
+                "git::recovery-already-claimed"
+            );
+        }
     }
 }

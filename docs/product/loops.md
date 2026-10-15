@@ -120,7 +120,9 @@ flowchart LR
   synchronized boundary retains any loose commits, and a successful claim
   replays the exact staged, unstaged, and non-ignored untracked generation.
   An interrupted adoption resumes only through `task capture` for its sealed
-  target; `task capture --restore` restores the exact pre-claim generation.
+  target. `task capture --restore` never rewinds published history: when
+  synchronization advanced the lane, it re-creates the sealed generation on
+  that synchronized HEAD; otherwise it restores the exact pre-claim generation.
   A moved target or mismatched generation refuses without deleting quarantine.
 - Every unowned-path or loose-commit refusal names the same two choices:
   `task capture HANDLE` for an existing ready execution task or `task capture
