@@ -22,6 +22,9 @@ pub(super) struct Content {
     pub label: AttrValue,
     pub title: AttrValue,
     pub width: Width,
+    /// The palette index the whole sheet, header and body, wears as its base;
+    /// `None` keeps the page's.
+    pub base_accent: Option<usize>,
     pub body: Html,
     pub overlay: Html,
     pub overlay_open: bool,
@@ -77,6 +80,8 @@ pub(super) fn render(render: SidebarRender<'_>) -> Html {
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="app-sidebar-title"
+                data-base-flavor={render.content.base_accent.map(|_| "sheet")}
+                data-base-accent={render.content.base_accent.map(|base| base.to_string())}
             >
                 {render.content.anchor.unwrap_or_default()}
                 <div ref={render.sheet_ref.clone()} class="app-sidebar-surface app-overlay-sheet">

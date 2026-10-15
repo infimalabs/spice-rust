@@ -87,6 +87,18 @@ fn group_console(groups: &[wire::rooms::WorkingGroup], group: &RoomAuthorityStam
         .count()
 }
 
+/// The palette index `group`'s console wears as its base, dealt by formation
+/// age, while the partition holds that group.
+pub(in crate::browser) fn group_base(
+    groups: &[wire::rooms::WorkingGroup],
+    group: &RoomAuthorityStamp,
+) -> Option<usize> {
+    groups
+        .iter()
+        .any(|candidate| candidate.group == *group)
+        .then(|| watchband::group_accent(group_console(groups, group), 0))
+}
+
 /// Every opened group console, in this browser's order, as fleet surfaces.
 pub(in crate::browser) fn render_group_surfaces(render: &GroupRender<'_, '_>) -> Html {
     let groups = render.controls.views.groups();

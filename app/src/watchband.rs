@@ -58,6 +58,9 @@ pub use task_links::{reported_tasks, task_mentions};
 /// from color.
 pub const ACCENTS: usize = 6;
 
+/// The Design namespace's base: the palette's final accent, plum.
+pub const DESIGN_BASE: usize = ACCENTS - 1;
+
 /// Largest member-count weight the team console assigns to layout.
 ///
 /// Membership itself is unbounded by presentation. Above this ceiling a team

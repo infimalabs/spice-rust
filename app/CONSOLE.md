@@ -140,6 +140,11 @@ from its last. Shared arrangement and browser-console order change neither
 rank; member and Design accents still step from the base in durable member
 order.
 
+The task overview sheet, header and body, wears the base of what it shows. A
+team or working-group total opens it in that console's base, and the Design
+scope, or any selection of only Design-owned work, opens it in the Design rail's
+plum. Any other selection keeps the page's base.
+
 ## Toolbar
 
 The toolbar has two rows: the team's task strip, then one status band holding

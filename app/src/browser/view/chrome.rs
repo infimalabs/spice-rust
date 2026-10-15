@@ -327,7 +327,7 @@ fn render_global_work_rail(
     rail: GlobalWorkRail,
 ) -> Html {
     let base_accent =
-        matches!(rail, GlobalWorkRail::Design).then(|| (watchband::ACCENTS - 1).to_string());
+        matches!(rail, GlobalWorkRail::Design).then(|| watchband::DESIGN_BASE.to_string());
     let scope = rail.scope();
     let groups = work
         .map(|work| work.stem_task_groups(&scope))

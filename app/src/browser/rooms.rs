@@ -34,7 +34,7 @@ mod coordination;
 mod invitations;
 mod reading;
 mod standing;
-pub(super) use console::{GroupRender, render_group_surfaces};
+pub(super) use console::{GroupRender, group_base, render_group_surfaces};
 pub(super) use invitations::render_invitations;
 pub(super) use reading::render_design_room;
 
