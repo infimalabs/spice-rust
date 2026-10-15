@@ -23,6 +23,7 @@ pub(super) fn drive_shutdown(
     _paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
+    author: Actor,
 ) -> Outcome<()> {
     let observed = match current_residency(bus, epoch) {
         Ok(observed) => observed,
@@ -36,7 +37,7 @@ pub(super) fn drive_shutdown(
 
     let mut next = observed.body().clone();
     next.state = ResidentState::Dark;
-    let mut ending = match write(Actor::Operator, epoch, Producer::CommandDoor) {
+    let mut ending = match write(author, epoch, Producer::CommandDoor) {
         Ok(write) => write,
         Err(outcome) => return outcome,
     };

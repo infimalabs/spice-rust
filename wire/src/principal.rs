@@ -17,20 +17,23 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Actor, CanonicalUuid, Seq};
+use crate::{Actor, CanonicalUuid, Digest, Domain, Seq};
 
 /// The born principal an actor acts as, before any role head is read.
 ///
-/// Until human actors exist, only the operator actor acts as a principal, and
-/// it acts as the bootstrap principal: the repository's first-born human. A
-/// lane or the resident acts as no principal. This resolution alone is what
-/// immutable journal soundness checks consult, because a fact's author must
-/// stay valid whatever roles later change; current authority is
-/// [`PrincipalRoles`].
+/// A human actor acts as the principal its capability names. The historical
+/// operator actor, which authored as the repository's human before human
+/// connections authenticated as themselves, acts as the bootstrap principal:
+/// the repository's first-born human. A lane or the resident acts as no
+/// principal. This resolution alone is what immutable journal soundness checks
+/// consult, because a fact's author must stay valid whatever roles later
+/// change; current authority is [`PrincipalRoles`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActingPrincipal {
     /// The repository's first-born principal.
     Bootstrap,
+    /// The born principal with this identity.
+    Born(CanonicalUuid),
 }
 
 impl ActingPrincipal {
@@ -39,6 +42,7 @@ impl ActingPrincipal {
     pub const fn of(actor: &Actor) -> Option<Self> {
         match actor {
             Actor::Operator => Some(Self::Bootstrap),
+            Actor::Human(principal) => Some(Self::Born(*principal)),
             Actor::Spice | Actor::Lane(_) => None,
         }
     }
@@ -68,7 +72,7 @@ impl PrincipalRoles {
     }
 
     /// The roles `actor` currently holds as a principal, absent when it acts
-    /// as no principal.
+    /// as no principal or names one never born.
     #[must_use]
     pub fn roles(&self, actor: &Actor) -> Option<BTreeSet<PrincipalRole>> {
         match ActingPrincipal::of(actor)? {
@@ -76,6 +80,11 @@ impl PrincipalRoles {
                 || BTreeSet::from([PrincipalRole::Operator]),
                 |head| head.roles.clone(),
             )),
+            ActingPrincipal::Born(principal) => self
+                .heads
+                .iter()
+                .find(|head| head.principal == principal)
+                .map(|head| head.roles.clone()),
         }
     }
 
@@ -85,12 +94,38 @@ impl PrincipalRoles {
         self.roles(actor).is_some_and(|roles| roles.contains(&role))
     }
 
-    /// Every actor whose principal currently holds `role`, in actor order.
+    /// Every actor whose principal currently holds `role`, in actor order:
+    /// each holding principal's human actor, and the historical operator
+    /// actor while the bootstrap principal holds it.
     #[must_use]
     pub fn holders(&self, role: PrincipalRole) -> Vec<Actor> {
-        std::iter::once(Actor::Operator)
+        let mut holders: Vec<Actor> = std::iter::once(Actor::Operator)
             .filter(|actor| self.holds(actor, role))
-            .collect()
+            .chain(
+                self.heads
+                    .iter()
+                    .filter(|head| head.holds(role))
+                    .map(|head| Actor::Human(head.principal)),
+            )
+            .collect();
+        holders.sort();
+        holders
+    }
+
+    /// The repository's first-born principal, absent before its birth.
+    #[must_use]
+    pub fn bootstrap(&self) -> Option<CanonicalUuid> {
+        self.heads.first().map(|head| head.principal)
+    }
+
+    /// Each principal holding an issued capability, with that capability's
+    /// digest.
+    pub fn issued(&self) -> impl Iterator<Item = (CanonicalUuid, &Digest)> {
+        self.heads.iter().filter_map(|head| {
+            head.capability
+                .as_ref()
+                .map(|capability| (head.principal, capability))
+        })
     }
 }
 
@@ -145,6 +180,13 @@ impl std::str::FromStr for PrincipalRole {
     }
 }
 
+/// The digest the journal keeps of a capability issued to a principal; the
+/// capability itself is handed off once and never journaled.
+#[must_use]
+pub fn capability_digest(capability: CanonicalUuid) -> Digest {
+    Digest::compute(Domain::PrincipalCapability, capability.get().as_bytes())
+}
+
 /// One principal's current standing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -157,6 +199,11 @@ pub struct PrincipalHead {
     pub profile: PrincipalProfile,
     /// Roles currently held.
     pub roles: BTreeSet<PrincipalRole>,
+    /// Digest of the capability this principal's admission issued, absent
+    /// once revoked. The bootstrap principal has none: each resident
+    /// generation mints its capability and publishes it locally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability: Option<Digest>,
 }
 
 impl PrincipalHead {
@@ -177,6 +224,10 @@ pub struct PrincipalAdmitted {
     pub profile: PrincipalProfile,
     /// Roles held from birth.
     pub roles: BTreeSet<PrincipalRole>,
+    /// Digest of the capability handed off to this principal, absent for the
+    /// bootstrap birth.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability: Option<Digest>,
 }
 
 /// One principal's recorded profile changed.
@@ -209,6 +260,16 @@ pub struct PrincipalRevoked {
     pub principal: CanonicalUuid,
     /// Role revoked.
     pub role: PrincipalRole,
+}
+
+/// One principal's issued capability was retired.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrincipalDeauthorized {
+    /// Principal whose capability was retired.
+    pub principal: CanonicalUuid,
+    /// Digest of the retired capability.
+    pub capability: Digest,
 }
 
 /// Read every born principal.
@@ -275,6 +336,15 @@ pub struct PrincipalRoleRef {
     pub role: PrincipalRole,
 }
 
+/// Retire the capability one principal's admission issued, ending every
+/// session it opened.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrincipalDeauthorize {
+    /// Principal whose capability is retired.
+    pub principal: CanonicalUuid,
+}
+
 /// Every born principal in birth order, as of the answering position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -283,9 +353,9 @@ pub struct PrincipalsAnswer {
     pub principals: Vec<PrincipalHead>,
 }
 
-/// One principal's standing as an admission, profile edit, or role change
-/// left it. Birth position is assigned at commit, so a write answers without
-/// it; [`PrincipalsAnswer`] carries it.
+/// One principal's standing as an admission, profile edit, role change, or
+/// capability revocation left it. Birth position is assigned at commit, so a
+/// write answers without it; [`PrincipalsAnswer`] carries it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrincipalStanding {
@@ -295,4 +365,9 @@ pub struct PrincipalStanding {
     pub profile: PrincipalProfile,
     /// Roles held after the write.
     pub roles: BTreeSet<PrincipalRole>,
+    /// The capability an admission issued, handed off in that admission's
+    /// reply alone. The command receipt and every fact keep only its digest,
+    /// so a replayed admission never hands it off again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability: Option<CanonicalUuid>,
 }

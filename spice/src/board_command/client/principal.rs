@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 use super::*;
 
 use wire::principal::{
-    PrincipalAdmit, PrincipalEdit, PrincipalProfile, PrincipalRead, PrincipalRole, PrincipalRoleRef,
+    PrincipalAdmit, PrincipalDeauthorize, PrincipalEdit, PrincipalProfile, PrincipalRead,
+    PrincipalRole, PrincipalRoleRef,
 };
 
 /// Route one `principal` leaf.
@@ -67,6 +68,16 @@ pub(super) fn dispatch_principal_client(
                 Err(outcome) => outcome,
             }
         }
+        ["principal", "deauthorize"] => match principal(matches) {
+            Ok(principal) => crate::command_client::execute_typed(
+                repository,
+                contract,
+                CommandKind::PrincipalDeauthorize,
+                Vec::new(),
+                &PrincipalDeauthorize { principal },
+            ),
+            Err(outcome) => outcome,
+        },
         _ => return None,
     };
     Some(render(outcome))
@@ -117,12 +128,21 @@ fn render(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
             }
             text
         }
-        CommandAnswer::Principal(standing) => format!(
-            "{} {} {}\n",
-            standing.principal,
-            roles(&standing.roles),
-            profile(&standing.profile)
-        ),
+        CommandAnswer::Principal(standing) => {
+            let mut text = format!(
+                "{} {} {}\n",
+                standing.principal,
+                roles(&standing.roles),
+                profile(&standing.profile)
+            );
+            if let Some(capability) = standing.capability {
+                text.push_str(&format!(
+                    "capability {capability} (shown once; open the app with it as the URL \
+                     fragment)\n"
+                ));
+            }
+            text
+        }
         body => {
             return Outcome::Reply(Reply { position, body });
         }

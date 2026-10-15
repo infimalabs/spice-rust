@@ -359,7 +359,7 @@ fn a_lane_session_resolves_its_shown_designs_contribution_sources() {
         vec![journal(1), artifact()],
     )];
     let mut runtime = contribution_runtime_as(&session, &format!("lane:{LANE}"), &snapshot);
-    assert!(!runtime.principal().is_operator());
+    assert!(!runtime.principal().is_human());
     assert!(runtime.offers(CommandKind::RoomContributionSources));
 
     runtime.show_task_details([room()]);

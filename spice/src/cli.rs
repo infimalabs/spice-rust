@@ -238,6 +238,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::PrincipalEdit
         | CommandKind::PrincipalGrant
         | CommandKind::PrincipalRevoke
+        | CommandKind::PrincipalDeauthorize
         | CommandKind::LaneRead
         | CommandKind::LaneJobsRead
         | CommandKind::LaneJobRead
@@ -437,6 +438,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["principal", "profile"]
             | ["principal", "role", "grant"]
             | ["principal", "role", "revoke"]
+            | ["principal", "deauthorize"]
             | ["preparation", "retain"]
             | ["preparation", "show"]
             | ["preparation", "critique"]

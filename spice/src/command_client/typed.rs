@@ -106,6 +106,7 @@ fn principal_kind_for(verb: &[&str]) -> Option<CommandKind> {
         ["profile"] => CommandKind::PrincipalEdit,
         ["role", "grant"] => CommandKind::PrincipalGrant,
         ["role", "revoke"] => CommandKind::PrincipalRevoke,
+        ["deauthorize"] => CommandKind::PrincipalDeauthorize,
         _ => return None,
     })
 }

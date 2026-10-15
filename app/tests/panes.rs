@@ -294,7 +294,7 @@ fn no_rendered_row_promotes_a_lane_principal() {
 
     // Reading them changes nothing about what this principal may be offered.
     let principal = read.principal();
-    assert!(!principal.is_operator());
+    assert!(!principal.is_human());
     assert!(GrantPane::over(principal).is_none());
 
     let steer = SteerPane::over(principal);

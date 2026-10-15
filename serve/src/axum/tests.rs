@@ -23,13 +23,21 @@ type ClientSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 const ASSERTION_DEADLINE: Duration = Duration::from_secs(2);
 
-/// Capabilities whose operator actor resolves to a principal holding the
+/// The bootstrap principal [`crate::roles::operator_book`] bears holding the
 /// operator role.
+fn owner() -> wire::Actor {
+    wire::Actor::Human(uuid("018f82d4-6f59-7d06-92e3-bce9131163b0"))
+}
+
+/// Capabilities whose local owner, holding the operator role, authenticates
+/// through [`operator`].
 fn operator_capabilities() -> Capabilities {
-    Capabilities {
-        principals: Arc::default(),
-        roles: crate::roles::operator_book(),
-    }
+    let wire::Actor::Human(principal) = owner() else {
+        unreachable!("the owner is a human principal");
+    };
+    Capabilities::owned_by(operator(), principal)
+        .expect("the owner capability binds")
+        .with_roles(crate::roles::operator_book())
 }
 
 fn uuid(text: &str) -> wire::CanonicalUuid {
@@ -452,9 +460,6 @@ async fn authenticated_socket_streams_bounded_bus_pages_updates_resume_and_typed
     let initial_lane_capability = identity(0xe8);
     commit_lane_stream(&bus, identity(0xe7), initial_lane_capability);
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -523,9 +528,6 @@ async fn a_liveness_probe_is_answered_per_probe_and_still_admits_its_generation(
         .expect("bus starts");
     commit_stream(&bus, "probe horizon", false);
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -601,9 +603,6 @@ async fn a_held_recall_does_not_block_a_probe_or_sibling_recall_on_one_socket() 
         .expect("bus starts");
     commit_stream(&bus, "concurrent command horizon", false);
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, mut control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -705,9 +704,6 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
         .expect("bus starts");
     commit_stream(&bus, "message horizon", false);
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -789,9 +785,6 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
         .expect("bus starts");
     commit_stream(&bus, "initial", false);
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities.clone()),
@@ -816,7 +809,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
     .await;
     let _ = stream_frame(&mut socket).await;
 
-    assert!(capabilities.remove(operator(), &wire::Actor::Operator));
+    assert!(capabilities.remove(operator(), &owner()));
     let frame = stream_frame(&mut socket).await;
     assert!(matches!(
         frame,
@@ -840,9 +833,6 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
         .expect("bus starts");
     commit_stream(&bus, "initial", false);
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, mut control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -1129,3 +1119,4 @@ async fn live_server_keeps_serving_an_admitted_generation_from_memory() {
 
 mod app;
 mod lifecycle;
+mod principals;

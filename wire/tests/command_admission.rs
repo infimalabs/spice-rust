@@ -32,6 +32,7 @@ fn bootstrap_holding(roles: &[PrincipalRole]) -> PrincipalRoles {
         born: Seq::new(born).expect("fixture position"),
         profile: PrincipalProfile::default(),
         roles: roles.iter().copied().collect::<BTreeSet<_>>(),
+        capability: None,
     };
     PrincipalRoles::new([head(91, 9, &[PrincipalRole::Operator]), head(90, 3, roles)])
 }
@@ -146,6 +147,37 @@ fn connected_commands_admit_a_born_principal_without_the_operator_role() {
         .admit(&accepted(Actor::Lane(uuid(4))), &PrincipalRoles::default())
         .expect("a lane submits connected commands");
     assert!(!lane.holds(PrincipalRole::Operator));
+}
+
+#[test]
+fn a_human_actor_holds_exactly_its_own_principals_roles() {
+    let roles = bootstrap_holding(&[]);
+    let operating = dark(uuid(1))
+        .admit(&accepted(Actor::Human(uuid(91))), &roles)
+        .expect("a later-born operator-role principal submits operator commands");
+    assert!(operating.holds(PrincipalRole::Operator));
+
+    let bootstrap = Actor::Human(uuid(90));
+    let Err(CommandRejection::Refusal(refusal)) =
+        dark(uuid(1)).admit(&accepted(bootstrap.clone()), &roles)
+    else {
+        panic!("a principal without the operator role must refuse operator commands");
+    };
+    assert_eq!(refusal.reason(), "command::authority");
+    let connected = wake(None, false, &[])
+        .admit(&accepted(bootstrap), &roles)
+        .expect("a principal without the operator role still submits connected commands");
+    assert!(!connected.holds(PrincipalRole::Operator));
+
+    let unborn = Actor::Human(uuid(77));
+    for command in [dark(uuid(1)), wake(None, false, &[])] {
+        let Err(CommandRejection::Refusal(refusal)) =
+            command.admit(&accepted(unborn.clone()), &roles)
+        else {
+            panic!("a human actor naming no born principal acts as nobody");
+        };
+        assert_eq!(refusal.reason(), "command::authority");
+    }
 }
 
 #[test]

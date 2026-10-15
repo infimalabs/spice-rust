@@ -66,7 +66,7 @@ pub(crate) fn referenced_quote_agents(
         .iter()
         .filter_map(|directive| match directive.actor {
             wire::Actor::Lane(lane) => Some(lane),
-            wire::Actor::Operator | wire::Actor::Spice => None,
+            wire::Actor::Operator | wire::Actor::Spice | wire::Actor::Human(_) => None,
         })
         .chain(directives.iter().flat_map(|directive| {
             directive
@@ -562,8 +562,10 @@ fn quote_author_name_html(
                 author_accent(author, agents, source),
             )
         }
+        // A human principal's directive takes the operator's slot until the
+        // app carries principal profiles to name its author.
         QuoteAuthor::Directive {
-            actor: wire::Actor::Operator,
+            actor: wire::Actor::Operator | wire::Actor::Human(_),
         } => quote_name_html(
             "",
             " data-quote-author=\"directive\" data-quote-actor=\"operator\" role=\"img\" \
@@ -631,11 +633,7 @@ fn quote_age_slot_html(
             )
         }
         QuoteAuthor::Directive { actor } => {
-            let actor = match actor {
-                wire::Actor::Operator => "operator".to_owned(),
-                wire::Actor::Spice => "spice".to_owned(),
-                wire::Actor::Lane(lane) => format!("lane:{lane}"),
-            };
+            let actor = actor.to_string();
             format!(
                 " data-quote-author=\"directive\" data-quote-actor=\"{}\"",
                 super::escape_html_attribute(&actor),

@@ -79,7 +79,7 @@ pub(super) fn render_composer(
         return Html::default();
     }
     let design = row.statement.body.born.clone();
-    if runtime.principal().is_operator() || !runtime.offers(CommandKind::RoomContribute) {
+    if runtime.principal().is_human() || !runtime.offers(CommandKind::RoomContribute) {
         return html! {
             <section class="room-contribute" aria-label="Contribute" data-room-contribute="read-only">
                 <p class="room-notice">

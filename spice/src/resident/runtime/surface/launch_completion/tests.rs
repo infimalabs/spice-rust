@@ -100,7 +100,13 @@ fn a_pending_launch_survives_refused_wakes_and_commits_before_dark() {
         .occupant
         .expect("the proven occupant committed before dark");
     assert!(matches!(
-        crate::resident::shutdown::drive_shutdown(&bus, &fixture.paths, fixture.epoch, &mut seats),
+        crate::resident::shutdown::drive_shutdown(
+            &bus,
+            &fixture.paths,
+            fixture.epoch,
+            &mut seats,
+            wire::Actor::Spice,
+        ),
         Outcome::Reply(_)
     ));
     let dark = current_residency(&bus, fixture.epoch).expect("residency reads");
@@ -127,7 +133,7 @@ async fn assert_pending_wakes_are_request_local(
     lifecycle: &mut lifecycle::Runtime,
     launches: &mut super::super::super::launch_runtime::Runtime,
 ) {
-    let (server, mut control) = command_server(fixture).await;
+    let (server, mut control) = command_server(fixture, bus).await;
     let address = server.local_addr().expect("command address reads");
     let (shutdown, stopped) = oneshot::channel();
     let serving = tokio::spawn(server.up_until(async move {
@@ -168,7 +174,10 @@ async fn assert_pending_wakes_are_request_local(
     serving.await.expect("server joins").expect("server stops");
 }
 
-async fn command_server(fixture: &LaunchFixture) -> (serve::axum::Server, serve::axum::Control) {
+async fn command_server(
+    fixture: &LaunchFixture,
+    bus: &Bus,
+) -> (serve::axum::Server, serve::axum::Control) {
     let app_identity = "5555555555555555555555555555555555555555555555555555555555555555";
     let stage = fixture.root.join(serve::APP_STAGE);
     let generation = stage.join(serve::APP_STAGE_GENERATIONS).join(app_identity);
@@ -194,11 +203,13 @@ async fn command_server(fixture: &LaunchFixture) -> (serve::axum::Server, serve:
             .identity()
             .clone(),
     };
-    let capabilities = serve::axum::Capabilities::default();
-    let operator = fixture.occupant;
-    capabilities
-        .insert(operator, Actor::Operator)
-        .expect("operator capability inserts");
+    let roles = bus
+        .read(|read| read.principal_roles())
+        .expect("fixture roles read");
+    let owner = roles.bootstrap().expect("the bootstrap principal is born");
+    let capabilities = serve::axum::Capabilities::owned_by(fixture.occupant, owner)
+        .expect("the owner's capability binds");
+    capabilities.publish(roles).expect("fixture roles publish");
     serve::axum::Server::bind(serve::axum::Generation::new(
         fixture.epoch,
         capabilities,
@@ -357,7 +368,34 @@ fn seed_vacant_lane(bus: &Bus, fixture: &LaunchFixture) {
         }],
         renewals: Vec::new(),
     });
+    let principal = owner();
+    let operator = std::collections::BTreeSet::from([wire::principal::PrincipalRole::Operator]);
+    let born = proposal
+        .fact(
+            wire::principal::PrincipalAdmitted {
+                principal,
+                profile: wire::principal::PrincipalProfile::default(),
+                roles: operator.clone(),
+                capability: None,
+            },
+            FactCause::Root,
+        )
+        .expect("the fixture's operator principal is born");
+    proposal.principal_head(born, move |born| wire::principal::PrincipalHead {
+        principal,
+        born,
+        profile: wire::principal::PrincipalProfile::default(),
+        roles: operator,
+        capability: None,
+    });
     commit(bus, proposal).expect("fixture residency commits");
+}
+
+/// The fixture's bootstrap principal, born holding the operator role.
+fn owner() -> CanonicalUuid {
+    "018f82d4-6f59-7d06-92e3-bce9131163b0"
+        .parse()
+        .expect("fixture principal")
 }
 
 fn send_steering(bus: &Bus, fixture: &LaunchFixture) {
@@ -367,7 +405,12 @@ fn send_steering(bus: &Bus, fixture: &LaunchFixture) {
     let origin: wire::Origin = format!("resident:{epoch}")
         .parse()
         .expect("steering origin");
-    let mut sent = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let mut sent = JournalWrite::new(
+        Actor::Human(owner()),
+        origin.clone(),
+        at,
+        Producer::CommandDoor,
+    );
     let body = wire::body::SteerSent {
         from: None,
         room: None,

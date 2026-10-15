@@ -38,6 +38,7 @@ const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163c3";
 const NEXT_EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163c9";
 const NEXT_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163ca";
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c2";
+const PRINCIPAL: &str = "018f82d4-6f59-7d06-92e3-bce9131163b0";
 const REQUEST: &str = "018f82d4-6f59-7d06-92e3-bce9131163c4";
 const SECRET_LANE_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce9131163cc";
 const SECOND_LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163cd";
@@ -602,9 +603,9 @@ fn stream_door_checks_nested_wire_and_terminal_cursor_epoch() {
 }
 
 #[test]
-fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
+fn human_and_lane_stream_authority_come_from_the_admitted_principal() {
     let operator_session = session(OPERATOR, EPOCH);
-    let operator = acceptance(&operator_session, "operator", EPOCH);
+    let operator = acceptance(&operator_session, &format!("human:{PRINCIPAL}"), EPOCH);
     let operator = AppRuntime::new(&operator);
     assert_eq!(
         operator.subjects(),

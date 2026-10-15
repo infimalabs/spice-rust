@@ -499,7 +499,7 @@ fn actor_fact(
         wire::Actor::Lane(lane) => render
             .lanes
             .and_then(|lanes| lanes.chat_target_for_lane(*lane)),
-        wire::Actor::Operator | wire::Actor::Spice => None,
+        wire::Actor::Operator | wire::Actor::Spice | wire::Actor::Human(_) => None,
     };
     linked_identity_fact(
         label,
@@ -513,7 +513,7 @@ fn actor_fact(
 fn actor_name(actor: &wire::Actor, lanes: Option<&LaneView>) -> String {
     let member = match actor {
         wire::Actor::Lane(lane) => lanes.and_then(|lanes| lanes.member(*lane)),
-        wire::Actor::Operator | wire::Actor::Spice => None,
+        wire::Actor::Operator | wire::Actor::Spice | wire::Actor::Human(_) => None,
     };
     crate::work::owner_label(actor, member)
 }

@@ -110,7 +110,7 @@ fn dispose(
     })?;
     let at = now()?;
     let mut write = JournalWrite::new(
-        Actor::Operator,
+        command.actor().clone(),
         resident_origin(command)?,
         at,
         Producer::CommandDoor,
@@ -172,7 +172,12 @@ fn answer(
         Some(room) => task_origin(room)?,
         None => resident_origin(command)?,
     };
-    let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let mut write = JournalWrite::new(
+        command.actor().clone(),
+        origin.clone(),
+        at,
+        Producer::CommandDoor,
+    );
     guard_result(&mut write, result, head.position());
     guard_residence(&mut write, lane);
     let returned = format!("ANS {result}: {text}");
@@ -339,7 +344,7 @@ fn recover(
     }
     let at = now()?;
     let mut write = JournalWrite::new(
-        Actor::Operator,
+        command.actor().clone(),
         resident_origin(command)?,
         at,
         Producer::CommandDoor,
@@ -410,7 +415,7 @@ fn assess(
         ));
     }
     let mut write = JournalWrite::new(
-        Actor::Operator,
+        command.actor().clone(),
         resident_origin(command)?,
         now()?,
         Producer::CommandDoor,

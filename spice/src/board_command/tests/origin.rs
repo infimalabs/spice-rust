@@ -24,7 +24,7 @@ fn send_directive(
     let sent = body::SteerSent {
         from: match author {
             Actor::Lane(teller) => Some(teller),
-            Actor::Operator | Actor::Spice => None,
+            Actor::Operator | Actor::Spice | Actor::Human(_) => None,
         },
         room: None,
         directive,

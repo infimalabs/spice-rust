@@ -488,8 +488,12 @@ fn creator_team_events(
         };
         let creator = match envelope.actor {
             Actor::Lane(_) => added.creation.creator_team(),
-            Actor::Operator | Actor::Spice if added.creation.creator_team().is_none() => None,
-            Actor::Operator | Actor::Spice => {
+            Actor::Operator | Actor::Spice | Actor::Human(_)
+                if added.creation.creator_team().is_none() =>
+            {
+                None
+            }
+            Actor::Operator | Actor::Spice | Actor::Human(_) => {
                 return Err(store_fault(
                     "lifecycle::task-creator-team-invalid",
                     "a non-lane task creation names a creator team",

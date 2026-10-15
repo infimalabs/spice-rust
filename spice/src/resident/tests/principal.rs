@@ -5,8 +5,8 @@ use std::fs;
 use std::io::Write as _;
 
 use wire::principal::{
-    PrincipalAdmit, PrincipalEdit, PrincipalHead, PrincipalRead, PrincipalRole, PrincipalRoleRef,
-    PrincipalRoles,
+    PrincipalAdmit, PrincipalDeauthorize, PrincipalEdit, PrincipalHead, PrincipalRead,
+    PrincipalRole, PrincipalRoleRef, PrincipalRoles,
 };
 
 use super::*;
@@ -90,8 +90,28 @@ fn command_under<B: serde::Serialize>(
     )
 }
 
-fn operator<B: serde::Serialize>(kind: CommandKind, body: &B, id: u8) -> wire::AdmittedCommand {
-    command(kind, body, Actor::Operator, id).expect("the operator's principal command admits")
+/// Admit `body` as `principal`'s own human actor under the journal's
+/// current role heads, as that principal's connection submits it.
+fn as_principal<B: serde::Serialize>(
+    seated: &Seated,
+    principal: wire::CanonicalUuid,
+    kind: CommandKind,
+    body: &B,
+    id: u8,
+) -> wire::AdmittedCommand {
+    let roles = principal_surface::roles(&seated.bus).expect("role heads read");
+    command_under(kind, body, Actor::Human(principal), id, &roles)
+        .expect("the principal's operator command admits")
+}
+
+/// Admit `body` as the bootstrap principal.
+fn operator<B: serde::Serialize>(
+    seated: &Seated,
+    kind: CommandKind,
+    body: &B,
+    id: u8,
+) -> wire::AdmittedCommand {
+    as_principal(seated, heads(&seated.bus)[0].principal, kind, body, id)
 }
 
 fn role(
@@ -100,8 +120,25 @@ fn role(
     reference: PrincipalRoleRef,
     id: u8,
 ) -> Outcome<CommandAnswer> {
-    let command = operator(kind, &reference, id);
+    let command = operator(seated, kind, &reference, id);
     principal_surface::role(&seated.bus, test_uuid(1), &command, &reference)
+}
+
+fn deauthorize(
+    seated: &Seated,
+    actor: wire::CanonicalUuid,
+    principal: wire::CanonicalUuid,
+    id: u8,
+) -> Outcome<CommandAnswer> {
+    let request = PrincipalDeauthorize { principal };
+    let command = as_principal(
+        seated,
+        actor,
+        CommandKind::PrincipalDeauthorize,
+        &request,
+        id,
+    );
+    principal_surface::deauthorize(&seated.bus, test_uuid(1), &command, &request)
 }
 
 fn refusal_reason(outcome: &Outcome<CommandAnswer>) -> &str {
@@ -111,8 +148,14 @@ fn refusal_reason(outcome: &Outcome<CommandAnswer>) -> &str {
     }
 }
 
-fn admitted(seated: &Seated, request: PrincipalAdmit, id: u8) -> wire::CanonicalUuid {
-    let command = operator(CommandKind::PrincipalAdmit, &request, id);
+/// Admit `request` as the bootstrap principal, answering the admitted
+/// principal and the capability its admission issued.
+fn admitted(
+    seated: &Seated,
+    request: PrincipalAdmit,
+    id: u8,
+) -> (wire::CanonicalUuid, wire::CanonicalUuid) {
+    let command = operator(seated, CommandKind::PrincipalAdmit, &request, id);
     match principal_surface::admit(
         &seated.bus,
         &seated.repository,
@@ -123,8 +166,21 @@ fn admitted(seated: &Seated, request: PrincipalAdmit, id: u8) -> wire::Canonical
         Outcome::Reply(Reply {
             body: CommandAnswer::Principal(standing),
             ..
-        }) => standing.principal,
+        }) => (
+            standing.principal,
+            standing
+                .capability
+                .expect("an admission issues a capability"),
+        ),
         other => panic!("expected an admission, got {other:?}"),
+    }
+}
+
+fn bea(roles: &[PrincipalRole]) -> PrincipalAdmit {
+    PrincipalAdmit {
+        name: Some("Bea".to_owned()),
+        email: None,
+        roles: roles.iter().copied().collect(),
     }
 }
 
@@ -159,7 +215,7 @@ fn first_start_bears_one_git_profiled_operator_and_restarts_bear_nothing_more() 
 }
 
 #[test]
-fn the_operator_role_never_leaves_the_last_actor_able_to_exercise_it() {
+fn the_operator_role_never_leaves_the_last_connectable_principal_holding_it() {
     let seated = seated("principal-last-operator");
     let first = heads(&seated.bus)[0].principal;
     let revoke_first = PrincipalRoleRef {
@@ -175,21 +231,17 @@ fn the_operator_role_never_leaves_the_last_actor_able_to_exercise_it() {
     );
     assert_eq!(refusal_reason(&refused), "principal::last-operator");
 
-    let second = admitted(
-        &seated,
-        PrincipalAdmit {
-            name: Some("Bea".to_owned()),
-            email: None,
-            roles: BTreeSet::from([PrincipalRole::Operator]),
-        },
-        11,
-    );
+    let (second, _) = admitted(&seated, bea(&[PrincipalRole::Operator]), 11);
+    assert!(matches!(
+        deauthorize(&seated, first, second, 12),
+        Outcome::Reply(_)
+    ));
     let before = heads(&seated.bus);
-    let refused = role(&seated, CommandKind::PrincipalRevoke, revoke_first, 12);
+    let refused = role(&seated, CommandKind::PrincipalRevoke, revoke_first, 13);
     assert_eq!(
         refusal_reason(&refused),
         "principal::last-operator",
-        "a principal no actor can act as leaves no one able to exercise the role"
+        "a principal no connection can act as leaves no one able to exercise the role"
     );
     assert_eq!(
         heads(&seated.bus),
@@ -205,7 +257,7 @@ fn the_operator_role_never_leaves_the_last_actor_able_to_exercise_it() {
                 principal: second,
                 role: PrincipalRole::Operator,
             },
-            13,
+            14,
         ),
         Outcome::Reply(_)
     ));
@@ -222,10 +274,70 @@ fn the_operator_role_never_leaves_the_last_actor_able_to_exercise_it() {
     assert_eq!(after[0], before[0], "the other principal is untouched");
 }
 
+/// Admission issues a capability the journal keeps only as a digest.
+/// Deauthorization retires it for good, authored as the deauthorizing
+/// principal, and never leaves the operator role without a connectable
+/// holder.
+#[test]
+fn deauthorization_retires_an_issued_capability_but_never_the_last_connectable_operator() {
+    let seated = seated("principal-deauthorize");
+    let first = heads(&seated.bus)[0].principal;
+    let (second, issued) = admitted(&seated, bea(&[]), 10);
+    assert_eq!(
+        heads(&seated.bus)[1].capability,
+        Some(wire::principal::capability_digest(issued)),
+        "the journal keeps only the issued capability's digest"
+    );
+
+    assert!(matches!(
+        deauthorize(&seated, first, second, 11),
+        Outcome::Reply(_)
+    ));
+    assert_eq!(heads(&seated.bus)[1].capability, None);
+    let retired = seated
+        .bus
+        .read(|read| read.latest_fact(wire::FactKind::PrincipalDeauthorized))
+        .expect("the journal reads")
+        .expect("deauthorization writes its fact");
+    assert_eq!(retired.actor, Actor::Human(first));
+    let retired = retired
+        .fact
+        .read::<wire::principal::PrincipalDeauthorized>()
+        .expect("the fact decodes");
+    assert_eq!(
+        (retired.principal, retired.capability),
+        (second, wire::principal::capability_digest(issued))
+    );
+    assert_eq!(
+        refusal_reason(&deauthorize(&seated, first, second, 12)),
+        "principal::capability-absent",
+        "a retired capability is never retired twice or reissued"
+    );
+
+    let (third, _) = admitted(&seated, bea(&[PrincipalRole::Operator]), 13);
+    let revoke_first = PrincipalRoleRef {
+        principal: first,
+        role: PrincipalRole::Operator,
+    };
+    assert!(
+        matches!(
+            role(&seated, CommandKind::PrincipalRevoke, revoke_first, 14),
+            Outcome::Reply(_)
+        ),
+        "a connectable operator principal lets the first give the role up"
+    );
+    let before = heads(&seated.bus);
+    assert_eq!(
+        refusal_reason(&deauthorize(&seated, third, third, 15)),
+        "principal::last-operator"
+    );
+    assert_eq!(heads(&seated.bus), before, "a refusal writes nothing");
+}
+
 #[test]
 fn a_profile_edit_moves_only_its_own_profile_and_keeps_omitted_fields() {
     let seated = seated("principal-profile");
-    let other = admitted(
+    let (other, _) = admitted(
         &seated,
         PrincipalAdmit {
             name: Some("Bea".to_owned()),
@@ -240,7 +352,7 @@ fn a_profile_edit_moves_only_its_own_profile_and_keeps_omitted_fields() {
         name: Some("Ada Renamed".to_owned()),
         email: None,
     };
-    let command = operator(CommandKind::PrincipalEdit, &edit, 11);
+    let command = operator(&seated, CommandKind::PrincipalEdit, &edit, 11);
     assert!(matches!(
         principal_surface::edit(&seated.bus, test_uuid(1), &command, &edit),
         Outcome::Reply(_)
@@ -301,11 +413,11 @@ fn lanes_cannot_list_admit_profile_or_change_principal_roles() {
 }
 
 /// The command door admits each command under the generation's current role
-/// book. Admitting another operator principal no actor can act as leaves the
-/// operator's own revocation refused, and the operator's next operator
-/// command on the same connection still admits.
+/// book. Admitting another operator principal issues it a connectable
+/// capability, so the bootstrap principal may give the role up, and the
+/// revocation governs that principal's next command on the same connection.
 #[test]
-fn the_door_refuses_a_revocation_that_would_leave_no_actor_operating() {
+fn the_door_admits_each_command_under_the_roles_its_predecessor_left() {
     let seated = seated("principal-role-book");
     let startup = crate::resident::load_startup_surface(&seated.repository)
         .expect("fixture startup policy resolves");
@@ -330,14 +442,17 @@ fn the_door_refuses_a_revocation_that_would_leave_no_actor_operating() {
         &startup.config,
         &reads,
     );
+    let bootstrap = heads(&seated.bus)[0].principal;
     let mut seats = Seats::new();
     let mut door = |kind, body: serde_json::Value, id| {
         let roles = capabilities.roles().current().expect("the role book reads");
-        let command = command_under(kind, &body, Actor::Operator, id, &roles)
-            .expect("the operator's command admits");
-        match surface.dispatch_fresh(&mut seats, &command) {
-            CommandDispatch::Complete { outcome, .. } => outcome,
-            CommandDispatch::Launch(_) => panic!("a principal command launches nothing"),
+        match command_under(kind, &body, Actor::Human(bootstrap), id, &roles) {
+            Ok(command) => match surface.dispatch_fresh(&mut seats, &command) {
+                CommandDispatch::Complete { outcome, .. } => outcome,
+                CommandDispatch::Launch(_) => panic!("a principal command launches nothing"),
+            },
+            Err(wire::CommandRejection::Refusal(refusal)) => Outcome::Refusal(refusal),
+            Err(other) => panic!("expected admission or refusal, got {other:?}"),
         }
     };
     let read = || serde_json::to_value(PrincipalRead {}).expect("read encodes");
@@ -345,16 +460,10 @@ fn the_door_refuses_a_revocation_that_would_leave_no_actor_operating() {
         door(CommandKind::PrincipalRead, read(), 10),
         Outcome::Reply(_)
     ));
-    let bootstrap = heads(&seated.bus)[0].principal;
-    let admit = PrincipalAdmit {
-        name: Some("Bea".to_owned()),
-        email: None,
-        roles: BTreeSet::from([PrincipalRole::Operator]),
-    };
     assert!(matches!(
         door(
             CommandKind::PrincipalAdmit,
-            serde_json::to_value(admit).expect("admission encodes"),
+            serde_json::to_value(bea(&[PrincipalRole::Operator])).expect("admission encodes"),
             11
         ),
         Outcome::Reply(_)
@@ -363,17 +472,17 @@ fn the_door_refuses_a_revocation_that_would_leave_no_actor_operating() {
         principal: bootstrap,
         role: PrincipalRole::Operator,
     };
-    let refused = door(
-        CommandKind::PrincipalRevoke,
-        serde_json::to_value(revoke).expect("revocation encodes"),
-        12,
-    );
-    assert_eq!(refusal_reason(&refused), "principal::last-operator");
-    assert!(
-        matches!(
-            door(CommandKind::PrincipalRead, read(), 13),
-            Outcome::Reply(_)
+    assert!(matches!(
+        door(
+            CommandKind::PrincipalRevoke,
+            serde_json::to_value(revoke).expect("revocation encodes"),
+            12,
         ),
-        "the operator keeps operator authority on the same connection"
+        Outcome::Reply(_)
+    ));
+    assert_eq!(
+        refusal_reason(&door(CommandKind::PrincipalRead, read(), 13)),
+        "command::authority",
+        "the revocation governs the principal's next command on the same connection"
     );
 }

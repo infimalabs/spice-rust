@@ -14,6 +14,7 @@ impl CommandKind {
             Self::PrincipalGrant | Self::PrincipalRevoke => {
                 Binding::of(B::PrincipalRoleRef, A::Principal)
             }
+            Self::PrincipalDeauthorize => Binding::of(B::PrincipalDeauthorize, A::Principal),
             _ => panic!("principal command binding partition is closed"),
         }
     }
@@ -26,6 +27,7 @@ impl Intent {
             Self::PrincipalAdmit(_) => BodyShape::PrincipalAdmit,
             Self::PrincipalEdit(_) => BodyShape::PrincipalEdit,
             Self::PrincipalRoleRef(_) => BodyShape::PrincipalRoleRef,
+            Self::PrincipalDeauthorize(_) => BodyShape::PrincipalDeauthorize,
             _ => panic!("principal intent shape partition is closed"),
         }
     }
@@ -38,6 +40,7 @@ impl BodyShape {
             Self::PrincipalAdmit => Intent::PrincipalAdmit(crate::decode(bytes)?),
             Self::PrincipalEdit => Intent::PrincipalEdit(crate::decode(bytes)?),
             Self::PrincipalRoleRef => Intent::PrincipalRoleRef(crate::decode(bytes)?),
+            Self::PrincipalDeauthorize => Intent::PrincipalDeauthorize(crate::decode(bytes)?),
             _ => unreachable!("principal body partition is closed"),
         })
     }

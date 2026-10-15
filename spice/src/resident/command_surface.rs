@@ -563,12 +563,18 @@ impl<'a> Surface<'a> {
             ) => Some(self.republishing_roles(principal_surface::role(
                 self.bus, self.epoch, command, reference,
             ))),
+            (CommandKind::PrincipalDeauthorize, Intent::PrincipalDeauthorize(request)) => {
+                Some(self.republishing_roles(principal_surface::deauthorize(
+                    self.bus, self.epoch, command, request,
+                )))
+            }
             _ => None,
         }
     }
 
-    /// Republish the role heads once a principal change lands, so the changed
-    /// principal's next command is decided by its new roles.
+    /// Republish the principal heads once a principal change lands, so the
+    /// changed principal's next command is decided by its new roles and an
+    /// issued or retired capability binds or ends at once.
     fn republishing_roles(&self, outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
         if matches!(outcome, Outcome::Reply(_))
             && let Err(fault) = self.lane.publish_roles(self.bus)

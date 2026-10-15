@@ -6,9 +6,6 @@ use super::*;
 async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind(generation(&app, capabilities))
         .await
         .expect("binds");

@@ -32,8 +32,9 @@ pub struct AppProtocolVersion(pub u32);
 impl AppProtocolVersion {
     /// The one app protocol this build speaks.
     ///
-    /// Version 13 carries each provider account's optional raw credit balance.
-    pub const CURRENT: Self = Self(13);
+    /// Version 14 admits the `human:<principal>` actor spelling a human
+    /// principal's own connection authors under.
+    pub const CURRENT: Self = Self(14);
 
     /// True when this is the app protocol this build speaks.
     #[must_use]

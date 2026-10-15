@@ -12,5 +12,6 @@ pub(crate) fn bootstrap_holding(roles: &[PrincipalRole]) -> PrincipalRoles {
         born: wire::Seq::new(1).expect("fixture birth"),
         profile: PrincipalProfile::default(),
         roles: roles.iter().copied().collect(),
+        capability: None,
     }])
 }

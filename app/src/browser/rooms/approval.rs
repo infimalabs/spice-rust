@@ -105,7 +105,7 @@ impl<'a> Context<'a> {
 
     fn interactive(&self) -> bool {
         self.controller.is_some()
-            && self.runtime.principal().is_operator()
+            && self.runtime.principal().is_human()
             && self.runtime.offers(CommandKind::PreparationDecide)
     }
 }

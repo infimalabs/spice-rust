@@ -9,8 +9,8 @@ use serde::Serialize;
 use crate::QuoteResolution;
 use crate::command::CommandKind;
 use crate::principal::{
-    PrincipalAdmit, PrincipalEdit, PrincipalRead, PrincipalRoleRef, PrincipalStanding,
-    PrincipalsAnswer,
+    PrincipalAdmit, PrincipalDeauthorize, PrincipalEdit, PrincipalRead, PrincipalRoleRef,
+    PrincipalStanding, PrincipalsAnswer,
 };
 use crate::rooms::{
     CandidateCoverageRecord, CandidateCritiqueRecord, CandidateRetain, CandidateWithdraw,
@@ -209,6 +209,8 @@ pub enum BodyShape {
     PrincipalEdit,
     /// [`PrincipalRoleRef`]
     PrincipalRoleRef,
+    /// [`PrincipalDeauthorize`]
+    PrincipalDeauthorize,
 }
 
 /// Which answer DTO a command kind's reply carries.
@@ -503,7 +505,8 @@ impl CommandKind {
             | Self::PrincipalAdmit
             | Self::PrincipalEdit
             | Self::PrincipalGrant
-            | Self::PrincipalRevoke => self.principal_binding(),
+            | Self::PrincipalRevoke
+            | Self::PrincipalDeauthorize => self.principal_binding(),
             Self::RoomPost
             | Self::RoomCoordinationRead
             | Self::RoomConversationText
@@ -897,6 +900,8 @@ pub enum Intent {
     PrincipalEdit(PrincipalEdit),
     /// [`BodyShape::PrincipalRoleRef`]
     PrincipalRoleRef(PrincipalRoleRef),
+    /// [`BodyShape::PrincipalDeauthorize`]
+    PrincipalDeauthorize(PrincipalDeauthorize),
 }
 
 impl Intent {
@@ -913,7 +918,8 @@ impl Intent {
             Self::PrincipalRead(_)
             | Self::PrincipalAdmit(_)
             | Self::PrincipalEdit(_)
-            | Self::PrincipalRoleRef(_) => self.principal_shape(),
+            | Self::PrincipalRoleRef(_)
+            | Self::PrincipalDeauthorize(_) => self.principal_shape(),
             Self::RoomPost(_)
             | Self::RoomCoordinationRead(_)
             | Self::RoomConversationText(_)
@@ -1372,7 +1378,8 @@ impl BodyShape {
             Self::PrincipalRead
             | Self::PrincipalAdmit
             | Self::PrincipalEdit
-            | Self::PrincipalRoleRef => return self.decode_principal_body(bytes),
+            | Self::PrincipalRoleRef
+            | Self::PrincipalDeauthorize => return self.decode_principal_body(bytes),
             Self::TasteRecord => Intent::TasteRecord(crate::decode(bytes)?),
             Self::Recognize => Intent::Recognize(crate::decode(bytes)?),
             Self::ReleasePublish => Intent::ReleasePublish(crate::decode(bytes)?),

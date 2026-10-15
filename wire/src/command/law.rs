@@ -846,7 +846,8 @@ impl CommandKind {
             Self::PrincipalAdmit
             | Self::PrincipalEdit
             | Self::PrincipalGrant
-            | Self::PrincipalRevoke => Law::PRINCIPAL,
+            | Self::PrincipalRevoke
+            | Self::PrincipalDeauthorize => Law::PRINCIPAL,
             _ => panic!("command law partition is closed"),
         }
     }

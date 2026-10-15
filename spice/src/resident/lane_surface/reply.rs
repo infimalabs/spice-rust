@@ -241,7 +241,7 @@ pub(super) fn fact_lane(fact: &wire::Envelope<wire::AnyFact>) -> Option<Canonica
         .and_then(|lane| lane.parse().ok())
         .or(match fact.actor {
             Actor::Lane(lane) => Some(lane),
-            Actor::Operator | Actor::Spice => None,
+            Actor::Operator | Actor::Spice | Actor::Human(_) => None,
         })
 }
 

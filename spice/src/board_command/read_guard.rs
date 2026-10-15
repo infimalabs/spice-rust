@@ -378,7 +378,7 @@ pub(super) fn task_creation_capture(
     snapshot: &ValidatedSnapshot,
 ) -> Result<TaskCreationCapture, Outcome<CommandAnswer>> {
     let lane = match command.actor() {
-        Actor::Operator => {
+        Actor::Operator | Actor::Human(_) => {
             return Ok(TaskCreationCapture {
                 context: body::TaskCreationContext::unavailable(
                     body::TaskCreationUnavailable::OperatorActor,
@@ -496,8 +496,7 @@ fn actor_route_with_occupant(
     prospective_occupant: Option<wire::CanonicalUuid>,
 ) -> Result<wire::intent::BoardActorRoute, Outcome<CommandAnswer>> {
     let actor = match principal {
-        wire::Actor::Operator => "operator".to_owned(),
-        wire::Actor::Spice => "spice".to_owned(),
+        wire::Actor::Operator | wire::Actor::Spice | wire::Actor::Human(_) => principal.to_string(),
         wire::Actor::Lane(lane) => {
             let row = residency
                 .lanes

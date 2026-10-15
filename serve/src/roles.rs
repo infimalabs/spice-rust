@@ -1,7 +1,7 @@
 //! The principal role heads one resident generation decides authority by.
 //!
 //! The resident publishes the journal's current heads before serving and
-//! after every principal change; the command door, operator capability
+//! after every principal change; the command door, principal capability
 //! lookups, and stream subject admission all read the same book, so a role
 //! change governs that principal's next request without reconnecting.
 
@@ -73,5 +73,6 @@ pub(crate) fn operator_book() -> RoleBook {
         born: wire::Seq::new(1).expect("fixture birth"),
         profile: PrincipalProfile::default(),
         roles: [PrincipalRole::Operator].into(),
+        capability: None,
     }]))
 }

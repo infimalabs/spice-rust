@@ -30,10 +30,7 @@ pub(super) async fn socket(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    if !state
-        .access
-        .admits_socket(query.as_deref(), &state.capabilities)
-    {
+    if !state.access.admits(query.as_deref(), &state.capabilities) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     if admit_headers(&state, &headers, true).is_err() {

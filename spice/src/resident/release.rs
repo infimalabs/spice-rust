@@ -297,7 +297,7 @@ pub(super) fn dispatch_up_change(
             }),
         )));
     }
-    match drive_shutdown(bus, paths, epoch, seats) {
+    match drive_shutdown(bus, paths, epoch, seats, command.actor().clone()) {
         Outcome::Reply(reply) => Outcome::Reply(Reply {
             position: reply.position,
             body: CommandAnswer::State(StateAnswer {
