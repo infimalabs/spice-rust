@@ -180,9 +180,11 @@ tab appears only while a lane actively claims work associated with one of the
 group's Designs, names that lane, and wears its accent. An accented tab's text
 is always accent-tinted and its background carries a 5% accent tint, 10% on
 hover. Every horn tab's rails, global or local, keep the neutral line color and
-undim one neutral step on hover; no accent paints them. Totals stay neutral, and
-global strips own their other interaction feedback independently. Every count
-badge is one neutral open-task total; see
+undim one neutral step on hover; no accent paints them. A local tab rises from
+its strip's status rule like a browser tab: on each side, a tiny flare curves
+its rail out to meet the rule and carries the tab's fill beneath the curve.
+Totals stay neutral, and global strips own their other interaction feedback
+independently. Every count badge is one neutral open-task total; see
 [Task counts show one open total](../docs/product/loops.md#the-jitter-contract).
 A global total or stem tab, or a team or group total, whose own partition
 holds work only the operator can move carries a small danger-coloured dot

@@ -491,7 +491,9 @@ path.image-annotation-hit { fill: none; }
 .team-lights:is([data-team-size="3"], [data-team-size="4"]) { --team-pip-columns: 2; }
 /* Three and five lights stagger their shorter row by half one pip pitch. */
 .team-lights:is([data-team-size="3"], [data-team-size="5"]) > :nth-child(even of .app-presence-pip) { transform: translateX(calc(-1 * (var(--app-presence-pip-size) + var(--team-pip-gap)) / 2)); }
-/* The leading total reserves width; the task scroller keeps its symmetric fades. */
+/* The leading total reserves width; the task scroller keeps its symmetric fades.
+   The clip edge sits one tab flare outside the columns so the total's flare
+   shows. */
 .team-toolbar > .team-task-rail {
   --team-task-fade: var(--mosaic-gap);
   --team-task-screen: calc(var(--team-task-fade) + var(--mosaic-gap));
@@ -501,7 +503,8 @@ path.image-annotation-hit { fill: none; }
   align-self: end;
   grid-template-columns: var(--app-total-tab-inline-size) minmax(0, 1fr);
   min-width: 0;
-  margin: 0 var(--team-toolbar-inline-inset);
+  margin: 0 calc(var(--team-toolbar-inline-inset) - var(--app-radius-card));
+  padding-inline: var(--app-radius-card);
   overflow: hidden;
 }
 .team-task-rail > :is(.team-tasks, [data-work-scope="team"], [data-work-scope="group"]) { align-self: end; }
