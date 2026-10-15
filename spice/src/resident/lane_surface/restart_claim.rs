@@ -16,9 +16,19 @@ impl RestoredClaim {
             && self.claim.body().epoch == epoch
             && self.lease.body().epoch == epoch
     }
+
+    pub(super) fn expired_at(&self, at: wire::Instant) -> bool {
+        at >= self.lease.body().expiry
+    }
 }
 
 /// Carry live lane claims in the same transaction that advances residency.
+///
+/// No resident renews a lease while none runs, so downtime is never held
+/// against a holder: a claim still active when its lane is restored, even one
+/// whose lease ran out while the resident was down, leaves startup with at
+/// least one rolling window from now. A holder that does not return lapses
+/// once that window passes unrenewed.
 pub(in crate::resident) fn append_startup_claims(
     bus: &Bus,
     lanes: &[wire::LaneResidency],
@@ -26,11 +36,12 @@ pub(in crate::resident) fn append_startup_claims(
     write: &mut JournalWrite,
     mut cause: PendingFact,
 ) -> CommandResult<PendingFact> {
+    let at = restore_clock()?;
     for durable in lanes {
         let Some(occupant) = durable.occupant else {
             continue;
         };
-        let Some(restored) = observe_restored_claim(bus, durable)? else {
+        let Some(restored) = observe_restored_claim(bus, durable, at)? else {
             continue;
         };
         guard_restored_claim(write, &restored);
@@ -40,10 +51,38 @@ pub(in crate::resident) fn append_startup_claims(
             durable,
             occupant,
             epoch,
+            at,
             FactCause::Pending(cause),
         )?;
     }
     Ok(cause)
+}
+
+fn restore_clock() -> CommandResult<wire::Instant> {
+    wire::Instant::new(jiff::Timestamp::now())
+        .map_err(|error| store_fault("lane::restart-clock-invalid", &error.to_string()))
+}
+
+/// The restored lease, rolling at least one window past `at`.
+fn restarted_lease(
+    observed: &wire::LeaseHead,
+    at: wire::Instant,
+) -> CommandResult<wire::LeaseHead> {
+    let window = at
+        .get()
+        .checked_add(jiff::SignedDuration::from_secs(
+            crate::board_command::AUTOMATIC_ROLLING_SECONDS,
+        ))
+        .map_err(|error| store_fault("lane::restart-lease-invalid", &error.to_string()))?;
+    let window = wire::Instant::new(window)
+        .map_err(|error| store_fault("lane::restart-lease-invalid", &error.to_string()))?;
+    let mut lease = observed.clone();
+    if window > lease.expiry {
+        lease.renewal = std::cmp::max(lease.renewal, at);
+        lease.expiry = window;
+        lease.maximum = std::cmp::max(lease.maximum, window);
+    }
+    Ok(lease)
 }
 
 fn append_startup_claim(
@@ -52,11 +91,14 @@ fn append_startup_claim(
     durable: &wire::LaneResidency,
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
+    at: wire::Instant,
     cause: FactCause,
 ) -> CommandResult<PendingFact> {
     let ancestor = durable
         .occupant
         .expect("restored claims require a predecessor occupant");
+    let mut lease = restarted_lease(restored.lease.body(), at)?;
+    lease.epoch = epoch;
     let rebound = write
         .fact(
             wire::body::ClaimRebound {
@@ -65,8 +107,8 @@ fn append_startup_claim(
                 occupant,
                 ancestor,
                 epoch,
-                until: restored.lease.body().expiry,
-                maximum: restored.lease.body().maximum,
+                until: lease.expiry,
+                maximum: lease.maximum,
                 source: restored.source.clone(),
             },
             cause,
@@ -79,21 +121,20 @@ fn append_startup_claim(
         claim.fact = position;
         claim
     });
-    let mut lease = restored.lease.body().clone();
-    lease.epoch = epoch;
     write.lease_head(restored.task.clone(), rebound, move |_| lease);
     Ok(rebound)
 }
 
+/// The active claim `durable`'s lane holds, as long as its lease has started
+/// by `at`; an expired lease is still returned for startup to restore.
 pub(super) fn observe_restored_claim(
     bus: &Bus,
     durable: &wire::LaneResidency,
+    at: wire::Instant,
 ) -> CommandResult<Option<RestoredClaim>> {
     let Some(ancestor) = durable.occupant else {
         return Ok(None);
     };
-    let at = wire::Instant::new(jiff::Timestamp::now())
-        .map_err(|error| store_fault("lane::restart-clock-invalid", &error.to_string()))?;
     let snapshot = bus
         .task_snapshot()
         .map_err(|error| store_fault("lane::restart-claim-heads-unreadable", &error.to_string()))?;
@@ -134,7 +175,7 @@ pub(super) fn observe_restored_claim(
                 "restored claim and lease generations disagree",
             ));
         }
-        if at < lease.body().start || at >= lease.body().expiry {
+        if at < lease.body().start {
             continue;
         }
         restored = Some(RestoredClaim {

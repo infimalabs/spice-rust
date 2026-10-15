@@ -269,10 +269,12 @@ pub(super) fn commit_adopted(
             "a detached supervisor cannot be adopted into a vacant lane",
         ));
     };
-    let Some(carried) = observe_restored_claim(bus, durable)? else {
+    let at = wire::Instant::new(jiff::Timestamp::now())
+        .map_err(|error| store_fault("lane::restart-clock-invalid", &error.to_string()))?;
+    let Some(carried) = observe_restored_claim(bus, durable, at)? else {
         return Ok(());
     };
-    if carried.is_bound_to(occupant, epoch) {
+    if carried.is_bound_to(occupant, epoch) || carried.expired_at(at) {
         return Ok(());
     }
     let observed = current_residency(bus, epoch)?;

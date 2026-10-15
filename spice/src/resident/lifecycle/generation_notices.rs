@@ -10,7 +10,9 @@ use journal::{JournalHead, TaskHeads};
 use wire::TaskHandle;
 
 use super::*;
-use crate::resident::supervisor::command::{TaskAssignmentNotice, TaskGenerationNotice};
+use crate::resident::supervisor::command::{
+    TaskAssignmentEnd, TaskAssignmentNotice, TaskGenerationNotice,
+};
 
 /// Index rows one read returns while a claim trails its task.
 const ADVANCE_PAGE: usize = 64;
@@ -25,6 +27,9 @@ pub(super) fn reconcile(
 ) -> CommandResult<bool> {
     for (lane, notice) in assignment_notices(snapshot) {
         super::super::supervisor::command::task_assignment(paths, lane, notice);
+    }
+    for (lane, ended) in assignment_ends(snapshot, cursor) {
+        super::super::supervisor::command::task_assignment_ended(paths, lane, ended);
     }
     for (lane, notice) in notices(bus, snapshot)? {
         super::super::supervisor::command::task_generation(paths, lane, notice);
@@ -51,6 +56,41 @@ fn assignment_notices(snapshot: &bus::TaskSnapshot) -> Vec<(CanonicalUuid, TaskA
                     task: TaskHandle::for_project(&statement.project, &statement.born).to_string(),
                     claim: claim.claimed.get(),
                     phase: heads.workflow().body().phase.to_string(),
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Claims that ended after `cursor`, the position the previous pass observed.
+///
+/// An assignment notice waits in the occupant's queue until its next step
+/// boundary, so the claim it announces can end first. Each ending since the
+/// last pass is told to the occupant that held the claim, whose driver
+/// withdraws a notice for it that has not been delivered yet. The first pass
+/// has no earlier observation and announces no endings.
+fn assignment_ends(
+    snapshot: &bus::TaskSnapshot,
+    cursor: Option<Seq>,
+) -> Vec<(CanonicalUuid, TaskAssignmentEnd)> {
+    let Some(cursor) = cursor else {
+        return Vec::new();
+    };
+    snapshot
+        .tasks()
+        .iter()
+        .filter_map(|heads| {
+            let claim = heads.claim()?.body();
+            if claim.disposition == ClaimDisposition::Active || claim.fact <= cursor {
+                return None;
+            }
+            let statement = heads.statement().body();
+            Some((
+                claim.lane,
+                TaskAssignmentEnd {
+                    occupant: claim.occupant,
+                    task: TaskHandle::for_project(&statement.project, &statement.born).to_string(),
+                    claim: claim.claimed.get(),
                 },
             ))
         })
