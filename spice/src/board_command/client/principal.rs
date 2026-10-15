@@ -117,11 +117,13 @@ fn render(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
             if answer.principals.is_empty() {
                 text.push_str("no principals\n");
             }
-            for head in &answer.principals {
+            for listing in &answer.principals {
+                let head = &listing.head;
                 text.push_str(&format!(
-                    "{} born {} {} {}\n",
+                    "{} born {} admitted {} {} {}\n",
                     head.principal,
                     head.born,
+                    listing.admitted,
                     roles(&head.roles),
                     profile(&head.profile)
                 ));

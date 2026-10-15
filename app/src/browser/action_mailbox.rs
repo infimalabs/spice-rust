@@ -134,6 +134,7 @@ impl ActionQueue {
             (stale.inbox(), CurrentRead::Inbox),
             (stale.consent(), CurrentRead::Consent),
             (stale.settings(), CurrentRead::Settings),
+            (stale.principals(), CurrentRead::Principals),
         ] {
             if invalidated {
                 mailbox.stale_current_reads.insert(read);
@@ -239,6 +240,7 @@ pub(crate) enum CurrentRead {
     Settings,
     Vendors,
     Consent,
+    Principals,
 }
 
 impl PendingKind {
@@ -250,6 +252,7 @@ impl PendingKind {
             Self::Settings => Some(CurrentRead::Settings),
             Self::Vendors => Some(CurrentRead::Vendors),
             Self::Consent => Some(CurrentRead::Consent),
+            Self::Principals => Some(CurrentRead::Principals),
             Self::TaskDetail { .. }
             | Self::ConversationText { .. }
             | Self::ContributionSources { .. }
@@ -260,6 +263,7 @@ impl PendingKind {
             | Self::RoomControl { .. }
             | Self::RoomCoordination { .. }
             | Self::Preparation { .. }
+            | Self::PrincipalWrite { .. }
             | Self::Draft { .. }
             | Self::Conclude { .. }
             | Self::Contribute { .. }
@@ -458,6 +462,7 @@ impl ClientAction {
             Self::RoomControl { request, .. } => room_control_bytes(request),
             Self::RoomCoordination { request, .. } => room_coordination_bytes(request),
             Self::Preparation { request, .. } => preparation_bytes(request),
+            Self::Principal { request, .. } => request.text_bytes(),
             Self::Draft { request, .. } => draft_bytes(request),
             Self::ArrangeTeams { teams, .. } => teams.iter().fold(
                 teams.len() * std::mem::size_of::<wire::intent::TeamArrangement>(),

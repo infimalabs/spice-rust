@@ -18,6 +18,8 @@ use crate::resident::timers::{Fired, RoomDue};
 mod packet_context;
 
 impl Lanes {
+    /// Admit `body` as `actor` under the current principal roles, as the
+    /// resident's command door does.
     fn admitted(
         &self,
         id: u8,
@@ -25,6 +27,10 @@ impl Lanes {
         kind: CommandKind,
         body: &impl serde::Serialize,
     ) -> wire::AdmittedCommand {
+        let roles = self
+            .bus
+            .read(|read| read.principal_roles())
+            .expect("principal roles read");
         Command {
             v: wire::WireVersion::CURRENT,
             id: test_uuid(id),
@@ -40,20 +46,35 @@ impl Lanes {
                 epoch: self.epoch,
                 release: "1.2.3".parse().expect("fixture release"),
             },
-            &wire::principal::PrincipalRoles::default(),
+            &roles,
         )
         .expect("control admits")
     }
 
     fn operate(&self, id: u8, control: RoomControl) -> Outcome<CommandAnswer> {
-        let command = self.admitted(id, Actor::Operator, CommandKind::RoomControl, &control);
+        self.operate_as(id, Actor::Operator, control)
+    }
+
+    fn operate_as(&self, id: u8, actor: Actor, control: RoomControl) -> Outcome<CommandAnswer> {
+        let command = self.admitted(id, actor, CommandKind::RoomControl, &control);
         crate::board_command::room_control(&self.bus, &command, &control, &steer::Config::default())
             .0
     }
 
     fn respond(&self, id: u8, result: &QuestionResultRef, text: &str) -> Outcome<CommandAnswer> {
-        self.operate(
+        self.respond_as(id, Actor::Operator, result, text)
+    }
+
+    fn respond_as(
+        &self,
+        id: u8,
+        actor: Actor,
+        result: &QuestionResultRef,
+        text: &str,
+    ) -> Outcome<CommandAnswer> {
+        self.operate_as(
             id,
+            actor,
             RoomControl::Answer {
                 result: result.clone(),
                 context: None,

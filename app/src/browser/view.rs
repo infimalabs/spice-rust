@@ -7,6 +7,7 @@ pub(super) mod chrome;
 mod quota;
 mod sidebar;
 mod spice_jobs;
+mod spice_principals;
 mod spice_sidebar;
 mod work_blockers;
 mod work_detail;
@@ -217,6 +218,7 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
                 runtime,
                 super::rooms::render_inbox(runtime, render.room_controls, render.sender),
             )}
+            {spice_principals::render(render.connection, runtime, render.sender)}
             {super::rooms::render_invitations(runtime)}
             {spice_jobs::render(standings.clone(), render.connection, runtime, render.sender)}
             {super::drafts::render_section(runtime, render.draft_controls, render.sender, &render.select_task)}

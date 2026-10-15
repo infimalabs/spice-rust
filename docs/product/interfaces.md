@@ -236,6 +236,40 @@ wakes a vacant lane exactly as an unheard ending does. A service may carry
 only a seated occupant and never wake the lane; a later seat hears what earlier
 seats did not.
 
+## Principals
+
+A principal is one human the repository has admitted: a fixed identity born by
+one `principal::admitted` fact, a recorded profile (name and email), roles, and
+the capability it connects with. The
+[identity invariants](invariants/identity.md#identity-a-human-principal-is-born-once-by-an-explicit-admission)
+own the rules; this section fixes the surfaces.
+
+- `spice principal list` reads every principal in birth order with its
+  identity, birth position, admission instant, roles, and profile.
+- `spice principal admit [--name NAME] [--email EMAIL] [--operator]` bears one
+  and prints its capability once; opening the app at `ORIGIN/#CAPABILITY`
+  connects as that principal.
+- `spice principal profile PRINCIPAL [--name NAME] [--email EMAIL]` replaces
+  the given profile fields.
+- `spice principal role grant|revoke PRINCIPAL operator` changes the one role.
+- `spice principal deauthorize PRINCIPAL` retires the capability an admission
+  issued, ending that principal's sessions.
+
+Every one of these is an operator-role command. The app's global menu shows
+**Principals** after the connected human's own panel and sends the same
+commands: each principal reads with its avatar and initials, name, email,
+roles, capability standing, and admission time, beside Edit profile, Grant or
+Revoke operator, and Revoke capability. Admit a human takes a required name, an
+optional email, and the operator role, and the reply's capability shows once in
+that panel as the opening link with a copy control; nothing stores it, and a
+replayed admission never shows it again. A principal without the operator role
+sees the section say so, because the resident refuses it the listing.
+
+Facts the historical `operator` actor recorded read as the earliest-born
+principal, and every authored item names its author's principal. Addressing
+stays a pointer to a concern, `#KEY` of a direction or `#TASK`: no principal
+has a short code, MSG selector, or route of its own.
+
 ## Extension surfaces
 
 Repository configuration may mount a command under the `spice` namespace;

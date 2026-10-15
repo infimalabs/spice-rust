@@ -120,6 +120,66 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Each principal is one identity row over its controls; an open form or the
+   one-time capability handoff stands beneath. */
+.app-spice-principal-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.app-spice-principal { display: grid; gap: 6px; min-width: 0; }
+.app-spice-principal-identity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.app-spice-principal .operator-avatar {
+  width: 32px;
+  height: 32px;
+  font-size: var(--app-type-caption);
+}
+.app-spice-principal-facts {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  font: var(--app-type-meta)/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.app-spice-principal-facts > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-spice-principal-facts > span,
+.app-spice-principal-own { color: var(--muted); }
+.app-spice-principal-form,
+.app-spice-principal-handoff {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border: var(--app-edge-soft);
+  border-radius: var(--app-radius-compact);
+  background: var(--control-surface-soft);
+  font: var(--app-type-meta)/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.app-spice-principal-form p,
+.app-spice-principal-handoff p { margin: 0; }
+.app-spice-principal-form label { display: grid; gap: 2px; min-width: 0; }
+.app-spice-principal-form label > span { color: var(--muted); }
+.app-spice-principal-form .app-spice-principal-check {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+.app-spice-principal-handoff code { overflow-wrap: anywhere; user-select: all; }
+.app-spice-principal-status { margin: 0; color: var(--muted); font-size: var(--app-type-sm); }
+.app-spice-principal-status[data-state="failed"],
+.app-spice-principal-form [data-state="danger"] { color: var(--danger); }
 .app-spice-topology-placeholder {
   min-height: 12rem;
   border: var(--app-edge-soft);

@@ -474,12 +474,22 @@ pub struct PrincipalDeauthorize {
     pub principal: CanonicalUuid,
 }
 
+/// One born principal as a listing presents it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrincipalListing {
+    /// Current standing.
+    pub head: PrincipalHead,
+    /// Commit instant of the admission fact that bore this principal.
+    pub admitted: crate::Instant,
+}
+
 /// Every born principal in birth order, as of the answering position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrincipalsAnswer {
-    /// Current principal heads, oldest birth first.
-    pub principals: Vec<PrincipalHead>,
+    /// Current principals, oldest birth first.
+    pub principals: Vec<PrincipalListing>,
 }
 
 /// One principal's standing as an admission, profile edit, role change, or

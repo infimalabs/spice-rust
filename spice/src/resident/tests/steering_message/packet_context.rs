@@ -77,6 +77,25 @@ fn an_operator_answer_presents_as_ans_without_its_header() {
     lanes.finish();
 }
 
+/// A second operator-role principal answers the question its own direction
+/// drew, and the lane hears that answer as theirs, not the bootstrap's.
+#[test]
+fn a_second_principals_answer_presents_as_theirs() {
+    let lanes = Lanes::new("packet-second-ans");
+    let second = test_uuid(90);
+    lanes.admit_operator(second);
+    let direction = lanes.direct_as(Actor::Human(second), SENDER, 20, "write the docs");
+    let result = asked(&lanes.say(SENDER, &format!("ASK #{direction}: which docs?")));
+    committed(&lanes.respond_as(62, Actor::Human(second), &result, "the CLI help"));
+    let key = lanes.held(SENDER, "the CLI help");
+
+    let (_, context) = lanes.acknowledged(SENDER, &key);
+    assert_eq!(context.packet, Some(wire::MessageSendKind::Ans));
+    assert_eq!(context.result, Some(result));
+    assert_eq!(context.actor, Actor::Human(second));
+    lanes.finish();
+}
+
 #[test]
 fn lane_packets_present_their_kind_and_answers_their_result() {
     let lanes = Lanes::new("packet-lane");

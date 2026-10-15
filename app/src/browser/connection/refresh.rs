@@ -89,6 +89,7 @@ pub(super) async fn send_refresh(
     send_inbox(principal, writer, actions, submissions).await?;
     send_consent(principal, writer, actions).await?;
     send_settings(principal, writer, actions).await?;
+    send_principals(principal, writer, actions).await?;
     send_vendors(principal, writer, actions).await
 }
 
@@ -117,6 +118,9 @@ pub(super) async fn send_stale(
     }
     if actions.take_ready_current_read(CurrentRead::Settings) {
         send_settings(principal, writer, actions).await?;
+    }
+    if actions.take_ready_current_read(CurrentRead::Principals) {
+        send_principals(principal, writer, actions).await?;
     }
     Ok(())
 }
@@ -424,6 +428,51 @@ async fn send_settings(
         GlobalSettingsRead {},
     )
     .await
+}
+
+async fn send_principals(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+) -> Result<(), String> {
+    send_if_offered(
+        principal,
+        writer,
+        actions,
+        PendingKind::Principals,
+        CommandKind::PrincipalRead,
+        wire::principal::PrincipalRead {},
+    )
+    .await
+}
+
+/// One principal write; its answer reaches the panel that asked.
+pub(super) async fn send_principal_write(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    request: &crate::client_action::PrincipalWrite,
+    respond: &crate::client_action::PrincipalResponse,
+) -> Result<CanonicalUuid, String> {
+    use crate::client_action::PrincipalWrite;
+    let pending = PendingKind::PrincipalWrite {
+        respond: respond.clone(),
+    };
+    let kind = request.kind();
+    match request {
+        PrincipalWrite::Admit(admit) => {
+            send_typed(principal, writer, actions, pending, kind, vec![], admit).await
+        }
+        PrincipalWrite::Edit(edit) => {
+            send_typed(principal, writer, actions, pending, kind, vec![], edit).await
+        }
+        PrincipalWrite::Grant(role) | PrincipalWrite::Revoke(role) => {
+            send_typed(principal, writer, actions, pending, kind, vec![], role).await
+        }
+        PrincipalWrite::Deauthorize(request) => {
+            send_typed(principal, writer, actions, pending, kind, vec![], request).await
+        }
+    }
 }
 
 async fn send_vendors(
