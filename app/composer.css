@@ -473,20 +473,18 @@
 .team-surface + .team-surface .team-composer {
   box-shadow: inset 8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
-/* Sibling consoles share one 2px dividing rule from the top of their tab row,
-   which sits at the foot of the task band, to their bottom: each paints one
-   pixel on its own facing edge, above everything it holds, so neither
-   console's content moves. The sibling selectors leave both outer fleet
-   edges bare. */
-.team-surface + .team-surface::before,
-.team-surface:has(+ .team-surface)::after {
+/* Sibling consoles share one faint dividing rule, the same edge as the status
+   band's top rule: it begins on that rule, at the foot of the task band, so the
+   tab row above stays open, and runs to their bottom. Only the later console
+   paints it, on its own start edge and above everything it holds, so neither
+   console's content moves and the earlier console's scrollbar stays clear. The
+   sibling selector leaves both outer fleet edges bare. */
+.team-surface + .team-surface::before {
   position: absolute; z-index: 7;
-  inset-block: calc(var(--team-task-band) - var(--app-horn-tab-block-size)) 0;
-  border-inline-start: var(--app-control-edge);
+  inset-block: var(--team-task-band) 0; inset-inline-start: 0;
+  border-inline-start: var(--app-edge);
   content: ""; pointer-events: none;
 }
-.team-surface + .team-surface::before { inset-inline-start: 0; }
-.team-surface:has(+ .team-surface)::after { inset-inline-end: 0; }
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);
   scroll-padding-top: var(--team-composer-block);

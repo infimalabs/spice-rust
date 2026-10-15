@@ -11,7 +11,10 @@ rather than a location: it opens [that Design's read view](DESIGNS.md#reading-a-
 and replaces itself with `#/chat`.
 
 Wide, narrow, short, empty, one-member, and multi-member consoles keep a usable
-header, composer, and stream without a nested vertical scroller.
+header, composer, and stream without a nested vertical scroller. Side-by-side
+consoles share one faint dividing edge, the same stroke as the status band's
+top rule: it begins on that rule, leaving the tab row above it open, and runs
+unbroken to the consoles' bottom.
 
 ## Working groups and teams
 
