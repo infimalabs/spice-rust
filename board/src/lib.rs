@@ -31,10 +31,10 @@ pub use control::{controlled_pending, controlled_pending_tasks, stranded_tasks};
 pub use graph::{Diagram, View};
 pub use inventory::{HiddenInventory, Inventory};
 pub use next::{
-    ResolvedTasks, Selection, SelectionIndex, TASTE_PLAN_TAG, WorkWait, awaits_selection,
-    blocked_handoff_until, capturable_entry, dependencies_satisfied, eligible_entry,
-    environment_satisfied, gather_route, gather_task, is_independent_handoff, is_released_by,
-    offer_order, offer_order_at, passive_design, resolved_tasks, select, select_at,
+    ResolvedTasks, Selection, SelectionIndex, TASTE_PLAN_TAG, WorkWait, awaits_authorized_work,
+    awaits_selection, blocked_handoff_until, capturable_entry, dependencies_satisfied,
+    eligible_entry, environment_satisfied, gather_route, gather_task, is_independent_handoff,
+    is_released_by, offer_order, offer_order_at, passive_design, resolved_tasks, select, select_at,
     select_with_index_at, select_with_satisfied, select_with_satisfied_at, selectable_entry,
     selectable_entry_at, stealable_entry, unselected_output_of, work_waits,
 };

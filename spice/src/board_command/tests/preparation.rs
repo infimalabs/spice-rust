@@ -1321,8 +1321,9 @@ fn next_work_offers_a_plan_released_task_whose_open_design_is_off_the_frontier()
     claim_task(&bus, epoch, &seats[0], &planner, &selected);
     let task = add_output(&bus, epoch, &selected, "Selected plan task");
     assert_committed(review_clean(&bus, epoch, &seats[0], &selected));
-    // With the sibling gone and the open Design held, no frontier row names
-    // the Design as its parent; only the task's controller link reaches it.
+    // With the sibling gone, no frontier row names the Design as its parent;
+    // only the task's controller link reaches it. The grouped Design waits on
+    // that released task, so no claim is needed to keep it from being offered.
     let visible = board(&bus, epoch, Actor::Operator);
     let heads = at(&visible, &sibling);
     assert_committed(issue(
@@ -1342,7 +1343,6 @@ fn next_work_offers_a_plan_released_task_whose_open_design_is_off_the_frontier()
         },
     ));
     group_design(&bus, epoch, &design);
-    claim_task(&bus, epoch, &seats[0], &planner, &design);
 
     let worker = Actor::Lane(seats[1].lane);
     let Some(NextWorkState::Candidate { task: offered }) =

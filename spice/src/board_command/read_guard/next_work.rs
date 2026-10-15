@@ -237,6 +237,7 @@ pub(in crate::board_command) fn project_frontier<'a>(
         entries.push(entry);
         frontier_heads.push(heads);
     }
+    satisfied.hold_released_work(&entries);
     let work = allocation.work();
     Ok((entries, satisfied, origin_threads, frontier_heads, work))
 }
