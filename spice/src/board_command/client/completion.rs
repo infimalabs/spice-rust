@@ -184,33 +184,6 @@ fn task_witness_moved(before: &CompletionPlan, after: &CompletionPlan) -> bool {
     let after_head = task_head(&after.expected, &after.task);
     before_head.is_some() && after_head.is_some() && before_head != after_head
 }
-#[cfg(test)]
-pub(in crate::board_command) fn completion_retryable_after_task_change(
-    before: &BoardAnswer,
-    after: &BoardAnswer,
-    task: &TaskHandle,
-) -> bool {
-    let before = completion_plan(before, Some(task), None, "fixture validation".to_owned());
-    let after = completion_plan(after, Some(task), None, "fixture validation".to_owned());
-    matches!(
-        (before, after),
-        (Ok(before), Ok(after)) if own_edit_is_only_completion_movement(&before, &after)
-    )
-}
-#[cfg(test)]
-pub(in crate::board_command) fn completion_foreign_task_change(
-    before: &BoardAnswer,
-    after: &BoardAnswer,
-    task: &TaskHandle,
-) -> bool {
-    let before = completion_plan(before, Some(task), None, "fixture validation".to_owned());
-    let after = completion_plan(after, Some(task), None, "fixture validation".to_owned());
-    matches!(
-        (before, after),
-        (Ok(before), Ok(after))
-            if !after.holder_acknowledged && task_witness_moved(&before, &after)
-    )
-}
 
 fn task_head(expected: &[Witness], task: &wire::TaskStamp) -> Option<wire::Seq> {
     expected.iter().find_map(|witness| match witness {

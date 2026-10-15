@@ -149,10 +149,6 @@ pub(super) use recovery::{RecoveryBoardState, recovery_board_state, recovery_pre
 use recovery::{client_add_recovery, client_recover};
 mod completion;
 use completion::{client_done, client_review};
-#[cfg(test)]
-pub(in crate::board_command) use completion::{
-    completion_foreign_task_change, completion_retryable_after_task_change,
-};
 mod submission;
 #[cfg(test)]
 pub(in crate::board_command) use submission::append_preparation_witnesses;
