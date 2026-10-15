@@ -11,7 +11,11 @@ use spice::repository::Repository;
 use wire::intent::{CommandAnswer, GlobalSettingsAnswer, GlobalSettingsSet};
 use wire::{Command, OperatorIdentity, Outcome, Producer, Reply, ReplyPosition, SeqRange};
 
-use super::{CommandResult, commit, seq, store_fault, typed_outcome, typed_store_fault, write};
+use super::shutdown::current_residency;
+use super::{
+    CommandEffects, CommandResult, commit, seq, store_fault, typed_outcome, typed_store_fault,
+    write,
+};
 
 fn stored_fast_mode(envelope: Option<&wire::Envelope<wire::AnyFact>>) -> bool {
     envelope
@@ -132,16 +136,25 @@ pub(super) fn read(bus: &Bus, repository: &Repository) -> Outcome<CommandAnswer>
     })
 }
 
-/// Commit one global settings replacement and its replayable command receipt.
+/// Commit one global settings replacement and its replayable command receipt,
+/// then owe each running member whose effective fast mode it flips a live
+/// change.
 pub(super) fn set(
     bus: &Bus,
     repository: &Repository,
     epoch: wire::CanonicalUuid,
     command: &wire::AdmittedCommand,
     request: &GlobalSettingsSet,
+    effects: &mut CommandEffects,
 ) -> Outcome<CommandAnswer> {
     let answer = match answer(repository, request.fast_mode) {
         Ok(answer) => answer,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let (before, residency) = match fast_mode(bus).and_then(|before| {
+        current_residency(bus, epoch).map(|residency| (before, residency.into_body()))
+    }) {
+        Ok(current) => current,
         Err(outcome) => return typed_outcome(outcome),
     };
     let mut proposal = match write(command.actor().clone(), epoch, Producer::CommandDoor) {
@@ -169,13 +182,22 @@ pub(super) fn set(
         return typed_store_fault("settings::receipt-invalid", &error.to_string());
     }
     match commit(bus, proposal) {
-        Ok(committed) => Outcome::Reply(Reply {
-            position: ReplyPosition::Committed(SeqRange {
-                first: seq(committed.first()),
-                last: seq(committed.last()),
-            }),
-            body: CommandAnswer::GlobalSettings(answer),
-        }),
+        Ok(committed) => {
+            super::lane_surface::owe_global_fast_flips(
+                effects,
+                command,
+                &residency,
+                before,
+                answer.fast_mode,
+            );
+            Outcome::Reply(Reply {
+                position: ReplyPosition::Committed(SeqRange {
+                    first: seq(committed.first()),
+                    last: seq(committed.last()),
+                }),
+                body: CommandAnswer::GlobalSettings(answer),
+            })
+        }
         Err(outcome) => typed_outcome(outcome),
     }
 }

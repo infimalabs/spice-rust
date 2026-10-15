@@ -57,7 +57,9 @@ use reply::{
     typed_environment_fault,
 };
 pub(super) use restart_claim::append_startup_claims;
-pub(super) use retune::{LiveChange, LiveChanges, retune, retune_effort, retune_fast};
+pub(super) use retune::{
+    LiveChange, LiveChanges, owe_global_fast_flips, retune, retune_effort, retune_fast,
+};
 pub(super) use session::{
     DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, SessionProofError,
     await_session, launch_resume, record_stream, resume_session, session_fact, session_source,

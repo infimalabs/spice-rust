@@ -122,7 +122,7 @@ pub(super) struct FastFlip {
     live: LiveRetune,
 }
 
-/// The live fast-mode changes owed by one residency write.
+/// The live fast-mode changes owed by one residency or global settings write.
 ///
 /// A member owes one only when the write flips its effective fast mode,
 /// resolved additively across its own flag, its team's flag, and the global
@@ -130,16 +130,17 @@ pub(super) struct FastFlip {
 /// can lag a change still awaiting confirmation, so it is not compared.
 pub(super) fn fast_flips(
     before: &wire::ResidencyHead,
+    before_global: bool,
     after: &wire::ResidencyHead,
-    global: bool,
+    after_global: bool,
 ) -> Vec<FastFlip> {
     after
         .lanes
         .iter()
         .filter_map(|row| {
-            let enabled = after.fast_mode(row, global);
+            let enabled = after.fast_mode(row, after_global);
             let prior = before.lanes.iter().find(|prior| prior.lane == row.lane)?;
-            if before.fast_mode(prior, global) == enabled || row.vendor.as_str() != "omp" {
+            if before.fast_mode(prior, before_global) == enabled || row.vendor.as_str() != "omp" {
                 return None;
             }
             let occupant = row.occupant?;
@@ -150,6 +151,22 @@ pub(super) fn fast_flips(
             })
         })
         .collect()
+}
+
+/// Owe each running member whose effective fast mode a global setting change
+/// flips its live change. The setting is already durable.
+pub(in crate::resident) fn owe_global_fast_flips(
+    effects: &mut CommandEffects,
+    command: &wire::AdmittedCommand,
+    residency: &wire::ResidencyHead,
+    before: bool,
+    after: bool,
+) {
+    owe_fast_flips(
+        effects,
+        command,
+        fast_flips(residency, before, residency, after),
+    );
 }
 
 /// Owe each running member its fast-mode change. The write that owed them
@@ -442,7 +459,7 @@ fn change(
     let seat_fact = selection.replace_seat(row);
     let live = selection.live_request(row).zip(row.occupant);
     let flips = if flips_owed {
-        fast_flips(observed.body(), &next, global_fast)
+        fast_flips(observed.body(), global_fast, &next, global_fast)
     } else {
         Vec::new()
     };
@@ -551,3 +568,6 @@ fn record_runtime(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
