@@ -632,17 +632,26 @@ pub fn decode_record(
     listen::decode(dialect, &bytes, record_locus).map_err(|_| RecordError::Unreadable)
 }
 
-/// The complete assistant words a room packet may cite in `event`: streamed
-/// assistant prose, or the intent a tool call declares.
+/// The visible assistant text block a room packet may be published from:
+/// one complete streamed assistant text block, exactly as the agent wrote it.
 ///
-/// The packet publisher and the room hunk resolver both select through this,
-/// so every published hunk names an event the resolver reads back.
+/// Settled message prose repeats or paraphrases that block, reasoning is not
+/// visible text, and a tool call's intent and arguments are call metadata, so
+/// none of them is a packet source.
 #[must_use]
 pub fn packet_text(event: &listen::Event) -> Option<&str> {
     match event {
         listen::Event::StreamedProse(prose) if prose.role == listen::ProseRole::Assistant => {
             Some(prose.text.as_str())
         }
+        _ => None,
+    }
+}
+
+/// The words a durable room hunk cites in `event`: a packet's visible text
+/// block, or a tool-call intent, which journaled hunks may cite.
+fn cited_text(event: &listen::Event) -> Option<&str> {
+    match event {
         listen::Event::Tool(listen::Tool {
             moment:
                 listen::ToolMoment::Call {
@@ -651,7 +660,7 @@ pub fn packet_text(event: &listen::Event) -> Option<&str> {
                 },
             ..
         }) => Some(intent),
-        _ => None,
+        _ => packet_text(event),
     }
 }
 
@@ -695,7 +704,7 @@ fn hunk_text(
     let text = usize::try_from(event)
         .ok()
         .and_then(|event| events.get(event))
-        .and_then(packet_text);
+        .and_then(cited_text);
     let range = usize::try_from(range.start)
         .ok()
         .zip(usize::try_from(range.end).ok());

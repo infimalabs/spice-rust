@@ -389,22 +389,10 @@ fn project_agent_event(
     }))
 }
 
-/// Complete assistant prose and an explicit packet preserved as a no-prose
-/// tool intent present their MSG packets as outgoing quotes. Other tool intents
-/// remain captions and never send.
+/// Assistant prose presents its MSG packets as outgoing quotes. A tool intent
+/// is call metadata that never sends, even when it repeats a packet header.
 fn presents_sends(decoded: &listen::Event) -> bool {
-    match decoded {
-        listen::Event::Tool(listen::Tool {
-            moment:
-                listen::ToolMoment::Call {
-                    intent: Some(intent),
-                    ..
-                },
-            ..
-        }) => steer::ack::scan::has_message(intent),
-        listen::Event::Tool(_) => false,
-        _ => true,
-    }
+    !matches!(decoded, listen::Event::Tool(_))
 }
 
 fn project_event_body(

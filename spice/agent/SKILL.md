@@ -35,8 +35,8 @@ buried/described headers. A post-ACK reminder only warrants an inbox check; an
 empty inbox is valid.
 
 Use peers' briefing/`spice lane list` addresses, never UUID/name;
-`unavailable:REASON` means vacant. `MSG SELECTOR [SELECTOR...]: BODY` sends;
-with a tool, repeat the packet as first intent. Selectors: `ADDRESS`;
+`unavailable:REASON` means vacant. `MSG SELECTOR [SELECTOR...]: BODY` sends
+only from visible text, never a tool intent. Selectors: `ADDRESS`;
 `ADDRESS#TASK` also records the room; `#TASK` alone only records the room.
 Only `#KEY` of a direction the operator sent you reaches the operator; no
 `operator` selector. BODY ends at the next placed ACK/NAK/MSG/ASK/ANS or block

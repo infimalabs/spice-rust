@@ -1,13 +1,13 @@
 //! Authored MSG, ASK, and ANS packets published as peer messages and room
 //! conversation records.
 //!
-//! A complete streamed assistant text block is the ordinary source. When OMP
-//! settles an assistant message with no text block, the explicitly repeated
-//! packet in a tool call's intent is instead its only verbatim assistant text
-//! and is admitted through the same seam as ACK/NAK. Settled message prose
-//! repeats or paraphrases streamed text, reasoning is not authored text, and
-//! tool arguments are never a source. A block is complete before it is decoded,
-//! so a truncated body never sends.
+//! Visible assistant text is the only source: each complete streamed
+//! assistant text block, including a turn's final message, in presentation
+//! order. Settled message prose repeats or paraphrases those blocks, reasoning
+//! is not visible text, and a tool call's intent and arguments are call
+//! metadata, so none of them publishes, even when an intent repeats a packet
+//! header. A block is complete before it is decoded, so a truncated body never
+//! sends.
 //!
 //! One packet resolves every recipient against one residency view and
 //! journals one `steer::messaged` fact per seated recipient in one guarded
