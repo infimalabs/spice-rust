@@ -755,6 +755,8 @@ struct PresentationDirective {
     review: bool,
     disposition: wire::Disposition,
     quote_target: wire::QuoteTarget,
+    /// Images retained by this directive, each with its exact quote target.
+    media_quotes: Vec<wire::MediaQuote>,
     /// Actor on the creating fact, which a quote of this directive names.
     actor: wire::Actor,
     /// Exact occupant that authored the directive as an MSG packet.
@@ -836,6 +838,8 @@ impl PresentationDirectives {
                 key: key.to_string(),
                 digest: wire::QuoteTarget::text_digest(&head.text),
             };
+            let media_quotes = spice::quote::media_quotes(&quote_target, &head.attachments)
+                .map_err(|error| format!("{error:?}"))?;
             let packet = spice::quote::steering_packet(row);
             let text = packet
                 .as_ref()
@@ -854,6 +858,7 @@ impl PresentationDirectives {
                     disposition: head.disposition,
                     retirement,
                     quote_target,
+                    media_quotes,
                     actor: row.created().actor.clone(),
                     sender: row
                         .created()
@@ -1072,6 +1077,7 @@ fn hydrate_directive_contexts(
                 end: u32::try_from(context.range.end)
                     .map_err(|_| "directive context end exceeds the wire range".to_owned())?,
                 quote_target: directive.quote_target.clone(),
+                media_quotes: directive.media_quotes.clone(),
                 actor: directive.actor.clone(),
                 authored: directive.published,
                 badge: directive.badge(),

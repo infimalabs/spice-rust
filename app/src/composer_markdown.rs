@@ -21,6 +21,7 @@ mod diagrams;
 mod image_flow;
 pub(crate) mod inline;
 mod math;
+mod media_quotes;
 mod quotes;
 mod tables;
 pub(crate) mod task_text;
@@ -72,6 +73,19 @@ impl QuoteSource {
 }
 
 pub(crate) type QuoteSources = BTreeMap<String, QuoteSource>;
+
+/// Borrowed identity and source authority used while presenting quotes.
+#[derive(Clone, Copy)]
+pub(crate) struct QuoteRenderContext<'a> {
+    agents: &'a QuoteAgents,
+    sources: &'a QuoteSources,
+}
+
+impl<'a> QuoteRenderContext<'a> {
+    pub(crate) const fn new(agents: &'a QuoteAgents, sources: &'a QuoteSources) -> Self {
+        Self { agents, sources }
+    }
+}
 
 pub(crate) use quotes::{
     referenced_quote_agents, referenced_quote_sources, referenced_quote_tasks,
@@ -308,6 +322,30 @@ pub(crate) fn render_received_with_quotes(
         quotes,
         quote_agents,
         quote_sources,
+        &[],
+        Finish::Received,
+    )
+}
+
+/// Render received text with exact quote targets for its retained images.
+pub(crate) fn render_received_with_media_quotes(
+    markdown: &str,
+    classifications: &[MessageClassification],
+    directives: &[MessageDirective],
+    quotes: &[wire::QuotePresentation],
+    quote_agents: &QuoteAgents,
+    quote_sources: &QuoteSources,
+    media_quotes: &[wire::MediaQuote],
+) -> RenderedMarkdown {
+    render(
+        markdown,
+        classifications,
+        directives,
+        &[],
+        quotes,
+        quote_agents,
+        quote_sources,
+        media_quotes,
         Finish::Received,
     )
 }
@@ -317,6 +355,7 @@ pub(crate) fn render_received_with_quotes(
 /// a period when unpunctuated and presents a terminal colon as a period, the
 /// card's attribution slots lead it and each answer after a quote chain, and
 /// each MSG the card sent reads as an outgoing quote to its recipients.
+#[cfg(test)]
 pub(crate) fn render_prose_card(
     markdown: &str,
     classifications: &[MessageClassification],
@@ -326,14 +365,36 @@ pub(crate) fn render_prose_card(
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
 ) -> RenderedMarkdown {
+    render_prose_card_with_media_quotes(
+        markdown,
+        classifications,
+        directives,
+        sends,
+        quotes,
+        QuoteRenderContext::new(quote_agents, quote_sources),
+        &[],
+    )
+}
+
+/// Render an assistant prose card with exact targets for its retained images.
+pub(crate) fn render_prose_card_with_media_quotes(
+    markdown: &str,
+    classifications: &[MessageClassification],
+    directives: &[MessageDirective],
+    sends: &[MessageSend],
+    quotes: &[wire::QuotePresentation],
+    quote_context: QuoteRenderContext<'_>,
+    media_quotes: &[wire::MediaQuote],
+) -> RenderedMarkdown {
     render(
         markdown,
         classifications,
         directives,
         sends,
         quotes,
-        quote_agents,
-        quote_sources,
+        quote_context.agents,
+        quote_context.sources,
+        media_quotes,
         Finish::ProseCard,
     )
 }
@@ -344,6 +405,7 @@ fn render_quote_card_body(
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
+    media_quotes: &[wire::MediaQuote],
     attribution: image_flow::Attribution,
     quote_depth: usize,
 ) -> RenderedMarkdown {
@@ -355,6 +417,7 @@ fn render_quote_card_body(
         quotes,
         quote_agents,
         quote_sources,
+        media_quotes,
         Finish::QuoteCard {
             attribution,
             quote_depth,
@@ -396,10 +459,12 @@ fn render(
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
+    media_quotes: &[wire::MediaQuote],
     finish: Finish<'_>,
 ) -> RenderedMarkdown {
     let math = math::normalize(markdown, classifications, directives, sends, OPTIONS);
     let markdown = math.markdown;
+    let mut media_quotes = media_quotes::Matcher::new(media_quotes, &math.directives);
     let (events, outer_quotes) = parse_events(
         &markdown,
         OPTIONS,
@@ -425,7 +490,8 @@ fn render(
     let image_count = markdown_image_only_count(&events, has_diagrams);
     let image_only = image_count > 0;
     // Diagram controls and nested block structure must not collapse into an image row.
-    let mut events = decorate_markdown_images(events, image_only && !has_diagrams);
+    let mut events =
+        decorate_markdown_images(events, image_only && !has_diagrams, &mut media_quotes);
     let attribution = match finish {
         Finish::Received | Finish::TaskText { .. } => None,
         Finish::ProseCard => {
@@ -896,12 +962,13 @@ fn markdown_image_only_count(events: &[MarkdownEvent<'_>], has_diagrams: bool) -
     images
 }
 
-fn decorate_markdown_images(
-    events: Vec<MarkdownEvent<'_>>,
+fn decorate_markdown_images<'a>(
+    events: Vec<MarkdownEvent<'a>>,
     image_only: bool,
-) -> Vec<MarkdownEvent<'_>> {
+    media_quotes: &mut media_quotes::Matcher,
+) -> Vec<MarkdownEvent<'a>> {
     if image_only {
-        return decorate_image_only_markdown(events);
+        return decorate_image_only_markdown(events, media_quotes);
     }
     let mut decorated = Vec::with_capacity(events.len());
     let mut index = 0usize;
@@ -924,11 +991,12 @@ fn decorate_markdown_images(
                 if linked_image_end(&events, index).is_some() =>
             {
                 let image_index = index + 1;
-                let image_end = push_decorated_image(&events, image_index, &mut decorated);
+                let image_end =
+                    push_decorated_image(&events, image_index, &mut decorated, media_quotes);
                 index = image_end + 1;
             }
             MarkdownEvent::Start(Tag::Image { .. }) => {
-                index = push_decorated_image(&events, index, &mut decorated);
+                index = push_decorated_image(&events, index, &mut decorated, media_quotes);
             }
             _ => decorated.push(events[index].clone()),
         }
@@ -937,14 +1005,17 @@ fn decorate_markdown_images(
     decorated
 }
 
-fn decorate_image_only_markdown(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>> {
+fn decorate_image_only_markdown<'a>(
+    events: Vec<MarkdownEvent<'a>>,
+    media_quotes: &mut media_quotes::Matcher,
+) -> Vec<MarkdownEvent<'a>> {
     let mut decorated = Vec::with_capacity(events.len());
     decorated.push(MarkdownEvent::InlineHtml(image_flow::STACK_OPEN.into()));
     let mut index = 0usize;
     while index < events.len() {
         match &events[index] {
             MarkdownEvent::Start(Tag::Image { .. }) => {
-                index = push_decorated_image(&events, index, &mut decorated);
+                index = push_decorated_image(&events, index, &mut decorated, media_quotes);
             }
             MarkdownEvent::Start(Tag::Paragraph)
             | MarkdownEvent::End(TagEnd::Paragraph)
@@ -990,6 +1061,7 @@ fn push_decorated_image<'a>(
     events: &[MarkdownEvent<'a>],
     index: usize,
     decorated: &mut Vec<MarkdownEvent<'a>>,
+    media_quotes: &mut media_quotes::Matcher,
 ) -> usize {
     let MarkdownEvent::Start(Tag::Image {
         dest_url, title, ..
@@ -1002,8 +1074,9 @@ fn push_decorated_image<'a>(
         .position(|event| matches!(event, MarkdownEvent::End(TagEnd::Image)))
         .map_or(events.len(), |offset| index + offset + 1);
     let alt = image_alt_text(&events[index + 1..end]);
+    let media_quote = media_quotes.take(dest_url, &alt);
     decorated.push(MarkdownEvent::InlineHtml(
-        image_preview_html(dest_url, title, &alt).into(),
+        media_quotes::image_preview_html(dest_url, title, &alt, media_quote).into(),
     ));
     end
 }
@@ -1038,44 +1111,6 @@ fn image_alt_text(events: &[MarkdownEvent<'_>]) -> String {
         }
     }
     alt
-}
-
-fn image_preview_html(source: &str, authored_title: &str, alt: &str) -> String {
-    let source = escape_html_attribute(source);
-    let alt = escape_html_attribute(alt);
-    let label = if alt.is_empty() { "image" } else { &alt };
-    let action = escape_html_attribute(&format!("Open {label} full size"));
-    let image_title = if authored_title.is_empty() {
-        String::new()
-    } else {
-        format!(" title=\"{}\"", escape_html_attribute(authored_title))
-    };
-    let malformed_data_image = data_image_has_malformed_base64(&source);
-    let (state, status) = if source.is_empty() || malformed_data_image {
-        ("error", "Image unavailable")
-    } else {
-        ("pending", "Loading image")
-    };
-    let image = if source.is_empty() || malformed_data_image {
-        format!("<img alt=\"{alt}\"{image_title} data-mosaic-image-state=\"{state}\">")
-    } else {
-        format!(
-            "<img src=\"{source}\" alt=\"{alt}\"{image_title} \
-             data-mosaic-image-state=\"{state}\">"
-        )
-    };
-    let preview = format!(
-        "{image}<span class=\"message-image-status\" role=\"status\" \
-         data-mosaic-image-status=\"{state}\">{status}</span>"
-    );
-    if !source.is_empty() && !malformed_data_image {
-        format!(
-            "<button type=\"button\" class=\"message-image message-image--openable\" \
-             data-image-preview=\"\" title=\"{action}\" aria-label=\"{action}\">{preview}</button>"
-        )
-    } else {
-        format!("<span class=\"message-image\" title=\"Image preview\">{preview}</span>")
-    }
 }
 
 fn data_image_has_malformed_base64(source: &str) -> bool {

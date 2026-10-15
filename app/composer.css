@@ -698,6 +698,33 @@
   min-height: 0;
   margin: 0;
 }
+.message-image-shell {
+  --message-image-size: var(--mosaic-image-size);
+  position: relative;
+  display: inline-grid;
+  flex: 0 0 var(--message-image-size);
+  width: var(--message-image-size);
+  min-width: var(--message-image-size);
+  height: var(--message-image-size);
+  aspect-ratio: 1 / 1;
+}
+.message-image-shell > .message-image {
+  --message-image-size: 100%;
+  grid-area: 1 / 1;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+}
+.message-image-quote {
+  position: absolute;
+  z-index: 3;
+  inset: 6px 6px auto auto;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: var(--app-radius-control);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  backdrop-filter: blur(8px);
+}
 /* Message card actions form one cutout rather than separate circles. The pair
    has no gap: Quote is square and Play rounds both inline-start corners into a
    finger. Every pair wears the same edges wherever it stands.
@@ -772,14 +799,14 @@
    it wherever it leaves room. Each image keeps its definite preferred width,
    which is what the float measures, so the row never waits for the images to
    load; in a narrow hunk the squares shrink evenly to share the float. */
-.markdown-body .message-hunk > p.message-image-stack:has(> .message-image + .message-image)
-  > .message-image {
+.markdown-body .message-hunk > p.message-image-stack:has(> .message-image-shell + .message-image-shell)
+  > .message-image-shell {
   flex-shrink: 1;
   min-width: 0;
   height: auto;
 }
-.markdown-body .message-hunk > p.message-image-stack:has(> .message-image + .message-image)
-  > .message-image > img {
+.markdown-body .message-hunk > p.message-image-stack:has(> .message-image-shell + .message-image-shell)
+  > .message-image-shell > .message-image > img {
   max-width: 100%;
   max-height: 100%;
 }
@@ -949,7 +976,7 @@
   margin: 0;
   overflow: hidden;
 }
-.team-surface .mosaic-message-card--image-cover .message-image {
+.team-surface .mosaic-message-card--image-cover :is(.message-image-shell, .message-image) {
   --message-image-size: 100%;
   display: grid;
   grid-template: minmax(0, 1fr) / minmax(0, 1fr);
@@ -1057,7 +1084,7 @@
 .team-surface .mosaic-message-card--crystal .mosaic-crystal {
   background: var(--panel);
 }
-.team-surface .mosaic-message-card--crystal .message-image.mosaic-crystal-cell {
+.team-surface .mosaic-message-card--crystal .message-image-shell.mosaic-crystal-cell {
   position: absolute;
   left: var(--crystal-cell-x, 0%);
   top: var(--crystal-cell-y, 0%);

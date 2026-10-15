@@ -33,6 +33,7 @@ fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
                         review: false,
                         disposition: wire::Disposition::Live,
                         quote_target: quote_target(key, text),
+                        media_quotes: Vec::new(),
                         retirement: None,
                     },
                 )
@@ -294,6 +295,7 @@ fn taste_acknowledgement_earns_a_typed_badge_without_a_marker() {
             review: false,
             disposition: wire::Disposition::Acked,
             quote_target: quote_target("dRyzkQp1P", directive_text),
+            media_quotes: Vec::new(),
             retirement: Some(wire::body::TranscriptLocus {
                 source: None,
                 member: 1,
@@ -372,6 +374,7 @@ fn review_feedback_context_carries_its_badge_without_a_marker() {
                     "Keep working the current task."
                 ),
             ),
+            media_quotes: Vec::new(),
             retirement: Some(wire::body::TranscriptLocus {
                 source: Some(source),
                 member: 1,
@@ -638,6 +641,7 @@ fn system_acknowledgment_badge_reaches_app_without_speech_eligibility() {
             review: false,
             disposition: wire::Disposition::Acked,
             quote_target: quote_target("dRyzkGX8b", "Accepted lane renewal context."),
+            media_quotes: Vec::new(),
             retirement: Some(wire::body::TranscriptLocus {
                 source: None,
                 member: 1,
@@ -919,6 +923,7 @@ fn repeated_acknowledgement_keeps_context_without_reearning_speech() {
             review: false,
             disposition: wire::Disposition::Acked,
             quote_target: quote_target("1kQwPZtK", "Keep the original response context."),
+            media_quotes: Vec::new(),
             retirement: Some(retirement),
         },
     )]));
@@ -991,6 +996,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
                 review: false,
                 disposition: wire::Disposition::Acked,
                 quote_target: quote_target("1kR5x8yR", "Continue"),
+                media_quotes: Vec::new(),
                 retirement: Some(retirement(8, 5)),
             },
         ),
@@ -1010,6 +1016,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
                 review: false,
                 disposition: wire::Disposition::Acked,
                 quote_target: quote_target("1kR5xJDD", "Keep one deterministic path."),
+                media_quotes: Vec::new(),
                 retirement: Some(retirement(0, 14)),
             },
         ),
@@ -1087,6 +1094,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
                 review: false,
                 disposition: wire::Disposition::Acked,
                 quote_target: quote_target("dRyzkGX8b", "Accepted lane renewal context."),
+                media_quotes: Vec::new(),
                 retirement: Some(retirement(13)),
             },
         ),
@@ -1106,6 +1114,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
                 review: false,
                 disposition: wire::Disposition::Acked,
                 quote_target: quote_target("1kQwPZtK", "Keep retained direction readable."),
+                media_quotes: Vec::new(),
                 retirement: Some(retirement(23)),
             },
         ),
@@ -1148,6 +1157,7 @@ fn acknowledged_context_survives_transcript_source_replacement() {
             review: false,
             disposition: wire::Disposition::Acked,
             quote_target: quote_target("1kQwPZtK", "Keep the original response context."),
+            media_quotes: Vec::new(),
             retirement: Some(wire::body::TranscriptLocus {
                 source: Some(expected_source),
                 member: 1,

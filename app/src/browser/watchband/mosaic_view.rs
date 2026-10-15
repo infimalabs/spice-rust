@@ -203,6 +203,15 @@ fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMes
         || left.unavailable_tool_terminals != right.unavailable_tool_terminals
         || left.boundary != right.boundary
         || left.media != right.media
+        || left.media_quotes != right.media_quotes
+        || !left
+            .directive_contexts
+            .iter()
+            .map(|context| &context.media_quotes)
+            .eq(right
+                .directive_contexts
+                .iter()
+                .map(|context| &context.media_quotes))
         || left.markdown_images != right.markdown_images
     {
         return false;

@@ -242,6 +242,14 @@ attachments leave. The shared attachment limits remain the submission
 authority: an attachment that does not fit is refused in the composer, never
 after Send.
 
+Retained steering attachments and transcript images carry an image-specific
+Quote action beside full-size opening. The action drafts exactly that image
+under its admitted name. Its target names the durable steering or tape source,
+source ordinal, and decoded-byte digest; paths, data URLs, tool intent, and
+browser-generated diagrams never become quote identity. A sent image quote
+resolves from the same durable source and renders an explicit unavailable state
+if that source no longer authenticates the named image.
+
 In the full-size image viewer, A activates **Annotate** when the image is a
 draft image the viewer can annotate, and D activates **Download**: each key
 does exactly what its button does, including a refusal, and nothing while the

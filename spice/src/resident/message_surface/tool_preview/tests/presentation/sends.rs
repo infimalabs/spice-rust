@@ -175,6 +175,7 @@ fn a_packet_and_a_following_acknowledgement_present_as_separate_quotes() {
                 key: key.to_owned(),
                 digest: wire::QuoteTarget::text_digest(directive),
             },
+            media_quotes: Vec::new(),
             retirement: None,
         },
     );

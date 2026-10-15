@@ -451,6 +451,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
         media: Vec::new(),
+        media_quotes: Vec::new(),
         markdown_images: Vec::new(),
     };
     MergedHistoryFixture {
@@ -859,6 +860,7 @@ fn card_at(member: u64, second: usize) -> wire::AgentMessage {
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
         media: Vec::new(),
+        media_quotes: Vec::new(),
         markdown_images: Vec::new(),
     }
 }
@@ -1210,6 +1212,7 @@ fn paired_boundary_fixture() -> (PathBuf, DurableHistory, CanonicalUuid, wire::A
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
         media: Vec::new(),
+        media_quotes: Vec::new(),
         markdown_images: Vec::new(),
     };
     (root, history, lane, future)

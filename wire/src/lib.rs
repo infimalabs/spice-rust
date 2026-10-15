@@ -114,8 +114,8 @@ pub use quota::{
     QuotaReport, QuotaResetCredit, QuotaResetCredits, QuotaScope, QuotaSnapshot, QuotaWindow,
 };
 pub use quote::{
-    QUOTE_DEPTH_LIMIT, QuoteAuthor, QuotePresentation, QuoteResolution, QuoteTarget,
-    QuoteTargetError, QuoteUnavailable, ResolvedQuote, steering_key,
+    MediaQuote, QUOTE_DEPTH_LIMIT, QuoteAuthor, QuotePresentation, QuoteResolution, QuoteTarget,
+    QuoteTargetError, QuoteUnavailable, ResolvedMediaQuote, ResolvedQuote, steering_key,
 };
 pub use reply::{
     AppOpen, DemoAnswer, FactRow, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,

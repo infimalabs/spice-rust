@@ -35,6 +35,7 @@ fn directive(key: &str, text: &str) -> (steer::Key, PresentationDirective) {
                 key: key.to_owned(),
                 digest: wire::QuoteTarget::text_digest(text),
             },
+            media_quotes: Vec::new(),
             actor: wire::Actor::Operator,
             sender: None,
             recipient: None,

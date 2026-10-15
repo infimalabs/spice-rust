@@ -6,6 +6,7 @@ use yew::functional::UseReducerDispatcher;
 
 use super::*;
 mod drag;
+mod media;
 mod message_badges;
 mod message_controls;
 pub(super) use drag::primary_composer_dragging;
@@ -305,7 +306,7 @@ pub(super) fn team_quote_sources(
         };
         let card_id = agent_message_source_id(message);
         let display_millis = crate::runtime::agent_message_display_millis(message);
-        if let Some(target) = &message.quote_target {
+        let mut insert_agent_source = |target: &wire::QuoteTarget| {
             sources.entry(target.to_string()).or_insert_with(|| {
                 crate::composer_markdown::QuoteSource {
                     card_id: Some(card_id.clone()),
@@ -320,11 +321,23 @@ pub(super) fn team_quote_sources(
                     }),
                 }
             });
+        };
+        if let Some(target) = &message.quote_target {
+            insert_agent_source(target);
+        }
+        for media_quote in &message.media_quotes {
+            insert_agent_source(&media_quote.target);
         }
         for context in &message.directive_contexts {
+            let source = crate::composer_markdown::QuoteSource::directive(context);
             sources
                 .entry(context.quote_target.to_string())
-                .or_insert_with(|| crate::composer_markdown::QuoteSource::directive(context));
+                .or_insert_with(|| source.clone());
+            for media_quote in &context.media_quotes {
+                sources
+                    .entry(media_quote.target.to_string())
+                    .or_insert_with(|| source.clone());
+            }
         }
     }
     sources
@@ -454,8 +467,7 @@ fn render_agent_message_card(
     // in; its quote wears the receiving member's.
     let operator = message.activity == wire::AgentActivityKind::Direction;
     let accent = (!operator).then(|| correspondent.accent.to_string());
-    let task_click = message_task_click(props.open_task.clone());
-    let task_keydown = message_task_keydown(props.open_task.clone());
+    let (message_click, message_keydown) = message_card_events(props, &source_id);
     html! {
         <article
             key={source_id.clone()}
@@ -479,8 +491,8 @@ fn render_agent_message_card(
             }}
             data-message-role={if operator { "operator" } else { "agent" }}
             data-mosaic-card-key={source_id}
-            onclick={task_click}
-            onkeydown={task_keydown}
+            onclick={message_click}
+            onkeydown={message_keydown}
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-agent-lane={member.lane.to_string()}
             data-agent-activity={watchband::agent_activity_name(message.activity)}
@@ -528,24 +540,51 @@ fn render_agent_message_card(
     }
 }
 
-fn message_task_click(
-    open_task: Callback<(wire::TaskStamp, web_sys::Element)>,
-) -> Callback<MouseEvent> {
-    Callback::from(move |event: MouseEvent| {
-        let Some((chip, task)) = message_task_from_target(event.target()) else {
-            return;
-        };
-        event.prevent_default();
-        event.stop_propagation();
-        open_task.emit((task, chip));
-    })
+fn message_card_events(
+    props: &AgentMessageCardProps,
+    source_id: &str,
+) -> (Callback<MouseEvent>, Callback<KeyboardEvent>) {
+    let display_millis = crate::runtime::agent_message_display_millis(&props.message);
+    let click = message_card_click(
+        props.open_task.clone(),
+        props.quote_dispatcher.clone(),
+        props.quote_lane,
+        source_id.to_owned(),
+        props.order,
+        display_millis,
+    );
+    let keydown = message_card_keydown(
+        props.open_task.clone(),
+        props.quote_dispatcher.clone(),
+        props.quote_lane,
+        source_id.to_owned(),
+        props.order,
+        display_millis,
+    );
+    (click, keydown)
 }
 
-fn message_task_keydown(
+fn message_card_click(
     open_task: Callback<(wire::TaskStamp, web_sys::Element)>,
-) -> Callback<KeyboardEvent> {
-    Callback::from(move |event: KeyboardEvent| {
-        if event.key() != "Enter" && event.key() != " " {
+    dispatcher: UseReducerDispatcher<ComposerDrafts>,
+    lane: CanonicalUuid,
+    source_id: String,
+    order: u64,
+    display_millis: i64,
+) -> Callback<MouseEvent> {
+    Callback::from(move |event: MouseEvent| {
+        if let Some((target, name)) = media_quote_from_target(event.target()) {
+            event.prevent_default();
+            event.stop_propagation();
+            add_media_quote(
+                &dispatcher,
+                lane,
+                &source_id,
+                order,
+                display_millis,
+                target,
+                name,
+            );
             return;
         }
         let Some((chip, task)) = message_task_from_target(event.target()) else {
@@ -557,6 +596,77 @@ fn message_task_keydown(
     })
 }
 
+fn message_card_keydown(
+    open_task: Callback<(wire::TaskStamp, web_sys::Element)>,
+    dispatcher: UseReducerDispatcher<ComposerDrafts>,
+    lane: CanonicalUuid,
+    source_id: String,
+    order: u64,
+    display_millis: i64,
+) -> Callback<KeyboardEvent> {
+    Callback::from(move |event: KeyboardEvent| {
+        if event.key() != "Enter" && event.key() != " " {
+            return;
+        }
+        if let Some((target, name)) = media_quote_from_target(event.target()) {
+            event.prevent_default();
+            event.stop_propagation();
+            add_media_quote(
+                &dispatcher,
+                lane,
+                &source_id,
+                order,
+                display_millis,
+                target,
+                name,
+            );
+            return;
+        }
+        let Some((chip, task)) = message_task_from_target(event.target()) else {
+            return;
+        };
+        event.prevent_default();
+        event.stop_propagation();
+        open_task.emit((task, chip));
+    })
+}
+
+fn media_quote_from_target(
+    target: Option<web_sys::EventTarget>,
+) -> Option<(wire::QuoteTarget, String)> {
+    let control = target
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())?
+        .closest("[data-image-quote-action]")
+        .ok()??;
+    let target = control
+        .get_attribute("data-image-quote-target")?
+        .parse()
+        .ok()?;
+    let name = control.get_attribute("data-image-quote-name")?;
+    Some((target, name))
+}
+
+fn add_media_quote(
+    dispatcher: &UseReducerDispatcher<ComposerDrafts>,
+    lane: CanonicalUuid,
+    source_id: &str,
+    order: u64,
+    display_millis: i64,
+    target: wire::QuoteTarget,
+    name: String,
+) {
+    let lane = lane.to_string();
+    let identity = target.to_string();
+    dispatcher.dispatch(ComposerAction::AddQuote {
+        lane: lane.clone(),
+        target,
+        source_id: source_id.to_owned(),
+        order,
+        display_millis,
+        preview: name,
+    });
+    focus_after_render(quote_textarea_id(&lane, &identity));
+}
 fn message_task_from_target(
     target: Option<web_sys::EventTarget>,
 ) -> Option<(web_sys::Element, wire::TaskStamp)> {
@@ -590,8 +700,13 @@ struct NormalFace<'a> {
 /// a click on the image itself.
 fn render_normal_face(message: &wire::AgentMessage, face: NormalFace<'_>) -> Html {
     let media = match face.crystal {
-        Some((companions, crystal)) => render_crystal_media(message, companions, crystal),
-        None => render_agent_message_media(face.unlinked_media, face.media_description),
+        Some((companions, crystal)) => media::render_crystal_media(message, companions, crystal),
+        None => media::render_agent_message_media(
+            face.unlinked_media,
+            &message.media,
+            face.media_description,
+            &message.media_quotes,
+        ),
     };
     // A lone tool image carries no badges or card actions, so it has no
     // controls to draw.
@@ -809,23 +924,24 @@ fn render_agent_markdown<'m>(
     )
     .expect("message media passed admission before browser rendering");
     let rendered = if is_prose {
-        crate::composer_markdown::render_prose_card(
+        crate::composer_markdown::render_prose_card_with_media_quotes(
             &shown.markdown,
             &shown.classifications,
             &shown.directives,
             &shown.sends,
             &message.quotes,
-            quote_agents,
-            quote_sources,
+            crate::composer_markdown::QuoteRenderContext::new(quote_agents, quote_sources),
+            &message.media_quotes,
         )
     } else {
-        crate::composer_markdown::render_received_with_quotes(
+        crate::composer_markdown::render_received_with_media_quotes(
             &shown.markdown,
             &shown.classifications,
             &shown.directives,
             &message.quotes,
             quote_agents,
             quote_sources,
+            &message.media_quotes,
         )
     };
     (shown.markdown, rendered)
@@ -896,76 +1012,6 @@ fn agent_message_correspondent(
         speech_owner: props.speech_owner.clone(),
         message_key,
         quote,
-    }
-}
-
-fn render_agent_message_media(
-    unlinked_media: Vec<&wire::Media>,
-    description: Option<&str>,
-) -> Html {
-    if unlinked_media.is_empty() {
-        return Html::default();
-    }
-    html! {
-        <div class="message-attachments">
-            {for unlinked_media.into_iter().map(|media| render_media_button(media, description, None))}
-        </div>
-    }
-}
-
-/// A crystallized run: the first card's image, then each companion's, every
-/// one in its own cell and openable full size on its own.
-fn render_crystal_media(
-    message: &wire::AgentMessage,
-    companions: &[Rc<wire::AgentMessage>],
-    crystal: &NodeRef,
-) -> Html {
-    let count = 1 + companions.len();
-    html! {
-        <div ref={crystal.clone()} class="message-attachments mosaic-crystal" data-crystal-count={count.to_string()}>
-            {for std::iter::once(message).chain(companions.iter().map(Rc::as_ref)).map(|message| {
-                let description = (!message.text.trim().is_empty())
-                    .then(|| watchband::tool_media_description(&message.text));
-                html! {
-                    <>{for message.media.iter().map(|media| {
-                        render_media_button(media, description.as_deref(), Some("mosaic-crystal-cell"))
-                    })}</>
-                }
-            })}
-        </div>
-    }
-}
-
-fn render_media_button(
-    media: &wire::Media,
-    description: Option<&str>,
-    cell: Option<&'static str>,
-) -> Html {
-    let description = description.unwrap_or(&media.name).to_owned();
-    let action = format!("Open {description} full size");
-    html! {
-        <button
-            type="button"
-            class={classes!("message-image", "message-image--openable", cell)}
-            title={action.clone()}
-            aria-label={action}
-            data-image-preview=""
-            data-image-name={media.name.clone()}
-        >
-            <img
-                src={media.data_url.clone()}
-                alt={description}
-                data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
-                data-mosaic-image-state="pending"
-            />
-            <span
-                class="message-image-status"
-                role="status"
-                data-mosaic-image-status="pending"
-            >
-                {"Loading image"}
-            </span>
-        </button>
     }
 }
 

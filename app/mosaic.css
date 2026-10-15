@@ -226,7 +226,7 @@
   flex-flow: row nowrap; margin: .5em 0; white-space: normal;
 }
 .message-attachments { flex-flow: row nowrap; }
-.mosaic-message-card--image-only .message-image,
+.mosaic-message-card--image-only :is(.message-image-shell, .message-image),
 .mosaic-message-card--image-only .mermaid-slot {
   --message-image-size: var(--mosaic-image-large-size);
 }
