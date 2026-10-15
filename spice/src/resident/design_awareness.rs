@@ -44,6 +44,7 @@ pub(in crate::resident) struct DesignNotice {
     task: String,
     title: String,
     pitch: String,
+    pub(in crate::resident) revision: SequenceCode,
     terms: Vec<String>,
 }
 
@@ -66,21 +67,26 @@ impl DesignNotice {
     }
 
     /// The invitation its lane hears, queued once per Design.
-    fn background(&self) -> BackgroundNotice {
+    pub(in crate::resident) fn background(&self) -> BackgroundNotice {
         let design = &self.design;
         BackgroundNotice {
             occupant: self.occupant,
             purpose: format!("design:{design}"),
             text: format!(
-                "<system-notice>\nPassive Design {design} \"{}\" matches your task {} on: {}.\n\
+                "<system-notice>\nYou joined the early statement sample for passive Design \
+                 {design} \"{}\" at statement revision {}; it matches your task {} on: {}.\n\
                  Pitch: {}\nRead its room with `spice room history {design}` \
-                 (`spice://task/{design}/room`). Contribute with `spice room contribute {design} \
-                 reason-for|reason-against|evidence|question TEXT`; `spice room leave {design} \
-                 --clause TEXT` declines further invitations. This private background \
+                 (`spice://task/{design}/room`). Optional commands: \
+                 `spice task modify {design} --title TITLE`; \
+                 `spice task modify {design} --description DESCRIPTION`; \
+                 `spice room contribute {design} \
+                 reason-for|reason-against|evidence|question TEXT`; or `spice room leave {design} \
+                 --clause TEXT` to decline further invitations. This private background \
                  invitation needs no acknowledgment key or visible ACK/NAK, starts no work, \
-                 grants no claim, and does not make this lane a room listener.\n\
-                 </system-notice>",
+                 grants no claim, creates no assignment, requires no response, and does not make \
+                 this lane a room listener.\n</system-notice>",
                 self.title,
+                self.revision,
                 self.task,
                 self.terms.join(", "),
                 self.pitch,
@@ -228,6 +234,7 @@ pub(in crate::resident) fn plan(
                         &design_statement.title,
                         design_statement.description.as_deref(),
                     ),
+                    revision: SequenceCode::new(design_statement.revision.get()),
                     terms: matched.iter().take(NOTICE_TERMS).cloned().collect(),
                 }
                 .fit(),

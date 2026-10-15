@@ -1,0 +1,279 @@
+//! One invited occupant's title and description amendment for an open Design.
+//!
+//! Editing and previewing are browser-local. A preview freezes the visible
+//! statement head into the ordinary `TaskEdit` witness, and a refusal returns
+//! to editing without changing either entered field.
+
+use wire::intent::{BoardTask, TaskEdit};
+use wire::rooms::DesignNoticed;
+use wire::{CanonicalUuid, TaskStamp, Witness};
+
+/// Whether this exact current lane occupant owns a durable invitation to
+/// amend the still-open Design.
+#[must_use]
+pub fn visible<'a>(
+    design: &BoardTask,
+    identity: Option<(CanonicalUuid, CanonicalUuid)>,
+    notices: impl IntoIterator<Item = &'a DesignNoticed>,
+) -> bool {
+    let Some((lane, occupant)) = identity else {
+        return false;
+    };
+    design
+        .design_standing()
+        .is_some_and(|standing| standing.is_open())
+        && notices.into_iter().any(|notice| {
+            notice.design == design.statement.body.born
+                && notice.lane == lane
+                && notice.occupant == occupant
+        })
+}
+
+/// One statement amendment together with the exact head it was drawn from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Submission {
+    /// Ordinary task edit; unchanged fields stay absent.
+    pub request: TaskEdit,
+    /// Exactly the statement head shown by the preview.
+    pub expected: Vec<Witness>,
+}
+
+/// Where the amendment draft stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DraftPhase {
+    /// Fields can be changed and previewed.
+    Editing,
+    /// The exact request is visible and ready to submit.
+    Previewing(Submission),
+    /// The exact request is in flight and cannot be sent again.
+    Pending(Submission),
+}
+
+/// Outcome of the latest preview or submission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DraftNotice {
+    /// Local validation or resident refusal.
+    Refused(String),
+    /// The resident accepted the ordinary task edit.
+    Saved,
+}
+/// The statement fields an amendment compares, without cloning the rest of a
+/// board row into each browser-local transition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StatementSnapshot {
+    design: TaskStamp,
+    handle: wire::TaskHandle,
+    title: String,
+    description: String,
+    head: wire::Seq,
+    open: bool,
+}
+
+impl StatementSnapshot {
+    #[must_use]
+    pub(crate) fn new(design: &BoardTask) -> Self {
+        Self {
+            design: design.statement.body.born.clone(),
+            handle: design.statement.body.handle.clone(),
+            title: design.presentation_title.trim().to_owned(),
+            description: design
+                .statement
+                .body
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_owned(),
+            head: design.statement.position,
+            open: design
+                .design_standing()
+                .is_some_and(|standing| standing.is_open()),
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[must_use]
+    pub(crate) const fn design(&self) -> &TaskStamp {
+        &self.design
+    }
+}
+
+/// Browser-local amendment fields for one Design.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesignAmendment {
+    design: TaskStamp,
+    title: String,
+    description: String,
+    phase: DraftPhase,
+    notice: Option<DraftNotice>,
+}
+
+impl DesignAmendment {
+    /// Start from the statement currently shown for `design`.
+    #[must_use]
+    pub fn new(design: &BoardTask) -> Self {
+        Self::from_snapshot(&StatementSnapshot::new(design))
+    }
+
+    #[must_use]
+    pub(crate) fn from_snapshot(statement: &StatementSnapshot) -> Self {
+        Self {
+            design: statement.design.clone(),
+            title: statement.title.clone(),
+            description: statement.description.clone(),
+            phase: DraftPhase::Editing,
+            notice: None,
+        }
+    }
+
+    /// Entered title, retained verbatim across refusal.
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// Entered description, retained verbatim across refusal.
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    /// Current phase.
+    #[must_use]
+    pub const fn phase(&self) -> &DraftPhase {
+        &self.phase
+    }
+
+    /// Latest outcome.
+    #[must_use]
+    pub const fn notice(&self) -> Option<&DraftNotice> {
+        self.notice.as_ref()
+    }
+
+    /// Whether a submission is in flight.
+    #[must_use]
+    pub const fn is_pending(&self) -> bool {
+        matches!(self.phase, DraftPhase::Pending(_))
+    }
+
+    /// Replace the title and retire any earlier preview or outcome.
+    pub fn set_title(&mut self, title: String) {
+        self.edit(|draft| draft.title = title);
+    }
+
+    /// Replace the description and retire any earlier preview or outcome.
+    pub fn set_description(&mut self, description: String) {
+        self.edit(|draft| draft.description = description);
+    }
+
+    #[cfg(test)]
+    pub fn preview(&mut self, design: &BoardTask) {
+        self.preview_snapshot(&StatementSnapshot::new(design));
+    }
+
+    pub(crate) fn preview_snapshot(&mut self, statement: &StatementSnapshot) {
+        if self.is_pending() {
+            return;
+        }
+        match self.submission(statement) {
+            Ok(submission) => {
+                self.phase = DraftPhase::Previewing(submission);
+                self.notice = None;
+            }
+            Err(reason) => {
+                self.phase = DraftPhase::Editing;
+                self.notice = Some(DraftNotice::Refused(reason));
+            }
+        }
+    }
+
+    /// Retract the preview while retaining both fields.
+    pub fn revise(&mut self) {
+        self.edit(|_| {});
+    }
+
+    /// Take the preview once and freeze it as pending.
+    pub fn begin_submit(&mut self) -> Option<Submission> {
+        let DraftPhase::Previewing(submission) = &self.phase else {
+            return None;
+        };
+        let submission = submission.clone();
+        self.phase = DraftPhase::Pending(submission.clone());
+        self.notice = None;
+        Some(submission)
+    }
+
+    /// Settle the pending edit. Success rebases the local fields to the exact
+    /// trimmed values submitted; refusal retains the entered values verbatim.
+    pub fn settle(&mut self, outcome: Result<(), String>) {
+        let DraftPhase::Pending(submission) = &self.phase else {
+            return;
+        };
+        let submission = submission.clone();
+        self.phase = DraftPhase::Editing;
+        match outcome {
+            Ok(()) => {
+                if let Some(title) = submission.request.title {
+                    self.title = title;
+                }
+                if let Some(description) = submission.request.description {
+                    self.description = description;
+                }
+                self.notice = Some(DraftNotice::Saved);
+            }
+            Err(reason) => self.notice = Some(DraftNotice::Refused(reason)),
+        }
+    }
+
+    fn edit(&mut self, change: impl FnOnce(&mut Self)) {
+        if self.is_pending() {
+            return;
+        }
+        self.phase = DraftPhase::Editing;
+        self.notice = None;
+        change(self);
+    }
+
+    fn submission(&self, statement: &StatementSnapshot) -> Result<Submission, String> {
+        if statement.design != self.design {
+            return Err(
+                "task::edit-design-mismatch: preview the Design this draft names".to_owned(),
+            );
+        }
+        if !statement.open {
+            return Err("task::settled: a settled Design statement cannot be amended".to_owned());
+        }
+        let title = self.title.trim();
+        if title.is_empty() {
+            return Err("task::title-empty: write a title".to_owned());
+        }
+        let description = self.description.trim();
+        let title = (title != statement.title).then(|| title.to_owned());
+        let description = (description != statement.description).then(|| description.to_owned());
+        if title.is_none() && description.is_none() {
+            return Err("task::edit-empty: change the title or description".to_owned());
+        }
+        Ok(Submission {
+            request: TaskEdit {
+                task: statement.handle.clone(),
+                title,
+                description,
+                acceptance: Vec::new(),
+                requirements: None,
+                intent: None,
+                evidence: None,
+                priority: None,
+                project: None,
+                flow: None,
+            },
+            expected: vec![Witness::Task {
+                task: statement.design.clone(),
+                head: statement.head,
+            }],
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "design_amendment/tests.rs"]
+mod tests;

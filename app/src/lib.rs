@@ -51,6 +51,8 @@ mod composer_submissions;
 #[cfg(any(target_arch = "wasm32", test))]
 mod contribution_draft;
 #[cfg(any(target_arch = "wasm32", test))]
+mod design_amendment;
+#[cfg(any(target_arch = "wasm32", test))]
 mod image_annotation;
 #[cfg(any(target_arch = "wasm32", test))]
 mod image_navigation;

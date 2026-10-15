@@ -1,10 +1,10 @@
-//! Typed task changes on the live socket: Draft creation, revision, and
+//! Typed task changes on the live socket: creation, statement revision,
 //! filing, a Design's conclusion, and a lane's Design contribution.
 
 use super::*;
 
 /// Send one typed task change under the heads its control was drawn from:
-/// a Draft's creation, revision, or filing, a Design's conclusion, or a
+/// task creation, statement revision or filing, a Design's conclusion, or a
 /// lane's contribution to an open Design.
 pub(super) async fn send_task_change(
     principal: &Principal,

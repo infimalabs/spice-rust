@@ -52,4 +52,10 @@ impl RoomProjection {
             })
             .collect()
     }
+
+    /// Every durable Design notice retained by this projection.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) fn design_notices(&self) -> impl Iterator<Item = &DesignNoticed> {
+        self.invitations.values().map(|notice| &notice.value)
+    }
 }

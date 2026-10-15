@@ -57,8 +57,8 @@ pub(crate) enum PreparationRequest {
     },
 }
 
-/// One operator Draft creation, revision, or filing, with the heads it was
-/// drawn from.
+/// One typed task creation, statement revision, or filing, with the heads it
+/// was drawn from. The Design-room amendment composer reuses `Edit`.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum DraftRequest {
     Create {
@@ -144,7 +144,7 @@ pub(crate) enum ClientAction {
         request: PreparationRequest,
         respond: PreparationResponse,
     },
-    /// Create, revise, or file one operator Draft.
+    /// Create or file an operator Draft, or revise a task statement.
     Draft {
         request: DraftRequest,
         respond: TaskResponse,

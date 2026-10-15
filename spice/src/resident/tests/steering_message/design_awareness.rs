@@ -353,6 +353,37 @@ fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
     let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
     let claim = lanes.claim_head(&task);
     let pending = lanes.pending(FIRST);
+    let occupied = BTreeMap::from([
+        (test_uuid(FIRST), test_uuid(FIRST + 1)),
+        (test_uuid(SECOND), test_uuid(SECOND + 1)),
+    ]);
+    let planning = crate::resident::room_catch_up::Planning::load(&lanes.bus, &config)
+        .expect("planning loads");
+    let planned = crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied)
+        .expect("invitations plan");
+    let invitation = planned
+        .iter()
+        .find(|told| told.lane == test_uuid(FIRST) && told.design == stamp(&passive))
+        .expect("passive Design invitation");
+    let current_revision = {
+        let design = stamp(&passive);
+        lanes
+            .bus
+            .read(move |read| read.task_head(&design))
+            .expect("statement reads")
+            .expect("Design statement exists")
+            .body()
+            .revision
+    };
+    assert_eq!(
+        invitation.notice.revision,
+        wire::SequenceCode::new(current_revision.get()),
+        "the private invitation is constructed from the current statement revision"
+    );
+    let background = invitation.notice.background();
+    assert_eq!(background.occupant, test_uuid(FIRST + 1));
+    assert_eq!(background.purpose, format!("design:{passive}"));
+    assert!(background.fits(), "the complete invitation fits one kick");
 
     let mut seated = claimant_seats();
     lanes.reconcile(&config, &seated);
