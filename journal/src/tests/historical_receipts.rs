@@ -1,6 +1,7 @@
 use super::*;
 
 const RETIRED: &str = "018f82d4-6f59-7d06-92e3-bce913116301";
+const AUTHORIZATION: &str = "018f82d4-6f59-7d06-92e3-bce913116304";
 const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163c3";
 
 #[test]
@@ -87,11 +88,71 @@ fn historical_corruption_is_reported_without_weakening_current_receipts() {
 }
 
 #[test]
+fn retired_in_place_receipts_verify_but_unregistered_kinds_do_not() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("authorize.sqlite3");
+    let current = historical_fixture(&path);
+    let request = authorize_request();
+    assert!(
+        wire::decode::<Command<serde_json::Value>>(&request).is_err(),
+        "a retained receipt must not restore the retired command to the live registry"
+    );
+    insert_in_place(
+        &current.connection,
+        "command_receipts",
+        AUTHORIZATION,
+        "preparation::authorize",
+        &request,
+    );
+    let before = receipt(&current.connection, "command_receipts", AUTHORIZATION);
+    drop(current);
+    let journal = Journal::open(&path).expect("authorization evidence reopens");
+    assert_eq!(
+        journal
+            .verify()
+            .expect("authorization evidence verifies")
+            .receipts,
+        2
+    );
+    assert_eq!(
+        receipt(&journal.connection, "command_receipts", AUTHORIZATION),
+        before,
+        "verification leaves retained evidence byte-identical"
+    );
+
+    let scratch = Scratch::new();
+    let path = scratch.path().join("unknown.sqlite3");
+    let current = historical_fixture(&path);
+    let unknown = retired_request(AUTHORIZATION, "preparation::never-registered");
+    insert_in_place(
+        &current.connection,
+        "command_receipts",
+        AUTHORIZATION,
+        "preparation::never-registered",
+        &unknown,
+    );
+    drop(current);
+    let journal = Journal::open(&path).expect("unknown evidence reopens");
+    assert!(
+        refused_violations(&journal)
+            .iter()
+            .any(|v| v.class == ViolationClass::Receipt),
+        "a never-registered command kind must remain invalid"
+    );
+}
+
+#[test]
 fn a_retired_tell_receipt_verifies_in_place_with_its_exact_request() {
     let scratch = Scratch::new();
     let path = scratch.path().join("tell.sqlite3");
     let current = historical_fixture(&path);
-    insert_tell(&current.connection, "command_receipts", &tell_request());
+    insert_in_place(
+        &current.connection,
+        "command_receipts",
+        RETIRED,
+        "steer::tell",
+        &tell_request(),
+    );
     drop(current);
     let journal = Journal::open(&path).expect("tell evidence reopens");
     assert_eq!(
@@ -109,7 +170,7 @@ fn a_retired_tell_receipt_verifies_in_place_with_its_exact_request() {
         let scratch = Scratch::new();
         let path = scratch.path().join("tell-corruption.sqlite3");
         let current = historical_fixture(&path);
-        insert_tell(&current.connection, table, &request);
+        insert_in_place(&current.connection, table, RETIRED, "steer::tell", &request);
         drop(current);
         let journal = Journal::open(&path).expect("current authority reopens");
         assert!(
@@ -209,6 +270,10 @@ fn insert_retired(connection: &Connection, id: &str) {
     ).expect("insert historical receipt");
 }
 
+fn authorize_request() -> Vec<u8> {
+    retired_request(AUTHORIZATION, "preparation::authorize")
+}
+
 fn tell_request() -> Vec<u8> {
     serde_json::to_vec(&json!({
         "v": 1, "id": RETIRED, "epoch": EPOCH, "kind": "steer::tell", "expected": [],
@@ -217,10 +282,18 @@ fn tell_request() -> Vec<u8> {
     .expect("request encodes")
 }
 
-fn insert_tell(connection: &Connection, table: &str, request: &[u8]) {
+fn retired_request(id: &str, kind: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "v": 1, "id": id, "epoch": EPOCH, "kind": kind, "expected": [],
+        "body": {"authorization": {"candidate": "dW4zAAAAA", "outputs": ["retained"]}},
+    }))
+    .expect("request encodes")
+}
+
+fn insert_in_place(connection: &Connection, table: &str, id: &str, kind: &str, request: &[u8]) {
     let response = Response {
         v: WireVersion::CURRENT,
-        id: uuid(RETIRED),
+        id: uuid(id),
         epoch: uuid(EPOCH),
         outcome: Outcome::Reply(Reply {
             position: ReplyPosition::Committed(SeqRange {
@@ -232,10 +305,17 @@ fn insert_tell(connection: &Connection, table: &str, request: &[u8]) {
     };
     connection
         .execute(
-            &format!("INSERT INTO {table} VALUES (?1, 'lane:018f82d4-6f59-7d06-92e3-bce913116303', 'steer::tell', ?2, ?3, ?4, 1, 2, NULL, ?5)"),
-            params![RETIRED, request, b"[]".as_slice(), wire::encode(&response).expect("response encodes"), EPOCH],
+            &format!("INSERT INTO {table} VALUES (?1, 'lane:018f82d4-6f59-7d06-92e3-bce913116303', ?2, ?3, ?4, ?5, 1, 2, NULL, ?6)"),
+            params![
+                id,
+                kind,
+                request,
+                b"[]".as_slice(),
+                wire::encode(&response).expect("response encodes"),
+                EPOCH
+            ],
         )
-        .expect("insert tell receipt");
+        .expect("insert in-place receipt");
 }
 
 fn receipt(connection: &Connection, table: &str, id: &str) -> Vec<rusqlite::types::Value> {
