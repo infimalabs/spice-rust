@@ -473,18 +473,33 @@
 .team-surface + .team-surface .team-composer {
   box-shadow: inset 8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
-/* Sibling consoles share one faint dividing rule in the soft shared edge tone:
-   it begins where the two status bands' rounded touching corners meet, one
-   card radius below the foot of the task band, so the tab row above stays open
-   and the curved top rules flow into it, and runs to their bottom. Only the
-   earlier console paints it, on its own end edge and above everything it holds,
-   so its controls read as in front of the next console and neither console's
-   content moves. The sibling selector leaves both outer fleet edges bare. */
-.team-surface:has(+ .team-surface)::after {
-  position: absolute; z-index: 7;
-  inset-block: calc(var(--team-task-band) + var(--app-radius-card)) 0; inset-inline-end: 0;
-  border-inline-end: var(--app-edge-soft);
-  content: ""; pointer-events: none;
+/* Where two consoles touch, the earlier lies on top. Its status band rounds its
+   touching top corner with a lane-top tab's radius, and the band and pane share
+   one faint end border in the soft edge tone, so its top rule turns down into
+   the rule dividing the consoles while the tab row above stays open. The later
+   band stays square and fills only the notch beyond that curve with its own
+   paint and top rule, so it reads as tucked beneath without either console
+   painting over the other. The sibling selectors leave both outer fleet edges
+   bare. */
+.team-surface:has(+ .team-surface) > .team-toolbar > .team-status-row,
+.team-surface:has(+ .team-surface) > .team-pane { border-inline-end: var(--app-edge-soft); }
+.team-surface:has(+ .team-surface) > .team-toolbar > .team-status-row { border-start-end-radius: var(--app-radius-card); }
+.team-surface + .team-surface > .team-toolbar > .team-status-row { position: relative; }
+.team-surface + .team-surface > .team-toolbar > .team-status-row::before {
+  --team-seam-notch: radial-gradient(circle at 0 var(--app-radius-card), transparent calc(var(--app-radius-card) - .5px), #000 calc(var(--app-radius-card) + .5px));
+  position: absolute;
+  inset-block-start: -1px;
+  inset-inline-end: 100%;
+  box-sizing: border-box;
+  inline-size: var(--app-radius-card);
+  block-size: var(--app-radius-card);
+  border-block-start: inherit;
+  background: inherit;
+  backdrop-filter: inherit;
+  -webkit-mask: var(--team-seam-notch);
+  mask: var(--team-seam-notch);
+  content: "";
+  pointer-events: none;
 }
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);

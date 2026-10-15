@@ -153,14 +153,15 @@ plum. Any other selection keeps the page's base.
 The toolbar has two rows: the team's task strip, then one status band holding
 presence pips beneath the team total and the live ticker in the rest. The
 status band is the console's top edge, for a team and a working group alike.
-Where two consoles touch, each band rounds its touching top corner with the
-same radius as the lane-top tabs, so both top rules curve down into the faint
-rule dividing the consoles, which begins where the curves meet; a corner at the
-browser edge stays square. Pips follow canonical member order and distinguish
-active, queued, waiting, bound, and unbound states without encoding agent
-identity. The ticker keeps relative age, status, prefix, accent, accessible
-label, and live-region semantics; an empty fleet reserves no pips and invents
-no status.
+Where two consoles touch, the earlier one lies on top: its band rounds its
+touching top corner with the same radius as the lane-top tabs, turning its top
+rule down its end edge into the faint rule dividing the consoles. The later
+band stays square, and its top rule and paint run beneath that curve, so only
+the earlier console's edge shows at the seam. A corner at the browser edge
+stays square. Pips follow canonical member order and distinguish active,
+queued, waiting, bound, and unbound states without encoding agent identity. The
+ticker keeps relative age, status, prefix, accent, accessible label, and
+live-region semantics; an empty fleet reserves no pips and invents no status.
 
 ## Task strips
 
