@@ -268,17 +268,17 @@ impl Capabilities {
             .is_some_and(|bindings| bindings.get(capability).is_some())
     }
 
-    /// The capability an app bootstrap hands the asking client: the one it
-    /// presented when that authenticates a born principal, otherwise the
-    /// local owner's. However many principals hold any role, each client is
-    /// served its own principal's capability.
+    /// The capability an app bootstrap hands the asking client. A presented
+    /// capability must currently authenticate a born principal; only an opener
+    /// presenting no capability may receive the local owner's.
     pub(super) fn serving(
         &self,
         presented: Option<wire::CanonicalUuid>,
     ) -> Option<wire::CanonicalUuid> {
-        let capability = presented
-            .filter(|capability| self.contains(*capability))
-            .or(self.owner)?;
+        let capability = match presented {
+            Some(capability) => capability,
+            None => self.owner?,
+        };
         self.is_principal(capability).then_some(capability)
     }
 }

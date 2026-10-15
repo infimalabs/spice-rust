@@ -98,7 +98,7 @@ async fn discovery_and_bootstrap_serve_each_operator_principal_its_own_capabilit
     capabilities
         .insert(lane_capability, wire::Actor::Lane(identity(0xa3)))
         .expect("lane capability binds");
-    let (server, _control) = Server::bind(generation(&app, capabilities))
+    let (server, _control) = Server::bind(generation(&app, capabilities.clone()))
         .await
         .expect("binds");
 
@@ -131,6 +131,29 @@ async fn discovery_and_bootstrap_serve_each_operator_principal_its_own_capabilit
             wire::decode(response_body(&response)).expect("bootstrap decodes");
         assert_eq!(bootstrap.capability, served, "{path}");
     }
+
+    capabilities
+        .publish(two_operators(None))
+        .expect("the second principal is deauthorized");
+    for path in [
+        format!("/bootstrap?auth={}", issued()),
+        format!("/bootstrap?auth={}", identity(0xa4)),
+    ] {
+        let response = request(address, &host, &path).await;
+        assert!(
+            response.starts_with(b"HTTP/1.1 401 Unauthorized\r\n"),
+            "{path}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&response).contains(&operator().to_string()),
+            "an invalid capability must not receive the owner's capability"
+        );
+    }
+    let response = request(address, &host, "/bootstrap").await;
+    assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
+    let bootstrap: wire::AppBootstrap =
+        wire::decode(response_body(&response)).expect("local bootstrap decodes");
+    assert_eq!(bootstrap.capability, operator());
 
     task.abort();
     assert!(task.await.expect_err("aborted server task").is_cancelled());

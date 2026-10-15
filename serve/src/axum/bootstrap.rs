@@ -11,11 +11,14 @@ pub(super) async fn bootstrap(
     let Ok(host) = admit_headers(&state, &headers, false) else {
         return StatusCode::FORBIDDEN.into_response();
     };
-    let Some(capability) = state
-        .capabilities
-        .serving(presented_capability(query.as_deref()))
-    else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    let presented = presented_capability(query.as_deref());
+    let Some(capability) = state.capabilities.serving(presented) else {
+        return if presented.is_some() {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+        .into_response();
     };
     let app_generation = match state.app.current_generation() {
         Ok(generation) => generation,
