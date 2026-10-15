@@ -1,7 +1,8 @@
 //! The principals an operator-role principal manages from the global menu:
-//! each born human with their initials, roles, capability, and admission time,
-//! and the admission, one-time capability handoff, profile edit, operator role,
-//! and capability retirement `spice principal` offers, through its commands.
+//! each born human with their initials, code and identity, roles, capability,
+//! and admission time, and the admission, one-time capability handoff, profile
+//! edit, operator role, and capability retirement `spice principal` offers,
+//! through its commands.
 
 use super::super::clock::Age;
 use super::chrome::CopyButton;
@@ -9,9 +10,9 @@ use super::*;
 use crate::client_action::{PrincipalResponse, PrincipalWrite};
 use crate::socket::SessionScope;
 use wire::principal::{
-    PrincipalAdmit, PrincipalDeauthorize, PrincipalDirectory, PrincipalEdit, PrincipalListing,
-    PrincipalProfile, PrincipalRole, PrincipalRoleRef, PrincipalRoles, PrincipalStanding,
-    PrincipalsAnswer,
+    PrincipalAdmit, PrincipalCode, PrincipalDeauthorize, PrincipalDirectory, PrincipalEdit,
+    PrincipalListing, PrincipalProfile, PrincipalRole, PrincipalRoleRef, PrincipalRoles,
+    PrincipalStanding, PrincipalsAnswer,
 };
 
 const HEADING: &str = "spice-principals-heading";
@@ -259,7 +260,12 @@ impl PrincipalRow<'_> {
 fn render_principal(row: &PrincipalRow<'_>) -> Html {
     let head = &row.listing.head;
     let principal = head.principal;
-    let name = display_name(principal, head.profile.name.as_deref());
+    let code = PrincipalCode::of(head);
+    let name = head
+        .profile
+        .name
+        .clone()
+        .unwrap_or_else(|| code.to_string());
     let mut identity = row
         .directory
         .and_then(|directory| directory.identity(&wire::Actor::Human(principal)))
@@ -313,6 +319,11 @@ fn render_principal(row: &PrincipalRow<'_>) -> Html {
                             <span class="app-spice-principal-own">{" (you)"}</span>
                         }
                     </strong>
+                    <span data-principal-code={code.to_string()}>
+                        {"code "}
+                        <code>{code.to_string()}</code>
+                        {format!(" · {principal}")}
+                    </span>
                     if let Some(email) = head.profile.email.as_deref() {
                         <span>{email.to_owned()}</span>
                     }

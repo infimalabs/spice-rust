@@ -1,5 +1,6 @@
-//! Retained global-settings answers cross from one operator identity to the
-//! principal directory used by the current command binding.
+//! Retained global-settings answers cross from one operator identity, or a
+//! directory whose entries carry no code, to the coded principal directory
+//! used by the current command binding.
 
 use super::*;
 
@@ -7,6 +8,8 @@ const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce9131163c3";
 const NAMED_COMMAND: &str = "018f82d4-6f59-7d06-92e3-bce913116301";
 const EARLY_COMMAND: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
 const PRINCIPAL: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
+const SECOND: &str = "018f82d4-6f59-7d06-92e3-bce913116304";
+const CODELESS_COMMAND: &str = "018f82d4-6f59-7d06-92e3-bce913116305";
 
 fn settings_command(id: &str, fast_mode: bool) -> Command<serde_json::Value> {
     Command {
@@ -19,15 +22,16 @@ fn settings_command(id: &str, fast_mode: bool) -> Command<serde_json::Value> {
     }
 }
 
-fn insert_retired_settings_receipt(
+/// Retain `command`'s answer carrying `field` beside its fast-mode value.
+fn insert_settings_receipt(
     journal: &Journal,
     command: &Command<serde_json::Value>,
-    operator: Option<serde_json::Value>,
+    field: Option<(&str, serde_json::Value)>,
 ) {
     let mut body =
         serde_json::Map::from_iter([("fast_mode".to_owned(), command.body["fast_mode"].clone())]);
-    if let Some(operator) = operator {
-        body.insert("operator".to_owned(), operator);
+    if let Some((name, value)) = field {
+        body.insert(name.to_owned(), value);
     }
     let response = Response {
         v: WireVersion::CURRENT,
@@ -89,59 +93,85 @@ fn replay(
     answer
 }
 
+fn admit(journal: &Journal, at: u64, principal: &str, name: &str) {
+    insert_fact(
+        journal,
+        fact(
+            at,
+            None,
+            FactKind::PrincipalAdmitted,
+            json!({
+                "principal": principal,
+                "profile": {"name": name},
+                "roles": ["operator"],
+            }),
+        ),
+    );
+}
+
 #[test]
-fn schema_63_settings_receipts_cross_once_and_replay_through_the_current_binding() {
+fn retained_settings_receipts_cross_once_to_a_coded_principal_directory() {
     let scratch = Scratch::new();
     let path = scratch.path().join("settings-receipts.sqlite3");
     let journal = authority_file_fixture(&path);
     let named = settings_command(NAMED_COMMAND, true);
     let early = settings_command(EARLY_COMMAND, false);
-    insert_retired_settings_receipt(
+    let codeless = settings_command(CODELESS_COMMAND, true);
+    insert_settings_receipt(
         &journal,
         &named,
-        Some(json!({
-            "name": "Ada Example",
-            "email": "ada@example.invalid",
-            "initials": "AE",
-            "gravatar": "ab".repeat(32),
-        })),
-    );
-    insert_retired_settings_receipt(&journal, &early, None);
-    insert_fact(
-        &journal,
-        fact(
-            3,
-            None,
-            FactKind::PrincipalAdmitted,
+        Some((
+            "operator",
             json!({
-                "principal": PRINCIPAL,
-                "profile": {"name": "Ada Example", "email": "ada@example.invalid"},
-                "roles": ["operator"],
+                "name": "Ada Example",
+                "email": "ada@example.invalid",
+                "initials": "AE",
+                "gravatar": "ab".repeat(32),
             }),
-        ),
+        )),
     );
-    restore_predecessor(&journal, 63);
+    insert_settings_receipt(&journal, &early, None);
+    insert_settings_receipt(
+        &journal,
+        &codeless,
+        Some((
+            "principals",
+            json!([{"principal": SECOND, "identity": {"name": "Grace Example"}}]),
+        )),
+    );
+    admit(&journal, 3, PRINCIPAL, "Ada Example");
+    admit(&journal, 4, SECOND, "Grace Example");
+    restore_predecessor(&journal, 64);
     drop(journal);
 
-    let journal = Journal::open(&path).expect("schema-63 settings receipts cross");
+    let journal = Journal::open(&path).expect("schema-64 settings receipts cross");
     assert_eq!(
         journal
             .migration()
             .map(|migration| (migration.from(), migration.to())),
-        Some((63, SCHEMA_VERSION)),
+        Some((64, SCHEMA_VERSION)),
     );
     let named = replay(&journal, named);
     assert!(named.fast_mode);
-    let identity = named
+    let bootstrap = named
         .principals
-        .identity(&Actor::Human(uuid(PRINCIPAL)))
+        .principal(&Actor::Human(uuid(PRINCIPAL)))
         .expect("retired operator becomes the bootstrap principal");
-    assert_eq!(identity.name.as_deref(), Some("Ada Example"));
-    assert_eq!(identity.initials.as_deref(), Some("AE"));
+    assert_eq!(bootstrap.code.to_string(), "3");
+    assert_eq!(bootstrap.identity.name.as_deref(), Some("Ada Example"));
+    assert_eq!(bootstrap.identity.initials.as_deref(), Some("AE"));
 
     let early = replay(&journal, early);
     assert!(!early.fast_mode);
     assert_eq!(early.principals.identity(&Actor::Operator), None);
+
+    let codeless = replay(&journal, codeless);
+    let second = codeless
+        .principals
+        .principal(&Actor::Human(uuid(SECOND)))
+        .expect("a codeless entry keeps its principal");
+    assert_eq!(second.code.to_string(), "4");
+    assert_eq!(second.identity.name.as_deref(), Some("Grace Example"));
     drop(journal);
 
     let reopened = Journal::open(&path).expect("crossed authority reopens");

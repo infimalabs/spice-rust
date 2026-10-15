@@ -7,10 +7,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::envelope::Seq;
-use crate::witness::TASK_STAMP_ALPHABET;
-
-/// Base-52 digits needed to spell `u64::MAX`.
-const MAX_DIGITS: usize = 12;
+use crate::position_spelling::{self, Misspelling};
 
 /// The executable peer address of one exact lane occupant.
 ///
@@ -55,18 +52,6 @@ impl OccupantAddress {
     pub const fn birth(self) -> Seq {
         self.0
     }
-
-    fn digits(self) -> ([u8; MAX_DIGITS], usize) {
-        let mut digits = [0; MAX_DIGITS];
-        let mut start = MAX_DIGITS;
-        let mut value = self.0.get();
-        while value > 0 {
-            start -= 1;
-            digits[start] = TASK_STAMP_ALPHABET[(value % 52) as usize];
-            value /= 52;
-        }
-        (digits, start)
-    }
 }
 
 impl From<Seq> for OccupantAddress {
@@ -79,41 +64,21 @@ impl FromStr for OccupantAddress {
     type Err = OccupantAddressError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let mut value = 0_u64;
-        let mut overflow = false;
-        for byte in text.bytes() {
-            let Some(digit) = TASK_STAMP_ALPHABET
-                .iter()
-                .position(|candidate| *candidate == byte)
-            else {
-                return Err(OccupantAddressError::Alphabet(text.to_owned()));
-            };
-            match value
-                .checked_mul(52)
-                .and_then(|value| value.checked_add(digit as u64))
-            {
-                Some(next) => value = next,
-                None => overflow = true,
-            }
-        }
-        match text.as_bytes() {
-            [] => Err(OccupantAddressError::Empty),
-            [b'0'] => Err(OccupantAddressError::Zero),
-            [b'0', ..] => Err(OccupantAddressError::LeadingZero(text.to_owned())),
-            _ if overflow => Err(OccupantAddressError::Overflow(text.to_owned())),
-            _ => Ok(Self(Seq::new(value).expect(
-                "a canonical nonempty spelling names a nonzero position",
-            ))),
-        }
+        position_spelling::parse(text)
+            .map(Self)
+            .map_err(|misspelling| match misspelling {
+                Misspelling::Empty => OccupantAddressError::Empty,
+                Misspelling::Alphabet => OccupantAddressError::Alphabet(text.to_owned()),
+                Misspelling::Zero => OccupantAddressError::Zero,
+                Misspelling::LeadingZero => OccupantAddressError::LeadingZero(text.to_owned()),
+                Misspelling::Overflow => OccupantAddressError::Overflow(text.to_owned()),
+            })
     }
 }
 
 impl fmt::Display for OccupantAddress {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (digits, start) = self.digits();
-        formatter.write_str(
-            std::str::from_utf8(&digits[start..]).expect("the base-52 alphabet is ASCII"),
-        )
+        position_spelling::write(self.0, formatter)
     }
 }
 
@@ -252,7 +217,7 @@ mod tests {
     fn spelled(mut value: u128) -> String {
         let mut digits = Vec::new();
         while value > 0 {
-            digits.push(super::TASK_STAMP_ALPHABET[(value % 52) as usize]);
+            digits.push(crate::witness::TASK_STAMP_ALPHABET[(value % 52) as usize]);
             value /= 52;
         }
         digits.reverse();

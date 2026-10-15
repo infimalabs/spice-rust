@@ -12,8 +12,10 @@
 /// to its statement and selection provenance; schema 63 retires that
 /// provenance while preserving exact statement evidence and adds the bounded
 /// per-Design maturity and notice projections. Schema 64 crosses retained
-/// settings answers from their single operator identity to a principal directory.
-pub const SCHEMA_VERSION: u32 = 64;
+/// settings answers from their single operator identity to a principal
+/// directory; schema 65 gives each of that directory's entries its principal's
+/// code.
+pub const SCHEMA_VERSION: u32 = 65;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

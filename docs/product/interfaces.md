@@ -245,7 +245,7 @@ the capability it connects with. The
 own the rules; this section fixes the surfaces.
 
 - `spice principal list` reads every principal in birth order with its
-  identity, birth position, admission instant, roles, and profile.
+  identity, code, birth position, admission instant, roles, and profile.
 - `spice principal admit [--name NAME] [--email EMAIL] [--operator]` bears one
   and prints its capability once; opening the app at `ORIGIN/#CAPABILITY`
   connects as that principal.
@@ -257,18 +257,22 @@ own the rules; this section fixes the surfaces.
 
 Every one of these is an operator-role command. The app's global menu shows
 **Principals** after the connected human's own panel and sends the same
-commands: each principal reads with its avatar and initials, name, email,
-roles, capability standing, and admission time, beside Edit profile, Grant or
-Revoke operator, and Revoke capability. Admit a human takes a required name, an
-optional email, and the operator role, and the reply's capability shows once in
-that panel as the opening link with a copy control; nothing stores it, and a
-replayed admission never shows it again. A principal without the operator role
-sees the section say so, because the resident refuses it the listing.
+commands: each principal reads with its avatar and initials, name, code and
+identity, email, roles, capability standing, and admission time, beside Edit
+profile, Grant or Revoke operator, and Revoke capability. Admit a human takes a
+required name, an optional email, and the operator role, and the reply's
+capability shows once in that panel as the opening link with a copy control;
+nothing stores it, and a replayed admission never shows it again. A principal
+without the operator role sees the section say so, because the resident refuses
+it the listing.
 
 Facts the historical `operator` actor recorded read as the earliest-born
-principal, and every authored item names its author's principal. Addressing
-stays a pointer to a concern, `#KEY` of a direction or `#TASK`: no principal
-has a short code, MSG selector, or route of its own.
+principal, and every authored item names its author's principal. A principal's
+code is the vowel-free base-52 spelling of the position of the admission that
+bore it: it identifies one human in text and the catalog, never a route.
+Addressing stays a pointer to a concern, `#KEY` of a direction or `#TASK`; a
+`#KEY` implies the principal who sent that direction, so no principal has an
+MSG selector or route of its own.
 
 ## Extension surfaces
 

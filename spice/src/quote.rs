@@ -422,9 +422,13 @@ fn render_author(author: &QuoteAuthor, principals: Option<&PrincipalDirectory>) 
             format!("agent occupant {occupant} of lane {lane}")
         }
         QuoteAuthor::Directive { actor } => principals
-            .map_or(NamedActor { actor, name: None }, |principals| {
-                principals.named(actor)
-            })
+            .map_or(
+                NamedActor {
+                    actor,
+                    principal: None,
+                },
+                |principals| principals.named(actor),
+            )
             .to_string(),
     }
 }

@@ -5,8 +5,10 @@
 //! journal position. Its identity and birth position never change; a profile
 //! edit or a role grant or revocation is its own fact and moves only that
 //! principal's head. Git configuration is at most the source an admission
-//! copies its profile from. No principal carries a short code or any other
-//! addressing route: humans are reached through concern pointers only.
+//! copies its profile from. A principal's [`PrincipalCode`] spells its birth
+//! position, identifying the person as briefly as an occupant address
+//! identifies an agent, but it is no addressing route: humans are reached
+//! through concern pointers only.
 //!
 //! [`PrincipalRoles`] is the one predicate deciding what an actor may do as a
 //! principal: the resident's command door, its operator-only controls, lane
@@ -16,11 +18,15 @@
 //! acting or authoring human reads that principal's recorded profile through
 //! the same resolution, never Git configuration.
 
+mod code;
+
 use std::collections::BTreeSet;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+
+pub use code::{PrincipalCode, PrincipalCodeError};
 
 use crate::{Actor, CanonicalUuid, Digest, Domain, HumanIdentity, Seq};
 
@@ -98,6 +104,15 @@ impl PrincipalRoles {
     #[must_use]
     pub fn head(&self, actor: &Actor) -> Option<&PrincipalHead> {
         acting_entry(&self.heads, actor, |head| head.principal)
+    }
+
+    /// The current head of the principal `code` identifies, absent when no
+    /// principal was born at that position.
+    #[must_use]
+    pub fn coded(&self, code: PrincipalCode) -> Option<&PrincipalHead> {
+        self.heads
+            .iter()
+            .find(|head| PrincipalCode::of(head) == code)
     }
 
     /// Every born principal's current head, oldest birth first.
@@ -178,6 +193,8 @@ impl PrincipalRoles {
 pub struct PrincipalDisplay {
     /// The principal displayed.
     pub principal: CanonicalUuid,
+    /// The code its birth position spells.
+    pub code: PrincipalCode,
     /// How its recorded profile presents.
     pub identity: HumanIdentity,
 }
@@ -198,6 +215,7 @@ impl PrincipalDirectory {
                 .iter()
                 .map(|head| PrincipalDisplay {
                     principal: head.principal,
+                    code: PrincipalCode::of(head),
                     identity: head.profile.identity(),
                 })
                 .collect(),
@@ -214,6 +232,7 @@ impl PrincipalDirectory {
                 .iter()
                 .map(|head| PrincipalDisplay {
                     principal: head.principal,
+                    code: PrincipalCode::of(head),
                     identity: HumanIdentity {
                         name: head.profile.name.clone(),
                         ..HumanIdentity::default()
@@ -223,43 +242,52 @@ impl PrincipalDirectory {
         )
     }
 
-    /// How the principal `actor` acts or authored as presents, by the
-    /// resolution [`PrincipalRoles::head`] applies: the earliest-born
-    /// principal for the historical operator actor. Absent for a lane, the
-    /// resident, and a principal this directory does not hold.
+    /// The principal `actor` acts or authored as, by the resolution
+    /// [`PrincipalRoles::head`] applies: the earliest-born principal for the
+    /// historical operator actor. Absent for a lane, the resident, and a
+    /// principal this directory does not hold.
     #[must_use]
-    pub fn identity(&self, actor: &Actor) -> Option<&HumanIdentity> {
-        acting_entry(&self.0, actor, |display| display.principal).map(|display| &display.identity)
+    pub fn principal(&self, actor: &Actor) -> Option<&PrincipalDisplay> {
+        acting_entry(&self.0, actor, |display| display.principal)
     }
 
-    /// `actor` as a reader sees it: named when it resolves, by
-    /// [`Self::identity`], to a principal whose profile records a name.
+    /// How the principal `actor` acts or authored as presents, by
+    /// [`Self::principal`].
+    #[must_use]
+    pub fn identity(&self, actor: &Actor) -> Option<&HumanIdentity> {
+        self.principal(actor).map(|display| &display.identity)
+    }
+
+    /// `actor` as a reader sees it: by its principal's code and recorded
+    /// name when it resolves, by [`Self::principal`], to a born principal.
     #[must_use]
     pub fn named<'a>(&'a self, actor: &'a Actor) -> NamedActor<'a> {
         NamedActor {
             actor,
-            name: self
-                .identity(actor)
-                .and_then(|identity| identity.name.as_deref()),
+            principal: self
+                .principal(actor)
+                .map(|display| (display.code, display.identity.name.as_deref())),
         }
     }
 }
 
-/// One actor as a reader sees it. A human whose principal's recorded profile
-/// carries a name reads `Name <actor>`, the name beside the identity it
-/// belongs to; every other actor reads as its identity alone.
+/// One actor as a reader sees it. A human resolving to a born principal reads
+/// as that principal's code, beside its recorded name as `Name <code>` when
+/// the profile carries one; every other actor, including a human whose
+/// principal is unknown, reads as its identity alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NamedActor<'a> {
     /// The actor itself.
     pub actor: &'a Actor,
-    /// Its principal's recorded name, when it has one.
-    pub name: Option<&'a str>,
+    /// The code and recorded name of the born principal it resolves to.
+    pub principal: Option<(PrincipalCode, Option<&'a str>)>,
 }
 
 impl fmt::Display for NamedActor<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.name {
-            Some(name) => write!(formatter, "{name} <{}>", self.actor),
+        match self.principal {
+            Some((code, Some(name))) => write!(formatter, "{name} <{code}>"),
+            Some((code, None)) => write!(formatter, "{code}"),
             None => write!(formatter, "{}", self.actor),
         }
     }

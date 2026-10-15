@@ -35,7 +35,7 @@ use clap::ArgMatches;
 use serde::Serialize;
 use spice::repository::Repository;
 use wire::output::{Bounded, Export};
-use wire::principal::{NamedActor, PrincipalDirectory};
+use wire::principal::{NamedActor, PrincipalCode, PrincipalDirectory};
 use wire::rooms::{
     RoomAuthorityStamp, RoomContributed, RoomContributionKind, RoomCoordinationStarted, RoomLeft,
     RoomMessaged, RoomPosted, RoomPublicationContent, RoomPublished, RoomPutAside, RoomSource,
@@ -53,21 +53,24 @@ use conversation::ConversationView;
 /// What a continuation's `--after` names.
 const CURSOR: &str = "a publication of this room";
 
-/// An actor a room read shows, beside the name its principal's recorded
-/// profile carries. It serializes as the actor alone, so JSON keeps the
-/// identity contract; text reads it as [`NamedActor`].
+/// An actor a room read shows, beside the code and name of the principal it
+/// resolves to. It serializes as the actor alone, so JSON keeps the identity
+/// contract; text reads it as [`NamedActor`].
 #[derive(Debug, Serialize)]
 #[serde(transparent)]
 pub(crate) struct Named {
     actor: Actor,
     #[serde(skip)]
-    name: Option<String>,
+    principal: Option<(PrincipalCode, Option<String>)>,
 }
 
 impl Named {
     fn of(principals: &PrincipalDirectory, actor: Actor) -> Self {
-        let name = principals.named(&actor).name.map(str::to_owned);
-        Self { actor, name }
+        let principal = principals
+            .named(&actor)
+            .principal
+            .map(|(code, name)| (code, name.map(str::to_owned)));
+        Self { actor, principal }
     }
 }
 
@@ -75,7 +78,10 @@ impl fmt::Display for Named {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         NamedActor {
             actor: &self.actor,
-            name: self.name.as_deref(),
+            principal: self
+                .principal
+                .as_ref()
+                .map(|(code, name)| (*code, name.as_deref())),
         }
         .fmt(formatter)
     }
