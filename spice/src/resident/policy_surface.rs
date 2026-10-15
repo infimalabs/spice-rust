@@ -8,7 +8,7 @@ use journal::{FactCause, GuardError, GuardRefusal, JournalGuard, JournalHead, Jo
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, ConsentAnswer, ConsentDecide, TrustAnswer, TrustRef};
 use wire::{
-    Actor, CanonicalUuid, Command, CommandKind, Outcome, Producer, Refusal, Reply, ReplyPosition,
+    CanonicalUuid, Command, CommandKind, Outcome, Producer, Refusal, Reply, ReplyPosition,
     SeqRange, SpiceCommand, TrustHead, TrustState, Witness,
 };
 
@@ -434,7 +434,7 @@ fn admit_trust_pend(
     reference: &TrustRef,
 ) -> SurfaceResult<TrustPendAdmission> {
     let context = TrustRefusalContext::pend(reference);
-    if !matches!(command.actor(), Actor::Operator) {
+    if !command.holds(wire::principal::PrincipalRole::Operator) {
         return Err(context.refusal(
             "trust::operator-required",
             Some("operator".to_owned()),

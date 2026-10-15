@@ -725,7 +725,7 @@ fn closed(
             RoomReceiptState::Cancelled { source },
         ),
     };
-    if *actor != Actor::Operator && !acts_as(actor, party) {
+    if !super::is_principal(actor) && !acts_as(actor, party) {
         return unsound(format!(
             "{actor} cannot close question {} for its stored party",
             body.result
@@ -1106,8 +1106,8 @@ fn code(seq: Seq) -> SequenceCode {
 
 fn acts_as(actor: &Actor, party: &RoomDestination) -> bool {
     match (actor, party) {
-        (Actor::Operator, RoomDestination::Operator {}) => true,
         (Actor::Lane(actor), RoomDestination::Lane { lane }) => actor == lane,
+        (actor, RoomDestination::Operator {}) => super::is_principal(actor),
         _ => false,
     }
 }

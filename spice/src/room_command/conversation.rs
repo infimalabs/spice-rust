@@ -177,8 +177,10 @@ pub(super) fn result_view(
         QuestionResultState::Cancelled { source } => (decider(read, source)?, record.requester()),
         _ => (None, record.requester()),
     };
-    let override_party =
-        closed_by == Some(Actor::Operator) && matches!(party, RoomDestination::Lane { .. });
+    let override_party = closed_by
+        .as_ref()
+        .is_some_and(|actor| wire::principal::ActingPrincipal::of(actor).is_some())
+        && matches!(party, RoomDestination::Lane { .. });
     let returned = match &state {
         QuestionResultState::Answered {
             return_delivery, ..

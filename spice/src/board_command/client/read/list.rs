@@ -261,7 +261,7 @@ pub(in crate::board_command::client) fn actor_route_matches(
 ) -> bool {
     let filing = task.statement.body.filing;
     (!task.visibility.is_hidden() && filing.is_filed())
-        || (filing.is_draft() && board.principal == wire::Actor::Operator)
+        || (filing.is_draft() && wire::principal::ActingPrincipal::of(&board.principal).is_some())
         || task.origin_thread == board.actor_route.origin_thread
 }
 

@@ -110,6 +110,7 @@ pub struct Source {
     bus: BusReader,
     epoch: wire::CanonicalUuid,
     rows: usize,
+    roles: crate::RoleBook,
     messages: MessageFeed,
     quota: Option<QuotaFeed>,
     #[cfg(test)]
@@ -124,23 +125,35 @@ struct ReadCounts {
 }
 
 impl Source {
-    /// Bind app reads to one resident Bus generation and one packing bound.
+    /// Bind app reads to one resident Bus generation, one packing bound, and
+    /// the principal role heads that decide operator-only subjects.
     #[must_use]
     pub fn new(
         bus: BusReader,
         epoch: wire::CanonicalUuid,
         rows: usize,
         presenter: QuotePresenter,
+        roles: crate::RoleBook,
     ) -> Self {
         Self {
             bus,
             epoch,
             rows,
+            roles,
             messages: MessageFeed::new(presenter),
             quota: None,
             #[cfg(test)]
             reads: Arc::new(ReadCounts::default()),
         }
+    }
+
+    /// Whether the accepted actor's principal currently holds the operator
+    /// role, read once per request.
+    fn operator(&self, accepted: &Accepted) -> Result<bool, Failure> {
+        self.roles
+            .current()
+            .map(|roles| roles.holds(&accepted.actor, wire::principal::PrincipalRole::Operator))
+            .map_err(|error| Failure::Fault(error.fault()))
     }
 
     /// Attach the process-local redacted quota source.
@@ -206,7 +219,8 @@ impl Source {
                 "stream packing requires at least one row",
             )));
         }
-        let subjects = admit_subjects(&accepted.actor, subjects)?;
+        let operator = self.operator(accepted)?;
+        let subjects = admit_subjects(&accepted.actor, operator, subjects)?;
         let mut quota_generation = self.current_quota(subjects.contains(&ViewSubject::Quota))?;
         let wants_messages = subjects.contains(&ViewSubject::Messages);
         let (heads, mut message_generation) = loop {
@@ -240,11 +254,7 @@ impl Source {
                 &format!("resume cursor {after_seq:?} is beyond snapshot {horizon}"),
             )));
         }
-        let cursor = if matches!(&accepted.actor, wire::Actor::Operator) {
-            Some(horizon)
-        } else {
-            after_seq
-        };
+        let cursor = if operator { Some(horizon) } else { after_seq };
 
         let mut subscription = Subscription {
             id: *id,
@@ -331,7 +341,11 @@ impl Source {
                 "the request is not a causal thread request",
             )));
         };
-        admit_subject(&accepted.actor, ViewSubject::Facts)?;
+        admit_subject(
+            &accepted.actor,
+            self.operator(accepted)?,
+            ViewSubject::Facts,
+        )?;
         let packed = self
             .bus
             .app_thread(cursor.seq, self.fact_budget()?)
@@ -363,7 +377,11 @@ impl Source {
                 "send one message-history request",
             )));
         };
-        admit_subject(&accepted.actor, ViewSubject::Messages)?;
+        admit_subject(
+            &accepted.actor,
+            self.operator(accepted)?,
+            ViewSubject::Messages,
+        )?;
         let heads = self.heads()?;
         let horizon = required_horizon(&heads)?;
         let generation =

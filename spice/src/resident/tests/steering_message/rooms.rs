@@ -624,7 +624,7 @@ fn land_delivery(
     seats: &mut Seats,
     notice: &room_catch_up::Notice,
 ) {
-    let source = serve::stream::Source::new(lanes.bus.reader(), lanes.epoch, 8, quote_presenter());
+    let source = message_source(lanes.bus.reader(), lanes.epoch);
     let publisher = source.message_publisher();
     let generation = publisher.batch().expect("message generation begins");
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");

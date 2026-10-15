@@ -350,12 +350,15 @@ fn command(
         expected: Vec::new(),
         body: serde_json::to_value(request).expect("renewal request encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch: fixture.epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: fixture.epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("operator renewal command admits")
 }
 
@@ -368,12 +371,15 @@ fn wake_command(fixture: &LaunchFixture, id: u64, request: &LaneState) -> wire::
         expected: Vec::new(),
         body: serde_json::to_value(request).expect("lane state request encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch: fixture.epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: fixture.epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("operator wake command admits")
 }
 

@@ -458,8 +458,9 @@ fn closed(
         QuestionClosure::Cancelled => ("requester", record.requester(), "cancel"),
     };
     let actor = command.actor().clone();
+    let operator = command.holds(wire::principal::PrincipalRole::Operator);
     match (&actor, party, close.override_party) {
-        (Actor::Operator, RoomDestination::Operator {}, true) => {
+        (_, RoomDestination::Operator {}, true) if operator => {
             return Err(refusal(
                 "room::override-unneeded",
                 Some(role.to_owned()),
@@ -469,7 +470,7 @@ fn closed(
                 ),
             ));
         }
-        (Actor::Operator, RoomDestination::Lane { lane }, false) => {
+        (_, RoomDestination::Lane { lane }, false) if operator => {
             return Err(refusal(
                 "room::override-required",
                 Some(lane.to_string()),
@@ -479,8 +480,8 @@ fn closed(
                 ),
             ));
         }
-        (Actor::Operator, _, _) => {}
-        (Actor::Lane(_), _, true) => {
+        _ if operator => {}
+        (_, _, true) => {
             return Err(refusal(
                 "room::override-operator-only",
                 None,

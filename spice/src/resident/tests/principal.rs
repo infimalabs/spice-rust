@@ -6,6 +6,7 @@ use std::io::Write as _;
 
 use wire::principal::{
     PrincipalAdmit, PrincipalEdit, PrincipalHead, PrincipalRead, PrincipalRole, PrincipalRoleRef,
+    PrincipalRoles,
 };
 
 use super::*;
@@ -17,6 +18,7 @@ const GIT_EMAIL: &str = "ada@example.invalid";
 struct Seated {
     repository: Repository,
     surface: crate::trust_command::Surface,
+    paths: RuntimePaths,
     bus: Bus,
 }
 
@@ -39,6 +41,7 @@ fn seated(name: &str) -> Seated {
     Seated {
         repository,
         surface,
+        paths,
         bus,
     }
 }
@@ -57,6 +60,17 @@ fn command<B: serde::Serialize>(
     actor: Actor,
     id: u8,
 ) -> Result<wire::AdmittedCommand, wire::CommandRejection> {
+    command_under(kind, body, actor, id, &PrincipalRoles::default())
+}
+
+/// Admit `body` as `actor` under exactly the role heads `roles`.
+fn command_under<B: serde::Serialize>(
+    kind: CommandKind,
+    body: &B,
+    actor: Actor,
+    id: u8,
+    roles: &PrincipalRoles,
+) -> Result<wire::AdmittedCommand, wire::CommandRejection> {
     wire::Command {
         v: wire::WireVersion::CURRENT,
         id: test_uuid(id),
@@ -65,12 +79,15 @@ fn command<B: serde::Serialize>(
         expected: Vec::new(),
         body: serde_json::to_value(body).expect("principal body encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor,
-        epoch: test_uuid(1),
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor,
+            epoch: test_uuid(1),
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        roles,
+    )
 }
 
 fn operator<B: serde::Serialize>(kind: CommandKind, body: &B, id: u8) -> wire::AdmittedCommand {
@@ -277,4 +294,98 @@ fn lanes_cannot_list_admit_profile_or_change_principal_roles() {
         };
         assert_eq!(refusal.reason(), "command::authority");
     }
+}
+
+/// The command door admits each command under the generation's current role
+/// book, and a role change republishes that book, so revoking the operator
+/// role refuses the principal's very next operator command on the same
+/// connection while its connected commands still admit.
+#[test]
+fn a_revoked_operator_role_refuses_the_principals_next_operator_command() {
+    let seated = seated("principal-role-book");
+    let startup = crate::resident::load_startup_surface(&seated.repository)
+        .expect("fixture startup policy resolves");
+    let capabilities = serve::axum::Capabilities::default();
+    let discovery = serve::Discovery {
+        endpoint: "http://127.0.0.1:1".to_owned(),
+        capability: test_uuid(2),
+        epoch: test_uuid(1),
+    };
+    let reads = read_materializations::CurrentReads::start_queueing(&seated.bus, &seated.paths);
+    let reporter: Arc<dyn lane::capture::CaptureReporter> =
+        Arc::new(super::startup::NoopCaptureReporter);
+    let lane = lane_surface::Runtime::new(&capabilities, &discovery, reporter.clone(), &reads);
+    lane.publish_roles(&seated.bus)
+        .expect("the generation publishes its role heads");
+    let surface = command_surface::Surface::new(
+        &seated.bus,
+        &seated.repository,
+        &seated.paths,
+        test_uuid(1),
+        command_surface::Runtimes::new(lane, lane_recovery::Runtime::new(reporter)),
+        &startup.config,
+        &reads,
+    );
+    let mut seats = Seats::new();
+    let mut door = |kind, body: serde_json::Value, id| {
+        let roles = capabilities.roles().current().expect("the role book reads");
+        let command = command_under(kind, &body, Actor::Operator, id, &roles)?;
+        match surface.dispatch_fresh(&mut seats, &command) {
+            CommandDispatch::Complete { outcome, .. } => Ok(outcome),
+            CommandDispatch::Launch(_) => panic!("a principal command launches nothing"),
+        }
+    };
+    let read = || serde_json::to_value(PrincipalRead {}).expect("read encodes");
+    assert!(matches!(
+        door(CommandKind::PrincipalRead, read(), 10),
+        Ok(Outcome::Reply(_))
+    ));
+    let bootstrap = heads(&seated.bus)[0].principal;
+    let admit = PrincipalAdmit {
+        name: Some("Bea".to_owned()),
+        email: None,
+        roles: BTreeSet::from([PrincipalRole::Operator]),
+    };
+    assert!(matches!(
+        door(
+            CommandKind::PrincipalAdmit,
+            serde_json::to_value(admit).expect("admission encodes"),
+            11
+        ),
+        Ok(Outcome::Reply(_))
+    ));
+    let revoke = PrincipalRoleRef {
+        principal: bootstrap,
+        role: PrincipalRole::Operator,
+    };
+    assert!(matches!(
+        door(
+            CommandKind::PrincipalRevoke,
+            serde_json::to_value(revoke).expect("revocation encodes"),
+            12
+        ),
+        Ok(Outcome::Reply(_))
+    ));
+
+    let Err(wire::CommandRejection::Refusal(refusal)) =
+        door(CommandKind::PrincipalRead, read(), 13)
+    else {
+        panic!("the revoked principal's next operator command must refuse");
+    };
+    assert_eq!(refusal.reason(), "command::authority");
+    let roles = capabilities.roles().current().expect("the role book reads");
+    assert!(
+        command_under(
+            CommandKind::SteerInbox,
+            &wire::intent::SteerInbox {
+                lane: None,
+                retired: false,
+            },
+            Actor::Operator,
+            14,
+            &roles,
+        )
+        .is_ok(),
+        "a born principal without the operator role still holds connected authority"
+    );
 }

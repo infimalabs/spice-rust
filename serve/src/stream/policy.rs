@@ -44,8 +44,11 @@ impl Failure {
     }
 }
 
+/// Admit `subjects` for `actor`; `operator` is whether its principal
+/// currently holds the operator role.
 pub(super) fn admit_subjects(
     actor: &Actor,
+    operator: bool,
     subjects: &[ViewSubject],
 ) -> Result<BTreeSet<ViewSubject>, Failure> {
     if subjects.is_empty() {
@@ -56,7 +59,7 @@ pub(super) fn admit_subjects(
     }
     let mut admitted = BTreeSet::new();
     for subject in subjects {
-        admit_subject(actor, *subject)?;
+        admit_subject(actor, operator, *subject)?;
         if !admitted.insert(*subject) {
             return Err(Failure::Refusal(refusal(
                 "stream::subject-duplicate",
@@ -67,11 +70,15 @@ pub(super) fn admit_subjects(
     Ok(admitted)
 }
 
-pub(super) fn admit_subject(actor: &Actor, subject: ViewSubject) -> Result<(), Failure> {
+pub(super) fn admit_subject(
+    actor: &Actor,
+    operator: bool,
+    subject: ViewSubject,
+) -> Result<(), Failure> {
     if matches!(
         subject,
         ViewSubject::Trust | ViewSubject::Messages | ViewSubject::Quota
-    ) && !matches!(actor, Actor::Operator)
+    ) && !operator
     {
         return Err(Failure::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(

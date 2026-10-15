@@ -1100,7 +1100,7 @@ pub(super) fn actor_seat(
             .lanes
             .iter()
             .find(|seat| seat.lane == *actor && occupied(seat)),
-        Actor::Operator => {
+        principal if wire::principal::ActingPrincipal::of(principal).is_some() => {
             let mut seats = board
                 .residency
                 .body
@@ -1117,7 +1117,7 @@ pub(super) fn actor_seat(
             }
             first
         }
-        Actor::Spice => None,
+        _ => None,
     }
     .ok_or_else(|| {
         refusal(

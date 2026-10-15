@@ -57,17 +57,25 @@ pub(super) fn is_legacy_task_generation_control(control: Option<&str>) -> bool {
 
 /// The directive a send opened when its authority is allowed to wake a lane.
 ///
-/// Operator sends retain universal wake authority. Resident sends have none
-/// except the exact source-locus control that tells a packet author their
-/// packet was wholly withheld. The lifecycle resolver and the inbox's `wakes`
-/// flag both answer from this one predicate.
-pub(super) fn operator_sent(envelope: &wire::Envelope<wire::AnyFact>) -> Option<CanonicalUuid> {
+/// Sends by an actor whose principal holds the operator role retain universal
+/// wake authority. Resident sends have none except the exact source-locus
+/// control that tells a packet author their packet was wholly withheld. The
+/// lifecycle resolver and the inbox's `wakes` flag both answer from this one
+/// predicate.
+pub(super) fn operator_sent(
+    roles: &wire::principal::PrincipalRoles,
+    envelope: &wire::Envelope<wire::AnyFact>,
+) -> Option<CanonicalUuid> {
     let sent = envelope.fact.read::<wire::body::SteerSent>()?;
-    sent_wakes(&envelope.actor, sent.control.as_deref()).then_some(sent.directive)
+    sent_wakes(roles, &envelope.actor, sent.control.as_deref()).then_some(sent.directive)
 }
 
-fn sent_wakes(actor: &Actor, control: Option<&str>) -> bool {
-    *actor == Actor::Operator
+fn sent_wakes(
+    roles: &wire::principal::PrincipalRoles,
+    actor: &Actor,
+    control: Option<&str>,
+) -> bool {
+    roles.holds(actor, wire::principal::PrincipalRole::Operator)
         || (*actor == Actor::Spice
             && control
                 .and_then(wire::parse_packet_withheld_control)
@@ -559,7 +567,7 @@ pub(super) fn inbox(
     request: &wire::intent::SteerInbox,
 ) -> Outcome<CommandAnswer> {
     let selected = match command.actor() {
-        Actor::Operator => request.lane,
+        _ if command.holds(wire::principal::PrincipalRole::Operator) => request.lane,
         Actor::Lane(lane) if request.lane.is_none_or(|requested| requested == *lane) => Some(*lane),
         Actor::Lane(lane) => {
             return refusal(
@@ -569,10 +577,12 @@ pub(super) fn inbox(
                 "read only the inbox bound to the authenticated lane",
             );
         }
-        Actor::Spice => {
-            return typed_protocol_fault(
-                "steer::principal-invalid",
-                "resident principal cannot submit an interactive inbox read",
+        actor => {
+            return refusal(
+                "steer::operator-required",
+                Some("operator".to_owned()),
+                Some(actor.to_string()),
+                "read another lane's inbox while holding the operator role",
             );
         }
     };
@@ -822,11 +832,19 @@ fn pending_snapshot(
         }
         let ledger = steer::Ledger::from_authority_heads(heads.iter().map(|head| head.body()))
             .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))?;
+        let roles = bus
+            .reader()
+            .principal_roles()
+            .map_err(|error| typed_store_fault("steer::roles-unreadable", &error.to_string()))?;
         let waking = heads
             .iter()
             .map(journal::JournalHead::body)
             .filter(|head| {
-                authority.facts().at(head.created).and_then(operator_sent) == Some(head.directive)
+                authority
+                    .facts()
+                    .at(head.created)
+                    .and_then(|envelope| operator_sent(&roles, envelope))
+                    == Some(head.directive)
             })
             .map(|head| head.directive)
             .collect();

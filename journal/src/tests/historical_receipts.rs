@@ -20,12 +20,15 @@ fn archived_identity_cannot_replay_or_commit_as_a_new_live_command() {
         expected: Vec::new(),
         body: json!({"scope": "all"}),
     }
-    .admit(&wire::Accepted {
-        wire: WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch: uuid(EPOCH),
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &wire::Accepted {
+            wire: WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: uuid(EPOCH),
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("different current command admits");
     assert_eq!(
         journal

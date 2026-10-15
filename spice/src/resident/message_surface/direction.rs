@@ -72,7 +72,7 @@ pub(super) fn present(
         let Some(directive) = steering.directives.get(&key) else {
             continue;
         };
-        if !matches!(directive.actor, wire::Actor::Operator)
+        if !steering.operator_sent(directive)
             || directive.sender.is_some()
             || directive.packet.is_some()
             || directive.lane != event.lane

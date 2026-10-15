@@ -1097,7 +1097,7 @@ pub(super) fn allocation_subscription(
         |lane: &&wire::LaneResidency| lane.disposition == "occupied" && lane.occupant.is_some();
     let seat = match actor {
         Actor::Lane(actor) => residency.lanes.iter().find(|seat| seat.lane == *actor),
-        Actor::Operator => {
+        principal if wire::principal::ActingPrincipal::of(principal).is_some() => {
             let mut seats = residency.lanes.iter().filter(occupied);
             let first = seats.next();
             if seats.next().is_some() {
@@ -1109,7 +1109,7 @@ pub(super) fn allocation_subscription(
             }
             first
         }
-        Actor::Spice => None,
+        _ => None,
     }
     .filter(occupied)
     .ok_or_else(|| {

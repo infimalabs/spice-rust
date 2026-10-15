@@ -5,7 +5,8 @@ use super::indexed_read::decode_head;
 use super::*;
 
 impl JournalRead<'_> {
-    /// One fixed page of live operator-authored steering in creation order.
+    /// One fixed page of live steering in creation order, authored by actors
+    /// whose principal currently holds the operator role.
     ///
     /// `start` is either the first page or the continuation returned by the
     /// preceding page. Overflow is always explicit.
@@ -15,6 +16,7 @@ impl JournalRead<'_> {
     ) -> Result<SteeringPage, GuardError> {
         self.require_current_steering_index()?;
         let first = steering_page_start(start)?;
+        let operators = self.role_holder_spellings(wire::principal::PrincipalRole::Operator)?;
         let mut statement = self
             .connection
             .prepare(
@@ -23,18 +25,15 @@ impl JournalRead<'_> {
                  steering.head_seq, steering.body, COUNT(*) OVER () \
                  FROM steering_heads AS steering \
                  JOIN fact_envelopes AS creating ON creating.seq = steering.created_seq \
-                 WHERE steering.disposition = 'live' AND creating.actor = ?1 \
+                 WHERE steering.disposition = 'live' \
+                 AND creating.actor IN (SELECT value FROM json_each(?1)) \
                  AND steering.created_seq >= ?2 ORDER BY steering.created_seq LIMIT ?3",
             )
             .map_err(GuardError::Store)?;
         read_metrics::observe_query();
         let rows = statement
             .query_map(
-                params![
-                    wire::Actor::Operator.to_string(),
-                    first,
-                    steering_query_rows(),
-                ],
+                params![operators, first, steering_query_rows()],
                 read_steering_page_row,
             )
             .map_err(GuardError::Store)?;
@@ -153,12 +152,14 @@ impl JournalRead<'_> {
             .collect()
     }
 
-    /// The newest direction the operator sent one lane, in any disposition.
+    /// The newest direction sent one lane, in any disposition, by an actor
+    /// whose principal currently holds the operator role.
     pub fn latest_operator_direction(
         &self,
         lane: wire::CanonicalUuid,
     ) -> Result<Option<JournalHead<wire::SteeringHead>>, GuardError> {
         self.require_current_steering_index()?;
+        let operators = self.role_holder_spellings(wire::principal::PrincipalRole::Operator)?;
         let row = self
             .connection
             .query_row(
@@ -166,10 +167,11 @@ impl JournalRead<'_> {
                  steering.disposition, steering.created_seq, steering.minted_micros, \
                  steering.head_seq, steering.body FROM steering_heads AS steering \
                  JOIN fact_envelopes AS creating ON creating.seq = steering.created_seq \
-                 WHERE steering.lane = ?1 AND creating.actor = ?2 \
+                 WHERE steering.lane = ?1 \
+                 AND creating.actor IN (SELECT value FROM json_each(?2)) \
                  AND json_extract(CAST(steering.body AS TEXT), '$.fanout') IS NOT NULL \
                  ORDER BY steering.created_seq DESC LIMIT 1",
-                [lane.to_string(), wire::Actor::Operator.to_string()],
+                [lane.to_string(), operators],
                 read_steering_columns,
             )
             .optional()

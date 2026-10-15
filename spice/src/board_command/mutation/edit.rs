@@ -62,7 +62,7 @@ fn prepare_correction(
         .evidence
         .as_ref()
         .is_some_and(|change| change.released().is_some())
-        && *command.actor() != wire::Actor::Operator
+        && !command.holds(wire::principal::PrincipalRole::Operator)
     {
         return Err(refusal(
             "task::evidence-authority",

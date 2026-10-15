@@ -240,12 +240,15 @@ fn admitted_demo_group_command(
         expected,
         body: serde_json::to_value(body).expect("fixture command body encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &wire::Accepted {
+            wire: WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("fixture command admits")
 }
 

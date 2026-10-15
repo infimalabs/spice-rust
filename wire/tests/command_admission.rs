@@ -1,6 +1,9 @@
 //! Authentication, generation, law, and body checks at the command door.
 
+use std::collections::BTreeSet;
+
 use wire::intent::{BodyShape, CommandAnswer, Intent, StateAnswer};
+use wire::principal::{PrincipalHead, PrincipalProfile, PrincipalRole, PrincipalRoles};
 use wire::{
     Accepted, Actor, CanonicalUuid, Command, CommandKind, CommandRejection, Outcome, Reply,
     ReplyPosition, ResidentState, Seq, WireVersion, Witness,
@@ -21,6 +24,22 @@ fn accepted(actor: Actor) -> Accepted {
     }
 }
 
+/// The bootstrap principal holding `roles`, born first, with a later-born
+/// operator beside it.
+fn bootstrap_holding(roles: &[PrincipalRole]) -> PrincipalRoles {
+    let head = |principal, born, roles: &[PrincipalRole]| PrincipalHead {
+        principal: uuid(principal),
+        born: Seq::new(born).expect("fixture position"),
+        profile: PrincipalProfile::default(),
+        roles: roles.iter().copied().collect::<BTreeSet<_>>(),
+    };
+    PrincipalRoles::new([head(91, 9, &[PrincipalRole::Operator]), head(90, 3, roles)])
+}
+
+fn operator() -> PrincipalRoles {
+    bootstrap_holding(&[PrincipalRole::Operator])
+}
+
 fn dark(epoch: CanonicalUuid) -> Command<serde_json::Value> {
     Command {
         v: WireVersion::CURRENT,
@@ -38,12 +57,13 @@ fn dark(epoch: CanonicalUuid) -> Command<serde_json::Value> {
 #[test]
 fn current_operator_command_admits_one_kind_selected_body() {
     let command = dark(uuid(1))
-        .admit(&accepted(Actor::Operator))
+        .admit(&accepted(Actor::Operator), &operator())
         .expect("current operator command admits");
 
     assert_eq!(command.id(), uuid(2));
     assert_eq!(command.epoch(), uuid(1));
     assert_eq!(command.actor(), &Actor::Operator);
+    assert!(command.holds(PrincipalRole::Operator));
     assert_eq!(command.kind(), CommandKind::UpChange);
     assert!(matches!(
         command.body(),
@@ -66,7 +86,7 @@ fn current_operator_command_admits_one_kind_selected_body() {
 #[test]
 fn stale_epoch_faults_before_body_admission() {
     let rejection = dark(uuid(3))
-        .admit(&accepted(Actor::Operator))
+        .admit(&accepted(Actor::Operator), &operator())
         .expect_err("stale generation faults");
 
     assert!(matches!(
@@ -79,13 +99,53 @@ fn stale_epoch_faults_before_body_admission() {
 #[test]
 fn lane_cannot_submit_an_operator_command() {
     let rejection = dark(uuid(1))
-        .admit(&accepted(Actor::Lane(uuid(4))))
+        .admit(&accepted(Actor::Lane(uuid(4))), &operator())
         .expect_err("lane authority refuses");
 
     let CommandRejection::Refusal(refusal) = rejection else {
         panic!("lane authority must refuse");
     };
     assert_eq!(refusal.reason(), "command::authority");
+}
+
+#[test]
+fn operator_authority_follows_the_bootstrap_principals_current_role() {
+    let Err(CommandRejection::Refusal(refusal)) =
+        dark(uuid(1)).admit(&accepted(Actor::Operator), &bootstrap_holding(&[]))
+    else {
+        panic!("an operator actor whose principal lost the role must refuse");
+    };
+    assert_eq!(refusal.reason(), "command::authority");
+    let unborn = dark(uuid(1))
+        .admit(&accepted(Actor::Operator), &PrincipalRoles::default())
+        .expect("before its recorded birth the bootstrap human is the operator");
+    assert!(unborn.holds(PrincipalRole::Operator));
+
+    let regranted = dark(uuid(1))
+        .admit(&accepted(Actor::Operator), &operator())
+        .expect("the next command after a grant admits");
+    assert!(regranted.holds(PrincipalRole::Operator));
+}
+
+#[test]
+fn connected_commands_admit_a_born_principal_without_the_operator_role() {
+    let read = || wake(None, false, &[]);
+    let admitted = read()
+        .admit(&accepted(Actor::Operator), &bootstrap_holding(&[]))
+        .expect("a born principal submits connected commands");
+    assert!(!admitted.holds(PrincipalRole::Operator));
+
+    let Err(CommandRejection::Refusal(refusal)) =
+        read().admit(&accepted(Actor::Spice), &operator())
+    else {
+        panic!("an actor acting as no principal is not connected");
+    };
+    assert_eq!(refusal.reason(), "command::authority");
+
+    let lane = read()
+        .admit(&accepted(Actor::Lane(uuid(4))), &PrincipalRoles::default())
+        .expect("a lane submits connected commands");
+    assert!(!lane.holds(PrincipalRole::Operator));
 }
 
 #[test]
@@ -101,7 +161,9 @@ fn task_creation_routes_are_closed_over_distinct_body_contracts() {
 fn missing_witness_and_wrong_body_stop_before_business_logic() {
     let mut missing = dark(uuid(1));
     missing.expected.clear();
-    let Err(CommandRejection::Refusal(refusal)) = missing.admit(&accepted(Actor::Operator)) else {
+    let Err(CommandRejection::Refusal(refusal)) =
+        missing.admit(&accepted(Actor::Operator), &operator())
+    else {
         panic!("a missing witness must refuse");
     };
     assert_eq!(refusal.reason(), "command::witness-law");
@@ -109,7 +171,7 @@ fn missing_witness_and_wrong_body_stop_before_business_logic() {
     let mut malformed = dark(uuid(1));
     malformed.body = serde_json::json!({ "task": "SPICE-1kKRRsDP" });
     assert!(matches!(
-        malformed.admit(&accepted(Actor::Operator)),
+        malformed.admit(&accepted(Actor::Operator), &operator()),
         Err(CommandRejection::Fault(wire::Fault { ref reason, .. }))
             if reason == "command::body-undecodable"
     ));
@@ -177,14 +239,14 @@ fn filing_requires_statement_authority_but_plain_wake_does_not() {
     let target: wire::TaskStamp = "0000000B".parse().expect("target task stamp");
     let unrelated: wire::TaskStamp = "0000000C".parse().expect("unrelated task stamp");
     let Err(CommandRejection::Refusal(refusal)) =
-        wake(Some("board.test"), false, &[]).admit(&accepted(Actor::Operator))
+        wake(Some("board.test"), false, &[]).admit(&accepted(Actor::Operator), &operator())
     else {
         panic!("filing without a task witness must refuse");
     };
     assert_eq!(refusal.reason(), "command::witness-law");
 
     let plain = wake(None, false, &[])
-        .admit(&accepted(Actor::Operator))
+        .admit(&accepted(Actor::Operator), &operator())
         .expect("plain wake retains workflow and deferral authority");
     assert!(matches!(plain.body(), Intent::TaskWake(_)));
 
@@ -193,7 +255,7 @@ fn filing_requires_statement_authority_but_plain_wake_does_not() {
         false,
         &[unrelated.clone(), unrelated.clone()],
     )
-    .admit(&accepted(Actor::Operator)) else {
+    .admit(&accepted(Actor::Operator), &operator()) else {
         panic!("duplicate unrelated task witnesses must refuse");
     };
     assert_eq!(refusal.reason(), "command::witness-law");
@@ -209,7 +271,7 @@ fn filing_requires_statement_authority_but_plain_wake_does_not() {
         false,
         &[target.clone(), target, unrelated],
     )
-    .admit(&accepted(Actor::Operator))
+    .admit(&accepted(Actor::Operator), &operator())
     .expect("exact target authority admits despite duplicate and extra predicates");
 }
 
@@ -219,13 +281,15 @@ fn wake_claim_requires_capture_authority_and_decodes_the_atomic_request() {
     missing
         .expected
         .retain(|witness| !matches!(witness, Witness::Eligibility { .. }));
-    let Err(CommandRejection::Refusal(refusal)) = missing.admit(&accepted(Actor::Operator)) else {
+    let Err(CommandRejection::Refusal(refusal)) =
+        missing.admit(&accepted(Actor::Operator), &operator())
+    else {
         panic!("wake claim without eligibility must refuse");
     };
     assert_eq!(refusal.reason(), "command::witness-law");
 
     let admitted = wake(None, true, &[])
-        .admit(&accepted(Actor::Operator))
+        .admit(&accepted(Actor::Operator), &operator())
         .expect("wake claim with capture authority admits");
     assert!(matches!(
         admitted.body(),
@@ -253,7 +317,7 @@ fn a_lane_cannot_inspect_or_terminate_keeper_jobs() {
             },
         };
         let Err(CommandRejection::Refusal(refusal)) =
-            command.admit(&accepted(Actor::Lane(uuid(4))))
+            command.admit(&accepted(Actor::Lane(uuid(4))), &operator())
         else {
             panic!("lane job control requires operator authority");
         };

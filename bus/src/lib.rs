@@ -484,6 +484,13 @@ mod runtime {
             })
         }
 
+        /// The current principal role predicate.
+        pub fn principal_roles(
+            &self,
+        ) -> Result<journal::crossing::principal::PrincipalRoles, BusReadError> {
+            self.transact_read(|read| read.principal_roles())
+        }
+
         fn transact_read<T: Send + 'static>(
             &self,
             read: impl FnOnce(&journal::JournalRead<'_>) -> Result<T, GuardError> + Send + 'static,

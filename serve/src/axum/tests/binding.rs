@@ -25,7 +25,7 @@ async fn server_refuses_an_identity_for_another_app_generation_before_binding() 
 #[tokio::test(flavor = "current_thread")]
 async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -51,7 +51,7 @@ async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
 #[tokio::test(flavor = "current_thread")]
 async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");

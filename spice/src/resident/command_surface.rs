@@ -8,7 +8,7 @@ use lane::occupant::Seats;
 use spice::placeholder::PlaceholderReason;
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, Intent};
-use wire::{Actor, CanonicalUuid, CommandKind, Outcome, Refusal, Reply, ReplyPosition};
+use wire::{CanonicalUuid, CommandKind, Outcome, Refusal, Reply, ReplyPosition};
 
 use super::{
     CommandDispatch, CommandEffects, RuntimePaths, SurfaceConfig, consent_surface,
@@ -545,20 +545,37 @@ impl<'a> Surface<'a> {
             (CommandKind::PrincipalRead, Intent::PrincipalRead(_)) => {
                 Some(principal_surface::read(self.bus))
             }
-            (CommandKind::PrincipalAdmit, Intent::PrincipalAdmit(admit)) => Some(
-                principal_surface::admit(self.bus, self.repository, self.epoch, command, admit),
-            ),
+            (CommandKind::PrincipalAdmit, Intent::PrincipalAdmit(admit)) => {
+                Some(self.republishing_roles(principal_surface::admit(
+                    self.bus,
+                    self.repository,
+                    self.epoch,
+                    command,
+                    admit,
+                )))
+            }
             (CommandKind::PrincipalEdit, Intent::PrincipalEdit(edit)) => {
                 Some(principal_surface::edit(self.bus, self.epoch, command, edit))
             }
             (
                 CommandKind::PrincipalGrant | CommandKind::PrincipalRevoke,
                 Intent::PrincipalRoleRef(reference),
-            ) => Some(principal_surface::role(
+            ) => Some(self.republishing_roles(principal_surface::role(
                 self.bus, self.epoch, command, reference,
-            )),
+            ))),
             _ => None,
         }
+    }
+
+    /// Republish the role heads once a principal change lands, so the changed
+    /// principal's next command is decided by its new roles.
+    fn republishing_roles(&self, outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
+        if matches!(outcome, Outcome::Reply(_))
+            && let Err(fault) = self.lane.publish_roles(self.bus)
+        {
+            return super::typed_outcome(fault);
+        }
+        outcome
     }
 
     pub(super) fn inbox_residency(
@@ -661,7 +678,7 @@ impl<'a> Surface<'a> {
     ) -> super::CommandResult<bool> {
         let mut released = lifecycle.observe_topology(command);
         if let Intent::LaneState(state) = command.body()
-            && command.actor() == &Actor::Operator
+            && command.holds(wire::principal::PrincipalRole::Operator)
             && state.action == wire::intent::LaneAction::Wake
         {
             if lifecycle.launch_pending(state.lane) {

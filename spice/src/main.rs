@@ -100,6 +100,8 @@ mod task_next_delivery;
 #[cfg(not(target_arch = "wasm32"))]
 mod taste_command;
 #[cfg(test)]
+mod test_principal;
+#[cfg(test)]
 #[expect(
     dead_code,
     reason = "the binary uses only the repository fixture operations needed by resident tests"

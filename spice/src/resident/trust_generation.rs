@@ -1183,12 +1183,15 @@ fn admitted_trust_command_as(
         expected: vec![Witness::Trust { digest, standing }],
         body: serde_json::to_value(reference).expect("trust reference encodes"),
     }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor,
-        epoch,
-        release: "1.2.3".parse().expect("fixture release"),
-    })
+    .admit(
+        &wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor,
+            epoch,
+            release: "1.2.3".parse().expect("fixture release"),
+        },
+        &wire::principal::PrincipalRoles::default(),
+    )
     .expect("fixture trust command admits")
 }
 

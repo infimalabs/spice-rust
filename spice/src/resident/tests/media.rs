@@ -65,12 +65,15 @@ fn direct_steer_send_refuses_unjournalable_content_before_mutation() {
             }],
             body: serde_json::to_value(&request).expect("steer request encodes"),
         }
-        .admit(&wire::Accepted {
-            wire: wire::WireVersion::CURRENT,
-            actor: Actor::Operator,
-            epoch,
-            release: "1.2.3".parse().expect("fixture release"),
-        })
+        .admit(
+            &wire::Accepted {
+                wire: wire::WireVersion::CURRENT,
+                actor: Actor::Operator,
+                epoch,
+                release: "1.2.3".parse().expect("fixture release"),
+            },
+            &wire::principal::PrincipalRoles::default(),
+        )
         .expect("resident content admission remains authoritative");
         let mut effects = CommandEffects::default();
         let outcome = steering::send(

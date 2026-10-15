@@ -73,7 +73,7 @@ fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_bac
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the backlog tape opens");
     tape.tee(PROSE).expect("durable prose is captured");
-    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = message_source(bus.reader(), epoch);
     let publisher = source.message_publisher();
     let residency = current_residency(&bus, epoch).expect("residency reads");
     let mut reader = message_surface::BacklogReader::indexed();
@@ -174,7 +174,7 @@ fn each_resident_generation_restores_durable_prose_before_app_subscription() {
     let observed = observations[0].at;
 
     for generation in 0..2 {
-        let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+        let source = message_source(bus.reader(), epoch);
         let publisher = source.message_publisher();
         let bus_reader = bus.reader();
         let mut reader = message_surface::BacklogReader::indexed();
@@ -266,7 +266,7 @@ fn startup_fills_the_visible_floor_across_a_sparse_tool_horizon() {
     .expect("sparse tape is accounted");
     assert!(ingest_diagnostic.is_empty());
 
-    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = message_source(bus.reader(), epoch);
     let publisher = source.message_publisher();
     let bus_reader = bus.reader();
     let mut reader = message_surface::BacklogReader::indexed();
@@ -399,7 +399,7 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the backlog tape opens");
     tape.tee(PROSE).expect("initial prose is captured");
-    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = message_source(bus.reader(), epoch);
     let publisher = source.message_publisher();
     let residency = current_residency(&bus, epoch).expect("residency reads");
     let mut reader = message_surface::BacklogReader::default();
@@ -479,7 +479,7 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
         .expect("durable history is captured");
     drop(tape);
 
-    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = message_source(bus.reader(), epoch);
     let publisher = source.message_publisher();
     let residency = current_residency(&bus, epoch).expect("residency reads");
     let mut reader = message_surface::BacklogReader::default();
@@ -619,7 +619,7 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
         "Unsafe."
     );
 
-    let live = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let live = message_source(bus.reader(), epoch);
     let publisher = live.message_publisher();
     let steering = message_surface::steering_ledger(&bus, &record)
         .expect("live steering context reads")
@@ -725,7 +725,7 @@ fn an_intent_only_acknowledgement_publishes_live_with_its_quoted_directive() {
         },
     };
 
-    let live = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let live = message_source(bus.reader(), epoch);
     let publisher = live.message_publisher();
     let steering =
         message_surface::steering_ledger(&bus, &record).expect("live steering context reads");
@@ -809,7 +809,7 @@ fn restore_mixed_acknowledgement_message(
     expected: &str,
     acknowledgement: wire::MessageAcknowledgement,
 ) {
-    let source = serve::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let source = message_source(bus.reader(), epoch);
     let publisher = source.message_publisher();
     let bus_reader = bus.reader();
     let mut reader = message_surface::BacklogReader::indexed();

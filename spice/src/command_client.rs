@@ -842,9 +842,11 @@ fn position_matches(law: ReplyPositionLaw, position: ReplyPosition) -> bool {
 fn principal_matches(principal: Principal, actor: &Actor) -> bool {
     match principal {
         Principal::Local => false,
-        Principal::Operator => matches!(actor, Actor::Operator),
+        Principal::Operator => wire::principal::ActingPrincipal::of(actor).is_some(),
         Principal::Lane => matches!(actor, Actor::Lane(_)),
-        Principal::OperatorOrLane => matches!(actor, Actor::Operator | Actor::Lane(_)),
+        Principal::OperatorOrLane => {
+            matches!(actor, Actor::Lane(_)) || wire::principal::ActingPrincipal::of(actor).is_some()
+        }
     }
 }
 

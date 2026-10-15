@@ -13,6 +13,8 @@ pub(super) struct Projection {
     cursor: Option<Seq>,
     ledger: steer::Ledger,
     operator_directives: BTreeSet<CanonicalUuid>,
+    /// The role heads deciding which newly observed sends wake a lane.
+    roles: wire::principal::PrincipalRoles,
     entries: Vec<Entry>,
     selection: board::SelectionIndex,
     heads: BTreeMap<TaskStamp, TaskHeads>,
@@ -48,6 +50,7 @@ impl Projection {
             cursor: None,
             ledger: steer::Ledger::new(),
             operator_directives: BTreeSet::new(),
+            roles: wire::principal::PrincipalRoles::default(),
             entries: Vec::new(),
             selection: board::SelectionIndex::new(&[]),
             heads: BTreeMap::new(),
@@ -63,6 +66,11 @@ impl Projection {
 
     pub(super) const fn cursor(&self) -> Option<Seq> {
         self.cursor
+    }
+
+    /// Decide wakes for sends observed from now on by these role heads.
+    pub(super) fn observe_roles(&mut self, roles: wire::principal::PrincipalRoles) {
+        self.roles = roles;
     }
 
     pub(super) fn entries(&self) -> &[Entry] {
@@ -197,7 +205,7 @@ impl Projection {
             .collect::<BTreeMap<_, _>>();
         let operator_directives = delta
             .iter()
-            .filter_map(|envelope| crate::resident::steering::operator_sent(envelope))
+            .filter_map(|envelope| crate::resident::steering::operator_sent(&self.roles, envelope))
             .collect();
         let ready_at = affected
             .into_iter()

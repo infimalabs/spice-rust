@@ -265,7 +265,7 @@ fn create_task<B: serde::Serialize>(
     if !unfiled.is_empty() {
         return unfiled_dependency_refusal(&unfiled);
     }
-    let intrinsic = operator_draft_origin(command.actor(), filing);
+    let intrinsic = operator_draft_origin(command, filing);
     let origin =
         match resolve_creation_origin(add.origin.as_ref(), command.actor(), &snapshot, intrinsic) {
             Ok(origin) => origin,
@@ -372,8 +372,11 @@ fn admit_prepared(
 /// The operator is the root authority, so a Draft it authors needs no further
 /// cause. A lane's Draft still names its directive or held parent, so drafting
 /// never mints causeless work for an agent.
-fn operator_draft_origin(actor: &Actor, filing: wire::TaskFiling) -> Option<wire::Origin> {
-    (filing.is_draft() && *actor == Actor::Operator).then(|| {
+fn operator_draft_origin(
+    command: &wire::AdmittedCommand,
+    filing: wire::TaskFiling,
+) -> Option<wire::Origin> {
+    (filing.is_draft() && command.holds(wire::principal::PrincipalRole::Operator)).then(|| {
         "operator:draft"
             .parse()
             .expect("constant origin is well formed")

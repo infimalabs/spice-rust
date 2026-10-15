@@ -27,7 +27,7 @@ async fn authenticated_socket_pages_member_history_before_the_initial_window() {
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "message history horizon", false);
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -301,7 +301,7 @@ async fn held_history_read_leaves_the_runtime_serving_other_sockets() {
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "held history horizon", false);
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -372,7 +372,7 @@ async fn one_socket_starts_lane_history_reads_concurrently() {
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
     commit_stream(&bus, "concurrent history horizon", false);
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");

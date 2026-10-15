@@ -10,7 +10,7 @@ const LOOPBACK_ORIGIN: &str = "http://127.0.0.1:48123";
 #[tokio::test(flavor = "current_thread")]
 async fn authenticated_session_routes_multiple_typed_commands_and_correlates_answers() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -42,7 +42,7 @@ async fn authenticated_session_routes_multiple_typed_commands_and_correlates_ans
 #[tokio::test(flavor = "current_thread")]
 async fn exact_capability_retirement_cancels_a_held_command_only_socket() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -125,7 +125,7 @@ async fn exact_capability_retirement_cancels_a_held_command_only_socket() {
 #[tokio::test(flavor = "current_thread")]
 async fn dark_drains_an_earlier_same_socket_response_before_closing() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -192,7 +192,7 @@ async fn dark_drains_an_earlier_same_socket_response_before_closing() {
 #[tokio::test(flavor = "current_thread")]
 async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -239,7 +239,7 @@ async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
 async fn shutdown_forces_transport_closed_when_a_session_cannot_finish_draining() {
     assert_eq!(SESSION_DRAIN_GRACE, Duration::from_secs(1));
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -267,7 +267,7 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     let app = TestApp::new();
     let lane = identity(0xd0);
     let lane_capability = identity(0xd1);
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -386,7 +386,7 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
 #[tokio::test(flavor = "current_thread")]
 async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_work() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -472,7 +472,7 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
 #[tokio::test(flavor = "current_thread")]
 async fn a_session_waiting_for_a_slot_still_delivers_the_answer_the_resident_awaits() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -534,7 +534,7 @@ async fn a_session_waiting_for_a_slot_still_delivers_the_answer_the_resident_awa
 #[tokio::test(flavor = "current_thread")]
 async fn a_saturated_ordinary_class_cannot_block_an_authenticated_demand() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -598,7 +598,7 @@ async fn a_saturated_ordinary_class_cannot_block_an_authenticated_demand() {
 #[tokio::test(flavor = "current_thread")]
 async fn priority_is_three_to_one_and_dark_waits_for_both_classes() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -739,7 +739,7 @@ async fn refuse_and_observe(
 #[tokio::test(flavor = "current_thread")]
 async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
     let app = TestApp::new();
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
@@ -897,7 +897,7 @@ fn state_reply(to: wire::ResidentState) -> wire::Outcome<wire::intent::CommandAn
 
 #[test]
 fn duplicate_capability_refuses_without_replacing_its_principal() {
-    let capabilities = Capabilities::default();
+    let capabilities = operator_capabilities();
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("first registration");

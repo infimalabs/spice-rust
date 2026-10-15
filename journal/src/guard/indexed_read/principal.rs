@@ -1,6 +1,6 @@
 //! Current human principal heads.
 
-use wire::principal::PrincipalHead;
+use wire::principal::{PrincipalHead, PrincipalRoles};
 
 use super::{GuardError, JournalHead, JournalRead, decode_head, read_metrics};
 
@@ -68,5 +68,30 @@ impl JournalRead<'_> {
         }
         heads.sort_by_key(|head| head.body.born);
         Ok(heads)
+    }
+
+    /// The role predicate over every born principal's current head.
+    pub fn principal_roles(&self) -> Result<PrincipalRoles, GuardError> {
+        Ok(PrincipalRoles::new(
+            self.principal_heads()?
+                .into_iter()
+                .map(JournalHead::into_body),
+        ))
+    }
+
+    /// Every actor spelling whose principal currently holds `role`, as one
+    /// JSON array an indexed query binds through `json_each`.
+    pub(crate) fn role_holder_spellings(
+        &self,
+        role: wire::principal::PrincipalRole,
+    ) -> Result<String, GuardError> {
+        let holders: Vec<String> = self
+            .principal_roles()?
+            .holders(role)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        serde_json::to_string(&holders)
+            .map_err(|error| GuardError::Invalid(format!("role holders encode: {error}")))
     }
 }

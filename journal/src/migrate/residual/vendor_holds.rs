@@ -244,7 +244,7 @@ impl History {
                 entry.insert(Directive {
                     lane,
                     created: seq,
-                    operator: envelope.actor == wire::Actor::Operator,
+                    operator: wire::principal::ActingPrincipal::of(&envelope.actor).is_some(),
                     live,
                 });
             }

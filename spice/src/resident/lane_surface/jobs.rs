@@ -26,7 +26,7 @@ pub(in crate::resident) fn catalog(
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
 ) -> Outcome<CommandAnswer> {
-    if command.actor() != &Actor::Operator {
+    if !command.holds(wire::principal::PrincipalRole::Operator) {
         return authority_refusal(command.actor(), "operator");
     }
     let (head, cursor) = match snapshot(bus, epoch) {
@@ -69,7 +69,7 @@ pub(in crate::resident) fn control(
     command: &wire::AdmittedCommand,
     target: &LaneJobRef,
 ) -> Outcome<CommandAnswer> {
-    if command.actor() != &Actor::Operator {
+    if !command.holds(wire::principal::PrincipalRole::Operator) {
         return authority_refusal(command.actor(), "operator");
     }
     let (head, cursor) = match snapshot(bus, epoch) {

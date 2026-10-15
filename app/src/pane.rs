@@ -86,10 +86,10 @@ impl Principal {
         self.scope
     }
 
-    /// True when this principal carries the operator capability.
+    /// True when this principal resolves to the operator's principal.
     #[must_use]
     pub const fn is_operator(&self) -> bool {
-        matches!(self.actor, Actor::Operator)
+        wire::principal::ActingPrincipal::of(&self.actor).is_some()
     }
 }
 

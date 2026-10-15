@@ -351,7 +351,7 @@ fn assess(
     actor: &Actor,
     body: RoomRelevanceAssessed,
 ) -> Result<(), Refusal> {
-    if *actor != Actor::Operator {
+    if !super::is_principal(actor) {
         return unsound(format!(
             "shadow relevance assessment is written by {actor}, not the operator"
         ));

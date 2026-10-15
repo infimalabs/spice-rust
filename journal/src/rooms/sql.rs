@@ -238,10 +238,7 @@ impl Authority for Stored<'_> {
             return Ok(None);
         };
         let head = wire::decode::<wire::SteeringHead>(&body)?;
-        Ok(
-            (creator == wire::Actor::Operator.to_string() && head.fanout.is_some())
-                .then_some(head.lane),
-        )
+        Ok((super::acts_as_principal(&creator) && head.fanout.is_some()).then_some(head.lane))
     }
 
     fn set_operator_direction(&mut self, key: &str, lane: CanonicalUuid) {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::roles::operator_book;
 use bus::{Bus, CommitOutcome, JournalCommit};
 use journal::{FactCause, Journal, JournalWrite};
 use wire::{Actor, Domain, Producer, StreamCursor, StreamFact, TrustHead, TrustState, body};
@@ -219,7 +220,7 @@ fn fact_sequences(delivery: &LiveDelivery) -> Vec<Seq> {
 #[test]
 fn packed_subscription_continues_exactly_then_becomes_live() {
     let bus = fixture(5);
-    let source = Source::new(bus.reader(), epoch(), 2, presenter());
+    let source = Source::new(bus.reader(), epoch(), 2, presenter(), operator_book());
     let (mut subscription, frames) = source
         .begin(
             &accepted(Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"))),
@@ -283,7 +284,7 @@ fn packed_subscription_continues_exactly_then_becomes_live() {
 #[test]
 fn fresh_operator_fact_subscription_begins_live_without_history() {
     let bus = fixture(5);
-    let source = Source::new(bus.reader(), epoch(), 2, presenter());
+    let source = Source::new(bus.reader(), epoch(), 2, presenter(), operator_book());
     let (subscription, frames) = source
         .begin(
             &accepted(Actor::Operator),
@@ -303,7 +304,7 @@ fn fresh_operator_fact_subscription_begins_live_without_history() {
 #[test]
 fn reconnect_is_strictly_after_the_admitted_fact_cursor() {
     let bus = fixture(5);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let (subscription, frames) = source
         .begin(
             &accepted(Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"))),
@@ -327,7 +328,7 @@ fn reconnect_is_strictly_after_the_admitted_fact_cursor() {
 #[test]
 fn operator_reconnect_begins_live_instead_of_draining_missed_history() {
     let bus = fixture(5);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let (subscription, frames) = source
         .begin(
             &accepted(Actor::Operator),
@@ -478,7 +479,7 @@ fn operator_room_snapshot_meets_live_facts_at_one_horizon() {
     let bus = fixture(2);
     let first = commit_group(&bus, "dVsYdDj7d", "dVsYdDj70");
     let second = commit_post(&bus, "dVsYdDj70", "dVsYdDj7f");
-    let source = Source::new(bus.reader(), epoch(), 1, presenter());
+    let source = Source::new(bus.reader(), epoch(), 1, presenter(), operator_book());
     let (mut subscription, frames) = source
         .begin(
             &accepted(Actor::Operator),
@@ -542,7 +543,7 @@ fn operator_room_snapshot_meets_live_facts_at_one_horizon() {
 #[tokio::test(flavor = "current_thread")]
 async fn durable_broadcast_drives_later_updates_without_refresh() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -577,7 +578,7 @@ async fn durable_broadcast_drives_later_updates_without_refresh() {
 #[tokio::test(flavor = "current_thread")]
 async fn transcript_ingestion_advances_live_cursor_without_crossing_app() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -608,7 +609,7 @@ async fn transcript_ingestion_advances_live_cursor_without_crossing_app() {
 #[tokio::test(flavor = "current_thread")]
 async fn one_large_commit_delivers_one_indexed_fact_quantum_per_turn() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 3, presenter());
+    let source = Source::new(bus.reader(), epoch(), 3, presenter(), operator_book());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -673,7 +674,7 @@ async fn one_large_commit_delivers_one_indexed_fact_quantum_per_turn() {
 #[tokio::test(flavor = "current_thread")]
 async fn queued_commits_coalesce_to_the_newest_barrier_without_duplicates() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 2, presenter());
+    let source = Source::new(bus.reader(), epoch(), 2, presenter(), operator_book());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -735,7 +736,7 @@ async fn queued_commits_coalesce_to_the_newest_barrier_without_duplicates() {
 #[tokio::test(flavor = "current_thread")]
 async fn broadcast_lag_during_catch_up_resumes_after_the_last_admitted_quantum() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 3, presenter());
+    let source = Source::new(bus.reader(), epoch(), 3, presenter(), operator_book());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -780,7 +781,7 @@ async fn broadcast_lag_during_catch_up_resumes_after_the_last_admitted_quantum()
 #[tokio::test(flavor = "current_thread")]
 async fn live_trust_overflow_retains_its_snapshot_for_exact_continuation() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 2, presenter());
+    let source = Source::new(bus.reader(), epoch(), 2, presenter(), operator_book());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -843,7 +844,7 @@ async fn live_trust_overflow_retains_its_snapshot_for_exact_continuation() {
 #[test]
 fn lane_principal_never_admits_operator_only_subjects() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book());
     let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
     for subject in [
         ViewSubject::Trust,
@@ -871,7 +872,8 @@ fn lane_principal_never_admits_operator_only_subjects() {
 async fn quota_subscription_hydrates_replaces_reconnects_and_exposes_lag() {
     let bus = fixture(1);
     let feed = QuotaFeed::new(quota_generation(3));
-    let source = Source::new(bus.reader(), epoch(), 10, presenter()).with_quota(feed.clone());
+    let source = Source::new(bus.reader(), epoch(), 10, presenter(), operator_book())
+        .with_quota(feed.clone());
     let mut updates = source.subscribe_quota().expect("quota source subscribes");
     let (mut subscription, initial) = source
         .begin(
@@ -934,7 +936,7 @@ fn quota_generation(generation: u64) -> wire::QuotaGeneration {
 #[test]
 fn thread_request_walks_one_indexed_barrier_and_names_continuation() {
     let bus = fixture(5);
-    let source = Source::new(bus.reader(), epoch(), 2, presenter());
+    let source = Source::new(bus.reader(), epoch(), 2, presenter(), operator_book());
     let request = StreamRequest::Thread {
         v: WireVersion::CURRENT,
         id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),

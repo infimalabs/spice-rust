@@ -59,6 +59,7 @@ fn completed_ack_is_visible_before_settlement_and_survives_both_settled_shapes()
             identity(0xc3),
             8,
             serve::stream::QuotePresenter::new(|_| Vec::new()),
+            serve::RoleBook::default(),
         );
         let publisher = source.message_publisher();
         let mut updates = source.subscribe_messages();

@@ -111,16 +111,17 @@ impl MessageDirective {
         let (Ok(start), Ok(end)) = (usize::try_from(self.start), usize::try_from(self.end)) else {
             return false;
         };
+        let human = crate::principal::ActingPrincipal::of(&self.actor).is_some();
         start < end
             && text.get(start..end).is_some()
             && matches!(&self.quote_target, QuoteTarget::Steering { .. })
             && (self.recipient.is_none()
                 || (self.sender.is_some() && matches!(self.actor, crate::Actor::Lane(_)))
-                || (self.packet.is_some() && matches!(self.actor, crate::Actor::Operator)))
+                || (self.packet.is_some() && human))
             && (self.result.is_some() == (self.packet == Some(MessageSendKind::Ans)))
             && self.delivery.as_ref().is_none_or(|delivery| {
                 !delivery.receivers.is_empty()
-                    && matches!(self.actor, crate::Actor::Operator)
+                    && human
                     && self.sender.is_none()
                     && self.recipient.is_none()
                     && self.packet.is_none()

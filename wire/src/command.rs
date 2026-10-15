@@ -5,6 +5,8 @@
 //! exhaustive matches over [`CommandKind`], so a new command that does not
 //! carry an explicit registry row does not compile.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 mod kind;
@@ -13,6 +15,7 @@ use crate::envelope::{Actor, WireVersion};
 use crate::hello::Accepted;
 use crate::ident::CanonicalUuid;
 use crate::intent::{CommandAnswer, Intent};
+use crate::principal::{PrincipalRole, PrincipalRoles};
 use crate::reply::{Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Response};
 use crate::witness::{Witness, WitnessKind};
 mod law;
@@ -265,6 +268,7 @@ pub struct AdmittedCommand {
     id: CanonicalUuid,
     epoch: CanonicalUuid,
     actor: Actor,
+    roles: BTreeSet<PrincipalRole>,
     kind: CommandKind,
     expected: Vec<Witness>,
     body: Intent,
@@ -288,6 +292,13 @@ impl AdmittedCommand {
     #[must_use]
     pub const fn actor(&self) -> &Actor {
         &self.actor
+    }
+
+    /// Whether the principal this command's actor acts as held `role` when
+    /// the command was admitted. A lane or the resident holds none.
+    #[must_use]
+    pub fn holds(&self, role: PrincipalRole) -> bool {
+        self.roles.contains(&role)
     }
 
     /// Closed command discriminant selecting this body's law and answer.
@@ -430,20 +441,28 @@ impl<B> Command<B> {
 }
 
 impl Command<serde_json::Value> {
-    /// Admit a crossing command under one authenticated socket acceptance.
+    /// Admit a crossing command under one authenticated socket acceptance
+    /// and the principal roles current when it arrives.
     ///
     /// Wire and epoch checks run before command law and body admission. The
     /// actor comes only from `accepted`; no caller-authored principal exists
-    /// in [`Command`]. A successful result therefore carries a current
-    /// generation, an authorized principal, exact admitted witnesses, and the
-    /// body shape selected by its kind.
+    /// in [`Command`]. Authority is decided by `roles` alone: an operator
+    /// command needs an actor whose principal holds the operator role, and a
+    /// connected command needs a lane or an actor acting as a born principal.
+    /// A successful result therefore carries a current generation, an
+    /// authorized principal and the roles it held, exact admitted witnesses,
+    /// and the body shape selected by its kind.
     ///
     /// # Errors
     ///
     /// Returns a refusal for stale wire versions, insufficient authority, or
     /// witness-law violations. Returns a protocol fault for a stale resident
     /// epoch or a malformed kind-selected body.
-    pub fn admit(self, accepted: &Accepted) -> Result<AdmittedCommand, CommandRejection> {
+    pub fn admit(
+        self,
+        accepted: &Accepted,
+        roles: &PrincipalRoles,
+    ) -> Result<AdmittedCommand, CommandRejection> {
         if !self.v.is_current() {
             return Err(CommandRejection::Refusal(Refusal::bare(
                 RefusalDiagnostic::new(
@@ -465,9 +484,12 @@ impl Command<serde_json::Value> {
             }));
         }
         let law = self.kind.law();
+        let held = roles.roles(&accepted.actor);
         let authorized = match law.authority {
-            Authority::Connected => matches!(accepted.actor, Actor::Operator | Actor::Lane(_)),
-            Authority::Operator => matches!(accepted.actor, Actor::Operator),
+            Authority::Connected => matches!(accepted.actor, Actor::Lane(_)) || held.is_some(),
+            Authority::Operator => held
+                .as_ref()
+                .is_some_and(|held| held.contains(&PrincipalRole::Operator)),
         };
         if !authorized {
             let expected = match law.authority {
@@ -521,6 +543,7 @@ impl Command<serde_json::Value> {
             id: self.id,
             epoch: self.epoch,
             actor: accepted.actor.clone(),
+            roles: held.unwrap_or_default(),
             kind: self.kind,
             expected: self.expected,
             body,

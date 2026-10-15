@@ -131,8 +131,11 @@ pub(in crate::resident) fn settle_pending_presentations(
     }
     let reader = bus.reader();
     let directives = load_steering_presentations(&reader, &pending.keys()).and_then(|rows| {
-        let mut directives = PresentationDirectives::from_presentations(&rows)
-            .map_err(|error| store_fault("serve::message-steering-invalid", &error))?;
+        let mut directives = PresentationDirectives::from_presentations(
+            &rows,
+            super::load_principal_roles(&reader)?,
+        )
+        .map_err(|error| store_fault("serve::message-steering-invalid", &error))?;
         directives.prove_recipients(&reader, pending.addresses())?;
         Ok(directives)
     });

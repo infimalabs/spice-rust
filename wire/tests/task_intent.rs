@@ -77,6 +77,7 @@ fn intent_edits_bind_their_statement_witness_to_the_edited_task() {
         epoch,
         release: "1.2.3".parse().expect("fixture release"),
     };
+    let roles = wire::principal::PrincipalRoles::default();
     let edit = wire::intent::TaskEdit {
         task,
         title: None,
@@ -107,8 +108,8 @@ fn intent_edits_bind_their_statement_witness_to_the_edited_task() {
 
     let foreign: wire::TaskStamp = "1kKRRsDQ".parse().expect("foreign task stamp");
     assert!(matches!(
-        command(foreign).admit(&accepted),
+        command(foreign).admit(&accepted, &roles),
         Err(CommandRejection::Refusal(ref refusal)) if refusal.reason() == "command::witness-law"
     ));
-    assert!(command(born).admit(&accepted).is_ok());
+    assert!(command(born).admit(&accepted, &roles).is_ok());
 }
