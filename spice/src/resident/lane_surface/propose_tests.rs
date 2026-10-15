@@ -172,6 +172,125 @@ fn startup_seating_carries_claim_without_an_observable_epoch_gap() {
     bus.shutdown().expect("fixture bus stops");
 }
 
+#[test]
+fn seating_appends_the_lane_without_reordering_teams_or_members() {
+    let epoch = uuid(60);
+    let lead = uuid(50);
+    let joiner = uuid(40);
+    let lone = uuid(30);
+    let seated = uuid(10);
+    let row = |lane: CanonicalUuid, team: CanonicalUuid| wire::LaneResidency {
+        lane,
+        team,
+        name: None,
+        worktree: format!("/worktrees/{lane}"),
+        life: "drive".to_owned(),
+        vendor: "omp".parse().expect("fixture vendor"),
+        model: None,
+        effort: None,
+        fast_mode: false,
+        occupant: None,
+        lineage: Vec::new(),
+        capabilities: vec![lane],
+        session: None,
+        disposition: VACANT.to_owned(),
+    };
+    let subscription = |team: CanonicalUuid| wire::TeamSubscription {
+        team,
+        policy: TeamLife::Drive,
+        fast_mode: false,
+    };
+    let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
+        .expect("fixture bus starts");
+    let mut resident = JournalWrite::new(
+        Actor::Spice,
+        format!("resident:{epoch}")
+            .parse()
+            .expect("resident origin"),
+        wire::Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical"),
+        Producer::CommandDoor,
+    );
+    let up = resident
+        .fact(wire::body::UpSeated { epoch }, FactCause::Root)
+        .expect("resident fact builds");
+    let lanes = vec![row(lead, lead), row(joiner, lead), row(lone, lone)];
+    resident.residency_head(up, move |_| wire::ResidencyHead {
+        epoch,
+        state: wire::ResidentState::Seated,
+        topology_revision: 1,
+        lanes,
+        subscriptions: vec![subscription(lone), subscription(lead)],
+        renewals: Vec::new(),
+    });
+    assert!(matches!(
+        bus.commit(resident).expect("fixture residency commits"),
+        bus::CommitOutcome::Committed(_)
+    ));
+    let observed = bus
+        .task_snapshot()
+        .expect("residency reads")
+        .residency()
+        .expect("residency is seated")
+        .clone();
+    let request = LaneSeat {
+        topology_revision: 1,
+        lane: seated,
+        team: seated,
+        name: None,
+        worktree: "/worktrees/seated".to_owned(),
+        life: "drive".to_owned(),
+        vendor: "omp".parse().expect("fixture vendor"),
+        model: None,
+        effort: None,
+        resume: None,
+    };
+    let command = wire::Command {
+        v: wire::WireVersion::CURRENT,
+        id: uuid(70),
+        epoch,
+        kind: wire::CommandKind::LaneSeat,
+        expected: Vec::new(),
+        body: serde_json::to_value(&request).expect("lane seat body encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+        release: "1.2.3".parse().expect("fixture release"),
+    })
+    .expect("operator lane seat admits");
+    let answer = LaneChangeAnswer {
+        lane: seated,
+        topology_revision: 2,
+        from: "absent".to_owned(),
+        to: VACANT.to_owned(),
+        git: None,
+        rtk: None,
+    };
+    let proposal = propose_seat(&command, &request, &observed, epoch, uuid(71), answer)
+        .expect("seat proposes");
+    assert!(matches!(
+        bus.commit(proposal).expect("seat commits"),
+        bus::CommitOutcome::Committed(_)
+    ));
+
+    let head = bus.task_snapshot().expect("residency reads");
+    let placed = head
+        .residency()
+        .expect("residency remains")
+        .body()
+        .lanes
+        .iter()
+        .map(|row| (row.lane, row.team))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        placed,
+        vec![(lead, lead), (joiner, lead), (lone, lone), (seated, seated)],
+        "a seat whose lane id sorts first still stands after every existing row"
+    );
+    bus.shutdown().expect("fixture bus stops");
+}
+
 /// Record the occupant's one launch birth beneath the generation it started in.
 pub(in crate::resident) fn seed_birth(
     bus: &Bus,
