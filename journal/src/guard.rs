@@ -617,6 +617,11 @@ impl JournalWrite {
         self.facts.push(ProposedFact { fact, cause });
         Ok(pending)
     }
+    /// Commit instant shared by every fact and head in this proposal.
+    #[must_use]
+    pub const fn at(&self) -> wire::Instant {
+        self.at
+    }
 
     /// Bound the largest proposed envelope before entering the commit door.
     ///

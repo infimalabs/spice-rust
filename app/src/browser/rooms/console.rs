@@ -54,6 +54,14 @@ struct Channel {
     accent: usize,
     label: String,
 }
+fn group_console(groups: &[wire::rooms::WorkingGroup], group: &RoomAuthorityStamp) -> usize {
+    groups
+        .iter()
+        .filter(|candidate| {
+            (candidate.group.micros(), candidate.group.as_str()) < (group.micros(), group.as_str())
+        })
+        .count()
+}
 
 /// Every opened group console, in this browser's order, as fleet surfaces.
 pub(in crate::browser) fn render_group_surfaces(render: &GroupRender<'_, '_>) -> Html {
@@ -72,31 +80,34 @@ pub(in crate::browser) fn render_group_surfaces(render: &GroupRender<'_, '_>) ->
 fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) -> Html {
     let projection = render.runtime.room_projection();
     let loaded = projection.status() == RoomProjectionStatus::Available;
-    // The durable partition order, never this browser's console order, deals
-    // the group's base, so opening or arranging consoles here recolours none.
+    // Formation age, never partition or browser-console order, deals the
+    // group's base. A partition move therefore recolours nothing.
     let authoritative = projection
         .partition()
         .groups
         .iter()
-        .enumerate()
-        .find(|(_, group)| group.group == view.group);
+        .find(|group| group.group == view.group);
     // Absence is shown only once a completed snapshot lacks the group; while
     // authority reloads, the console keeps its last name and its geometry.
     let absent = loaded && authoritative.is_none();
-    let base = authoritative.map(|(console, _)| watchband::group_accent(console, 0));
-    let channels = authoritative.map_or_else(Vec::new, |(console, group)| {
+    let console =
+        authoritative.map(|group| group_console(&projection.partition().groups, &group.group));
+    let base = console.map(|console| watchband::group_accent(console, 0));
+    let channels = authoritative.map_or_else(Vec::new, |group| {
         group
             .anchors
             .iter()
             .enumerate()
             .map(|(position, stamp)| Channel {
                 stamp: stamp.clone(),
-                accent: watchband::group_accent(console, position),
+                accent: watchband::group_accent(
+                    console.expect("an authoritative group has a formation rank"),
+                    position,
+                ),
                 label: anchor_label(render.runtime, stamp),
             })
             .collect::<Vec<_>>()
     });
-    let authoritative = authoritative.map(|(_, group)| group);
     let name = group_name(render.runtime, render.controls, view, authoritative, absent);
     let slot = render.controls.slots.slot(view.group.clone());
     let cards = plane_cards(render, &view.group, &channels);
@@ -840,4 +851,30 @@ fn composer_holds(key: &str, posted: &crate::composer_drafts::ComposerDraft) -> 
                     && value(&quote_textarea_id(key, &quote.identity)).as_deref()
                         == Some(quote.body.as_str())
             })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_console_rank_follows_identity_age_instead_of_partition_order() {
+        let older =
+            RoomAuthorityStamp::for_micros(1_700_000_000_000_000).expect("older fixture group");
+        let younger =
+            RoomAuthorityStamp::for_micros(1_700_000_000_001_000).expect("younger fixture group");
+        let groups = [
+            wire::rooms::WorkingGroup {
+                group: younger.clone(),
+                anchors: Vec::new(),
+            },
+            wire::rooms::WorkingGroup {
+                group: older.clone(),
+                anchors: Vec::new(),
+            },
+        ];
+
+        assert_eq!(group_console(&groups, &older), 0);
+        assert_eq!(group_console(&groups, &younger), 1);
+    }
 }

@@ -288,6 +288,7 @@ fn seed_vacant_lane_with_lineage(
         lanes: vec![durable],
         subscriptions: vec![wire::TeamSubscription {
             team: lane,
+            formed_at: None,
             policy: wire::intent::TeamLife::Drive,
             fast_mode: false,
         }],

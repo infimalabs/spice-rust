@@ -104,10 +104,6 @@ pub(in crate::resident) fn configure(
         Err(outcome) => return typed_outcome(outcome),
     };
     let flips = super::retune::fast_flips(observed.body(), &next, global_fast);
-    let lane_answer = match answer(&next, None, seats, paths) {
-        Ok(answer) => answer,
-        Err(outcome) => return typed_outcome(outcome),
-    };
     // A policy-only change crosses no lane boundary, so an empty read is authoritative.
     let moved: Vec<_> = membership.iter().map(|change| change.member).collect();
     let sources = match bus.lane_source_boundaries(&moved) {
@@ -116,6 +112,19 @@ pub(in crate::resident) fn configure(
             return typed_store_fault("team::boundary-unreadable", &error.to_string());
         }
     };
+    let write = match write(
+        command.actor().clone(),
+        epoch,
+        Producer::ResidentRecognition,
+    ) {
+        Ok(write) => write,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    reconcile_formations(observed.body(), &mut next, write.at());
+    let lane_answer = match answer(&next, None, seats, paths) {
+        Ok(answer) => answer,
+        Err(outcome) => return typed_outcome(outcome),
+    };
     commit_configured(
         bus,
         epoch,
@@ -123,6 +132,7 @@ pub(in crate::resident) fn configure(
         request,
         effects,
         &observed,
+        write,
         ConfiguredTeam {
             membership,
             previous,
@@ -143,16 +153,9 @@ fn commit_configured(
     request: &TeamConfigure,
     effects: &mut CommandEffects,
     observed: &journal::JournalHead<wire::ResidencyHead>,
+    mut write: journal::JournalWrite,
     configured: ConfiguredTeam,
 ) -> Outcome<CommandAnswer> {
-    let mut write = match write(
-        command.actor().clone(),
-        epoch,
-        Producer::ResidentRecognition,
-    ) {
-        Ok(write) => write,
-        Err(outcome) => return typed_outcome(outcome),
-    };
     guard_residency(&mut write, observed);
     let fact = match write.fact(
         wire::body::TeamConfigured {
@@ -237,6 +240,40 @@ fn previous_subscription(
             "a current team has no task-allocation lifetime",
         )),
         Err(outcome) => Err(typed_outcome(outcome)),
+    }
+}
+
+/// Preserve a team's first multi-member instant, mint it on a singleton-to-team
+/// crossing, and clear it when the identity becomes a lone seat.
+pub(super) fn reconcile_formations(
+    observed: &wire::ResidencyHead,
+    next: &mut wire::ResidencyHead,
+    at: wire::Instant,
+) {
+    for subscription in &mut next.subscriptions {
+        let members = next
+            .lanes
+            .iter()
+            .filter(|row| row.team == subscription.team)
+            .count();
+        subscription.formed_at = if members < 2 {
+            None
+        } else {
+            let existing = observed
+                .lanes
+                .iter()
+                .filter(|row| row.team == subscription.team)
+                .count();
+            if existing < 2 {
+                Some(at)
+            } else {
+                observed
+                    .subscriptions
+                    .iter()
+                    .find(|current| current.team == subscription.team)
+                    .and_then(|current| current.formed_at)
+            }
+        };
     }
 }
 
@@ -615,7 +652,7 @@ pub(in crate::resident) fn arrange(
         Ok(current) => standings(&current),
         Err(outcome) => return outcome,
     };
-    let next = match arranged_head(observed.body(), &arranged, topology_revision) {
+    let mut next = match arranged_head(observed.body(), &arranged, topology_revision) {
         Ok(next) => next,
         Err(outcome) => return outcome,
     };
@@ -625,10 +662,6 @@ pub(in crate::resident) fn arrange(
     };
     let flips = super::retune::fast_flips(observed.body(), &next, global_fast);
     let teams = standings(&arranged.partition);
-    let lane_answer = match answer(&next, None, seats, paths) {
-        Ok(answer) => answer,
-        Err(outcome) => return typed_outcome(outcome),
-    };
     let sources = match bus.lane_source_boundaries(&moved_lanes(&from, &teams)) {
         Ok(sources) => sources,
         Err(error) => {
@@ -641,6 +674,11 @@ pub(in crate::resident) fn arrange(
         Producer::ResidentRecognition,
     ) {
         Ok(write) => write,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    reconcile_formations(observed.body(), &mut next, write.at());
+    let lane_answer = match answer(&next, None, seats, paths) {
+        Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
     guard_residency(&mut write, &observed);

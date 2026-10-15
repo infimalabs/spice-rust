@@ -785,6 +785,7 @@ fn seed_write_seated(
         }],
         subscriptions: vec![wire::TeamSubscription {
             team,
+            formed_at: None,
             policy,
             fast_mode: false,
         }],

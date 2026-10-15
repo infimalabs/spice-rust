@@ -470,11 +470,17 @@ fn startup_admits_only_one_ordered_subscription_per_resident_team() {
     let current = vec![
         wire::TeamSubscription {
             team,
+            formed_at: Some(
+                "2030-04-12T18:44:09.271Z"
+                    .parse()
+                    .expect("fixture formation instant"),
+            ),
             policy: wire::intent::TeamLife::Drive,
             fast_mode: false,
         },
         wire::TeamSubscription {
             team: sibling,
+            formed_at: None,
             policy: wire::intent::TeamLife::Steer,
             fast_mode: true,
         },

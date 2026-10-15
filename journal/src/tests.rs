@@ -969,6 +969,7 @@ fn residency_head() -> ResidencyHead {
         }],
         subscriptions: vec![wire::TeamSubscription {
             team: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
+            formed_at: None,
             policy: wire::intent::TeamLife::Drive,
             fast_mode: false,
         }],

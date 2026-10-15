@@ -1225,6 +1225,7 @@ fn attach_heads(
         .iter()
         .map(|lane| wire::TeamSubscription {
             team: lane.team,
+            formed_at: None,
             policy: wire::intent::TeamLife::Drive,
             fast_mode: false,
         })

@@ -833,6 +833,7 @@ pub(super) fn read_board(
 pub(super) fn board_offer(entries: &[Entry], answer: &BoardAnswer) -> Vec<wire::TaskStamp> {
     let subscription = wire::TeamSubscription {
         team: wire::CanonicalUuid::new(uuid::Uuid::nil()),
+        formed_at: None,
         policy: wire::intent::TeamLife::Drain,
         fast_mode: false,
     };

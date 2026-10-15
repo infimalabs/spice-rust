@@ -317,6 +317,7 @@ fn seed_two_lanes(bus: &Bus, fixture: &LaunchFixture) {
     };
     let subscription = |team| wire::TeamSubscription {
         team,
+        formed_at: None,
         policy: wire::intent::TeamLife::Drive,
         fast_mode: false,
     };

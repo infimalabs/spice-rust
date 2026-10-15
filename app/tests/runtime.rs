@@ -405,11 +405,22 @@ fn lane_response_with_renewals(
     let subscriptions = rows
         .iter()
         .map(|(_, team, _, _)| {
+            let formed_at = (rows
+                .iter()
+                .filter(|(_, candidate, _, _)| candidate == team)
+                .count()
+                > 1)
+            .then(|| {
+                "2030-04-12T18:44:09.271Z"
+                    .parse()
+                    .expect("fixture formation instant")
+            });
             let team = uuid(team);
             (
                 team,
                 wire::TeamSubscription {
                     team,
+                    formed_at,
                     policy: wire::intent::TeamLife::Steer,
                     fast_mode: false,
                 },

@@ -82,8 +82,8 @@ pub struct LaneRow {
     pub fast_mode: bool,
     /// Members in canonical resident seat order.
     pub members: Vec<LaneMember>,
-    /// This team's place among the teams, in the resident's durable team
-    /// order, which decides its base accent; a lone seat stands in no console.
+    /// This team's rank by durable formation instant, which decides its base
+    /// accent; a lone seat stands in no console.
     pub console: Option<usize>,
 }
 
@@ -235,6 +235,27 @@ impl LaneRow {
     }
 }
 
+fn deal_team_consoles(
+    teams: &mut [LaneRow],
+    subscriptions: &BTreeMap<CanonicalUuid, &wire::TeamSubscription>,
+) {
+    let mut ranked = teams
+        .iter()
+        .enumerate()
+        .filter(|(_, team)| team.teamed())
+        .map(|(index, team)| {
+            let formed_at = subscriptions[&team.lane]
+                .formed_at
+                .expect("an admitted team names its formation instant");
+            (formed_at, team.lane, index)
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_unstable();
+    for (console, (_, _, index)) in ranked.into_iter().enumerate() {
+        teams[index].console = Some(console);
+    }
+}
+
 impl From<&LaneAnswer> for LaneView {
     fn from(answer: &LaneAnswer) -> Self {
         let mut subscriptions = BTreeMap::new();
@@ -296,9 +317,7 @@ impl From<&LaneAnswer> for LaneView {
             teams.len(),
             "an admitted lane answer names no orphan team policy"
         );
-        for (console, team) in teams.iter_mut().filter(|team| team.teamed()).enumerate() {
-            team.console = Some(console);
-        }
+        deal_team_consoles(&mut teams, &subscriptions);
         Self {
             epoch: answer.epoch,
             state: answer.state,
@@ -350,6 +369,57 @@ mod tests {
         assert_eq!(view.chat_target_for_team(independent), None);
         assert_eq!(view.chat_target_for_lane(uuid(6)), None);
         assert_eq!(view.chat_target_for_team(uuid(6)), None);
+    }
+
+    #[test]
+    fn team_console_order_follows_formation_instead_of_lane_order() {
+        let older = uuid(1);
+        let younger = uuid(2);
+        let mut subscriptions = BTreeMap::new();
+        let older_subscription = wire::TeamSubscription {
+            team: older,
+            formed_at: Some(
+                "2030-04-12T18:44:09.271Z"
+                    .parse()
+                    .expect("older formation instant"),
+            ),
+            policy: wire::intent::TeamLife::Drive,
+            fast_mode: false,
+        };
+        let younger_subscription = wire::TeamSubscription {
+            team: younger,
+            formed_at: Some(
+                "2030-04-12T18:44:10.271Z"
+                    .parse()
+                    .expect("younger formation instant"),
+            ),
+            policy: wire::intent::TeamLife::Drive,
+            fast_mode: false,
+        };
+        subscriptions.insert(older, &older_subscription);
+        subscriptions.insert(younger, &younger_subscription);
+        let mut teams = [
+            LaneRow {
+                lane: younger,
+                subscription: wire::intent::TeamLife::Drive,
+                fast_mode: false,
+                members: vec![member(uuid(3)), member(uuid(4))],
+                console: None,
+            },
+            LaneRow {
+                lane: older,
+                subscription: wire::intent::TeamLife::Drive,
+                fast_mode: false,
+                members: vec![member(uuid(5)), member(uuid(6))],
+                console: None,
+            },
+        ];
+
+        deal_team_consoles(&mut teams, &subscriptions);
+        assert_eq!(
+            teams.iter().map(|team| team.console).collect::<Vec<_>>(),
+            [Some(1), Some(0)]
+        );
     }
 
     fn member(lane: CanonicalUuid) -> LaneMember {
