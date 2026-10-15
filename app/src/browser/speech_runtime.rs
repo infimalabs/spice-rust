@@ -12,14 +12,13 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
-use super::watchband::TeamSpeech;
 use super::{SurfaceData, toast};
 use crate::AppRuntime;
 use crate::runtime::LaneRow;
 use crate::speech::{SystemObservers, SystemStart, VoiceRequest};
 use crate::speech_queue::{
-    Advance, AutomaticChange, Enqueue, NarrationCursorRow, NarrationCursors, NarrationMessage,
-    SpeechEntry, SpeechOwner, SpeechQueue, SpeechRequest,
+    Advance, AutomaticChange, Enqueue, LaneSpeech, NarrationCursorRow, NarrationCursors,
+    NarrationMessage, SpeechEntry, SpeechMode, SpeechOwner, SpeechQueue, SpeechRequest,
 };
 use wire::CanonicalUuid;
 
@@ -43,7 +42,7 @@ pub(super) enum SpeechStatus {
 pub(super) struct NarrationBatch {
     pub(super) team: String,
     pub(super) materialization: bool,
-    pub(super) mode: TeamSpeech,
+    pub(super) mode: LaneSpeech,
     pub(super) messages: Vec<NarrationMessage>,
 }
 
@@ -425,7 +424,7 @@ fn narration_callback(
     set_automatic: Callback<(String, bool)>,
 ) -> Callback<NarrationBatch> {
     Callback::from(move |batch: NarrationBatch| {
-        set_automatic.emit((batch.team.clone(), batch.mode != TeamSpeech::Quiet));
+        set_automatic.emit((batch.team.clone(), batch.mode.admits(batch.mode.team())));
         let lines = {
             let mut cursors = cursors.borrow_mut();
             let lines = cursors.observe(batch.materialization, &batch.messages);
@@ -433,10 +432,10 @@ fn narration_callback(
             lines
         };
         for line in lines {
-            let text = match batch.mode {
-                TeamSpeech::Quiet => None,
-                TeamSpeech::Speak => line.automatic_speech,
-                TeamSpeech::Narrate => line.narration,
+            let text = match batch.mode.lane(&line.lane) {
+                SpeechMode::Quiet => None,
+                SpeechMode::Speak => line.automatic_speech,
+                SpeechMode::Narrate => line.narration,
             };
             if let Some(text) = text {
                 speak.emit(SpeechRequest::narration(

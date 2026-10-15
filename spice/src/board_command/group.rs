@@ -3,8 +3,8 @@ use super::*;
 use wire::grouping::{Destination, Group, GroupingError, Partition, Placement, RevisionError};
 use wire::intent::{
     DesignStanding, WorkingGroupAnchor, WorkingGroupArrange, WorkingGroupChange,
-    WorkingGroupChangeStatus, WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
-    WorkingGroupView,
+    WorkingGroupChangeStatus, WorkingGroupFast, WorkingGroupMove, WorkingGroupPage,
+    WorkingGroupRead, WorkingGroupView,
 };
 use wire::rooms::{
     RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupMoved,
@@ -267,7 +267,7 @@ fn moved_fact(
         design: request.design.clone(),
         from: moved.from.cloned(),
         to: moved.to.cloned(),
-        partition: stated(&next, revision),
+        partition: stated(&next, revision, current),
     };
     let status = if ended {
         WorkingGroupChangeStatus::Ended
@@ -309,7 +309,7 @@ pub(super) fn arrange_working_groups(
         Err(error) => return arrangement_refusal(error),
     };
     let fact = WorkingGroupsArranged {
-        partition: stated(&arranged.partition, revision),
+        partition: stated(&arranged.partition, revision, &current),
         from: current.clone(),
     };
     change_partition(
@@ -327,6 +327,90 @@ pub(super) fn arrange_working_groups(
         },
         request.clone(),
     )
+}
+
+/// Turn one standing group's fast-mode flag on or off: the whole partition
+/// restated with only that flag changed.
+pub(super) fn set_working_group_fast(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    request: &WorkingGroupFast,
+) -> Outcome<CommandAnswer> {
+    let current = match bus.read(|read| current_partition(read)) {
+        Ok(current) => current,
+        Err(error) => return store_fault("group::read-unavailable", &error.to_string()),
+    };
+    let revision = match next_revision(command, current.revision) {
+        Ok(revision) => revision,
+        Err(outcome) => return outcome,
+    };
+    if !current
+        .groups
+        .iter()
+        .any(|group| group.group == request.group)
+    {
+        return refusal(
+            "group::missing",
+            Some(request.group.to_string()),
+            "the working group no longer stands; read the working groups and retry",
+        );
+    }
+    let mut partition = current.clone();
+    partition.revision = revision;
+    if !partition.set_fast(&request.group, request.fast_mode) {
+        return refusal(
+            "group::fast-unchanged",
+            Some(request.fast_mode.to_string()),
+            "the group's fast mode already stands there",
+        );
+    }
+    let fact = WorkingGroupsArranged {
+        from: current,
+        partition,
+    };
+    change_partition(
+        bus,
+        command,
+        working_group_origin(),
+        revision,
+        WorkingGroupChangeStatus::Retuned,
+        Vec::new(),
+        |write, _| {
+            write
+                .fact(fact, FactCause::Root)
+                .map(drop)
+                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))
+        },
+        request.clone(),
+    )
+}
+
+/// Lanes a fast-flagged working group runs fast: each holder of an active
+/// claim on one of its Design tasks.
+pub(crate) fn group_fast_lanes(
+    read: &JournalRead<'_>,
+) -> Result<std::collections::BTreeSet<wire::CanonicalUuid>, GuardError> {
+    let partition = current_partition(read)?;
+    let mut lanes = std::collections::BTreeSet::new();
+    for group in &partition.groups {
+        if !partition.is_fast(&group.group) {
+            continue;
+        }
+        for born in &group.anchors {
+            let design = read
+                .task_head(born)?
+                .is_some_and(|task| task.body().intent == Some(wire::TaskIntent::Design));
+            if !design {
+                continue;
+            }
+            if let Some(claim) = read.claim_head(born)?
+                && claim.body().disposition == wire::ClaimDisposition::Active
+            {
+                lanes.insert(claim.body().lane);
+            }
+        }
+    }
+    Ok(lanes)
 }
 
 /// The revision a change observed at its group witness commits, refusing a
@@ -366,8 +450,14 @@ fn designs(current: &WorkingGroupPartition) -> Result<Designs<'_>, Outcome<Comma
     .map_err(|error| store_fault("group::partition-invalid", &format!("{error:?}")))
 }
 
-fn stated(designs: &Designs<'_>, revision: u64) -> WorkingGroupPartition {
-    WorkingGroupPartition {
+/// The partition `designs` states at `revision`, carrying each standing
+/// group's fast-mode flag from `current`.
+fn stated(
+    designs: &Designs<'_>,
+    revision: u64,
+    current: &WorkingGroupPartition,
+) -> WorkingGroupPartition {
+    let mut partition = WorkingGroupPartition {
         revision,
         groups: designs
             .groups()
@@ -377,7 +467,10 @@ fn stated(designs: &Designs<'_>, revision: u64) -> WorkingGroupPartition {
                 anchors: group.members.into_iter().cloned().collect(),
             })
             .collect(),
-    }
+        fast: Vec::new(),
+    };
+    partition.carry_fast(current);
+    partition
 }
 
 /// The refusal for a grouping change no group command words for itself.

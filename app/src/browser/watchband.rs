@@ -39,8 +39,8 @@ pub(super) use composer::{
     primary_textarea_id, use_primary_composer_drag_state,
 };
 use controls::ArrangementOpener;
-pub(in crate::browser) use controls::{ControlsFrame, SendSlot, holds_text};
-pub(super) use controls::{TeamControlAction, TeamControls, TeamRequest, TeamSpeech};
+pub(in crate::browser) use controls::{ControlsFrame, GroupPanel, SendSlot, holds_text};
+pub(super) use controls::{TeamControlAction, TeamControls, TeamRequest};
 use controls::{TeamLife, render_team_controls};
 pub(in crate::browser) use fleet::use_team_arrangement_focus;
 use fleet::{FleetRender, render_empty_fleet, render_populated_fleet};
@@ -93,7 +93,6 @@ pub(super) fn render_team(
         team_controls,
         composer_drag,
         composer_slots,
-        room_controls,
         team_drag,
         select_task,
         open_message_task,
@@ -157,15 +156,8 @@ pub(super) fn render_team(
         .filter(|team| team.teamed())
         .collect::<Vec<_>>();
     composer_slots.retain(|lane| teams.iter().any(|team| team.lane == *lane));
-    let groups = super::rooms::render_group_surfaces(&super::rooms::GroupRender {
-        runtime,
-        work,
-        controls: room_controls,
-        sender,
-        drafts,
-        open_message_task,
-        navigate,
-    });
+    let groups =
+        super::rooms::render_group_surfaces(&super::rooms::GroupRender::of(render, runtime, work));
     if teams.is_empty() {
         return render_empty_fleet(team_fleet, groups);
     }
@@ -310,7 +302,7 @@ fn render_compose(
     if team.members.is_empty() {
         return empty("No agents are assigned.");
     }
-    let control = team_controls.current(team.lane, team.subscription);
+    let plane = team_controls.plane(team, runtime);
     let submit = submit_team_callback(
         &team.members,
         epoch,
@@ -323,7 +315,7 @@ fn render_compose(
     let broadcast_help = format!("composer-broadcast-help-{}", team.lane);
     let dormant = team_dormant(team, drafts);
     let slots = send_slots(team, standings, drafts, authority, epoch, &broadcast);
-    let ready = control.pending_life.is_none() && slots.iter().any(|slot| slot.reachable);
+    let ready = plane.control.pending_life.is_none() && slots.iter().any(|slot| slot.reachable);
     let cards = activity_cards(runtime, team, quote_agents);
     let member_command = member_controls::command_callback(sender, surface, team.lane);
     let composer = html! {
@@ -367,7 +359,7 @@ fn render_compose(
                 team.lane,
                 team.subscription,
                 topology_revision,
-                &control,
+                &plane,
                 team_controls,
                 &controls.set_automatic_speech,
                 sender,
@@ -393,7 +385,7 @@ fn render_compose(
                 drafts,
                 controls,
                 open_message_task,
-                &control,
+                &plane,
                 HistoryPaging::of(runtime, team, sender),
                 composer_slot,
             )}
@@ -571,7 +563,7 @@ fn render_activity(
     drafts: &UseReducerHandle<ComposerDrafts>,
     controls: &view::AgentControls,
     open_message_task: &Callback<(wire::TaskStamp, web_sys::Element)>,
-    team_control: &controls::TeamControl,
+    plane: &controls::Plane,
     history: HistoryPaging<'_>,
     composer_slot: web_sys::HtmlElement,
 ) -> Html {
@@ -592,14 +584,14 @@ fn render_activity(
             }
             <MosaicPlane
                 key={team.lane.to_string()}
-                owner={PlaneOwner::Team { lane: team.lane, life: team_control.life }}
+                owner={PlaneOwner::Team { lane: team.lane, life: plane.control.life }}
                 members={team.members.len()}
                 cards={cards.to_vec()}
                 quote_dispatcher={drafts.dispatcher()}
                 open_message_task={open_message_task.clone()}
                 speak={controls.speak.clone()}
                 {narrate}
-                speech={team_control.speech}
+                speech={plane.speech.clone()}
                 speech_owner={(*controls.speech_owner).clone()}
                 history_targets={history.targets}
                 history_revision={history.revision}

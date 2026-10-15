@@ -10,6 +10,8 @@
 //! states nothing for a gesture that changes nothing or that a full group
 //! could not admit.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use wire::grouping::MEMBER_LIMIT;
 use wire::intent::BoardTask;
 use wire::rooms::{RoomAuthorityStamp, WorkingGroupPartition};
@@ -308,4 +310,30 @@ pub fn designs(tasks: &[BoardTask]) -> impl Iterator<Item = &BoardTask> {
     tasks
         .iter()
         .filter(|task| task.statement.body.intent == Some(wire::TaskIntent::Design))
+}
+
+/// The lanes holding a live claim on each working group's Design tasks: the
+/// lanes making its proposals. A claim on a Plan or other task a Design
+/// controls is not a claim on the group's designs.
+#[must_use]
+pub fn claimants(
+    partition: &WorkingGroupPartition,
+    board: &crate::runtime::BoardView,
+) -> BTreeMap<RoomAuthorityStamp, BTreeSet<CanonicalUuid>> {
+    partition
+        .groups
+        .iter()
+        .map(|group| {
+            let lanes = group
+                .anchors
+                .iter()
+                .filter_map(|design| board.row(design))
+                .filter(|row| row.statement.body.intent == Some(wire::TaskIntent::Design))
+                .filter_map(|row| row.claim.as_ref())
+                .filter(|claim| claim.body.disposition == wire::ClaimDisposition::Active)
+                .map(|claim| claim.body.lane)
+                .collect();
+            (group.group.clone(), lanes)
+        })
+        .collect()
 }

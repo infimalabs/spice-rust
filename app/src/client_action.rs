@@ -83,6 +83,31 @@ pub(crate) enum GroupChange {
     Move(wire::rooms::WorkingGroupMove),
     /// Restate every group and its designs in order.
     Arrange(wire::rooms::WorkingGroupArrange),
+    /// Turn one group's fast-mode flag on or off.
+    Fast(wire::rooms::WorkingGroupFast),
+}
+
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+impl GroupChange {
+    /// The identity bytes this change names, which the action mailbox bounds.
+    pub(crate) fn bytes(&self) -> usize {
+        match self {
+            Self::Move(request) => request.design.as_str().len(),
+            Self::Arrange(request) => request
+                .groups
+                .iter()
+                .map(|group| {
+                    group.group.as_str().len()
+                        + group
+                            .anchors
+                            .iter()
+                            .map(|design| design.as_str().len())
+                            .sum::<usize>()
+                })
+                .sum(),
+            Self::Fast(request) => request.group.as_str().len(),
+        }
+    }
 }
 
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]

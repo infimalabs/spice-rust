@@ -318,7 +318,7 @@ fn adopted_outputs(
     (output, spare)
 }
 
-fn retain_test_candidate(
+pub(super) fn retain_test_candidate(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &[Seat],
@@ -421,7 +421,7 @@ fn record_test_critique(
     ));
 }
 
-fn record_test_coverage(
+pub(super) fn record_test_coverage(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &[Seat],
@@ -628,7 +628,7 @@ fn select_candidate_outputs(
     decision
 }
 
-fn authorize_test_output(
+pub(super) fn authorize_test_output(
     bus: &Bus,
     epoch: CanonicalUuid,
     controller: &TaskHandle,
@@ -823,7 +823,7 @@ fn add_output(bus: &Bus, epoch: CanonicalUuid, controller: &TaskHandle, name: &s
 }
 
 /// Add a reviewed Plan under `controller` through explicit preparation.
-fn add_plan_output(
+pub(super) fn add_plan_output(
     bus: &Bus,
     epoch: CanonicalUuid,
     controller: &TaskHandle,

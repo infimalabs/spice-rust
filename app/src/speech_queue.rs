@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use wire::CanonicalUuid;
+
 /// Maximum number of per-agent narration cursors retained by one browser.
 pub const MAX_NARRATION_CURSORS: usize = 256;
 
@@ -38,6 +40,128 @@ impl SpeechOwner {
     #[must_use]
     pub fn is_control(&self, message_key: &str, control: SpeechControl) -> bool {
         self.message_key == message_key && self.control == control
+    }
+}
+
+/// One browser-local speech posture, ordered by loudness: Quiet voices
+/// nothing, Speak voices resident-classified final answers and acknowledged
+/// steering, and Narrate voices each live card edge.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub enum SpeechMode {
+    #[default]
+    Quiet,
+    Speak,
+    Narrate,
+}
+
+impl SpeechMode {
+    /// Every posture, in slider order.
+    pub const ALL: [Self; 3] = [Self::Quiet, Self::Speak, Self::Narrate];
+
+    /// The posture's slider word.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Quiet => "Quiet",
+            Self::Speak => "Speak",
+            Self::Narrate => "Narrate",
+        }
+    }
+
+    /// The posture's slider stop.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Quiet => 0,
+            Self::Speak => 1,
+            Self::Narrate => 2,
+        }
+    }
+
+    /// The posture's slider stop, clamped to the loudest.
+    #[must_use]
+    pub fn at(index: usize) -> Self {
+        Self::ALL[index.min(Self::ALL.len() - 1)]
+    }
+
+    /// The posture as browser storage records it.
+    #[must_use]
+    pub const fn storage_value(self) -> u8 {
+        self.index() as u8
+    }
+
+    /// The posture browser storage recorded, if it names one.
+    #[must_use]
+    pub fn from_storage(value: u8) -> Option<Self> {
+        Self::ALL.get(usize::from(value)).copied()
+    }
+}
+
+/// The loudest posture of every working group covering each lane, given each
+/// group's posture and the lanes holding a live claim on its designs. A Quiet
+/// group covers nothing.
+#[must_use]
+pub fn group_speech<'a>(
+    groups: impl IntoIterator<Item = (SpeechMode, &'a BTreeSet<CanonicalUuid>)>,
+) -> BTreeMap<CanonicalUuid, SpeechMode> {
+    let mut covered = BTreeMap::new();
+    for (mode, lanes) in groups {
+        if mode == SpeechMode::Quiet {
+            continue;
+        }
+        for lane in lanes {
+            let loudest = covered.entry(*lane).or_insert(mode);
+            *loudest = (*loudest).max(mode);
+        }
+    }
+    covered
+}
+
+/// What one team plane voices: the team's posture, raised for each member a
+/// working group covers to the louder of the two.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LaneSpeech {
+    team: SpeechMode,
+    /// Each covered member's loudest group posture, keyed as narration names
+    /// its lane.
+    covered: BTreeMap<String, SpeechMode>,
+}
+
+impl LaneSpeech {
+    /// One team's speech, from its posture, its members, and every lane's
+    /// loudest covering group posture.
+    #[must_use]
+    pub fn new(
+        team: SpeechMode,
+        members: impl IntoIterator<Item = CanonicalUuid>,
+        groups: &BTreeMap<CanonicalUuid, SpeechMode>,
+    ) -> Self {
+        let covered = members
+            .into_iter()
+            .filter_map(|lane| Some((lane.to_string(), *groups.get(&lane)?)))
+            .collect();
+        Self { team, covered }
+    }
+
+    /// The team's own posture.
+    #[must_use]
+    pub const fn team(&self) -> SpeechMode {
+        self.team
+    }
+
+    /// The posture one lane's lines are voiced at.
+    #[must_use]
+    pub fn lane(&self, lane: &str) -> SpeechMode {
+        self.covered
+            .get(lane)
+            .map_or(self.team, |group| self.team.max(*group))
+    }
+
+    /// Whether the team admits automatic speech with its posture set to
+    /// `team`: some member is voiced louder than Quiet.
+    #[must_use]
+    pub fn admits(&self, team: SpeechMode) -> bool {
+        team != SpeechMode::Quiet || !self.covered.is_empty()
     }
 }
 

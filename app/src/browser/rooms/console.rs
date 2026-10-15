@@ -26,8 +26,8 @@ use crate::browser::clock::Age;
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::browser::watchband::{
     ActivityCard, ComposerAction, ComposerDrafts, ComposerTextarea, HistorySender, MosaicPlane,
-    PlaneOwner, ROOM_CARD_PREFIX, TeamSpeech, clear_composer, focus_after_render, prepare_composer,
-    primary_textarea_id, quote_textarea_id, render_quote_shards,
+    PlaneOwner, ROOM_CARD_PREFIX, TeamControls, clear_composer, focus_after_render,
+    prepare_composer, primary_textarea_id, quote_textarea_id, render_quote_shards,
 };
 use crate::client_action::{ClientAction, RoomPostAction};
 use crate::room_views::{GroupView, RoomViewAction};
@@ -46,6 +46,30 @@ pub(in crate::browser) struct GroupRender<'a, 'w> {
     pub(in crate::browser) drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub(in crate::browser) open_message_task: &'a Callback<(TaskStamp, web_sys::Element)>,
     pub(in crate::browser) navigate: &'a Callback<crate::browser::navigation::Intent>,
+    /// Each group panel's browser-local TURBO request and sliders.
+    pub(in crate::browser) team_controls: &'a UseReducerHandle<TeamControls>,
+    pub(in crate::browser) agents: &'a crate::browser::view::AgentControls,
+}
+
+impl<'a, 'w> GroupRender<'a, 'w> {
+    /// The group consoles' share of one app render.
+    pub(in crate::browser) fn of(
+        app: &'a crate::browser::view::AppRender<'_>,
+        runtime: &'a AppRuntime,
+        work: Option<&'a WorkProjection<'w>>,
+    ) -> Self {
+        Self {
+            runtime,
+            work,
+            controls: app.room_controls,
+            sender: app.sender,
+            drafts: app.composer_drafts,
+            open_message_task: &app.open_message_task,
+            navigate: app.navigate,
+            team_controls: app.team_controls,
+            agents: app.agents,
+        }
+    }
 }
 
 /// One design as its group shows it: a composer target and an accented channel.
@@ -130,7 +154,7 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
     let composer = html! {
         <form class="team-composer" onsubmit={panel::submit(&postables)}>
             <div class="team-agents">{for composers}</div>
-            {panel::render(render.controls, &view.group, projection.partition().revision, &postables, posting)}
+            {panel::render(render, &view.group, &postables, posting)}
         </form>
     };
     html! {
@@ -171,7 +195,7 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
                             open_message_task={render.open_message_task.clone()}
                             speak={Callback::noop()}
                             narrate={Callback::noop()}
-                            speech={TeamSpeech::Quiet}
+                            speech={crate::speech_queue::LaneSpeech::default()}
                             speech_owner={None}
                             history_targets={BTreeMap::new()}
                             history_revision={0}

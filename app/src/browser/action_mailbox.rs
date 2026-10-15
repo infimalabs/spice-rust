@@ -451,7 +451,7 @@ impl ClientAction {
         match self {
             Self::Job { target, .. } => target.id.len(),
             Self::Jobs { .. } => 0,
-            Self::WorkingGroupChange { change, .. } => group_change_bytes(change),
+            Self::WorkingGroupChange { change, .. } => change.bytes(),
             Self::RoomPost(post) => room_post_bytes(post),
             Self::RoomControl { request, .. } => room_control_bytes(request),
             Self::RoomCoordination { request, .. } => room_coordination_bytes(request),
@@ -592,24 +592,6 @@ impl ClientAction {
             } => *topology_revision = revision,
             _ => unreachable!("only topology mutations are prepared by the scheduler"),
         }
-    }
-}
-
-fn group_change_bytes(change: &crate::client_action::GroupChange) -> usize {
-    match change {
-        crate::client_action::GroupChange::Move(request) => request.design.as_str().len(),
-        crate::client_action::GroupChange::Arrange(request) => request
-            .groups
-            .iter()
-            .map(|group| {
-                group.group.as_str().len()
-                    + group
-                        .anchors
-                        .iter()
-                        .map(|design| design.as_str().len())
-                        .sum::<usize>()
-            })
-            .sum(),
     }
 }
 

@@ -1315,6 +1315,7 @@ fn dispatch_working_group(
         wire::intent::Intent::WorkingGroupArrange(arrange) => {
             arrange_working_groups(bus, command, arrange)
         }
+        wire::intent::Intent::WorkingGroupFast(fast) => set_working_group_fast(bus, command, fast),
         _ => return None,
     })
 }

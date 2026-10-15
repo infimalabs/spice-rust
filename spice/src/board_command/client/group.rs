@@ -217,6 +217,7 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
                         wire::intent::WorkingGroupChangeStatus::Moved => "moved",
                         wire::intent::WorkingGroupChangeStatus::Ended => "moved; its group ended",
                         wire::intent::WorkingGroupChangeStatus::Arranged => "arranged",
+                        wire::intent::WorkingGroupChangeStatus::Retuned => "fast mode set",
                     }
                 ),
             }),

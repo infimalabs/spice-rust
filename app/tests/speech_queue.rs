@@ -1,6 +1,8 @@
+use std::collections::BTreeSet;
+
 use app::speech_queue::{
-    Advance, AutomaticChange, Enqueue, MAX_NARRATION_CURSORS, NarrationCursors, NarrationMessage,
-    SpeechControl, SpeechQueue, SpeechRequest,
+    Advance, AutomaticChange, Enqueue, LaneSpeech, MAX_NARRATION_CURSORS, NarrationCursors,
+    NarrationMessage, SpeechControl, SpeechMode, SpeechQueue, SpeechRequest, group_speech,
 };
 
 fn playback(lane: &str) -> wire::SpeechPlayback {
@@ -404,4 +406,36 @@ fn automatic_message(lane: &str, key: &str, text: &str, speech: &str) -> Narrati
         automatic_speech: Some(speech.to_owned()),
         ..message(lane, key, text)
     }
+}
+
+#[test]
+fn a_lane_is_voiced_at_the_louder_of_its_team_and_every_group_covering_it() {
+    use SpeechMode::{Narrate, Quiet, Speak};
+
+    let lane = |last: u8| -> wire::CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-0000000000{last:02}")
+            .parse()
+            .expect("fixture lane")
+    };
+    let (narrated, spoken, quieted, uncovered) = (lane(1), lane(2), lane(3), lane(4));
+    let narrating = BTreeSet::from([narrated]);
+    let speaking = BTreeSet::from([narrated, spoken]);
+    let quiet = BTreeSet::from([quieted]);
+    let groups = group_speech([(Narrate, &narrating), (Speak, &speaking), (Quiet, &quiet)]);
+    let members = [narrated, spoken, quieted, uncovered];
+    let voiced = |team| {
+        let speech = LaneSpeech::new(team, members, &groups);
+        members.map(|member| speech.lane(&member.to_string()))
+    };
+    assert_eq!(voiced(Quiet), [Narrate, Speak, Quiet, Quiet]);
+    assert_eq!(voiced(Speak), [Narrate, Speak, Speak, Speak]);
+    assert_eq!(voiced(Narrate), [Narrate; 4]);
+
+    let covered = LaneSpeech::new(Quiet, members, &groups);
+    assert!(
+        covered.admits(Quiet),
+        "a covered member admits a Quiet team"
+    );
+    let quiet_only = group_speech([(Quiet, &quiet)]);
+    assert!(!LaneSpeech::new(Quiet, members, &quiet_only).admits(Quiet));
 }

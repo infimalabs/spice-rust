@@ -5,8 +5,14 @@ use wire::intent::{
 };
 use wire::rooms::{
     RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupArrange,
-    WorkingGroupMove,
+    WorkingGroupFast, WorkingGroupMove,
 };
+
+use super::preparation::{
+    add_controller, add_plan_output, authorize_test_output, record_test_coverage,
+    retain_test_candidate,
+};
+use crate::board_command::group_fast_lanes;
 
 fn group_stamp(offset: i64) -> RoomAuthorityStamp {
     RoomAuthorityStamp::for_micros(1_760_000_000_000_000 + offset).expect("fixture group stamp")
@@ -430,5 +436,74 @@ fn working_groups_admit_at_most_six_designs_and_nothing_but_designs() {
         "group::design-only",
     ));
     assert_eq!(read_partition(&bus, epoch), full);
+    clean(&root, bus);
+}
+
+fn set_fast(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    group: &RoomAuthorityStamp,
+    fast_mode: bool,
+) -> Outcome<CommandAnswer> {
+    let revision = read_partition(bus, epoch).revision;
+    issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::WorkingGroupFast,
+        vec![Witness::Group { revision }],
+        &WorkingGroupFast {
+            group: group.clone(),
+            fast_mode,
+        },
+    )
+}
+
+#[test]
+fn a_fast_flagged_group_runs_exactly_the_live_claimants_of_its_designs() {
+    let (root, bus, epoch, seats) = fixture("group-fast", 4);
+    let design = |name| add_controller(&bus, epoch, name, wire::TaskIntent::Design, None);
+    let controller = design("Fast controller");
+    let plan = add_plan_output(&bus, epoch, &controller, "Fast selected plan");
+    let spare = add_plan_output(&bus, epoch, &controller, "Fast spare plan");
+    let (candidate, source) =
+        retain_test_candidate(&bus, epoch, &seats[..2], &controller, &plan, &spare);
+    record_test_coverage(&bus, epoch, &seats[..2], &controller, &candidate, &source);
+    authorize_test_output(&bus, epoch, &controller, &plan, &spare, candidate);
+    let (flagged, unflagged) = (design("Fast design"), design("Slow design"));
+    let (fast, slow) = (group_stamp(500), group_stamp(600));
+    for (task, group) in [(&controller, &fast), (&flagged, &fast), (&unflagged, &slow)] {
+        let born = task.born().expect("design identity");
+        assert_committed(move_design(&bus, epoch, &born, Some(group)));
+    }
+    assert!(refused_as(
+        set_fast(&bus, epoch, &group_stamp(700), true),
+        "group::missing"
+    ));
+    assert_committed(set_fast(&bus, epoch, &fast, true));
+    let fast_lanes = || bus.read(group_fast_lanes).expect("group fast lanes read");
+    assert!(
+        fast_lanes().is_empty(),
+        "a flag runs no lane without a claim"
+    );
+
+    capture_for(&bus, epoch, &seats[0], &flagged);
+    capture_for(&bus, epoch, &seats[1], &unflagged);
+    capture_for(&bus, epoch, &seats[2], &plan);
+    assert_eq!(
+        fast_lanes(),
+        [seats[0].lane].into(),
+        "neither an unflagged group's claimant, a Plan's claimant, nor an idle lane runs fast"
+    );
+
+    assert_committed(set_fast(&bus, epoch, &fast, false));
+    assert!(
+        fast_lanes().is_empty(),
+        "lowering the flag releases its claimant"
+    );
+    assert!(refused_as(
+        set_fast(&bus, epoch, &fast, false),
+        "group::fast-unchanged"
+    ));
     clean(&root, bus);
 }

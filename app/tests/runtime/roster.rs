@@ -43,6 +43,7 @@ fn partition(groups: &[(&str, &[&str])]) -> WorkingGroupPartition {
                 anchors: designs.iter().map(|label| fixture_stamp(label)).collect(),
             })
             .collect(),
+        fast: Vec::new(),
     }
 }
 

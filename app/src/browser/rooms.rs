@@ -462,6 +462,7 @@ fn submit_change(
                             "Design moved; its group ended with its last design.".to_owned()
                         }
                         WorkingGroupChangeStatus::Arranged => "Working groups arranged.".to_owned(),
+                        WorkingGroupChangeStatus::Retuned => "Group fast mode set.".to_owned(),
                     },
                     Err(error) => error,
                 };

@@ -566,7 +566,9 @@ impl CommandKind {
             | Self::BoardHandout
             | Self::RoomCoordinationRead
             | Self::RoomConversationText => Law::OPERATOR_READ,
-            Self::WorkingGroupMove | Self::WorkingGroupArrange => Law::GROUP,
+            Self::WorkingGroupMove | Self::WorkingGroupArrange | Self::WorkingGroupFast => {
+                Law::GROUP
+            }
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::RoomPost => Law::ROOM_POST,
             Self::RoomContribute => Law::ROOM_CONTRIBUTE,
@@ -731,12 +733,13 @@ impl CommandKind {
             (Self::WorkingGroupMove, Intent::WorkingGroupMove(request)) => Some(&request.design),
             _ => None,
         };
-        if matches!(self, Self::WorkingGroupMove | Self::WorkingGroupArrange)
-            && let Some(stray) = expected.iter().find_map(|witness| match witness {
-                Witness::Existence { task } if Some(task) != moved => Some(task),
-                _ => None,
-            })
-        {
+        if matches!(
+            self,
+            Self::WorkingGroupMove | Self::WorkingGroupArrange | Self::WorkingGroupFast
+        ) && let Some(stray) = expected.iter().find_map(|witness| match witness {
+            Witness::Existence { task } if Some(task) != moved => Some(task),
+            _ => None,
+        }) {
             return Err(LawError::SubjectMismatch {
                 command: self,
                 kind: WitnessKind::Existence,

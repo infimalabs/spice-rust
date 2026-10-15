@@ -460,6 +460,7 @@ fn plant_stored_group(journal: &Journal, anchors: usize) -> String {
         partition: wire::rooms::WorkingGroupPartition {
             revision: 1,
             groups: vec![group.clone()],
+            fast: Vec::new(),
         },
     };
     insert_fact(
