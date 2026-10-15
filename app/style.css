@@ -109,6 +109,13 @@
   --app-anchor-ink: var(--ink);
   --app-anchor-muted: var(--muted);
   --app-anchor-line: var(--line);
+  /* Cross-console signals and tokens keep one semantic palette for the
+     effective theme. Never redeclared: base-flavored objects inherit these
+     resolved page colors instead of following their rebound primitives. */
+  --app-semantic-live: var(--accent);
+  --app-semantic-live-soft: var(--accent-soft);
+  --app-semantic-ink: var(--app-anchor-ink);
+  --app-semantic-panel: var(--app-anchor-panel);
   /* Speaker rail widths: a message card's and a quote's. Anything that names
      a speaker or owner with a left rail uses one of these two sizes. */
   --message-rail: 4px;
@@ -301,7 +308,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 }
 
 .app-presence-pip {
-  --app-presence-color: var(--accent);
+  --app-presence-color: var(--app-semantic-live);
   --app-presence-opacity: 1;
   display: inline-block;
   border-radius: var(--app-radius-circle);
@@ -327,7 +334,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-presence-pip--status {
   width: var(--app-presence-pip-size);
   height: var(--app-presence-pip-size);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-semantic-live) 14%, transparent);
 }
 .app-presence-pip--status:is(.bound, .unbound) { box-shadow: none; }
 /* A working group's lights are its design channels, each in its accent and
@@ -349,7 +356,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-presence-pip--work {
   width: var(--app-presence-pip-size);
   height: var(--app-presence-pip-size);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--app-semantic-live-soft);
 }
 .app-glass-control-surface {
   --app-control-glass-paint: color-mix(
@@ -1211,9 +1218,9 @@ tbody tr:last-child td { border-bottom: 0; }
   overflow: hidden;
   border: 0;
   border-radius: var(--app-radius-pill);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  background: color-mix(in srgb, var(--app-semantic-live) 6%, transparent);
   box-shadow: none;
-  color: var(--accent);
+  color: var(--app-semantic-live);
   cursor: pointer;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: calc(var(--app-type-prose) * .8125);

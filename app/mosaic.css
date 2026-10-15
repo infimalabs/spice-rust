@@ -557,7 +557,7 @@ path.image-annotation-hit { fill: none; }
   > :is(.ticker-age, .ticker-prefix, .ticker-detail) {
   opacity: var(--inactive-lane-opacity);
 }
-.team-surface .ticker-age { display: inline-block; width: 3ch; color: var(--accent); text-align: right; }
+.team-surface .ticker-age { display: inline-block; width: 3ch; color: var(--app-semantic-live); text-align: right; }
 .team-surface .ticker-age.queued { color: var(--warning); } .team-surface .ticker-age.bound, .team-surface .ticker-age.unbound { color: var(--muted); opacity: .7; }
 .team-surface .ticker-prefix { color: color-mix(in srgb, var(--accent-slot, var(--muted)) 70%, var(--ink)); font-weight: 700; }
 .team-pane {
@@ -756,7 +756,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.composer-shard-age { color: var(--accent); }
+.composer-shard-age { color: var(--app-semantic-live); }
 .composer-shard-age.queued { color: var(--warning); }
 .composer-shard-age.bound,
 .composer-shard-age.unbound {
@@ -1333,7 +1333,7 @@ a.relative-age {
 }
 .team-surface .message-actions { flex: 0 0 auto; margin-left: 0; }
 .team-surface :is(.message-ack-pill, .message-taste-pill, .message-broadcast-pill, .message-review-pill, .message-final-pill, .message-room-pill) {
-  --message-inline-pill-accent: var(--ink);
+  --message-inline-pill-accent: var(--app-semantic-ink);
   display: inline-flex;
   min-height: 17px;
   align-items: center;
@@ -1342,10 +1342,10 @@ a.relative-age {
   border-radius: var(--app-radius-pill);
   background: color-mix(
     in srgb,
-    color-mix(in srgb, var(--message-inline-pill-accent) 80%, var(--ink)) 80%,
+    color-mix(in srgb, var(--message-inline-pill-accent) 80%, var(--app-semantic-ink)) 80%,
     transparent
   );
-  color: var(--panel);
+  color: var(--app-semantic-panel);
   font-size: .8125em;
   font-weight: 700;
   white-space: nowrap;
@@ -1374,7 +1374,7 @@ a.relative-age {
   border-end-end-radius: var(--app-radius-pill);
 }
 .team-surface .message-classification-group > :not(:first-child) {
-  border-inline-start: var(--app-control-edge-width) solid color-mix(in srgb, var(--panel) 24%, transparent);
+  border-inline-start: var(--app-control-edge-width) solid color-mix(in srgb, var(--app-semantic-panel) 24%, transparent);
 }
 .team-surface .message-final-pill {
   --message-inline-pill-accent: var(--accent-1);
@@ -1388,7 +1388,7 @@ a.relative-age {
    the reader cannot act on, so it wears the ACK label in the muted tone until
    the journal retires the key. */
 .team-surface .message-ack-pill {
-  --message-inline-pill-accent: var(--accent);
+  --message-inline-pill-accent: var(--app-semantic-live);
   justify-content: flex-start;
 }
 /* The speaker's classifications form one segmented pill, as does a quoted
@@ -1411,7 +1411,7 @@ a.relative-age {
 }
 .team-surface .message-ack-pill[data-message-packet] .message-ack-label { width: auto; } /* sized to kind and result */
 .team-surface .message-ack-pill[data-acknowledgement="pending"] {
-  --message-inline-pill-accent: var(--muted);
+  --message-inline-pill-accent: var(--app-anchor-muted);
 }
 .team-surface .message-ack-pill[data-acknowledgement="declined"] {
   --message-inline-pill-accent: var(--accent-3);
@@ -1425,13 +1425,11 @@ a.relative-age {
 .team-surface .message-review-pill {
   --message-inline-pill-accent: var(--accent-1);
 }
-@media (prefers-color-scheme: light) {
-  .team-surface .message-taste-pill {
-    --message-inline-pill-accent: color-mix(in srgb, var(--accent-2) 90%, var(--ink));
-  }
-  .team-surface .message-review-pill {
-    --message-inline-pill-accent: color-mix(in srgb, var(--accent-1) 90%, var(--ink));
-  }
+:root[data-app-effective-theme="light"] .team-surface .message-taste-pill {
+  --message-inline-pill-accent: color-mix(in srgb, var(--accent-2) 90%, var(--app-semantic-ink));
+}
+:root[data-app-effective-theme="light"] .team-surface .message-review-pill {
+  --message-inline-pill-accent: color-mix(in srgb, var(--accent-1) 90%, var(--app-semantic-ink));
 }
 .team-surface .markdown-body blockquote .message-ack-pill,
 .team-surface .markdown-body blockquote .message-broadcast-pill {

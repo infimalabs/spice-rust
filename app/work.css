@@ -1,11 +1,11 @@
 .work-overview {
   min-width: 0;
-  --work-in-flight: var(--accent);
+  --work-in-flight: var(--app-semantic-live);
   --work-ready: var(--focus);
   --work-blocked: var(--danger);
   --work-deferred: var(--warning);
   --work-terminal: var(--muted);
-  --work-completed: var(--accent);
+  --work-completed: var(--app-semantic-live);
   --work-deleted: var(--danger);
 }
 
@@ -995,7 +995,7 @@
 .room-standing-lanes li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
 .room-standing-lane { font-weight: 600; }
 .room-standing-availability { color: var(--muted); }
-.room-standing-availability[data-availability="seated"] { color: var(--accent); }
+.room-standing-availability[data-availability="seated"] { color: var(--app-semantic-live); }
 .room-standing-observation p { overflow-wrap: anywhere; }
 
 .room-reason {
