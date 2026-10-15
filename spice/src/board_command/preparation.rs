@@ -5,6 +5,10 @@ use wire::rooms::{
     ExecutionAuthorized, OutputAdopt, OutputControlled, PreparationDecide, PreparationDecided,
     ProposalRef, RetainedCandidate,
 };
+
+mod references;
+mod withdrawal;
+
 pub(super) fn dispatch_preparation(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -23,6 +27,9 @@ pub(super) fn dispatch_preparation(
             decide_preparation(bus, command, decision, projects, allocation)
         }
         wire::intent::Intent::OutputAdopt(adopt) => adopt_output(bus, command, adopt),
+        wire::intent::Intent::CandidateWithdraw(withdraw) => {
+            withdrawal::withdraw_candidate(bus, command, withdraw)
+        }
         _ => return None,
     })
 }
@@ -158,6 +165,9 @@ pub(super) fn retain_candidate(
         &request_body.candidate.candidate.controller,
         &request_body.candidate.outputs,
     ) {
+        return outcome;
+    }
+    if let Err(outcome) = references::require_scoped_references(bus, &request_body.candidate) {
         return outcome;
     }
     record(
@@ -392,6 +402,8 @@ pub(super) fn decide_preparation(
     commit_decision(bus, command, request_body, candidate, consequence)
 }
 
+/// The exact retained candidate a decision disposes of: present, witnessed
+/// at its head, and not withdrawn by its author.
 fn retained_candidate(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -401,16 +413,31 @@ fn retained_candidate(
         candidate: candidate.clone(),
     };
     let read_subject = subject.clone();
-    let head = bus
-        .read(move |read| read.proposal_head(&read_subject))
-        .map_err(|error| store_fault("preparation::authority-unreadable", &error.to_string()))?
-        .ok_or_else(|| {
-            refusal(
-                "preparation::candidate-missing",
-                Some(candidate.candidate.to_string()),
-                "retain the exact candidate version before deciding it",
-            )
-        })?;
+    let withdrawal = ProposalRef::Withdrawal {
+        candidate: candidate.clone(),
+    };
+    let (head, withdrawn) = bus
+        .read(move |read| {
+            Ok::<_, GuardError>((
+                read.proposal_head(&read_subject)?,
+                read.proposal_head(&withdrawal)?.is_some(),
+            ))
+        })
+        .map_err(|error| store_fault("preparation::authority-unreadable", &error.to_string()))?;
+    let head = head.ok_or_else(|| {
+        refusal(
+            "preparation::candidate-missing",
+            Some(candidate.candidate.to_string()),
+            "retain the exact candidate version before deciding it",
+        )
+    })?;
+    if withdrawn {
+        return Err(refusal(
+            "preparation::candidate-withdrawn",
+            Some(candidate.candidate.to_string()),
+            "its author withdrew this candidate; decide the corrected candidate instead",
+        ));
+    }
     require_witness(
         command,
         &Witness::Proposal {

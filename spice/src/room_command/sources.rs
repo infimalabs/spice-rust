@@ -44,7 +44,9 @@ impl<'a> RoomSources<'a> {
 
     /// Whether `source` yields its bytes to a record at `before`: a journal
     /// fact earlier than it, a hunk the tape still holds, or an artifact
-    /// retained on the Design.
+    /// retained on the Design. A cited contribution is an immutable journal
+    /// record whose publication the command barrier and journal fold resolve
+    /// before admission, so a recorded citation always yields it.
     pub(crate) fn check(
         &mut self,
         source: &RoomSource,
@@ -58,6 +60,7 @@ impl<'a> RoomSources<'a> {
                     Err(RoomSourceUnavailable::Missing {})
                 }
             }
+            RoomSource::Contribution { .. } => Ok(()),
             RoomSource::Transcript(hunk) => {
                 let tape = self.tape().ok_or(RoomSourceUnavailable::Unreadable {})?;
                 spice::quote::room_hunk_text(tape, hunk).map(drop)

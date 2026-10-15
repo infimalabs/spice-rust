@@ -2,12 +2,11 @@
 
 use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
-    CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued, CandidateRetained,
-    ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
-    ProposalRef, QuestionResultHead, QuestionResultRecord, QuestionResultRef, RetainedCandidate,
-    RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomHorizon, RoomLeft,
-    RoomMessaged, RoomPublication, RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord,
-    RoomReceiptRef, WorkingGroupPartition,
+    CandidateCoverage, CandidateCritique, CandidateWithdrawal, ExecutionAuthorization,
+    PreparationDecision, ProposalRef, QuestionResultHead, QuestionResultRecord, QuestionResultRef,
+    RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomHorizon,
+    RoomLeft, RoomMessaged, RoomPublication, RoomPublished, RoomPutAside, RoomReceiptHead,
+    RoomReceiptRecord, RoomReceiptRef, WorkingGroupPartition,
 };
 
 use super::{
@@ -30,6 +29,8 @@ pub enum ProposalAuthority {
     Coverage(CandidateCoverage),
     /// One decision under a controlling task.
     Decision(PreparationDecision),
+    /// The author's withdrawal of one exact undecided candidate.
+    Withdrawal(CandidateWithdrawal),
 }
 
 /// One ordered page of operator items still owing a disposition.
@@ -92,6 +93,11 @@ impl JournalRead<'_> {
                 &subject,
                 |body: &PreparationDecision| body.decision == *decision,
                 ProposalAuthority::Decision,
+            )?,
+            ProposalRef::Withdrawal { candidate } => self.proposal_family(
+                &subject,
+                |body: &CandidateWithdrawal| body.candidate == *candidate,
+                ProposalAuthority::Withdrawal,
             )?,
         };
         Ok(head)
@@ -225,7 +231,7 @@ impl JournalRead<'_> {
                 break;
             }
             let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
-            if preparation_controller(&fact.fact).as_ref() != Some(controller) {
+            if fact.fact.preparation_controller() != Some(controller) {
                 return Err(GuardError::Invalid(format!(
                     "preparation authority index for {controller} names {} fact {seq}",
                     fact.fact.kind()
@@ -1308,21 +1314,6 @@ fn indexed_length(
     let length = row.get::<_, i64>(column).map_err(GuardError::Store)?;
     usize::try_from(length)
         .map_err(|_| GuardError::Invalid(format!("{class} has an invalid byte length")))
-}
-
-fn preparation_controller(fact: &wire::AnyFact) -> Option<wire::TaskStamp> {
-    if let Some(body) = fact.read::<CandidateRetained>() {
-        Some(body.candidate.candidate.controller)
-    } else if let Some(body) = fact.read::<CandidateCritiqued>() {
-        Some(body.critique.critique.candidate.controller)
-    } else if let Some(body) = fact.read::<CandidateCovered>() {
-        Some(body.coverage.coverage.candidate.controller)
-    } else if let Some(body) = fact.read::<PreparationDecided>() {
-        Some(body.decision.decision.controller)
-    } else {
-        fact.read::<ExecutionAuthorized>()
-            .map(|body| body.authorization.decision.controller)
-    }
 }
 
 fn require_room<T>(

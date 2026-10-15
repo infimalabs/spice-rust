@@ -77,6 +77,8 @@ pub enum CommandKind {
     CandidateCoverageRecord,
     /// Record one exact operator disposition; selection also authorizes its subset.
     PreparationDecide,
+    /// Withdraw one exact undecided candidate its author retained.
+    CandidateWithdraw,
     /// Adopt pending existing work under preparation control.
     OutputAdopt,
     /// Read durable global app settings.

@@ -36,6 +36,7 @@ impl CommandKind {
         Self::CandidateCritiqueRecord,
         Self::CandidateCoverageRecord,
         Self::PreparationDecide,
+        Self::CandidateWithdraw,
         Self::OutputAdopt,
         Self::GlobalSettingsRead,
         Self::GlobalSettingsSet,
@@ -132,6 +133,7 @@ impl CommandKind {
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::PreparationDecide
+            | Self::CandidateWithdraw
             | Self::OutputAdopt
             | Self::TaskAdd
             | Self::TaskOopsAdd
@@ -223,6 +225,7 @@ impl CommandKind {
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::PreparationDecide
+            | Self::CandidateWithdraw
             | Self::OutputAdopt => self.preparation_spelling(),
             Self::TaskAdd => "task::add",
             Self::TaskOopsAdd => "task::oops-add",
@@ -267,6 +270,7 @@ impl CommandKind {
             Self::CandidateCritiqueRecord => "preparation::critique",
             Self::CandidateCoverageRecord => "preparation::cover",
             Self::PreparationDecide => "preparation::decide",
+            Self::CandidateWithdraw => "preparation::withdraw",
             Self::OutputAdopt => "preparation::adopt",
             _ => panic!("preparation command spelling partition is closed"),
         }

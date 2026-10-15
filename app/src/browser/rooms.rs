@@ -560,6 +560,23 @@ fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {
         ));
     }
     for positioned in authority
+        .withdrawals
+        .values()
+        .filter(|positioned| positioned.value.withdrawal.candidate.controller == *controller)
+    {
+        let record = &positioned.value;
+        records.push((
+            positioned.position,
+            "Withdrawal",
+            serde_json::json!({
+                "withdrawal": record.withdrawal,
+                "author": record.author,
+                "at": record.at,
+            })
+            .to_string(),
+        ));
+    }
+    for positioned in authority
         .authorizations
         .values()
         .filter(|positioned| positioned.value.decision.controller == *controller)

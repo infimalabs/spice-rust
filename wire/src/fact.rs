@@ -161,6 +161,9 @@ macro_rules! registered_body {
     (PreparationDecided) => {
         crate::rooms::PreparationDecided
     };
+    (CandidateWithdrawn) => {
+        crate::rooms::CandidateWithdrawn
+    };
     (ExecutionAuthorized) => {
         crate::rooms::ExecutionAuthorized
     };
@@ -351,6 +354,8 @@ vocabulary! {
     CandidateCovered = "proposal::covered" by CommandDoor;
     /// The operator decided one exact candidate; selection authorizes its subset.
     PreparationDecided = "proposal::decided" by CommandDoor;
+    /// The author withdrew one exact undecided candidate from operator choice.
+    CandidateWithdrawn = "proposal::withdrawn" by CommandDoor;
     /// A selected decision made its exact selected outputs eligible.
     ExecutionAuthorized = "proposal::authorized" by CommandDoor;
 
@@ -834,6 +839,37 @@ impl AnyFact {
             sealed::RegisteredBody::OutputControlled(body) => {
                 Some((&body.output, Some(&body.preparation)))
             }
+            _ => None,
+        }
+    }
+
+    /// Controller whose preparation authority this proposal-family fact
+    /// records: a candidate, critique, coverage, decision, withdrawal, or
+    /// authorization names the Plan or Design it prepares.
+    #[must_use]
+    pub fn preparation_controller(&self) -> Option<&crate::witness::TaskStamp> {
+        use sealed::RegisteredBody as Decoded;
+        match &self.decoded {
+            Decoded::CandidateRetained(body) => Some(&body.candidate.candidate.controller),
+            Decoded::CandidateCritiqued(body) => Some(&body.critique.critique.candidate.controller),
+            Decoded::CandidateCovered(body) => Some(&body.coverage.coverage.candidate.controller),
+            Decoded::PreparationDecided(body) => Some(&body.decision.decision.controller),
+            Decoded::CandidateWithdrawn(body) => Some(&body.withdrawal.candidate.controller),
+            Decoded::ExecutionAuthorized(body) => Some(&body.authorization.decision.controller),
+            _ => None,
+        }
+    }
+
+    /// Design room that holds this room-authored record: a contribution,
+    /// post, lane packet, or leave.
+    #[must_use]
+    pub fn room_record(&self) -> Option<&crate::witness::TaskStamp> {
+        use sealed::RegisteredBody as Decoded;
+        match &self.decoded {
+            Decoded::RoomContributed(body) => Some(&body.room),
+            Decoded::RoomPublished(body) => Some(&body.room),
+            Decoded::RoomMessaged(body) => Some(&body.room),
+            Decoded::RoomLeft(body) => Some(&body.room),
             _ => None,
         }
     }

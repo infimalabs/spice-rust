@@ -21,6 +21,7 @@ mod engagement;
 mod groups;
 mod hunks;
 mod relevance;
+mod withdrawal;
 
 fn write() -> JournalWrite {
     write_as(Actor::Operator)

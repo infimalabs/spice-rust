@@ -1032,6 +1032,12 @@ impl fmt::Display for Source<'_> {
             ),
             RoomSource::Journal { fact } => write!(formatter, "journal fact={fact}"),
             RoomSource::Artifact { digest } => write!(formatter, "artifact digest={digest}"),
+            RoomSource::Contribution { room, publication } => {
+                write!(
+                    formatter,
+                    "contribution room={room} publication={publication}"
+                )
+            }
         }
     }
 }

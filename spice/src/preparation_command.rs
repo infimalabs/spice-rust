@@ -8,12 +8,12 @@ use spice::repository::Repository;
 use wire::output::Bounded;
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued, CandidateRetained,
-    ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
-    RetainedCandidate,
+    CandidateWithdrawal, CandidateWithdrawn, ExecutionAuthorization, ExecutionAuthorized,
+    PreparationDecided, PreparationDecision, ProposalRef, RetainedCandidate,
 };
 use wire::{
-    Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Seq, SequenceCode, TaskHandle,
-    TaskStamp,
+    Actor, Fault, FaultClass, Instant, Outcome, Refusal, Reply, ReplyPosition, Seq, SequenceCode,
+    TaskHandle, TaskStamp,
 };
 
 use crate::read_page::Page;
@@ -40,8 +40,12 @@ pub(crate) struct PreparationRecord {
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum PreparationAuthority {
+    /// A retained candidate, marked with the position of its author's
+    /// withdrawal when it no longer stands for operator choice.
     Candidate {
         candidate: RetainedCandidate,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        withdrawn: Option<SequenceCode>,
     },
     Critique {
         critique: CandidateCritique,
@@ -54,6 +58,12 @@ enum PreparationAuthority {
     },
     Authorization {
         authorization: ExecutionAuthorization,
+    },
+    /// The candidate author's recorded withdrawal, with its reason.
+    Withdrawal {
+        withdrawal: CandidateWithdrawal,
+        author: Actor,
+        at: Instant,
     },
 }
 
@@ -215,7 +225,7 @@ fn recorded(
             .preparation_authority_page(anchor, next, budget)
             .map_err(store)?;
         for envelope in fetched.rows.into_iter().take(retain - rows.len()) {
-            rows.push(record(envelope)?);
+            rows.push(record(read, envelope)?);
         }
         match fetched.continuation {
             Some(position) => next = Some(position),
@@ -239,10 +249,26 @@ fn recorded(
     })
 }
 
-fn record(envelope: wire::Envelope<wire::AnyFact>) -> Result<PreparationRecord, Failure> {
+fn record(
+    read: &journal::JournalRead<'_>,
+    envelope: wire::Envelope<wire::AnyFact>,
+) -> Result<PreparationRecord, Failure> {
     let authority = if let Some(body) = envelope.fact.read::<CandidateRetained>() {
+        let withdrawn = read
+            .proposal_head(&ProposalRef::Withdrawal {
+                candidate: body.candidate.candidate.clone(),
+            })
+            .map_err(store)?
+            .map(|head| SequenceCode::new(head.position().get()));
         PreparationAuthority::Candidate {
             candidate: body.candidate,
+            withdrawn,
+        }
+    } else if let Some(body) = envelope.fact.read::<CandidateWithdrawn>() {
+        PreparationAuthority::Withdrawal {
+            withdrawal: body.withdrawal,
+            author: envelope.actor.clone(),
+            at: envelope.at,
         }
     } else if let Some(body) = envelope.fact.read::<CandidateCritiqued>() {
         PreparationAuthority::Critique {

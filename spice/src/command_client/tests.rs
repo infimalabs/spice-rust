@@ -866,6 +866,10 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
             &["preparation", "decide"][..],
             CommandKind::PreparationDecide,
         ),
+        (
+            &["preparation", "withdraw"][..],
+            CommandKind::CandidateWithdraw,
+        ),
         (&["preparation", "adopt"][..], CommandKind::OutputAdopt),
         (&["lane", "list"][..], CommandKind::BoardRead),
         (&["task", "list"][..], CommandKind::BoardRead),

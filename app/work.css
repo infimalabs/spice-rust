@@ -788,6 +788,7 @@
 
 .room-preparation > header,
 .room-approval > header,
+.room-approval-withdrawn > header,
 .room-conclusion > header,
 .room-contributions > header,
 .room-history > header {
@@ -799,8 +800,16 @@
 
 .room-reading,
 .room-approval,
+.room-approval-withdrawn,
 .room-contributions,
 .room-history { display: grid; gap: 8px; }
+/* A withdrawal reads as one sentence: who, how long ago, why, which fact. */
+.room-approval-withdrawal .relative-age {
+  display: inline;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+}
 
 /* Contributions are evidence, never authority, so they keep the neutral rail
    and say what they offer in words rather than colour. */

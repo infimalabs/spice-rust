@@ -71,6 +71,7 @@ const PINNED: &[(&str, &str)] = &[
     ("CandidateCritiqued", "proposal::critiqued"),
     ("CandidateCovered", "proposal::covered"),
     ("PreparationDecided", "proposal::decided"),
+    ("CandidateWithdrawn", "proposal::withdrawn"),
     ("ExecutionAuthorized", "proposal::authorized"),
     ("DocApplied", "doc::applied"),
     ("GlobalSettingsChanged", "settings::changed"),

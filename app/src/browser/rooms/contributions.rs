@@ -248,6 +248,17 @@ fn render_source(runtime: &AppRuntime, source: &RoomSource, state: SourceState<'
                 >{"Artifact "}<code>{digest.to_string()}</code></CopyButton>
             },
         ),
+        RoomSource::Contribution { publication, .. } => (
+            "contribution",
+            html! {
+                <CopyButton
+                    class="app-compact-control"
+                    text={AttrValue::from(serde_json::to_string(source).unwrap_or_default())}
+                    subject="contribution source"
+                    label={AttrValue::from(format!("Copy contribution source {publication}"))}
+                >{"Contribution "}<code>{publication.to_string()}</code></CopyButton>
+            },
+        ),
     };
     html! {
         <li data-source-kind={kind} data-source-state={state_key}>

@@ -16,10 +16,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use wire::rooms::{
-    CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained, CoverageAuthority,
-    DecisionOutcome, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
-    RetainedCandidate, RoomAnchor, RoomAuthorityStamp, RoomContributed, RoomDelivered, RoomHorizon,
-    RoomLeft, RoomMessaged, RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk,
+    CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRef, CandidateRetained,
+    CandidateWithdrawal, CandidateWithdrawn, CoverageAuthority, DecisionOutcome,
+    ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef, RetainedCandidate,
+    RoomAnchor, RoomAuthorityStamp, RoomContributed, RoomDelivered, RoomHorizon, RoomLeft,
+    RoomMessaged, RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk,
     WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
 };
 use wire::{
@@ -218,6 +219,12 @@ pub(crate) trait Authority {
     fn output_authorized(&self, output: &str) -> Result<bool, Refusal>;
     /// Whether this decision already authorized a selection.
     fn decision_authorized(&self, decision: &str) -> Result<bool, Refusal>;
+    /// Whether any decision recorded under `controller` decides `candidate`.
+    fn candidate_decided(
+        &self,
+        controller: &str,
+        candidate: &CandidateRef,
+    ) -> Result<bool, Refusal>;
     /// The room-coordination direction one steering key names, if any.
     fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal>;
     /// Record a room-coordination direction's current state.
@@ -483,6 +490,25 @@ impl Authority for History {
             .any(|row| row.decision == decision))
     }
 
+    fn candidate_decided(
+        &self,
+        controller: &str,
+        candidate: &CandidateRef,
+    ) -> Result<bool, Refusal> {
+        for (subject, row) in &self.projection.proposals {
+            if row.controller == controller
+                && matches!(
+                    wire::decode::<ProposalRef>(subject.as_bytes())?,
+                    ProposalRef::Decision { .. }
+                )
+                && decides(&row.body, candidate)?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal> {
         Ok(self.directions.get(key).cloned())
     }
@@ -657,33 +683,60 @@ pub(crate) fn fold(
         }
         return store_partition(authority, seq, &current, &arranged.partition);
     }
+    fold_preparation(authority, seq, actor, fact).unwrap_or(Ok(()))
+}
+
+/// Admit one candidate, critique, coverage, decision, withdrawal, or
+/// authorization fact, or `None` when `fact` is none of them.
+fn fold_preparation(
+    authority: &mut impl Authority,
+    seq: Seq,
+    actor: &Actor,
+    fact: &AnyFact,
+) -> Option<Result<(), Refusal>> {
     if let Some(CandidateRetained { candidate }) = fact.read() {
-        return retain(authority, seq, candidate);
+        return Some(retain(authority, seq, candidate));
     }
     if let Some(CandidateCritiqued { critique }) = fact.read() {
-        let assessed = ProposalRef::Candidate {
-            candidate: critique.critique.candidate.clone(),
-        };
-        require_proposal(authority, &assessed)?;
-        require_source(authority, seq, &critique.source)?;
-        let controller = critique.critique.candidate.controller.to_string();
-        let proposal = ProposalRef::Critique {
-            critique: critique.critique.clone(),
-        };
-        return record(authority, seq, &proposal, controller, &critique);
+        return Some(critique_candidate(authority, seq, &critique));
     }
     if let Some(CandidateCovered { coverage }) = fact.read() {
-        return cover(authority, seq, actor, coverage);
+        return Some(cover(authority, seq, actor, coverage));
     }
     if let Some(PreparationDecided { decision }) = fact.read() {
-        require_operator(actor, "a preparation decision")?;
-        return decide(authority, seq, decision);
+        return Some(
+            require_operator(actor, "a preparation decision")
+                .and_then(|()| decide(authority, seq, decision)),
+        );
+    }
+    if let Some(CandidateWithdrawn { withdrawal }) = fact.read() {
+        return Some(withdraw(authority, seq, actor, withdrawal));
     }
     if let Some(ExecutionAuthorized { authorization }) = fact.read() {
-        require_operator(actor, "execution authorization")?;
-        return authorize(authority, seq, authorization);
+        return Some(
+            require_operator(actor, "execution authorization")
+                .and_then(|()| authorize(authority, seq, authorization)),
+        );
     }
-    Ok(())
+    None
+}
+
+/// Admit one critique of an existing candidate citing an admissible source.
+fn critique_candidate(
+    authority: &mut impl Authority,
+    seq: Seq,
+    critique: &wire::rooms::CandidateCritique,
+) -> Result<(), Refusal> {
+    let assessed = ProposalRef::Candidate {
+        candidate: critique.critique.candidate.clone(),
+    };
+    require_proposal(authority, &assessed)?;
+    require_source(authority, seq, &critique.source)?;
+    let controller = critique.critique.candidate.controller.to_string();
+    let proposal = ProposalRef::Critique {
+        critique: critique.critique.clone(),
+    };
+    record(authority, seq, &proposal, controller, critique)
 }
 
 /// Admit one coordination, catch-up, conversation, or leave fact, or `None`
@@ -1030,11 +1083,59 @@ fn decide(
             candidate: decision.outcome.candidate().clone(),
         },
     )?;
+    let withdrawal = subject(&ProposalRef::Withdrawal {
+        candidate: decision.outcome.candidate().clone(),
+    })?;
+    if authority.proposal(&withdrawal)?.is_some() {
+        return unsound(format!(
+            "candidate {} was withdrawn by its author before this decision",
+            decision.outcome.candidate().candidate
+        ));
+    }
     require_source(authority, seq, &decision.source)?;
     let proposal = ProposalRef::Decision {
         decision: decision.decision.clone(),
     };
     record(authority, seq, &proposal, controller.to_string(), &decision)
+}
+
+/// Only a candidate's authenticated author withdraws it, once, while no
+/// decision has disposed of it. The retained candidate stays untouched.
+fn withdraw(
+    authority: &mut impl Authority,
+    seq: Seq,
+    actor: &Actor,
+    withdrawal: CandidateWithdrawal,
+) -> Result<(), Refusal> {
+    let candidate = ProposalRef::Candidate {
+        candidate: withdrawal.candidate.clone(),
+    };
+    require_proposal(authority, &candidate)?;
+    if authority.proposal_author(&subject(&candidate)?)?.as_ref() != Some(actor) {
+        return unsound(format!(
+            "candidate {} is withdrawn by {actor}, not by its author",
+            withdrawal.candidate.candidate
+        ));
+    }
+    let controller = withdrawal.candidate.controller.to_string();
+    if authority.candidate_decided(&controller, &withdrawal.candidate)? {
+        return unsound(format!(
+            "candidate {} is already decided and cannot be withdrawn",
+            withdrawal.candidate.candidate
+        ));
+    }
+    let proposal = ProposalRef::Withdrawal {
+        candidate: withdrawal.candidate.clone(),
+    };
+    record(authority, seq, &proposal, controller, &withdrawal)
+}
+
+/// Whether one stored decision body disposes of `candidate`.
+fn decides(body: &[u8], candidate: &CandidateRef) -> Result<bool, Refusal> {
+    Ok(wire::decode::<PreparationDecision>(body)?
+        .outcome
+        .candidate()
+        == candidate)
 }
 
 fn authorize(
@@ -1205,6 +1306,13 @@ pub(super) fn require_source(
         }
         RoomSource::Transcript(hunk) => require_hunk(authority, hunk)?,
         RoomSource::Artifact { .. } => {}
+        RoomSource::Contribution { room, publication } => {
+            if !authority.published(room.as_str(), &publication.to_string())? {
+                return unsound(format!(
+                    "source contribution {publication} is not published in room {room}"
+                ));
+            }
+        }
     }
     Ok(())
 }

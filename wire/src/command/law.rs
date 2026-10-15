@@ -576,7 +576,8 @@ impl CommandKind {
             Self::RoomClose => Law::ROOM_CLOSE,
             Self::CandidateRetain
             | Self::CandidateCritiqueRecord
-            | Self::CandidateCoverageRecord => Law::PROPOSAL_RECORD,
+            | Self::CandidateCoverageRecord
+            | Self::CandidateWithdraw => Law::PROPOSAL_RECORD,
             Self::PreparationDecide => Law::PREPARATION_DECIDE,
             Self::OutputAdopt => Law::ADOPT,
             _ => self.task_law(),

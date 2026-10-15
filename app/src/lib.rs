@@ -197,8 +197,8 @@ mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};
 pub use runtime::{
-    AppRuntime, AppSurface, BlockerActionState, BoardView, Contribution, ContributionGroup,
-    ContributionSources, Conversation, ConversationProjection, ConversationText,
+    AppRuntime, AppSurface, BlockerActionState, BoardView, CandidateWithdrawalRecord, Contribution,
+    ContributionGroup, ContributionSources, Conversation, ConversationProjection, ConversationText,
     CoordinationStanding, Delivery, ItemConcern, LaneActivity, LaneMember, LaneRow, LaneStatus,
     LaneView, OperatorItem, ParticipantReason, PreparationProjection, QuestionResult, Relevance,
     ResumeAutomation, RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind,

@@ -563,6 +563,7 @@ impl NativeInvocation<'_> {
             | ["preparation", "critique"]
             | ["preparation", "cover"]
             | ["preparation", "decide"]
+            | ["preparation", "withdraw"]
             | ["preparation", "adopt"]
             | ["doc"]
             | ["doc", "ledger"] => {

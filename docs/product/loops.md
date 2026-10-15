@@ -484,11 +484,12 @@ owns each rule summarized here.
   `spice room contribute HANDLE KIND TEXT [--source SOURCE...]`: a
   [typed](invariants/identity.md#identity-a-lane-contributes-typed-problem-space-records-to-an-open-design)
   reason for, reason against, evidence, or question citing exact journal,
-  transcript, or retained-artifact sources. Room history groups contributions
-  by kind beside the full chronology, and `--contributions` reads only them. A
-  contribution is problem-space record, never a decision: it changes no task,
-  claim, group, candidate, or authorization, and a concluded Design accepts
-  none.
+  transcript, contribution, or retained-artifact sources. Its answer carries
+  `source`, the exact JSON a candidate reference or later contribution cites
+  it by. Room history groups contributions by kind beside the full
+  chronology, and `--contributions` reads only them. A contribution is
+  problem-space record, never a decision: it changes no task, claim, group,
+  candidate, or authorization, and a concluded Design accepts none.
 - **Design awareness.** A lane whose claimed task matches a passive Design's
   terms hears one private
   [background invitation](invariants/identity.md#identity-a-passive-design-invitation-is-background-information-once-per-occupant)
@@ -503,8 +504,11 @@ owns each rule summarized here.
   Plan plans executable tasks. When a Design finds follow-up warranted, it
   creates the acceptance-bearing output Plans under itself and runs
   `preparation retain CANDIDATE_JSON` with a candidate that names those
-  outputs. A finding that no follow-up is warranted says so explicitly in the
-  Design's notes.
+  outputs and cites only sources in that Design's scope. A finding that no
+  follow-up is warranted says so explicitly in the Design's notes. An author
+  that retained a mistaken candidate runs `preparation withdraw
+  WITHDRAWAL_JSON` with a reason naming the correction before any decision;
+  the version stays in history but leaves the operator's choices.
 
   A Design
   [stays open until the operator concludes it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):

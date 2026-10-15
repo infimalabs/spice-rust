@@ -46,7 +46,7 @@ fn retain(root: &Path, task: &TaskStamp, bytes: &[u8]) -> wire::Digest {
         .digest
 }
 
-fn contribution_body(
+pub(super) fn contribution_body(
     room: &TaskHandle,
     kind: RoomContributionKind,
     text: &str,
@@ -61,7 +61,7 @@ fn contribution_body(
 }
 
 /// Contribute `body` as `actor`, witnessing the Design as the board reads now.
-fn contribute(
+pub(super) fn contribute(
     bus: &Bus,
     epoch: CanonicalUuid,
     root: &Path,
@@ -93,7 +93,7 @@ fn contribute(
     )
 }
 
-fn contributed(outcome: Outcome<CommandAnswer>) -> RoomContributeAnswer {
+pub(super) fn contributed(outcome: Outcome<CommandAnswer>) -> RoomContributeAnswer {
     match assert_committed(outcome) {
         CommandAnswer::RoomContribute(answer) => answer,
         other => panic!("contribution answered {other:?}"),
@@ -697,7 +697,8 @@ fn verification_binds_a_contribution_fact_to_its_successful_answer() {
     connection
         .execute(
             "UPDATE command_receipts SET response = CAST(json_set(\
-             CAST(response AS TEXT), '$.outcome.body.publication', ?1) AS BLOB) \
+             CAST(response AS TEXT), '$.outcome.body.publication', ?1, \
+             '$.outcome.body.source.publication', ?1) AS BLOB) \
              WHERE command_kind = 'room::contribute'",
             [replacement.to_string()],
         )

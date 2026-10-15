@@ -921,6 +921,7 @@ mod conclude;
 pub(super) use conclude::{conclude, done_conclusion};
 mod contribution;
 mod returned;
+mod withdrawal;
 
 #[test]
 fn working_group_moves_organize_designs_without_authorizing_outputs() {
