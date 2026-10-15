@@ -86,21 +86,65 @@ pub(super) fn current(bus: &Bus, repository: &Repository) -> CommandResult<Globa
     answer(repository, stored_fast_mode(fact.as_ref()))
 }
 
-/// Resolve the current fast-mode value for one later occupant launch.
-pub(super) fn fast_mode(bus: &Bus) -> CommandResult<bool> {
-    bus.read(|read| read.latest_fact(wire::FactKind::GlobalSettingsChanged))
-        .map(|fact| stored_fast_mode(fact.as_ref()))
-        .map_err(|error| store_fault("settings::journal-unreadable", &error.to_string()))
+/// The fast-mode levels a residency head does not hold: the global setting
+/// and the lanes fast-flagged working groups run fast.
+pub(super) struct FastLevels {
+    global: bool,
+    groups: std::collections::BTreeSet<wire::CanonicalUuid>,
 }
 
-/// Resolve one seat's fast mode for its next occupant launch: on when its own
-/// flag, its team's flag, or the global setting enables it.
+impl FastLevels {
+    pub(super) const fn new(
+        global: bool,
+        groups: std::collections::BTreeSet<wire::CanonicalUuid>,
+    ) -> Self {
+        Self { global, groups }
+    }
+
+    /// Read both levels at one journal horizon.
+    pub(super) fn read(bus: &Bus) -> CommandResult<Self> {
+        bus.read(|read| {
+            Ok(Self::new(
+                stored_fast_mode(
+                    read.latest_fact(wire::FactKind::GlobalSettingsChanged)?
+                        .as_ref(),
+                ),
+                crate::board_command::group_fast_lanes(read)?,
+            ))
+        })
+        .map_err(|error| store_fault("settings::journal-unreadable", &error.to_string()))
+    }
+
+    /// Whether one seat runs fast: its own flag, its team's flag, the global
+    /// setting, or a fast-flagged working group whose design it claims.
+    pub(super) fn lane(&self, head: &wire::ResidencyHead, row: &wire::LaneResidency) -> bool {
+        self.held(head, row) || self.groups.contains(&row.lane)
+    }
+
+    /// Whether a level other than the working groups runs one seat fast.
+    pub(super) fn held(&self, head: &wire::ResidencyHead, row: &wire::LaneResidency) -> bool {
+        head.fast_mode(row, self.global)
+    }
+
+    /// The lanes fast-flagged working groups run fast.
+    pub(super) const fn groups(&self) -> &std::collections::BTreeSet<wire::CanonicalUuid> {
+        &self.groups
+    }
+
+    /// The lanes fast-flagged working groups run fast.
+    pub(super) fn into_groups(self) -> std::collections::BTreeSet<wire::CanonicalUuid> {
+        self.groups
+    }
+}
+
+/// Resolve one seat's fast mode for its next occupant launch across every
+/// level.
 pub(super) fn lane_fast_mode(
     bus: &Bus,
     head: &wire::ResidencyHead,
     row: &wire::LaneResidency,
 ) -> CommandResult<bool> {
-    Ok(head.fast_mode(row, fast_mode(bus)?))
+    Ok(FastLevels::read(bus)?.lane(head, row))
 }
 
 /// Read the current global settings at one immutable journal horizon.

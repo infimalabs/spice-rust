@@ -68,9 +68,7 @@ impl SurfaceRuntimes {
         } else {
             None
         };
-        let live_changes = lane_surface::LiveChanges::start(paths).map_err(|error| {
-            environment_fault("lane::live-change-start-failed", &error.to_string())
-        })?;
+        let live_changes = lane_surface::LiveChanges::start(bus, paths)?;
         Ok(Self {
             timer_commits,
             timers,
@@ -608,6 +606,7 @@ impl LiveSurface<'_, '_> {
     ) -> CommandResult<()> {
         let mut input_lead = input::Lead::Supervisor;
         while !self.turn(&mut input_lead).await? {
+            self.live_changes.settle_groups(self.bus, self.epoch)?;
             reap::present_closed_transcripts(
                 self.bus,
                 self.epoch,

@@ -1,7 +1,12 @@
 use super::*;
+use crate::speech_queue::SpeechMode;
 
 mod frame;
+mod group;
 pub(in crate::browser) use frame::{ControlsFrame, SendSlot, holds_text};
+use group::GroupControlAction;
+pub(in crate::browser) use group::GroupPanel;
+pub(super) use group::Plane;
 
 const TEAM_SPEECH_STORAGE: &str = "spice:team-speech:v1";
 
@@ -59,42 +64,6 @@ impl From<wire::intent::TeamLife> for TeamLife {
     }
 }
 
-/// Browser-local speech posture for one app team.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TeamSpeech {
-    Quiet,
-    Speak,
-    Narrate,
-}
-
-impl TeamSpeech {
-    const ALL: [Self; 3] = [Self::Quiet, Self::Speak, Self::Narrate];
-
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Quiet => "Quiet",
-            Self::Speak => "Speak",
-            Self::Narrate => "Narrate",
-        }
-    }
-
-    const fn index(self) -> usize {
-        match self {
-            Self::Quiet => 0,
-            Self::Speak => 1,
-            Self::Narrate => 2,
-        }
-    }
-
-    const fn storage_value(self) -> u8 {
-        self.index() as u8
-    }
-
-    fn from_storage(value: u8) -> Option<Self> {
-        Self::ALL.get(usize::from(value)).copied()
-    }
-}
-
 /// The control that opened a team's arrangement, where dismissal returns focus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::browser) enum ArrangementOpener {
@@ -105,7 +74,7 @@ pub(in crate::browser) enum ArrangementOpener {
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct TeamControl {
     pub(super) arrangement: Option<ArrangementOpener>,
-    pub(super) speech: TeamSpeech,
+    pub(super) speech: SpeechMode,
     pub(super) life: TeamLife,
     preview_life: Option<TeamLife>,
     pub(super) pending_life: Option<TeamLife>,
@@ -119,7 +88,7 @@ impl Default for TeamControl {
     fn default() -> Self {
         Self {
             arrangement: None,
-            speech: TeamSpeech::Quiet,
+            speech: SpeechMode::Quiet,
             life: TeamLife::Steer,
             preview_life: None,
             pending_life: None,
@@ -130,10 +99,12 @@ impl Default for TeamControl {
     }
 }
 
-/// Per-team control state retained across Mosaic redraws.
+/// Per-team and per-working-group control state retained across Mosaic
+/// redraws.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct TeamControls {
     teams: BTreeMap<CanonicalUuid, TeamControl>,
+    groups: BTreeMap<wire::rooms::RoomAuthorityStamp, group::GroupControl>,
 }
 
 /// The selections one in-flight team configuration command carries, which
@@ -154,7 +125,7 @@ pub(crate) enum TeamControlAction {
     SetSpeech {
         team: CanonicalUuid,
         authoritative_life: wire::intent::TeamLife,
-        speech: TeamSpeech,
+        speech: SpeechMode,
     },
     PreviewLife {
         team: CanonicalUuid,
@@ -190,6 +161,7 @@ pub(crate) enum TeamControlAction {
         /// The team's held TURBO flag, absent when the team is no longer held.
         fast_mode: Option<bool>,
     },
+    Group(GroupControlAction),
 }
 
 impl Reducible for TeamControls {
@@ -234,6 +206,7 @@ impl Reducible for TeamControls {
             TeamControlAction::SettleSuperseded { request, fast_mode } => {
                 next.settle_superseded(request, fast_mode);
             }
+            TeamControlAction::Group(action) => next.reduce_group(action),
         }
         Rc::new(next)
     }
@@ -247,6 +220,7 @@ impl TeamControls {
         else {
             return controls;
         };
+        controls.groups = group::restore(&storage);
         let Some(document) = storage.get_item(TEAM_SPEECH_STORAGE).ok().flatten() else {
             return controls;
         };
@@ -254,7 +228,7 @@ impl TeamControls {
             return controls;
         };
         for (team, value) in rows {
-            let (Ok(team), Some(speech)) = (team.parse(), TeamSpeech::from_storage(value)) else {
+            let (Ok(team), Some(speech)) = (team.parse(), SpeechMode::from_storage(value)) else {
                 continue;
             };
             controls.teams.entry(team).or_default().speech = speech;
@@ -305,7 +279,7 @@ impl TeamControls {
         &mut self,
         team: CanonicalUuid,
         authoritative_life: wire::intent::TeamLife,
-        speech: TeamSpeech,
+        speech: SpeechMode,
     ) {
         self.teams
             .entry(team)
@@ -545,7 +519,7 @@ pub(super) fn render_team_controls(
     team: CanonicalUuid,
     authoritative_life: wire::intent::TeamLife,
     topology_revision: u64,
-    control: &TeamControl,
+    plane: &Plane,
     team_controls: &UseReducerHandle<TeamControls>,
     set_automatic_speech: &Callback<(String, bool)>,
     sender: &SenderHandle,
@@ -556,6 +530,7 @@ pub(super) fn render_team_controls(
     slots: Vec<SendSlot>,
     fast_mode: bool,
 ) -> Html {
+    let control = &plane.control;
     let speech = control.speech;
     let selected = control.preview_life.unwrap_or(control.life);
     let preview_life = preview_life_callback(team, authoritative_life, team_controls.clone());
@@ -626,6 +601,7 @@ pub(super) fn render_team_controls(
                 team,
                 authoritative_life,
                 speech,
+                SpeechMode::ALL.map(|mode| plane.speech.admits(mode)),
                 team_controls.clone(),
                 set_automatic_speech.clone(),
             )}
@@ -689,20 +665,21 @@ fn turbo_button(
 }
 
 /// The team's speech mode, applied in the input turn that selects it so the
-/// queue never narrates under a mode the control no longer shows.
+/// queue never narrates under a mode the control no longer shows. A Quiet team
+/// still admits automatic speech while a working group voices a member.
 fn speech_slider(
     team: CanonicalUuid,
     authoritative_life: wire::intent::TeamLife,
-    speech: TeamSpeech,
+    speech: SpeechMode,
+    admits: [bool; 3],
     controls: UseReducerHandle<TeamControls>,
     set_automatic_speech: Callback<(String, bool)>,
 ) -> Html {
     let automatic_team = team.to_string();
     let oninput = Callback::from(move |event: InputEvent| {
         let input: HtmlInputElement = event.target_unchecked_into();
-        let index = input.value().parse::<usize>().unwrap_or(1);
-        let speech = TeamSpeech::ALL[index.min(TeamSpeech::ALL.len() - 1)];
-        set_automatic_speech.emit((automatic_team.clone(), speech != TeamSpeech::Quiet));
+        let speech = SpeechMode::at(input.value().parse::<usize>().unwrap_or(1));
+        set_automatic_speech.emit((automatic_team.clone(), admits[speech.index()]));
         controls.dispatch(TeamControlAction::SetSpeech {
             team,
             authoritative_life,
@@ -723,7 +700,7 @@ fn speech_slider(
                 aria-label={format!("Speech mode: {}", speech.label())}
                 {oninput}
             />
-            {slider_words(TeamSpeech::ALL.map(|speech| speech.label()), speech.index())}
+            {slider_words(SpeechMode::ALL.map(SpeechMode::label), speech.index())}
         </label>
     }
 }

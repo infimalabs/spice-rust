@@ -99,11 +99,11 @@ pub(in crate::resident) fn configure(
     }
     let configured_life = subscription.policy;
     let configured_fast = subscription.fast_mode;
-    let global_fast = match super::super::settings_surface::fast_mode(bus) {
-        Ok(fast_mode) => fast_mode,
+    let levels = match super::super::settings_surface::FastLevels::read(bus) {
+        Ok(levels) => levels,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let flips = super::retune::fast_flips(observed.body(), &next, global_fast);
+    let flips = super::retune::fast_flips(observed.body(), &next, &levels);
     let lane_answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -619,11 +619,11 @@ pub(in crate::resident) fn arrange(
         Ok(next) => next,
         Err(outcome) => return outcome,
     };
-    let global_fast = match super::super::settings_surface::fast_mode(bus) {
-        Ok(fast_mode) => fast_mode,
+    let levels = match super::super::settings_surface::FastLevels::read(bus) {
+        Ok(levels) => levels,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let flips = super::retune::fast_flips(observed.body(), &next, global_fast);
+    let flips = super::retune::fast_flips(observed.body(), &next, &levels);
     let teams = standings(&arranged.partition);
     let lane_answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,

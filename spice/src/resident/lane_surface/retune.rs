@@ -7,6 +7,9 @@
 //! interrupted live changes leave the running identity untouched while the
 //! durable seat selection still advances.
 
+use std::collections::BTreeSet;
+
+use super::super::settings_surface::FastLevels;
 use super::super::supervisor::command::{LiveRetune, LiveRetuneResult};
 use super::*;
 
@@ -125,21 +128,21 @@ pub(super) struct FastFlip {
 /// The live fast-mode changes owed by one residency write.
 ///
 /// A member owes one only when the write flips its effective fast mode,
-/// resolved additively across its own flag, its team's flag, and the global
-/// setting, and it runs an OMP launch with recorded identity. That identity
-/// can lag a change still awaiting confirmation, so it is not compared.
+/// resolved additively across every level `levels` and the heads carry, and
+/// it runs an OMP launch with recorded identity. That identity can lag a
+/// change still awaiting confirmation, so it is not compared.
 pub(super) fn fast_flips(
     before: &wire::ResidencyHead,
     after: &wire::ResidencyHead,
-    global: bool,
+    levels: &FastLevels,
 ) -> Vec<FastFlip> {
     after
         .lanes
         .iter()
         .filter_map(|row| {
-            let enabled = after.fast_mode(row, global);
+            let enabled = levels.lane(after, row);
             let prior = before.lanes.iter().find(|prior| prior.lane == row.lane)?;
-            if before.fast_mode(prior, global) == enabled || row.vendor.as_str() != "omp" {
+            if levels.lane(before, prior) == enabled || row.vendor.as_str() != "omp" {
                 return None;
             }
             let occupant = row.occupant?;
@@ -166,6 +169,63 @@ pub(super) fn owe_fast_flips(
             flip.occupant,
             flip.live,
         ));
+    }
+}
+
+/// The live fast-mode changes owed when the lanes fast-flagged working groups
+/// run fast move from `before` to those `levels` resolves: one per running
+/// OMP member that gained or lost group fast mode while no other level holds
+/// it, so a change that leaves effective fast mode alone owes nothing.
+pub(super) fn group_flips(
+    head: &wire::ResidencyHead,
+    before: &BTreeSet<CanonicalUuid>,
+    levels: &FastLevels,
+) -> Vec<FastFlip> {
+    before
+        .symmetric_difference(levels.groups())
+        .filter_map(|lane| {
+            let row = head.lanes.iter().find(|row| row.lane == *lane)?;
+            if levels.held(head, row) || row.vendor.as_str() != "omp" {
+                return None;
+            }
+            Some(FastFlip {
+                lane: *lane,
+                occupant: row.occupant?,
+                live: LiveRetune::Fast {
+                    enabled: levels.groups().contains(lane),
+                },
+            })
+        })
+        .collect()
+}
+
+/// The lanes fast-flagged working groups last ran fast. Claims, design moves,
+/// and group flags change that set through many writers, so the resident
+/// settles it after every loop turn rather than at each writer.
+struct GroupFast {
+    lanes: BTreeSet<CanonicalUuid>,
+}
+
+impl GroupFast {
+    /// The live changes owed since the last settlement, as the resident's own
+    /// derived act.
+    fn settle(&mut self, bus: &Bus, epoch: CanonicalUuid) -> CommandResult<Vec<LiveChange>> {
+        let levels = FastLevels::read(bus)?;
+        if *levels.groups() == self.lanes {
+            return Ok(Vec::new());
+        }
+        let head = current_residency(bus, epoch)?;
+        let flips = group_flips(head.body(), &self.lanes, &levels);
+        self.lanes = levels.into_groups();
+        Ok(flips
+            .into_iter()
+            .map(|flip| LiveChange {
+                actor: wire::Actor::Spice,
+                lane: flip.lane,
+                occupant: flip.occupant,
+                live: flip.live,
+            })
+            .collect())
     }
 }
 
@@ -231,10 +291,16 @@ pub(in crate::resident) struct LiveChanges {
     owed: Option<mpsc::Sender<LiveChange>>,
     confirmed: tokio::sync::mpsc::UnboundedReceiver<LiveChange>,
     worker: Option<std::thread::JoinHandle<()>>,
+    groups: GroupFast,
 }
 
 impl LiveChanges {
-    pub(in crate::resident) fn start(paths: &RuntimePaths) -> io::Result<Self> {
+    /// Start the worker, settling working-group fast mode from the lanes the
+    /// journal's groups run fast now.
+    pub(in crate::resident) fn start(bus: &Bus, paths: &RuntimePaths) -> CommandResult<Self> {
+        let groups = GroupFast {
+            lanes: FastLevels::read(bus)?.into_groups(),
+        };
         let (owed, asks) = mpsc::channel::<LiveChange>();
         let (confirm, confirmed) = tokio::sync::mpsc::unbounded_channel();
         let paths = paths.clone();
@@ -249,12 +315,30 @@ impl LiveChanges {
                         return;
                     }
                 }
+            })
+            .map_err(|error| {
+                super::super::release::environment_fault(
+                    "lane::live-change-start-failed",
+                    &error.to_string(),
+                )
             })?;
         Ok(Self {
             owed: Some(owed),
             confirmed,
             worker: Some(worker),
+            groups,
         })
+    }
+
+    /// Queue the changes working-group fast mode owes since the last turn.
+    pub(in crate::resident) fn settle_groups(
+        &mut self,
+        bus: &Bus,
+        epoch: CanonicalUuid,
+    ) -> CommandResult<()> {
+        let changes = self.groups.settle(bus, epoch)?;
+        self.owe(changes);
+        Ok(())
     }
 
     /// Queue the changes one dispatched command owes.
@@ -421,14 +505,13 @@ fn change(
             Ok(revision) => revision,
             Err(outcome) => return outcome,
         };
-    let flips_owed = matches!(selection, Selection::Fast(_));
-    let global_fast = if flips_owed {
-        match super::super::settings_surface::fast_mode(bus) {
-            Ok(fast_mode) => fast_mode,
+    let levels = if matches!(selection, Selection::Fast(_)) {
+        match FastLevels::read(bus) {
+            Ok(levels) => Some(levels),
             Err(outcome) => return typed_outcome(outcome),
         }
     } else {
-        false
+        None
     };
     let mut next = observed.body().clone();
     next.topology_revision = topology_revision;
@@ -441,11 +524,10 @@ fn change(
     };
     let seat_fact = selection.replace_seat(row);
     let live = selection.live_request(row).zip(row.occupant);
-    let flips = if flips_owed {
-        fast_flips(observed.body(), &next, global_fast)
-    } else {
-        Vec::new()
-    };
+    let flips = levels
+        .as_ref()
+        .map(|levels| fast_flips(observed.body(), &next, levels))
+        .unwrap_or_default();
     let answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -551,3 +633,7 @@ fn record_runtime(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "retune_tests.rs"]
+mod tests;

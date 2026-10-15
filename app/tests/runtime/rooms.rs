@@ -89,6 +89,7 @@ fn group_moved(position: u64, extra: &[&str]) -> serde_json::Value {
             partition: WorkingGroupPartition {
                 revision: position,
                 groups: vec![group],
+                fast: Vec::new(),
             },
         },
     )
@@ -107,6 +108,7 @@ fn group_ended(position: u64) -> serde_json::Value {
             partition: WorkingGroupPartition {
                 revision: position,
                 groups: Vec::new(),
+                fast: Vec::new(),
             },
         },
     )

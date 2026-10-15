@@ -1,6 +1,6 @@
 //! A working group's control panel: the team panel's frame and geometry,
-//! holding the group's arrangement menu and one post control for every
-//! drafted design composer.
+//! holding the group's TURBO, its arrangement menu, its speech and stance
+//! sliders, and one send control for every drafted design composer.
 
 use wasm_bindgen::JsCast;
 use wire::TaskStamp;
@@ -8,7 +8,8 @@ use wire::rooms::RoomAuthorityStamp;
 use yew::prelude::*;
 
 use super::super::Controls;
-use crate::browser::watchband::{ControlsFrame, SendSlot, holds_text};
+use super::GroupRender;
+use crate::browser::watchband::{ControlsFrame, GroupPanel, SendSlot, holds_text};
 use crate::room_views::GroupView;
 
 /// One open design composer as the group's post control sees it.
@@ -61,16 +62,42 @@ pub(super) fn submit(postables: &[Postable]) -> Callback<SubmitEvent> {
     })
 }
 
-/// The panel: no TURBO, the arrangement menu where the team menu stands, no
-/// sliders, and POST in SEND's place. With no quote drafted and no post in
-/// flight it rests exactly as an idle team's panel does.
+/// The panel: TURBO, the arrangement menu where the team menu stands, the
+/// speech slider, the stance slider in the allocation slot, and SEND. With no
+/// quote drafted and no post in flight it rests exactly as an idle team's
+/// panel does.
 pub(super) fn render(
-    controls: &Controls,
+    render: &GroupRender<'_, '_>,
     group: &RoomAuthorityStamp,
-    revision: u64,
     postables: &[Postable],
     posting: bool,
 ) -> Html {
+    let controls = render.controls;
+    let projection = render.runtime.room_projection();
+    let claimants = render
+        .runtime
+        .board()
+        .and_then(|board| crate::roster::claimants(projection.partition(), board).remove(group))
+        .unwrap_or_default();
+    let names = claimants
+        .iter()
+        .map(|lane| super::super::conversation::lane_label(render.runtime, *lane))
+        .collect::<Vec<_>>();
+    let report = {
+        let notice = controls.notice.clone();
+        Callback::from(move |text| notice.set(Some(text)))
+    };
+    let group_controls = GroupPanel {
+        runtime: render.runtime,
+        controls: render.team_controls,
+        set_automatic_speech: &render.agents.set_automatic_speech,
+        sender: render.sender,
+        report,
+        group,
+        claimants: &claimants,
+        names: &names,
+    }
+    .render();
     let slots = postables
         .iter()
         .map(|postable| SendSlot {
@@ -117,16 +144,16 @@ pub(super) fn render(
         <ControlsFrame
             {dormant}
             {ready}
-            topology_revision={revision}
+            topology_revision={projection.partition().revision}
             {slots}
-            verb="Post"
+            verb="Send"
             noun="design"
-            speech={None::<&'static str>}
-            lifetime={None::<&'static str>}
+            speech={Some(group_controls.speech)}
+            lifetime={Some(group_controls.stance)}
             lifetime_pending={false}
-            turbo={Html::default()}
+            turbo={group_controls.turbo}
             {menu}
-            children={Html::default()}
+            children={group_controls.sliders}
         />
     }
 }
