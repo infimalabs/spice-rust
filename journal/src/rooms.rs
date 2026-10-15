@@ -195,6 +195,10 @@ pub(crate) trait Authority {
     fn task(&self, task: &TaskStamp) -> Result<Option<Option<TaskPreparation>>, Refusal>;
     /// Record a task birth or an admitted output control.
     fn set_task(&mut self, task: &TaskStamp, preparation: Option<TaskPreparation>);
+    /// Current statement head position of one task, when it exists.
+    fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal>;
+    /// Record one task statement mutation.
+    fn set_task_statement(&mut self, task: &TaskStamp, statement: Seq);
     /// Record the current accounted head of one logical transcript stream.
     fn account(&mut self, head: &TranscriptSourceHead);
     /// Current accounted head of the linked logical transcript stream.
@@ -368,6 +372,7 @@ impl Projection {
 pub(crate) struct History {
     projection: Projection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
+    task_statements: BTreeMap<String, Seq>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
     /// Proposal head position to the actor that recorded it.
     authors: BTreeMap<u64, Actor>,
@@ -410,6 +415,14 @@ impl Authority for History {
 
     fn set_task(&mut self, task: &TaskStamp, preparation: Option<TaskPreparation>) {
         self.tasks.insert(task.as_str().to_owned(), preparation);
+    }
+    fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal> {
+        Ok(self.task_statements.get(task.as_str()).copied())
+    }
+
+    fn set_task_statement(&mut self, task: &TaskStamp, statement: Seq) {
+        self.task_statements
+            .insert(task.as_str().to_owned(), statement);
     }
 
     fn account(&mut self, head: &TranscriptSourceHead) {
@@ -601,6 +614,9 @@ pub(crate) fn fold(
     actor: &Actor,
     fact: &AnyFact,
 ) -> Result<(), Refusal> {
+    for task in fact.revised_tasks() {
+        authority.set_task_statement(task, seq);
+    }
     if let Some(body) = fact.read::<wire::rooms::OutputControlled>() {
         return control(authority, &body.output, body.preparation);
     }

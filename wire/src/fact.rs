@@ -842,6 +842,26 @@ impl AnyFact {
         task.into_iter().chain(selected)
     }
 
+    /// Every task whose statement head this fact establishes.
+    ///
+    /// Workflow-only task mutations are deliberately absent. Folding these
+    /// facts in journal order recovers the exact statement revision current at
+    /// any retained position.
+    pub fn revised_tasks(&self) -> impl Iterator<Item = &crate::witness::TaskStamp> {
+        use sealed::RegisteredBody as Decoded;
+        let (task, selected): (_, &[crate::witness::TaskStamp]) = match &self.decoded {
+            Decoded::TaskAdded(body) => (Some(&body.task), &[]),
+            Decoded::TaskFiled(body) => (Some(&body.task), &[]),
+            Decoded::TaskEdited(body) => (Some(&body.task), &[]),
+            Decoded::OutputControlled(body) => (Some(&body.output), &[]),
+            Decoded::ExecutionAuthorized(body) => {
+                (None, body.authorization.selected_outputs.as_slice())
+            }
+            _ => (None, &[]),
+        };
+        task.into_iter().chain(selected)
+    }
+
     /// Task intent this fact declares, when it declares one.
     ///
     /// Creation declares the statement's opening intent, including none; an

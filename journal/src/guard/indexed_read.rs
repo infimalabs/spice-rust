@@ -438,6 +438,42 @@ impl JournalRead<'_> {
         decode_bounded_fact(row, seq, 1, 2, 3).map(|(fact, _)| Some(fact))
     }
 
+    /// The one fact that moved `task` from hidden filing into ordinary filed
+    /// work, absent when it was filed at birth.
+    pub fn task_filed(
+        &self,
+        task: &wire::TaskStamp,
+    ) -> Result<Option<wire::Envelope<wire::AnyFact>>, GuardError> {
+        let Some(horizon) = self.cursor else {
+            return Ok(None);
+        };
+        let horizon = i64::try_from(horizon.get())
+            .map_err(|_| GuardError::Invalid("task filing horizon exceeds SQLite".to_owned()))?;
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT seq, kind, length(envelope), envelope FROM fact_envelopes \
+                 WHERE kind = ?1 AND seq <= ?2 \
+                 AND json_extract(CAST(envelope AS TEXT), '$.fact.task') = ?3 \
+                 ORDER BY seq LIMIT 1",
+            )
+            .map_err(GuardError::Store)?;
+        let mut rows = statement
+            .query(params![
+                wire::FactKind::TaskFiled.as_str(),
+                horizon,
+                task.as_str()
+            ])
+            .map_err(GuardError::Store)?;
+        let Some(row) = rows.next().map_err(GuardError::Store)? else {
+            return Ok(None);
+        };
+        let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
+        read_metrics::observe_row();
+        decode_bounded_fact(row, seq, 1, 2, 3).map(|(fact, _)| Some(fact))
+    }
+
     /// Read one bounded primary-key fact range through an immutable horizon.
     pub fn fact_page(
         &self,

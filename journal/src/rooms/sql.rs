@@ -16,6 +16,7 @@ use super::{
 pub(crate) struct Stored<'a> {
     connection: &'a Connection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
+    task_statements: BTreeMap<String, Seq>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
     directions: BTreeMap<String, Direction>,
     operator_directions: BTreeMap<String, CanonicalUuid>,
@@ -26,6 +27,7 @@ impl<'a> Stored<'a> {
         Self {
             connection,
             tasks: BTreeMap::new(),
+            task_statements: BTreeMap::new(),
             transcripts: BTreeMap::new(),
             directions: BTreeMap::new(),
             operator_directions: BTreeMap::new(),
@@ -60,6 +62,30 @@ impl Authority for Stored<'_> {
 
     fn set_task(&mut self, task: &TaskStamp, preparation: Option<TaskPreparation>) {
         self.tasks.insert(task.as_str().to_owned(), preparation);
+    }
+    fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal> {
+        if let Some(statement) = self.task_statements.get(task.as_str()) {
+            return Ok(Some(*statement));
+        }
+        let seq = self
+            .connection
+            .query_row(
+                "SELECT head_seq FROM task_heads WHERE stamp = ?1",
+                [task.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        seq.map(|seq| {
+            u64::try_from(seq).ok().and_then(Seq::new).ok_or_else(|| {
+                Refusal::Unsound(format!("task {task} has an invalid statement head"))
+            })
+        })
+        .transpose()
+    }
+
+    fn set_task_statement(&mut self, task: &TaskStamp, statement: Seq) {
+        self.task_statements
+            .insert(task.as_str().to_owned(), statement);
     }
 
     fn account(&mut self, head: &TranscriptSourceHead) {

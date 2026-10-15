@@ -1,23 +1,20 @@
-//! Background invitations of matching lanes to passive Designs.
+//! Background invitations of relevant lanes to passive Designs.
 //!
-//! For every occupied lane whose occupant holds an active claim, each open
-//! Design outside every working group whose terms match the claimed task (see
-//! [`spice::rooms::awareness`]) is told to that occupant once: the resident
-//! records `room::noticed`, the operator's durable read of who was invited,
-//! then hands the exact occupant one private background notice. An active or
-//! concluded Design is never invited, nor one this lane holds or created, one
-//! whose room it already listens to, or one whose room it ever published in;
-//! a contribution, packet, or leave therefore ends that lane's invitations.
-//! An occupant that ignored an invitation is not told again; a later occupant
-//! of the lane may be, at a matching claim it holds. The record is no room
-//! publication, so it adds no attention, participation, steering, or wake,
-//! and the notice needs no acknowledgment.
+//! Every matching claimant receives one organic notice. During a filed passive
+//! Design's first half-open ten-minute window, up to three otherwise eligible
+//! claimant occupants also receive seeded notices without a term match.
+//! Selection rotates deterministically from the Design stamp and survives
+//! restart because every notice is recorded before delivery. Active,
+//! concluded, grouped, held, created, joined, and previously told Designs
+//! retain their suppressions. Records bind the exact Design statement; they
+//! are background information only, adding no attention, participation,
+//! steering, claim, wake, or acknowledgment.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use journal::{GuardError, JournalRead};
 use spice::rooms::awareness::{DesignTerms, pitch, task_terms};
-use wire::rooms::DesignNoticed;
+use wire::rooms::{DesignNoticeProvenance, DesignNoticed};
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, LaneResidency, Producer, Seq, SequenceCode, TaskStamp,
 };
@@ -29,9 +26,13 @@ use super::*;
 /// Refusal reason of an invitation a commit after its observation made stale.
 const STALE: &str = "room::awareness-stale";
 
+/// Half-open early-seeding window after ordinary filing.
+const SEEDED_WINDOW_SECONDS: i64 = 10 * 60;
+/// Lifetime seeded-recipient cap per Design.
+const SEEDED_NOTICE_CAP: usize = 3;
 /// Most bytes of the Design title one notice repeats.
 const TITLE_BYTES: usize = 200;
-/// Most matched terms one notice names; the record keeps them all.
+/// Most matched terms one organic notice names; the record keeps them all.
 const NOTICE_TERMS: usize = 6;
 /// Pitch and title lengths a notice keeps whole while fitting one datagram.
 const SHORTEST_CLIP_BYTES: usize = 16;
@@ -44,6 +45,7 @@ pub(in crate::resident) struct DesignNotice {
     task: String,
     title: String,
     pitch: String,
+    provenance: DesignNoticeProvenance,
     terms: Vec<String>,
 }
 
@@ -71,20 +73,33 @@ impl DesignNotice {
         BackgroundNotice {
             occupant: self.occupant,
             purpose: format!("design:{design}"),
-            text: format!(
-                "<system-notice>\nPassive Design {design} \"{}\" matches your task {} on: {}.\n\
-                 Pitch: {}\nRead its room with `spice room history {design}` \
-                 (`spice://task/{design}/room`). Contribute with `spice room contribute {design} \
-                 reason-for|reason-against|evidence|question TEXT`; `spice room leave {design} \
-                 --clause TEXT` declines further invitations. This private background \
-                 invitation needs no acknowledgment key or visible ACK/NAK, starts no work, \
-                 grants no claim, and does not make this lane a room listener.\n\
-                 </system-notice>",
-                self.title,
-                self.task,
-                self.terms.join(", "),
-                self.pitch,
-            ),
+            text: match self.provenance {
+                DesignNoticeProvenance::Organic => format!(
+                    "<system-notice>\nPassive Design {design} \"{}\" matches your task {} on: {}.\n\
+                     Pitch: {}\nRead its room with `spice room history {design}` \
+                     (`spice://task/{design}/room`). Contribute with `spice room contribute {design} \
+                     reason-for|reason-against|evidence|question TEXT`; `spice room leave {design} \
+                     --clause TEXT` declines further invitations. This private background \
+                     invitation needs no acknowledgment key or visible ACK/NAK, starts no work, \
+                     grants no claim, and does not make this lane a room listener.\n\
+                     </system-notice>",
+                    self.title,
+                    self.task,
+                    self.terms.join(", "),
+                    self.pitch,
+                ),
+                DesignNoticeProvenance::Seeded => format!(
+                    "<system-notice>\nPassive Design {design} \"{}\" selected your task {} for its \
+                     early sample; no term match was required.\nPitch: {}\nRead its room with \
+                     `spice room history {design}` (`spice://task/{design}/room`). Contribute with \
+                     `spice room contribute {design} reason-for|reason-against|evidence|question \
+                     TEXT`; `spice room leave {design} --clause TEXT` declines further invitations. \
+                     This private background invitation needs no acknowledgment key or visible \
+                     ACK/NAK, starts no work, grants no claim, and does not make this lane a room \
+                     listener.\n</system-notice>",
+                    self.title, self.task, self.pitch,
+                ),
+            },
         }
     }
 }
@@ -94,11 +109,16 @@ impl DesignNotice {
 #[derive(Clone)]
 pub(in crate::resident) struct Told {
     pub(in crate::resident) lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    task: TaskStamp,
-    claim: Seq,
+    pub(in crate::resident) occupant: CanonicalUuid,
+    pub(in crate::resident) task: TaskStamp,
+    pub(in crate::resident) task_statement: Seq,
+    pub(in crate::resident) claim: Seq,
     pub(in crate::resident) design: TaskStamp,
-    terms: Vec<String>,
+    pub(in crate::resident) statement: Seq,
+    pub(in crate::resident) provenance: DesignNoticeProvenance,
+    pub(in crate::resident) filed_at: Instant,
+    pub(in crate::resident) seeded_before: usize,
+    pub(in crate::resident) terms: Vec<String>,
     pub(in crate::resident) notice: DesignNotice,
     horizon: Option<Seq>,
 }
@@ -152,6 +172,13 @@ pub(super) fn occupied(seats: &Seats) -> BTreeMap<CanonicalUuid, CanonicalUuid> 
         .collect()
 }
 
+/// Immutable ordinary-filing boundary of one Design.
+#[derive(Clone, Copy)]
+struct Filing {
+    position: Seq,
+    at: Instant,
+}
+
 /// Every invitation each occupied claimant's occupant is owed, in task then
 /// Design order.
 pub(in crate::resident) fn plan(
@@ -189,54 +216,148 @@ pub(in crate::resident) fn plan(
         .iter()
         .map(|(_, claim, occupant)| (claim.lane, *occupant))
         .collect();
-    let (told, horizon) = noticed(bus, planning.residency.lanes.clone(), claimants)?;
+    let origins = designs
+        .iter()
+        .map(|(design, _)| (design.born().clone(), design.statement().queue_origin))
+        .collect();
+    let (history, horizon, filings) = noticed(
+        bus,
+        planning.residency.lanes.clone(),
+        claimants,
+        origins,
+        planning.at,
+    )?;
     let mut owed = Vec::new();
-    for (entry, claim, occupant) in claims {
-        let statement = entry.statement();
-        let terms = task_terms(
-            &statement.title,
-            statement.description.as_deref(),
-            &statement.acceptance,
-        );
-        let told = told.get(&(claim.lane, occupant));
-        for (design, design_terms) in &designs {
+    for (design, design_terms) in designs {
+        let filing = filings
+            .get(design.born())
+            .copied()
+            .ok_or_else(|| store_fault("room::awareness-filing-missing", design.born().as_str()))?;
+        let seeded_before = history.seeded.get(design.born()).copied().unwrap_or(0);
+        let can_seed =
+            seeded_before < SEEDED_NOTICE_CAP && within_seed_window(filing.at, planning.at);
+        let mut seeded = Vec::new();
+        for (index, (entry, claim, occupant)) in claims.iter().enumerate() {
             if design.born() == entry.born()
-                || told.is_some_and(|designs| designs.contains(design.born()))
+                || history
+                    .told
+                    .get(occupant)
+                    .is_some_and(|designs| designs.contains(design.born()))
                 || held_or_created(design, claim.lane)
+                || engaged(bus, planning, design.born(), claim.lane)?
             {
                 continue;
             }
-            let Some(matched) = design_terms.matched(&terms) else {
-                continue;
-            };
-            if engaged(bus, planning, design.born(), claim.lane)? {
-                continue;
+            let statement = entry.statement();
+            let terms = task_terms(
+                &statement.title,
+                statement.description.as_deref(),
+                &statement.acceptance,
+            );
+            if let Some(matched) = design_terms.matched(&terms) {
+                owed.push(invitation(
+                    entry,
+                    claim.lane,
+                    *occupant,
+                    claim.claimed,
+                    design,
+                    DesignNoticeProvenance::Organic,
+                    matched,
+                    filing,
+                    seeded_before,
+                    horizon,
+                ));
+            } else if can_seed {
+                seeded.push(index);
             }
-            let design_statement = design.statement();
-            owed.push(Told {
-                lane: claim.lane,
-                occupant,
-                task: entry.born().clone(),
-                claim: claim.claimed,
-                design: design.born().clone(),
-                notice: DesignNotice {
+        }
+        seeded.sort_unstable_by_key(|index| claims[*index].1.lane);
+        if !seeded.is_empty() {
+            let rotation = design_rotation(design.born(), seeded.len());
+            seeded.rotate_left(rotation);
+            for index in seeded.into_iter().take(SEEDED_NOTICE_CAP - seeded_before) {
+                let (entry, claim, occupant) = claims[index];
+                owed.push(invitation(
+                    entry,
+                    claim.lane,
                     occupant,
-                    design: design.handle().to_string(),
-                    task: entry.handle().to_string(),
-                    title: clip(&design_statement.title, TITLE_BYTES),
-                    pitch: pitch(
-                        &design_statement.title,
-                        design_statement.description.as_deref(),
-                    ),
-                    terms: matched.iter().take(NOTICE_TERMS).cloned().collect(),
-                }
-                .fit(),
-                terms: matched,
-                horizon,
-            });
+                    claim.claimed,
+                    design,
+                    DesignNoticeProvenance::Seeded,
+                    Vec::new(),
+                    filing,
+                    seeded_before,
+                    horizon,
+                ));
+            }
         }
     }
+    owed.sort_unstable_by(|left, right| {
+        left.task
+            .cmp(&right.task)
+            .then_with(|| left.design.cmp(&right.design))
+    });
     Ok(owed)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn invitation(
+    entry: &board::Entry,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    claim: Seq,
+    design: &board::Entry,
+    provenance: DesignNoticeProvenance,
+    terms: Vec<String>,
+    filing: Filing,
+    seeded_before: usize,
+    horizon: Option<Seq>,
+) -> Told {
+    let statement = entry.statement();
+    let design_statement = design.statement();
+    Told {
+        lane,
+        occupant,
+        task: entry.born().clone(),
+        task_statement: statement.revision,
+        claim,
+        design: design.born().clone(),
+        statement: design_statement.revision,
+        provenance,
+        filed_at: filing.at,
+        seeded_before,
+        notice: DesignNotice {
+            occupant,
+            design: design.handle().to_string(),
+            task: entry.handle().to_string(),
+            title: clip(&design_statement.title, TITLE_BYTES),
+            pitch: pitch(
+                &design_statement.title,
+                design_statement.description.as_deref(),
+            ),
+            provenance,
+            terms: terms.iter().take(NOTICE_TERMS).cloned().collect(),
+        }
+        .fit(),
+        terms,
+        horizon,
+    }
+}
+
+/// Stable per-Design start within the current sorted eligible cohort.
+fn design_rotation(design: &TaskStamp, candidates: usize) -> usize {
+    design.as_str().bytes().fold(0_usize, |seed, byte| {
+        seed.wrapping_mul(31).wrapping_add(usize::from(byte))
+    }) % candidates
+}
+
+/// Whether `at` belongs to the half-open interval `[filed, filed + 10m)`.
+fn within_seed_window(filed: Instant, at: Instant) -> bool {
+    filed.get() <= at.get()
+        && filed
+            .get()
+            .checked_add(jiff::SignedDuration::from_secs(SEEDED_WINDOW_SECONDS))
+            .is_ok_and(|until| at.get() < until)
 }
 
 /// Whether `entry` is an open Design outside every working group.
@@ -291,19 +412,29 @@ fn engaged(
         .any(|row| row.lane == lane && row.listens()))
 }
 
-/// The Designs told to each occupant, keyed by lane and occupant.
-type Noticed = BTreeMap<(CanonicalUuid, CanonicalUuid), BTreeSet<TaskStamp>>;
+/// Durable invitation state needed for once-per-occupant and lifetime caps.
+#[derive(Default)]
+struct NoticeHistory {
+    told: BTreeMap<CanonicalUuid, BTreeSet<TaskStamp>>,
+    seeded: BTreeMap<TaskStamp, usize>,
+}
 
-/// The Designs already told to each claimant occupant, read from the earliest
-/// such occupant's birth on its lane, and the horizon the read covers. A
-/// claimant whose birth is unproved widens the read to every retained record,
-/// so no invitation repeats.
+/// The Designs already told to each claimant occupant, lifetime seeded counts,
+/// filing boundaries, and the exact horizon these reads cover.
 fn noticed(
     bus: &Bus,
     lanes: Vec<LaneResidency>,
     claimants: BTreeMap<CanonicalUuid, CanonicalUuid>,
-) -> CommandResult<(Noticed, Option<Seq>)> {
+    origins: Vec<(TaskStamp, Seq)>,
+    at: Instant,
+) -> CommandResult<(NoticeHistory, Option<Seq>, BTreeMap<TaskStamp, Filing>)> {
     bus.read(move |read| {
+        let filings = origins
+            .iter()
+            .map(|(design, origin)| {
+                filing(read, design, *origin).map(|filed| (design.clone(), filed))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
         let addresses = bus::journal_seat_addresses(read, &lanes)?;
         let births = claimants
             .iter()
@@ -315,11 +446,20 @@ fn noticed(
                 _ => None,
             })
             .collect::<Option<Vec<_>>>();
-        let mut after = births
-            .and_then(|births| births.into_iter().min())
-            .and_then(|birth| birth.get().checked_sub(1))
-            .and_then(Seq::new);
-        let mut told = Noticed::new();
+        let mut after = births.and_then(|mut starts| {
+            starts.extend(
+                filings
+                    .values()
+                    .filter(|filing| within_seed_window(filing.at, at))
+                    .map(|filing| filing.position),
+            );
+            starts
+                .into_iter()
+                .min()
+                .and_then(|position| position.get().checked_sub(1))
+                .and_then(Seq::new)
+        });
+        let mut history = NoticeHistory::default();
         loop {
             let page = noticed_page(read, after)?;
             for body in page
@@ -327,17 +467,56 @@ fn noticed(
                 .iter()
                 .filter_map(|row| row.fact.read::<DesignNoticed>())
             {
-                told.entry((body.lane, body.occupant))
+                history
+                    .told
+                    .entry(body.occupant)
                     .or_default()
-                    .insert(body.design);
+                    .insert(body.design.clone());
+                if body.provenance == DesignNoticeProvenance::Seeded {
+                    *history.seeded.entry(body.design).or_default() += 1;
+                }
             }
             let Some(continuation) = page.continuation else {
-                return Ok((told, page.horizon));
+                return Ok((history, page.horizon, filings));
             };
             after = Some(continuation);
         }
     })
     .map_err(|error| store_fault("room::awareness-unreadable", &error.to_string()))
+}
+
+/// Recover the immutable fact that put one currently filed Design into
+/// ordinary work.
+fn filing(
+    read: &JournalRead<'_>,
+    design: &TaskStamp,
+    queue_origin: Seq,
+) -> Result<Filing, GuardError> {
+    if let Some(envelope) = read.task_filed(design)? {
+        return Ok(Filing {
+            position: envelope.seq,
+            at: envelope.at,
+        });
+    }
+    let envelope = read.room_fact(queue_origin)?.ok_or_else(|| {
+        GuardError::Invalid(format!(
+            "Design {design} queue origin {queue_origin} is missing"
+        ))
+    })?;
+    let added = envelope
+        .fact
+        .read::<wire::body::TaskAdded>()
+        .filter(|added| added.task == *design && added.filing.is_filed())
+        .ok_or_else(|| {
+            GuardError::Invalid(format!(
+                "Design {design} queue origin {queue_origin} is not its filed birth"
+            ))
+        })?;
+    let _ = added;
+    Ok(Filing {
+        position: envelope.seq,
+        at: envelope.at,
+    })
 }
 
 /// One retained page of `room::noticed` records after `after`.
@@ -353,11 +532,26 @@ fn noticed_page(
     )
 }
 
-/// Refuse an invitation a commit after its observation made stale: the claim
-/// moved, the Design is no longer passive, the lane published in its room, or
-/// the occupant was already invited to it.
-fn still_owed(read: &JournalRead<'_>, told: &Told) -> Result<(), GuardError> {
+/// Refuse an invitation whose claim, occupant, statement, standing,
+/// engagement, cap, window, or once-per-occupant observation went stale.
+fn still_owed(read: &JournalRead<'_>, told: &Told, at: Instant) -> Result<(), GuardError> {
+    current_recipient(read, told)?;
+    passive_design(read, told)?;
+    unseen_invitation(read, told, at)
+}
+
+fn current_recipient(read: &JournalRead<'_>, told: &Told) -> Result<(), GuardError> {
     let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
+    let occupied = read.residency_head()?.is_some_and(|head| {
+        head.body().lanes.iter().any(|row| {
+            row.lane == told.lane
+                && row.occupant == Some(told.occupant)
+                && row.disposition == "occupied"
+        })
+    });
+    if !occupied {
+        return Err(stale("the occupant moved"));
+    }
     let claimed = read.claim_head(&told.task)?.is_some_and(|head| {
         let claim = head.body();
         claim.disposition == ClaimDisposition::Active
@@ -366,6 +560,32 @@ fn still_owed(read: &JournalRead<'_>, told: &Told) -> Result<(), GuardError> {
     });
     if !claimed {
         return Err(stale("the claim moved"));
+    }
+    if !read
+        .task_head(&told.task)?
+        .is_some_and(|head| head.body().revision == told.task_statement)
+    {
+        return Err(stale("the claimed task statement moved"));
+    }
+    Ok(())
+}
+
+fn passive_design(read: &JournalRead<'_>, told: &Told) -> Result<(), GuardError> {
+    let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
+    let Some(statement) = read.task_head(&told.design)? else {
+        return Err(stale("the Design disappeared"));
+    };
+    if statement.body().revision != told.statement {
+        return Err(stale("the Design statement moved"));
+    }
+    if statement.body().intent != Some(wire::TaskIntent::Design)
+        || !statement.body().filing.is_filed()
+    {
+        return Err(stale("the Design is no longer filed as a Design"));
+    }
+    let filed = filing(read, &told.design, statement.body().queue_origin)?;
+    if filed.position > told.statement || filed.at != told.filed_at {
+        return Err(stale("the Design filing boundary moved"));
     }
     let open = read
         .workflow_head(&told.design)?
@@ -376,8 +596,16 @@ fn still_owed(read: &JournalRead<'_>, told: &Told) -> Result<(), GuardError> {
             .iter()
             .any(|group| group.anchors.contains(&told.design))
     });
-    if !open || grouped {
-        return Err(stale("the Design is no longer passive"));
+    let held = read.claim_head(&told.design)?.is_some_and(|head| {
+        head.body().disposition == ClaimDisposition::Active && head.body().lane == told.lane
+    });
+    let created = matches!(
+        &statement.body().creation,
+        wire::body::TaskCreationContext::Transcript { boundary, .. }
+            if boundary.lane == told.lane
+    );
+    if !open || grouped || held || created {
+        return Err(stale("the Design is no longer passive for this lane"));
     }
     if read
         .latest_room_publication(&told.design, &Actor::Lane(told.lane))?
@@ -385,26 +613,41 @@ fn still_owed(read: &JournalRead<'_>, told: &Told) -> Result<(), GuardError> {
     {
         return Err(stale("the lane published in the room"));
     }
-    let mut after = told.horizon;
-    loop {
-        let page = noticed_page(read, after)?;
-        if page
-            .rows
-            .iter()
-            .filter_map(|row| row.fact.read::<DesignNoticed>())
-            .any(|body| {
-                body.lane == told.lane
-                    && body.occupant == told.occupant
-                    && body.design == told.design
-            })
-        {
-            return Err(stale("the occupant was already invited"));
-        }
-        let Some(continuation) = page.continuation else {
-            return Ok(());
-        };
-        after = Some(continuation);
+    Ok(())
+}
+
+fn unseen_invitation(read: &JournalRead<'_>, told: &Told, at: Instant) -> Result<(), GuardError> {
+    let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
+    if told.provenance == DesignNoticeProvenance::Seeded && !within_seed_window(told.filed_at, at) {
+        return Err(stale("the seeded window closed"));
     }
+    let mut seeded = told.seeded_before;
+    let Some(current) = read.cursor()? else {
+        return Err(stale("the journal horizon disappeared"));
+    };
+    let mut start = journal::FactPageStart::After(told.horizon);
+    loop {
+        let page = read.fact_page(start, current, journal::FactReadBudget::RETAINED)?;
+        for envelope in &page.rows {
+            let Some(body) = envelope.fact.read::<DesignNoticed>() else {
+                return Err(stale("authority changed after the invitation was planned"));
+            };
+            if body.occupant == told.occupant && body.design == told.design {
+                return Err(stale("the occupant was already invited"));
+            }
+            if body.design == told.design && body.provenance == DesignNoticeProvenance::Seeded {
+                seeded += 1;
+            }
+        }
+        let Some(overflow) = page.overflow else {
+            break;
+        };
+        start = journal::FactPageStart::At(overflow.continuation);
+    }
+    if told.provenance == DesignNoticeProvenance::Seeded && seeded >= SEEDED_NOTICE_CAP {
+        return Err(stale("the seeded cohort is full"));
+    }
+    Ok(())
 }
 
 /// Commit the durable record of one invitation before it is told: `false`
@@ -419,6 +662,8 @@ pub(in crate::resident) fn record(bus: &Bus, told: &Told) -> CommandResult<bool>
     write
         .fact(
             DesignNoticed {
+                statement: told.statement,
+                provenance: told.provenance,
                 design: told.design.clone(),
                 lane: told.lane,
                 occupant: told.occupant,
@@ -431,7 +676,7 @@ pub(in crate::resident) fn record(bus: &Bus, told: &Told) -> CommandResult<bool>
         .map_err(|error| store_fault("room::awareness-build", &error.to_string()))?;
     let observed = told.clone();
     write.guard(journal::JournalGuard::new(move |read| {
-        still_owed(read, &observed)
+        still_owed(read, &observed, at)
     }));
     match bus
         .commit(write)

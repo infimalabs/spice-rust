@@ -452,6 +452,8 @@ fn room_authority_pages_every_design_notice() {
         .fact(
             wire::rooms::DesignNoticed {
                 design,
+                statement: wire::Seq::new(1).expect("fixture statement"),
+                provenance: wire::rooms::DesignNoticeProvenance::Organic,
                 lane: uuid(HOLDER),
                 occupant: uuid(HOLDER),
                 task: claimed,
