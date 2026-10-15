@@ -214,12 +214,11 @@ and unbroken card text wrap within the sidebar instead of widening or clipping
 the global menu. The heading reads `<initials>'s inbox` (for example, "CA's
 inbox") once the connected principal's recorded profile supplies initials, and
 "Your inbox" until then; a profile edit retitles the same surface in place. It
-catalogs
-every open operator item each lane addressed through `#KEY` of a direction the
-operator sent it; the card names that direction by key and the text the
-operator sent. Retained
-pre-cutover items name the task they concerned, or show as unnamed when they
-named none; current packets cannot create either.
+catalogs every open operator item each lane addressed through `#KEY` of a
+direction the operator sent it; the card names that direction by key and the
+text the operator sent. Retained pre-cutover items name the task they
+concerned, or show as unnamed when they named none; current packets cannot
+create either.
 Then the card shows its publication's full body. A lane's body stays in its
 transcript, so the app reads it once, with the concerned direction's text,
 through the operator-only `room::conversation-text` read, which projects the
