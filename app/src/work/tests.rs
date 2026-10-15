@@ -79,6 +79,15 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
     }
 }
 
+/// An open Design: Design intent in its pending `design` phase.
+pub(crate) fn design(value: i64, project: &str) -> BoardTask {
+    let mut row = task(value, project);
+    row.statement.body.intent = Some(wire::TaskIntent::Design);
+    row.workflow.body.flow = vec!["design".parse().expect("fixture phase")];
+    row.workflow.body.phase = "design".parse().expect("fixture phase");
+    row
+}
+
 pub(crate) fn claim(task: &BoardTask, disposition: ClaimDisposition) -> Positioned<ClaimHead> {
     Positioned {
         position: seq(3),
@@ -248,13 +257,7 @@ fn lifecycle_precedence_follows_task_status_standings() {
 
 #[test]
 fn design_passivity_yields_only_to_possession_and_grouping() {
-    let design = |value| {
-        let mut row = task(value, "alpha.design");
-        row.statement.body.intent = Some(wire::TaskIntent::Design);
-        row.workflow.body.flow = vec!["design".parse().expect("fixture phase")];
-        row.workflow.body.phase = "design".parse().expect("fixture phase");
-        row
-    };
+    let design = |value| design(value, "alpha.design");
     let mut held = design(1);
     held.claim = Some(claim(&held, ClaimDisposition::Active));
     let mut lapsed = design(2);

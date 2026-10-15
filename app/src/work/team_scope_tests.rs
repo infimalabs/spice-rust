@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use wire::CanonicalUuid;
 use wire::head::ClaimDisposition;
 
-use super::tests::{board, claim, stamp, task};
+use super::tests::{board, claim, design, stamp, task};
 use super::{WorkOwner, WorkProjection, WorkScope};
 
 fn uuid(value: &str) -> CanonicalUuid {
@@ -161,9 +161,8 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
         construction: stamp(90),
     };
 
-    let mut design = task(1, "rooms.design");
+    let mut design = design(1, "rooms.design");
     design.creator_team = Some(creator);
-    design.statement.body.intent = Some(wire::TaskIntent::Design);
     let mut design_claim = claim(&design, ClaimDisposition::Active);
     design_claim.body.lane = member;
     design.claim = Some(design_claim);
@@ -191,7 +190,23 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
     past_claim.body.lane = member;
     rehomed.claim = Some(past_claim);
 
-    let board = board(vec![design, direct_output, plan, execution, rehomed]);
+    // Intake before the open design phase is ordinary claimed work.
+    let mut intake = task(6, "rooms.intake");
+    intake.creator_team = Some(creator);
+    intake.statement.body.intent = Some(wire::TaskIntent::Design);
+    intake.workflow.body.flow = ["plan", "design"]
+        .map(|phase| phase.parse().expect("fixture phase"))
+        .to_vec();
+    intake.workflow.body.phase = "plan".parse().expect("fixture phase");
+
+    let board = board(vec![
+        design,
+        direct_output,
+        plan,
+        execution,
+        rehomed,
+        intake,
+    ]);
     let projection = WorkProjection::from_board_with_team_memberships(
         &board,
         Some(BTreeSet::from([creator, executor])),
@@ -211,8 +226,8 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
     );
     assert_eq!(
         borns(&WorkScope::AllOpen),
-        BTreeSet::from([stamp(4), stamp(5)]),
-        "a Plan-controlled task stays execution work and no Design-owned row is duplicated",
+        BTreeSet::from([stamp(4), stamp(5), stamp(6)]),
+        "a Plan-controlled task and a Design in intake stay execution work, and no Design-owned row is duplicated",
     );
     let team = WorkScope::Team { team: executor };
     let strip = projection
@@ -245,22 +260,21 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
 
 #[test]
 fn group_scope_docks_only_active_work_associated_with_its_designs() {
-    let design = stamp(1);
+    let design_born = stamp(1);
     let second_lane = uuid("22222222-2222-4222-8222-222222222222");
     let group = "dVxJ7j0vj"
         .parse::<wire::rooms::RoomAuthorityStamp>()
         .expect("fixture group");
     let preparation = || wire::TaskPreparation {
-        parent: design.clone(),
-        controller: design.clone(),
-        construction: design.clone(),
+        parent: design_born.clone(),
+        controller: design_born.clone(),
+        construction: design_born.clone(),
     };
     let activate = |row: &mut wire::intent::BoardTask| {
         row.claim = Some(claim(row, ClaimDisposition::Active));
     };
 
-    let mut active_design = task(1, "rooms.design");
-    active_design.statement.body.intent = Some(wire::TaskIntent::Design);
+    let mut active_design = design(1, "rooms.design");
     activate(&mut active_design);
     let mut active_output = task(2, "rooms.active");
     active_output.statement.body.preparation = Some(preparation());
@@ -289,7 +303,7 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
     let projection = WorkProjection::from_board(&board);
     let scope = WorkScope::Group {
         group,
-        designs: vec![design],
+        designs: vec![design_born],
     };
     let (group_counts, workers) = projection.group_worker_strip(&scope);
     assert_eq!(
