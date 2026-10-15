@@ -103,7 +103,6 @@ fn render_total(
                 title={title.clone()}
                 aria-label={title}
                 data-sidebar-focus-key={format!("group-work:{}:all", view.group)}
-                data-blocked={view::chrome::blocked_mark(counts)}
                 onclick={open_group}
             >
                 {view::chrome::render_task_count(counts)}

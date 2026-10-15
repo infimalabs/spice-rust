@@ -334,7 +334,6 @@ fn render_team_total(
                 title={title.clone()}
                 aria-label={title}
                 data-sidebar-focus-key={format!("team-work:{team}:all")}
-                data-blocked={view::chrome::blocked_mark(counts)}
                 onclick={open_team}
             >
                 {view::chrome::render_task_count(counts)}
