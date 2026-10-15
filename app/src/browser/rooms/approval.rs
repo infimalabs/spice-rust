@@ -832,9 +832,10 @@ fn render_withdrawal(
     withdrawal: &RoomPositioned<CandidateWithdrawalRecord>,
 ) -> Html {
     let record = &withdrawal.value;
-    let author = match &record.author {
-        wire::Actor::Lane(lane) => lane_label(runtime, *lane),
-        other => crate::work::owner_label(other, None),
+    let author = runtime.room_projection().author(&record.author);
+    let author = match author {
+        wire::Actor::Lane(lane) => lane_label(runtime, lane),
+        other => crate::work::owner_label(&other, None),
     };
     let fact = SequenceCode::new(withdrawal.position.get());
     html! {

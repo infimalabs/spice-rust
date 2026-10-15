@@ -166,10 +166,13 @@ fn external_module_name(line: &str) -> Option<String> {
 }
 
 fn resolve_module(source: &Path, declaration: &Declaration) -> Result<PathBuf, String> {
-    let directory = module_directory(source)?;
     if let Some(path) = &declaration.path {
-        return Ok(directory.join(path));
+        let parent = source
+            .parent()
+            .ok_or_else(|| format!("{} has no parent", source.display()))?;
+        return Ok(parent.join(path));
     }
+    let directory = module_directory(source)?;
     let flat = directory.join(format!("{}.rs", declaration.name));
     let nested = directory.join(&declaration.name).join("mod.rs");
     match (flat.is_file(), nested.is_file()) {
@@ -323,6 +326,29 @@ fn a_selected_tree_without_git_metadata_uses_its_present_sources() {
     );
 }
 
+#[test]
+fn an_explicit_path_is_relative_to_the_declaring_source_file() {
+    let fixture = Fixture::new();
+    let source = fixture.root().join("app/src/design_amendment.rs");
+    let expected = fixture.root().join("app/src/design_amendment/tests.rs");
+    fs::create_dir_all(expected.parent().expect("fixture test module has a parent"))
+        .expect("create explicit module directory");
+    fs::write(
+        &source,
+        "#[path = \"design_amendment/tests.rs\"]\nmod tests;\n",
+    )
+    .expect("write declaring module");
+    fs::write(&expected, "pub fn contract() {}\n").expect("write explicit module");
+    let declaration = declarations(&fs::read_to_string(&source).expect("read declaring module"))
+        .expect("parse declaration")
+        .pop()
+        .expect("one declaration");
+
+    assert_eq!(
+        resolve_module(&source, &declaration).expect("resolve explicit path"),
+        expected
+    );
+}
 /// Two fixtures held at once take separate roots, and neither survives its
 /// owner or is emptied by the other.
 ///

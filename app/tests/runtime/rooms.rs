@@ -3,6 +3,7 @@
 
 use super::*;
 use serde::Serialize;
+use wire::principal::{PrincipalAdmitted, PrincipalProfile, PrincipalRole};
 use wire::rooms::{
     CandidateRef, CandidateReference, CandidateRetained, CandidateWithdrawal, CandidateWithdrawn,
     CoverageRef, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorized,
@@ -55,6 +56,19 @@ fn live_fact(fact: serde_json::Value) -> Vec<u8> {
         "fact": fact,
     }))
     .expect("live fact frame serializes")
+}
+
+fn principal_admitted(position: u64, principal: &str) -> serde_json::Value {
+    envelope(
+        position,
+        "principal::admitted",
+        &PrincipalAdmitted {
+            principal: uuid(principal),
+            profile: PrincipalProfile::default(),
+            roles: [PrincipalRole::Operator].into_iter().collect(),
+            capability: None,
+        },
+    )
 }
 
 fn room() -> wire::TaskStamp {
@@ -582,6 +596,59 @@ fn a_withdrawn_version_stays_in_history_with_its_author_reason_and_time() {
     assert_eq!(
         serde_json::to_value(record.value.at).expect("instant encodes"),
         "2030-04-12T18:44:09.271Z"
+    );
+}
+
+#[test]
+fn historical_operator_withdrawal_keeps_the_first_principal_after_another_birth() {
+    const FIRST: &str = "018f82d4-6f59-7d06-92e3-bce9131163f0";
+    const SECOND: &str = "018f82d4-6f59-7d06-92e3-bce9131163a0";
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    runtime.apply_stream(&operator_facts(&session, 4));
+    let candidate = CandidateRef {
+        controller: room(),
+        candidate: authority(CANDIDATE),
+    };
+    let withdrawn = envelope(
+        4,
+        "proposal::withdrawn",
+        &CandidateWithdrawn {
+            withdrawal: CandidateWithdrawal {
+                candidate: candidate.clone(),
+                reason: "superseded".to_owned(),
+            },
+        },
+    );
+    runtime.apply_stream(&room_page(
+        &session,
+        &[
+            principal_admitted(1, FIRST),
+            room_message(2),
+            retained(3, CANDIDATE, "HIDDEN-oops1"),
+            withdrawn,
+        ],
+        None,
+        4,
+    ));
+
+    let author = runtime.room_projection().preparation().withdrawals[&candidate]
+        .value
+        .author
+        .clone();
+    assert_eq!(author, wire::Actor::Operator);
+    let resolved = wire::Actor::Human(uuid(FIRST));
+    assert_eq!(runtime.room_projection().author(&author), resolved);
+
+    runtime.apply_stream(&admitted_stream(
+        &session,
+        &live_fact(principal_admitted(5, SECOND)),
+    ));
+    assert_eq!(
+        runtime.room_projection().author(&author),
+        resolved,
+        "a later birth does not move historical authorship"
     );
 }
 

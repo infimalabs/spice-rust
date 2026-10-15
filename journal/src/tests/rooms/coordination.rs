@@ -119,6 +119,32 @@ fn record(
     write
 }
 
+fn admit_principal(journal: &mut Journal, principal: &str) -> Seq {
+    let principal = uuid(principal);
+    let roles = std::collections::BTreeSet::from([wire::principal::PrincipalRole::Operator]);
+    let mut write = write_as(Actor::Spice);
+    let admitted = write
+        .fact(
+            wire::principal::PrincipalAdmitted {
+                principal,
+                profile: wire::principal::PrincipalProfile::default(),
+                roles: roles.clone(),
+                capability: None,
+            },
+            FactCause::Root,
+        )
+        .expect("principal admission builds");
+    write.principal_head(admitted, move |born| wire::principal::PrincipalHead {
+        principal,
+        born,
+        profile: wire::principal::PrincipalProfile::default(),
+        roles,
+        capability: None,
+    });
+    journal.apply(write).expect("principal admission commits");
+    cursor(journal).expect("principal admission has a position")
+}
+
 /// One stop direction: its key index, the claim win it cites, and its lane.
 type Stop<'a> = (usize, u64, &'a str);
 
@@ -473,6 +499,24 @@ fn room_authority_pages_every_design_notice() {
     assert_eq!(
         page.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
         vec![noticed]
+    );
+}
+
+/// The room snapshot carries exactly the first admission needed to resolve
+/// historical operator authors; later births cannot move that identity.
+#[test]
+fn room_authority_pages_the_first_principal_admission_only() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let first = admit_principal(&mut journal, "018f82d4-6f59-7d06-92e3-bce9131163f0");
+    let second = admit_principal(&mut journal, "018f82d4-6f59-7d06-92e3-bce9131163a0");
+    let page = journal
+        .read(|read| {
+            read.room_authority_page(crate::FactPageStart::After(None), second, fact_budget(8))
+        })
+        .expect("room authority reads");
+    assert_eq!(
+        page.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+        vec![first]
     );
 }
 

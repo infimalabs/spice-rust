@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use wire::rooms::{self as authority, RoomAuthorityStamp};
-use wire::{CanonicalUuid, FactKind, Packed, Seq, StreamFact, TaskHandle, TaskStamp};
+use wire::{Actor, CanonicalUuid, FactKind, Packed, Seq, StreamFact, TaskHandle, TaskStamp};
 
 use super::BoardView;
 
@@ -330,6 +330,9 @@ pub struct RoomProjection {
     /// Greatest live position seen before the snapshot completed.
     early: Option<Seq>,
     direction: Option<Direction>,
+    /// Earliest-born human principal, used only to present historical
+    /// operator-authored room authority under its durable human identity.
+    bootstrap: Option<CanonicalUuid>,
     partition: authority::WorkingGroupPartition,
     rooms: BTreeMap<TaskStamp, RoomState>,
     preparation: PreparationProjection,
@@ -357,6 +360,7 @@ impl Default for RoomProjection {
             last_fact: None,
             early: None,
             direction: None,
+            bootstrap: None,
             partition: authority::WorkingGroupPartition::default(),
             rooms: BTreeMap::new(),
             preparation: PreparationProjection::default(),
@@ -398,6 +402,15 @@ impl RoomProjection {
     /// Conversation, operator item, result, and lane delivery authority.
     pub const fn conversation(&self) -> &ConversationProjection {
         &self.conversation
+    }
+
+    /// The author a room read presents for one recorded fact actor.
+    #[must_use]
+    pub fn author(&self, actor: &Actor) -> Actor {
+        match (actor, self.bootstrap) {
+            (Actor::Operator, Some(bootstrap)) => Actor::Human(bootstrap),
+            _ => actor.clone(),
+        }
     }
 
     /// Resolve the durable room identity only through the latest board snapshot.
@@ -584,6 +597,7 @@ impl RoomProjection {
     }
 
     fn apply_fact(&mut self, fact: &StreamFact) -> bool {
+        let principal = self.apply_principal_fact(fact).unwrap_or(false);
         let delivered = self.conversation.apply_delivery(fact);
         let changed = self
             .apply_room_fact(fact)
@@ -595,7 +609,24 @@ impl RoomProjection {
         if fact.kind() != FactKind::RoomMessaged {
             self.messaged.clear();
         }
-        delivered | changed
+        principal | delivered | changed
+    }
+
+    fn apply_principal_fact(&mut self, fact: &StreamFact) -> Option<bool> {
+        match fact.kind() {
+            FactKind::PrincipalAdmitted => Some(
+                fact.read::<wire::principal::PrincipalAdmitted>()
+                    .is_some_and(|body| {
+                        if self.bootstrap.is_some() {
+                            false
+                        } else {
+                            self.bootstrap = Some(body.principal);
+                            true
+                        }
+                    }),
+            ),
+            _ => None,
+        }
     }
 
     fn apply_room_fact(&mut self, fact: &StreamFact) -> Option<bool> {
