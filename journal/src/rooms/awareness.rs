@@ -6,13 +6,14 @@ use wire::rooms::{
     DESIGN_NOTICE_TERMS, DesignNoticeProvenance, DesignNoticed, DesignReturnDelivered,
     PreparationDecision, ProposalRef,
 };
-use wire::{Actor, AnyFact, ClaimDisposition, ClaimHead};
+use wire::{Actor, AnyFact, ClaimDisposition, ClaimHead, Seq};
 
 use super::{Authority, Refusal, require_task, subject, unsound};
 
 /// Admit one Design notice record, or `None` for another fact.
 pub(super) fn fold(
-    authority: &impl Authority,
+    authority: &mut impl Authority,
+    seq: Seq,
     actor: &Actor,
     fact: &AnyFact,
 ) -> Option<Result<(), Refusal>> {
@@ -20,7 +21,7 @@ pub(super) fn fold(
         return Some(returned(authority, actor, &body));
     }
     fact.read::<DesignNoticed>()
-        .map(|body| notice(authority, actor, &body))
+        .map(|body| notice(authority, seq, actor, &body))
 }
 
 /// Every return-delivery record still names the exact active claim it served.
@@ -88,7 +89,12 @@ fn returned(
     Ok(())
 }
 
-fn notice(authority: &impl Authority, actor: &Actor, body: &DesignNoticed) -> Result<(), Refusal> {
+fn notice(
+    authority: &mut impl Authority,
+    seq: Seq,
+    actor: &Actor,
+    body: &DesignNoticed,
+) -> Result<(), Refusal> {
     if *actor != Actor::Spice {
         return unsound(format!(
             "design awareness for {} is resident-owned, not written by {actor}",
@@ -136,5 +142,8 @@ fn notice(authority: &impl Authority, actor: &Actor, body: &DesignNoticed) -> Re
             body.design
         ));
     }
-    Ok(())
+    authority.change(super::Change::MaturityNotice {
+        seq: seq.get(),
+        notice: body.clone(),
+    })
 }

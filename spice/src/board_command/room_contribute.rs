@@ -58,6 +58,15 @@ pub(crate) fn room_contribute(
         return refused;
     }
     let room = anchor.born().clone();
+    let Some(statement) = expected.iter().find_map(|witness| match witness {
+        wire::Witness::Task { task, head } if task == &room => Some(*head),
+        _ => None,
+    }) else {
+        return store_fault(
+            "room::contribution-statement-missing",
+            "the admitted contribution has no Design statement witness",
+        );
+    };
     let Some(before) = snapshot.cursor.get().checked_add(1).and_then(Seq::new) else {
         return store_fault(
             "room::cursor-exhausted",
@@ -100,6 +109,7 @@ pub(crate) fn room_contribute(
             publication,
             lane,
             contribution: contribute.kind,
+            statement: Some(statement),
             text: text.to_owned(),
             sources: contribute.sources.clone(),
         },

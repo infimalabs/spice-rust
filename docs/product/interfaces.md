@@ -132,6 +132,8 @@ task handles instead.
 | Design contribution text | 4096 bytes, nonempty and stored without leading or trailing whitespace | `room::contribution-empty` or `room::contribution-too-long`; the command normalizes outer whitespace, while a noncanonical journal fact is refused |
 | Sources per Design contribution | 8 distinct exact authorities | `room::contribution-sources-exceeded` or `room::contribution-source-duplicate`; two transcript links to the same locus and text range remain one authority when only their accounted boundary differs |
 | Contribution room and proof | an open Design, by a lane, with one source witness per cited authority | `room::contribution-not-design`, `room::contribution-design-concluded`, `room::contribution-lane-only`, or `room::contribution-source-witness`; the journal refuses a contribution without its matching successful command receipt |
+| Exact Design maturity statement heads | current plus three recent heads; older heads fold into one aggregate | display the aggregate instead of expanding history |
+| Distinct lanes per Design maturity set | 64 sorted identities | display the retained count with a bounded marker; maturity's three-lane threshold remains exact |
 | Post to a settled room | an unresolved anchor only | `room::anchor-settled`, naming the standing: a completed, closed, or deleted anchor's room stays readable, and its open receipts and results still settle |
 | Late answer | the immutable deadline | `room::deadline-passed`: close with `spice room cancel RESULT --clause TEXT --override` |
 | Answer or close by a non-party | stored parties only | `room::not-respondent` or `room::override-required`, naming the `--override` command |

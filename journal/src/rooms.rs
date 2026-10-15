@@ -48,6 +48,18 @@ pub(crate) use coordination::{
 pub(crate) use engagement::require_transition as require_engagement;
 pub(crate) use evidence::{SCHEMA_SQL as EVIDENCE_SCHEMA_SQL, fold as fold_evidence};
 pub(crate) use relevance::SCHEMA_SQL as RELEVANCE_SCHEMA_SQL;
+pub(crate) const MATURITY_SCHEMA_SQL: &str = r#"
+CREATE TABLE design_notices (
+    design TEXT NOT NULL,
+    seq INTEGER NOT NULL UNIQUE REFERENCES fact_envelopes(seq),
+    PRIMARY KEY (design, seq)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX design_notices_design_seq ON design_notices(design, seq);
+CREATE TABLE design_maturity (
+    design TEXT PRIMARY KEY,
+    body BLOB NOT NULL
+) STRICT;
+"#;
 pub(crate) use sql::{Stored, require_open_controllers, settle_controls, write_projection};
 
 /// Room-authority projection tables, created with the current schema.
@@ -162,6 +174,10 @@ pub(crate) struct AuthorizationRow {
 pub(crate) struct Projection {
     /// `(room, publication)` to publishing fact position.
     pub(crate) publications: BTreeMap<(String, String), u64>,
+    /// `(Design, notice position)` rows for bounded per-Design reads.
+    pub(crate) notices: BTreeMap<(String, u64), ()>,
+    /// Design to its canonical bounded maturity accumulator.
+    pub(crate) maturity: BTreeMap<String, Vec<u8>>,
     /// The working-group partition's head position and canonical body.
     pub(crate) partition: Option<(u64, Vec<u8>)>,
     /// Canonical proposal subject to its write-once head.
@@ -307,10 +323,15 @@ pub(crate) enum Change {
         required: Option<(String, u64)>,
     },
     Relevance(relevance::Edit),
+    MaturityNotice {
+        seq: u64,
+        notice: wire::rooms::DesignNoticed,
+    },
+    MaturityContribution(wire::rooms::RoomContributed),
 }
 
 impl Projection {
-    fn apply(&mut self, change: Change) {
+    fn apply(&mut self, change: Change) -> Result<(), Refusal> {
         match change {
             Change::Publication {
                 room,
@@ -362,7 +383,36 @@ impl Projection {
                 }
             }
             Change::Relevance(edit) => self.relevance.apply(edit),
+            Change::MaturityNotice { seq, notice } => {
+                self.notices.insert((notice.design.to_string(), seq), ());
+                self.update_maturity(&notice.design, |maturity| {
+                    maturity.observe_notice(&notice);
+                })?;
+            }
+            Change::MaturityContribution(contribution) => {
+                self.update_maturity(&contribution.room, |maturity| {
+                    maturity.observe_contribution(&contribution);
+                })?;
+            }
         }
+        Ok(())
+    }
+
+    fn update_maturity(
+        &mut self,
+        design: &TaskStamp,
+        update: impl FnOnce(&mut wire::rooms::DesignMaturity),
+    ) -> Result<(), Refusal> {
+        let mut maturity = self
+            .maturity
+            .get(design.as_str())
+            .map(|body| wire::decode(body))
+            .transpose()?
+            .unwrap_or_default();
+        update(&mut maturity);
+        self.maturity
+            .insert(design.to_string(), wire::encode(&maturity)?);
+        Ok(())
     }
 }
 
@@ -594,8 +644,7 @@ impl Authority for History {
     }
 
     fn change(&mut self, change: Change) -> Result<(), Refusal> {
-        self.projection.apply(change);
-        Ok(())
+        self.projection.apply(change)
     }
 }
 
@@ -756,7 +805,7 @@ fn fold_traffic(
     if let Some(result) = relevance::fold(authority, seq, actor, fact) {
         return Some(result);
     }
-    if let Some(result) = awareness::fold(authority, actor, fact) {
+    if let Some(result) = awareness::fold(authority, seq, actor, fact) {
         return Some(result);
     }
     if let Some(result) = coordination::fold(authority, seq, actor, fact) {
@@ -963,7 +1012,22 @@ fn contribute(
     for source in &body.sources {
         require_source(authority, seq, source)?;
     }
-    publish(authority, seq, &body.room, &body.publication)
+    publish(authority, seq, &body.room, &body.publication)?;
+    if let Some(statement) = body.statement {
+        let current = authority.task_statement(&body.room)?.ok_or_else(|| {
+            Refusal::Unsound(format!(
+                "contribution Design {} has no statement",
+                body.room
+            ))
+        })?;
+        if current != statement {
+            return unsound(format!(
+                "contribution in {} names statement {statement} while its current head is {current}",
+                body.room
+            ));
+        }
+    }
+    authority.change(Change::MaturityContribution(body.clone()))
 }
 
 /// Coverage authority is the principal that wrote it: the operator, an

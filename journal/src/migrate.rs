@@ -10,6 +10,7 @@ mod awareness;
 mod decisions;
 mod designs;
 mod fact_bounds;
+mod maturity;
 mod residual;
 mod team_formations;
 
@@ -46,14 +47,15 @@ const PREPARED: &str = "prepared";
 /// selection provenance, and creates the room-authority projection, per-lane
 /// room catch-up cursors and horizons, room coordination heads, room
 /// conversation heads, operator items, required task evidence, relevance
-/// shadow records, the working-group partition, and the empty principal head
-/// index a predecessor lacks, replacing its per-route room receipts and
-/// per-group heads, before the schema identity advances. The schema-61
-/// principal vocabulary requires no row rewrite. Current readers therefore
-/// need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 29] = [
+/// shadow records, the working-group partition, the empty principal head
+/// index, and the per-Design notice and bounded maturity projections a
+/// predecessor lacks, replacing its per-route room receipts and per-group
+/// heads, before the schema identity advances. The schema-61 principal
+/// vocabulary and schema-62 authority require no row rewrite. Current readers
+/// therefore need no release-specific execution arm.
+const PREDECESSOR_SCHEMAS: [u32; 30] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61,
+    57, 58, 59, 60, 61, 62,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -100,9 +102,11 @@ pub(crate) const ROOM_RELEVANCE_SCHEMA: u32 = 49;
 pub(crate) const GROUP_PARTITION_SCHEMA: u32 = 53;
 /// Last schema whose current decision shape predates output verdicts.
 const WHOLE_CANDIDATE_DECISION_SCHEMA: u32 = 56;
+/// First schema whose baseline carries bounded Design maturity and notices.
+pub(crate) const DESIGN_MATURITY_SCHEMA: u32 = 63;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
-const ROOM_SCHEMA_STEPS: [(u32, &str); 9] = [
+const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
     (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
     (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
     (
@@ -118,6 +122,7 @@ const ROOM_SCHEMA_STEPS: [(u32, &str); 9] = [
     (TASK_EVIDENCE_SCHEMA, crate::rooms::EVIDENCE_SCHEMA_SQL),
     (ROOM_RELEVANCE_SCHEMA, crate::rooms::RELEVANCE_SCHEMA_SQL),
     (GROUP_PARTITION_SCHEMA, crate::rooms::GROUP_SCHEMA_SQL),
+    (DESIGN_MATURITY_SCHEMA, crate::rooms::MATURITY_SCHEMA_SQL),
 ];
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
@@ -329,24 +334,8 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         return Ok(None);
     }
     if version < WHOLE_CANDIDATE_DECISION_SCHEMA {
-        residual::refuse_group_markers(&transaction)?;
-        refuse_creation_omission(&transaction)?;
-        cross_oops_filing(&transaction)?;
-        let vendor_holds = residual::refuse(&transaction)?;
-        cross_residency_subscriptions(&transaction)?;
-        cross_retired_gate_filed(&transaction)?;
-        cross_retired_task_guidance(&transaction)?;
-        residual::cross(&transaction, vendor_holds)?;
-        residual::cross_steering_rooms(&transaction)?;
-        if version >= ROOM_AUTHORITY_SCHEMA {
-            decisions::cross(&transaction)?;
-        }
-        designs::cross(&transaction)?;
-        if (ROOM_CONVERSATION_SCHEMA..ROOM_ITEM_SCHEMA).contains(&version) {
-            transaction
-                .execute_batch("DROP TABLE room_receipts;")
-                .map_err(OpenError::Sqlite)?;
-        }
+        cross_shape_predecessor(&transaction, version)?;
+    } else {
         create_room_schemas(&transaction, version)?;
     }
     if version < TEAM_FORMATIONS_SCHEMA {
@@ -354,6 +343,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     }
     create_principal_heads(&transaction, version)?;
     awareness::cross(&transaction)?;
+    maturity::cross(&transaction)?;
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -369,6 +359,30 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         to: SCHEMA_VERSION,
     }))
 }
+fn cross_shape_predecessor(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<(), OpenError> {
+    residual::refuse_group_markers(transaction)?;
+    refuse_creation_omission(transaction)?;
+    cross_oops_filing(transaction)?;
+    let vendor_holds = residual::refuse(transaction)?;
+    cross_residency_subscriptions(transaction)?;
+    cross_retired_gate_filed(transaction)?;
+    cross_retired_task_guidance(transaction)?;
+    residual::cross(transaction, vendor_holds)?;
+    residual::cross_steering_rooms(transaction)?;
+    if version >= ROOM_AUTHORITY_SCHEMA {
+        decisions::cross(transaction)?;
+    }
+    designs::cross(transaction)?;
+    if (ROOM_CONVERSATION_SCHEMA..ROOM_ITEM_SCHEMA).contains(&version) {
+        transaction
+            .execute_batch("DROP TABLE room_receipts;")
+            .map_err(OpenError::Sqlite)?;
+    }
+    create_room_schemas(transaction, version)
+}
 
 /// Create each room projection an authority at `version` lacks; version zero
 /// lacks them all.
@@ -378,6 +392,14 @@ fn create_room_schemas(
 ) -> Result<(), OpenError> {
     for (since, sql) in ROOM_SCHEMA_STEPS {
         if version < since {
+            if since == DESIGN_MATURITY_SCHEMA {
+                transaction
+                    .execute_batch(
+                        "DROP TABLE IF EXISTS design_maturity;\
+                         DROP TABLE IF EXISTS design_notices;",
+                    )
+                    .map_err(OpenError::Sqlite)?;
+            }
             transaction.execute_batch(sql).map_err(OpenError::Sqlite)?;
         }
     }
@@ -1393,8 +1415,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 62, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 63, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 62;
+PRAGMA user_version = 63;
 "#;

@@ -180,6 +180,16 @@ Design view's form. Its sidebar lists the lane's Design invitations from the
 room snapshot's `room::noticed` records, labels each as an organic match or
 bounded early sample, and carries the exact evaluated Design statement.
 
+The read view derives its **Design maturity** panel from the resident's bounded
+per-Design projection, never by folding rendered room history. It shows
+contribution kinds and distinct lanes, organic reach, recent statement-head
+invitation yield, folded older-head and unattributed historical totals, and
+every missing substantive dimension. Fresh has no contributions; steeped
+requires reason-for, reason-against, evidence, and three contributing lanes.
+Questions and broad invitation reach cannot satisfy it. A steeped panel adds a
+neutral operator-attention cue, not a danger or workflow state; maturity never
+blocks or authorizes a Design decision.
+
 The same read view lists every immutable proposal version. An operator uses
 native radios and text fields to accept or reject every output, optionally
 comment on each verdict and the version overall, then preview and submit one

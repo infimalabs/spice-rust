@@ -334,7 +334,7 @@ impl Authority for Stored<'_> {
     }
 }
 
-fn apply(connection: &Connection, change: Change) -> Result<(), rusqlite::Error> {
+fn apply(connection: &Connection, change: Change) -> Result<(), Refusal> {
     match change {
         Change::Publication {
             room,
@@ -395,7 +395,45 @@ fn apply(connection: &Connection, change: Change) -> Result<(), rusqlite::Error>
                 .map(|(result, seq)| (result.as_str(), *seq)),
         )?,
         Change::Relevance(edit) => relevance::apply_sql(connection, edit)?,
+        Change::MaturityNotice { seq, notice } => {
+            connection.execute(
+                "INSERT INTO design_notices(design, seq) VALUES (?1, ?2)",
+                params![notice.design.as_str(), sql(seq)],
+            )?;
+            update_maturity(connection, &notice.design, |maturity| {
+                maturity.observe_notice(&notice);
+            })?;
+        }
+        Change::MaturityContribution(contribution) => {
+            update_maturity(connection, &contribution.room, |maturity| {
+                maturity.observe_contribution(&contribution);
+            })?;
+        }
     }
+    Ok(())
+}
+
+fn update_maturity(
+    connection: &Connection,
+    design: &TaskStamp,
+    update: impl FnOnce(&mut wire::rooms::DesignMaturity),
+) -> Result<(), Refusal> {
+    let mut maturity = connection
+        .query_row(
+            "SELECT body FROM design_maturity WHERE design = ?1",
+            [design.as_str()],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .optional()?
+        .map(|body| wire::decode(&body))
+        .transpose()?
+        .unwrap_or_default();
+    update(&mut maturity);
+    connection.execute(
+        "INSERT INTO design_maturity(design, body) VALUES (?1, ?2) \
+         ON CONFLICT(design) DO UPDATE SET body = excluded.body",
+        params![design.as_str(), wire::encode(&maturity)?],
+    )?;
     Ok(())
 }
 
@@ -433,15 +471,34 @@ fn insert_authorization(
     Ok(())
 }
 
+fn load_maturity(
+    connection: &Connection,
+) -> Result<(BTreeMap<(String, u64), ()>, BTreeMap<String, Vec<u8>>), rusqlite::Error> {
+    let notices = table(
+        connection,
+        "SELECT design, seq FROM design_notices",
+        |row| Ok(((row.get(0)?, unsql(row.get(1)?)), ())),
+    )?;
+    let maturity = table(
+        connection,
+        "SELECT design, body FROM design_maturity",
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    Ok((notices, maturity))
+}
+
 impl Projection {
     /// Read every stored projection row.
     pub(crate) fn load(connection: &Connection) -> Result<Self, rusqlite::Error> {
+        let (notices, maturity) = load_maturity(connection)?;
         Ok(Self {
             publications: table(
                 connection,
                 "SELECT room, publication, seq FROM room_publications",
                 |row| Ok(((row.get(0)?, row.get(1)?), unsql(row.get(2)?))),
             )?,
+            notices,
+            maturity,
             partition: connection
                 .query_row(
                     "SELECT head_seq, body FROM group_partition WHERE singleton = 1",
@@ -523,15 +580,27 @@ pub(crate) fn write_projection(
     projection: &Projection,
 ) -> Result<(), rusqlite::Error> {
     connection.execute_batch(
-        "DELETE FROM room_publications; DELETE FROM group_partition; \
-         DELETE FROM proposal_heads; DELETE FROM authorization_heads; DELETE FROM room_cursors; \
-         DELETE FROM room_horizons; DELETE FROM room_directions; DELETE FROM room_shelvings; \
-         DELETE FROM task_evidence;",
+        "DELETE FROM room_publications; DELETE FROM design_notices; DELETE FROM design_maturity; \
+         DELETE FROM group_partition; DELETE FROM proposal_heads; DELETE FROM authorization_heads; \
+         DELETE FROM room_cursors; DELETE FROM room_horizons; DELETE FROM room_directions; \
+         DELETE FROM room_shelvings; DELETE FROM task_evidence;",
     )?;
     for ((room, publication), seq) in &projection.publications {
         connection.execute(
             "INSERT INTO room_publications(room, publication, seq) VALUES (?1, ?2, ?3)",
             params![room, publication, sql(*seq)],
+        )?;
+    }
+    for ((design, seq), ()) in &projection.notices {
+        connection.execute(
+            "INSERT INTO design_notices(design, seq) VALUES (?1, ?2)",
+            params![design, sql(*seq)],
+        )?;
+    }
+    for (design, body) in &projection.maturity {
+        connection.execute(
+            "INSERT INTO design_maturity(design, body) VALUES (?1, ?2)",
+            params![design, body],
         )?;
     }
     if let Some((seq, body)) = &projection.partition {

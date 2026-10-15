@@ -1118,6 +1118,8 @@ fn expected_tables() -> BTreeSet<String> {
         "claim_index",
         "command_receipts",
         "cursor_head",
+        "design_maturity",
+        "design_notices",
         "fact_envelopes",
         "finding_heads",
         "group_partition",

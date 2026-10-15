@@ -12,7 +12,7 @@ use clap::ArgMatches;
 use serde::Serialize;
 use spice::repository::Repository;
 use wire::output::Bounded;
-use wire::rooms::DesignNoticed;
+use wire::rooms::{DesignMaturity, DesignMaturityState, DesignNoticed};
 use wire::{CanonicalUuid, FaultClass, Outcome, Reply, ReplyPosition, Seq, TaskHandle, TaskStamp};
 
 use super::{Failure, current_handle, discover, fault, store, task_invalid};
@@ -27,6 +27,8 @@ pub(crate) struct DesignAwareness {
     design: TaskHandle,
     anchor: TaskStamp,
     page: Bounded<Noticed>,
+    maturity: DesignMaturity,
+    effect: &'static str,
 }
 
 /// One admitted awareness record.
@@ -111,7 +113,19 @@ fn awareness(
     let anchor = named
         .born()
         .map_err(|error| task_invalid(named.as_str(), &error))?;
-    let (cursor, design, rows) = journal
+    let requested = page
+        .after()
+        .map(|after| {
+            after
+                .parse::<u64>()
+                .ok()
+                .and_then(Seq::new)
+                .ok_or_else(|| page.cursor_refusal(CURSOR))
+        })
+        .transpose()?;
+    let after = requested.and_then(|seq| seq.get().checked_sub(1).and_then(Seq::new));
+    let budget = journal::FactReadBudget::new(page.retain(), page.limits().bytes).map_err(store)?;
+    let (cursor, design, maturity, rows, more) = journal
         .read_with(|read| -> Result<_, Failure> {
             let design = current_handle(read, &anchor, projects)?;
             let cursor = read.cursor().map_err(store)?.ok_or_else(|| {
@@ -121,47 +135,36 @@ fn awareness(
                     "the journal names a task but no read position",
                 )
             })?;
-            let mut rows = Vec::new();
-            let mut after = None;
-            loop {
-                let fetched = read
-                    .selected_fact_page(
-                        &[wire::FactKind::DesignNoticed],
-                        after,
-                        Some(cursor),
-                        journal::FactReadBudget::RETAINED,
-                    )
-                    .map_err(store)?;
-                for envelope in fetched.rows {
-                    let Some(body) = envelope.fact.read::<DesignNoticed>() else {
-                        continue;
-                    };
-                    if body.design != anchor {
-                        continue;
-                    }
-                    rows.push(Noticed {
-                        seq: envelope.seq,
-                        lane: body.lane,
-                        occupant: body.occupant,
-                        task: current_handle(read, &body.task, projects)?,
-                        claim: Seq::new(body.claim.get()).ok_or_else(|| {
-                            fault(
-                                FaultClass::Store,
-                                "room::awareness-claim-invalid",
-                                "an awareness record names claim position zero",
-                            )
-                        })?,
-                        statement: body.statement,
-                        provenance: body.provenance,
-                        terms: body.terms,
-                    });
-                }
-                match fetched.continuation {
-                    Some(next) => after = Some(next),
-                    None => break,
-                }
+            let maturity = read.design_maturity(&anchor).map_err(store)?;
+            let fetched = read.design_notices(&anchor, after, budget).map_err(store)?;
+            let more = fetched.continuation.is_some();
+            let mut rows = Vec::with_capacity(fetched.rows.len());
+            for envelope in fetched.rows {
+                let Some(body) = envelope.fact.read::<DesignNoticed>() else {
+                    return Err(fault(
+                        FaultClass::Store,
+                        "room::awareness-index-invalid",
+                        "the Design notice index returned another fact kind",
+                    ));
+                };
+                rows.push(Noticed {
+                    seq: envelope.seq,
+                    lane: body.lane,
+                    occupant: body.occupant,
+                    task: current_handle(read, &body.task, projects)?,
+                    claim: Seq::new(body.claim.get()).ok_or_else(|| {
+                        fault(
+                            FaultClass::Store,
+                            "room::awareness-claim-invalid",
+                            "an awareness record names claim position zero",
+                        )
+                    })?,
+                    statement: body.statement,
+                    provenance: body.provenance,
+                    terms: body.terms,
+                });
             }
-            Ok((cursor, design, rows))
+            Ok((cursor, design, maturity, rows, more))
         })
         .map_err(|error| match error {
             journal::ReadError::Journal(error) => store(error),
@@ -170,13 +173,24 @@ fn awareness(
     if let Some(notice) = crate::board_command::rename_notice(&named, &design) {
         eprintln!("{notice}");
     }
-    let page = page.listed(rows, |row| row.seq.to_string(), CURSOR)?;
+    let population = rows.len().saturating_add(usize::from(more));
+    let page = page.shown(
+        rows.into_iter()
+            .map(|row| {
+                let key = row.seq.to_string();
+                (row, key)
+            })
+            .collect(),
+        population,
+    )?;
     Ok((
         ReplyPosition::Snapshot(cursor),
         DesignAwareness {
             design,
             anchor,
             page,
+            maturity,
+            effect: "advisory only; neither blocks nor authorizes a Design decision",
         },
     ))
 }
@@ -188,6 +202,8 @@ impl fmt::Display for DesignAwareness {
             "design {} awareness (background notices; no attention or acknowledgment)",
             self.design
         )?;
+        write!(formatter, "\n{}", maturity_summary(&self.maturity))?;
+        write!(formatter, "\n{}", self.effect)?;
         for row in &self.page.rows {
             write!(formatter, "\n{row}")?;
         }
@@ -196,6 +212,31 @@ impl fmt::Display for DesignAwareness {
             None => Ok(()),
         }
     }
+}
+
+fn maturity_summary(maturity: &DesignMaturity) -> String {
+    let state = match maturity.state() {
+        DesignMaturityState::Fresh => "fresh".to_owned(),
+        DesignMaturityState::Steeped => "steeped".to_owned(),
+        DesignMaturityState::Steeping { unmet } => format!(
+            "steeping; needs {}",
+            unmet
+                .into_iter()
+                .map(|requirement| requirement.label())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    format!(
+        "maturity {state}; contributions for={} against={} evidence={} questions={} from {} lanes; organic notices={} to {} lanes",
+        maturity.contributions.reason_for,
+        maturity.contributions.reason_against,
+        maturity.contributions.evidence,
+        maturity.contributions.question,
+        maturity.contributing_lanes.len(),
+        maturity.organic_notices,
+        maturity.organic_lanes.len(),
+    )
 }
 
 impl fmt::Display for Noticed {

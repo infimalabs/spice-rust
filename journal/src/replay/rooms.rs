@@ -45,6 +45,18 @@ pub(super) fn verify(
         &stored.publications,
         violations,
     );
+    compare(
+        "design_notices",
+        &expected.notices,
+        &stored.notices,
+        violations,
+    );
+    compare(
+        "design_maturity",
+        &expected.maturity,
+        &stored.maturity,
+        violations,
+    );
     fn singleton(partition: &Option<(u64, Vec<u8>)>) -> BTreeMap<u8, &(u64, Vec<u8>)> {
         partition.iter().map(|head| (1_u8, head)).collect()
     }
@@ -115,6 +127,8 @@ pub(super) fn verify(
         violations,
     );
     Ok(usize::from(stored.partition.is_some())
+        + stored.notices.len()
+        + stored.maturity.len()
         + stored.proposals.len()
         + stored.authorizations.len()
         + stored.cursors.len()

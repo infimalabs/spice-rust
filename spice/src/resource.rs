@@ -54,7 +54,7 @@ spice://task/HANDLE/artifact  task artifact list HANDLE [?limit=N&max-bytes=N&af
 spice://task/HANDLE/artifact/ARTIFACT  task artifact show HANDLE ARTIFACT [?offset=N&bytes=N]
 spice://task/HANDLE/room  room history HANDLE [?contributions&limit=N&max-bytes=N&after=PUBLICATION]; contributions pages only typed contributions; every page groups its contributions by kind; reading joins and acknowledges nothing
 spice://task/HANDLE/room/relevance  room relevance HANDLE [?limit=N&max-bytes=N&after=OBSERVATION]; shadow observations, assessments, and whole-room metrics; reading changes nothing
-spice://task/HANDLE/room/awareness  room awareness HANDLE [?limit=N&max-bytes=N&after=POSITION]; lanes told about this Design, with matched terms; reading changes nothing
+spice://task/HANDLE/room/awareness  room awareness HANDLE [?limit=N&max-bytes=N&after=POSITION]; lanes told about this Design, matched terms, and bounded advisory maturity; reading changes nothing
 spice://task/HANDLE/preparation  preparation show HANDLE [?limit=N&max-bytes=N&after=POSITION]; reading changes nothing
 spice://room/inbox  room inbox [?limit=N&max-bytes=N&after=ITEM]; open operator items, each with its receipt and result; reading settles nothing
 spice://room/result/RESULT  room result RESULT; one question's result, its parties, closure attribution, and answer return receipt
