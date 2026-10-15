@@ -158,14 +158,16 @@ unchanged. Success replaces the Draft with its Filed task, which the allocator
 can offer at once.
 
 The **OOPS** section follows Drafts and lists each open OOPS report the
-operator can read, each opening its task detail. That detail carries **File**
-with a **Project** field holding the report's current project; naming another
-public project files it there instead. Filing witnesses the statement,
-workflow, and deferral heads the control was drawn from, so a report that
-changed meanwhile refuses. A refusal, including a refused project, is shown
-beside the control and leaves the report parked. Success replaces the report
-with its Filed task under that project's handle. Filing under a Design's
-preparation, or filing and claiming at once, stays with `spice task file`.
+operator can read, each opening its task detail. There **File** sits in the
+Activity composer's action row beside **Add**, so the operator can read a
+report, record observations, and file it in one place. File takes no input: it
+files the report under its current project, and the allocator can offer the
+result at once. Filing witnesses the statement, workflow, and deferral heads
+the control was drawn from, so a report that changed meanwhile refuses. A
+refusal is shown beneath the composer and leaves the report parked. Success
+replaces the report with its Filed task under that project's handle.
+Re-homing a report under another project, filing under a Design's preparation,
+or filing and claiming at once stays with `spice task file`.
 
 ## Resident topology in the global menu
 
