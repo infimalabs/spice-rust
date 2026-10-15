@@ -151,11 +151,16 @@ plum. Any other selection keeps the page's base.
 ## Toolbar
 
 The toolbar has two rows: the team's task strip, then one status band holding
-presence pips beneath the team total and the live ticker in the rest. Pips
-follow canonical member order and distinguish active, queued, waiting, bound,
-and unbound states without encoding agent identity. The ticker keeps relative
-age, status, prefix, accent, accessible label, and live-region semantics; an
-empty fleet reserves no pips and invents no status.
+presence pips beneath the team total and the live ticker in the rest. The
+status band is the console's top edge, for a team and a working group alike.
+Where two consoles touch, each band rounds its touching top corner with the
+same radius as the lane-top tabs, so both top rules curve down into the faint
+rule dividing the consoles, which begins where the curves meet; a corner at the
+browser edge stays square. Pips follow canonical member order and distinguish
+active, queued, waiting, bound, and unbound states without encoding agent
+identity. The ticker keeps relative age, status, prefix, accent, accessible
+label, and live-region semantics; an empty fleet reserves no pips and invents
+no status.
 
 ## Task strips
 
@@ -180,11 +185,9 @@ tab appears only while a lane actively claims work associated with one of the
 group's Designs, names that lane, and wears its accent. An accented tab's text
 is always accent-tinted and its background carries a 5% accent tint, 10% on
 hover. Every horn tab's rails, global or local, keep the neutral line color and
-undim one neutral step on hover; no accent paints them. A local tab rises from
-its strip's status rule like a browser tab: on each side, a tiny flare curves
-its rail out to meet the rule and carries the tab's fill beneath the curve.
-Totals stay neutral, and global strips own their other interaction feedback
-independently. Every count badge is one neutral open-task total; see
+undim one neutral step on hover; no accent paints them. Totals stay neutral, and
+global strips own their other interaction feedback independently. Every count
+badge is one neutral open-task total; see
 [Task counts show one open total](../docs/product/loops.md#the-jitter-contract).
 A global total or stem tab, or a team or group total, whose own partition
 holds work only the operator can move carries a small danger-coloured dot
