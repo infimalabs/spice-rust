@@ -260,11 +260,16 @@ fn only_the_author_withdraws_an_undecided_candidate_and_the_correction_stays_act
     assert_eq!(position, withdrawn.last, "a repeat writes nothing");
     assert!(text.text.contains(reason), "{}", text.text);
 
-    let returned = |candidate: &CandidateRef| DecisionOutcome::Returned {
+    let rejected = |candidate: &CandidateRef| DecisionOutcome::Resolved {
         candidate: candidate.clone(),
-        reason: "another pass".to_owned(),
+        outputs: vec![OutputDecision {
+            output: output.born().expect("output stamp"),
+            verdict: OutputVerdict::Rejected,
+            comment: Some("another pass".to_owned()),
+        }],
+        comment: None,
     };
-    let refused = decide(&bus, epoch, &design, 1, &source, returned(&mistaken));
+    let refused = decide(&bus, epoch, &design, 1, &source, rejected(&mistaken));
     assert_eq!(refusal_of(&refused).0, "preparation::candidate-withdrawn");
     assert_committed(decide(
         &bus,
@@ -272,7 +277,7 @@ fn only_the_author_withdraws_an_undecided_candidate_and_the_correction_stays_act
         &design,
         1,
         &source,
-        returned(&corrected),
+        rejected(&corrected),
     ));
     let late = withdraw(&bus, epoch, author, &design, &corrected, reason);
     assert_eq!(refusal_of(&late).0, "preparation::candidate-decided");
