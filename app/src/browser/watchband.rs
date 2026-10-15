@@ -456,7 +456,14 @@ fn activity_cards(
     // A card carries only the agents, sources, and tasks its quotes name:
     // unrelated roster or board changes cannot re-render and remeasure it.
     let unquoted = Rc::new(crate::composer_markdown::QuoteAgents::new());
-    let quote_sources = team_quote_sources(runtime, team);
+    let lanes = team
+        .members
+        .iter()
+        .map(|member| member.lane)
+        .collect::<Vec<_>>();
+    let directions =
+        crate::watchband::direction_cards(runtime.messages().iter().map(Rc::as_ref), &lanes);
+    let quote_sources = team_quote_sources(runtime, team, &directions);
     let unquoted_sources = Rc::new(crate::composer_markdown::QuoteSources::new());
     let quote_tasks = runtime
         .board()
@@ -520,19 +527,10 @@ fn activity_cards(
             Some(agent_card(position, member, Rc::clone(message)))
         })
         .collect::<Vec<_>>();
-    let lanes = team
-        .members
-        .iter()
-        .map(|member| member.lane)
-        .collect::<Vec<_>>();
-    cards.extend(
-        crate::watchband::direction_cards(runtime.messages().iter().map(Rc::as_ref), &lanes)
-            .into_iter()
-            .filter_map(|message| {
-                let (position, member) = member_of(message.lane)?;
-                Some(agent_card(position, member, Rc::new(message)))
-            }),
-    );
+    cards.extend(directions.into_iter().filter_map(|message| {
+        let (position, member) = member_of(message.lane)?;
+        Some(agent_card(position, member, Rc::new(message)))
+    }));
     cards.extend(
         runtime
             .lifecycle_boundaries()

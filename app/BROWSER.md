@@ -327,9 +327,12 @@ The card rests in the operator's neutral accent. Its body is the direction as
 one quote reading operator → receiving members, with that quote's Quote and
 Play controls and its steering quote target. One send fanned out to several
 members of a team is one card naming each of them, so a resend, a nudge,
-a reload, or an older page adds no second card. A peer delivery or a
-post-compaction replay is no direction card, and the answering ACK or NAK card
-still quotes the direction it answers.
+a reload, or an older page adds no second card. The direction's relative age
+links to that card as any card's age does, and a quote of the same direction
+inside another card links there too; with no direction card in the team plane,
+that age stays unlinked. A peer delivery or a post-compaction replay is no
+direction card, and the answering ACK or NAK card still quotes the direction
+it answers.
 
 Each quote layer ends with one task target after its speaker's last word,
 filled with origin-task badges; it repeats on no other hunk, and Play never

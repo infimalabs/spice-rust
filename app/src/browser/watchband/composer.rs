@@ -290,11 +290,27 @@ pub(in crate::browser) fn agent_message_source_id(message: &wire::AgentMessage) 
 /// History arrives in stages. Rebuilding this projection from the resident
 /// snapshot lets existing quote cards acquire names and links as their source
 /// cards arrive, without treating an absent source as a permanent failure.
+/// A direction the team shows as its own card is that directive's source, so
+/// its age links there wherever it is quoted.
 pub(super) fn team_quote_sources(
     runtime: &AppRuntime,
     team: &crate::runtime::LaneRow,
+    directions: &[wire::AgentMessage],
 ) -> crate::composer_markdown::QuoteSources {
     let mut sources = crate::composer_markdown::QuoteSources::new();
+    for card in directions {
+        let card_id = agent_message_source_id(card);
+        for context in &card.directive_contexts {
+            let source = crate::composer_markdown::QuoteSource {
+                card_id: Some(card_id.clone()),
+                ..crate::composer_markdown::QuoteSource::directive(context)
+            };
+            for media_quote in &context.media_quotes {
+                sources.insert(media_quote.target.to_string(), source.clone());
+            }
+            sources.insert(context.quote_target.to_string(), source);
+        }
+    }
     for message in runtime.messages().iter().rev() {
         let Some((position, member)) = team
             .members
