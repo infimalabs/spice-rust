@@ -31,9 +31,7 @@ use crate::browser::watchband::{
 };
 use crate::client_action::{ClientAction, RoomPostAction};
 use crate::room_views::{GroupView, RoomViewAction};
-use crate::runtime::{
-    RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomProjectionStatus,
-};
+use crate::runtime::{RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind};
 use crate::watchband;
 use crate::work::WorkProjection;
 
@@ -115,7 +113,6 @@ pub(in crate::browser) fn render_group_surfaces(render: &GroupRender<'_, '_>) ->
 
 fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) -> Html {
     let projection = render.runtime.room_projection();
-    let loaded = projection.status() == RoomProjectionStatus::Available;
     // Formation age, never partition or browser-console order, deals the
     // group's base. A partition move therefore recolours nothing.
     let authoritative = projection
@@ -123,9 +120,6 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
         .groups
         .iter()
         .find(|group| group.group == view.group);
-    // Absence is shown only once a completed snapshot lacks the group; while
-    // authority reloads, the console keeps its last name and its geometry.
-    let absent = loaded && authoritative.is_none();
     let console =
         authoritative.map(|group| group_console(&projection.partition().groups, &group.group));
     let base = console.map(|console| watchband::group_accent(console, 0));
@@ -144,7 +138,7 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
             })
             .collect::<Vec<_>>()
     });
-    let name = group_name(render.runtime, render.controls, view, authoritative, absent);
+    let name = group_name(render.runtime, render.controls, view, authoritative);
     let slot = render.controls.slots.slot(view.group.clone());
     let cards = plane_cards(render, &view.group, &channels);
     let empty = cards.is_empty();
@@ -192,9 +186,6 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
         >
             {toolbar::render(render, view, &channels)}
             {panel::render_arrangement(render.controls, view, index, &name)}
-            if absent {
-                <p class="room-unavailable">{"Shared group authority is unavailable. This local view remains in place."}</p>
-            }
             <div class="team-pane">
                 <div class="team-compose">
                     // The composer renders into its slot in the plane's scroll content.
@@ -237,7 +228,6 @@ fn group_name(
     controls: &Controls,
     view: &GroupView,
     authoritative: Option<&wire::rooms::WorkingGroup>,
-    absent: bool,
 ) -> String {
     match authoritative {
         Some(group) => {
@@ -248,7 +238,6 @@ fn group_name(
                 .insert(view.group.clone(), label.clone());
             label
         }
-        None if absent => "Unavailable working group".to_owned(),
         None => controls
             .names
             .borrow()

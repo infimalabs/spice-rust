@@ -90,10 +90,12 @@ into a fresh group and is offered only while its group holds another design;
 the second takes it out of its group. They and every drop send one
 `group::move` or `group::arrange` witnessing the partition revision the browser
 last folded, and a change that partition revision no longer matches is refused
-rather than merged. A group whose last design leaves ends, and any already-open
-local console becomes an unavailable placeholder once a completed room snapshot
-lacks the group; while room authority loads or reconnects, the console keeps
-its last label and geometry.
+rather than merged. A group whose last design leaves ends, and once a completed
+room snapshot lacks the group, every browser closes that group's open console
+and forgets it, so a reload does not restore it. Ending a group moves no task:
+its designs and the work they produced stay on the board. While room
+authority loads or reconnects, an open console keeps its last label and
+geometry and closes nothing.
 
 **Designs** lists the open Design tasks no group holds, as Unassigned Agents
 lists lanes in no team; each tile there reads open, passive, and each grouped

@@ -3,7 +3,9 @@
 //! Working-group facts own saved organization, including which designs a group
 //! holds and their order. This state owns presentation only: which group
 //! consoles this browser opened, their order, each design composer's draft,
-//! and the design composer holding focus.
+//! and the design composer holding focus. The one way shared organization
+//! reaches it is a group ending: a completed snapshot that no longer holds a
+//! group closes that group's console.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -74,6 +76,16 @@ impl RoomViews {
         self.groups.retain(|view| &view.group != group);
     }
 
+    /// Close every console whose group `standing` no longer holds. `standing`
+    /// is the group set of a completed room snapshot; `None`, while room
+    /// authority loads or reconnects, closes nothing, so a transient gap keeps
+    /// every console in place.
+    pub(crate) fn close_ended(&mut self, standing: Option<&BTreeSet<RoomAuthorityStamp>>) {
+        if let Some(standing) = standing {
+            self.groups.retain(|view| standing.contains(&view.group));
+        }
+    }
+
     pub(crate) fn move_group(&mut self, group: &RoomAuthorityStamp, delta: isize) {
         let Some(index) = self.groups.iter().position(|view| &view.group == group) else {
             return;
@@ -126,6 +138,7 @@ impl RoomViews {
         match action {
             RoomViewAction::Open { group, design } => self.open_group(group, design),
             RoomViewAction::CloseGroup { group } => self.close_group(&group),
+            RoomViewAction::Snapshot { standing } => self.close_ended(standing.as_ref()),
             RoomViewAction::MoveGroup { group, delta } => self.move_group(&group, delta),
             RoomViewAction::Draft {
                 group,
@@ -153,6 +166,11 @@ pub(crate) enum RoomViewAction {
     },
     CloseGroup {
         group: RoomAuthorityStamp,
+    },
+    /// Room authority now reads `standing`: the groups a completed snapshot
+    /// holds, or `None` while it loads or reconnects.
+    Snapshot {
+        standing: Option<BTreeSet<RoomAuthorityStamp>>,
     },
     MoveGroup {
         group: RoomAuthorityStamp,
@@ -202,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_group_changes_cannot_mount_reorder_or_close_local_views() {
+    fn shared_group_changes_cannot_mount_or_reorder_local_views() {
         let first = group("dVsYdDj7d");
         let second = group("dVsZzx5S8");
         let a = design("dVrD59Y8N");
@@ -212,8 +230,8 @@ mod tests {
         views.set_draft(&first, &a, "unfinished".into());
         views.move_group(&second, -1);
 
-        // No authority value enters this presentation model. A catalog update
-        // therefore cannot mutate it; only explicit local actions below can.
+        // No membership or order change enters this presentation model; only
+        // the explicit local actions below mount, move, or close a console.
         let restored = RoomViews::restore(&views.document().unwrap()).unwrap();
         assert_eq!(restored, views);
         assert_eq!(restored.groups()[0].group, second);
@@ -225,6 +243,40 @@ mod tests {
         assert_eq!(views.groups()[1].group, first);
         views.close_group(&second);
         assert_eq!(views.groups().len(), 1);
+    }
+
+    #[test]
+    fn only_a_completed_snapshot_closes_an_ended_groups_console() {
+        let ended = group("dVsYdDj7d");
+        let live = group("dVsZzx5S8");
+        let a = design("dVrD59Y8N");
+        let mut views = RoomViews::default();
+        views.open_group(ended.clone(), None);
+        views.open_group(live.clone(), Some(a.clone()));
+        views.set_draft(&live, &a, "unfinished".into());
+        let before = views.clone();
+
+        views.apply(RoomViewAction::Snapshot { standing: None });
+        assert_eq!(views, before, "loading or reconnecting closes nothing");
+
+        views.apply(RoomViewAction::Snapshot {
+            standing: Some(BTreeSet::from([live.clone(), group("dVsZzx5S9")])),
+        });
+        assert_eq!(views.groups().len(), 1, "the ended group's console closed");
+        let survivor = &views.groups()[0];
+        assert_eq!(survivor.group, live);
+        assert!(survivor.focused(&a));
+        assert_eq!(survivor.draft(&a), "unfinished");
+        assert_eq!(
+            RoomViews::restore(&views.document().unwrap()).unwrap(),
+            views,
+            "the closed console is gone from what a reload restores"
+        );
+
+        views.apply(RoomViewAction::Snapshot {
+            standing: Some(BTreeSet::new()),
+        });
+        assert!(views.groups().is_empty());
     }
 
     #[test]
