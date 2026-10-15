@@ -209,14 +209,14 @@ fn open_designs_cross_once_onto_their_open_phase_and_release_their_outputs_edges
     let mut journal = Journal::in_memory().expect("journal");
     let retained = retained(&mut journal);
     let concluded = workflow(&journal, &retained.concluded);
-    restore_predecessor(&journal, SCHEMA_VERSION - 1);
+    restore_predecessor(&journal, SHAPE_PREDECESSOR_SCHEMA);
 
     let migration = crate::migrate::admit(&mut journal.connection)
         .expect("retained Designs cross")
         .expect("predecessor crosses");
     assert_eq!(
         (migration.from(), migration.to()),
-        (SCHEMA_VERSION - 1, SCHEMA_VERSION)
+        (SHAPE_PREDECESSOR_SCHEMA, SCHEMA_VERSION)
     );
 
     let open = workflow(&journal, &retained.open);
@@ -271,7 +271,7 @@ fn an_undecodable_open_design_refuses_with_its_owning_release() {
             [retained.open.as_str()],
         )
         .expect("retired workflow is planted");
-    restore_predecessor(&journal, SCHEMA_VERSION - 1);
+    restore_predecessor(&journal, SHAPE_PREDECESSOR_SCHEMA);
 
     let error =
         crate::migrate::admit(&mut journal.connection).expect_err("an undecodable Design refuses");
@@ -290,7 +290,7 @@ fn an_undecodable_open_design_refuses_with_its_owning_release() {
             .connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
             .expect("schema identity reads"),
-        SCHEMA_VERSION - 1,
+        SHAPE_PREDECESSOR_SCHEMA,
         "a refused crossing leaves the predecessor identity"
     );
 }

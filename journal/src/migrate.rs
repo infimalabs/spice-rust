@@ -45,8 +45,8 @@ const PREPARED: &str = "prepared";
 /// partition a predecessor lacks, replacing its per-route room receipts and
 /// per-group heads, before the schema identity advances.
 /// Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 23] = [
-    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+const PREDECESSOR_SCHEMAS: [u32; 24] = [
+    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -75,6 +75,8 @@ pub(crate) const ROOM_RELEVANCE_SCHEMA: u32 = 49;
 /// First schema whose baseline carries the working-group partition in place
 /// of per-group heads.
 pub(crate) const GROUP_PARTITION_SCHEMA: u32 = 53;
+/// Last schema whose current decision shape predates output verdicts.
+const WHOLE_CANDIDATE_DECISION_SCHEMA: u32 = 56;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
 const ROOM_SCHEMA_STEPS: [(u32, &str); 9] = [
@@ -302,25 +304,27 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
-    residual::refuse_group_markers(&transaction)?;
-    refuse_creation_omission(&transaction)?;
-    cross_oops_filing(&transaction)?;
-    let vendor_holds = residual::refuse(&transaction)?;
-    cross_residency_subscriptions(&transaction)?;
-    cross_retired_gate_filed(&transaction)?;
-    cross_retired_task_guidance(&transaction)?;
-    residual::cross(&transaction, vendor_holds)?;
-    residual::cross_steering_rooms(&transaction)?;
-    if version >= ROOM_AUTHORITY_SCHEMA {
-        decisions::cross(&transaction)?;
+    if version < WHOLE_CANDIDATE_DECISION_SCHEMA {
+        residual::refuse_group_markers(&transaction)?;
+        refuse_creation_omission(&transaction)?;
+        cross_oops_filing(&transaction)?;
+        let vendor_holds = residual::refuse(&transaction)?;
+        cross_residency_subscriptions(&transaction)?;
+        cross_retired_gate_filed(&transaction)?;
+        cross_retired_task_guidance(&transaction)?;
+        residual::cross(&transaction, vendor_holds)?;
+        residual::cross_steering_rooms(&transaction)?;
+        if version >= ROOM_AUTHORITY_SCHEMA {
+            decisions::cross(&transaction)?;
+        }
+        designs::cross(&transaction)?;
+        if (ROOM_CONVERSATION_SCHEMA..ROOM_ITEM_SCHEMA).contains(&version) {
+            transaction
+                .execute_batch("DROP TABLE room_receipts;")
+                .map_err(OpenError::Sqlite)?;
+        }
+        create_room_schemas(&transaction, version)?;
     }
-    designs::cross(&transaction)?;
-    if (ROOM_CONVERSATION_SCHEMA..ROOM_ITEM_SCHEMA).contains(&version) {
-        transaction
-            .execute_batch("DROP TABLE room_receipts;")
-            .map_err(OpenError::Sqlite)?;
-    }
-    create_room_schemas(&transaction, version)?;
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -1345,8 +1349,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 56, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 57, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 56;
+PRAGMA user_version = 57;
 "#;

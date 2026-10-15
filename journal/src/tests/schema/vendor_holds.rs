@@ -204,7 +204,7 @@ fn retain_evidence_only(journal: &Journal) {
             [FactKind::LaneHeld.as_str()],
         )
         .expect("vendor inputs are removed");
-    restore_predecessor(journal, SCHEMA_VERSION - 1);
+    restore_predecessor(journal, SHAPE_PREDECESSOR_SCHEMA);
 }
 
 fn table(journal: &Journal, query: &str) -> Vec<(String, Vec<u8>)> {
@@ -246,7 +246,7 @@ fn writable_open_gives_each_vendor_hold_the_input_its_preceding_history_proves()
         journal
             .migration()
             .map(|migration| (migration.from(), migration.to())),
-        Some((SCHEMA_VERSION - 1, SCHEMA_VERSION)),
+        Some((SHAPE_PREDECESSOR_SCHEMA, SCHEMA_VERSION)),
     );
     assert_eq!(
         facts(&journal),

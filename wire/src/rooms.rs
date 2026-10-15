@@ -15,6 +15,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 mod contribution;
 mod conversation;
 mod coordination;
+mod decision;
 mod notice;
 mod relevance;
 mod withdrawal;
@@ -22,6 +23,7 @@ mod withdrawal;
 pub use contribution::*;
 pub use conversation::*;
 pub use coordination::*;
+pub use decision::*;
 pub use notice::*;
 pub use relevance::*;
 pub use withdrawal::*;
@@ -955,120 +957,6 @@ pub struct CandidateCovered {
     pub coverage: CandidateCoverage,
 }
 
-/// Exact operator disposition of one immutable retained candidate version.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
-pub enum DecisionOutcome {
-    /// Authorize exactly this nonempty subset of the candidate's outputs.
-    Selected {
-        /// Exact retained candidate version being selected.
-        candidate: CandidateRef,
-        /// Unique output subset this decision releases.
-        selected_outputs: Vec<TaskStamp>,
-    },
-    /// Return this candidate version for further preparation.
-    Returned {
-        /// Exact retained candidate version being returned.
-        candidate: CandidateRef,
-        /// Nonempty operator reason for returning it.
-        reason: String,
-    },
-    /// Collapse the Design through its conclusion authority, on this
-    /// candidate's premise.
-    Collapse {
-        /// Exact retained candidate version whose premise did not hold.
-        candidate: CandidateRef,
-        /// Nonempty operator reason for collapsing it.
-        reason: String,
-    },
-}
-
-impl DecisionOutcome {
-    /// Exact retained candidate version this decision addresses.
-    #[must_use]
-    pub fn candidate(&self) -> &CandidateRef {
-        match self {
-            Self::Selected { candidate, .. }
-            | Self::Returned { candidate, .. }
-            | Self::Collapse { candidate, .. } => candidate,
-        }
-    }
-}
-
-/// One source-backed operator decision under a controlling task.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "PreparationDecisionWire", into = "PreparationDecisionWire")]
-pub struct PreparationDecision {
-    /// Stable decision identity.
-    pub decision: DecisionRef,
-    /// Exact authority owning the decision basis.
-    pub source: RoomSource,
-    /// Selection, return, or collapse over one exact candidate version.
-    pub outcome: DecisionOutcome,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PreparationDecisionWire {
-    decision: DecisionRef,
-    source: RoomSource,
-    outcome: DecisionOutcome,
-}
-
-impl TryFrom<PreparationDecisionWire> for PreparationDecision {
-    type Error = &'static str;
-
-    fn try_from(value: PreparationDecisionWire) -> Result<Self, Self::Error> {
-        if value.outcome.candidate().controller != value.decision.controller {
-            return Err("decision and candidate must share one controlling task");
-        }
-        match &value.outcome {
-            DecisionOutcome::Selected {
-                selected_outputs, ..
-            } if selected_outputs.is_empty() || !all_unique(selected_outputs) => {
-                return Err("a selection must name a nonempty unique output set");
-            }
-            DecisionOutcome::Returned { reason, .. } | DecisionOutcome::Collapse { reason, .. }
-                if reason.trim().is_empty() =>
-            {
-                return Err("a return or collapse decision requires a nonempty reason");
-            }
-            _ => {}
-        }
-        Ok(Self {
-            decision: value.decision,
-            source: value.source,
-            outcome: value.outcome,
-        })
-    }
-}
-
-impl From<PreparationDecision> for PreparationDecisionWire {
-    fn from(value: PreparationDecision) -> Self {
-        Self {
-            decision: value.decision,
-            source: value.source,
-            outcome: value.outcome,
-        }
-    }
-}
-
-/// Command body recording one preparation decision.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PreparationDecide {
-    /// Source-backed decision to record.
-    pub decision: PreparationDecision,
-}
-
-/// Immutable fact body recording one preparation decision.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PreparationDecided {
-    /// Source-backed decision that was recorded.
-    pub decision: PreparationDecision,
-}
-
 /// Exact selected execution authority created by its operator decision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -1374,6 +1262,18 @@ mod tests {
         let decision: PreparationDecision = serde_json::from_value(decision_value.clone()).unwrap();
         assert_eq!(serde_json::to_value(decision).unwrap(), decision_value);
 
+        let returned_value = serde_json::json!({
+            "decision": {"controller": "1kKRRsDR0", "decision": "5"},
+            "source": {"kind": "journal", "fact": "3"},
+            "outcome": {
+                "kind": "returned",
+                "candidate": candidate(),
+                "reason": "revise the premise"
+            }
+        });
+        let returned: PreparationDecision = serde_json::from_value(returned_value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(returned).unwrap(), returned_value);
+
         let authorization_value = serde_json::json!({
             "decision": {"controller": "1kKRRsDR0", "decision": "4"},
             "candidate": candidate(),
@@ -1390,6 +1290,57 @@ mod tests {
         let mut empty = decision_value;
         empty["outcome"]["selected_outputs"] = serde_json::json!([]);
         assert!(serde_json::from_value::<PreparationDecision>(empty).is_err());
+    }
+
+    #[test]
+    fn output_decisions_round_trip_verdicts_and_optional_comments() {
+        let value = serde_json::json!({
+            "decision": {"controller": "1kKRRsDR0", "decision": "5"},
+            "source": {"kind": "journal", "fact": "3"},
+            "outcome": {
+                "kind": "resolved",
+                "candidate": candidate(),
+                "outputs": [
+                    {
+                        "output": "1kKRRsDR3",
+                        "verdict": "accepted",
+                        "comment": "meets the contract"
+                    },
+                    {
+                        "output": "1kKRRsDR4",
+                        "verdict": "rejected",
+                        "comment": "revise the boundary"
+                    }
+                ],
+                "comment": "move the first plan forward"
+            }
+        });
+        let decision: PreparationDecision = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&decision).unwrap(), value);
+        let accepted = "1kKRRsDR3".parse::<TaskStamp>().unwrap();
+        assert_eq!(
+            decision.outcome.accepted_outputs().collect::<Vec<_>>(),
+            vec![&accepted]
+        );
+        assert!(decision.outcome.carries_feedback());
+
+        for invalid in [
+            serde_json::json!([]),
+            serde_json::json!([
+                {"output": "1kKRRsDR3", "verdict": "accepted"},
+                {"output": "1kKRRsDR3", "verdict": "rejected"}
+            ]),
+            serde_json::json!([
+                {"output": "1kKRRsDR3", "verdict": "accepted", "comment": " "}
+            ]),
+        ] {
+            let mut invalid_value = value.clone();
+            invalid_value["outcome"]["outputs"] = invalid;
+            assert!(
+                serde_json::from_value::<PreparationDecision>(invalid_value).is_err(),
+                "invalid output decision was admitted"
+            );
+        }
     }
 
     #[test]

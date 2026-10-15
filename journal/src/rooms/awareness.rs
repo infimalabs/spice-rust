@@ -3,8 +3,7 @@
 
 use rusqlite::{Connection, OptionalExtension};
 use wire::rooms::{
-    DESIGN_NOTICE_TERMS, DecisionOutcome, DesignNoticed, DesignReturnDelivered,
-    PreparationDecision, ProposalRef,
+    DESIGN_NOTICE_TERMS, DesignNoticed, DesignReturnDelivered, PreparationDecision, ProposalRef,
 };
 use wire::{Actor, AnyFact, ClaimDisposition, ClaimHead};
 
@@ -80,9 +79,9 @@ fn returned(
         return unsound(format!("return delivery for {design} names no decision"));
     };
     let decision: PreparationDecision = wire::decode(&recorded)?;
-    if !matches!(decision.outcome, DecisionOutcome::Returned { .. }) {
+    if !decision.outcome.carries_feedback() {
         return unsound(format!(
-            "return delivery for {design} names a decision that returned nothing"
+            "return delivery for {design} names a decision carrying no holder feedback"
         ));
     }
     Ok(())

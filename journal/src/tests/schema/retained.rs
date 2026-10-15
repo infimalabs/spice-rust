@@ -47,7 +47,7 @@ fn retained_residual_fixture(path: &Path) -> (Vec<u8>, Vec<u8>) {
              '$.fact.from') AS BLOB) WHERE seq = 4;"
         ))
         .expect("retired shapes are planted");
-    restore_predecessor(&journal, SCHEMA_VERSION - 1);
+    restore_predecessor(&journal, SHAPE_PREDECESSOR_SCHEMA);
     canonical
 }
 
@@ -76,7 +76,7 @@ fn writable_open_drops_task_edit_notices_and_spells_implicit_fast_flags_once() {
         journal
             .migration()
             .map(|migration| (migration.from(), migration.to())),
-        Some((SCHEMA_VERSION - 1, SCHEMA_VERSION)),
+        Some((SHAPE_PREDECESSOR_SCHEMA, SCHEMA_VERSION)),
     );
     assert_eq!(
         residual_rows(&journal),
@@ -121,7 +121,7 @@ fn writable_open_moves_hidden_oops_projects_into_explicit_filing_state() {
                 [retained],
             )
             .expect("retained OOPS head is planted");
-        restore_predecessor(&journal, SCHEMA_VERSION - 1);
+        restore_predecessor(&journal, SHAPE_PREDECESSOR_SCHEMA);
         drop(journal);
 
         let crossed = Journal::open(&path).expect("retained OOPS authority crosses");
@@ -516,7 +516,7 @@ fn assert_retained_refusals(cases: &[RetainedCase]) {
             .connection
             .execute_batch(retire)
             .expect("retired shape is planted");
-        restore_predecessor(&journal, SCHEMA_VERSION - 1);
+        restore_predecessor(&journal, SHAPE_PREDECESSOR_SCHEMA);
         drop(journal);
         let before = fs::read(&path).expect("authority bytes read");
 

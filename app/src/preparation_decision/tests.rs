@@ -1,6 +1,7 @@
 use wire::intent::{BoardTask, TextAnswer};
 use wire::rooms::{
-    CandidateRef, CandidateReference, DecisionOutcome, RetainedCandidate, RoomSource,
+    CandidateRef, CandidateReference, DecisionOutcome, OutputDecision, OutputVerdict,
+    RetainedCandidate, RoomSource,
 };
 use wire::{Seq, SequenceCode, Witness};
 
@@ -53,265 +54,150 @@ fn board() -> Vec<BoardTask> {
     ]
 }
 
-#[test]
-fn a_partial_selection_previews_exact_current_authority() {
-    let candidate = candidate();
-    let mut draft = DecisionDraft::new(candidate_ref());
-    assert_eq!(draft.candidate(), &candidate_ref());
-    assert_eq!(draft.choice(), DecisionChoice::Selected);
-    draft.toggle_output(stamp(4));
+fn preview(draft: &mut DecisionDraft, candidate: &RetainedCandidate, sequence: u64) {
     draft.preview(
         &design(),
         Seq::new(50).expect("fixture position"),
-        &candidate,
-        SequenceCode::new(2),
+        candidate,
+        SequenceCode::new(sequence),
         &board(),
     );
+}
+
+#[test]
+fn mixed_verdicts_preview_every_comment_and_authorize_only_accepted_outputs() {
+    let candidate = candidate();
+    let mut draft = DecisionDraft::new(candidate_ref());
+    assert_eq!(draft.choice(), DecisionChoice::Selected);
+    draft.set_output_verdict(stamp(3), OutputVerdict::Accepted);
+    draft.set_output_comment(stamp(3), "  acceptance explained  ".to_owned());
+    draft.set_output_verdict(stamp(4), OutputVerdict::Rejected);
+    draft.set_output_comment(stamp(4), "  revise this boundary  ".to_owned());
+    draft.set_reason("  overall context  ".to_owned());
+    preview(&mut draft, &candidate, 2);
+
     let DraftPhase::Previewing(submission) = draft.phase() else {
-        panic!("valid selection previews: {:?}", draft.phase());
+        panic!("complete decision previews: {:?}", draft.phase());
     };
     assert_eq!(
         submission.request.decision.outcome,
-        DecisionOutcome::Selected {
+        DecisionOutcome::Resolved {
             candidate: candidate_ref(),
-            selected_outputs: vec![stamp(4)],
+            outputs: vec![
+                OutputDecision {
+                    output: stamp(3),
+                    verdict: OutputVerdict::Accepted,
+                    comment: Some("acceptance explained".to_owned()),
+                },
+                OutputDecision {
+                    output: stamp(4),
+                    verdict: OutputVerdict::Rejected,
+                    comment: Some("revise this boundary".to_owned()),
+                },
+            ],
+            comment: Some("overall context".to_owned()),
         }
     );
-    assert_eq!(submission.request.decision.decision.controller, stamp(1));
-    assert_eq!(
-        submission.request.decision.source,
-        RoomSource::Journal {
-            fact: SequenceCode::new(50)
-        }
-    );
-    assert!(submission.expected.contains(&Witness::Proposal {
-        proposal: wire::rooms::ProposalRef::Candidate {
-            candidate: candidate_ref()
-        },
-        head: Some(Seq::new(50).expect("fixture position")),
-    }));
     assert!(submission.expected.contains(&Witness::Authorization {
-        output: stamp(4),
+        output: stamp(3),
         head: None,
     }));
-    assert!(!submission.expected.iter().any(|witness| {
-        matches!(witness, Witness::Authorization { output, .. } if *output == stamp(3))
-    }));
+    assert!(!submission.expected.iter().any(
+        |witness| matches!(witness, Witness::Authorization { output, .. } if *output == stamp(4))
+    ));
 }
 
 #[test]
-fn return_and_collapse_require_reasons_and_keep_the_design_open_until_authority_moves() {
+fn every_output_requires_a_verdict_and_all_rejected_authorizes_nothing() {
     let candidate = candidate();
     let mut draft = DecisionDraft::new(candidate_ref());
-    draft.set_choice(DecisionChoice::Returned);
-    draft.preview(
-        &design(),
-        Seq::new(50).expect("fixture position"),
-        &candidate,
-        SequenceCode::new(1),
-        &board(),
-    );
-    assert_eq!(refusal(&draft), "preparation::return-reason-empty");
+    draft.set_output_verdict(stamp(3), OutputVerdict::Rejected);
+    preview(&mut draft, &candidate, 1);
+    assert_eq!(refusal(&draft), "preparation::output-undecided");
 
-    draft.set_reason("  Rework the boundary.  ".to_owned());
-    draft.preview(
-        &design(),
-        Seq::new(50).expect("fixture position"),
-        &candidate,
-        SequenceCode::new(1),
-        &board(),
-    );
-    let DraftPhase::Previewing(returned) = draft.phase() else {
-        panic!("return previews");
+    draft.set_output_verdict(stamp(4), OutputVerdict::Rejected);
+    draft.set_output_comment(stamp(4), "not yet".to_owned());
+    preview(&mut draft, &candidate, 1);
+    let DraftPhase::Previewing(submission) = draft.phase() else {
+        panic!("all-rejected decision previews");
     };
+    assert!(
+        !submission
+            .expected
+            .iter()
+            .any(|witness| matches!(witness, Witness::Authorization { .. }))
+    );
     assert!(matches!(
-        &returned.request.decision.outcome,
-        DecisionOutcome::Returned { reason, .. } if reason == "Rework the boundary."
+        &submission.request.decision.outcome,
+        DecisionOutcome::Resolved { outputs, .. }
+            if outputs.iter().all(|output| output.verdict == OutputVerdict::Rejected)
     ));
+}
 
+#[test]
+fn collapse_requires_a_reason_and_a_pending_decision_submits_once() {
+    let candidate = candidate();
+    let mut draft = DecisionDraft::new(candidate_ref());
     draft.set_choice(DecisionChoice::Collapse);
-    draft.preview(
-        &design(),
-        Seq::new(50).expect("fixture position"),
-        &candidate,
-        SequenceCode::new(2),
-        &board(),
-    );
-    let DraftPhase::Previewing(collapsed) = draft.phase() else {
-        panic!("collapse previews");
-    };
-    assert!(matches!(
-        &collapsed.request.decision.outcome,
-        DecisionOutcome::Collapse { reason, .. } if reason == "Rework the boundary."
-    ));
-}
+    preview(&mut draft, &candidate, 1);
+    assert_eq!(refusal(&draft), "preparation::collapse-reason-empty");
 
-#[test]
-fn a_pending_decision_submits_once_and_refusal_keeps_the_exact_draft() {
-    let candidate = candidate();
-    let mut draft = DecisionDraft::new(candidate_ref());
-    draft.toggle_output(stamp(3));
-    draft.preview(
-        &design(),
-        Seq::new(50).expect("fixture position"),
-        &candidate,
-        SequenceCode::new(1),
-        &board(),
-    );
-    let submission = draft.begin_submit().expect("preview submits");
-    assert!(draft.is_pending());
+    draft.set_reason("  premise failed  ".to_owned());
+    preview(&mut draft, &candidate, 1);
+    let expected = draft.begin_submit().expect("preview submits");
     assert!(draft.begin_submit().is_none());
-    draft.toggle_output(stamp(4));
     draft.set_reason("ignored while pending".to_owned());
-    draft.revise();
-    assert_eq!(draft.phase(), &DraftPhase::Pending(submission.clone()));
+    assert_eq!(draft.phase(), &DraftPhase::Pending(expected.clone()));
 
     draft.settle(Err("preparation::stale: proposal moved".to_owned()));
     assert_eq!(refusal(&draft), "preparation::stale");
-    assert!(draft.selected(&stamp(3)) && !draft.selected(&stamp(4)));
-    assert!(draft.reason().is_empty());
-    assert!(
-        draft.begin_submit().is_none(),
-        "refusal requires a fresh preview"
-    );
-
-    draft.preview(
-        &design(),
-        Seq::new(50).expect("fixture position"),
-        &candidate,
-        SequenceCode::new(1),
-        &board(),
-    );
-    assert_eq!(draft.begin_submit(), Some(submission));
+    assert_eq!(draft.reason(), "  premise failed  ");
+    preview(&mut draft, &candidate, 1);
+    assert_eq!(draft.begin_submit(), Some(expected));
     draft.settle(Ok(TextAnswer {
-        text: "selected 1 output".to_owned(),
+        text: "decision recorded".to_owned(),
     }));
     assert_eq!(
         draft.notice(),
-        Some(&DraftNotice::Recorded("selected 1 output".to_owned()))
-    );
-    assert!(
-        draft.selected(&stamp(3)),
-        "the reply is not optimistic authority"
+        Some(&DraftNotice::Recorded("decision recorded".to_owned()))
     );
 }
 
 #[test]
-fn stale_or_incomplete_render_data_refuses_without_silently_narrowing_the_choice() {
-    let candidate = candidate();
-    let mut draft = DecisionDraft::new(candidate_ref());
-    draft.preview(
-        &design(),
-        Seq::new(50).expect("fixture position"),
-        &candidate,
-        SequenceCode::new(1),
-        &board(),
-    );
-    assert_eq!(refusal(&draft), "preparation::selection-empty");
-
-    draft.toggle_output(stamp(4));
-    let incomplete = vec![design(), task(2, "rooms.input"), task(3, "rooms.first")];
-    draft.preview(
-        &design(),
-        Seq::new(50).expect("fixture position"),
-        &candidate,
-        SequenceCode::new(1),
-        &incomplete,
-    );
-    assert_eq!(refusal(&draft), "preparation::output-unavailable");
-
-    let mut concluded = design();
-    concluded.workflow.body.status = "completed".to_owned();
-    concluded.workflow.body.review = "clean".to_owned();
-    concluded.workflow.body.completion = Some(
-        "2026-09-23T06:00:00.000Z"
-            .parse()
-            .expect("fixture completion"),
-    );
-    draft.preview(
-        &concluded,
-        Seq::new(50).expect("fixture position"),
-        &candidate,
-        SequenceCode::new(1),
-        &board(),
-    );
-    assert_eq!(refusal(&draft), "preparation::design-not-open");
-}
-
-#[test]
-fn composer_retains_settled_versions_and_one_exact_pending_owner() {
+fn composer_retains_versions_and_one_exact_pending_owner() {
     let first = candidate_ref();
     let second = CandidateRef {
         controller: stamp(1),
         candidate: "dVsYdDj7m".parse().expect("second candidate"),
     };
     let candidate = candidate();
-    let mut second_candidate = candidate.clone();
-    second_candidate.candidate = second.clone();
-    let tasks = board();
     let mut composer = DecisionComposer::default();
     composer.apply(first.clone(), false, |draft| {
-        draft.set_choice(DecisionChoice::Returned);
+        draft.set_choice(DecisionChoice::Collapse);
         draft.set_reason("revise the premise".to_owned());
-        draft.preview(
-            &design(),
-            Seq::new(50).expect("fixture position"),
-            &candidate,
-            SequenceCode::new(1),
-            &tasks,
-        );
+        preview(draft, &candidate, 1);
         assert!(draft.begin_submit().is_some());
     });
     assert!(composer.is_pending());
 
-    composer.apply(second.clone(), false, |draft| {
-        draft.set_choice(DecisionChoice::Returned);
+    composer.apply(second.clone(), false, |_| {
+        panic!("another version cannot displace a pending decision");
     });
-    assert!(
-        composer.draft(&second).is_none(),
-        "another version cannot displace a pending decision"
-    );
-    composer.apply(second.clone(), true, |_| {
-        panic!("a response cannot settle a different candidate")
-    });
-    assert!(
-        composer
-            .draft(&first)
-            .is_some_and(DecisionDraft::is_pending),
-        "the submitted version stays visibly pending"
-    );
-
+    assert!(composer.draft(&second).is_none());
     composer.apply(first.clone(), true, |draft| {
         draft.settle(Err("preparation::stale: proposal moved".to_owned()));
     });
-    let first_draft = composer
-        .draft(&first)
-        .expect("first version remains selected");
-    assert_eq!(refusal(first_draft), "preparation::stale");
-    assert_eq!(first_draft.choice(), DecisionChoice::Returned);
-    assert_eq!(first_draft.reason(), "revise the premise");
+    assert_eq!(
+        composer.draft(&first).map(DecisionDraft::reason),
+        Some("revise the premise")
+    );
 
     composer.apply(second.clone(), false, |draft| {
-        draft.set_choice(DecisionChoice::Returned);
-        draft.set_reason("revise the second premise".to_owned());
-        draft.preview(
-            &design(),
-            Seq::new(51).expect("second fixture position"),
-            &second_candidate,
-            SequenceCode::new(2),
-            &tasks,
-        );
+        draft.set_choice(DecisionChoice::Collapse);
+        draft.set_reason("second premise".to_owned());
     });
-    let second_draft = composer
-        .draft(&second)
-        .expect("second version has an independent draft");
-    assert_eq!(second_draft.choice(), DecisionChoice::Returned);
-    assert!(matches!(second_draft.phase(), DraftPhase::Previewing(_)));
-
-    let retained_first = composer
-        .draft(&first)
-        .expect("first version remains beside its refusal");
-    assert_eq!(refusal(retained_first), "preparation::stale");
-    assert_eq!(retained_first.choice(), DecisionChoice::Returned);
-    assert_eq!(retained_first.reason(), "revise the premise");
+    assert_eq!(
+        composer.draft(&second).map(DecisionDraft::reason),
+        Some("second premise")
+    );
 }

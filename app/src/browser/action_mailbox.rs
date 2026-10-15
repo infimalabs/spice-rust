@@ -670,6 +670,16 @@ fn preparation_bytes(request: &crate::client_action::PreparationRequest) -> usiz
                     .sum(),
                 wire::rooms::DecisionOutcome::Returned { reason, .. }
                 | wire::rooms::DecisionOutcome::Collapse { reason, .. } => reason.len(),
+                wire::rooms::DecisionOutcome::Resolved {
+                    outputs, comment, ..
+                } => outputs
+                    .iter()
+                    .map(|output| {
+                        output.output.as_str().len()
+                            + output.comment.as_ref().map_or(0, String::len)
+                    })
+                    .sum::<usize>()
+                    .saturating_add(comment.as_ref().map_or(0, String::len)),
             };
             request
                 .decision

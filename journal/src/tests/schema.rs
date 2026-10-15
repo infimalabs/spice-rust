@@ -41,6 +41,9 @@ fn current_schema_is_the_only_executable_journal_shape() {
     );
 }
 
+/// Last retained schema that still needs the pre-56 shape migrations.
+const SHAPE_PREDECESSOR_SCHEMA: u32 = 55;
+
 /// Return a current fixture to a predecessor's shape and identity.
 fn restore_predecessor(journal: &Journal, predecessor: u32) {
     let rooms = if predecessor < crate::migrate::ROOM_AUTHORITY_SCHEMA {
@@ -122,7 +125,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 #[test]
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
     for predecessor in [
-        33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+        33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 56,
     ] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
@@ -252,7 +255,7 @@ fn schema_39_projects_frozen_peer_rooms_into_steering_heads_once() {
             [directive.to_string()],
         )
         .expect("restore schema-39 steering head");
-    restore_predecessor(&journal, SCHEMA_VERSION - 1);
+    restore_predecessor(&journal, SHAPE_PREDECESSOR_SCHEMA);
     drop(journal);
 
     let crossed = Journal::open(&path).expect("schema-39 peer room crosses");
@@ -340,7 +343,7 @@ fn plant_omitted_subscriptions(journal: &Journal, lanes: Vec<LaneResidency>) {
             params![serde_json::to_vec(&head).expect("omitting head encodes")],
         )
         .expect("plant an omitted subscription table");
-    restore_predecessor(journal, SCHEMA_VERSION - 1);
+    restore_predecessor(journal, SHAPE_PREDECESSOR_SCHEMA);
 }
 
 #[test]
@@ -383,7 +386,7 @@ fn an_omitted_residency_subscription_table_crosses_once_to_its_explicit_form() {
         let journal = Journal::open(&path).expect("an omitted table crosses forward");
         assert_eq!(
             journal.migration().map(|migration| migration.from()),
-            Some(SCHEMA_VERSION - 1)
+            Some(SHAPE_PREDECESSOR_SCHEMA)
         );
         let expected = ResidencyHead {
             lanes,
