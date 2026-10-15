@@ -24,8 +24,6 @@ pub enum DependencyWall<'a> {
     Unreachable(&'a TaskStamp),
     /// The task needs an environment requirement only the operator can satisfy.
     Environment(&'a TaskStamp),
-    /// The task is a Design awaiting the operator's selection of its outputs.
-    Selection(&'a TaskStamp),
     /// The task is a Design outside every working group.
     Passive(&'a TaskStamp),
 }

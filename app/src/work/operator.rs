@@ -37,8 +37,8 @@ impl<'a> OperatorWait<'a> {
         self.environment
     }
 
-    /// The wall it presents to the tasks it holds when neither its
-    /// environment nor a selection explains it.
+    /// The wall it presents to the tasks it holds when its environment does
+    /// not explain it.
     #[must_use]
     pub const fn wall(&self) -> Option<DependencyWall<'a>> {
         self.wall
@@ -79,13 +79,9 @@ impl<'a> OperatorQueue<'a> {
                 let Some((at, wall)) = walls.wall(index, dependency) else {
                     continue;
                 };
-                if matches!(wall, DependencyWall::Selection(_)) {
-                    continue;
-                }
                 let wait = waits[at].get_or_insert_with(|| OperatorWait::new(at));
                 match wall {
                     DependencyWall::Environment(_) => wait.environment = true,
-                    DependencyWall::Selection(_) => unreachable!("selection was handled above"),
                     _ => wait.wall = Some(wall),
                 }
                 if wait.holds.last() != Some(&index) {

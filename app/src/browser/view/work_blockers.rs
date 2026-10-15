@@ -311,12 +311,6 @@ fn render_wall(wall: DependencyWall<'_>) -> Html {
             "It can never complete, so each dependency on it must change.",
             "Unreachable",
         ),
-        DependencyWall::Selection(_) => (
-            "selection",
-            "Awaiting your selection",
-            "This Design's retained candidate waits for your exact selection of its outputs, or the closure of each unselected one. Decide it in the Design's room.",
-            "Operator required",
-        ),
         DependencyWall::Passive(_) => (
             "passive",
             "Passive Design",
