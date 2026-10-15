@@ -474,14 +474,15 @@
   box-shadow: inset 8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
 /* Sibling consoles share one faint dividing rule in the soft shared edge tone:
-   it begins at the foot of the task band, so the tab row above stays open, and
-   runs to their bottom. Only the earlier console paints it, on its own end edge
-   and above everything it holds, so its controls read as in front of the next
-   console and neither console's content moves. The sibling selector leaves both
-   outer fleet edges bare. */
+   it begins where the two status bands' rounded touching corners meet, one
+   card radius below the foot of the task band, so the tab row above stays open
+   and the curved top rules flow into it, and runs to their bottom. Only the
+   earlier console paints it, on its own end edge and above everything it holds,
+   so its controls read as in front of the next console and neither console's
+   content moves. The sibling selector leaves both outer fleet edges bare. */
 .team-surface:has(+ .team-surface)::after {
   position: absolute; z-index: 7;
-  inset-block: var(--team-task-band) 0; inset-inline-end: 0;
+  inset-block: calc(var(--team-task-band) + var(--app-radius-card)) 0; inset-inline-end: 0;
   border-inline-end: var(--app-edge-soft);
   content: ""; pointer-events: none;
 }
