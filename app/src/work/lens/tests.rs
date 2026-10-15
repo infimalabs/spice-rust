@@ -95,10 +95,11 @@ fn enrichment_resolves_a_missing_selected_task_in_place() {
     assert_eq!(project(Some(&elsewhere)).nodes[1].kind, "Missing task");
 }
 
-/// A Design's overview draws its preparation outputs downstream of it, and a
-/// Plan's own overview names its preparing Design at the arrow's upstream end.
+/// A Design's overview draws its Plan outputs downstream of it, a Plan's own
+/// overview names its preparing Design upstream, and inherited control does
+/// not shortcut the Plan-to-executable dependency.
 #[test]
-fn preparation_outputs_flow_from_their_controller() {
+fn design_plan_outputs_flow_without_shortcutting_nested_work() {
     let mut design = task(1, "rooms.design");
     design.statement.body.intent = Some(wire::TaskIntent::Design);
     let plan = |value| {
@@ -111,7 +112,14 @@ fn preparation_outputs_flow_from_their_controller() {
         });
         plan
     };
-    let board = board(vec![design, plan(2), plan(3)]);
+    let mut execution = task(4, "rooms.work");
+    execution.statement.body.preparation = Some(wire::TaskPreparation {
+        parent: stamp(2),
+        controller: stamp(1),
+        construction: stamp(4),
+    });
+    execution.statement.body.dependencies = vec![stamp(2)];
+    let board = board(vec![design, plan(2), plan(3), execution]);
     let work = WorkProjection::from_board(&board);
     let arrows = |selected: Vec<wire::TaskStamp>| {
         let selection =
@@ -149,5 +157,13 @@ fn preparation_outputs_flow_from_their_controller() {
         arrows(vec![stamp(2)]),
         BTreeSet::from([(Some(stamp(1)), Some(stamp(2)), "then")]),
         "a Plan alone still shows the Design that prepared it upstream",
+    );
+    assert_eq!(
+        arrows(vec![stamp(1), stamp(2), stamp(4)]),
+        BTreeSet::from([
+            (Some(stamp(1)), Some(stamp(2)), "then"),
+            (Some(stamp(2)), Some(stamp(4)), "then"),
+        ]),
+        "inherited Design control does not shortcut the Plan-to-task dependency",
     );
 }
