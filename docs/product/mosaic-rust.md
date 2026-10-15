@@ -17,8 +17,10 @@ renders none, and a state record that reports no message count infers none.
 
 Older history pages when a placed member frontier is near the viewport, the
 reader reaches the plane's trailing edge, or a member lacks composer prose.
-Missing prose can demand successive offscreen pages; a card still measuring
-does not itself establish viewport demand. Each frontier is requested once
+Missing prose can demand successive offscreen pages, and it pages a plane that
+holds no card yet, such as a team whose lanes have not run since the resident
+started, from each member's newest history; a card still measuring does not
+itself establish viewport demand. Each frontier is requested once
 unless a fresh viewport gesture follows a completed page. An unanswered page
 is requested again after reconnect, even if its frontier has moved offscreen.
 

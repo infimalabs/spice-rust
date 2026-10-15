@@ -719,15 +719,15 @@ pub(in crate::browser) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     // Edges exist only in a settled layout: a plane measuring its first lattice
     // shows a placeholder extent that reads as a trailing edge, so it offers no
     // paging targets until the lattice commits and the edge means something.
-    // An empty plane's extent is only its composer's, never a trailing edge.
+    // An empty plane still pages: each member it holds misses prose, which is
+    // demand of its own, so its newest history arrives from no card at all.
     let unsettled = BTreeMap::new();
-    let paging_targets = if cards.is_empty()
-        || measurement_phase(rendered_plane.is_some(), measurement_width) == "measuring"
-    {
-        &unsettled
-    } else {
-        &properties.history_targets
-    };
+    let paging_targets =
+        if measurement_phase(rendered_plane.is_some(), measurement_width) == "measuring" {
+            &unsettled
+        } else {
+            &properties.history_targets
+        };
     use_history_paging(
         host.clone(),
         &cards,
