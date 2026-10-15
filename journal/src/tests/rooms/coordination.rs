@@ -503,17 +503,20 @@ fn room_authority_pages_every_design_notice() {
 }
 
 /// The room snapshot carries exactly the first admission needed to resolve
-/// historical operator authors; later births cannot move that identity.
+/// historical operator authors, in one bounded query; later births cannot
+/// move that identity.
 #[test]
 fn room_authority_pages_the_first_principal_admission_only() {
     let mut journal = Journal::in_memory().expect("journal");
     let first = admit_principal(&mut journal, "018f82d4-6f59-7d06-92e3-bce9131163f0");
     let second = admit_principal(&mut journal, "018f82d4-6f59-7d06-92e3-bce9131163a0");
+    crate::guard::reset_indexed_read_metrics();
     let page = journal
         .read(|read| {
             read.room_authority_page(crate::FactPageStart::After(None), second, fact_budget(8))
         })
         .expect("room authority reads");
+    assert_eq!(crate::guard::indexed_read_metrics().queries, 1);
     assert_eq!(
         page.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
         vec![first]
