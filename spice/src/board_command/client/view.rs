@@ -370,6 +370,7 @@ impl Standings {
         let subscription = allocation_subscription(&board.residency.body, &board.principal)
             .unwrap_or(wire::TeamSubscription {
                 team: CanonicalUuid::new(uuid::Uuid::nil()),
+                formed_at: None,
                 policy: wire::intent::TeamLife::Drain,
                 fast_mode: false,
             });

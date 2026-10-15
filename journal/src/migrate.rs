@@ -10,6 +10,7 @@ mod decisions;
 mod designs;
 mod fact_bounds;
 mod residual;
+mod team_formations;
 
 #[cfg(test)]
 pub(crate) use fact_bounds::bounds_sql;
@@ -45,8 +46,9 @@ const PREPARED: &str = "prepared";
 /// partition a predecessor lacks, replacing its per-route room receipts and
 /// per-group heads, before the schema identity advances.
 /// Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 24] = [
+const PREDECESSOR_SCHEMAS: [u32; 25] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+    57,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -54,6 +56,8 @@ const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
 const OOPS_FILING_RELEASE: &str = "schema-53";
 /// Release that added the residency subscription table without a schema step.
 const RESIDENCY_SUBSCRIPTIONS_RELEASE: &str = "4047a2a4f";
+/// Release that first persisted each live team's formation instant.
+const TEAM_FORMATIONS_RELEASE: &str = "schema-58";
 /// First schema whose baseline carries the room-authority projection.
 pub(crate) const ROOM_AUTHORITY_SCHEMA: u32 = 36;
 /// First schema whose baseline carries per-lane room catch-up cursors.
@@ -325,6 +329,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         }
         create_room_schemas(&transaction, version)?;
     }
+    team_formations::cross(&transaction)?;
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -599,6 +604,7 @@ fn derived_subscriptions(
             })?;
             Ok(wire::TeamSubscription {
                 team,
+                formed_at: None,
                 policy,
                 fast_mode: false,
             })
@@ -1349,8 +1355,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 57, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 58, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 57;
+PRAGMA user_version = 58;
 "#;

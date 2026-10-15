@@ -326,13 +326,61 @@ fn residency_lane(lane: &str, team: &str, life: &str) -> LaneResidency {
     }
 }
 
-/// Plant an immediate-predecessor residency head written before its table.
-fn plant_omitted_subscriptions(journal: &Journal, lanes: Vec<LaneResidency>) {
-    let mut head = serde_json::to_value(ResidencyHead {
-        lanes,
+/// Plant predecessor residency authority and the immutable facts that prove
+/// when each retained team crossed from one member to two.
+fn plant_omitted_subscriptions(journal: &mut Journal, lanes: Vec<LaneResidency>) {
+    let mut head = ResidencyHead {
+        lanes: lanes.clone(),
         ..residency_head()
-    })
-    .expect("residency head encodes");
+    };
+    if !lanes.is_empty() {
+        let at: Instant = "2030-04-12T18:44:09.271Z"
+            .parse()
+            .expect("fixture formation instant");
+        let mut write = crate::JournalWrite::new(
+            Actor::Spice,
+            "resident:018f82d4-6f59-7d06-92e3-bce913116399"
+                .parse()
+                .expect("fixture origin"),
+            at,
+            wire::Producer::ResidentRecognition,
+        );
+        let mut latest = None;
+        for lane in &lanes {
+            latest = Some(
+                write
+                    .fact(
+                        wire::body::LaneSeated {
+                            lane: lane.lane,
+                            team: lane.team,
+                            capability: uuid("018f82d4-6f59-7d06-92e3-bce913116390"),
+                            name: lane.name.clone(),
+                            worktree: lane.worktree.clone(),
+                            life: lane.life.clone(),
+                            vendor: lane.vendor.clone(),
+                            model: lane.model.clone(),
+                            effort: lane.effort.clone(),
+                        },
+                        crate::FactCause::Root,
+                    )
+                    .expect("fixture seating fact builds"),
+            );
+        }
+        write.residency_head(latest.expect("nonempty lanes produce a fact"), move |_| {
+            head
+        });
+        journal.apply(write).expect("fixture topology commits");
+        head = wire::decode(
+            &journal
+                .connection
+                .query_row("SELECT body FROM residency_head", [], |row| {
+                    row.get::<_, Vec<u8>>(0)
+                })
+                .expect("fixture residency reads"),
+        )
+        .expect("fixture residency decodes");
+    }
+    let mut head = serde_json::to_value(head).expect("residency head encodes");
     head.as_object_mut()
         .expect("residency head is an object")
         .remove("subscriptions");
@@ -350,8 +398,13 @@ fn plant_omitted_subscriptions(journal: &Journal, lanes: Vec<LaneResidency>) {
 fn an_omitted_residency_subscription_table_crosses_once_to_its_explicit_form() {
     const EARLY: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
     const LATE: &str = "018f82d4-6f59-7d06-92e3-bce913116309";
-    let subscription = |team, policy, fast_mode| wire::TeamSubscription {
+    let subscription = |team, formed: bool, policy, fast_mode| wire::TeamSubscription {
         team: uuid(team),
+        formed_at: formed.then(|| {
+            "2030-04-12T18:44:09.271Z"
+                .parse()
+                .expect("fixture formation instant")
+        }),
         policy,
         fast_mode,
     };
@@ -363,8 +416,8 @@ fn an_omitted_residency_subscription_table_crosses_once_to_its_explicit_form() {
                 residency_lane("018f82d4-6f59-7d06-92e3-bce913116313", EARLY, "drive"),
             ],
             vec![
-                subscription(EARLY, wire::intent::TeamLife::Drive, false),
-                subscription(LATE, wire::intent::TeamLife::Steer, false),
+                subscription(EARLY, true, wire::intent::TeamLife::Drive, false),
+                subscription(LATE, false, wire::intent::TeamLife::Steer, false),
             ],
         ),
         (Vec::new(), Vec::new()),
@@ -372,8 +425,8 @@ fn an_omitted_residency_subscription_table_crosses_once_to_its_explicit_form() {
     for (lanes, subscriptions) in cases {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
-        let journal = authority_file_fixture(&path);
-        plant_omitted_subscriptions(&journal, lanes.clone());
+        let mut journal = authority_file_fixture(&path);
+        plant_omitted_subscriptions(&mut journal, lanes.clone());
         let head_seq = |journal: &Journal| -> i64 {
             journal
                 .connection
@@ -432,8 +485,8 @@ fn an_omitted_residency_table_without_one_closed_team_life_refuses_atomically() 
     ] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");
-        let journal = authority_file_fixture(&path);
-        plant_omitted_subscriptions(&journal, lanes);
+        let mut journal = authority_file_fixture(&path);
+        plant_omitted_subscriptions(&mut journal, lanes);
         drop(journal);
         let authority = || fs::read(&path).expect("authority bytes read");
         let before = authority();

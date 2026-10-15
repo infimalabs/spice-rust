@@ -45,6 +45,11 @@ fn fleet() -> wire::ResidencyHead {
             .into_iter()
             .map(|(team, fast_mode)| wire::TeamSubscription {
                 team: uuid(team),
+                formed_at: Some(
+                    "2030-04-12T18:44:09.271Z"
+                        .parse()
+                        .expect("fixture formation instant"),
+                ),
                 policy: wire::intent::TeamLife::Drive,
                 fast_mode,
             })

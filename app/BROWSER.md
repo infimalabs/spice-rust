@@ -74,8 +74,8 @@ team, or lane authority, and a group edit never mounts, reorders, or closes a
 browser view.
 
 The Spice sidebar's working-group catalog is the design-side twin of the team
-roster and is drawn by the same roster (see
-[Resident topology in the global menu](#resident-topology-in-the-global-menu)).
+roster and is drawn by the same roster (see [Resident topology in the global
+menu](OVERVIEW.md#resident-topology-in-the-global-menu)).
 It reads one shared partition: every group in partition order, each holding its
 designs in order, guarded by one revision. A group exists only while designs
 belong to it: it is never created empty, never named, and never removed as an
@@ -105,14 +105,11 @@ intent and `group::partition-moved` for a partition that changed since the
 browser read it, each leave every group unchanged.
 
 Each opened group is a console in the team fleet, after the teams, read exactly
-as a team console with tasks and agents swapped, its whole console rebuilt
-through the [base-flavor contract](CONSOLE.md#design-standing) on the base its
-place in the shared group order deals: groups count down from the palette's
-end, so the first wears plum, the next teal, then red. A team's composers target
-its lanes and its tabs are tasks; a group's composers target its designs and
-its tabs are lanes. The group's lead design wears its base and each later
-design, in their shared order, the next slot down: the design's composer, its
-light in the status band, and every one of its room cards carry it. All
+as a team console with tasks and agents swapped. Its base and durable Design
+stepping follow the [console flavor contract](CONSOLE.md#design-standing),
+independent of shared partition or browser-console order. A team's composers
+target its lanes and its tabs are tasks; a group's composers target its designs
+and its tabs are lanes. All
 designs' publications interleave newest first in one packed plane, so no room
 is paged or opened separately; durable task and publication stamps key the
 cards, and linked bytes that are not present stay labeled source
@@ -235,181 +232,6 @@ considered, each report's standing, its disposition, evidenced cause, and any
 exceptions or uncertainty. The browser records no grooming: a Design's menu
 carries no grooming form, and an OOPS report leaves parking only through
 filing.
-
-## Drafts and OOPS
-
-A task's filing state is one of three standings. **Filed** work is ordinary
-board work. An **OOPS** report asserts unexpected behavior and stays parked
-until it is filed through `spice task file` or its task detail's **File**.
-A **Draft** is prospective work its author is still shaping. It asserts
-nothing, never joins OOPS grooming, and stays outside allocation, claims,
-capture, dependency satisfaction, completion, team strips, and execution
-summaries until the same `spice task file` transition admits it.
-
-The Spice view's **Drafts** section follows Jobs. It lists each open Draft the
-operator can read, then keeps the Task/Plan/Design creator behind one compact
-**New Draft** disclosure. Opening it reveals every creation field; closing it
-returns focus to the same summary without changing any entered values. A new
-Draft needs a title and an admitted public project, and takes an optional Plan
-or Design intent, description, and acceptance. Recording one opens it in task
-detail, which shows the full editor beside the Draft's contract. **Save Draft**
-writes only the fields that changed, including project, intent, and flow.
-**File** validates the Draft as a complete ordinary Task, Plan, or Design. A
-refusal names the field or filing option to repair and leaves the Draft
-unchanged. Success replaces the Draft with its Filed task, which the allocator
-can offer at once.
-
-The **OOPS** section follows Drafts and lists each open OOPS report the
-operator can read, each opening its task detail. That detail carries **File**
-with a **Project** field holding the report's current project; naming another
-public project files it there instead. Filing witnesses the statement,
-workflow, and deferral heads the control was drawn from, so a report that
-changed meanwhile refuses. A refusal, including a refused project, is shown
-beside the control and leaves the report parked. Success replaces the report
-with its Filed task under that project's handle. Filing under a Design's
-preparation, or filing and claiming at once, stays with `spice task file`.
-
-## Resident topology in the global menu
-
-The Spice view leads with connection state, the inspectable version stack, and
-the theme selector. Global TURBO stands beside the Spice button in its header,
-starting where the theme selector starts, with the weekly percentage above the
-button. The Spice launcher stays fixed
-while the sidebar opens and closes; TURBO and the percentage enter and exit
-with the fading sidebar surface instead of leading or trailing it. An available
-app generation turns the version into the explicit reload control, sized to its
-own label rather than stretched across the row.
-A superseded app generation keeps running until its session
-fails against the resident serving the replacement; that failure reloads the
-tab into the served generation once per generation, unless a composer draft or
-unsettled submission would be lost, in which case the tab stays and reconnects
-behind the reload control.
-
-Resident topology is one interactive roster, and the working-group catalog is
-the same roster over designs. Each team lists its agents with presence, name,
-worktree, model, pending steering, liveness, held task, kept jobs, and provider
-emblem; a teamed agent opens its composer in Chat.
-
-One roster component draws both kinds. Formed groups stand in their shared
-order, each a card named for member zero holding its members' tiles; **New
-Team** or **New working group** follows, then **Unassigned Agents** or
-**Designs**, which lists only members no group holds. While the kind's
-configuration and arrangement are admitted, every tile and card drags; a mouse
-drags the whole tile or card, a finger or pen drags a tile by its name or a
-card by its header, so the rest still scrolls the sheet and a tap still opens
-Chat, and holding a lift near the sheet's edge scrolls it toward an off-screen
-target. A member released on the New target begins a group holding only it; on
-a card, or a tile in another group, joins that group; on a tile in its own
-group takes that place; on the ungrouped list leaves its group, and a group
-whose last member leaves ends. A card released on another card or its tiles
-takes that place among the groups. Reordering restates the whole arrangement
-(`team::arrange` or `group::arrange`); every other release moves one member.
-A release where nothing would change, a group's only member on New, or a card
-on New or the ungrouped list sends nothing. Groups stop at six members: a full
-group's card and tiles disable their mouse and touch drop target, while its
-members can still reorder or leave, and the authority refuses a stale client's
-seventh member. Every change carries the revision the roster was drawn from.
-No roster gesture mounts, reorders, closes, or focuses a view.
-
-## Jobs in the global menu
-
-Immediately after the operator panel and its inbox, the Spice view shows
-**Jobs**, every job every lane keeps, apart from the topology roster. Jobs
-stays ahead of Drafts, OOPS, working groups, resident topology, and the **Provider
-quota** section that ends the view. The list and its full-width inspection card
-share the existing four-row slot. Empty, loading, filtered, and inspection
-states retain that footprint; larger lists and evidence scroll inside it rather
-than enlarging the sheet. Those bounded viewports retain native wheel and touch
-scroll chaining. At either edge, arrow and page keys continue through the
-containing Spice menu instead of trapping keyboard navigation in Jobs.
-
-Rows show kind (▶ command, ◆ service, ● watch), agent accent and name, observed
-start age, and the complete command in the tooltip. Ended jobs awaiting agent
-delivery use hollow glyphs. Search matches agent, command, or job key; the
-heading counts also filter by kind or unheard endings. Click **Jobs** to clear
-the filters. An unpublished start displays `?`, not an invented age.
-
-Open a row to inspect its command, working directory, keeper lifecycle, start,
-deadline, and ending evidence. **Summary** and **Output** share the same card;
-previous/next navigate matching jobs without opening another pane. Output is
-the keeper's bounded tail, with an explicit notice when earlier output was
-omitted. Copy copies the complete command or the displayed output. Back returns
-to the list; Escape first cancels a kill confirmation, otherwise returns.
-
-**Kill** requires running/starting evidence and current operator authority.
-Confirmation names the exact job key, focuses **Cancel**, and asks the existing
-keeper to terminate that command's process group. Stopping, ended, unavailable,
-and no-longer-cataloged references cannot be killed from the card. A sent stop
-is not replayed after reconnect; refresh reads what the keeper actually did.
-Inspection and operator termination never mark the agent's result as delivered.
-An operator-stopped ending remains eligible for its ordinary agent notification.
-
-The operator-only `lane::jobs-read`, `lane::job-read`, and `lane::job-stop` reads
-and control operate on the existing keeper records, not a second job store.
-Their job payloads use the native base52 job key and an encoded topology
-revision/lane slot, not a new UUID identity. Changed topology invalidates the
-reference before any stop marker is written; return to the list for a current
-reference. Existing lane summaries and retained keeper data keep their current
-shape. Catalogs refresh while the panel is visible; live inspection refreshes
-while its card is visible. Disconnection and missing records are explicit.
-
-## Provider quota rows
-
-**Accounts lacking usage** and **Disabled credentials** appear only when they
-have entries. Each account-limit row shows the limit name, a capacity bar
-filled with what remains, the amount — `N% left` for a percent limit, `R / L
-unit left` for a counted one — and the reset cadence. An account sharing the
-weekly limit wears the same accent as its layer in the Spice button's quota
-fill; others stay neutral.
-
-The reset-credit summary states available and redeemable counts, the available
-count standing in when the provider omits redeemable. Each redeemable credit
-shows its provider title, program, and remaining count when present, its grant
-age (`Granted at unknown time` when absent or invalid), and any valid expiry as
-a countdown, exact times on hover. A provider-reported raw credit balance shows
-on its own account as whole credits, truncated so a fraction never reads as
-more than can be spent; it is neither a time-window meter nor a reset grant,
-accounts never share or aggregate it, and Spice never infers it.
-
-## Arranging teams
-
-A team is named by its lead agent, canonical member zero, with the label its
-messages carry: the configured name, else the worktree leaf. Only a team with
-no current members keeps its short id.
-
-Each team console takes its whole base from its place among the teams in the
-shared order: teams count up from the palette's start, so the first wears
-green, the next blue, then gold, and an unteamed agent takes no place. The lead
-wears that base and each later member the next slot up. Colours follow only
-that shared order, so swapping two teams swaps their colours, and opening,
-closing, or reordering consoles in one browser changes none.
-
-Pick up a team from its pip matrix: dropping on the middle of another team
-swaps the two teams' positions; dropping on either outer edge joins the source
-into that team, which keeps its identity, primary composer, and member order and
-appends the source members in order. The pip stack and the team menu open the
-same **Swap positions** and **Join into** choices by keyboard or tap; Escape
-returns focus to whichever opened them. Joins stop at six members: a target
-that would make a seventh is shown unavailable and sends nothing. Every
-accepted arrangement sends the complete topology at the drawn revision;
-cancellation, a changed revision, or a removed source sends nothing.
-
-## Lane menu
-
-Each Chat lane's compact menu button uses a smaller three-bar glyph than the
-team menu, matching its smaller control without shrinking the pointer target.
-It swaps that lane's composer for its seat panel. The panel leads with what the
-agent needs from the operator — consent requests to Allow or Deny in place,
-held tasks iced, blocked, or in review, a lease near expiry, and direction left
-waiting — then the Wake, Drain, Remove, Renew, and next-launch model, effort,
-and fast-mode commands and their refusals. Renew submits at once; Drain and
-Remove confirm first. Effort and fast mode show the running value beside the
-next launch, and the fast-mode status names which level enables it; fast mode
-follows [the lane loop](../docs/product/loops.md#l-lane--the-place). Presence,
-lease age, current task, latest activity, waiting direction, the lane identity,
-occupant, session, and worktree follow, beside **Create new team** and **Leave
-all teams**. The button, Escape, or a click elsewhere in the team restores the
-composer.
 
 ## Composer images
 

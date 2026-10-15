@@ -842,6 +842,19 @@ pub(super) fn startup_subscriptions(
             "the durable task-allocation lifetime table is not one row per resident team in team order",
         ));
     }
+    for subscription in &stored {
+        let teamed = lanes
+            .iter()
+            .filter(|row| row.team == subscription.team)
+            .nth(1)
+            .is_some();
+        if teamed != subscription.formed_at.is_some() {
+            return Err(store_fault(
+                "team::formation-misaligned",
+                "a durable team names one formation instant exactly while it holds multiple members",
+            ));
+        }
+    }
     Ok(stored)
 }
 

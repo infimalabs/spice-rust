@@ -74,6 +74,7 @@ pub(super) fn move_fixture_lane_to_team(
         .retain(|subscription| subscription.team != from_team);
     next.subscriptions.push(wire::TeamSubscription {
         team,
+        formed_at: None,
         policy: wire::intent::TeamLife::Drive,
         fast_mode: false,
     });

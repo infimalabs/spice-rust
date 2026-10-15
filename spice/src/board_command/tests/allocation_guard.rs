@@ -75,6 +75,7 @@ fn reseat(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
         .iter()
         .map(|lane| wire::TeamSubscription {
             team: lane.team,
+            formed_at: None,
             policy: wire::intent::TeamLife::Drain,
             fast_mode: false,
         })

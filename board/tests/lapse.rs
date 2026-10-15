@@ -449,6 +449,7 @@ fn seat_residency(write: &mut JournalWrite, fact: journal::PendingFact) {
         }],
         subscriptions: vec![wire::TeamSubscription {
             team: uuid(20),
+            formed_at: None,
             policy: wire::intent::TeamLife::Drain,
             fast_mode: false,
         }],

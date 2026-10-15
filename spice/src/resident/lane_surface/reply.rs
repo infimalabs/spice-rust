@@ -677,6 +677,7 @@ mod tests {
     fn subscriptions() -> Vec<wire::TeamSubscription> {
         vec![wire::TeamSubscription {
             team: uuid(1),
+            formed_at: None,
             policy: wire::intent::TeamLife::Drive,
             fast_mode: false,
         }]

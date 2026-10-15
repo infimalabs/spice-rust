@@ -1059,6 +1059,7 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                 .collect(),
             subscriptions: vec![wire::TeamSubscription {
                 team,
+                formed_at: Some(instant(DEMO_RESIDENT_AT)),
                 policy: wire::intent::TeamLife::Drive,
                 fast_mode: false,
             }],

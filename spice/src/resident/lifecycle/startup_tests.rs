@@ -91,6 +91,7 @@ fn seed_vacant_org(bus: &Bus, fixture: &LaunchFixture, policy: wire::intent::Tea
         lanes,
         subscriptions: vec![wire::TeamSubscription {
             team,
+            formed_at: None,
             policy,
             fast_mode: false,
         }],

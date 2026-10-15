@@ -152,6 +152,7 @@ pub(super) fn fixture(
         .iter()
         .map(|lane| wire::TeamSubscription {
             team: lane.team,
+            formed_at: None,
             policy: wire::intent::TeamLife::Drain,
             fast_mode: false,
         })

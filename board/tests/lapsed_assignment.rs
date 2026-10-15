@@ -51,6 +51,7 @@ fn projects() -> board::ProjectPolicy {
 fn drain() -> wire::TeamSubscription {
     wire::TeamSubscription {
         team: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
+        formed_at: None,
         policy: wire::intent::TeamLife::Drain,
         fast_mode: false,
     }

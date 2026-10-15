@@ -156,6 +156,7 @@ fn seed_vacant_lane(bus: &Bus, fixture: &LaunchFixture) {
         lanes: vec![row],
         subscriptions: vec![wire::TeamSubscription {
             team: lane,
+            formed_at: None,
             policy: wire::intent::TeamLife::Steer,
             fast_mode: false,
         }],
