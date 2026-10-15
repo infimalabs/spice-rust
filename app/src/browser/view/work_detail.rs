@@ -272,6 +272,10 @@ fn render_available(
                 <dl class="app-fact-grid">
                     {project_fact(render, &statement.project)}
                     {fact("Status", workflow.status.clone())}
+                    if let Some(stranded) = &row.stranded {
+                        {fact("Stranded by", stranded.controller.to_string())}
+                        {fact("Settle", stranded.settle.clone())}
+                    }
                     {fact("Current phase", workflow.phase.to_string())}
                     {fact("Flow", workflow.flow.iter().map(ToString::to_string).collect::<Vec<_>>().join(" → "))}
                     {fact("Review", workflow.review.clone())}

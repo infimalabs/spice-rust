@@ -215,8 +215,7 @@ pub(in crate::board_command) fn task_close(
 ///
 /// This is a Design's only terminal act: no lane step and no selection
 /// concludes it. Done refuses while an output it constructed still awaits
-/// selection; collapse records why the premise did not hold and leaves such
-/// outputs gated.
+/// selection. Collapse closes each unreleased construction subtree atomically.
 pub(in crate::board_command) fn task_conclude(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -249,7 +248,7 @@ pub(in crate::board_command) fn stage_collapse(
     write: &mut JournalWrite,
     cause: PendingFact,
     at: Instant,
-) -> Result<(), Outcome<CommandAnswer>> {
+) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
     let conclude = TaskConclude {
         task: design,
         conclusion: body::DesignConclusion::Collapsed { reason },
@@ -262,9 +261,11 @@ pub(in crate::board_command) fn stage_collapse(
         projects,
         allocation,
     )?;
+    guard_task_projection(write, snapshot.task_barrier.clone());
     let entry = admitted_entry(&snapshot, settlement)?;
     let cause = FactCause::Pending(cause);
-    stage(write, entry, settlement, cause, at, projects).map(drop)
+    stage_with_controlled(write, &snapshot, entry, settlement, cause, at, projects)
+        .map(|(_, closed)| closed)
 }
 
 fn settle(
@@ -303,8 +304,24 @@ fn settle(
     };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
-    let post = match stage(&mut write, entry, settlement, FactCause::Root, at, projects) {
-        Ok(post) => post,
+    if settlement.negative()
+        && matches!(
+            entry.statement().intent,
+            Some(wire::TaskIntent::Plan | wire::TaskIntent::Design)
+        )
+    {
+        guard_task_projection(&mut write, snapshot.task_barrier.clone());
+    }
+    let (post, closed) = match stage_with_controlled(
+        &mut write,
+        &snapshot,
+        entry,
+        settlement,
+        FactCause::Root,
+        at,
+        projects,
+    ) {
+        Ok(staged) => staged,
         Err(outcome) => return outcome,
     };
     let answer = wire::intent::TaskAnswer {
@@ -312,6 +329,7 @@ fn settle(
         status: settlement.status().to_owned(),
         completion: None,
         claim: None,
+        closed,
         next: next_action(&snapshot, &post),
     };
     if let Err(outcome) = settlement.receipt(&mut write, command, answer.clone()) {
@@ -320,8 +338,49 @@ fn settle(
     committed(bus, write, CommandAnswer::Task(answer))
 }
 
+/// Stage one terminal task and every pending subtree its negative disposition
+/// can no longer release.
+fn stage_with_controlled(
+    write: &mut JournalWrite,
+    snapshot: &ValidatedSnapshot,
+    entry: &Entry,
+    settlement: Settlement<'_>,
+    cause: FactCause,
+    at: Instant,
+    projects: &ProjectPolicy,
+) -> Result<(Entry, Vec<TaskHandle>), Outcome<CommandAnswer>> {
+    let controlled = settlement
+        .negative()
+        .then(|| board::controlled_pending(&snapshot.entries, entry.born()))
+        .unwrap_or_default();
+    require_controlled_unheld(&controlled, settlement)?;
+    let (post, settled) = stage(write, entry, settlement, cause, at, projects)?;
+    if controlled.is_empty() {
+        return Ok((post, Vec::new()));
+    }
+    let validation = controlled_validation(entry, settlement);
+    let mut closed = Vec::with_capacity(controlled.len());
+    for controlled in controlled {
+        let close = TaskClose {
+            task: controlled.handle().clone(),
+            validation: validation.clone(),
+            force_claimed: settlement.force_claimed(),
+        };
+        stage(
+            write,
+            controlled,
+            Settlement::Close(&close),
+            FactCause::Pending(settled),
+            at,
+            projects,
+        )?;
+        closed.push(controlled.handle().clone());
+    }
+    Ok((post, closed))
+}
+
 /// Stage the settlement fact and the settled workflow, and free a forced
-/// claim, returning the settled entry.
+/// claim, returning the settled entry and its causal fact.
 fn stage(
     write: &mut JournalWrite,
     entry: &Entry,
@@ -329,7 +388,7 @@ fn stage(
     cause: FactCause,
     at: Instant,
     projects: &ProjectPolicy,
-) -> Result<Entry, Outcome<CommandAnswer>> {
+) -> Result<(Entry, PendingFact), Outcome<CommandAnswer>> {
     let claimed = entry
         .claim()
         .filter(|claim| claim.disposition == ClaimDisposition::Active)
@@ -348,7 +407,50 @@ fn stage(
             ..claim
         });
     }
-    Ok(post)
+    Ok((post, settled))
+}
+
+fn require_controlled_unheld(
+    controlled: &[&Entry],
+    settlement: Settlement<'_>,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let Some((entry, claim)) = controlled.iter().find_map(|entry| {
+        entry
+            .claim()
+            .filter(|claim| claim.disposition == ClaimDisposition::Active)
+            .map(|claim| (*entry, claim))
+    }) else {
+        return Ok(());
+    };
+    if settlement.force_claimed() {
+        return Ok(());
+    }
+    let remedy = if matches!(settlement, Settlement::Conclude(_)) {
+        "the holder checkpoints its work and runs `spice task free`; retry the collapse once every controlled task is unheld"
+    } else {
+        "rerun with --force-claimed to settle the controller and take every controlled task from its holder"
+    };
+    Err(refusal(
+        "task::controlled-descendant-claimed",
+        Some(format!("{} held by {}", entry.handle(), claim.actor)),
+        remedy,
+    ))
+}
+
+fn controlled_validation(controller: &Entry, settlement: Settlement<'_>) -> String {
+    let disposition = match settlement {
+        Settlement::Delete(_) => "was deleted",
+        Settlement::Close(_) => "was closed",
+        Settlement::Conclude(_) => "was collapsed",
+    };
+    format!(
+        "Controller {} {disposition}: {}",
+        controller.handle(),
+        settlement
+            .text()
+            .expect("every negative controller settlement has stated text")
+            .trim(),
+    )
 }
 
 /// The named, unsettled entry, refusing empty text, a settlement that does not

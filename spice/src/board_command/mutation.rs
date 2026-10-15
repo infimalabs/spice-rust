@@ -21,6 +21,7 @@ pub(super) use taste_proposal::taste_proposal_add;
 /// One actor-filtered board snapshot whose cursor and entries were validated together.
 pub(super) struct ValidatedSnapshot {
     pub(super) cursor: wire::Seq,
+    pub(super) task_barrier: Digest,
     pub(super) facts: bus::TaskFacts,
     pub(super) answer: BoardAnswer,
     pub(super) entries: Vec<Entry>,
@@ -563,6 +564,7 @@ where
         status: "pending".to_owned(),
         completion: None,
         claim: claim_answer,
+        closed: Vec::new(),
         next,
     };
     if let Err(error) = write.command_result(
@@ -863,6 +865,7 @@ pub(super) fn task_note(
         status: "noted".to_owned(),
         completion: None,
         claim: None,
+        closed: Vec::new(),
         next,
     };
     if let Err(error) = write.command_result(
@@ -1091,6 +1094,7 @@ fn commit_dependency_edit(
         status: "edited".to_owned(),
         completion: None,
         claim: None,
+        closed: Vec::new(),
         next,
     };
     if let Err(error) = write.command_result(

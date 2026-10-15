@@ -220,10 +220,19 @@ fn collapse_still_uses_the_operator_conclusion_path() {
         Outcome::Refusal(refusal) if refusal.reason() == "task::conclude-claimed"
     ));
     fixture.free(0);
-    assert_committed(fixture.decide(collapse));
+    let CommandAnswer::Text(answer) = assert_committed(fixture.decide(collapse)) else {
+        panic!("collapse decision did not return text");
+    };
     let current = board(&fixture.bus, fixture.epoch, Actor::Operator);
     let workflow = &at(&current, &fixture.design).workflow.body;
     assert_eq!(workflow.status, "completed");
     assert!(!workflow.concluded_positively());
+    for output in &fixture.outputs {
+        assert_eq!(at(&current, output).workflow.body.status, "completed");
+        assert!(
+            answer.text.contains(output.as_str()),
+            "the collapse decision answer names every task it closed"
+        );
+    }
     fixture.finish();
 }

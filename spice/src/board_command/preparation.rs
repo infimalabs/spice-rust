@@ -39,8 +39,8 @@ pub(super) fn dispatch_preparation(
 ///
 /// A Plan concludes like any reviewed task; its outputs then wait only for
 /// that positive boundary and ordinary dependencies. Collapse, operator close,
-/// and delete are separate, explicit negative dispositions. They intentionally
-/// leave outputs gated and do not call this guard.
+/// and delete are separate negative dispositions that atomically settle the
+/// pending preparation branches they can no longer release.
 pub(super) fn require_no_pending_controlled_outputs(
     snapshot: &ValidatedSnapshot,
     controller: &Entry,
@@ -654,12 +654,24 @@ fn commit_decision(
             projects,
             allocation,
         } => {
-            if let Err(outcome) = super::mutation::stage_collapse(
+            let closed = match super::mutation::stage_collapse(
                 bus, command, design, reason, projects, allocation, &mut write, decided, at,
             ) {
-                return outcome;
+                Ok(closed) => closed,
+                Err(outcome) => return outcome,
+            };
+            if closed.is_empty() {
+                "collapsed the Design".to_owned()
+            } else {
+                format!(
+                    "collapsed the Design and closed {}",
+                    closed
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             }
-            "collapsed the Design".to_owned()
         }
     };
     let answer = TextAnswer {

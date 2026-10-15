@@ -86,8 +86,17 @@ fn render_preview(
             "Conclude {handle} done. The resident refuses while an output still owes your selection."
         ),
         DesignConclusion::Collapsed { reason } => {
+            let controlled = if row.controlled.is_empty() {
+                "no pending controlled task".to_owned()
+            } else {
+                row.controlled
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
             format!(
-                "Conclude {handle} collapsed: {reason}. Every output it constructed stays gated."
+                "Conclude {handle} collapsed: {reason}. No output is released. This also closes: {controlled}."
             )
         }
     };

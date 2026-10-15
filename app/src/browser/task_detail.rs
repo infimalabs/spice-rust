@@ -393,19 +393,24 @@ pub(super) fn creator_context_link(
     }
 }
 
-/// Whether the operator may close a task from its composer, and whose live
-/// claim that closure takes.
+/// Whether the operator may settle a task from its composer, whose live claim
+/// that settlement takes, and which controlled tasks it closes with it.
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct TaskClosure {
     holder: Option<wire::Actor>,
+    controlled: Vec<wire::TaskHandle>,
+    closable: bool,
 }
 
-/// The closure a composer offers for `heads`: none without the capability or
-/// once the task is settled.
+/// The settlement a composer offers for `heads`: none without the capability
+/// or once the task is settled. Designs conclude rather than close, but remain
+/// directly withdrawable.
 pub(super) fn closure(can_close: bool, heads: &wire::intent::BoardTask) -> Option<TaskClosure> {
     let settled = matches!(heads.workflow.body.status.as_str(), "completed" | "deleted");
     (can_close && !settled).then(|| TaskClosure {
         holder: live_holder(heads),
+        controlled: heads.controlled.clone(),
+        closable: heads.statement.body.intent != Some(wire::TaskIntent::Design),
     })
 }
 
@@ -467,13 +472,26 @@ fn close_witnesses(heads: &wire::intent::BoardTask) -> Vec<wire::Witness> {
     ]
 }
 
-/// The submit button value that sends the draft as a closing validation.
+/// Submitter values that settle the task with the composed text.
 const CLOSE_SUBMITTER: &str = "close";
+const DELETE_SUBMITTER: &str = "delete";
 
-fn submitted_close(event: &SubmitEvent) -> bool {
-    event
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComposerSettlement {
+    Close,
+    Delete,
+}
+
+fn submitted_settlement(event: &SubmitEvent) -> Option<ComposerSettlement> {
+    match event
         .submitter()
-        .is_some_and(|button| button.get_attribute("value").as_deref() == Some(CLOSE_SUBMITTER))
+        .and_then(|button| button.get_attribute("value"))
+        .as_deref()
+    {
+        Some(CLOSE_SUBMITTER) => Some(ComposerSettlement::Close),
+        Some(DELETE_SUBMITTER) => Some(ComposerSettlement::Delete),
+        _ => None,
+    }
 }
 
 /// The one observation composer every surface showing `task` renders, bound
@@ -505,6 +523,7 @@ pub(super) fn render_note_composer(
     }
     let busy = composer.submission.busy();
     let closing = composer.submission == NoteSubmission::Closing;
+    let deleting = composer.submission == NoteSubmission::Deleting;
     let form_key = task.to_string();
     let task = task.clone();
     let label_id = id.clone();
@@ -527,14 +546,25 @@ pub(super) fn render_note_composer(
                     {if busy && !closing { "Saving…" } else { "Add" }}
                 </button>
                 if let Some(closure) = closure {
+                    if closure.closable {
+                        <button
+                            type="submit"
+                            class="team-send"
+                            value={CLOSE_SUBMITTER}
+                            disabled={busy}
+                            title={closure.holder.as_ref().map(|holder| format!("Closing takes this task from {holder}"))}
+                        >
+                            {if closing { "Closing…" } else { "Close" }}
+                        </button>
+                    }
                     <button
                         type="submit"
                         class="team-send"
-                        value={CLOSE_SUBMITTER}
+                        value={DELETE_SUBMITTER}
                         disabled={busy}
-                        title={closure.holder.as_ref().map(|holder| format!("Closing takes this task from {holder}"))}
+                        title={closure.holder.as_ref().map(|holder| format!("Deleting takes this task from {holder}"))}
                     >
-                        {if closing { "Closing…" } else { "Close" }}
+                        {if deleting { "Deleting…" } else { "Delete" }}
                     </button>
                 }
                 {actions}
@@ -544,8 +574,8 @@ pub(super) fn render_note_composer(
 }
 
 /// Append one observation to the task named by the submitting surface, or
-/// close that task with the draft as its validation when the close button
-/// submitted the form.
+/// settle that task with the draft as validation/reason when a destructive
+/// submitter sent the form.
 pub(super) fn note_submit_callback(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
@@ -561,8 +591,8 @@ pub(super) fn note_submit_callback(
             .map(|textarea| textarea.value())
             .unwrap_or_default();
         notes.update(&task, |composer| composer.draft.clone_from(&text));
-        let closing = submitted_close(&event);
-        let (handle, after, close) = {
+        let requested_settlement = submitted_settlement(&event);
+        let (handle, after, settlement) = {
             let data = surface.read();
             let Some(detail) = data
                 .as_ref()
@@ -581,16 +611,18 @@ pub(super) fn note_submit_callback(
             (
                 detail.task.statement.body.handle.clone(),
                 detail.notes.last().map(|note| note.position),
-                closing.then(|| {
+                requested_settlement.map(|settlement| {
                     (
+                        settlement,
                         close_witnesses(&detail.task),
                         live_holder(&detail.task).is_some(),
+                        detail.task.controlled.clone(),
                     )
                 }),
             )
         };
-        if let Some((expected, force_claimed)) = close {
-            queue_close(
+        if let Some((settlement, expected, force_claimed, controlled)) = settlement {
+            queue_settlement(
                 &sender,
                 &notes,
                 &task,
@@ -598,6 +630,8 @@ pub(super) fn note_submit_callback(
                 &text,
                 expected,
                 force_claimed,
+                &controlled,
+                settlement,
             );
             return;
         }
@@ -630,8 +664,13 @@ pub(super) fn note_submit_callback(
     })
 }
 
-/// Queue one closure whose witnesses are the heads the operator closed from.
-fn queue_close(
+/// Validate, confirm, and queue one destructive task settlement against the
+/// exact heads and controlled closure set the operator saw.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the composer supplies one fully witnessed settlement"
+)]
+fn queue_settlement(
     sender: &SenderHandle,
     notes: &NoteComposers,
     task: &TaskStamp,
@@ -639,36 +678,74 @@ fn queue_close(
     text: &str,
     expected: Vec<wire::Witness>,
     force_claimed: bool,
+    controlled: &[wire::TaskHandle],
+    settlement: ComposerSettlement,
 ) {
-    let validation = match compose::close(text) {
-        Ok(validation) => validation,
+    let text = match compose::close(text) {
+        Ok(text) => text,
         Err(refusal) => {
             notes.update(task, |composer| composer.notice = refusal.into());
             return;
         }
     };
+    if !confirm_settlement(settlement, &handle, &text, controlled) {
+        return;
+    }
     let queued = action_identity(sender).is_some_and(|id| {
-        admit_action(
-            sender,
-            ClientAction::Close {
+        let action = match settlement {
+            ComposerSettlement::Close => ClientAction::Close {
                 id,
                 task: handle,
-                validation,
+                validation: text,
                 expected,
                 force_claimed,
             },
-        )
+            ComposerSettlement::Delete => ClientAction::Delete {
+                id,
+                task: handle,
+                reason: text,
+                expected,
+                force_claimed,
+            },
+        };
+        admit_action(sender, action)
     });
     notes.update(task, |composer| {
         composer.notice = Notice::none();
         composer.submission = if queued {
-            NoteSubmission::Closing
+            match settlement {
+                ComposerSettlement::Close => NoteSubmission::Closing,
+                ComposerSettlement::Delete => NoteSubmission::Deleting,
+            }
         } else {
             NoteSubmission::Failed(
-                "Closure could not be queued; the draft was retained.".to_owned(),
+                "Settlement could not be queued; the draft was retained.".to_owned(),
             )
         };
     });
+}
+
+fn confirm_settlement(
+    settlement: ComposerSettlement,
+    handle: &wire::TaskHandle,
+    text: &str,
+    controlled: &[wire::TaskHandle],
+) -> bool {
+    let verb = match settlement {
+        ComposerSettlement::Close => "Close",
+        ComposerSettlement::Delete => "Delete",
+    };
+    let mut message = format!("{verb} {handle}?\n\nReason or validation:\n{text}");
+    if !controlled.is_empty() {
+        message.push_str("\n\nThis also closes these controlled tasks:");
+        for task in controlled {
+            message.push_str("\n- ");
+            message.push_str(task.as_str());
+        }
+    }
+    web_sys::window()
+        .and_then(|window| window.confirm_with_message(&message).ok())
+        .unwrap_or(false)
 }
 
 fn retain_note_failure(notes: &NoteComposers, task: &TaskStamp) {

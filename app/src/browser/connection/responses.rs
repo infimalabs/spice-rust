@@ -440,9 +440,26 @@ fn apply_task_mutation_response(
         PendingKind::Note { task, text, after } => {
             apply_note_response(session, handles, runtime, task, text, after, bytes)?
         }
-        PendingKind::Close { task } => {
-            apply_close_response(session, handles, runtime, task, bytes)?
-        }
+        PendingKind::Close { task } => apply_settlement_response(
+            session,
+            handles,
+            runtime,
+            task,
+            bytes,
+            "close",
+            "closed",
+            "Task was not closed",
+        )?,
+        PendingKind::Delete { task } => apply_settlement_response(
+            session,
+            handles,
+            runtime,
+            task,
+            bytes,
+            "delete",
+            "deleted",
+            "Task was not deleted",
+        )?,
         PendingKind::RoomCoordination { respond } => {
             apply_callback_reply(session, bytes, "Room coordination failed", &respond)?
         }
@@ -540,30 +557,37 @@ fn apply_note_response(
     }
 }
 
-/// A closed task clears its composer and rereads the detail that now shows it
-/// completed; a refusal keeps the draft with the resident's reason.
-fn apply_close_response(
+/// A settled task clears its composer and rereads the detail; a refusal keeps
+/// the draft with the resident's reason.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one response handler keeps close and delete identity checks identical"
+)]
+fn apply_settlement_response(
     session: &Session,
     handles: &SurfaceHandles,
     runtime: &mut AppRuntime,
     task: wire::TaskStamp,
     bytes: &[u8],
+    operation: &str,
+    past: &str,
+    failure: &str,
 ) -> Result<CommandApplication, String> {
     let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
     match &admitted.get().outcome {
         wire::Outcome::Reply(reply) => {
-            let answered = reply
-                .body
-                .task
-                .born()
-                .map_err(|error| format!("close answer named a non-canonical task: {error}"))?;
+            let answered = reply.body.task.born().map_err(|error| {
+                format!("{operation} answer named a non-canonical task: {error}")
+            })?;
             if answered != task {
                 handles.notes.update(&task, |composer| {
-                    composer.submission = NoteSubmission::Failed(
-                        "The resident closed a different task; the draft was retained.".to_owned(),
-                    );
+                    composer.submission = NoteSubmission::Failed(format!(
+                        "The resident {past} a different task; the draft was retained."
+                    ));
                 });
-                return Err("close answer task identity did not match its command".to_owned());
+                return Err(format!(
+                    "{operation} answer task identity did not match its command"
+                ));
             }
             handles
                 .notes
@@ -572,8 +596,7 @@ fn apply_close_response(
             Ok(CommandApplication::ordinary(false))
         }
         outcome => {
-            let issue = outcome_issue("Task was not closed", outcome)
-                .unwrap_or_else(|| "Task was not closed.".to_owned());
+            let issue = outcome_issue(failure, outcome).unwrap_or_else(|| format!("{failure}."));
             handles.notes.update(&task, |composer| {
                 composer.submission = NoteSubmission::Failed(issue);
             });

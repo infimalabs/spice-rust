@@ -461,6 +461,9 @@ pub struct TaskAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub claim: Option<Box<ClaimAnswer>>,
+    /// Pending controlled tasks closed atomically with the named task.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closed: Vec<TaskHandle>,
     /// Exact CLI command admitted as the next action, when one is available.
     #[serde(
         default,

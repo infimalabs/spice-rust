@@ -233,6 +233,7 @@ fn replay_task_completion(
             status: terminal.status,
             completion: None,
             claim: None,
+            closed: Vec::new(),
             next: terminal.next,
         }),
     }))
@@ -448,6 +449,7 @@ fn append_done(
         status,
         completion: None,
         claim: None,
+        closed: Vec::new(),
         next,
     })
 }
@@ -934,6 +936,7 @@ fn review_answer(
         status,
         completion: None,
         claim: None,
+        closed: Vec::new(),
         next,
     }
 }

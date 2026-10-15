@@ -527,6 +527,20 @@ owns each rule summarized here.
   working-group membership grants no authorization. Rejected-output and
   overall feedback is [told once to its active holder](invariants/identity.md#identity-a-designs-newest-return-is-told-once-to-its-active-holder)
   as its next input, and `room history` lists every verdict and comment.
+  A collapse concludes negatively and, in that same journal write, operator-closes
+  every still-unselected pending output and every pending task prepared beneath
+  it; each closure validation names the Design and collapse reason. A prior exact
+  acceptance remains authorized and live. Operator close or delete of a Plan or
+  Design likewise closes every pending construction subtree that controller can
+  no longer release, but never closes a task already released by a positive Plan
+  review. Any live claim in the closure set refuses the whole operation and names
+  its holder; `task close` and `task delete` accept `--force-claimed` to free those
+  claims atomically. CLI answers list every task closed, and browser collapse,
+  close, and delete confirmations preview the same set. Historical pending work
+  whose controller had already collapsed, closed, or been deleted is not repaired
+  on read: board, status, and detail call it `stranded` and print its explicit
+  `spice task close` settlement command.
+
 
   A Plan is an ordinary reviewed task constructor. It creates its
   acceptance-bearing executable tasks under itself; those tasks wait for its

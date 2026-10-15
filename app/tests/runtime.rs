@@ -291,6 +291,8 @@ fn board_task(
         explicit_release: false,
         grouped: false,
         collapse_reason: None,
+        controlled: Vec::new(),
+        stranded: None,
         claim_context: None,
         git_context: None,
         parked_commits: None,

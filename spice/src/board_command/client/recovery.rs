@@ -565,6 +565,7 @@ fn reconcile_client_recovery(
                             status: "pending".to_owned(),
                             completion: None,
                             claim: Some(Box::new(claim)),
+                            closed: Vec::new(),
                             next: None,
                         })
                     } else {

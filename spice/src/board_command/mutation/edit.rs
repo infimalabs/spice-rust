@@ -416,6 +416,7 @@ fn publish_correction(
         status,
         completion: None,
         claim: None,
+        closed: Vec::new(),
         next,
     };
     if let Err(error) = write.command_result(

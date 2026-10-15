@@ -718,9 +718,26 @@ fn render_phase(
                         comment.as_deref().unwrap_or("none"),
                     )
                 }
-                DecisionOutcome::Collapse { reason, .. } => format!(
-                    "Collapse the Design on this proposal's premise: {reason}. No output is released."
-                ),
+                DecisionOutcome::Collapse { reason, .. } => {
+                    let closed = context
+                        .controller
+                        .map(|controller| controller.controlled.as_slice())
+                        .unwrap_or_default();
+                    if closed.is_empty() {
+                        format!(
+                            "Collapse the Design on this proposal's premise: {reason}. No output is released; no pending controlled task needs closure."
+                        )
+                    } else {
+                        format!(
+                            "Collapse the Design on this proposal's premise: {reason}. No output is released. This also closes: {}.",
+                            closed
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        )
+                    }
+                }
             };
             let submit = submit(
                 context.controls,
