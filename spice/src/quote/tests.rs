@@ -521,6 +521,66 @@ fn nested_quote_presentation_inlines_each_sources_own_media() {
         format!("see {inner_text}")
     );
 }
+#[test]
+fn media_targets_select_one_authenticated_ordinal_and_present_it_as_media() {
+    let first =
+        wire::Media::from_base64("first.png", "image/png", "iVBORw0KGgo=").expect("fixture media");
+    let second =
+        wire::Media::from_base64("second.png", "image/png", "iVBORw0KGgo=").expect("fixture media");
+    let mut store = MemoryStore::default();
+    store.steering.insert(
+        "dTVLR0qL0".to_owned(),
+        SourceQuote {
+            identity: None,
+            text: "source prose is not selected".to_owned(),
+            author: QuoteAuthor::Directive {
+                actor: wire::Actor::Operator,
+            },
+            disposition: Some(wire::Disposition::Acked),
+            media: vec![first, second.clone()],
+            packet: None,
+        },
+    );
+    let target = QuoteTarget::SteeringMedia {
+        key: "dTVLR0qL0".to_owned(),
+        ordinal: 1,
+        digest: second.identity().expect("media identity"),
+    };
+
+    assert!(matches!(
+        resolve_with(&store, &target.to_string(), 0),
+        QuoteResolution::Media(ResolvedMediaQuote {
+            media,
+            author: QuoteAuthor::Directive {
+                actor: wire::Actor::Operator
+            },
+            disposition: Some(wire::Disposition::Acked),
+        }) if media == second
+    ));
+    assert!(matches!(
+        present_with(&store, &target.markdown(), 0).as_slice(),
+        [QuotePresentation::Media { media, .. }] if media == &second
+    ));
+
+    let missing = QuoteTarget::SteeringMedia {
+        key: "dTVLR0qL0".to_owned(),
+        ordinal: 2,
+        digest: second.identity().expect("media identity"),
+    };
+    assert_eq!(
+        resolve_with(&store, &missing.to_string(), 0),
+        unavailable(&missing.to_string(), QuoteUnavailable::Unknown)
+    );
+    let mismatched = QuoteTarget::SteeringMedia {
+        key: "dTVLR0qL0".to_owned(),
+        ordinal: 1,
+        digest: QuoteTarget::text_digest("not image bytes"),
+    };
+    assert_eq!(
+        resolve_with(&store, &mismatched.to_string(), 0),
+        unavailable(&mismatched.to_string(), QuoteUnavailable::DigestMismatch)
+    );
+}
 
 #[test]
 fn refusals_name_the_original_target_without_synthesized_values() {

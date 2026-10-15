@@ -41,6 +41,7 @@ fn prose_message() -> AgentMessage {
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
         media: Vec::new(),
+        media_quotes: Vec::new(),
         markdown_images: Vec::new(),
     }
 }
@@ -78,6 +79,7 @@ fn a_directive_destination_belongs_to_a_peer_sender_or_an_operator_packet() {
             key: "amberfern".to_owned(),
             digest: wire::QuoteTarget::text_digest("ship"),
         },
+        media_quotes: Vec::new(),
         actor,
         authored: "2030-04-12T18:44:08.000Z".parse().expect("fixture instant"),
         badge: None,

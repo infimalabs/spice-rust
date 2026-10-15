@@ -889,6 +889,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
             media: Vec::new(),
+            media_quotes: Vec::new(),
             markdown_images: Vec::new(),
         },
         tool_message_sample(first_id, second_id),
@@ -928,6 +929,7 @@ fn tool_message_sample(first_id: CanonicalUuid, second_id: CanonicalUuid) -> Age
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
         media: Vec::new(),
+        media_quotes: Vec::new(),
         markdown_images: Vec::new(),
     }
 }
@@ -961,6 +963,7 @@ fn compaction_message_sample(first_id: CanonicalUuid) -> AgentMessage {
         unavailable_tool_terminals: vec!["Bash: cargo test".to_owned()],
         boundary: None,
         media: Vec::new(),
+        media_quotes: Vec::new(),
         markdown_images: Vec::new(),
     }
 }
@@ -974,6 +977,7 @@ fn directive_sample() -> wire::MessageDirective {
             key: "amberfern".to_owned(),
             digest: wire::QuoteTarget::text_digest("settled directive"),
         },
+        media_quotes: Vec::new(),
         actor: wire::Actor::Operator,
         authored: at("2030-04-12T18:44:08.000Z"),
         badge: Some(DirectiveBadge::Taste),
@@ -1091,6 +1095,7 @@ fn stream_data_samples(
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
         media: Vec::new(),
+        media_quotes: Vec::new(),
         markdown_images: Vec::new(),
     };
     vec![

@@ -482,6 +482,7 @@ mod tests {
                     review: false,
                     disposition: Disposition::Live,
                     quote_target,
+                    media_quotes: Vec::new(),
                     retirement: None,
                 },
             )

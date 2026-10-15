@@ -112,6 +112,7 @@ mod tests {
                 key: key.to_owned(),
                 digest: wire::QuoteTarget::text_digest(text),
             },
+            media_quotes: Vec::new(),
             actor: wire::Actor::Operator,
             authored: "2030-04-12T18:44:08.000Z".parse().expect("fixture instant"),
             badge: None,
@@ -182,6 +183,7 @@ mod tests {
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
             media: Vec::new(),
+            media_quotes: Vec::new(),
             markdown_images: Vec::new(),
         }
     }

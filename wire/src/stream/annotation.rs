@@ -51,6 +51,9 @@ pub struct MessageDirective {
     pub end: u32,
     /// Canonical steering target supplied by the resident.
     pub quote_target: QuoteTarget,
+    /// Images retained by this directive, each with its exact quote target.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media_quotes: Vec<crate::MediaQuote>,
     /// Actor on the directive's creating fact.
     pub actor: crate::Actor,
     /// Journal instant at which the quoted directive was published.
@@ -111,9 +114,24 @@ impl MessageDirective {
         let (Ok(start), Ok(end)) = (usize::try_from(self.start), usize::try_from(self.end)) else {
             return false;
         };
+        let Some(key) = (match &self.quote_target {
+            QuoteTarget::Steering { key, .. } => Some(key.as_str()),
+            _ => None,
+        }) else {
+            return false;
+        };
         start < end
             && text.get(start..end).is_some()
-            && matches!(&self.quote_target, QuoteTarget::Steering { .. })
+            && self.media_quotes.iter().all(|media| {
+                !media.name.is_empty()
+                    && matches!(
+                        &media.target,
+                        QuoteTarget::SteeringMedia {
+                            key: media_key,
+                            ..
+                        } if media_key == key
+                    )
+            })
             && (self.recipient.is_none()
                 || (self.sender.is_some() && matches!(self.actor, crate::Actor::Lane(_)))
                 || (self.packet.is_some() && matches!(self.actor, crate::Actor::Operator)))
