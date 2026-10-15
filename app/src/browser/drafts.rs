@@ -212,7 +212,7 @@ pub(super) fn render_editor(
             };
             let notice = controls.notice.clone();
             let request = if filing {
-                Ok(filing_request(&row, None))
+                Ok(filing_request(&row))
             } else {
                 revision(&form, &row)
             };
@@ -251,10 +251,12 @@ pub(super) fn render_editor(
     }
 }
 
-/// The filing control an open OOPS report's task detail carries: it files the
-/// report as ordinary work under the named public project, its current project
-/// unless the operator names another.
-pub(super) fn render_oops_filing(
+/// The File action an open OOPS report's observation composer carries beside
+/// Add, so the operator can record observations and file in one place. It
+/// files the report as ordinary work under its current project through the
+/// guarded file transition, so the allocator can offer it at once; re-homing a
+/// report under another project stays with `spice task file --into`.
+pub(super) fn render_oops_file_action(
     runtime: Option<&AppRuntime>,
     controls: &Controls,
     sender: &SenderHandle,
@@ -265,43 +267,40 @@ pub(super) fn render_oops_filing(
     }
     let files = runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskFile));
     let statement = &row.statement.body;
-    let submit = {
+    let title = format!(
+        "File under {} as ordinary work the allocator can offer; a refusal keeps it parked",
+        statement.project
+    );
+    let file = {
         let controls = controls.clone();
         let sender = sender.clone();
         let row = row.clone();
-        Callback::from(move |event: SubmitEvent| {
-            event.prevent_default();
-            let Some(form) = submitted_form(&event) else {
-                return;
-            };
-            match destination(&field(&form, "project"), &row.statement.body.project) {
-                Ok(into) => {
-                    let notice = controls.notice.clone();
-                    let landed = Callback::from(move |answer: TaskAnswer| {
-                        notice.set(Some(format!("Filed {}.", answer.task)));
-                    });
-                    controls.send(&sender, filing_request(&row, into), landed);
-                }
-                Err(problem) => controls.notice.set(Some(problem)),
-            }
+        Callback::from(move |_: MouseEvent| {
+            let notice = controls.notice.clone();
+            let landed = Callback::from(move |answer: TaskAnswer| {
+                notice.set(Some(format!("Filed {}.", answer.task)));
+            });
+            controls.send(&sender, filing_request(&row), landed);
         })
     };
     html! {
-        <section class="app-sheet-section" data-oops-filing={statement.handle.to_string()}>
-            <h3>{"OOPS"}</h3>
-            <p class="muted">{"Parked off the allocator until it is filed. File admits it as ordinary work under the named public project, or refuses and keeps it parked."}</p>
-            {controls.notice()}
-            <form
-                key={format!("{}-{}", statement.born, row.statement.position)}
-                class="draft-form"
-                onsubmit={submit}
-            >
-                <label class="draft-field-project"><span>{"Project"}</span><input name="project" type="text" required=true value={statement.project.clone()} /></label>
-                <div class="draft-actions">
-                    <button type="submit" disabled={!files}>{"File"}</button>
-                </div>
-            </form>
-        </section>
+        <button
+            type="button"
+            class="team-send"
+            data-oops-file={statement.handle.to_string()}
+            disabled={!files}
+            title={title}
+            onclick={file}
+        >{"File"}</button>
+    }
+}
+
+/// The outcome of the last filing beside an open OOPS report's File action.
+pub(super) fn render_oops_file_notice(controls: &Controls, row: &BoardTask) -> Html {
+    if open_oops(row) {
+        controls.notice()
+    } else {
+        Html::default()
     }
 }
 
@@ -315,16 +314,6 @@ fn open_oops(task: &BoardTask) -> bool {
     task.statement.body.filing.is_oops()
         && task.workflow.body.status == "pending"
         && task.workflow.body.completion.is_none()
-}
-
-/// The `into` a filing names for an entered project: none when it keeps the
-/// task's current project.
-fn destination(entered: &str, current: &str) -> Result<Option<String>, String> {
-    let entered = entered.trim();
-    if entered.is_empty() {
-        return Err("Name the public project that receives the filed task.".to_owned());
-    }
-    Ok((entered != current).then(|| entered.to_owned()))
 }
 
 /// The editable content of a new Draft, or of `row` when it exists.
@@ -485,14 +474,13 @@ fn revision(form: &web_sys::HtmlFormElement, row: &BoardTask) -> Result<DraftReq
     })
 }
 
-/// The guarded file transition for `row`, into `into` when it names another
-/// public project.
-fn filing_request(row: &BoardTask, into: Option<String>) -> DraftRequest {
+/// The guarded file transition for `row`, under its current project.
+fn filing_request(row: &BoardTask) -> DraftRequest {
     let task = row.statement.body.born.clone();
     DraftRequest::File {
         request: TaskFile {
             task: row.statement.body.handle.clone(),
-            into,
+            into: None,
             preparation: None,
             claim: false,
         },

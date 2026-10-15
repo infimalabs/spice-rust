@@ -479,6 +479,12 @@ fn submitted_close(event: &SubmitEvent) -> bool {
 /// The one observation composer every surface showing `task` renders, bound
 /// to that task and preserving only that task's draft while feedback uses its task-owned toast.
 /// With a `closure`, the same draft can instead close the task as its validation.
+/// `actions` are the task's own further controls, such as an OOPS report's
+/// File, kept in the composer's action row so they follow an observation.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one composer binds its task, capabilities, draft, and action row"
+)]
 pub(super) fn render_note_composer(
     id: String,
     handle: &str,
@@ -487,10 +493,14 @@ pub(super) fn render_note_composer(
     closure: Option<&TaskClosure>,
     composer: &NoteComposer,
     submit: &Callback<(TaskStamp, SubmitEvent)>,
+    actions: Html,
 ) -> Html {
     if !can_note {
         return html! {
-            <p class="work-note-capability">{"This capability can read observations but cannot append them."}</p>
+            <>
+                <p class="work-note-capability">{"This capability can read observations but cannot append them."}</p>
+                <div class="team-composer-controls work-note-actions">{actions}</div>
+            </>
         };
     }
     let busy = composer.submission.busy();
@@ -527,6 +537,7 @@ pub(super) fn render_note_composer(
                         {if closing { "Closing…" } else { "Close" }}
                     </button>
                 }
+                {actions}
             </div>
         </form>
     }
