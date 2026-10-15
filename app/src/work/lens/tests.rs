@@ -94,3 +94,60 @@ fn enrichment_resolves_a_missing_selected_task_in_place() {
     elsewhere.edges.clear();
     assert_eq!(project(Some(&elsewhere)).nodes[1].kind, "Missing task");
 }
+
+/// A Design's overview draws its preparation outputs downstream of it, and a
+/// Plan's own overview names its preparing Design at the arrow's upstream end.
+#[test]
+fn preparation_outputs_flow_from_their_controller() {
+    let mut design = task(1, "rooms.design");
+    design.statement.body.intent = Some(wire::TaskIntent::Design);
+    let plan = |value| {
+        let mut plan = task(value, "rooms.plan");
+        plan.statement.body.intent = Some(wire::TaskIntent::Plan);
+        plan.statement.body.preparation = Some(wire::TaskPreparation {
+            parent: stamp(1),
+            controller: stamp(1),
+            construction: stamp(90),
+        });
+        plan
+    };
+    let board = board(vec![design, plan(2), plan(3)]);
+    let work = WorkProjection::from_board(&board);
+    let arrows = |selected: Vec<wire::TaskStamp>| {
+        let selection =
+            TaskOverviewSelection::new(selected, super::super::TaskOverviewContext::Task);
+        let presentation = super::project(
+            &work.overview_graph(&selection),
+            &work,
+            None,
+            TaskRelationKind::Dependency,
+            WorkRelationshipDirection::Both,
+            &selection,
+        )
+        .expect("overview presentation");
+        presentation
+            .edges
+            .iter()
+            .map(|edge| {
+                (
+                    presentation.nodes[edge.from].task.clone(),
+                    presentation.nodes[edge.to].task.clone(),
+                    edge.label,
+                )
+            })
+            .collect::<BTreeSet<_>>()
+    };
+
+    assert_eq!(
+        arrows(vec![stamp(1), stamp(2), stamp(3)]),
+        BTreeSet::from([
+            (Some(stamp(1)), Some(stamp(2)), "then"),
+            (Some(stamp(1)), Some(stamp(3)), "then"),
+        ]),
+    );
+    assert_eq!(
+        arrows(vec![stamp(2)]),
+        BTreeSet::from([(Some(stamp(1)), Some(stamp(2)), "then")]),
+        "a Plan alone still shows the Design that prepared it upstream",
+    );
+}

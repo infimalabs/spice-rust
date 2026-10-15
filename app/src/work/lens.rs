@@ -81,27 +81,13 @@ pub(crate) fn project(
     let mut edge_keys = BTreeSet::new();
     let mut edges = Vec::new();
     if relation == TaskRelationKind::Dependency {
-        for edge in local.edges() {
-            let (Some(&dependent), Some(&prerequisite)) = (
-                local_to_merged.get(&edge.dependent()),
-                local_to_merged.get(&edge.prerequisite()),
-            ) else {
-                continue;
-            };
-            if direction == WorkRelationshipDirection::Dependents
-                && !(local.nodes()[edge.dependent()].selected()
-                    && local.nodes()[edge.prerequisite()].selected())
-            {
-                continue;
-            }
-            push_edge(
-                &mut edges,
-                &mut edge_keys,
-                prerequisite,
-                dependent,
-                edge_label(relation),
-            );
-        }
+        push_local_then_edges(
+            local,
+            &local_to_merged,
+            direction,
+            &mut edges,
+            &mut edge_keys,
+        );
     }
 
     if let Some(answer) = answer {
@@ -161,6 +147,42 @@ fn push_edge(
 ) {
     if keys.insert((from, to, label)) {
         edges.push(Edge { from, to, label });
+    }
+}
+
+/// The admitted board's own then arrows: each dependency from prerequisite to
+/// dependent, and each preparation from controller to output.
+fn push_local_then_edges(
+    local: &TaskOverviewGraph,
+    local_to_merged: &BTreeMap<usize, usize>,
+    direction: WorkRelationshipDirection,
+    edges: &mut Vec<Edge>,
+    keys: &mut BTreeSet<(usize, usize, &'static str)>,
+) {
+    let label = edge_label(TaskRelationKind::Dependency);
+    for edge in local.edges() {
+        let (Some(&dependent), Some(&prerequisite)) = (
+            local_to_merged.get(&edge.dependent()),
+            local_to_merged.get(&edge.prerequisite()),
+        ) else {
+            continue;
+        };
+        if direction == WorkRelationshipDirection::Dependents
+            && !(local.nodes()[edge.dependent()].selected()
+                && local.nodes()[edge.prerequisite()].selected())
+        {
+            continue;
+        }
+        push_edge(edges, keys, prerequisite, dependent, label);
+    }
+    for preparation in local.preparations() {
+        let (Some(&controller), Some(&output)) = (
+            local_to_merged.get(&preparation.controller()),
+            local_to_merged.get(&preparation.output()),
+        ) else {
+            continue;
+        };
+        push_edge(edges, keys, controller, output, label);
     }
 }
 
