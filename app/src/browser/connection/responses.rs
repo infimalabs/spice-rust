@@ -255,6 +255,7 @@ fn apply_command_response(
 ) -> Result<CommandApplication, String> {
     Ok(match kind {
         kind @ (PendingKind::Board
+        | PendingKind::Principals
         | PendingKind::Settings
         | PendingKind::Vendors
         | PendingKind::Consent) => apply_scalar_response(session, runtime, kind, bytes)?,
@@ -660,6 +661,15 @@ fn apply_scalar_response(
 ) -> Result<CommandApplication, String> {
     match kind {
         PendingKind::Board => runtime.apply_board(&admit_response(session, bytes)?),
+        PendingKind::Principals => {
+            let admitted =
+                admit_response::<wire::principal::PrincipalDirectoryAnswer>(session, bytes)?;
+            if runtime.apply_principals(&admitted) {
+                return Err(
+                    "connected principal authority changed; reopening its subscription".to_owned(),
+                );
+            }
+        }
         PendingKind::Settings => runtime.apply_settings(&admit_response(session, bytes)?),
         PendingKind::Vendors => runtime.apply_vendor_catalog(&admit_response(session, bytes)?),
         PendingKind::Consent => runtime.apply_consent_queue(&admit_response(session, bytes)?),

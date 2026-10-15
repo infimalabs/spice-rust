@@ -135,6 +135,7 @@ pub(crate) enum PendingKind {
     Inbox {
         covered: std::collections::BTreeMap<wire::CanonicalUuid, String>,
     },
+    Principals,
     Settings,
     Vendors,
     /// The operator's pending consent queue.

@@ -5,8 +5,8 @@ use std::fs;
 use std::io::Write as _;
 
 use wire::principal::{
-    PrincipalAdmit, PrincipalDeauthorize, PrincipalEdit, PrincipalHead, PrincipalRead,
-    PrincipalRole, PrincipalRoleRef, PrincipalRoles,
+    PrincipalAdmit, PrincipalDeauthorize, PrincipalDirectoryRead, PrincipalEdit, PrincipalHead,
+    PrincipalRead, PrincipalRole, PrincipalRoleRef, PrincipalRoles,
 };
 
 use super::*;
@@ -212,6 +212,57 @@ fn first_start_bears_one_git_profiled_operator_and_restarts_bear_nothing_more() 
         .filter(|envelope| envelope.fact.kind() == wire::FactKind::PrincipalAdmitted)
         .count();
     assert_eq!(admissions, 1);
+}
+
+#[test]
+fn a_connected_non_operator_reads_names_and_only_its_own_roles() {
+    let seated = seated("principal-connected-directory");
+    let (bea, _) = admitted(&seated, bea(&[]), 10);
+    let roles = principal_surface::roles(&seated.bus).expect("role heads read");
+    let actor = Actor::Human(bea);
+
+    command_under(
+        CommandKind::PrincipalDirectoryRead,
+        &PrincipalDirectoryRead {},
+        actor.clone(),
+        11,
+        &roles,
+    )
+    .expect("connected principal directory read admits");
+    assert!(
+        command_under(
+            CommandKind::PrincipalRead,
+            &PrincipalRead {},
+            actor.clone(),
+            12,
+            &roles,
+        )
+        .is_err(),
+        "the operator-only administrative list remains refused"
+    );
+
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::PrincipalDirectory(answer),
+        ..
+    }) = principal_surface::directory(&seated.bus, &actor)
+    else {
+        panic!("directory read replies");
+    };
+    assert!(answer.roles.is_empty());
+    assert_eq!(
+        answer
+            .principals
+            .identity(&actor)
+            .and_then(|identity| identity.name.as_deref()),
+        Some("Bea")
+    );
+    assert_eq!(
+        answer
+            .principals
+            .identity(&Actor::Operator)
+            .and_then(|identity| identity.name.as_deref()),
+        Some(GIT_NAME)
+    );
 }
 
 #[test]

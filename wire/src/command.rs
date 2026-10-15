@@ -170,6 +170,8 @@ pub enum CommandKind {
     /// Withdraw approval from the exact executable digest.
     TrustRevoke,
 
+    /// Read every principal's display identity and this principal's roles.
+    PrincipalDirectoryRead,
     /// Read every born human principal.
     PrincipalRead,
     /// Bear one new human principal.

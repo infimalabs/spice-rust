@@ -696,10 +696,17 @@ async fn establish_connection(
     data: &mut SurfaceData,
     signal: &web_sys::AbortSignal,
 ) -> Result<EstablishedConnection, String> {
-    let (session, writer, mut reader) =
+    let (session, mut writer, mut reader) =
         open_socket(identity, app_update, served_app, signal).await?;
-    let (principal, hydrating) =
-        admit_runtime(&session, &mut reader, connection, surface, data).await?;
+    let (principal, hydrating) = admit_runtime(
+        &session,
+        &mut writer,
+        &mut reader,
+        connection,
+        surface,
+        data,
+    )
+    .await?;
     Ok(EstablishedConnection {
         session,
         writer,
@@ -823,6 +830,7 @@ pub(super) fn loaded_app_generation() -> Result<wire::Digest, String> {
 /// Admit the acceptance frame and publish the runtime that frame names.
 async fn admit_runtime(
     session: &Session,
+    writer: &mut SocketWriter,
     reader: &mut SocketReader,
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
@@ -838,14 +846,68 @@ async fn admit_runtime(
     let accepted = session
         .admit_accepted(&accepted_bytes)
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
-    let (principal, hydrating) = data.admit(&accepted);
+    let (initial_principal, hydrating) = data.admit(&accepted);
+    let principal = bootstrap_principal(session, writer, reader, data, &initial_principal).await?;
+    surface.set(data.publication());
     if !hydrating {
-        surface.set(data.publication());
         connection.set(Connection::Online {
             epoch: principal.epoch().to_string(),
         });
     }
     Ok((principal, hydrating))
+}
+
+async fn bootstrap_principal(
+    session: &Session,
+    writer: &mut SocketWriter,
+    reader: &mut SocketReader,
+    data: &SurfaceData,
+    initial: &Principal,
+) -> Result<Principal, String> {
+    let command = SteerPane::over(initial)
+        .command(
+            random_uuid()?,
+            CommandKind::PrincipalDirectoryRead,
+            vec![],
+            wire::principal::PrincipalDirectoryRead {},
+        )
+        .map_err(|error| error.to_string())?;
+    writer
+        .send(Message::Bytes(
+            wire::encode(&command).map_err(|error| error.to_string())?,
+        ))
+        .await
+        .map_err(websocket_error)?;
+    let bytes = binary_message(
+        reader
+            .next()
+            .await
+            .ok_or_else(|| "socket closed before principal bootstrap".to_owned())?
+            .map_err(websocket_error)?,
+    )?;
+    let admitted = admit_response::<wire::principal::PrincipalDirectoryAnswer>(session, &bytes)?;
+    match &admitted.get().outcome {
+        wire::Outcome::Reply(_) => {}
+        wire::Outcome::Refusal(refusal) => {
+            return Err(format!(
+                "principal bootstrap refused ({}): {}",
+                refusal.reason(),
+                refusal.explanation()
+            ));
+        }
+        wire::Outcome::Fault(fault) => {
+            return Err(format!(
+                "principal bootstrap failed ({}): {}",
+                fault.reason, fault.detail
+            ));
+        }
+    }
+    let mut runtime = data.write();
+    let runtime = runtime
+        .as_mut()
+        .ok_or_else(|| "accepted connection created no runtime".to_owned())?;
+    runtime.apply_principals(&admitted);
+    Ok(runtime.principal().clone())
 }
 
 /// Carry back the stream directives one admitted frame produced.

@@ -133,6 +133,7 @@ impl ActionQueue {
             (stale.lanes(), CurrentRead::Lanes),
             (stale.inbox(), CurrentRead::Inbox),
             (stale.consent(), CurrentRead::Consent),
+            (stale.principals(), CurrentRead::Principals),
             (stale.settings(), CurrentRead::Settings),
         ] {
             if invalidated {
@@ -236,6 +237,7 @@ pub(crate) enum CurrentRead {
     Board,
     Lanes,
     Inbox,
+    Principals,
     Settings,
     Vendors,
     Consent,
@@ -247,6 +249,7 @@ impl PendingKind {
             Self::Board => Some(CurrentRead::Board),
             Self::Lanes { .. } => Some(CurrentRead::Lanes),
             Self::Inbox { .. } => Some(CurrentRead::Inbox),
+            Self::Principals => Some(CurrentRead::Principals),
             Self::Settings => Some(CurrentRead::Settings),
             Self::Vendors => Some(CurrentRead::Vendors),
             Self::Consent => Some(CurrentRead::Consent),

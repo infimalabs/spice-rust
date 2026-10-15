@@ -87,6 +87,7 @@ pub(super) async fn send_refresh(
     send_board(principal, writer, actions).await?;
     send_lanes(principal, writer, actions, submissions).await?;
     send_inbox(principal, writer, actions, submissions).await?;
+    send_principals(principal, writer, actions).await?;
     send_consent(principal, writer, actions).await?;
     send_settings(principal, writer, actions).await?;
     send_vendors(principal, writer, actions).await
@@ -111,6 +112,9 @@ pub(super) async fn send_stale(
     }
     if actions.take_ready_current_read(CurrentRead::Inbox) {
         send_inbox(principal, writer, actions, submissions).await?;
+    }
+    if actions.take_ready_current_read(CurrentRead::Principals) {
+        send_principals(principal, writer, actions).await?;
     }
     if actions.take_ready_current_read(CurrentRead::Consent) {
         send_consent(principal, writer, actions).await?;
@@ -406,6 +410,22 @@ pub(super) async fn send_consent_ruling(
         CommandKind::ConsentDecide,
         expected.to_vec(),
         ruling.clone(),
+    )
+    .await
+}
+
+async fn send_principals(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+) -> Result<(), String> {
+    send_if_offered(
+        principal,
+        writer,
+        actions,
+        PendingKind::Principals,
+        CommandKind::PrincipalDirectoryRead,
+        wire::principal::PrincipalDirectoryRead {},
     )
     .await
 }

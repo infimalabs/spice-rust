@@ -20,6 +20,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::{Actor, CanonicalUuid, Digest, Domain, HumanIdentity, Seq};
 
@@ -188,19 +189,16 @@ pub struct PrincipalDisplay {
 pub struct PrincipalDirectory(Vec<PrincipalDisplay>);
 
 impl PrincipalDirectory {
-    /// Each head of `roles` in birth order, presented by `present`.
+    /// Each current head in birth order, with the complete display identity
+    /// derived from its recorded profile.
     #[must_use]
-    pub fn of(
-        roles: &PrincipalRoles,
-        present: impl Fn(&PrincipalProfile) -> HumanIdentity,
-    ) -> Self {
+    pub fn display(heads: &[PrincipalHead]) -> Self {
         Self(
-            roles
-                .heads()
+            heads
                 .iter()
                 .map(|head| PrincipalDisplay {
                     principal: head.principal,
-                    identity: present(&head.profile),
+                    identity: head.profile.identity(),
                 })
                 .collect(),
         )
@@ -210,10 +208,19 @@ impl PrincipalDirectory {
     /// that shows no badge or avatar.
     #[must_use]
     pub fn names(roles: &PrincipalRoles) -> Self {
-        Self::of(roles, |profile| HumanIdentity {
-            name: profile.name.clone(),
-            ..HumanIdentity::default()
-        })
+        Self(
+            roles
+                .heads()
+                .iter()
+                .map(|head| PrincipalDisplay {
+                    principal: head.principal,
+                    identity: HumanIdentity {
+                        name: head.profile.name.clone(),
+                        ..HumanIdentity::default()
+                    },
+                })
+                .collect(),
+        )
     }
 
     /// How the principal `actor` acts or authored as presents, by the
@@ -276,6 +283,36 @@ pub struct PrincipalProfile {
         deserialize_with = "crate::optional::present"
     )]
     pub email: Option<String>,
+}
+
+impl PrincipalProfile {
+    /// Complete browser presentation derived only from this recorded profile.
+    #[must_use]
+    pub fn identity(&self) -> HumanIdentity {
+        let initials = self.name.as_deref().and_then(|name| {
+            let badge = name
+                .split_whitespace()
+                .take(2)
+                .filter_map(|word| word.chars().next())
+                .flat_map(char::to_uppercase)
+                .collect::<String>();
+            (!badge.is_empty()).then_some(badge)
+        });
+        let gravatar = self.email.as_ref().map(|email| {
+            format!(
+                "{:x}",
+                Sha256::digest(email.trim().to_lowercase().as_bytes())
+            )
+            .parse()
+            .expect("a SHA-256 lowercase hex spelling is a Gravatar hash")
+        });
+        HumanIdentity {
+            name: self.name.clone(),
+            email: self.email.clone(),
+            initials,
+            gravatar,
+        }
+    }
 }
 
 /// One authority a principal may hold.
@@ -405,6 +442,20 @@ pub struct PrincipalDeauthorized {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrincipalRead {}
+/// Read every principal's display identity and the connected principal's roles.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrincipalDirectoryRead {}
+
+/// Connected-readable principal identities and only the reader's current roles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrincipalDirectoryAnswer {
+    /// Every born principal's display identity, oldest birth first.
+    pub principals: PrincipalDirectory,
+    /// Roles held by the principal that issued this read.
+    pub roles: BTreeSet<PrincipalRole>,
+}
 
 /// Bear one new principal.
 ///
