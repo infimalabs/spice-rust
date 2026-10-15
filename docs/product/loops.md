@@ -625,7 +625,9 @@ distinctive quality.
   single-line slot, so an update never changes a box.
 - **Task counts show one open total.** Every global and team roll-up tab shows
   one badge counting open tasks; a global tab's title and accessible name carry
-  the ready, active, and blocked-or-deferred breakdown. A stem badge is
+  the ready, active, and blocked-or-deferred breakdown. A global tab whose
+  partition counts blocked work also carries an out-of-flow alert dot, and its
+  title and accessible name lead with the blocked count. A stem badge is
   content-sized, so a digit-width change may resize its tab; the total tabs
   reserve one minimum badge footprint.
 - **Presentation changes do not touch card identity or style.** Recolouring and

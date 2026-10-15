@@ -223,6 +223,21 @@ fn count_breakdown(counts: WorkCounts) -> String {
     )
 }
 
+/// Whether a global tab marks blocked work: exactly when the partition it
+/// opens counts a blocked task, the same count its title names.
+fn blocked_mark(counts: WorkCounts) -> Option<&'static str> {
+    (counts.blocked() > 0).then_some("true")
+}
+
+/// A global tab's title and accessible name, led by its blocked count when it
+/// carries the mark, so the state never rests on the dot alone.
+fn lead_with_blocked(counts: WorkCounts, title: String) -> String {
+    match counts.blocked() {
+        0 => title,
+        blocked => format!("{blocked} blocked; {title}"),
+    }
+}
+
 #[derive(Clone, Copy)]
 enum GlobalWorkRail {
     Execution,
@@ -352,12 +367,15 @@ fn render_aggregate_pill(
     rail: GlobalWorkRail,
 ) -> Html {
     let open = counts.open();
-    let title = format!(
-        "{}: {open} {}; {}{}",
-        rail.aggregate_title(),
-        if open == 1 { "task" } else { "tasks" },
-        count_breakdown(counts),
-        designs.map(DesignSplit::title).unwrap_or_default(),
+    let title = lead_with_blocked(
+        counts,
+        format!(
+            "{}: {open} {}; {}{}",
+            rail.aggregate_title(),
+            if open == 1 { "task" } else { "tasks" },
+            count_breakdown(counts),
+            designs.map(DesignSplit::title).unwrap_or_default(),
+        ),
     );
     let focus_key = rail.focus_prefix();
     let scope = rail.scope();
@@ -370,6 +388,7 @@ fn render_aggregate_pill(
             title={title.clone()}
             aria-label={title}
             data-work-scope={rail.data_scope()}
+            data-blocked={blocked_mark(counts)}
             data-designs-active={designs.map(|split| split.active.to_string())}
             data-designs-passive={designs.map(|split| split.passive.to_string())}
             data-sidebar-focus-key={focus_key}
@@ -391,10 +410,13 @@ fn render_stem_pill(
     let counts = group.counts();
     let scope = rail.stem_scope(identity.clone());
     let focus_key = format!("{}:{identity}", rail.focus_prefix());
-    let title = format!(
-        "{identity}: {}{}",
-        count_breakdown(counts),
-        designs.map(DesignSplit::title).unwrap_or_default(),
+    let title = lead_with_blocked(
+        counts,
+        format!(
+            "{identity}: {}{}",
+            count_breakdown(counts),
+            designs.map(DesignSplit::title).unwrap_or_default(),
+        ),
     );
     let navigate = navigate.clone();
     let label = html! { <span class="app-horn-tab__label">{identity.stem().to_owned()}</span> };
@@ -408,6 +430,7 @@ fn render_stem_pill(
             aria-label={title}
             data-task-stem={identity.stem().to_owned()}
             data-task-visibility={if identity.hidden() { "hidden" } else { "public" }}
+            data-blocked={blocked_mark(counts)}
             data-designs-active={designs.map(|split| split.active.to_string())}
             data-designs-passive={designs.map(|split| split.passive.to_string())}
             data-sidebar-focus-key={focus_key}
