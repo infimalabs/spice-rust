@@ -913,7 +913,9 @@ fn accountable_owner(
     teams: Option<&BTreeSet<wire::CanonicalUuid>>,
     member_teams: &BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
 ) -> Option<WorkOwner> {
-    if task.statement.body.intent == Some(wire::TaskIntent::Design) {
+    // A Design-intent row in plan or review intake is ordinary claimed work
+    // until it enters its open design phase.
+    if task.design_standing().is_some() {
         return Some(WorkOwner::Design(task.statement.body.born.clone()));
     }
     if let Some(controller) = task

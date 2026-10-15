@@ -417,7 +417,7 @@ fn neighbor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::work::tests::{board, stamp, task};
+    use crate::work::tests::{board, design, stamp, task};
 
     #[test]
     fn selection_preserves_first_order_and_deduplicates() {
@@ -538,11 +538,11 @@ mod tests {
 
     #[test]
     fn an_overview_shows_the_design_base_only_for_design_scope_or_wholly_design_owned_work() {
-        let mut design = task(1, "alpha.design");
-        design.statement.body.intent = Some(wire::TaskIntent::Design);
-        let mut second = task(2, "alpha.design");
-        second.statement.body.intent = Some(wire::TaskIntent::Design);
-        let board = board(vec![design, second, task(3, "alpha.build")]);
+        let board = board(vec![
+            design(1, "alpha.design"),
+            design(2, "alpha.design"),
+            task(3, "alpha.build"),
+        ]);
         let work = WorkProjection::from_board(&board);
         let selection = |tasks: &[i64], context| {
             TaskOverviewSelection::new(tasks.iter().copied().map(stamp), context)

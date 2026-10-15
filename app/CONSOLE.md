@@ -165,8 +165,9 @@ construction and leads with a badge-only total. The global strips keep equal,
 small browser-edge insets, including the platform safe area: execution at the
 left and Design at the right. The left global total opens all current execution
 work. The right global
-total opens all current Design-owned work: each Design root and each open task
-directly controlled by a Design. Global membership is the stable namespace;
+total opens all current Design-owned work: each Design root past plan or review
+intake and each open task directly controlled by a Design; a Design still in
+intake is ordinary execution work. Global membership is the stable namespace;
 active local docking does not remove a task from its global strip. A team total
 opens the overview with exactly the tasks its members are currently working,
 Design work included, without changing task authority or accountable ownership.
