@@ -473,15 +473,20 @@
 .team-surface + .team-surface .team-composer {
   box-shadow: inset 8px 0 14px -6px color-mix(in srgb, var(--app-shadow-source) 42%, transparent);
 }
-/* Only sibling teams need a dividing rule, and only below the composer block
-   and its painted continuation: nothing strokes beside or above the preceding
-   team's controls. The sibling selector leaves both outer fleet edges bare. */
-.team-surface + .team-surface .team-compose::before {
-  position: absolute; z-index: 1;
-  inset: calc(var(--app-control-edge-width) + var(--team-composer-block) + var(--team-composer-overhang)) auto 0 0;
+/* Sibling consoles share one 2px dividing rule from the top of their tab row,
+   which sits at the foot of the task band, to their bottom: each paints one
+   pixel on its own facing edge, above everything it holds, so neither
+   console's content moves. The sibling selectors leave both outer fleet
+   edges bare. */
+.team-surface + .team-surface::before,
+.team-surface:has(+ .team-surface)::after {
+  position: absolute; z-index: 7;
+  inset-block: calc(var(--team-task-band) - var(--app-horn-tab-block-size)) 0;
   border-inline-start: var(--app-control-edge);
   content: ""; pointer-events: none;
 }
+.team-surface + .team-surface::before { inset-inline-start: 0; }
+.team-surface:has(+ .team-surface)::after { inset-inline-end: 0; }
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);
   scroll-padding-top: var(--team-composer-block);
