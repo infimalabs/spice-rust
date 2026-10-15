@@ -9,8 +9,9 @@
 /// build cannot know what their owning release added. Schema 61 admits the
 /// `human:<principal>` actor spelling and principal capability digests, which
 /// an older release cannot read. Schema 62 binds every retained Design notice
-/// to its statement and selection provenance.
-pub const SCHEMA_VERSION: u32 = 62;
+/// to its statement and selection provenance. Schema 63 crosses retained
+/// settings answers from their single operator identity to a principal directory.
+pub const SCHEMA_VERSION: u32 = 63;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

@@ -11,6 +11,7 @@ mod decisions;
 mod designs;
 mod fact_bounds;
 mod residual;
+mod settings_receipts;
 mod team_formations;
 
 #[cfg(test)]
@@ -48,12 +49,13 @@ const PREPARED: &str = "prepared";
 /// conversation heads, operator items, required task evidence, relevance
 /// shadow records, the working-group partition, and the empty principal head
 /// index a predecessor lacks, replacing its per-route room receipts and
-/// per-group heads, before the schema identity advances. The schema-61
-/// principal vocabulary requires no row rewrite. Current readers therefore
-/// need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 29] = [
+/// per-group heads. Finally it crosses every retained settings command answer
+/// from the retired operator field to the current principal directory before
+/// the schema identity advances. Current readers therefore need no execution
+/// arm.
+const PREDECESSOR_SCHEMAS: [u32; 30] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61,
+    57, 58, 59, 60, 61, 62,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -328,31 +330,12 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
-    if version < WHOLE_CANDIDATE_DECISION_SCHEMA {
-        residual::refuse_group_markers(&transaction)?;
-        refuse_creation_omission(&transaction)?;
-        cross_oops_filing(&transaction)?;
-        let vendor_holds = residual::refuse(&transaction)?;
-        cross_residency_subscriptions(&transaction)?;
-        cross_retired_gate_filed(&transaction)?;
-        cross_retired_task_guidance(&transaction)?;
-        residual::cross(&transaction, vendor_holds)?;
-        residual::cross_steering_rooms(&transaction)?;
-        if version >= ROOM_AUTHORITY_SCHEMA {
-            decisions::cross(&transaction)?;
-        }
-        designs::cross(&transaction)?;
-        if (ROOM_CONVERSATION_SCHEMA..ROOM_ITEM_SCHEMA).contains(&version) {
-            transaction
-                .execute_batch("DROP TABLE room_receipts;")
-                .map_err(OpenError::Sqlite)?;
-        }
-        create_room_schemas(&transaction, version)?;
-    }
+    cross_legacy_predecessor(&transaction, version)?;
     if version < TEAM_FORMATIONS_SCHEMA {
         team_formations::cross(&transaction)?;
     }
     create_principal_heads(&transaction, version)?;
+    settings_receipts::cross(&transaction)?;
     awareness::cross(&transaction)?;
     transaction
         .execute(
@@ -368,6 +351,36 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         from: version,
         to: SCHEMA_VERSION,
     }))
+}
+/// Cross authority shapes retired before whole-candidate decisions. Keeping
+/// this bounded legacy sequence apart leaves the one writable-open dispatcher
+/// as schema classification and transaction ownership only.
+fn cross_legacy_predecessor(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<(), OpenError> {
+    if version >= WHOLE_CANDIDATE_DECISION_SCHEMA {
+        return Ok(());
+    }
+    residual::refuse_group_markers(transaction)?;
+    refuse_creation_omission(transaction)?;
+    cross_oops_filing(transaction)?;
+    let vendor_holds = residual::refuse(transaction)?;
+    cross_residency_subscriptions(transaction)?;
+    cross_retired_gate_filed(transaction)?;
+    cross_retired_task_guidance(transaction)?;
+    residual::cross(transaction, vendor_holds)?;
+    residual::cross_steering_rooms(transaction)?;
+    if version >= ROOM_AUTHORITY_SCHEMA {
+        decisions::cross(transaction)?;
+    }
+    designs::cross(transaction)?;
+    if (ROOM_CONVERSATION_SCHEMA..ROOM_ITEM_SCHEMA).contains(&version) {
+        transaction
+            .execute_batch("DROP TABLE room_receipts;")
+            .map_err(OpenError::Sqlite)?;
+    }
+    create_room_schemas(transaction, version)
 }
 
 /// Create each room projection an authority at `version` lacks; version zero
@@ -1393,8 +1406,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 62, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 63, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 62;
+PRAGMA user_version = 63;
 "#;
