@@ -389,9 +389,21 @@ fn render_author(author: &QuoteAuthor) -> String {
     }
 }
 
+/// What a text quote target's digest authenticates on one source.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum TextIdentity {
+    /// The presented `text` is itself the digested prose.
+    Presented,
+    /// A presenter rewrote `text`; the target digests this authored prose.
+    Authored(String),
+    /// The source carries media but no quoteable prose, so no text target
+    /// names it; only its media targets resolve.
+    Absent,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SourceQuote {
-    identity: Option<String>,
+    identity: TextIdentity,
     text: String,
     author: QuoteAuthor,
     disposition: Option<wire::Disposition>,
@@ -494,7 +506,7 @@ impl QuoteStore for ResidentStore<'_> {
             |(lane, occupant)| QuoteAuthor::Agent { lane, occupant },
         );
         Ok(SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text: head.text.clone(),
             author,
             disposition: Some(head.disposition),
@@ -517,7 +529,7 @@ impl QuoteStore for ResidentStore<'_> {
             .map_err(|_| SourceError::Unreadable)?
             .ok_or(SourceError::Unknown)?;
         let authored = |text, packet| SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text,
             author: QuoteAuthor::Directive {
                 actor: envelope.actor.clone(),
@@ -545,7 +557,7 @@ impl QuoteStore for ResidentStore<'_> {
                 _ => SourceError::Unknown,
             })?;
         Ok(SourceQuote {
-            identity: None,
+            identity: TextIdentity::Presented,
             text,
             author: QuoteAuthor::Agent {
                 lane: messaged.hunk.head.lane,
@@ -629,7 +641,11 @@ fn resolve_text_source(
         return Err(QuoteUnavailable::Malformed);
     }
     let resolved = source_for(store, target)?;
-    let identity = resolved.identity.as_deref().unwrap_or(&resolved.text);
+    let identity = match &resolved.identity {
+        TextIdentity::Presented => resolved.text.as_str(),
+        TextIdentity::Authored(prose) => prose.as_str(),
+        TextIdentity::Absent => return Err(QuoteUnavailable::Unknown),
+    };
     if QuoteTarget::text_digest(identity) != *target.digest() {
         return Err(QuoteUnavailable::DigestMismatch);
     }
@@ -871,11 +887,11 @@ fn resolve_tape(
                 |present| present(reader, lane, source, locus.event, &prose),
             )
             .map_err(|_| SourceError::Unreadable)?;
-        (Some(prose.text.clone()), text)
+        (TextIdentity::Authored(prose.text.clone()), text)
     } else if media.is_empty() {
         return Err(SourceError::Unknown);
     } else {
-        (None, String::new())
+        (TextIdentity::Absent, String::new())
     };
     Ok(SourceQuote {
         identity,
