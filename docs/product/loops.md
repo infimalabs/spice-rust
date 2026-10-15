@@ -626,7 +626,8 @@ distinctive quality.
 - **Task counts show one open total.** Every global and team roll-up tab shows
   one badge counting open tasks; a global tab's title and accessible name carry
   the ready, active, and blocked-or-deferred breakdown. A global tab whose
-  partition counts blocked work also carries an out-of-flow alert dot, and its
+  partition counts blocked work, held by an unsatisfied dependency, also carries
+  an out-of-flow alert dot on its count badge's top inline-end corner, and its
   title and accessible name lead with the blocked count. A stem badge is
   content-sized, so a digit-width change may resize its tab; the total tabs
   reserve one minimum badge footprint.
