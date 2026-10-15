@@ -273,7 +273,8 @@ impl PendingKind {
             | Self::Steer
             | Self::SteerSubmission { .. }
             | Self::Note { .. }
-            | Self::Close { .. } => None,
+            | Self::Close { .. }
+            | Self::Delete { .. } => None,
         }
     }
 }
@@ -484,6 +485,16 @@ impl ClientAction {
                 .as_str()
                 .len()
                 .saturating_add(validation.len())
+                .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>()),
+            Self::Delete {
+                task,
+                reason,
+                expected,
+                ..
+            } => task
+                .as_str()
+                .len()
+                .saturating_add(reason.len())
                 .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>()),
             Self::Conclude {
                 request, expected, ..

@@ -16,19 +16,25 @@ pub(in crate::board_command) fn read_task_detail(
         Err(error) => return store_fault("board::heads-unreadable", &error.to_string()),
     };
     let selected = std::collections::BTreeSet::from([detail.task.clone()]);
+    let projection = task_ancestry_selection(&observed, std::slice::from_ref(&detail.task));
     let snapshot = match validated_snapshot_from_with_occupant(
         &observed,
         principal,
         projects,
         allocation,
         None,
-        Some(&selected),
+        Some(&projection),
         false,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(task) = snapshot.answer.tasks.into_iter().next() else {
+    let Some(task) = snapshot
+        .answer
+        .tasks
+        .into_iter()
+        .find(|task| task.statement.body.born == detail.task)
+    else {
         return refusal(
             "task::detail-unknown",
             Some(detail.task.to_string()),

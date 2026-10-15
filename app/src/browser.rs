@@ -136,6 +136,8 @@ enum NoteSubmission {
     },
     /// The composed text was sent as this task's closing validation.
     Closing,
+    /// The composed text was sent as this task's withdrawal reason.
+    Deleting,
     Failed(String),
 }
 
@@ -143,7 +145,7 @@ impl NoteSubmission {
     const fn busy(&self) -> bool {
         matches!(
             self,
-            Self::Pending { .. } | Self::Reconciling { .. } | Self::Closing
+            Self::Pending { .. } | Self::Reconciling { .. } | Self::Closing | Self::Deleting
         )
     }
 }

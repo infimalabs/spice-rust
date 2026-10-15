@@ -305,6 +305,7 @@ fn reused(snapshot: &ValidatedSnapshot, index: usize, completed: bool) -> Outcom
             .to_owned(),
             completion: None,
             claim: None,
+            closed: Vec::new(),
             next: next_action(snapshot, entry),
         }),
     })

@@ -242,6 +242,14 @@ pub(crate) enum ClientAction {
         expected: Vec<wire::Witness>,
         force_claimed: bool,
     },
+    /// Withdraw one task with the composed text as its reason.
+    Delete {
+        id: CanonicalUuid,
+        task: TaskHandle,
+        reason: String,
+        expected: Vec<wire::Witness>,
+        force_claimed: bool,
+    },
     /// Direction the operator aimed at one seated lane from its tile.
     ///
     /// The occupant and epoch travel with the message because the residency

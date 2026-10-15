@@ -1,6 +1,6 @@
 //! Only the operator concludes an unheld open Design, done or collapsed.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
@@ -213,7 +213,7 @@ fn conclusion_and_closure_each_refuse_the_other_purpose() {
 }
 
 #[test]
-fn collapse_records_its_reason_and_gates_every_output_again() {
+fn collapse_settles_unselected_tree_without_retracting_selected_output() {
     let (root, bus, epoch, seats) = fixture("design-conclude-collapse", 2);
     let design = add_controller(
         &bus,
@@ -223,7 +223,8 @@ fn collapse_records_its_reason_and_gates_every_output_again() {
         None,
     );
     let output = add_output(&bus, epoch, &design, "Selected collapsed output");
-    let spare = add_output(&bus, epoch, &design, "Unselected collapsed output");
+    let spare = add_plan_output(&bus, epoch, &design, "Unselected collapsed Plan");
+    let descendant = add_output(&bus, epoch, &spare, "Unselected Plan output");
     let (candidate, source) = retain_test_candidate(&bus, epoch, &seats, &design, &output, &spare);
     record_test_critique(&bus, epoch, &seats, &design, &candidate, &source);
     let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
@@ -235,13 +236,21 @@ fn collapse_records_its_reason_and_gates_every_output_again() {
         let refused = conclude(&bus, epoch, Actor::Operator, &design, collapse(blank));
         assert_eq!(refusal_reason(&refused), "task::collapse-reason-empty");
     }
-    assert_committed(conclude(
+    let answer = assert_committed(conclude(
         &bus,
         epoch,
         Actor::Operator,
         &design,
         collapse("the premise did not hold"),
     ));
+    let CommandAnswer::Task(answer) = answer else {
+        panic!("collapse did not return a task answer: {answer:?}");
+    };
+    assert_eq!(
+        answer.closed.iter().collect::<BTreeSet<_>>(),
+        [&spare, &descendant].into_iter().collect(),
+        "the answer names every pending task settled with the controller"
+    );
     let collapsed = workflow(&bus, epoch, &design);
     assert_eq!(collapsed.status, "completed");
     assert!(
@@ -249,9 +258,34 @@ fn collapse_records_its_reason_and_gates_every_output_again() {
         "collapse concludes negatively"
     );
     assert_eq!(
-        open_blocked(&bus, epoch),
-        [output_stamp, spare.born().expect("spare stamp")].into(),
-        "a collapsed Design releases nothing, even what it selected"
+        workflow(&bus, epoch, &output).status,
+        "pending",
+        "an authorized output remains live"
+    );
+    assert!(!open_blocked(&bus, epoch).contains(&output_stamp));
+    for closed in [&spare, &descendant] {
+        assert_eq!(
+            workflow(&bus, epoch, closed).status,
+            "completed",
+            "every unselected branch member is settled"
+        );
+    }
+    let closed_stamps = [&spare, &descendant]
+        .map(|task| task.born().expect("closed task stamp"))
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    let validations = bus
+        .fact_snapshot()
+        .expect("closure facts read")
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.fact.read::<body::TaskClosed>())
+        .filter(|closed| closed_stamps.contains(&closed.task))
+        .map(|closed| closed.validation)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        validations,
+        vec![format!("Controller {design} was collapsed: the premise did not hold"); 2]
     );
     let design_stamp = design.born().expect("design stamp");
     let recorded = bus

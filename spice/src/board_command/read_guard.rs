@@ -19,13 +19,15 @@ use context::{
     route_actor_identity, selected_task_contexts, selected_task_creator_teams,
     selected_task_origin_threads, task_contexts, task_creator_teams, task_origin_threads,
 };
+mod projection;
+use projection::project_task_rows;
 #[cfg(test)]
 pub(in crate::board_command) use task_selection::history_cursor_order;
 use task_selection::{TaskSelection, retain_family, selected_tasks};
 pub(in crate::board_command) use task_selection::{in_family, validate_family};
 pub(super) use working::{
-    command_task_snapshot, validated_snapshot_for_automatic, validated_working_snapshot,
-    validated_working_snapshot_for_tasks,
+    command_task_snapshot, task_ancestry_selection, validated_snapshot_for_automatic,
+    validated_working_snapshot, validated_working_snapshot_for_tasks,
 };
 
 pub(super) fn phase(name: &str) -> wire::Phase {
@@ -106,8 +108,16 @@ fn validated_snapshot_from_with_occupant(
         Some(occupant) => actor_route_with_occupant(&principal, &residency.body, Some(occupant))?,
         None => actor_route(&principal, &residency.body)?,
     };
+    let task_barrier = task_projection_barrier(
+        observed
+            .tasks()
+            .iter()
+            .flat_map(|heads| [heads.statement().position(), heads.workflow().position()])
+            .max(),
+    );
     Ok(ValidatedSnapshot {
         cursor,
+        task_barrier,
         facts: if retain_facts {
             observed.facts().clone()
         } else {
@@ -142,62 +152,6 @@ fn validated_snapshot_from_with_occupant(
         },
         entries,
     })
-}
-
-/// Project every selected task row from one snapshot.
-///
-/// The fact log is read once here, so each row is a lookup rather than
-/// another pass.
-fn project_task_rows(
-    observed: &bus::TaskSnapshot,
-    projects: &ProjectPolicy,
-    residency: &wire::ResidencyHead,
-    selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
-) -> Result<(Vec<Entry>, Vec<BoardTask>), Outcome<CommandAnswer>> {
-    let (origin_threads, creator_teams, (claim_contexts, git_contexts)) = match selected {
-        Some(selected) if selected.is_empty() => {
-            (Default::default(), Default::default(), Default::default())
-        }
-        Some(selected) => (
-            selected_task_origin_threads(observed, residency, selected)?,
-            selected_task_creator_teams(observed, selected)?,
-            selected_task_contexts(observed, selected),
-        ),
-        None => (
-            task_origin_threads(observed.facts().iter(), residency, None)?,
-            task_creator_teams(observed.facts().iter(), None)?,
-            task_contexts(observed.facts(), None),
-        ),
-    };
-    let projection = TaskProjection {
-        projects,
-        facts: observed.facts(),
-        origin_threads: &origin_threads,
-        creator_teams: &creator_teams,
-        claim_contexts: &claim_contexts,
-        git_contexts: &git_contexts,
-    };
-    let capacity = selected.map_or(observed.tasks().len(), std::collections::BTreeSet::len);
-    let mut tasks = Vec::with_capacity(capacity);
-    let mut entries = Vec::with_capacity(capacity);
-    let mut project = |heads: &journal::TaskHeads| -> Result<(), Outcome<CommandAnswer>> {
-        let (entry, task) = projection.project(heads)?;
-        entries.push(entry);
-        tasks.push(task);
-        Ok(())
-    };
-    if let Some(selected) = selected {
-        for task in selected {
-            if let Some(heads) = observed.task_heads(task) {
-                project(heads)?;
-            }
-        }
-    } else {
-        for heads in observed.tasks() {
-            project(heads)?;
-        }
-    }
-    Ok((entries, tasks))
 }
 
 /// Everything one task row needs beyond its own authoritative heads.
@@ -1120,6 +1074,20 @@ pub(super) fn request<B>(command: &wire::AdmittedCommand, body: B) -> Command<B>
 pub(super) fn guard(write: &mut JournalWrite, expected: Vec<Witness>) {
     write.guard(JournalGuard::new(move |read| {
         witnesses_hold(read, &expected)
+    }));
+}
+
+/// Refuse a multi-task mutation if any task statement or workflow changed
+/// after its closure set was classified.
+pub(super) fn guard_task_projection(write: &mut JournalWrite, expected: Digest) {
+    write.guard(JournalGuard::new(move |read| {
+        if task_projection_barrier(read.task_projection_cursor()?) == expected {
+            Ok(())
+        } else {
+            Err(GuardError::refused(
+                "board::witness-moved: task projection changed",
+            ))
+        }
     }));
 }
 

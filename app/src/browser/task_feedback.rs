@@ -7,6 +7,7 @@ enum PendingFeedback {
     NoteSaving { task: TaskStamp, subject: String },
     NoteReconciling { task: TaskStamp, subject: String },
     Closing { task: TaskStamp, subject: String },
+    Deleting { task: TaskStamp, subject: String },
     Reconnecting { task: TaskStamp },
 }
 
@@ -16,6 +17,7 @@ impl PendingFeedback {
             Self::NoteSaving { task, .. }
             | Self::NoteReconciling { task, .. }
             | Self::Closing { task, .. }
+            | Self::Deleting { task, .. }
             | Self::Reconnecting { task } => task,
         }
     }
@@ -29,6 +31,7 @@ impl PendingFeedback {
                 format!("Saved for {subject}; waiting for durable activity…").into()
             }
             Self::Closing { subject, .. } => format!("Closing {subject}…").into(),
+            Self::Deleting { subject, .. } => format!("Deleting {subject}…").into(),
             Self::Reconnecting { .. } => {
                 "Showing admitted detail while reconnecting. Updates and observations will resume when spice reconnects.".into()
             }
@@ -41,6 +44,7 @@ impl PendingFeedback {
                 Some(format!("Observation saved for {subject}.").into())
             }
             Self::Closing { subject, .. } => Some(format!("Closed {subject} as completed.").into()),
+            Self::Deleting { subject, .. } => Some(format!("Deleted {subject}.").into()),
             Self::Reconnecting { .. } => None,
         }
     }
@@ -88,6 +92,10 @@ fn feedback(state: &AppState) -> Feedback {
                     task: task.clone(),
                     subject: task_subject(runtime, task),
                 }),
+                NoteSubmission::Deleting => Some(PendingFeedback::Deleting {
+                    task: task.clone(),
+                    subject: task_subject(runtime, task),
+                }),
                 NoteSubmission::Idle | NoteSubmission::Failed(_) => None,
             };
         }
@@ -107,7 +115,8 @@ fn feedback(state: &AppState) -> Feedback {
                     NoteSubmission::Idle
                     | NoteSubmission::Pending { .. }
                     | NoteSubmission::Reconciling { .. }
-                    | NoteSubmission::Closing => None,
+                    | NoteSubmission::Closing
+                    | NoteSubmission::Deleting => None,
                 });
         }
         if note_pending.is_some() && note_settled.is_some() {

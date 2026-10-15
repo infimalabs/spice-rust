@@ -1172,16 +1172,6 @@ fn a_design_output_is_eligible_only_under_that_designs_selection() {
                 design(Standing::Positive),
             ),
             (
-                "a collapsed Design",
-                output(selected, Vec::new()),
-                design(Standing::Closed),
-            ),
-            (
-                "a deleted Design",
-                output(selected, Vec::new()),
-                design(Standing::Deleted),
-            ),
-            (
                 "an open ordinary dependency",
                 output(selected, vec![stamp("BOARD-blocker")]),
                 design(Standing::Positive),
@@ -1192,10 +1182,15 @@ fn a_design_output_is_eligible_only_under_that_designs_selection() {
                 "{reason} must leave a {intent:?} Design output gated"
             );
         }
-        for standing in [Standing::Open, Standing::Positive] {
+        for standing in [
+            Standing::Open,
+            Standing::Positive,
+            Standing::Closed,
+            Standing::Deleted,
+        ] {
             assert!(
                 first_eligible(&[output(selected, Vec::new()), design(standing)]),
-                "a selected {intent:?} output of an open or done Design is eligible"
+                "exact selection permanently releases a {intent:?} Design output"
             );
         }
     }
@@ -1294,24 +1289,19 @@ fn a_plan_output_waits_only_for_its_plans_positive_conclusion() {
 
     let design = |standing| planning("BOARD-design", wire::TaskIntent::Design, standing);
     let selected_plan_task = constructed("BOARD-plan", "BOARD-design", None, None, Vec::new());
-    for standing in [Standing::Closed, Standing::Deleted] {
-        assert!(
-            !first_eligible(&[
-                selected_plan_task.clone(),
-                plan(Standing::Positive),
-                design(standing),
-            ]),
-            "a task under a negatively settled Design's Plan stays gated"
-        );
-    }
-    for standing in [Standing::Open, Standing::Positive] {
+    for standing in [
+        Standing::Open,
+        Standing::Positive,
+        Standing::Closed,
+        Standing::Deleted,
+    ] {
         assert!(
             first_eligible(&[
                 selected_plan_task.clone(),
                 plan(Standing::Positive),
                 design(standing),
             ]),
-            "a task under a selected Plan runs while its Design stands"
+            "positive Plan review permanently releases its task from the outer Design"
         );
     }
     assert!(

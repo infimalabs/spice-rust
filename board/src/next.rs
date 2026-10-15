@@ -22,6 +22,7 @@ pub struct ResolvedTasks {
     designs: BTreeMap<TaskStamp, bool>,
     active_designs: BTreeSet<TaskStamp>,
     unselected: BTreeSet<TaskStamp>,
+    released: BTreeSet<TaskStamp>,
 }
 
 impl ResolvedTasks {
@@ -75,6 +76,10 @@ impl ResolvedTasks {
 
     fn positive(&self, task: &TaskStamp) -> bool {
         self.settled.get(task) == Some(&true)
+    }
+
+    fn released(&self, task: &TaskStamp) -> bool {
+        self.released.contains(task)
     }
 
     /// Whether `task` is known here and has not settled negatively: it is
@@ -886,11 +891,12 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
 /// A constructed output waits for its controller to stand: known, and not
 /// settled negatively by collapse, closure, or deletion. When its preparation
 /// is a Design, the output, Plan or task, also waits for that Design's exact
-/// execution authorization, which leaves the Design open. Otherwise it waits
-/// for its preparation to conclude positively; nothing else, including
-/// operator closure, releases it. Retained pre-cutover group markers are
-/// unsupported evidence and never participate in eligibility. A preparation a
-/// Plan constructs runs alongside it. An unknown preparation leaves the output
+/// execution authorization, which permanently releases that output even when
+/// the Design later concludes negatively. Otherwise it waits for its
+/// preparation to conclude positively; nothing else, including operator
+/// closure, releases it. Retained pre-cutover group markers are unsupported
+/// evidence and never participate in eligibility. A preparation a Plan
+/// constructs runs alongside it. An unknown preparation leaves the output
 /// gated. A gather task needs no authorization: it runs exactly while the
 /// Design that constructed it is open and grouped.
 fn control_satisfied(statement: &wire::TaskHead, gather: bool, completed: &ResolvedTasks) -> bool {
@@ -900,19 +906,19 @@ fn control_satisfied(statement: &wire::TaskHead, gather: bool, completed: &Resol
     if gather {
         return completed.open_active_design(&preparation.parent);
     }
+    if completed.released(&statement.born) {
+        return true;
+    }
     if preparation.construction != statement.born {
         return true;
     }
     let controller = completed.standing(&preparation.controller);
     match completed.design(&preparation.parent) {
         None => false,
-        Some(true) => {
-            controller
-                && statement
-                    .authorization
-                    .as_ref()
-                    .is_some_and(|decision| decision.controller == preparation.controller)
-        }
+        Some(true) => statement
+            .authorization
+            .as_ref()
+            .is_some_and(|decision| decision.controller == preparation.controller),
         Some(false) => {
             statement.intent.is_some() || (controller && completed.positive(&preparation.parent))
         }
@@ -1059,5 +1065,6 @@ pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
         }
         resolved.observe(candidate.statement(), candidate.workflow());
     }
+    resolved.released = crate::control::released_tasks(entries);
     resolved
 }

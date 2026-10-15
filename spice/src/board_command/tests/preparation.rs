@@ -277,46 +277,6 @@ fn later_candidate_versions_release_additional_exact_output_subsets() {
     );
     clean(&root, bus);
 }
-fn adopted_outputs(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    controller: &TaskHandle,
-) -> (TaskHandle, TaskHandle) {
-    let output = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "Selected output",
-        "Selected output",
-        None,
-    );
-    let spare = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "Unselected output",
-        "Unselected output",
-        None,
-    );
-
-    for task in [&output, &spare] {
-        let current = board(&bus, epoch, Actor::Operator);
-        let mut expected = transition_witnesses(at(&current, task));
-        expected.extend(transition_witnesses(at(&current, &controller)));
-        assert_committed(issue(
-            &bus,
-            epoch,
-            Actor::Operator,
-            CommandKind::OutputAdopt,
-            expected,
-            &OutputAdopt {
-                output: task.clone(),
-                preparation: controller.clone(),
-            },
-        ));
-    }
-    (output, spare)
-}
 
 pub(super) fn retain_test_candidate(
     bus: &Bus,
@@ -753,68 +713,204 @@ fn assert_controlled_output_refusal(outcome: Outcome<CommandAnswer>, outputs: &[
 }
 
 #[test]
-fn operator_negative_settlements_leave_controlled_outputs_pending_and_unauthorized() {
+fn controller_settlement_refuses_a_held_descendant_until_forced_then_closes_the_tree() {
     for (fixture_name, deleted) in [
         ("preparation-close-controller", false),
         ("preparation-delete-controller", true),
     ] {
-        let (root, bus, epoch, _) = fixture(fixture_name, 1);
+        let (root, bus, epoch, seats) = fixture(fixture_name, 2);
+        let controller_holder = Actor::Lane(seats[0].lane);
+        let lane = Actor::Lane(seats[1].lane);
         let controller = add_plan(&bus, epoch, fixture_name);
-        let (output, spare) = adopted_outputs(&bus, epoch, &controller);
-        let visible = board(&bus, epoch, Actor::Operator);
-        let heads = at(&visible, &controller);
-        let expected = vec![
-            statement_witness(heads),
-            workflow_witness(heads),
-            claim_witness(heads),
-        ];
-        let outcome = if deleted {
-            issue(
-                &bus,
-                epoch,
-                Actor::Operator,
-                CommandKind::TaskDelete,
-                expected,
-                &TaskDelete {
-                    task: controller.clone(),
-                    reason: "candidate rejected".to_owned(),
-                    force_claimed: false,
-                },
-            )
-        } else {
-            issue(
-                &bus,
-                epoch,
-                Actor::Operator,
-                CommandKind::TaskClose,
-                expected,
-                &TaskClose {
-                    task: controller.clone(),
-                    validation: "no selected execution is justified".to_owned(),
-                    force_claimed: false,
-                },
-            )
+        let branch = add_plan_output(&bus, epoch, &controller, "Controlled Plan");
+        let leaf = add_output(&bus, epoch, &branch, "Controlled task");
+        claim_task(&bus, epoch, &seats[0], &controller_holder, &controller);
+        claim_task(&bus, epoch, &seats[1], &lane, &branch);
+        free_active(&bus, epoch, &controller_holder, &seats[0], &controller);
+
+        let settle = |force_claimed| {
+            let visible = board(&bus, epoch, Actor::Operator);
+            let heads = at(&visible, &controller);
+            let expected = vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+            ];
+            if deleted {
+                issue(
+                    &bus,
+                    epoch,
+                    Actor::Operator,
+                    CommandKind::TaskDelete,
+                    expected,
+                    &TaskDelete {
+                        task: controller.clone(),
+                        reason: "candidate rejected".to_owned(),
+                        force_claimed,
+                    },
+                )
+            } else {
+                issue(
+                    &bus,
+                    epoch,
+                    Actor::Operator,
+                    CommandKind::TaskClose,
+                    expected,
+                    &TaskClose {
+                        task: controller.clone(),
+                        validation: "no selected execution is justified".to_owned(),
+                        force_claimed,
+                    },
+                )
+            }
         };
-        assert_committed(outcome);
+        let refused = settle(false);
+        let Outcome::Refusal(refusal) = refused else {
+            panic!("held controlled task did not refuse settlement: {refused:?}")
+        };
+        assert_eq!(refusal.reason(), "task::controlled-descendant-claimed");
+        assert!(
+            refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed)
+                .is_some_and(|observed| {
+                    observed.contains(branch.as_str()) && observed.contains(&lane.to_string())
+                }),
+            "the refusal names the controlled task and its holder"
+        );
+
+        let CommandAnswer::Task(answer) = assert_committed(settle(true)) else {
+            panic!("controller settlement did not answer with task state");
+        };
+        assert_eq!(answer.closed.len(), 2);
+        assert!(answer.closed.contains(&branch));
+        assert!(answer.closed.contains(&leaf));
         let settled = board(&bus, epoch, Actor::Operator);
         assert_eq!(
             at(&settled, &controller).workflow.body.status,
             if deleted { "deleted" } else { "completed" }
         );
-        for controlled in [&output, &spare] {
+        for controlled in [&branch, &leaf] {
             let heads = at(&settled, controlled);
-            assert_eq!(heads.workflow.body.status, "pending");
-            assert_eq!(heads.statement.body.authorization, None);
+            assert_eq!(heads.workflow.body.status, "completed");
+            assert!(
+                heads
+                    .claim
+                    .as_ref()
+                    .is_none_or(|claim| claim.body.disposition != ClaimDisposition::Active),
+                "forced settlement frees every controlled claim"
+            );
         }
-        assert_eq!(
-            open_blocked(&bus, epoch),
-            [&output, &spare]
-                .map(|task| task.born().expect("output stamp"))
-                .into(),
-            "a negative settlement releases no controlled output"
-        );
         clean(&root, bus);
     }
+}
+#[test]
+fn legacy_negative_controller_state_is_reported_as_stranded_without_mutation() {
+    let (root, bus, epoch, _) = fixture("preparation-stranded-readout", 1);
+    let controller = add_plan(&bus, epoch, "Legacy closed Plan");
+    let branch = add_plan_output(&bus, epoch, &controller, "Legacy stranded Plan");
+    let leaf = add_output(&bus, epoch, &branch, "Legacy stranded task");
+    legacy_close_without_controlled_settlement(&bus, epoch, &controller);
+
+    let current = board(&bus, epoch, Actor::Operator);
+    for task in [&branch, &leaf] {
+        let stranded = at(&current, task)
+            .stranded
+            .as_ref()
+            .expect("legacy controlled work is classified as stranded");
+        assert_eq!(stranded.controller, controller);
+        assert!(
+            stranded
+                .settle
+                .contains(&format!("spice task close {task}"))
+        );
+        let shown = task_show(&current, at(&current, task), &[]);
+        assert!(shown.contains(&format!("stranded controller {controller}")));
+        assert!(shown.contains(&format!("settle {}", stranded.settle)));
+    }
+    let status = task_status(&current).expect("stranded task status renders");
+    for task in [&branch, &leaf] {
+        assert!(status.contains(&format!(
+            "stranded {task} controller {controller} settle spice task close {task}"
+        )));
+    }
+
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::TaskDetail(detail),
+        ..
+    }) = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDetail,
+        Vec::new(),
+        &wire::intent::TaskDetail {
+            task: leaf.born().expect("leaf stamp"),
+        },
+    )
+    else {
+        panic!("stranded task detail did not return");
+    };
+    assert_eq!(
+        detail
+            .task
+            .stranded
+            .as_ref()
+            .map(|stranded| &stranded.controller),
+        Some(&controller)
+    );
+    assert_eq!(
+        at(&board(&bus, epoch, Actor::Operator), &branch)
+            .workflow
+            .body
+            .status,
+        "pending",
+        "readout never repairs retained history"
+    );
+    clean(&root, bus);
+}
+
+/// Reproduce the retained pre-fix shape without passing through the current
+/// settlement command, which now closes controlled work atomically.
+fn legacy_close_without_controlled_settlement(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    controller: &TaskHandle,
+) {
+    let current = board(bus, epoch, Actor::Operator);
+    let heads = at(&current, controller);
+    let born = heads.statement.body.born.clone();
+    let mut workflow = heads.workflow.body.clone();
+    let phase = workflow.phase.clone();
+    let at = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
+    workflow.status = "completed".to_owned();
+    workflow.completion = Some(at);
+    workflow.review = "closed".to_owned();
+    workflow.assignment = None;
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "fixture:legacy-strand"
+            .parse()
+            .expect("fixture origin parses"),
+        at,
+        Producer::CommandDoor,
+    );
+    let closed = write
+        .fact(
+            body::TaskClosed {
+                task: born.clone(),
+                validation: "legacy close".to_owned(),
+                phase,
+                claimed: None,
+            },
+            FactCause::Root,
+        )
+        .expect("legacy closure fact builds");
+    write.workflow_head(born, closed, move |_| workflow);
+    assert!(matches!(
+        bus.commit(write).expect("legacy closure commits"),
+        CommitOutcome::Committed(_)
+    ));
 }
 
 /// Add an output under `controller` through explicit preparation.
@@ -1172,6 +1268,38 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     );
     let worker = Actor::Lane(seats[1].lane);
     claim_task(&bus, epoch, &seats[1], &worker, &task);
+    let visible = board(&bus, epoch, Actor::Operator);
+    let heads = at(&visible, &design);
+    let CommandAnswer::Task(answer) = assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskConclude,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ],
+        &TaskConclude {
+            task: design.clone(),
+            conclusion: body::DesignConclusion::Collapsed {
+                reason: "remaining proposal rejected".to_owned(),
+            },
+        },
+    )) else {
+        panic!("collapse did not answer with task state");
+    };
+    assert_eq!(answer.closed, vec![sibling.clone()]);
+    let collapsed = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&collapsed, &task).workflow.body.status, "pending");
+    assert_eq!(
+        at(&collapsed, &task)
+            .claim
+            .as_ref()
+            .map(|claim| &claim.body.actor),
+        Some(&worker),
+        "a task released by positive Plan review remains held and live"
+    );
     clean(&root, bus);
 }
 

@@ -403,6 +403,12 @@ pub(in crate::board_command) fn task_show_bounded(
         format!("status {}", workflow.status),
         format!("claim {}", claim_line(task)),
     ];
+    if let Some(stranded) = &task.stranded {
+        lines.extend([
+            format!("stranded controller {}", stranded.controller),
+            format!("settle {}", stranded.settle),
+        ]);
+    }
     lines.extend(
         task.design_standing()
             .map(|standing| format!("standing {standing}")),
@@ -1125,6 +1131,9 @@ pub(super) fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String
             task.statement.body.handle,
         );
     }
+    if let Some(stranded) = &task.stranded {
+        return format!("next: {}", stranded.settle);
+    }
     if task.workflow.body.phase.as_str() == "review" {
         if active_claimed_by_principal(board, task) {
             return format!(
@@ -1220,6 +1229,28 @@ pub(in crate::board_command) fn task_status(
                 && board::eligible_entry(&satisfied, entry, &board.principal, &environment)
         })
         .count();
+    let visible = rows
+        .iter()
+        .map(|entry| entry.born())
+        .collect::<std::collections::BTreeSet<_>>();
+    let stranded = board
+        .tasks
+        .iter()
+        .filter(|task| visible.contains(&task.statement.body.born))
+        .filter_map(|task| {
+            task.stranded.as_ref().map(|stranded| {
+                format!(
+                    "stranded {} controller {} settle {}",
+                    task.statement.body.handle, stranded.controller, stranded.settle,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    let stranded = if stranded.is_empty() {
+        "stranded -".to_owned()
+    } else {
+        stranded.join("\n")
+    };
     Ok(format!(
         "claim {claim}\ntaste-review {taste_review}\nactor {}\nfilter {}\n\
          public task project depth {}..{} dotted segments\n\
@@ -1229,7 +1260,7 @@ pub(in crate::board_command) fn task_status(
          trust-grant required={} \
          appliance-version after={} observed={} \
          satisfied={} blocked={}\n\
-         stale {stale}\noops {oops}\ndrafts {drafts}",
+         stale {stale}\noops {oops}\ndrafts {drafts}\n{stranded}",
         board.actor_route.actor,
         actor_route_filter(board),
         board.project_policy.public_min_depth,

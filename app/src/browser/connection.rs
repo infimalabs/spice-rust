@@ -1,5 +1,8 @@
 use super::*;
 
+mod settlement;
+use settlement::{BorrowedTaskClose, BorrowedTaskDelete, send_task_close, send_task_delete};
+
 const BROWSER_AUTH_TOKEN_STORAGE: &str = "spice:app-auth-token:v1";
 /// The served app generation this tab last reloaded toward, so a document that
 /// still cannot load it never reloads again.
@@ -398,6 +401,7 @@ async fn dispatch_client_action(
             ClientAction::GlobalSettings(_)
                 | ClientAction::Note { .. }
                 | ClientAction::Close { .. }
+                | ClientAction::Delete { .. }
                 | ClientAction::Steer { .. }
         ) {
             lease.prepare_pending_transfer();
@@ -998,6 +1002,7 @@ async fn dispatch_action(
         }
         action @ (ClientAction::Note { .. }
         | ClientAction::Close { .. }
+        | ClientAction::Delete { .. }
         | ClientAction::Steer { .. }) => {
             dispatch_authored_action(principal, writer, actions, action)
                 .await
@@ -1072,6 +1077,27 @@ async fn dispatch_authored_action(
                 BorrowedTaskClose {
                     task,
                     validation,
+                    force_claimed: *force_claimed,
+                },
+            )
+            .await
+        }
+        ClientAction::Delete {
+            id,
+            task,
+            reason,
+            expected,
+            force_claimed,
+        } => {
+            send_task_delete(
+                principal,
+                writer,
+                actions,
+                *id,
+                expected,
+                BorrowedTaskDelete {
+                    task,
+                    reason,
                     force_claimed: *force_claimed,
                 },
             )
@@ -1261,41 +1287,6 @@ async fn send_task_note(
 struct BorrowedTaskNote<'a> {
     task: &'a TaskHandle,
     note: &'a str,
-}
-
-async fn send_task_close(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    actions: &ActionQueue,
-    id: CanonicalUuid,
-    expected: &[Witness],
-    close: BorrowedTaskClose<'_>,
-) -> Result<CanonicalUuid, String> {
-    let born = close.task.born().map_err(|error| {
-        format!(
-            "task handle {} has no canonical birth stamp: {error}",
-            close.task
-        )
-    })?;
-    send_typed_as(
-        principal,
-        writer,
-        actions,
-        id,
-        PendingKind::Close { task: born },
-        CommandKind::TaskClose,
-        expected.to_vec(),
-        close,
-    )
-    .await
-}
-
-#[derive(Serialize)]
-struct BorrowedTaskClose<'a> {
-    task: &'a TaskHandle,
-    validation: &'a str,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    force_claimed: bool,
 }
 
 #[derive(Serialize)]

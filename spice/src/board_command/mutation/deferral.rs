@@ -474,6 +474,7 @@ fn file_unfiled(
         status: "filed".to_owned(),
         completion: None,
         claim: claim_answer,
+        closed: Vec::new(),
         next,
     };
     if let Err(error) = write.command_result(
@@ -766,6 +767,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         },
         completion: None,
         claim: claim_answer,
+        closed: Vec::new(),
         next,
     };
     finish_deferral(bus, command, intent, write, answer, parked, prepared_claim)

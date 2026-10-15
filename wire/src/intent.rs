@@ -44,8 +44,8 @@ pub use board::{
     TaskGitContext, TaskGitContextKind, TaskHistoryCursor, TaskHistoryPage, TaskLifecycleKind,
     TaskRelationEdge, TaskRelationFrontier, TaskRelationKind, TaskRelationNode,
     TaskRelationNodeRef, TaskRelationTruncation, TaskRelations, TaskRelationsAnswer, TaskStep,
-    TaskTimeline, TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent, TaskTranscriptRecovery,
-    TextAnswer,
+    TaskStranding, TaskTimeline, TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent,
+    TaskTranscriptRecovery, TextAnswer,
 };
 pub use jobs::{
     KeptJob, LaneJobAnswer, LaneJobCatalog, LaneJobPhase, LaneJobRef, LaneJobScope, LaneJobsAnswer,

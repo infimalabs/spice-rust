@@ -64,15 +64,29 @@ pub(in crate::board_command) fn validated_working_snapshot_for_tasks(
     Ok(snapshot)
 }
 
+pub(in crate::board_command) fn task_ancestry_selection(
+    observed: &bus::TaskSnapshot,
+    roots: &[wire::TaskStamp],
+) -> std::collections::BTreeSet<wire::TaskStamp> {
+    expand_task_selection(observed, roots.iter().cloned().collect())
+}
+
 fn working_task_selection(
     observed: &bus::TaskSnapshot,
     roots: &[wire::TaskStamp],
 ) -> std::collections::BTreeSet<wire::TaskStamp> {
-    let mut pending = observed
+    let pending = observed
         .allocation_frontier()
         .map(|heads| heads.statement().body().born.clone())
         .chain(roots.iter().cloned())
         .collect::<Vec<_>>();
+    expand_task_selection(observed, pending)
+}
+
+fn expand_task_selection(
+    observed: &bus::TaskSnapshot,
+    mut pending: Vec<wire::TaskStamp>,
+) -> std::collections::BTreeSet<wire::TaskStamp> {
     let mut selected = std::collections::BTreeSet::new();
     while let Some(task) = pending.pop() {
         if !selected.insert(task.clone()) {
