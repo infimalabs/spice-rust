@@ -47,6 +47,8 @@ type InboxReader = Box<dyn Fn() -> Option<Vec<u8>> + Send + Sync>;
 type BriefingReader = Box<dyn Fn() -> Option<String> + Send + Sync>;
 /// Composes a resumed seat's notice from the lane's current authority.
 type ResumeReader = Box<dyn Fn() -> String + Send + Sync>;
+/// Whether the journal's residency head seats this driver's occupant.
+type SeatedReader = Box<dyn Fn() -> bool + Send + Sync>;
 
 pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin> {
     stdin: Mutex<Option<W>>,
@@ -56,6 +58,9 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     read_briefing: BriefingReader,
     /// Read once, when a resumed seat's first turn is delivered.
     read_resume: ResumeReader,
+    /// Read while the first turn is held: it is written only to a seated
+    /// occupant, whose commands job admission accepts.
+    read_seated: SeatedReader,
     sequence: AtomicU64,
     delivered: Mutex<Option<Vec<u8>>>,
     /// Latest queued background notice per purpose. Superseded notices are
@@ -248,11 +253,13 @@ impl<W: Write + Send + 'static> Driver<W> {
         let sessions = current::Sessions::new(lane, worktree.clone())?;
         let uri_server = current::resource_server(lane, worktree, terminal.clone())?;
         let briefing = Arc::clone(&sessions);
+        let seating = terminal.clone();
         Ok(Self::with_server(
             stdin,
             move || inbox.read(),
             move || briefing.briefing(),
             move || sessions.resume(),
+            move || seating.as_ref().is_none_or(Terminal::seated),
             uri_server,
             steer::Key::for_identity(lane),
             terminal,
@@ -264,6 +271,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         read_inbox: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
         read_briefing: impl Fn() -> Option<String> + Send + Sync + 'static,
         read_resume: impl Fn() -> String + Send + Sync + 'static,
+        read_seated: impl Fn() -> bool + Send + Sync + 'static,
         uri_server: uri::UriServer,
         seal: steer::Key,
         terminal: Option<Terminal>,
@@ -273,6 +281,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             read_inbox: Box::new(read_inbox),
             read_briefing: Box::new(read_briefing),
             read_resume: Box::new(read_resume),
+            read_seated: Box::new(read_seated),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             room_catch_up_sent: Mutex::new(None),
@@ -375,9 +384,13 @@ impl<W: Write + Send + 'static> Driver<W> {
 
     /// Read and interject the current authenticated inbox unless it is empty
     /// or exactly what the agent already received. Every call being answered
-    /// is interrupted before unheard direction is written.
+    /// is interrupted before unheard direction is written. The resident sends
+    /// this kick right after it commits a start, so a first turn held for that
+    /// seating is released first.
     pub(in crate::resident) fn deliver_inbox(&self) {
-        self.interject(InboxDelivery::Update);
+        if !self.release_first_turn() {
+            self.interject(InboxDelivery::Update);
+        }
     }
 
     fn configure_room_catch_up(
