@@ -47,8 +47,10 @@ repository working groups, participant reasons, preparation evidence,
 decisions, authorizations, and claim-bound stop requests. The `rooms` subject
 pages the facts behind current room authority at the subscription horizon:
 every room publication, the current head of the working-group partition and
-of each proposal and authorization, and each coordination's direction and
-current steering head.
+of each proposal and authorization, each coordination's direction and current
+steering head, and the repository's first principal admission. That admission
+resolves historical operator-authored room authority to the same durable human
+after reconnect; later admissions never move it.
 Live facts strictly after that horizon continue it, so the operator's
 live-start fact stream neither repeats nor misses authority. The projection is
 unavailable until its snapshot completes.

@@ -89,6 +89,7 @@ impl Decisions {
 /// the preparation authority of `room`, which pages from the first record.
 pub(super) fn decisions(
     read: &journal::JournalRead<'_>,
+    roles: &wire::principal::PrincipalRoles,
     anchor: &TaskStamp,
     room: &TaskHandle,
 ) -> Result<Decisions, Failure> {
@@ -118,7 +119,7 @@ pub(super) fn decisions(
             decision: decided.decision.decision.decision,
             seq: envelope.seq,
             at: envelope.at,
-            actor: envelope.actor,
+            actor: roles.author(&envelope.actor),
             outcome: decided.decision.outcome,
         });
     }

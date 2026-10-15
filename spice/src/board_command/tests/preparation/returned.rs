@@ -9,6 +9,37 @@ use super::contribution::history;
 use super::*;
 use crate::board_command::{owed_returns, record_return};
 
+fn admit_principal(bus: &Bus, epoch: CanonicalUuid, principal: CanonicalUuid) {
+    let origin = format!("resident:{epoch}")
+        .parse()
+        .expect("resident fixture origin");
+    let now = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
+    let mut write = JournalWrite::new(Actor::Spice, origin, now, Producer::CommandDoor);
+    let roles = std::collections::BTreeSet::from([wire::principal::PrincipalRole::Operator]);
+    let born = write
+        .fact(
+            wire::principal::PrincipalAdmitted {
+                principal,
+                profile: wire::principal::PrincipalProfile::default(),
+                roles: roles.clone(),
+                capability: None,
+            },
+            FactCause::Root,
+        )
+        .expect("principal birth fact builds");
+    write.principal_head(born, move |born| wire::principal::PrincipalHead {
+        principal,
+        born,
+        profile: wire::principal::PrincipalProfile::default(),
+        roles,
+        capability: None,
+    });
+    assert!(matches!(
+        bus.commit(write).expect("principal birth commits"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
 struct Returnable {
     root: FixtureRoot,
     bus: Bus,
@@ -139,6 +170,21 @@ impl Returnable {
             .collect()
     }
 
+    fn decision_actors(&self) -> Vec<Actor> {
+        history(
+            self.root.as_ref(),
+            self.root.as_ref(),
+            &[self.design.as_str()],
+        )["decisions"]["rows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|row| {
+                serde_json::from_value(row["actor"].clone()).expect("decision actor decodes")
+            })
+            .collect()
+    }
+
     fn finish(self) {
         clean(&self.root, self.bus);
     }
@@ -181,6 +227,33 @@ fn rejected_output_and_overall_comments_reach_the_holder_once() {
         fixture.tell(&fixture.occupied()),
         [],
         "restart reconciliation does not redeliver consumed feedback"
+    );
+    fixture.finish();
+}
+
+#[test]
+fn room_history_resolves_an_operator_decision_to_the_first_principal() {
+    let fixture = Returnable::new("design-decision-author", 1, None);
+    assert_committed(fixture.decide(fixture.rejected()));
+    assert_eq!(fixture.decision_actors(), [Actor::Operator]);
+
+    let first: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163f0"
+        .parse()
+        .expect("fixture principal");
+    admit_principal(&fixture.bus, fixture.epoch, first);
+    assert_eq!(fixture.decision_actors(), [Actor::Human(first)]);
+
+    admit_principal(
+        &fixture.bus,
+        fixture.epoch,
+        "018f82d4-6f59-7d06-92e3-bce9131163a0"
+            .parse()
+            .expect("fixture principal"),
+    );
+    assert_eq!(
+        fixture.decision_actors(),
+        [Actor::Human(first)],
+        "a later principal cannot move historical authorship"
     );
     fixture.finish();
 }

@@ -436,7 +436,7 @@ fn recorded(
             None => break,
         }
     }
-    let decisions = sections::decisions(read, anchor, &room)?;
+    let decisions = sections::decisions(read, &roles, anchor, &room)?;
     Ok(Recorded {
         cursor,
         room,
