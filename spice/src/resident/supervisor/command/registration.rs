@@ -3,10 +3,11 @@
 //! serves the scheme is told about it and handed URLs to read, and only a
 //! seated occupant's commands pass job admission, so a turn written before
 //! the start commits would open with refusals. A resumed seat's notice is
-//! read from current authority only at that release. Background notices and
-//! steering wait behind that turn: omp runs whatever reaches an idle session
-//! first as a turn of its own, so anything written ahead of the first prompt
-//! would leave the prompt's authority stale by its delivery.
+//! read from current authority only at that release. Background notices, kept
+//! jobs' events and endings, and steering wait behind that turn: omp runs
+//! whatever reaches an idle session first as a turn of its own, so anything
+//! written ahead of the first prompt would leave the prompt's authority stale
+//! by its delivery.
 
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,7 +15,7 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 
 use listen::Decoded;
 
-use super::Driver;
+use super::{Driver, Job, Report};
 
 #[cfg(test)]
 mod tests;
@@ -40,6 +41,18 @@ pub(super) struct Registration {
     /// the driver's background lock, so a notice is either held for the
     /// first prompt's flush or written after it, never neither.
     holding: AtomicBool,
+    /// Kept jobs whose telling waits for the first prompt, in the order they
+    /// first asked. Nothing about their telling is claimed meanwhile, so a
+    /// seat that closes first leaves them owed to its successor.
+    jobs: Mutex<Vec<(Job, Owed)>>,
+}
+
+/// What a held job still has to say once the first prompt is written.
+enum Owed {
+    /// Its unheard events.
+    Events,
+    /// Its unheard events, then the ending it was followed to.
+    Ending(Option<Report>),
 }
 
 impl Registration {
@@ -102,8 +115,9 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// the journal seats this occupant; returns whether this call started it.
     /// Only one call takes the turn, so a resumed seat's authority is read
     /// once, at this delivery. Background notices held meanwhile follow the
-    /// prompt, then the inbox as it stands now, so omp starts the prompt's
-    /// turn before any of theirs and the direction it counts arrives after it.
+    /// prompt, then held jobs' events and endings, then the inbox as it stands
+    /// now, so omp starts the prompt's turn before any of theirs and the
+    /// direction it counts arrives after it.
     pub(super) fn release_first_turn(&self) -> bool {
         if self.registration.serves.get().is_none() {
             return false;
@@ -147,7 +161,48 @@ impl<W: Write + Send + 'static> Driver<W> {
             }
         }
         drop(queued);
+        let held = std::mem::take(
+            &mut *self
+                .registration
+                .jobs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        for (job, owed) in held {
+            self.deliver_events(&job);
+            if let Owed::Ending(report) = owed {
+                self.deliver(&job, report.as_ref());
+            }
+        }
         self.interject(super::steering::InboxDelivery::Update);
+        true
+    }
+
+    /// Hold one kept job's telling while the first turn is unwritten, and say
+    /// whether it was held. An ending replaces an earlier events-only hold,
+    /// since a delivered ending follows the job's events.
+    pub(super) fn hold_job(&self, job: &Job, ending: Option<Option<&Report>>) -> bool {
+        let _background = self
+            .background
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !self.registration.holds_first_turn() {
+            return false;
+        }
+        let owed = ending.map_or(Owed::Events, |report| Owed::Ending(report.cloned()));
+        let mut held = self
+            .registration
+            .jobs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match held.iter_mut().find(|(held, _)| held.id() == job.id()) {
+            Some((_, slot)) => {
+                if matches!(owed, Owed::Ending(_)) {
+                    *slot = owed;
+                }
+            }
+            None => held.push((job.clone(), owed)),
+        }
         true
     }
 

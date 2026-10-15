@@ -8,7 +8,7 @@ use vendor::omp::{JobCall, JobOp};
 
 use super::super::terminal::job::Ending;
 use super::super::terminal::{Control, Event as JobEvent, Job, Jobs, Terminal};
-use super::{Driver, Work};
+use super::{Driver, FirstTurn, Work};
 
 /// The occupant's input, as the driver writes it.
 #[derive(Clone, Default)]
@@ -168,6 +168,56 @@ fn a_successor_hears_what_its_vacated_predecessor_did_not_then_the_ending() {
     next.hear(&terminal, &job, &Control::new());
     assert!(terminal.undelivered().is_empty());
     assert_eq!(successor.notices().len(), 3, "each is told once");
+}
+
+#[test]
+fn a_job_owed_at_seat_start_waits_unclaimed_behind_the_first_prompt_then_follows_it_once() {
+    let scratch = Scratch::new("first-turn");
+    let (jobs, terminal) = terminal(&scratch);
+    let job = jobs.record_for_tests("cargo build", true, Some(60_000));
+    let printed = lines(&["finished"]);
+    job.print_for_tests(1, &printed);
+    job.end_for_tests(Ending::Exited { code: 0 });
+
+    let sink = Sink::default();
+    let seated = seat(&sink, &terminal);
+    seated
+        .open(b"", Some(FirstTurn::Resumed("resumed".to_owned())))
+        .expect("opening writes");
+    for owed in terminal.undelivered() {
+        seated.hear(&terminal, &owed, &Control::new());
+    }
+    assert!(
+        sink.frames().is_empty(),
+        "nothing reaches the idle session ahead of the first prompt"
+    );
+    assert_eq!(
+        terminal.undelivered().len(),
+        1,
+        "a held ending stays owed, so a seat closing now leaves it to its successor"
+    );
+
+    let registration = serde_json::to_vec(&serde_json::json!({
+        "id": listen::OMP_URI_SCHEMES_REQUEST_ID,
+        "type": "response",
+        "command": "set_host_uri_schemes",
+        "success": true,
+    }))
+    .expect("JSON");
+    let locus = Locus::new(0, 0, registration.len() as u64);
+    let _ask = seated.observe(&listen::decode(Dialect::Omp, &registration, locus).expect("locus"));
+
+    let frames = sink.frames();
+    assert_eq!(
+        frames[0]["id"],
+        vendor::omp::PROMPT_REQUEST_ID,
+        "{frames:?}"
+    );
+    let notices = sink.notices();
+    assert_eq!(notices.len(), 2, "{notices:?}");
+    assert_eq!(notices[0], told(&job, 1, &printed));
+    assert_eq!(notices[1].0, ending_purpose(&job));
+    assert!(terminal.undelivered().is_empty());
 }
 
 #[test]
