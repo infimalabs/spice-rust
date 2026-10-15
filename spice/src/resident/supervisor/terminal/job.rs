@@ -891,7 +891,7 @@ impl Job {
         LogLines {
             path: self.log_path(),
             file: None,
-            lines: events::Lines::default(),
+            partial: Vec::new(),
         }
     }
 }
@@ -920,7 +920,7 @@ pub(in crate::resident) enum Looked<T> {
 pub(in crate::resident) struct LogLines {
     path: PathBuf,
     file: Option<File>,
-    lines: events::Lines,
+    partial: Vec<u8>,
 }
 
 impl LogLines {
@@ -944,16 +944,37 @@ impl LogLines {
         loop {
             match file.read(&mut chunk) {
                 Ok(0) => return Ok(()),
-                Ok(read) => self.lines.push(&chunk[..read], &mut *line),
+                Ok(read) => Self::push(&mut self.partial, &chunk[..read], &mut *line),
                 Err(error) if error.kind() == ErrorKind::Interrupted => {}
                 Err(error) => return Err(error),
             }
         }
     }
 
+    fn push(partial: &mut Vec<u8>, bytes: &[u8], line: &mut dyn FnMut(String)) {
+        for piece in bytes.split_inclusive(|byte| *byte == b'\n') {
+            let (body, ended) = match piece.strip_suffix(b"\n") {
+                Some(body) => (body, true),
+                None => (piece, false),
+            };
+            partial.extend_from_slice(body);
+            if ended {
+                line(Self::take(partial));
+            }
+        }
+    }
+
+    fn take(partial: &mut Vec<u8>) -> String {
+        let mut bytes = std::mem::take(partial);
+        if bytes.last() == Some(&b'\r') {
+            bytes.pop();
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
     /// The unterminated last line, read once the log is complete.
-    pub(in crate::resident) fn finish(self) -> Option<String> {
-        self.lines.finish()
+    pub(in crate::resident) fn finish(mut self) -> Option<String> {
+        (!self.partial.is_empty()).then(|| Self::take(&mut self.partial))
     }
 }
 
