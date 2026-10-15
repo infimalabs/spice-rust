@@ -95,7 +95,20 @@ pub(super) async fn dispatch_control(
     let lifecycle_released = if is_replay {
         false
     } else {
-        command_surface.prepare_explicit_lifecycle(lifecycle, request.command())?
+        match command_surface.prepare_explicit_lifecycle(lifecycle, request.command()) {
+            Ok(released) => released,
+            Err(Outcome::Refusal(refusal)) => {
+                // A refused request leaves the resident owning every pending
+                // launch and its eventual completion.
+                complete_response(request, Outcome::Refusal(refusal)).await;
+                return Ok(ControlDispatch {
+                    reached_dark: false,
+                    lifecycle_witness: None,
+                    inbox_delivery: None,
+                });
+            }
+            Err(outcome) => return Err(outcome),
+        }
     };
     let command = request.command().id();
     let epoch = request.command().epoch();
