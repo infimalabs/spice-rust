@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::*;
 
 fn uuid(value: u8) -> CanonicalUuid {
@@ -58,19 +60,93 @@ fn owed(flips: Vec<FastFlip>) -> Vec<(CanonicalUuid, CanonicalUuid, LiveRetune)>
         .collect()
 }
 
+fn levels(global: bool, groups: &[u8]) -> FastLevels {
+    FastLevels::new(global, groups.iter().map(|lane| uuid(*lane)).collect())
+}
+
+fn lanes(lanes: &[u8]) -> BTreeSet<CanonicalUuid> {
+    lanes.iter().map(|lane| uuid(*lane)).collect()
+}
+
+fn fast(lane: u8, enabled: bool) -> (CanonicalUuid, CanonicalUuid, LiveRetune) {
+    (uuid(lane), uuid(100 + lane), LiveRetune::Fast { enabled })
+}
+
 #[test]
 fn a_global_fast_mode_change_owes_only_the_members_it_flips() {
     let fleet = fleet();
 
     assert_eq!(
-        owed(fast_flips(&fleet, true, &fleet, false)),
-        vec![(uuid(3), uuid(103), LiveRetune::Fast { enabled: false })],
+        owed(fast_flips(&fleet, &fleet, &levels(true, &[]), false)),
+        vec![fast(3, false)],
         "global off slows only the member no lane or team flag keeps fast"
     );
     assert_eq!(
-        owed(fast_flips(&fleet, false, &fleet, true)),
-        vec![(uuid(3), uuid(103), LiveRetune::Fast { enabled: true })],
+        owed(fast_flips(&fleet, &fleet, &levels(false, &[]), true)),
+        vec![fast(3, true)],
         "global on speeds only the member not already fast"
     );
-    assert!(owed(fast_flips(&fleet, true, &fleet, true)).is_empty());
+    assert!(owed(fast_flips(&fleet, &fleet, &levels(true, &[]), true)).is_empty());
+    assert!(
+        owed(fast_flips(&fleet, &fleet, &levels(true, &[3]), false)).is_empty(),
+        "global off leaves fast a member its working group runs fast"
+    );
+}
+
+#[test]
+fn group_fast_mode_runs_only_its_claimants_and_adds_to_every_other_level() {
+    let fleet = fleet();
+    let row = |lane| {
+        fleet
+            .lanes
+            .iter()
+            .find(|row| row.lane == uuid(lane))
+            .expect("fleet member")
+    };
+    let effective = |levels: &FastLevels| [1, 2, 3, 4].map(|lane| levels.lane(&fleet, row(lane)));
+    assert_eq!(effective(&levels(false, &[])), [true, true, false, true]);
+    assert_eq!(effective(&levels(false, &[3])), [true, true, true, true]);
+    assert_eq!(effective(&levels(true, &[])), [true; 4]);
+    assert_eq!(
+        effective(&levels(false, &[1, 4])),
+        [true, true, false, true],
+        "a group adds fast mode only to its claimants and switches no level off"
+    );
+}
+
+#[test]
+fn a_claim_beginning_and_ending_owes_its_running_lane_one_live_change() {
+    let fleet = fleet();
+    assert_eq!(
+        owed(group_flips(&fleet, &lanes(&[]), &levels(false, &[3]))),
+        vec![fast(3, true)]
+    );
+    assert_eq!(
+        owed(group_flips(&fleet, &lanes(&[3]), &levels(false, &[]))),
+        vec![fast(3, false)]
+    );
+    assert!(owed(group_flips(&fleet, &lanes(&[3]), &levels(false, &[3]))).is_empty());
+}
+
+#[test]
+fn a_group_change_owes_nothing_while_another_level_holds_fast_mode() {
+    let fleet = fleet();
+    for (global, lane, held) in [(false, 1, "team"), (false, 4, "own"), (true, 3, "global")] {
+        assert!(
+            owed(group_flips(&fleet, &lanes(&[]), &levels(global, &[lane]))).is_empty()
+                && owed(group_flips(&fleet, &lanes(&[lane]), &levels(global, &[]))).is_empty(),
+            "the {held} flag holds lane {lane} fast"
+        );
+    }
+}
+
+#[test]
+fn team_turbo_off_owes_nothing_to_a_lane_its_group_runs_fast() {
+    let before = fleet();
+    let mut after = before.clone();
+    after.subscriptions[0].fast_mode = false;
+    assert_eq!(
+        owed(fast_flips(&before, &after, &levels(false, &[1]), false)),
+        vec![fast(2, false)]
+    );
 }
