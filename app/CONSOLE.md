@@ -173,6 +173,12 @@ undim one neutral step on hover; no accent paints them. Totals stay neutral, and
 global strips own their other interaction feedback independently. Every count
 badge is one neutral open-task total; see
 [Task counts show one open total](../docs/product/loops.md#the-jitter-contract).
+A global total or stem tab whose own partition counts a blocked task, held by
+an unsatisfied dependency, carries a small danger-coloured dot seated on its
+count badge's top inline-end corner, as a lane menu's renewal dot sits on its
+button. Its title and accessible name then lead with that blocked count. The
+dot is out of flow, so marking or clearing a tab never moves its box, badge,
+label, or focus ring; local team and group strips carry no mark.
 
 Each global stem tab opens its complete visibility-qualified stem within its
 own partition. A local strip has no stem roll-ups: past its total, a team strip
