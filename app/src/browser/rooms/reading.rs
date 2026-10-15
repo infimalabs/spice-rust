@@ -214,15 +214,21 @@ fn render_amendment(
             .map(|occupant| (*lane, occupant)),
         Actor::Human(_) | Actor::Operator | Actor::Spice => None,
     };
-    if !runtime.offers(CommandKind::TaskEdit)
-        || !crate::design_amendment::visible(
-            design,
-            identity,
-            runtime.room_projection().design_notices(),
-        )
-    {
+    if !runtime.offers(CommandKind::TaskEdit) {
         return Html::default();
     }
+    let Some(invitation) = crate::design_amendment::invitation(
+        design,
+        identity,
+        runtime.room_projection().design_notices(),
+    ) else {
+        return Html::default();
+    };
+    let matched = format!(
+        "Invited by the organic match with {} on {}.",
+        super::anchor_label(runtime, &invitation.task),
+        wire::rooms::shown_notice_terms(&invitation.terms).join(", "),
+    );
 
     let draft = controls.amendment(design);
     let callbacks = amendment_callbacks(controls, sender, design);
@@ -234,6 +240,7 @@ fn render_amendment(
                 <strong>{"Amend statement"}</strong>
                 <span>{"No assignment or response is created."}</span>
             </header>
+            <p class="room-amendment-match">{matched}</p>
             {notice}
             {phase}
         </section>

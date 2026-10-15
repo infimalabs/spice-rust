@@ -35,7 +35,7 @@ fn direct_steer_send_refuses_unjournalable_content_before_mutation() {
             "steer::media-invalid",
         ),
         (
-            "\0".repeat(journal::MAX_DURABLE_FACT_ENVELOPE_BYTES / 6),
+            "\0".repeat(wire::MAX_DURABLE_FACT_ENVELOPE_BYTES / 6),
             Vec::new(),
             "steer::envelope-too-large",
         ),
@@ -91,7 +91,7 @@ fn direct_steer_send_refuses_unjournalable_content_before_mutation() {
         let maximum = if reason == "steer::media-invalid" {
             wire::media::MAX_MEDIA_DATA_URL_BYTES
         } else {
-            journal::MAX_DURABLE_FACT_ENVELOPE_BYTES
+            wire::MAX_DURABLE_FACT_ENVELOPE_BYTES
         };
         assert!(
             refusal

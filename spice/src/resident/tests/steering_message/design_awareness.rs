@@ -387,11 +387,11 @@ fn assert_awareness_projection(
                 (
                     serde_json::json!(told.lane),
                     serde_json::json!(told.statement),
-                    serde_json::json!(told.terms),
+                    serde_json::json!(wire::rooms::shown_notice_terms(&told.terms)),
                 )
             })
             .collect::<Vec<_>>(),
-        "the operator reads the exact statement with every invitation"
+        "the operator reads the exact statement and shown terms of every invitation"
     );
     assert_eq!(rows[0]["task"], serde_json::json!(task));
     let read = lanes.room_read(&["awareness", unrelated.as_str()]);

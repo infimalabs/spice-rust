@@ -2,7 +2,7 @@ use wire::intent::BoardTask;
 use wire::rooms::DesignNoticed;
 use wire::{CanonicalUuid, SequenceCode, Witness};
 
-use super::{DesignAmendment, DraftNotice, DraftPhase, visible};
+use super::{DesignAmendment, DraftNotice, DraftPhase, FIELD_BYTES, invitation};
 use crate::work::tests::task;
 
 fn design() -> BoardTask {
@@ -165,17 +165,30 @@ fn a_refusal_retains_both_edited_fields() {
 }
 
 #[test]
-fn visibility_requires_the_noticed_current_occupant_and_an_open_design() {
+fn the_composer_shows_only_for_the_noticed_current_occupant_of_an_open_design() {
     let design = design();
     let lane = uuid(1);
     let occupant = uuid(2);
-    let notices = [notice(&design, lane, occupant)];
-    assert!(visible(&design, Some((lane, occupant)), &notices));
+    let notices = [
+        notice(&design, lane, uuid(9)),
+        notice(&design, lane, occupant),
+    ];
+    let visible = |design: &BoardTask, identity, notices: &[DesignNoticed]| {
+        invitation(design, identity, notices).is_some()
+    };
+    assert_eq!(
+        invitation(&design, Some((lane, occupant)), &notices),
+        Some(&notices[1]),
+        "the composer names the notice its exact occupant received"
+    );
     assert!(
         !visible(&design, None, &notices),
         "an operator has no lane occupant identity"
     );
-    assert!(!visible(&design, Some((lane, uuid(3))), &notices));
+    assert!(
+        !visible(&design, Some((lane, uuid(3))), &notices),
+        "another occupant of the noticed lane sees no composer"
+    );
     assert!(!visible(&design, Some((uuid(4), occupant)), &notices));
     assert!(!visible(&design, Some((lane, occupant)), &[]));
 
@@ -199,6 +212,21 @@ fn visibility_requires_the_noticed_current_occupant_and_an_open_design() {
             .expect("fixture completion"),
     );
     assert!(!visible(&settled, Some((lane, occupant)), &notices));
+}
+
+#[test]
+fn entered_fields_keep_at_most_one_durable_fact_of_text() {
+    let design = design();
+    let mut draft = DesignAmendment::new(&design);
+    let over = format!("{}é", "x".repeat(FIELD_BYTES - 1));
+    draft.set_description(over);
+    assert_eq!(draft.description().len(), FIELD_BYTES - 1);
+    assert_eq!(refusal(&draft), "task::text-too-long");
+    draft.set_title("x".repeat(FIELD_BYTES + 7));
+    assert_eq!(draft.title().len(), FIELD_BYTES);
+    draft.set_title("Within bound".to_owned());
+    assert_eq!(draft.title(), "Within bound");
+    assert!(draft.notice().is_none());
 }
 
 #[test]

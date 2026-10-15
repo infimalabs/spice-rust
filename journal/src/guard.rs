@@ -177,14 +177,6 @@ pub const MAX_RETAINED_FACT_PAGE_ROWS: usize = 256;
 /// advance, then stops before another envelope would cross this target.
 pub const MAX_RETAINED_FACT_PAGE_BYTES: usize = 1024 * 1024;
 
-/// Repository-owned hard ceiling for one durable fact envelope.
-///
-/// This independently bounds the exceptional first row a retained-fact page
-/// may decode when that row is larger than its aggregate byte target.
-pub const MAX_DURABLE_FACT_ENVELOPE_BYTES: usize = 4 * 1024 * 1024;
-
-const _: () = assert!(wire::media::MAX_MEDIA_DATA_URL_BYTES < MAX_DURABLE_FACT_ENVELOPE_BYTES);
-
 /// Positive, repository-bounded work admitted for one retained-fact page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FactReadBudget {

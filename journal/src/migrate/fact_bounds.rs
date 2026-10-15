@@ -1,6 +1,6 @@
 //! Current durable fact-envelope size enforcement.
 
-use crate::MAX_DURABLE_FACT_ENVELOPE_BYTES;
+use wire::MAX_DURABLE_FACT_ENVELOPE_BYTES;
 
 pub(crate) const FACT_ENVELOPE_INSERT_TRIGGER: &str = "fact_envelopes_envelope_size_insert";
 pub(crate) const FACT_ENVELOPE_UPDATE_TRIGGER: &str = "fact_envelopes_envelope_size_update";

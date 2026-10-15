@@ -4,31 +4,36 @@
 //! it was drawn from: preview sends only the fields the occupant changed from
 //! that base and witnesses its head, so a statement edit landing meanwhile
 //! refuses through the ordinary `TaskEdit` witness instead of being reverted.
-//! A refusal returns to editing without changing either entered field.
+//! A refusal returns to editing without changing either entered field. Each
+//! entered field keeps at most the bytes one durable fact can carry.
 
 use wire::intent::{BoardTask, TaskEdit};
 use wire::rooms::DesignNoticed;
 use wire::{CanonicalUuid, TaskStamp, Witness};
 
-/// Whether this exact current lane occupant owns a durable invitation to
-/// amend the still-open Design.
+/// Most bytes one entered field retains: an amendment lands as one fact.
+const FIELD_BYTES: usize = wire::MAX_DURABLE_FACT_ENVELOPE_BYTES;
+
+/// The durable invitation through which this exact current lane occupant
+/// may amend the still-open Design, if any.
 #[must_use]
-pub fn visible<'a>(
+pub fn invitation<'a>(
     design: &BoardTask,
     identity: Option<(CanonicalUuid, CanonicalUuid)>,
     notices: impl IntoIterator<Item = &'a DesignNoticed>,
-) -> bool {
-    let Some((lane, occupant)) = identity else {
-        return false;
-    };
-    design
+) -> Option<&'a DesignNoticed> {
+    let (lane, occupant) = identity?;
+    if !design
         .design_standing()
         .is_some_and(|standing| standing.is_open())
-        && notices.into_iter().any(|notice| {
-            notice.design == design.statement.body.born
-                && notice.lane == lane
-                && notice.occupant == occupant
-        })
+    {
+        return None;
+    }
+    notices.into_iter().find(|notice| {
+        notice.design == design.statement.body.born
+            && notice.lane == lane
+            && notice.occupant == occupant
+    })
 }
 
 /// One statement amendment together with the exact head it was drawn from.
@@ -165,12 +170,28 @@ impl DesignAmendment {
 
     /// Replace the title and retire any earlier preview or outcome.
     pub fn set_title(&mut self, title: String) {
-        self.edit(|draft| draft.title = title);
+        self.edit(|draft| draft.title = draft.bounded(title));
     }
 
     /// Replace the description and retire any earlier preview or outcome.
     pub fn set_description(&mut self, description: String) {
-        self.edit(|draft| draft.description = description);
+        self.edit(|draft| draft.description = draft.bounded(description));
+    }
+
+    /// `text` clipped at a character boundary within [`FIELD_BYTES`], noting
+    /// the clip as a refusal of the excess.
+    fn bounded(&mut self, mut text: String) -> String {
+        if text.len() > FIELD_BYTES {
+            let mut end = FIELD_BYTES;
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            self.notice = Some(DraftNotice::Refused(format!(
+                "task::text-too-long: kept the first {FIELD_BYTES} bytes one statement can carry"
+            )));
+        }
+        text
     }
 
     #[cfg(test)]

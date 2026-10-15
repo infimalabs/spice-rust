@@ -528,7 +528,7 @@ fn a_correction_to_an_unknown_task_is_refused() {
 }
 
 /// A correction naming one field, with every other field left alone.
-fn only(task: &TaskHandle) -> TaskEdit {
+pub(super) fn only(task: &TaskHandle) -> TaskEdit {
     TaskEdit {
         intent: None,
         evidence: None,

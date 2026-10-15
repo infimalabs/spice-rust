@@ -414,7 +414,7 @@ struct FactRow {
 }
 
 fn fact_envelope_length_violation(row: &FactRow, violations: &mut Vec<Violation>) -> bool {
-    let limit = u64::try_from(crate::MAX_DURABLE_FACT_ENVELOPE_BYTES)
+    let limit = u64::try_from(wire::MAX_DURABLE_FACT_ENVELOPE_BYTES)
         .expect("fact envelope limit fits the verifier counter");
     let Ok(observed) = u64::try_from(row.envelope_length) else {
         violations.push(Violation::new(

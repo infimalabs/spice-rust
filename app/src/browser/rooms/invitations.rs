@@ -45,7 +45,7 @@ pub(in crate::browser) fn render_invitations(runtime: Option<&AppRuntime>) -> Ht
                             {format!(
                                 "Organic match with {} on {}. Opening it joins no group and claims nothing.",
                                 super::anchor_label(runtime, &notice.value.task),
-                                notice.value.terms.join(", "),
+                                wire::rooms::shown_notice_terms(&notice.value.terms).join(", "),
                             )}
                         </p>
                     </article>

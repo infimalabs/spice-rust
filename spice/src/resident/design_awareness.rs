@@ -24,8 +24,6 @@ const STALE: &str = "room::awareness-stale";
 
 /// Most bytes of the Design title one notice repeats.
 const TITLE_BYTES: usize = 200;
-/// Most matched terms one organic notice names; the record keeps them all.
-const NOTICE_TERMS: usize = 6;
 /// Pitch and title lengths a notice keeps whole while fitting one datagram.
 const SHORTEST_CLIP_BYTES: usize = 16;
 
@@ -257,7 +255,10 @@ fn invitation(
                 design_statement.description.as_deref(),
             ),
             revision: SequenceCode::new(design_statement.revision.get()),
-            terms: terms.iter().take(NOTICE_TERMS).cloned().collect(),
+            terms: wire::rooms::shown_notice_terms(&terms)
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
         }
         .fit(),
         terms,
