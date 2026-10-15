@@ -245,12 +245,12 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-horn-tab--down { border-radius: 0 0 var(--app-radius-card) var(--app-radius-card); }
 .app-horn-tab--up { border-radius: var(--app-radius-card) var(--app-radius-card) 0 0; }
 .app-horn-tab--wide { border-inline-width: var(--message-rail); }
-/* Blocked work marks a global tab with a small danger dot seated on its count
-   badge's top inline-end corner, as the renewal dot sits on a lane menu's
-   corner. Out of flow, it never changes the tab's box, badge, label, or
-   focus ring. */
-.app-horn-tab[data-blocked="true"] .app-count-badge { position: relative; }
-.app-horn-tab[data-blocked="true"] .app-count-badge::after {
+/* Work only the operator can move marks a tab with a small danger dot seated
+   on its count badge's top inline-end corner, as the renewal dot sits on a
+   lane menu's corner. Out of flow, it never changes the tab's box, badge,
+   label, or focus ring. */
+.app-horn-tab[data-needs-operator="true"] .app-count-badge { position: relative; }
+.app-horn-tab[data-needs-operator="true"] .app-count-badge::after {
   position: absolute;
   top: -2px;
   inset-inline-end: -2px;
@@ -263,7 +263,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   pointer-events: none;
 }
 @media (forced-colors: active) {
-  .app-horn-tab[data-blocked="true"] .app-count-badge::after { forced-color-adjust: none; background: CanvasText; box-shadow: none; }
+  .app-horn-tab[data-needs-operator="true"] .app-count-badge::after { forced-color-adjust: none; background: CanvasText; box-shadow: none; }
 }
 .app-horn-tab__label { color: var(--app-base-muted); opacity: .72; }
 .app-horn-tab--group { gap: 0; padding: 0; }

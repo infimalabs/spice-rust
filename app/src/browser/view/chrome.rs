@@ -223,14 +223,15 @@ fn count_breakdown(counts: WorkCounts) -> String {
     )
 }
 
-/// Whether a Work tab marks blocked work: exactly when the partition it opens
-/// counts blocked execution trouble.
-pub(in crate::browser) fn blocked_mark(counts: WorkCounts) -> Option<&'static str> {
-    (counts.blocked() > 0).then_some("true")
+/// Whether a Work tab carries the danger dot: exactly when the partition it
+/// opens holds work only the operator can move.
+pub(in crate::browser) fn operator_mark(counts: WorkCounts) -> Option<&'static str> {
+    (counts.needs_operator() > 0).then_some("true")
 }
 
-/// A Work tab's title and accessible name, led by its blocked count when it
-/// carries the mark, so the state never rests on the dot alone.
+/// A Work tab's title and accessible name, led by the count of tasks needing
+/// the operator when it carries the mark, so the state never rests on the dot
+/// alone.
 pub(in crate::browser) fn task_count_title(label: &str, counts: WorkCounts) -> String {
     let open = counts.open();
     let title = format!(
@@ -238,9 +239,9 @@ pub(in crate::browser) fn task_count_title(label: &str, counts: WorkCounts) -> S
         if open == 1 { "task" } else { "tasks" },
         count_breakdown(counts),
     );
-    match counts.blocked() {
+    match counts.needs_operator() {
         0 => title,
-        blocked => format!("{blocked} blocked; {title}"),
+        needed => format!("{needed} need you; {title}"),
     }
 }
 
@@ -388,7 +389,7 @@ fn render_aggregate_pill(
             title={title.clone()}
             aria-label={title}
             data-work-scope={rail.data_scope()}
-            data-blocked={blocked_mark(counts)}
+            data-needs-operator={operator_mark(counts)}
             data-designs-active={designs.map(|split| split.active.to_string())}
             data-designs-passive={designs.map(|split| split.passive.to_string())}
             data-sidebar-focus-key={focus_key}
@@ -427,7 +428,7 @@ fn render_stem_pill(
             aria-label={title}
             data-task-stem={identity.stem().to_owned()}
             data-task-visibility={if identity.hidden() { "hidden" } else { "public" }}
-            data-blocked={blocked_mark(counts)}
+            data-needs-operator={operator_mark(counts)}
             data-designs-active={designs.map(|split| split.active.to_string())}
             data-designs-passive={designs.map(|split| split.passive.to_string())}
             data-sidebar-focus-key={focus_key}

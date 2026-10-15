@@ -256,7 +256,7 @@ fn lifecycle_precedence_follows_task_status_standings() {
 }
 
 #[test]
-fn design_passivity_yields_only_to_possession_and_grouping() {
+fn design_passivity_yields_only_to_possession_grouping_and_selection() {
     let design = |value| design(value, "alpha.design");
     let mut held = design(1);
     held.claim = Some(claim(&held, ClaimDisposition::Active));
@@ -280,8 +280,10 @@ fn design_passivity_yields_only_to_possession_and_grouping() {
         grouped,
         grouped_lapsed,
         design(6),
+        design(7),
     ]);
     board.blocked.insert(stamp(6));
+    board.awaiting_selection.insert(stamp(7));
     let projection = WorkProjection::from_board(&board);
 
     assert_eq!(
@@ -297,11 +299,12 @@ fn design_passivity_yields_only_to_possession_and_grouping() {
             WorkAvailability::Ready,
             WorkAvailability::Stale,
             WorkAvailability::Passive,
+            WorkAvailability::Selection,
         ],
-        "an ungrouped Design waits on the operator whatever else holds it; a grouped one moves"
+        "an ungrouped Design waits on the operator's grouping unless it awaits an output selection; a grouped one moves"
     );
     let counts = projection.counts();
-    assert_eq!([counts.passive(), counts.waiting()], [3, 3]);
+    assert_eq!([counts.passive(), counts.waiting()], [3, 4]);
     assert_eq!(
         projection
             .scope_strip(&WorkScope::planning())
@@ -315,6 +318,7 @@ fn design_passivity_yields_only_to_possession_and_grouping() {
             WorkAvailability::Passive,
             WorkAvailability::Passive,
             WorkAvailability::Passive,
+            WorkAvailability::Selection,
         ],
         "passive Designs stay on the Design rail after every Design an agent can move"
     );
@@ -522,4 +526,88 @@ fn owners_read_as_agent_names_and_unknown_lanes_stay_distinguishable() {
     );
     assert_eq!(projection.tasks[1].working_claimant(), None);
     assert_eq!(projection.tasks[2].working_claimant(), None);
+}
+
+#[test]
+fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
+    let mut in_flight = task(1, "alpha.quiet");
+    in_flight.claim = Some(claim(&in_flight, ClaimDisposition::Active));
+    let mut stale = task(2, "alpha.quiet");
+    stale.claim = Some(claim(&stale, ClaimDisposition::Lapsed));
+    let mut review = task(3, "alpha.quiet");
+    review.workflow.body.phase = "review".parse().expect("review phase");
+    let ready = task(4, "alpha.quiet");
+    let workflow_waiting = task(5, "alpha.quiet");
+    let mut deferred = task(6, "beta.later");
+    deferred.workflow.body.deferral = Some(
+        "2026-09-24T06:00:00.000Z"
+            .parse()
+            .expect("fixture deferral"),
+    );
+    let mut held = task(7, "gamma.trust");
+    held.statement.body.requirements = wire::EnvironmentRequirements::one(
+        EnvironmentRequirement::journal_schema(2).expect("fixture requirement"),
+    );
+    let blocked = task(8, "delta.wall");
+    let selection = design(9, "alpha.design");
+    let passive = design(10, "beta.design");
+    let mut board = board(vec![
+        in_flight,
+        stale,
+        review,
+        ready,
+        workflow_waiting,
+        deferred,
+        held,
+        blocked,
+        selection,
+        passive,
+    ]);
+    board.workflow_waiting.insert(stamp(5));
+    board.blocked.insert(stamp(8));
+    board.awaiting_selection.insert(stamp(9));
+    let projection = WorkProjection::from_board(&board);
+    let marks = |scope: &WorkScope| {
+        projection
+            .stem_task_groups(scope)
+            .iter()
+            .map(|group| {
+                (
+                    group.stem().stem().to_owned(),
+                    group.counts().needs_operator(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+
+    assert_eq!(
+        marks(&WorkScope::AllOpen),
+        BTreeMap::from([
+            ("alpha".to_owned(), 0),
+            ("beta".to_owned(), 1),
+            ("delta".to_owned(), 1),
+            ("gamma".to_owned(), 1),
+        ]),
+        "in-flight, stale, review, ready, and neutral waiting need nothing; a deferral, \
+         a blocked wall, and an environment hold each mark only their own stem"
+    );
+    assert_eq!(
+        projection
+            .scope_counts(&WorkScope::AllOpen)
+            .needs_operator(),
+        3,
+        "the execution total never counts a Design awaiting selection"
+    );
+    assert_eq!(
+        marks(&WorkScope::planning()),
+        BTreeMap::from([("alpha".to_owned(), 1), ("beta".to_owned(), 0)]),
+        "a Design awaiting selection marks its own Design stem; a passive one marks nothing"
+    );
+    assert_eq!(
+        projection
+            .scope_counts(&WorkScope::planning())
+            .needs_operator(),
+        1,
+        "the Design total never counts execution work"
+    );
 }

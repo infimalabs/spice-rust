@@ -334,6 +334,16 @@ impl WorkCounts {
             + self.deferred
             + self.parked
     }
+
+    /// Open work only the operator can move: a dependency or controller wall
+    /// with no advancing path, a Design awaiting output selection, a
+    /// deferral, or an environment hold such as a trust grant. Neutral
+    /// workflow waiting, passive Designs, and parked work need nothing from
+    /// the operator.
+    #[must_use]
+    pub const fn needs_operator(self) -> usize {
+        self.blocked + self.selection + self.deferred + self.held
+    }
     #[must_use]
     pub const fn open(self) -> usize {
         self.in_flight + self.ready + self.review + self.stale + self.blocked + self.waiting()
@@ -918,19 +928,22 @@ fn accountable_owner(
     if task.design_standing().is_some() {
         return Some(WorkOwner::Design(task.statement.body.born.clone()));
     }
-    if let Some(controller) = task
+    // Only a Design's direct output belongs to it. Work a Design-produced Plan
+    // creates inherits that Design as its selection controller, yet it is
+    // ordinary execution work.
+    if let Some(parent) = task
         .statement
         .body
         .preparation
         .as_ref()
-        .map(|preparation| &preparation.controller)
-        .filter(|controller| {
-            by_born.get(*controller).is_some_and(|&index| {
+        .map(|preparation| &preparation.parent)
+        .filter(|parent| {
+            by_born.get(*parent).is_some_and(|&index| {
                 board.tasks[index].statement.body.intent == Some(wire::TaskIntent::Design)
             })
         })
     {
-        return Some(WorkOwner::Design(controller.clone()));
+        return Some(WorkOwner::Design(parent.clone()));
     }
     home_team(task, teams, member_teams).map(WorkOwner::Team)
 }
@@ -1119,8 +1132,14 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
         {
             return WorkAvailability::Parked;
         }
+        // A passive Design still holding an output for the operator's
+        // selection waits on that decision, not on grouping.
         _ if task.design_standing() == Some(wire::intent::DesignStanding::Passive) => {
-            return WorkAvailability::Passive;
+            return if board.awaiting_selection.contains(&task.statement.body.born) {
+                WorkAvailability::Selection
+            } else {
+                WorkAvailability::Passive
+            };
         }
         Some(ClaimDisposition::Lapsed) => return WorkAvailability::Stale,
         _ => {}

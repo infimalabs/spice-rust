@@ -185,20 +185,24 @@ global strips own their other interaction feedback independently. Every count
 badge is one neutral open-task total; see
 [Task counts show one open total](../docs/product/loops.md#the-jitter-contract).
 A global total or stem tab, or a team or group total, whose own partition
-counts blocked execution trouble carries a small danger-coloured dot seated on
-its count badge's top inline-end corner, as a lane menu's renewal dot sits on
-its button. Its title and accessible name then lead with that blocked count.
+holds work only the operator can move carries a small danger-coloured dot
+seated on its count badge's top inline-end corner, as a lane menu's renewal dot
+sits on its button. Its title and accessible name then lead with that count.
 The dot is out of flow, so marking or clearing a tab never moves its box,
 badge, label, or focus ring; local task tabs carry no mark.
 
 The resident classifies each closed allocation gate once as blocked execution
 trouble, neutral workflow waiting, or awaiting Design selection. Dependency
 graphs, detail standings, counts, operator attention, and tab marks consume that
-same partition. A healthy Plan sequence and work waiting under an open Plan or
-Design use the neutral Waiting treatment; a Design waiting for output selection
-uses Awaiting selection. Neither creates a danger dot or the red Needs attention
-band. Only a dependency or controller wall with no advancing workflow path is
-Blocked and danger-coloured.
+same partition. Work only the operator can move is a Blocked wall with no
+advancing workflow path, a Design awaiting output selection (a passive one
+included), a deferral, or an environment hold such as an executable-configuration
+trust grant; each marks only the exact total or stem whose partition holds it,
+so Design work never marks an execution tab and execution work never marks a
+Design tab. A healthy Plan sequence and work waiting under an open Plan or
+Design use the neutral Waiting treatment and mark nothing, nor do passive
+Designs, parked work, or ready, review, stale, and in-flight work. Only a
+Blocked row is danger-coloured in detail and graphs.
 
 Each global stem tab opens its complete visibility-qualified stem within its
 own partition. A local strip has no stem roll-ups: past its total, a team strip
