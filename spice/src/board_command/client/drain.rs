@@ -24,21 +24,22 @@ pub(crate) struct ParkedCounts {
     pub(crate) active: usize,
     pub(crate) stale: usize,
     pub(crate) blocked: usize,
-    pub(crate) waiting: usize,
+    pub(crate) workflow_waiting: usize,
+    pub(crate) selection: usize,
+    pub(crate) deferred: usize,
     pub(crate) oops: usize,
 }
 
 impl ParkedCounts {
-    /// Measure parked rows among already authority-filtered, actor-routed
-    /// pending execution rows.
-    ///
-    /// Blocked asks the board which prerequisites are satisfied so the same
-    /// row cannot count ready and blocked at once; typed OOPS rows are counted
-    /// across the whole visible board, as task status does.
+    /// Measure possession and set-aside states among authority-filtered
+    /// execution rows, and the resident's gate partition among every routed
+    /// row. Design-side selection and control therefore remain visible without
+    /// inflating execution possession.
     pub(in crate::board_command) fn measure(
+        board: &BoardAnswer,
         entries: &[Entry],
-        satisfied: &board::ResolvedTasks,
-        rows: &[&Entry],
+        execution_rows: &[&Entry],
+        wait_rows: &[&Entry],
     ) -> Self {
         let disposition = |entry: &&&Entry, wanted: ClaimDisposition| {
             entry
@@ -46,31 +47,42 @@ impl ParkedCounts {
                 .is_some_and(|claim| claim.disposition == wanted)
         };
         Self {
-            active: rows
+            active: execution_rows
                 .iter()
                 .filter(|entry| disposition(entry, ClaimDisposition::Active))
                 .count(),
-            stale: rows
+            stale: execution_rows
                 .iter()
                 .filter(|entry| disposition(entry, ClaimDisposition::Lapsed))
                 .count(),
-            blocked: rows
+            blocked: wait_rows
                 .iter()
-                .filter(|entry| !board::dependencies_satisfied(entry, satisfied))
+                .filter(|entry| board.blocked.contains(entry.born()))
                 .count(),
-            waiting: rows
+            workflow_waiting: wait_rows
+                .iter()
+                .filter(|entry| board.workflow_waiting.contains(entry.born()))
+                .count(),
+            selection: wait_rows
+                .iter()
+                .filter(|entry| board.awaiting_selection.contains(entry.born()))
+                .count(),
+            deferred: execution_rows
                 .iter()
                 .filter(|entry| entry.workflow().deferral.is_some())
                 .count(),
-            oops: entries
-                .iter()
-                .filter(|entry| {
-                    entry.is_oops()
-                        && entry.workflow().status == "pending"
-                        && entry.workflow().completion.is_none()
-                        && !satisfied.speculative_design_work(entry.statement())
-                })
-                .count(),
+            oops: {
+                let satisfied = board::resolved_tasks(entries);
+                entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.is_oops()
+                            && entry.workflow().status == "pending"
+                            && entry.workflow().completion.is_none()
+                            && !satisfied.speculative_design_work(entry.statement())
+                    })
+                    .count()
+            },
         }
     }
 
@@ -96,12 +108,22 @@ impl ParkedCounts {
                 "stale",
                 "lapsed claims whose takeover did not land this pass",
             ),
-            (self.blocked, "blocked", "waiting on their dependencies"),
             (
-                self.waiting,
-                "waiting",
-                "deferred until their scheduled time",
+                self.blocked,
+                "blocked",
+                "execution dependencies cannot advance",
             ),
+            (
+                self.workflow_waiting,
+                "waiting",
+                "following normal Plan or Design workflow",
+            ),
+            (
+                self.selection,
+                "selection",
+                "awaiting the operator's Design selection",
+            ),
+            (self.deferred, "deferred", "until their scheduled time"),
             (self.oops, "oops", "parked on the deferred triage board"),
         ]
         .into_iter()
@@ -211,7 +233,9 @@ impl DrainReadout {
                 active: board.active,
                 stale: board.stale,
                 blocked: board.blocked,
-                waiting: board.waiting,
+                workflow_waiting: board.workflow_waiting,
+                selection: board.selection,
+                deferred: board.deferred,
                 oops: board.oops,
             },
             team,

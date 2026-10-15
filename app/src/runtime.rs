@@ -80,6 +80,9 @@ pub struct BoardView {
     /// Rows the allocator holds back for an unsettled prerequisite or an
     /// unconcluded or unauthorizing controller, judged by the resident.
     pub blocked: BTreeSet<wire::TaskStamp>,
+    /// Rows held by normal Plan/Design control or a prerequisite chain that
+    /// still reaches advancing work, judged by the resident.
+    pub workflow_waiting: BTreeSet<wire::TaskStamp>,
     /// Designs the allocator holds for the operator's selection of an output
     /// they constructed, judged by the resident.
     pub awaiting_selection: BTreeSet<wire::TaskStamp>,
@@ -154,6 +157,7 @@ impl From<&BoardAnswer> for BoardView {
             room_anchors,
             offer,
             blocked: answer.blocked.iter().cloned().collect(),
+            workflow_waiting: answer.workflow_waiting.iter().cloned().collect(),
             awaiting_selection: answer.awaiting_selection.iter().cloned().collect(),
             quote_tasks: Rc::new(answer.origins.clone()),
             environment,

@@ -1319,5 +1319,96 @@ fn a_plan_output_waits_only_for_its_plans_positive_conclusion() {
     );
 }
 
+#[test]
+fn healthy_plan_sequences_and_planning_control_are_neutral_not_blocked() {
+    let plan = planning("WAIT-plan", wire::TaskIntent::Plan, Standing::Open);
+    let mut sequence = vec![
+        plan.clone(),
+        named_output_with("WAIT-step-1", "WAIT-plan", "WAIT-plan", Vec::new(), true),
+    ];
+    for step in 2..=6 {
+        sequence.push(named_output_with(
+            &format!("WAIT-step-{step}"),
+            "WAIT-plan",
+            "WAIT-plan",
+            vec![stamp(&format!("WAIT-step-{}", step - 1))],
+            false,
+        ));
+    }
+    let mut broken = statement("WAIT-broken");
+    broken.dependencies.push(stamp("WAIT-missing"));
+    sequence.push(admitted(broken, workflow("todo"), None, None).expect("blocked task"));
+
+    let waits = board::work_waits(&sequence, &environment());
+    assert_eq!(waits.get(&stamp("WAIT-step-1")), None);
+    for step in 2..=6 {
+        assert_eq!(
+            waits.get(&stamp(&format!("WAIT-step-{step}"))),
+            Some(&board::WorkWait::Workflow),
+            "each Plan step behind progressing work is a neutral workflow wait"
+        );
+    }
+    assert_eq!(
+        waits.get(&stamp("WAIT-broken")),
+        Some(&board::WorkWait::Blocked),
+        "an ordinary dependency wall is execution trouble"
+    );
+
+    let output = named_output("WAIT-plan-output", "WAIT-plan", "WAIT-plan");
+    let entries = [plan, output];
+    let waits = board::work_waits(&entries, &environment());
+    assert_eq!(
+        waits.get(&stamp("WAIT-plan-output")),
+        Some(&board::WorkWait::Workflow),
+        "an output waits neutrally for its Plan's positive review"
+    );
+}
+
+#[test]
+fn design_selection_wins_its_gate_and_its_output_waits_neutrally() {
+    let design =
+        planning("WAIT-design", wire::TaskIntent::Design, Standing::Open).with_grouped(true);
+    let output = named_output("WAIT-design-output", "WAIT-design", "WAIT-design");
+    let entries = [design, output];
+    let waits = board::work_waits(&entries, &environment());
+    assert_eq!(
+        waits.get(&stamp("WAIT-design")),
+        Some(&board::WorkWait::Selection),
+        "the open Design names the operator action rather than a generic block"
+    );
+    assert_eq!(
+        waits.get(&stamp("WAIT-design-output")),
+        Some(&board::WorkWait::Workflow),
+        "an unselected output waits neutrally on its open Design"
+    );
+}
+
+fn named_output(name: &str, parent: &str, controller: &str) -> Entry {
+    named_output_with(name, parent, controller, Vec::new(), false)
+}
+
+fn named_output_with(
+    name: &str,
+    parent: &str,
+    controller: &str,
+    dependencies: Vec<TaskStamp>,
+    claimed: bool,
+) -> Entry {
+    let mut head = statement(name);
+    head.preparation = Some(wire::TaskPreparation {
+        parent: stamp(parent),
+        controller: stamp(controller),
+        construction: head.born.clone(),
+    });
+    head.dependencies = dependencies;
+    admitted(
+        head,
+        workflow("todo"),
+        claimed.then(|| claim(ClaimDisposition::Active)),
+        claimed.then(lease),
+    )
+    .expect("controlled output")
+}
+
 #[path = "coordination/late.rs"]
 mod late;

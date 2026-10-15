@@ -327,37 +327,69 @@ pub(super) fn group_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle)
     assert_committed(move_design_now(bus, epoch, &born, Some(&fixture_group())));
 }
 
-/// The rows an Open read reports blocked, after proving they are exactly the
-/// open rows the allocator's own gate holds back on the complete board.
+/// The rows an Open read reports as blocked execution trouble, after proving
+/// they are exactly the resident classifier's blocked partition.
 pub(super) fn open_blocked(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStamp> {
-    let (open, entries, resolved) = open_and_full(bus, epoch);
-    let gated = entries
-        .iter()
-        .filter(|entry| {
-            open.tasks
-                .iter()
-                .any(|task| task.statement.body.born == *entry.born())
-                && entry.workflow().status == "pending"
-                && !board::dependencies_satisfied(entry, &resolved)
-        })
-        .map(|entry| entry.born().clone())
+    let (open, entries) = open_and_full(bus, epoch);
+    let environment = wire::Environment::journal_schema(journal::SCHEMA_VERSION)
+        .expect("compiled journal schema");
+    let classified = board::work_waits(&entries, &environment)
+        .into_iter()
+        .filter(|(_, wait)| *wait == board::WorkWait::Blocked)
+        .map(|(task, _)| task.clone())
         .collect::<BTreeSet<_>>();
     let blocked = open.blocked.iter().cloned().collect::<BTreeSet<_>>();
     assert_eq!(
-        blocked, gated,
-        "open read blocked rows equal the allocator gate"
+        blocked, classified,
+        "open read blocked rows equal the resident classification"
     );
     blocked
 }
 
-/// The Designs an Open read reports awaiting selection, after proving they are
-/// exactly the rows the allocator holds for the operator on the complete board.
-pub(super) fn open_awaiting_selection(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStamp> {
-    let (open, entries, resolved) = open_and_full(bus, epoch);
-    let held = entries
+/// The rows an Open read reports as normal Plan/Design workflow waits, after
+/// proving they are exactly the resident classifier's neutral partition.
+pub(super) fn open_workflow_waiting(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStamp> {
+    let (open, entries) = open_and_full(bus, epoch);
+    let environment = wire::Environment::journal_schema(journal::SCHEMA_VERSION)
+        .expect("compiled journal schema");
+    let classified = board::work_waits(&entries, &environment)
+        .into_iter()
+        .filter(|(_, wait)| *wait == board::WorkWait::Workflow)
+        .map(|(task, _)| task.clone())
+        .collect::<BTreeSet<_>>();
+    let waiting = open
+        .workflow_waiting
         .iter()
-        .filter(|entry| board::awaits_selection(entry, &resolved))
-        .map(|entry| entry.born().clone())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        waiting, classified,
+        "open read workflow waits equal the resident classification"
+    );
+    waiting
+}
+
+/// Every open row whose allocator gate remains closed, independent of its
+/// mutually exclusive presentation category.
+pub(super) fn open_gated(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStamp> {
+    let (open, _) = open_and_full(bus, epoch);
+    open.blocked
+        .into_iter()
+        .chain(open.workflow_waiting)
+        .chain(open.awaiting_selection)
+        .collect()
+}
+
+/// The Designs an Open read reports awaiting selection, after proving they are
+/// exactly the resident classifier's selection partition.
+pub(super) fn open_awaiting_selection(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStamp> {
+    let (open, entries) = open_and_full(bus, epoch);
+    let environment = wire::Environment::journal_schema(journal::SCHEMA_VERSION)
+        .expect("compiled journal schema");
+    let classified = board::work_waits(&entries, &environment)
+        .into_iter()
+        .filter(|(_, wait)| *wait == board::WorkWait::Selection)
+        .map(|(task, _)| task.clone())
         .collect::<BTreeSet<_>>();
     let awaiting = open
         .awaiting_selection
@@ -365,16 +397,13 @@ pub(super) fn open_awaiting_selection(bus: &Bus, epoch: CanonicalUuid) -> BTreeS
         .cloned()
         .collect::<BTreeSet<_>>();
     assert_eq!(
-        awaiting, held,
-        "open read selection waits equal the allocator's"
+        awaiting, classified,
+        "open read selection waits equal the resident classification"
     );
     awaiting
 }
 
-fn open_and_full(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-) -> (BoardAnswer, Vec<Entry>, board::ResolvedTasks) {
+fn open_and_full(bus: &Bus, epoch: CanonicalUuid) -> (BoardAnswer, Vec<Entry>) {
     let outcome = issue(
         bus,
         epoch,
@@ -391,9 +420,10 @@ fn open_and_full(
         panic!("open board read did not answer: {outcome:?}");
     };
     let full = board(bus, epoch, Actor::Operator);
-    let entries = actor_entries(&full).expect("full board entries validate");
-    let resolved = board::resolved_tasks(&entries);
-    (*open, entries, resolved)
+    (
+        (*open),
+        actor_entries(&full).expect("full board entries validate"),
+    )
 }
 
 pub(super) fn board_with_allocation(

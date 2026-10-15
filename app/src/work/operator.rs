@@ -1,14 +1,8 @@
-//! Every task only the operator can move, across the whole board.
+//! Every execution task whose current wall needs operator intervention.
 //!
-//! A Design the resident holds for the operator's selection of its outputs
-//! waits on the operator, whatever its standing or claim. A task whose
-//! environment needs an operator act waits on the operator unless the
-//! operator already set it aside (terminal, draft, parked, deferred, or a
-//! passive Design). A task also waits on the operator when the dependency
-//! chain of a task the prerequisite gate holds stops at it behind an
-//! operator-only wall. Each waiting task appears once, in board order,
-//! however many reasons and held tasks reach it, so stepping through the
-//! queue is stable.
+//! Environment holds and dependency walls belong here. Normal Plan/Design
+//! sequencing and Design selection remain reachable through their ordinary
+//! Work surfaces without entering the danger queue.
 
 use super::{DependencyWall, WorkAvailability, WorkProjection, wall::DependencyWalls};
 
@@ -17,7 +11,6 @@ use super::{DependencyWall, WorkAvailability, WorkProjection, wall::DependencyWa
 pub struct OperatorWait<'a> {
     task: usize,
     environment: bool,
-    selection: bool,
     wall: Option<DependencyWall<'a>>,
     holds: Vec<usize>,
 }
@@ -27,7 +20,6 @@ impl<'a> OperatorWait<'a> {
         Self {
             task,
             environment: false,
-            selection: false,
             wall: None,
             holds: Vec::new(),
         }
@@ -43,12 +35,6 @@ impl<'a> OperatorWait<'a> {
     #[must_use]
     pub const fn environment(&self) -> bool {
         self.environment
-    }
-
-    /// It is a Design awaiting the operator's selection of its outputs.
-    #[must_use]
-    pub const fn selection(&self) -> bool {
-        self.selection
     }
 
     /// The wall it presents to the tasks it holds when neither its
@@ -78,11 +64,6 @@ impl<'a> OperatorQueue<'a> {
         let tasks = work.tasks();
         let mut waits = (0..tasks.len()).map(|_| None).collect::<Vec<_>>();
         for (index, task) in tasks.iter().enumerate() {
-            if task.awaiting_selection() {
-                waits[index]
-                    .get_or_insert_with(|| OperatorWait::new(index))
-                    .selection = true;
-            }
             if task.environment_blocked() && !set_aside(task.availability()) {
                 waits[index]
                     .get_or_insert_with(|| OperatorWait::new(index))
@@ -98,10 +79,13 @@ impl<'a> OperatorQueue<'a> {
                 let Some((at, wall)) = walls.wall(index, dependency) else {
                     continue;
                 };
+                if matches!(wall, DependencyWall::Selection(_)) {
+                    continue;
+                }
                 let wait = waits[at].get_or_insert_with(|| OperatorWait::new(at));
                 match wall {
                     DependencyWall::Environment(_) => wait.environment = true,
-                    DependencyWall::Selection(_) => wait.selection = true,
+                    DependencyWall::Selection(_) => unreachable!("selection was handled above"),
                     _ => wait.wall = Some(wall),
                 }
                 if wait.holds.last() != Some(&index) {

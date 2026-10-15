@@ -794,7 +794,7 @@ fn filing_oops_report_atomically_becomes_controlled_and_unauthorized() {
     assert_eq!(output.statement.body.authorization, None);
     assert_eq!(output.claim, None);
     assert_eq!(
-        open_blocked(&bus, epoch),
+        open_workflow_waiting(&bus, epoch),
         [output.statement.body.born.clone()].into()
     );
 

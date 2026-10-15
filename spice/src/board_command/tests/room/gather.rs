@@ -92,7 +92,7 @@ fn gather(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle, name: &str) -> T
 }
 
 fn runnable(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> bool {
-    !open_blocked(bus, epoch).contains(&born(task))
+    !open_gated(bus, epoch).contains(&born(task))
 }
 
 #[test]

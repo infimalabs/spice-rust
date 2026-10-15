@@ -138,6 +138,7 @@ fn validated_snapshot_from_with_occupant(
             tasks,
             offer: Vec::new(),
             blocked: Vec::new(),
+            workflow_waiting: Vec::new(),
             awaiting_selection: Vec::new(),
             origins: Default::default(),
             notes: Default::default(),
@@ -727,10 +728,22 @@ pub(super) fn read_board(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    if matches!(read, BoardRead::Open | BoardRead::All { .. }) {
+        let waits = board::work_waits(&snapshot.entries, &snapshot.answer.environment());
+        for (task, wait) in waits {
+            match wait {
+                board::WorkWait::Blocked => snapshot.answer.blocked.push(task.clone()),
+                board::WorkWait::Workflow => {
+                    snapshot.answer.workflow_waiting.push(task.clone());
+                }
+                board::WorkWait::Selection => {
+                    snapshot.answer.awaiting_selection.push(task.clone());
+                }
+            }
+        }
+    }
     if matches!(read, BoardRead::Open) {
         snapshot.answer.offer = board_offer(&snapshot.entries, &snapshot.answer);
-        snapshot.answer.blocked = board_blocked(&snapshot.entries);
-        snapshot.answer.awaiting_selection = board_awaiting_selection(&snapshot.entries);
         snapshot.answer.origins = steering_origins(&observed);
         snapshot
             .answer
@@ -802,32 +815,6 @@ pub(super) fn board_offer(entries: &[Entry], answer: &BoardAnswer) -> Vec<wire::
     .into_iter()
     .map(|selection| selection.entry().born().clone())
     .collect()
-}
-
-/// Open rows whose prerequisites or controller gate hold them back, judged by
-/// the allocator's own [`board::dependencies_satisfied`].
-fn board_blocked(entries: &[Entry]) -> Vec<wire::TaskStamp> {
-    let resolved = board::resolved_tasks(entries);
-    entries
-        .iter()
-        .filter(|entry| {
-            entry.workflow().status == "pending"
-                && entry.workflow().completion.is_none()
-                && !board::dependencies_satisfied(entry, &resolved)
-        })
-        .map(|entry| entry.born().clone())
-        .collect()
-}
-
-/// Open Designs the allocator holds for the operator's selection, judged by
-/// the allocator's own [`board::awaits_selection`].
-fn board_awaiting_selection(entries: &[Entry]) -> Vec<wire::TaskStamp> {
-    let resolved = board::resolved_tasks(entries);
-    entries
-        .iter()
-        .filter(|entry| board::awaits_selection(entry, &resolved))
-        .map(|entry| entry.born().clone())
-        .collect()
 }
 
 pub(super) fn read_graph(

@@ -734,6 +734,7 @@ mod tests {
             room_anchors: Vec::new(),
             offer: Vec::new(),
             blocked,
+            workflow_waiting: std::collections::BTreeSet::new(),
             awaiting_selection: std::collections::BTreeSet::new(),
             quote_tasks: std::rc::Rc::default(),
             environment: Environment::journal_schema(1).expect("fixture schema"),

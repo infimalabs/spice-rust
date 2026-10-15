@@ -92,9 +92,10 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
             WorkAvailability::InFlight
             | WorkAvailability::Ready
             | WorkAvailability::Review
+            | WorkAvailability::Waiting
+            | WorkAvailability::Selection
             | WorkAvailability::Stale => return None,
             WorkAvailability::Held => DependencyWall::Environment(born),
-            WorkAvailability::Selection => DependencyWall::Selection(born),
             WorkAvailability::Passive => DependencyWall::Passive(born),
             WorkAvailability::Deferred => DependencyWall::Deferred(born),
             WorkAvailability::Parked | WorkAvailability::Draft => DependencyWall::Parked(born),

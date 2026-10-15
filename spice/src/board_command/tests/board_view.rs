@@ -156,3 +156,63 @@ fn a_large_board_keeps_the_claim_pages_every_task_once_and_clips_long_titles() {
     );
     clean(&root, bus);
 }
+
+#[test]
+fn cli_standings_consume_the_residents_three_way_wait_partition() {
+    let (root, bus, epoch, _) = fixture("board-waits", 1);
+    let blocked = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "VIEW-BLOCKED",
+        "Broken execution gate",
+        Some("todo"),
+    );
+    let waiting = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "VIEW-WAITING",
+        "Healthy workflow sequence",
+        Some("todo"),
+    );
+    let selection = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "VIEW-SELECTION",
+        "Awaiting Design selection",
+        Some("todo"),
+    );
+    let mut current = board(&bus, epoch, Actor::Operator);
+    let blocked_born = at(&current, &blocked).statement.body.born.clone();
+    let waiting_born = at(&current, &waiting).statement.body.born.clone();
+    let selection_born = at(&current, &selection).statement.body.born.clone();
+    current.offer.clear();
+    current.blocked = vec![blocked_born];
+    current.workflow_waiting = vec![waiting_born];
+    current.awaiting_selection = vec![selection_born];
+
+    let current = posture(&current, None);
+    let standing = |handle: &TaskHandle| {
+        current
+            .work
+            .rows
+            .iter()
+            .find(|row| &row.handle == handle)
+            .expect("wait row is present")
+            .standing
+    };
+    assert_eq!(standing(&blocked), Standing::Blocked);
+    assert_eq!(standing(&waiting), Standing::Workflow);
+    assert_eq!(standing(&selection), Standing::Selection);
+    assert_eq!(
+        (
+            current.counts.blocked,
+            current.counts.workflow_waiting,
+            current.counts.selection,
+        ),
+        (1, 1, 1)
+    );
+    clean(&root, bus);
+}

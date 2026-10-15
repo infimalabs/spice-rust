@@ -936,10 +936,19 @@ pub struct NextWorkTask {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NextWorkCounts {
+    /// Current claims.
     pub active: usize,
+    /// Lapsed claims.
     pub stale: usize,
+    /// Closed execution gates with no advancing path.
     pub blocked: usize,
-    pub waiting: usize,
+    /// Normal Plan/Design control and advancing prerequisite chains.
+    pub workflow_waiting: usize,
+    /// Open Designs awaiting exact output selection.
+    pub selection: usize,
+    /// Explicitly deferred work.
+    pub deferred: usize,
+    /// Parked OOPS rows.
     pub oops: usize,
 }
 
@@ -1225,11 +1234,17 @@ pub struct BoardAnswer {
     /// fixed across steps. Empty for every other read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offer: Vec<crate::TaskStamp>,
-    /// Open-read rows the allocator holds back for a prerequisite that has not
-    /// settled or a controller that has not concluded positively and
-    /// authorized them, in durable identity order. Empty for every other read.
+    /// Open-read rows whose prerequisite or controller gate has no path
+    /// through current advancing work. This is execution trouble, in durable
+    /// identity order. Empty for every other read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked: Vec<crate::TaskStamp>,
+    /// Open-read rows held by normal Plan/Design control or an unresolved
+    /// prerequisite chain that still reaches advancing work. These remain
+    /// allocator-ineligible but are not execution trouble. Durable identity
+    /// order; empty for every other read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workflow_waiting: Vec<crate::TaskStamp>,
     /// Open-read Designs in their final phase that the allocator holds for
     /// the operator: an output each constructed still lacks its selection, so
     /// only an execution authorization or settling that output releases it.

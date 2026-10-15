@@ -299,8 +299,10 @@ fn open_read_offers_the_full_board_allocation_order_from_its_bounded_rows() {
     assert_eq!(
         open.blocked,
         [waiting.born().expect("waiting stamp")],
-        "a settled prerequisite releases its dependent; an open one blocks"
+        "an ordinary unsettled dependency remains blocked execution work"
     );
+    assert!(open.workflow_waiting.is_empty());
+    assert!(open.awaiting_selection.is_empty());
     let offered = open
         .offer
         .iter()

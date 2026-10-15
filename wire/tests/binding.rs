@@ -689,6 +689,8 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
         claim_context: Some(claim_context(epoch)),
         git_context: Some(completion_context()),
         parked_commits: None,
+        stranded: None,
+        controlled: Vec::new(),
     };
 
     let encoded = serde_json::to_value(&task).expect("the constructed board task encodes");

@@ -69,10 +69,12 @@ pub(crate) enum Standing {
     Selection,
     /// A claim whose lease lapsed.
     Stale,
-    /// Waiting on a dependency that has not completed.
+    /// Execution work whose unresolved gate has no advancing path.
     Blocked,
+    /// Normal Plan/Design control or sequencing behind advancing work.
+    Workflow,
     /// Deferred until a scheduled time.
-    Waiting,
+    Deferred,
     /// Open but not workable by the reading actor.
     Pending,
     /// No longer open.
@@ -89,7 +91,8 @@ impl Standing {
             Self::Selection => "selection",
             Self::Stale => "stale",
             Self::Blocked => "blocked",
-            Self::Waiting => "waiting",
+            Self::Workflow => "waiting",
+            Self::Deferred => "deferred",
             Self::Pending => "pending",
             Self::Closed => "closed",
         }
@@ -134,7 +137,8 @@ pub(crate) struct PostureCounts {
     pub(crate) review: usize,
     pub(crate) stale: usize,
     pub(crate) blocked: usize,
-    pub(crate) waiting: usize,
+    pub(crate) workflow_waiting: usize,
+    pub(crate) deferred: usize,
     pub(crate) selection: usize,
     pub(crate) pending: usize,
     /// Typed OOPS rows across the visible board.
@@ -363,7 +367,7 @@ impl Standings {
         let standing = entries
             .iter()
             .map(|entry| {
-                let standing = standing(entry, &board.principal, &environment, &satisfied);
+                let standing = standing(entry, board, &environment, &satisfied);
                 (entry.born().clone(), standing)
             })
             .collect();
@@ -410,7 +414,7 @@ impl Standings {
 
 fn standing(
     entry: &Entry,
-    principal: &Actor,
+    answer: &BoardAnswer,
     environment: &wire::Environment,
     satisfied: &board::ResolvedTasks,
 ) -> Standing {
@@ -419,20 +423,24 @@ fn standing(
         return Standing::Closed;
     }
     match entry.claim().map(|claim| (claim.disposition, &claim.actor)) {
-        Some((ClaimDisposition::Active, actor)) if actor == principal => return Standing::Claimed,
+        Some((ClaimDisposition::Active, actor)) if actor == &answer.principal => {
+            return Standing::Claimed;
+        }
         Some((ClaimDisposition::Active, _)) => return Standing::Active,
         Some((ClaimDisposition::Lapsed, _)) => return Standing::Stale,
         _ => {}
     }
     if workflow.deferral.is_some() {
-        Standing::Waiting
-    } else if !board::dependencies_satisfied(entry, satisfied) {
-        Standing::Blocked
-    } else if board::awaits_selection(entry, satisfied) {
+        Standing::Deferred
+    } else if answer.awaiting_selection.contains(entry.born()) {
         Standing::Selection
+    } else if answer.workflow_waiting.contains(entry.born()) {
+        Standing::Workflow
+    } else if answer.blocked.contains(entry.born()) {
+        Standing::Blocked
     } else if workflow.phase.as_str() == "review" {
         Standing::Review
-    } else if board::eligible_entry(satisfied, entry, principal, environment) {
+    } else if board::eligible_entry(satisfied, entry, &answer.principal, environment) {
         Standing::Ready
     } else {
         Standing::Pending
@@ -522,13 +530,18 @@ fn posture(
             Standing::Review => counts.review += 1,
             Standing::Stale => counts.stale += 1,
             Standing::Blocked => counts.blocked += 1,
-            Standing::Waiting => counts.waiting += 1,
+            Standing::Workflow => counts.workflow_waiting += 1,
+            Standing::Deferred => counts.deferred += 1,
             Standing::Selection => counts.selection += 1,
             Standing::Pending | Standing::Closed => counts.pending += 1,
         }
         if matches!(
             standing,
-            Standing::Ready | Standing::Review | Standing::Selection | Standing::Blocked
+            Standing::Ready
+                | Standing::Review
+                | Standing::Selection
+                | Standing::Workflow
+                | Standing::Blocked
         ) {
             work.push(*entry);
         }
@@ -537,8 +550,8 @@ fn posture(
     let work = admit(board, standings, &work, request)?;
     let mut text = format!(
         "board for {} at cursor {}: {} visible, {} open on this route\n\
-         active {} ready {} review {} selection {} blocked {} waiting {} stale {} pending {} \
-         oops {} drafts {}\n\
+         active {} ready {} review {} selection {} blocked {} waiting {} deferred {} stale {} \
+         pending {} oops {} drafts {}\n\
          claim ",
         board.principal,
         board.cursor,
@@ -549,7 +562,8 @@ fn posture(
         counts.review,
         counts.selection,
         counts.blocked,
-        counts.waiting,
+        counts.workflow_waiting,
+        counts.deferred,
         counts.stale,
         counts.pending,
         counts.oops,
