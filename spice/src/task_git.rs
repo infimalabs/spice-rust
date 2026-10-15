@@ -1285,8 +1285,9 @@ pub use launch::{LaunchAdvance, LaunchSkip};
 mod recovery;
 mod resolution;
 pub use recovery::{
-    Recovery, RecoveryClaim, bind_recovery_claim, pending_recovery, quarantine_for_recovery,
-    recovery_claim, replay_recovery, restore_recovery, synchronize_recovery,
+    Recovery, RecoveryClaim, RestoreOutcome, bind_recovery_claim, pending_recovery,
+    quarantine_for_recovery, recovery_claim, replay_recovery, restore_recovery,
+    synchronize_recovery,
 };
 mod transaction;
 use transaction::*;
