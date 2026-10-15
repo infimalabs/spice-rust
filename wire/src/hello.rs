@@ -217,7 +217,7 @@ pub enum SpeechPlayback {
 pub struct Hello {
     /// Socket schema version the client speaks.
     pub wire: WireVersion,
-    /// Capability authenticating an operator or lane connection.
+    /// Capability authenticating a human principal's or a lane's connection.
     pub capability: CanonicalUuid,
     /// Resident generation the client believes it is addressing.
     pub epoch: CanonicalUuid,
