@@ -28,6 +28,10 @@ pub const COMMON_TERM_MIN_STATEMENTS: usize = 8;
 /// A term in more than this fraction, numerator over denominator, of the
 /// board's open statements is common.
 pub const COMMON_TERM_SHARE: (usize, usize) = (1, 4);
+/// Most bytes of completion validation admitted to one matching profile.
+pub const COMPLETION_VALIDATION_BYTES: usize = 4 * 1024;
+/// Most distinct terms retained in one completion matching profile.
+pub const COMPLETION_PROFILE_TERMS: usize = 256;
 
 /// Common words that say nothing about what a statement concerns.
 const STOP: &[&str] = &[
@@ -125,11 +129,40 @@ pub fn task_terms(
     )
 }
 
+/// Terms of a completed task's statement plus a bounded prefix of its
+/// validation, capped again after deduplication.
+#[must_use]
+pub fn completion_terms(
+    title: &str,
+    description: Option<&str>,
+    acceptance: &[String],
+    validation: &str,
+) -> BTreeSet<String> {
+    let mut validation_end = validation.len().min(COMPLETION_VALIDATION_BYTES);
+    while !validation.is_char_boundary(validation_end) {
+        validation_end -= 1;
+    }
+    terms_capped(
+        std::iter::once(title)
+            .chain(description)
+            .chain(acceptance.iter().map(String::as_str))
+            .chain(std::iter::once(&validation[..validation_end])),
+        COMPLETION_PROFILE_TERMS,
+    )
+}
+
 /// The distinct terms of `texts`.
 fn terms<'a>(texts: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
+    terms_capped(texts, usize::MAX)
+}
+
+fn terms_capped<'a>(texts: impl IntoIterator<Item = &'a str>, maximum: usize) -> BTreeSet<String> {
     let mut terms = BTreeSet::new();
     for text in texts {
         for run in text.split(|c: char| !c.is_alphanumeric()) {
+            if terms.len() == maximum {
+                return terms;
+            }
             if run.chars().any(char::is_numeric) {
                 continue;
             }
@@ -326,6 +359,41 @@ mod tests {
             CommonTerms::of(statements),
             CommonTerms(BTreeSet::from(["cursor".to_owned(), "lane".to_owned()])),
             "exactly the share is not common; one statement more is"
+        );
+    }
+
+    #[test]
+    fn a_completion_profile_bounds_validation_bytes_and_distinct_terms() {
+        let distinct = (0..COMPLETION_PROFILE_TERMS + 20)
+            .map(|index| {
+                let first = char::from(b'a' + ((index / (26 * 26)) % 26) as u8);
+                let second = char::from(b'a' + ((index / 26) % 26) as u8);
+                let third = char::from(b'a' + (index % 26) as u8);
+                format!("term{first}{second}{third}")
+            })
+            .collect::<Vec<_>>();
+        let excluded = distinct.last().expect("generated terms").clone();
+        let profile = completion_terms(
+            "Retained statement marker",
+            Some("Statement description"),
+            &[],
+            &distinct.join(" "),
+        );
+        assert_eq!(profile.len(), COMPLETION_PROFILE_TERMS);
+        assert!(profile.contains("retained"));
+        assert!(
+            !profile.contains(&excluded),
+            "validation terms beyond the profile cap are not retained"
+        );
+
+        let validation = format!(
+            "{}é boundarymarker",
+            "x".repeat(COMPLETION_VALIDATION_BYTES - 1)
+        );
+        let clipped = completion_terms("Retained statement marker", None, &[], &validation);
+        assert!(
+            !clipped.contains("boundarymarker"),
+            "validation after a partial UTF-8 boundary contributes no terms"
         );
     }
 

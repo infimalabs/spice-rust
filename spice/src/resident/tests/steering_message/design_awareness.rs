@@ -132,6 +132,53 @@ impl Lanes {
         commit(&self.bus, release).expect("release commits");
     }
 
+    /// Complete the task under its active claim with one durable `TaskDone`.
+    fn complete(&self, handle: &wire::TaskHandle, validation: &str) {
+        let claim = self.claim_head(handle).expect("the task is claimed");
+        let task = stamp(handle);
+        let workflow = self
+            .bus
+            .read({
+                let task = task.clone();
+                move |read| read.workflow_head(&task)
+            })
+            .expect("workflow reads")
+            .expect("workflow exists")
+            .into_body();
+        let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
+        let operation = wire::intent::TaskDone::operation_for_claim(claim.claimed);
+        let validation = validation.to_owned();
+        let mut completion = write(claim.actor.clone(), self.epoch, Producer::CommandDoor)
+            .expect("completion write starts");
+        let done = completion
+            .fact(
+                wire::body::TaskDone {
+                    task: task.clone(),
+                    validation,
+                    terminal: Some(wire::body::TaskCompletionTerminal {
+                        operation,
+                        status: "completed".to_owned(),
+                        next: None,
+                    }),
+                    git: None,
+                    source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
+                },
+                FactCause::Root,
+            )
+            .expect("completion fact is valid");
+        completion.workflow_head(task.clone(), done, move |_| wire::WorkflowHead {
+            status: "completed".to_owned(),
+            completion: Some(at),
+            ..workflow
+        });
+        completion.claim_head(task, done, move |fact| wire::ClaimHead {
+            fact,
+            disposition: wire::ClaimDisposition::Freed,
+            ..claim
+        });
+        commit(&self.bus, completion).expect("completion commits");
+    }
+
     /// Change one task statement after an awareness observation.
     fn retitle(&self, task: &wire::TaskHandle, title: &str) {
         let stamp = stamp(task);
@@ -308,7 +355,7 @@ impl Lanes {
     /// diagnostic.
     fn reconcile(&self, config: &SurfaceConfig, seats: &Seats) {
         let mut diagnostics = Vec::new();
-        crate::resident::design_awareness::reconcile(
+        crate::resident::design_awareness::reconcile_claims(
             &self.bus,
             &self.paths,
             config,
@@ -316,6 +363,30 @@ impl Lanes {
             &mut diagnostics,
         )
         .expect("awareness reconciles");
+        assert!(
+            diagnostics.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&diagnostics)
+        );
+    }
+
+    /// Run one resident completion-aware pass, failing on any diagnostic.
+    fn reconcile_completions(
+        &self,
+        config: &SurfaceConfig,
+        seats: &Seats,
+        completions: &mut crate::resident::design_awareness::CompletionCursor,
+    ) {
+        let mut diagnostics = Vec::new();
+        crate::resident::design_awareness::reconcile(
+            &self.bus,
+            &self.paths,
+            config,
+            seats,
+            completions,
+            &mut diagnostics,
+        )
+        .expect("completion awareness reconciles");
         assert!(
             diagnostics.is_empty(),
             "{}",
@@ -410,7 +481,7 @@ fn assert_planned_invitation(lanes: &Lanes, config: &SurfaceConfig, passive: &wi
     ]);
     let planning =
         crate::resident::room_catch_up::Planning::load(&lanes.bus, config).expect("planning loads");
-    let planned = crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied)
+    let planned = crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied, &[])
         .expect("invitations plan");
     let invitation = planned
         .iter()
@@ -583,6 +654,161 @@ fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
 }
 
 #[test]
+fn a_new_completion_invites_its_unchanged_occupant_without_restart_backfill() {
+    let lanes = Lanes::new("design-awareness-completion");
+    lanes.vacate(FIRST);
+    lanes.renew(FIRST, test_uuid(FIRST));
+    let config = surface(&lanes);
+    let task = lanes.claimed("dVrD245Kc", FIRST);
+    let design = lanes.design(
+        "dVrD245Kd",
+        "Cache invalidation cursor",
+        "Keep retained cache invalidation evidence bounded.",
+    );
+    let mut observed = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    lanes.complete(
+        &task,
+        "Verified cache invalidation through the bounded cursor.",
+    );
+    let mut restarted = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("restarted completion cursor starts");
+    let occupant = test_uuid(FIRST);
+    let mut seated = seats(&[(FIRST, occupant)]);
+    lanes.reconcile_completions(&config, &seated, &mut restarted);
+    assert!(
+        lanes.noticed().is_empty(),
+        "a restarted resident does not backfill an earlier completion"
+    );
+    lanes.reconcile_completions(&config, &seated, &mut observed);
+    assert_eq!(lanes.told(FIRST, occupant), [stamp(&design)]);
+    lanes.reconcile_completions(&config, &seated, &mut observed);
+    assert_eq!(
+        lanes.told(FIRST, occupant),
+        [stamp(&design)],
+        "the completion is consumed once"
+    );
+    seated.release_all();
+    lanes.finish();
+}
+
+#[test]
+fn completion_overlap_made_only_of_board_common_terms_invites_nothing() {
+    let lanes = Lanes::new("design-awareness-completion-common");
+    lanes.vacate(FIRST);
+    lanes.renew(FIRST, test_uuid(FIRST));
+    let config = surface(&lanes);
+    let task = lanes.seed_task(
+        "dVrD245Kc",
+        "Lane room cursor",
+        Some("Retained lane room cursor."),
+        None,
+        Some(test_uuid(FIRST)),
+    );
+    let _design = lanes.design(
+        "dVrD245Kd",
+        "Room cursor lane",
+        "Retained room cursor lane.",
+    );
+    for index in 0..8 {
+        let stamp = wire::TaskStamp::for_micros(20_000 + index)
+            .expect("fixture stamp")
+            .to_string();
+        lanes.seed_task(
+            &stamp,
+            "Lane room cursor",
+            Some("Retained lane room cursor."),
+            None,
+            None,
+        );
+    }
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    lanes.complete(&task, "Retained lane room cursor.");
+    let occupant = test_uuid(FIRST);
+    let mut seated = seats(&[(FIRST, occupant)]);
+    lanes.reconcile_completions(&config, &seated, &mut completions);
+    assert!(
+        lanes.noticed().is_empty(),
+        "board-common completion terms provide no match weight"
+    );
+    seated.release_all();
+    lanes.finish();
+}
+
+#[test]
+fn claim_and_completion_triggers_share_once_per_occupant_suppression() {
+    {
+        let lanes = Lanes::new("design-awareness-claim-then-completion");
+        lanes.vacate(FIRST);
+        lanes.renew(FIRST, test_uuid(FIRST));
+        let config = surface(&lanes);
+        let task = lanes.claimed("dVrD245Kc", FIRST);
+        let design = lanes.design("dVrD245Kd", "Room catch-up pagination", PITCH);
+        let occupant = test_uuid(FIRST);
+        let mut seated = seats(&[(FIRST, occupant)]);
+        lanes.reconcile(&config, &seated);
+        let mut completions =
+            crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+                .expect("completion cursor starts");
+        lanes.complete(&task, MATCHING);
+        lanes.reconcile_completions(&config, &seated, &mut completions);
+        assert_eq!(lanes.told(FIRST, occupant), [stamp(&design)]);
+        seated.release_all();
+        lanes.finish();
+    }
+    {
+        let lanes = Lanes::new("design-awareness-completion-then-claim");
+        lanes.vacate(FIRST);
+        lanes.renew(FIRST, test_uuid(FIRST));
+        let config = surface(&lanes);
+        let task = lanes.claimed("dVrD245Kc", FIRST);
+        let design = lanes.design("dVrD245Kd", "Room catch-up pagination", PITCH);
+        let occupant = test_uuid(FIRST);
+        let mut seated = seats(&[(FIRST, occupant)]);
+        let mut completions =
+            crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+                .expect("completion cursor starts");
+        lanes.complete(&task, MATCHING);
+        lanes.reconcile_completions(&config, &seated, &mut completions);
+        let _later = lanes.claimed("dVrD245Kp", FIRST);
+        lanes.reconcile(&config, &seated);
+        assert_eq!(lanes.told(FIRST, occupant), [stamp(&design)]);
+        seated.release_all();
+        lanes.finish();
+    }
+}
+
+#[test]
+fn a_completion_observation_refuses_after_the_design_statement_moves() {
+    let lanes = Lanes::new("design-awareness-completion-race");
+    lanes.vacate(FIRST);
+    lanes.renew(FIRST, test_uuid(FIRST));
+    let config = surface(&lanes);
+    let task = lanes.claimed("dVrD245Kc", FIRST);
+    let design = lanes.design("dVrD245Kd", "Room catch-up pagination", PITCH);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    lanes.complete(&task, MATCHING);
+    let completed = completions.take(&lanes.bus).expect("completion page reads");
+    let occupied = BTreeMap::from([(test_uuid(FIRST), test_uuid(FIRST))]);
+    let planning = crate::resident::room_catch_up::Planning::load(&lanes.bus, &config)
+        .expect("planning loads");
+    let mut planned =
+        crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied, &completed)
+            .expect("completion invitation plans");
+    assert_eq!(planned.len(), 1);
+    lanes.retitle(&design, "A different statement");
+    assert!(
+        !crate::resident::design_awareness::record(&lanes.bus, &planned.remove(0))
+            .expect("stale invitation is judged"),
+        "a moved Design statement commits no completion invitation"
+    );
+    assert!(lanes.noticed().is_empty());
+    lanes.finish();
+}
+
+#[test]
 fn a_stale_observation_commits_no_invitation() {
     let lanes = Lanes::new("design-awareness-race");
     let config = surface(&lanes);
@@ -593,7 +819,7 @@ fn a_stale_observation_commits_no_invitation() {
     let observe = || {
         let planning = crate::resident::room_catch_up::Planning::load(&lanes.bus, &config)
             .expect("planning loads");
-        crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied)
+        crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied, &[])
             .expect("invitations plan")
     };
     let (earlier, later) = (observe(), observe());
@@ -725,8 +951,9 @@ fn observed_invitation(
     let occupied = BTreeMap::from([(test_uuid(FIRST), test_uuid(FIRST + 1))]);
     let planning =
         crate::resident::room_catch_up::Planning::load(&lanes.bus, config).expect("planning loads");
-    let mut planned = crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied)
-        .expect("invitation plans");
+    let mut planned =
+        crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied, &[])
+            .expect("invitation plans");
     assert_eq!(planned.len(), 1);
     (task, design, planned.remove(0))
 }
