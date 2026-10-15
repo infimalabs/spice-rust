@@ -504,6 +504,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   border: 0;
   border-inline-start: var(--app-control-edge);
   background: color-mix(in srgb, var(--panel) 96%, var(--page));
+  color: var(--ink);
 }
 .app-overlay-panel {
   background: color-mix(in srgb, var(--panel) 94%, var(--control));

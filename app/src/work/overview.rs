@@ -48,6 +48,20 @@ impl TaskOverviewContext {
     }
 }
 
+/// The base flavor an overview wears: the base of the namespace or console its
+/// selection shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskOverviewBase<'s> {
+    /// The page's own base.
+    Page,
+    /// The Design namespace's base, which the Design global rail wears.
+    Design,
+    /// One team console's base.
+    Team(wire::CanonicalUuid),
+    /// One working-group console's base.
+    Group(&'s wire::rooms::RoomAuthorityStamp),
+}
+
 /// One explicit overview selection. The vector is complete, stable, and
 /// deduplicated; there is no distinguished current task or hidden sibling set.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -252,6 +266,38 @@ impl WorkProjection<'_> {
             self.project_tasks(&project),
             TaskOverviewContext::Project(project),
         )
+    }
+
+    /// The base `selection` shows. Team and working-group scopes show their
+    /// console; the Design scope, or any nonempty selection of only
+    /// Design-owned work, shows the Design namespace; anything else shows the
+    /// page.
+    #[must_use]
+    pub fn overview_base<'s>(&self, selection: &'s TaskOverviewSelection) -> TaskOverviewBase<'s> {
+        match &selection.context {
+            TaskOverviewContext::Scope(WorkScope::Team { team }) => TaskOverviewBase::Team(*team),
+            TaskOverviewContext::Scope(WorkScope::Group { group, .. }) => {
+                TaskOverviewBase::Group(group)
+            }
+            TaskOverviewContext::Scope(WorkScope::Planning { .. }) => TaskOverviewBase::Design,
+            _ if !selection.is_empty() && self.only_design_owned(&selection.tasks) => {
+                TaskOverviewBase::Design
+            }
+            _ => TaskOverviewBase::Page,
+        }
+    }
+
+    /// Whether every task in the deduplicated `tasks` is current and
+    /// Design-owned.
+    fn only_design_owned(&self, tasks: &[TaskStamp]) -> bool {
+        let tasks = tasks.iter().collect::<BTreeSet<_>>();
+        self.tasks
+            .iter()
+            .filter(|task| {
+                task.belongs_to_design() && tasks.contains(&task.row.statement.body.born)
+            })
+            .count()
+            == tasks.len()
     }
 
     /// Build the graph that is available synchronously with the board snapshot.
@@ -484,5 +530,52 @@ mod tests {
         assert_eq!(graph.edges().len(), 2);
         assert_eq!(graph.nodes()[10].kind(), TaskOverviewNodeKind::External);
         assert_eq!(graph.nodes()[11].kind(), TaskOverviewNodeKind::Missing);
+    }
+
+    #[test]
+    fn an_overview_shows_the_design_base_only_for_design_scope_or_wholly_design_owned_work() {
+        let mut design = task(1, "alpha.design");
+        design.statement.body.intent = Some(wire::TaskIntent::Design);
+        let mut second = task(2, "alpha.design");
+        second.statement.body.intent = Some(wire::TaskIntent::Design);
+        let board = board(vec![design, second, task(3, "alpha.build")]);
+        let work = WorkProjection::from_board(&board);
+        let selection = |tasks: &[i64], context| {
+            TaskOverviewSelection::new(tasks.iter().copied().map(stamp), context)
+        };
+        let design_scope = TaskOverviewContext::Scope(WorkScope::Planning { stem: None });
+
+        assert_eq!(
+            work.overview_base(&selection(&[1, 2], TaskOverviewContext::Task)),
+            TaskOverviewBase::Design
+        );
+        assert_eq!(
+            work.overview_base(&selection(&[1, 3], TaskOverviewContext::Task)),
+            TaskOverviewBase::Page,
+            "execution work beside a Design keeps the page base"
+        );
+        assert_eq!(
+            work.overview_base(&selection(&[1, 99], TaskOverviewContext::Task)),
+            TaskOverviewBase::Page,
+            "a task the board does not carry is not known to be Design-owned"
+        );
+        assert_eq!(
+            work.overview_base(&selection(&[], TaskOverviewContext::Task)),
+            TaskOverviewBase::Page
+        );
+        assert_eq!(
+            work.overview_base(&selection(&[], design_scope)),
+            TaskOverviewBase::Design,
+            "the Design scope shows its namespace even while empty"
+        );
+        let team: wire::CanonicalUuid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            .parse()
+            .expect("fixture team");
+        let team_scope = TaskOverviewContext::Scope(WorkScope::Team { team });
+        assert_eq!(
+            work.overview_base(&selection(&[1, 2], team_scope)),
+            TaskOverviewBase::Team(team),
+            "a team scope shows its console even over only Design work"
+        );
     }
 }

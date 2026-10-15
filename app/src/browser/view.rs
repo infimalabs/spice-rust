@@ -249,6 +249,7 @@ fn render_spice_sidebar(render: &AppRender<'_>, runtime: Option<&AppRuntime>) ->
         label: "Spice".into(),
         title: "Operator, resident & teams".into(),
         width: sidebar::Width::Small,
+        base_accent: None,
         body,
         overlay: Html::default(),
         overlay_open: false,

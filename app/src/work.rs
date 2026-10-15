@@ -13,7 +13,7 @@ mod relationship;
 mod wall;
 pub use operator::{OperatorQueue, OperatorWait};
 pub use overview::{
-    TaskOverviewContext, TaskOverviewEdge, TaskOverviewGraph, TaskOverviewNode,
+    TaskOverviewBase, TaskOverviewContext, TaskOverviewEdge, TaskOverviewGraph, TaskOverviewNode,
     TaskOverviewNodeKind, TaskOverviewSelection,
 };
 pub use relationship::{

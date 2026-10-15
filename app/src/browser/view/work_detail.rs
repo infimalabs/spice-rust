@@ -4,7 +4,7 @@ use super::super::clock::{TaskTimePresentation, task_time};
 use super::*;
 use crate::composer_markdown::inline::LineControls;
 use crate::runtime::LaneView;
-use crate::work::{TaskOverviewSelection, WorkProjection, WorkTask};
+use crate::work::{TaskOverviewBase, TaskOverviewSelection, WorkProjection, WorkTask};
 use wire::TaskStamp;
 
 pub(super) struct WorkDetailRender<'a, 'work> {
@@ -106,11 +106,31 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> sidebar::Content {
         label: "Task overview".into(),
         title: overview_title(render.selection, render.runtime).into(),
         width: sidebar::Width::Large,
+        base_accent: base_accent(&render),
         body,
         overlay,
         overlay_open: **render.blocker_review,
         dismiss_overlay,
         anchor: None,
+    }
+}
+
+/// The palette index of the base the overview shows, as the team console,
+/// working-group console, or Design global rail wears it.
+fn base_accent(render: &WorkDetailRender<'_, '_>) -> Option<usize> {
+    match render.work.overview_base(render.selection) {
+        TaskOverviewBase::Page => None,
+        TaskOverviewBase::Design => Some(crate::watchband::DESIGN_BASE),
+        TaskOverviewBase::Team(team) => render
+            .lanes?
+            .lanes
+            .iter()
+            .find(|row| row.lane == team)
+            .map(|row| row.accent(0)),
+        TaskOverviewBase::Group(group) => super::super::rooms::group_base(
+            &render.runtime?.room_projection().partition().groups,
+            group,
+        ),
     }
 }
 
