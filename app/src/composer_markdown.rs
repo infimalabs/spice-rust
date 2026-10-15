@@ -542,11 +542,16 @@ fn parse_events<'m>(
                 if quote_depth == 0 {
                     let quote = if let Some(context) = contexts.remove(&source.start) {
                         OuterQuote {
-                            accent: quotes::speaker_accent(
-                                &context_author(&context),
-                                &context.quote_target.to_string(),
-                                quote_agents,
-                                quote_sources,
+                            accent: context.delivery.as_ref().map_or_else(
+                                || {
+                                    quotes::speaker_accent(
+                                        &context_author(&context),
+                                        &context.quote_target.to_string(),
+                                        quote_agents,
+                                        quote_sources,
+                                    )
+                                },
+                                |delivery| quotes::delivery_accent(delivery, quote_agents),
                             ),
                             attribution: Some(directive_attribution(
                                 &context,

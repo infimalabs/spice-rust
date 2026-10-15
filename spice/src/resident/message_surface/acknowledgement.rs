@@ -565,7 +565,7 @@ fn packet_acknowledgement(packet: &ClassifiedPacket) -> Option<wire::MessageAckn
     }
 }
 
-fn append_acknowledgement_quote(rendered: &mut String, directive: &str) {
+pub(super) fn append_acknowledgement_quote(rendered: &mut String, directive: &str) {
     for (index, line) in directive.split('\n').enumerate() {
         if index > 0 {
             rendered.push('\n');

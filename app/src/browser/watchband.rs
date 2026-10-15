@@ -449,7 +449,8 @@ fn broadcast_targets(
         .collect()
 }
 
-/// Every stable assistant-authored record the team can render, newest first.
+/// Every stable assistant-authored record the team can render, and one card
+/// per operator send its members received, newest first.
 /// Observation time is the primary display order. The admitted lane and source
 /// locus break equal-time ties without parsing a rendered DOM identity. The
 /// persistent plane uses this complete order to distinguish edge additions
@@ -469,56 +470,76 @@ fn activity_cards(
         .map(|board| Rc::clone(&board.quote_tasks))
         .unwrap_or_default();
     let unquoted_tasks = Rc::new(crate::runtime::QuoteTasks::new());
+    let agent_card = |position: usize,
+                      member: &crate::runtime::LaneMember,
+                      message: Rc<wire::AgentMessage>| {
+        ActivityCard::Agent {
+            accent: team.accent(position),
+            member: member.clone(),
+            quote_agents: if message.quotes.is_empty()
+                && message.directive_contexts.is_empty()
+                && message.sends.is_empty()
+            {
+                Rc::clone(&unquoted)
+            } else {
+                Rc::new(crate::composer_markdown::referenced_quote_agents(
+                    &message.quotes,
+                    &message.directive_contexts,
+                    &message.sends,
+                    quote_agents,
+                ))
+            },
+            quote_sources: if message.quotes.is_empty() && message.directive_contexts.is_empty() {
+                Rc::clone(&unquoted_sources)
+            } else {
+                Rc::new(crate::composer_markdown::referenced_quote_sources(
+                    &message.quotes,
+                    &message.directive_contexts,
+                    &quote_sources,
+                ))
+            },
+            quote_tasks: if message.quotes.is_empty() && message.directive_contexts.is_empty() {
+                Rc::clone(&unquoted_tasks)
+            } else {
+                Rc::new(crate::composer_markdown::referenced_quote_tasks(
+                    &message.quotes,
+                    &message.directive_contexts,
+                    &quote_tasks,
+                ))
+            },
+            quote_lane: crate::composer_drafts::quote_lane(&team.members, &message),
+            message,
+            companions: Rc::from([]),
+        }
+    };
+    let member_of = |lane: CanonicalUuid| {
+        team.members
+            .iter()
+            .enumerate()
+            .find(|(_, member)| member.lane == lane)
+    };
     let mut cards = runtime
         .messages()
         .iter()
+        .filter(|message| message.activity != wire::AgentActivityKind::Direction)
         .filter_map(|message| {
-            let (position, member) = team
-                .members
-                .iter()
-                .enumerate()
-                .find(|(_, member)| member.lane == message.lane)?;
-            Some(ActivityCard::Agent {
-                accent: team.accent(position),
-                member: member.clone(),
-                quote_agents: if message.quotes.is_empty()
-                    && message.directive_contexts.is_empty()
-                    && message.sends.is_empty()
-                {
-                    Rc::clone(&unquoted)
-                } else {
-                    Rc::new(crate::composer_markdown::referenced_quote_agents(
-                        &message.quotes,
-                        &message.directive_contexts,
-                        &message.sends,
-                        quote_agents,
-                    ))
-                },
-                quote_sources: if message.quotes.is_empty() && message.directive_contexts.is_empty()
-                {
-                    Rc::clone(&unquoted_sources)
-                } else {
-                    Rc::new(crate::composer_markdown::referenced_quote_sources(
-                        &message.quotes,
-                        &message.directive_contexts,
-                        &quote_sources,
-                    ))
-                },
-                quote_tasks: if message.quotes.is_empty() && message.directive_contexts.is_empty() {
-                    Rc::clone(&unquoted_tasks)
-                } else {
-                    Rc::new(crate::composer_markdown::referenced_quote_tasks(
-                        &message.quotes,
-                        &message.directive_contexts,
-                        &quote_tasks,
-                    ))
-                },
-                quote_lane: crate::composer_drafts::quote_lane(&team.members, message),
-                message: Rc::clone(message),
-                companions: Rc::from([]),
-            })
+            let (position, member) = member_of(message.lane)?;
+            Some(agent_card(position, member, Rc::clone(message)))
         })
         .collect::<Vec<_>>();
+    let lanes = team
+        .members
+        .iter()
+        .map(|member| member.lane)
+        .collect::<Vec<_>>();
+    cards.extend(
+        crate::watchband::direction_cards(runtime.messages().iter().map(Rc::as_ref), &lanes)
+            .into_iter()
+            .filter_map(|message| {
+                let (position, member) = member_of(message.lane)?;
+                Some(agent_card(position, member, Rc::new(message)))
+            }),
+    );
     cards.extend(
         runtime
             .lifecycle_boundaries()

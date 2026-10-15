@@ -474,6 +474,7 @@ mod tests {
                     recipient: None,
                     packet: None,
                     published: published(),
+                    fanout: None,
                     lane: lane(),
                     text,
                     authored: true,

@@ -201,16 +201,20 @@ pub(super) fn render_message_chrome(
         &control_context,
         &mut controls,
     );
-    let corner = (!is_prose && !lone_tool_image).then(|| {
-        render_message_controls(
-            message,
-            shown_text,
-            correspondent,
-            false,
-            producer_label,
-            attribution,
-        )
-    });
+    // A direction card is its quote, whose own lead carries the age, the
+    // operator → receiver signoff, and the controls.
+    let corner =
+        (!is_prose && !lone_tool_image && message.activity != wire::AgentActivityKind::Direction)
+            .then(|| {
+                render_message_controls(
+                    message,
+                    shown_text,
+                    correspondent,
+                    false,
+                    producer_label,
+                    attribution,
+                )
+            });
     MessageChrome {
         signoff,
         controls: Rc::new(controls),

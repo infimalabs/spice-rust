@@ -357,7 +357,12 @@ impl AppRuntime {
 
     fn observe_messages(&mut self, messages: &[AgentMessage]) -> bool {
         let mut changed = self.message_cards.merge(messages.iter());
-        for message in messages {
+        // Operator direction is a card in its receiver's plane, not something
+        // the lane did.
+        for message in messages
+            .iter()
+            .filter(|message| message.activity != AgentActivityKind::Direction)
+        {
             changed |= self.push_activity(LaneActivity::from_message(message));
         }
         changed
@@ -519,7 +524,10 @@ impl AppRuntime {
 
     fn apply_activity_snapshot(&mut self, limit: usize, incoming: &[AgentMessage]) -> bool {
         let mut activities = Vec::<&AgentMessage>::new();
-        for message in incoming {
+        for message in incoming
+            .iter()
+            .filter(|message| message.activity != AgentActivityKind::Direction)
+        {
             if !activities
                 .iter()
                 .any(|existing| existing.lane == message.lane && existing.locus == message.locus)

@@ -76,6 +76,22 @@ pub struct MessageDirective {
     /// Result an ANS packet context answers. Other packet kinds carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<crate::rooms::QuestionResultRef>,
+    /// The delivery a top-level operator direction card presents. Only a
+    /// plain operator direction, delivered rather than answered, carries one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<MessageDelivery>,
+}
+
+/// One plain operator direction as its receivers' transcripts recorded it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageDelivery {
+    /// Operator submit action shared by every target-specific directive the
+    /// send fanned out to; a consumer presents one card per send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fanout: Option<crate::CanonicalUuid>,
+    /// Every occupant whose transcript recorded the delivery, in display order.
+    pub receivers: Vec<MessageDestination>,
 }
 
 /// A peer message's immutable destination, independent of current seating.
@@ -102,6 +118,13 @@ impl MessageDirective {
                 || (self.sender.is_some() && matches!(self.actor, crate::Actor::Lane(_)))
                 || (self.packet.is_some() && matches!(self.actor, crate::Actor::Operator)))
             && (self.result.is_some() == (self.packet == Some(MessageSendKind::Ans)))
+            && self.delivery.as_ref().is_none_or(|delivery| {
+                !delivery.receivers.is_empty()
+                    && matches!(self.actor, crate::Actor::Operator)
+                    && self.sender.is_none()
+                    && self.recipient.is_none()
+                    && self.packet.is_none()
+            })
     }
 }
 /// Whether directive contexts are exact, ordered, and non-overlapping.

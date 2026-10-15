@@ -27,6 +27,7 @@ enum MessageCardKind {
     Compaction,
     Session,
     SignOut,
+    Direction,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +58,7 @@ fn card_kind(message: &AgentMessage) -> Option<MessageCardKind> {
         AgentActivityKind::Compaction => Some(MessageCardKind::Compaction),
         AgentActivityKind::Session => Some(MessageCardKind::Session),
         AgentActivityKind::SignOut => Some(MessageCardKind::SignOut),
+        AgentActivityKind::Direction => Some(MessageCardKind::Direction),
     }
 }
 

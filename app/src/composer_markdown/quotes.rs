@@ -68,11 +68,17 @@ pub(crate) fn referenced_quote_agents(
             wire::Actor::Lane(lane) => Some(lane),
             wire::Actor::Operator | wire::Actor::Spice => None,
         })
-        .chain(
-            directives
-                .iter()
-                .filter_map(|directive| directive.recipient.map(|recipient| recipient.lane)),
-        )
+        .chain(directives.iter().flat_map(|directive| {
+            directive
+                .recipient
+                .map(|recipient| recipient.lane)
+                .into_iter()
+                .chain(
+                    directive.delivery.iter().flat_map(|delivery| {
+                        delivery.receivers.iter().map(|receiver| receiver.lane)
+                    }),
+                )
+        }))
         .chain(sends.iter().flat_map(|send| {
             std::iter::once(send.from).chain(send.recipients.iter().map(|recipient| recipient.lane))
         }))
@@ -184,7 +190,8 @@ pub(super) fn signoff_html(
 }
 
 /// Source attribution is independent of the answer's badge. A peer context
-/// carries the immutable destination proved by its creating message fact.
+/// carries the immutable destination proved by its creating message fact; a
+/// delivered direction names every member whose transcript recorded it.
 pub(super) fn directive_signoff_html(
     context: &wire::MessageDirective,
     target: &str,
@@ -197,10 +204,33 @@ pub(super) fn directive_signoff_html(
     };
     let age = quote_age_slot_html(&author, agents, source);
     let name = quote_author_name_html(&author, agents, source);
-    let destination = context.recipient.map_or_else(String::new, |recipient| {
-        participant_html(recipient.lane, recipient.occupant, None, agents)
-    });
+    let mut destination = String::new();
+    let receivers = context.recipient.iter().chain(
+        context
+            .delivery
+            .iter()
+            .flat_map(|delivery| &delivery.receivers),
+    );
+    for receiver in receivers {
+        push_recipient_separator(&mut destination);
+        destination.push_str(&participant_html(
+            receiver.lane,
+            receiver.occupant,
+            None,
+            agents,
+        ));
+    }
     packet_signoff_html(&age, &name, &destination, "incoming")
+}
+
+/// The accent slot a delivered direction's quote wears: its first
+/// receiver's, as that member's own cards wear it.
+pub(super) fn delivery_accent(
+    delivery: &wire::MessageDelivery,
+    agents: &super::QuoteAgents,
+) -> Option<usize> {
+    let receiver = delivery.receivers.first()?;
+    occupant_agent(agents, receiver.lane, receiver.occupant).map(|(agent, _)| agent.accent)
 }
 
 fn packet_signoff_html(age: &str, sender: &str, recipients: &str, direction: &str) -> String {

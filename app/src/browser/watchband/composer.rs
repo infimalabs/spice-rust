@@ -450,6 +450,10 @@ fn render_agent_message_card(
         card_label
     };
     let speaking = props.speech_owner.is_some();
+    // The operator's direction wears the neutral accent the operator speaks
+    // in; its quote wears the receiving member's.
+    let operator = message.activity == wire::AgentActivityKind::Direction;
+    let accent = (!operator).then(|| correspondent.accent.to_string());
     let task_click = message_task_click(props.open_task.clone());
     let task_keydown = message_task_keydown(props.open_task.clone());
     html! {
@@ -473,7 +477,7 @@ fn render_agent_message_card(
             } else {
                 "agent-message"
             }}
-            data-message-role="agent"
+            data-message-role={if operator { "operator" } else { "agent" }}
             data-mosaic-card-key={source_id}
             onclick={task_click}
             onkeydown={task_keydown}
@@ -488,8 +492,8 @@ fn render_agent_message_card(
             data-message-decline-count={classifications.declines.to_string()}
             data-speech-active={speaking.to_string()}
             data-producer-target-id={quote_lane.to_string()}
-            data-accent={correspondent.accent.to_string()}
-            data-accent-slot={correspondent.accent.to_string()}
+            data-accent={accent.clone()}
+            data-accent-slot={accent}
             data-state={layout.lifecycle.as_str()}
             data-track={layout.track.to_string()}
             data-span={layout.span.to_string()}
@@ -686,6 +690,7 @@ fn agent_message_card_label(
         ),
         wire::AgentActivityKind::Reasoning => format!("Thinking from {attribution}"),
         wire::AgentActivityKind::Prose => format!("Agent message from {attribution}"),
+        wire::AgentActivityKind::Direction => format!("Operator direction to {attribution}"),
     }
 }
 

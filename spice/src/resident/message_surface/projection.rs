@@ -514,9 +514,40 @@ fn project_event_body(
             automatic_speech: None,
             media: Vec::new(),
         },
+        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Operator => {
+            return project_direction(event, prose, steering);
+        }
         _ => return Ok(None),
     };
     Ok(Some(projected))
+}
+
+/// The authenticated operator direction one operator-role record delivered to
+/// its lane, or nothing when it delivered none.
+fn project_direction(
+    event: &AgentEvent<'_>,
+    prose: &listen::Prose,
+    steering: Option<&PresentationDirectives>,
+) -> CommandResult<Option<ProjectedEvent>> {
+    let presentation_event = PresentationEvent {
+        lane: event.lane,
+        author: Some(event.author),
+        source: event
+            .source
+            .or_else(|| event.observations.source(event.lane, prose.locus)),
+        locus: prose.locus,
+        ordinal: event.ordinal,
+    };
+    let presentation = direction::present(&prose.text, steering, presentation_event)
+        .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
+    Ok(presentation.map(|presentation| ProjectedEvent {
+        activity: AgentActivityKind::Direction,
+        locus: prose.locus,
+        presentation,
+        provider_error: None,
+        automatic_speech: None,
+        media: Vec::new(),
+    }))
 }
 
 fn agent_quote_target(

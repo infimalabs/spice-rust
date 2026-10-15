@@ -18,6 +18,7 @@ use super::{
 mod acknowledgement;
 mod automatic_speech;
 mod backlog;
+mod direction;
 mod media_hydration;
 mod pending;
 mod projection;
@@ -568,16 +569,20 @@ pub(super) fn steering_ledger(
     };
     let acknowledges = authored().any(steer::has_acknowledgement);
     let (packets, addresses) = packet_destinations(authored());
-    if !acknowledges && !packets {
+    let mut keys = direction::delivered(record.decoded.events());
+    if !acknowledges && !packets && keys.is_empty() {
         return Ok(None);
     }
+    if acknowledges {
+        keys.extend(steering_keys(authored()));
+    }
     let reader = bus.reader();
-    let mut ledger = if acknowledges {
-        let presentations = load_steering_presentations(&reader, &steering_keys(authored()))?;
+    let mut ledger = if keys.is_empty() {
+        PresentationDirectives::default()
+    } else {
+        let presentations = load_steering_presentations(&reader, &keys)?;
         PresentationDirectives::from_presentations(&presentations)
             .map_err(|error| store_fault("serve::message-steering-invalid", &error))?
-    } else {
-        PresentationDirectives::default()
     };
     ledger.prove_recipients(&reader, addresses)?;
     Ok(Some(ledger))
@@ -749,6 +754,8 @@ struct PresentationDirective {
     packet: Option<spice::quote::SteeringPacket>,
     /// Journal instant at which the directive's creating fact was committed.
     published: wire::Instant,
+    /// Operator submit action this directive's send shares with its siblings.
+    fanout: Option<CanonicalUuid>,
     retirement: Option<wire::body::TranscriptLocus>,
 }
 
@@ -845,6 +852,7 @@ impl PresentationDirectives {
                     ),
                     packet,
                     published: row.created().at,
+                    fanout: head.fanout,
                 },
             );
         }
@@ -1054,6 +1062,7 @@ fn hydrate_directive_contexts(
                     .packet
                     .as_ref()
                     .and_then(|packet| packet.result.clone()),
+                delivery: None,
             })
         })
         .collect()

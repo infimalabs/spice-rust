@@ -924,6 +924,16 @@ fn walk_observations(
     })
 }
 
+fn scan_events(scan: &listen::Scan) -> impl Iterator<Item = &listen::Event> {
+    scan.records
+        .iter()
+        .flat_map(|record| match &record.payload {
+            listen::RecordPayload::Events(events) => events.as_slice(),
+            _ => &[],
+        })
+        .map(|sourced| &sourced.event)
+}
+
 fn scan_assistant_texts(scan: &listen::Scan) -> impl Iterator<Item = &str> {
     scan.records
         .iter()
@@ -941,10 +951,9 @@ fn hydrate_steering_presentations(
     scan: &listen::Scan,
     steering: &mut PresentationDirectives,
 ) -> CommandResult<()> {
-    let keys = steering_keys(scan_assistant_texts(scan))
-        .into_iter()
-        .filter(|key| !steering.directives.contains_key(key))
-        .collect::<BTreeSet<_>>();
+    let mut keys = steering_keys(scan_assistant_texts(scan));
+    keys.extend(direction::delivered(scan_events(scan)));
+    keys.retain(|key| !steering.directives.contains_key(key));
     let rows = load_steering_presentations(bus, &keys)?;
     steering
         .extend_presentations(&rows)

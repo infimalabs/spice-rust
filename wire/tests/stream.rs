@@ -85,6 +85,7 @@ fn a_directive_destination_belongs_to_a_peer_sender_or_an_operator_packet() {
         recipient: Some(wire::MessageDestination { lane, occupant }),
         packet,
         result: None,
+        delivery: None,
     };
     let msg = Some(wire::MessageSendKind::Msg);
 
@@ -101,6 +102,39 @@ fn a_directive_destination_belongs_to_a_peer_sender_or_an_operator_packet() {
     assert!(
         !directive(Actor::Spice, None, msg).is_valid_for("> hi"),
         "only operator and peer packets have a destination"
+    );
+
+    let delivered = |actor, recipient| wire::MessageDirective {
+        recipient,
+        delivery: Some(wire::MessageDelivery {
+            fanout: None,
+            receivers: vec![wire::MessageDestination { lane, occupant }],
+        }),
+        ..directive(actor, None, None)
+    };
+    assert!(delivered(Actor::Operator, None).is_valid_for("> hi"));
+    assert!(
+        !delivered(Actor::Spice, None).is_valid_for("> hi"),
+        "only the operator's own direction is delivered as its card"
+    );
+    assert!(
+        !delivered(
+            Actor::Operator,
+            Some(wire::MessageDestination { lane, occupant })
+        )
+        .is_valid_for("> hi"),
+        "a delivery names its receivers, not one answering recipient"
+    );
+    let unreceived = wire::MessageDirective {
+        delivery: Some(wire::MessageDelivery {
+            fanout: None,
+            receivers: Vec::new(),
+        }),
+        ..delivered(Actor::Operator, None)
+    };
+    assert!(
+        !unreceived.is_valid_for("> hi"),
+        "a delivery has a receiver"
     );
 }
 

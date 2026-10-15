@@ -67,7 +67,8 @@ fn card_segments(activity: AgentActivityKind, text: &str, until_list: bool) -> V
         | AgentActivityKind::Turn
         | AgentActivityKind::Compaction
         | AgentActivityKind::Session
-        | AgentActivityKind::SignOut => Vec::new(),
+        | AgentActivityKind::SignOut
+        | AgentActivityKind::Direction => Vec::new(),
     }
 }
 

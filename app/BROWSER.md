@@ -461,13 +461,24 @@ its card shows the packet body, the same pills, and the lane the directive was
 delivered to after the arrow. A quote's head keeps the card head's type scale
 and name color.
 
+Each authenticated operator direction a lane's transcript recorded is also a
+top-level card in that lane's team plane, at its earliest recorded delivery.
+The card rests in the operator's neutral accent. Its body is the direction as
+one quote reading operator → receiving members, with that quote's Quote and
+Play controls and its steering quote target. One send fanned out to several
+members of a team is one card naming each of them, so a resend, a nudge,
+a reload, or an older page adds no second card. A peer delivery or a
+post-compaction replay is no direction card, and the answering ACK or NAK card
+still quotes the direction it answers.
+
 Each quote layer ends with one task target after its speaker's last word,
 filled with origin-task badges; it repeats on no other hunk, and Play never
 reads it. An isolated task-handle chip's hover title is its surrounding
 activity prose, or `Open task HANDLE` alone. Directly trailing sentence
 punctuation stays on the chip's line without preventing a break before it. A
 quote's rail shows its speaker: an agent's or peer lane's quote wears that
-lane's accent; operator, Spice, taste, broadcast, review, and unattributed
+lane's accent; a direction card's quote wears its first receiving member's;
+other operator, Spice, taste, broadcast, review, and unattributed
 quotes take the neutral accent; an
 unavailable quote keeps its warning rail.
 
