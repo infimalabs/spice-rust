@@ -103,7 +103,7 @@ pub(in crate::resident) fn configure(
         Ok(fast_mode) => fast_mode,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let flips = super::retune::fast_flips(observed.body(), &next, global_fast);
+    let flips = super::retune::fast_flips(observed.body(), global_fast, &next, global_fast);
     let lane_answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
@@ -623,7 +623,7 @@ pub(in crate::resident) fn arrange(
         Ok(fast_mode) => fast_mode,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let flips = super::retune::fast_flips(observed.body(), &next, global_fast);
+    let flips = super::retune::fast_flips(observed.body(), global_fast, &next, global_fast);
     let teams = standings(&arranged.partition);
     let lane_answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,

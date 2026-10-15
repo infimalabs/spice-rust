@@ -312,8 +312,9 @@ flowchart LR
   reads; omitting model or effort restores vendor configuration. Fast mode is
   additive: a launch runs fast when the seat, its team, or the global setting
   enables it. Lane rows report running values separately from seat values. A
-  running OMP occupant is retuned only after the seat or team change commits,
-  and its running value changes only when the provider confirms; a bare model, a
+  running OMP occupant is retuned only after the seat, team, or global change
+  commits, and for fast mode only when that change flips its effective value.
+  Its running value changes only when the provider confirms; a bare model, a
   clear, an unsupported occupant, a refusal, or an interrupted request leaves it
   unchanged. A launch applies the seat's effort before the first turn, and a
   refused opening effort fails the launch.

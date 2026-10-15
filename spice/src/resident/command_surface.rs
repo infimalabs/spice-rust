@@ -298,7 +298,27 @@ impl<'a> Surface<'a> {
             .map(CommandDispatch::ordinary)
             .or_else(|| self.dispatch_room_coordination(command))
             .or_else(|| self.dispatch_steering(command))
+            .or_else(|| self.dispatch_settings(command))
             .or_else(|| self.dispatch_policy(command).map(CommandDispatch::ordinary))
+    }
+
+    /// A global settings write, which owes running lanes their flipped fast mode.
+    fn dispatch_settings(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
+        let (CommandKind::GlobalSettingsSet, Intent::GlobalSettingsSet(settings)) =
+            (command.kind(), command.body())
+        else {
+            return None;
+        };
+        let mut effects = CommandEffects::default();
+        let outcome = settings_surface::set(
+            self.bus,
+            self.repository,
+            self.epoch,
+            command,
+            settings,
+            &mut effects,
+        );
+        Some(CommandDispatch::with_effects(outcome, effects))
     }
 
     /// Room reads, which commit nothing and notify no lane.
@@ -487,9 +507,6 @@ impl<'a> Surface<'a> {
             (CommandKind::VendorCatalog, Intent::VendorCatalog(_)) => {
                 Some(vendor_surface::catalog(self.bus, self.repository))
             }
-            (CommandKind::GlobalSettingsSet, Intent::GlobalSettingsSet(settings)) => Some(
-                settings_surface::set(self.bus, self.repository, self.epoch, command, settings),
-            ),
             (CommandKind::ConsentRead, Intent::ConsentRead(_)) => {
                 Some(policy_surface::read(self.reads, &self.config.consent))
             }
