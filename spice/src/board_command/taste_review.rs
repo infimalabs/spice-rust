@@ -272,7 +272,7 @@ pub(super) fn task_taste_review(
             .lanes
             .iter()
             .find(|seat| seat.lane == *lane),
-        Actor::Operator | Actor::Spice => None,
+        Actor::Operator | Actor::Spice | Actor::Human(_) => None,
     };
     let vendor = seat.map(|seat| seat.vendor.as_str());
     let model = seat

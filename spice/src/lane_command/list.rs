@@ -152,7 +152,7 @@ fn lane_list(
 ) -> Result<LanePage, Outcome<LanePage>> {
     let actor = match board.principal {
         Actor::Lane(lane) => Some(lane),
-        Actor::Operator | Actor::Spice => None,
+        Actor::Operator | Actor::Spice | Actor::Human(_) => None,
     };
     lane_list_page(lane_list_candidates(board)?, actor, options).map(LanePage)
 }

@@ -97,17 +97,23 @@ impl JournalCursor {
 /// choose it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Actor {
-    /// The operator acting directly.
+    /// The operator acting directly, before human principals authenticated
+    /// their own connections. Historical facts keep this spelling; nothing
+    /// authors it any longer.
     Operator,
     /// The resident acting on its own behalf.
     Spice,
     /// A seated lane.
     Lane(CanonicalUuid),
+    /// A born human principal acting through its own capability.
+    Human(CanonicalUuid),
 }
 
 impl Actor {
     /// Prefix introducing a lane principal.
     const LANE: &'static str = "lane:";
+    /// Prefix introducing a human principal.
+    const HUMAN: &'static str = "human:";
 }
 
 impl Ord for Actor {
@@ -138,7 +144,9 @@ impl PartialOrd for Actor {
 
 /// Text that does not name a principal.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[error("actor must be `operator`, `spice`, or `lane:<canonical-uuid>`: {0:?}")]
+#[error(
+    "actor must be `operator`, `spice`, `lane:<canonical-uuid>`, or `human:<canonical-uuid>`: {0:?}"
+)]
 pub struct ActorError(String);
 
 impl FromStr for Actor {
@@ -152,6 +160,11 @@ impl FromStr for Actor {
                 .strip_prefix(Self::LANE)
                 .and_then(|lane| lane.parse().ok())
                 .map(Self::Lane)
+                .or_else(|| {
+                    text.strip_prefix(Self::HUMAN)
+                        .and_then(|human| human.parse().ok())
+                        .map(Self::Human)
+                })
                 .ok_or_else(|| ActorError(text.to_owned())),
         }
     }
@@ -163,6 +176,7 @@ impl fmt::Display for Actor {
             Self::Operator => formatter.write_str("operator"),
             Self::Spice => formatter.write_str("spice"),
             Self::Lane(lane) => write!(formatter, "{}{lane}", Self::LANE),
+            Self::Human(principal) => write!(formatter, "{}{principal}", Self::HUMAN),
         }
     }
 }

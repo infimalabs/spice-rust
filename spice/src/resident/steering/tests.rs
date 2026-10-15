@@ -32,8 +32,13 @@ fn only_operator_role_holders_and_exact_withheld_packet_controls_wake_a_lane() {
     let operator = crate::test_principal::bootstrap_holding(&[PrincipalRole::Operator]);
     let revoked = crate::test_principal::bootstrap_holding(&[]);
 
+    let human = Actor::Human(operator.bootstrap().expect("bootstrap principal"));
+    let stranger = Actor::Human(DIRECTIVE.parse().expect("unborn principal"));
     assert!(sent_wakes(&operator, &Actor::Operator, None));
+    assert!(sent_wakes(&operator, &human, None));
+    assert!(!sent_wakes(&operator, &stranger, None));
     assert!(!sent_wakes(&revoked, &Actor::Operator, None));
+    assert!(!sent_wakes(&revoked, &human, None));
     assert!(sent_wakes(&revoked, &Actor::Spice, Some(&control)));
     assert!(!sent_wakes(
         &operator,

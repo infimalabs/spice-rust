@@ -5,13 +5,16 @@ pub(super) async fn bootstrap(
     RawQuery(query): RawQuery,
     headers: HeaderMap,
 ) -> Response {
-    if !state.access.admits_token(query.as_deref()) {
+    if !state.access.admits(query.as_deref(), &state.capabilities) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let Ok(host) = admit_headers(&state, &headers, false) else {
         return StatusCode::FORBIDDEN.into_response();
     };
-    let Some(capability) = state.capabilities.operator() else {
+    let Some(capability) = state
+        .capabilities
+        .serving(presented_capability(query.as_deref()))
+    else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let app_generation = match state.app.current_generation() {

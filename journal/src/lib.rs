@@ -6,8 +6,10 @@
 /// predecessors, which writable open crosses exactly once into the current
 /// shape. Retired schemas refuse before persistent storage configuration and
 /// name the release that last migrated them; newer schemas refuse because this
-/// build cannot know what their owning release added.
-pub const SCHEMA_VERSION: u32 = 60;
+/// build cannot know what their owning release added. Schema 61 admits the
+/// `human:<principal>` actor spelling and principal capability digests, which
+/// an older release cannot read.
+pub const SCHEMA_VERSION: u32 = 61;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

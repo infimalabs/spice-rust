@@ -1,13 +1,10 @@
 //! Axum listener binding, web-origin checks, and socket capability admission.
 
-use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -25,11 +22,13 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Discovery;
 
+mod capabilities;
 mod control;
 mod history;
 mod listener;
 mod socket;
 
+pub use capabilities::{Capabilities, CapabilityError};
 use listener::ClosingListener;
 use socket::{admit_headers, is_dark, reachable_as, socket};
 
@@ -44,209 +43,6 @@ const INLINE_MODULE_OPEN: &str = "<script type=\"module\">";
 const INLINE_MODULE_CLOSE: &str = "</script>";
 const SCRIPT_OPEN: &str = "<script";
 const DEFAULT_SCRIPT_HASH: &str = "B50SC8VLF+K2T0Re7VCfyZ3PqVhYIkg+OlhW+7PQyTU=";
-
-/// Closed capability-to-principal map for one resident generation, with the
-/// principal role heads its command door and operator lookups decide by.
-#[derive(Clone, Default)]
-pub struct Capabilities {
-    principals: Arc<RwLock<BTreeMap<wire::CanonicalUuid, CapabilityBinding>>>,
-    roles: crate::RoleBook,
-}
-
-#[derive(Clone, Debug)]
-struct CapabilityBinding {
-    actor: wire::Actor,
-    retired: CancellationToken,
-}
-
-struct CapabilityAdmission {
-    accepted: wire::Accepted,
-    retired: CancellationToken,
-}
-
-impl fmt::Debug for Capabilities {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Capabilities")
-            .field(
-                "principals",
-                &self
-                    .principals
-                    .read()
-                    .map_or(0, |principals| principals.len()),
-            )
-            .finish()
-    }
-}
-
-impl Capabilities {
-    /// Register an operator or lane capability exactly once.
-    pub fn insert(
-        &self,
-        capability: wire::CanonicalUuid,
-        actor: wire::Actor,
-    ) -> Result<(), CapabilityError> {
-        if matches!(actor, wire::Actor::Spice) {
-            return Err(CapabilityError::ResidentIsNotInteractive);
-        }
-        let mut principals = self
-            .principals
-            .write()
-            .map_err(|_| CapabilityError::Unavailable)?;
-        match principals.entry(capability) {
-            Entry::Vacant(entry) => {
-                entry.insert(CapabilityBinding {
-                    actor,
-                    retired: CancellationToken::new(),
-                });
-                Ok(())
-            }
-            Entry::Occupied(_) => Err(CapabilityError::Duplicate),
-        }
-    }
-
-    /// Remove one exact capability mapping during a failed or retired seat.
-    pub fn remove(&self, capability: wire::CanonicalUuid, actor: &wire::Actor) -> bool {
-        let Ok(mut principals) = self.principals.write() else {
-            return false;
-        };
-        if principals
-            .get(&capability)
-            .is_none_or(|binding| &binding.actor != actor)
-        {
-            return false;
-        }
-        let retired = principals
-            .remove(&capability)
-            .expect("matching capability remains under the registry lock")
-            .retired;
-        drop(principals);
-        retired.cancel();
-        true
-    }
-
-    /// Admit a current hello and derive its principal server-side.
-    pub fn admit(
-        &self,
-        hello: &wire::Hello,
-        epoch: wire::CanonicalUuid,
-        release: &wire::manifest::ProductVersion,
-    ) -> Result<wire::Accepted, OpeningError> {
-        self.admit_session(hello, epoch, release)
-            .map(|admission| admission.accepted)
-    }
-
-    /// Admit one socket and retain the exact binding that authenticated it.
-    fn admit_session(
-        &self,
-        hello: &wire::Hello,
-        epoch: wire::CanonicalUuid,
-        release: &wire::manifest::ProductVersion,
-    ) -> Result<CapabilityAdmission, OpeningError> {
-        hello.admit(epoch).map_err(|rejected| match rejected {
-            wire::Rejected::Wire(refusal) => OpeningError::Refused(refusal),
-            wire::Rejected::Epoch(fault) => OpeningError::Fault(fault),
-        })?;
-        let (actor, retired) = self
-            .principals
-            .read()
-            .map_err(|_| {
-                OpeningError::Fault(wire::Fault {
-                    class: wire::FaultClass::Environment,
-                    reason: "serve::capability-unavailable".to_owned(),
-                    detail: "resident capability registry is unavailable".to_owned(),
-                })
-            })?
-            .get(&hello.capability)
-            .map(|binding| (binding.actor.clone(), binding.retired.clone()))
-            .ok_or_else(|| {
-                OpeningError::Refused(wire::Refusal::bare(wire::RefusalDiagnostic::new(
-                    "hello::capability-unknown",
-                    None,
-                    None,
-                    None,
-                )))
-            })?;
-        Ok(CapabilityAdmission {
-            accepted: wire::Accepted {
-                wire: wire::WireVersion::CURRENT,
-                actor,
-                epoch,
-                release: release.clone(),
-            },
-            retired,
-        })
-    }
-
-    /// The principal role heads this generation decides authority by. The
-    /// resident publishes them before serving and after every principal
-    /// change, so a role change governs that principal's next request.
-    #[must_use]
-    pub fn roles(&self) -> &crate::RoleBook {
-        &self.roles
-    }
-
-    fn is_operator(&self, capability: wire::CanonicalUuid) -> bool {
-        let Ok(roles) = self.roles.current() else {
-            return false;
-        };
-        self.principals.read().ok().is_some_and(|principals| {
-            principals.get(&capability).is_some_and(|binding| {
-                roles.holds(&binding.actor, wire::principal::PrincipalRole::Operator)
-            })
-        })
-    }
-
-    fn matches(&self, capability: wire::CanonicalUuid, actor: &wire::Actor) -> bool {
-        self.principals.read().ok().is_some_and(|principals| {
-            principals
-                .get(&capability)
-                .is_some_and(|binding| &binding.actor == actor)
-        })
-    }
-
-    fn contains(&self, capability: wire::CanonicalUuid) -> bool {
-        self.principals
-            .read()
-            .ok()
-            .is_some_and(|principals| principals.contains_key(&capability))
-    }
-
-    fn operator(&self) -> Option<wire::CanonicalUuid> {
-        let roles = self.roles.current().ok()?;
-        let principals = self.principals.read().ok()?;
-        let mut operators = principals.iter().filter_map(|(capability, binding)| {
-            roles
-                .holds(&binding.actor, wire::principal::PrincipalRole::Operator)
-                .then_some(*capability)
-        });
-        let operator = operators.next()?;
-        operators.next().is_none().then_some(operator)
-    }
-}
-
-/// Capability registration was structurally invalid.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CapabilityError {
-    Duplicate,
-    ResidentIsNotInteractive,
-    NotOperator,
-    /// The shared registry could not be acquired.
-    Unavailable,
-}
-
-impl fmt::Display for CapabilityError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Duplicate => "app capability is already registered",
-            Self::ResidentIsNotInteractive => "resident actor cannot own an interactive capability",
-            Self::NotOperator => "resident discovery requires an operator capability",
-            Self::Unavailable => "app capability registry is unavailable",
-        })
-    }
-}
-
-impl Error for CapabilityError {}
 
 /// Opening failed before a capability-scoped session existed.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -330,15 +126,9 @@ impl Access {
         self.allow_non_loopback
     }
 
-    fn admits_token(&self, query: Option<&str>) -> bool {
-        self.token.as_deref().is_none_or(|expected| {
-            query_secret(query).is_some_and(|got| {
-                constant_time_eq::constant_time_eq(got.as_bytes(), expected.as_bytes())
-            })
-        })
-    }
-
-    fn admits_socket(&self, query: Option<&str>, capabilities: &Capabilities) -> bool {
+    /// Whether the query carries this surface's token or a capability it
+    /// binds; a local or trusted-network surface admits every query.
+    fn admits(&self, query: Option<&str>, capabilities: &Capabilities) -> bool {
         self.token.is_none()
             || query_secret(query).is_some_and(|got| {
                 self.token.as_deref().is_some_and(|expected| {
@@ -348,6 +138,11 @@ impl Access {
                     .is_ok_and(|capability| capabilities.contains(capability))
             })
     }
+}
+
+/// The capability a query's secret names, when it is one.
+fn presented_capability(query: Option<&str>) -> Option<wire::CanonicalUuid> {
+    query_secret(query)?.parse().ok()
 }
 
 impl fmt::Debug for Access {
@@ -797,10 +592,10 @@ impl Server {
             .map(crate::stream::Source::message_publisher)
     }
 
-    /// Discovery document for the registered operator capability.
+    /// Discovery document for a born principal's registered capability.
     pub fn discovery(&self, capability: wire::CanonicalUuid) -> Result<Discovery, CapabilityError> {
-        if !self.state.capabilities.is_operator(capability) {
-            return Err(CapabilityError::NotOperator);
+        if !self.state.capabilities.is_principal(capability) {
+            return Err(CapabilityError::NotPrincipal);
         }
         Ok(Discovery {
             endpoint: self.state.origin.clone(),

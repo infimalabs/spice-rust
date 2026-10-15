@@ -97,6 +97,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::PrincipalEdit
         | CommandKind::PrincipalGrant
         | CommandKind::PrincipalRevoke
+        | CommandKind::PrincipalDeauthorize
         | CommandKind::LaneRead
         | CommandKind::LaneState
         | CommandKind::LaneJobsRead

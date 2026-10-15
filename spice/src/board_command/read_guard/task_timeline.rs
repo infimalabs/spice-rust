@@ -196,7 +196,7 @@ fn transition(
 fn lane_of(actor: &Actor) -> Option<wire::CanonicalUuid> {
     match actor {
         Actor::Lane(lane) => Some(*lane),
-        Actor::Operator | Actor::Spice => None,
+        Actor::Operator | Actor::Spice | Actor::Human(_) => None,
     }
 }
 

@@ -86,9 +86,10 @@ impl Principal {
         self.scope
     }
 
-    /// True when this principal resolves to the operator's principal.
+    /// True when this principal is a human acting as itself, or the
+    /// historical operator actor its bootstrap principal answers for.
     #[must_use]
-    pub const fn is_operator(&self) -> bool {
+    pub const fn is_human(&self) -> bool {
         wire::principal::ActingPrincipal::of(&self.actor).is_some()
     }
 }
@@ -260,7 +261,7 @@ impl<'a> SteerPane<'a> {
     pub const fn offers(&self, kind: CommandKind) -> bool {
         match kind.law().authority {
             Authority::Connected => true,
-            Authority::Operator => self.principal.is_operator(),
+            Authority::Operator => self.principal.is_human(),
         }
     }
 
@@ -319,7 +320,7 @@ impl<'a> GrantPane<'a> {
     /// Open a grant pane, or `None` for a principal without the capability.
     #[must_use]
     pub const fn over(principal: &'a Principal) -> Option<Self> {
-        if principal.is_operator() {
+        if principal.is_human() {
             Some(Self {
                 steer: SteerPane::over(principal),
             })

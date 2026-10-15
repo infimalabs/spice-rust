@@ -21,6 +21,9 @@ pub(crate) fn coordination_lane(bus: &Bus, target: OccupantAddress) -> Option<Ca
 
 use super::room::mint_publication;
 
+mod automation;
+pub(crate) use automation::room_resumes_by_rule;
+
 /// A room's latest coordination records, read beside the board snapshot.
 struct Coordination {
     directed: Option<JournalHead<RoomCoordinationStarted>>,
@@ -120,6 +123,7 @@ pub(crate) fn room_coordinate_with(
             Err(outcome) => return outcome,
         };
     let issue = Issue {
+        author: command.actor().clone(),
         directive: command.id(),
         rule,
         automated: None,
@@ -141,187 +145,10 @@ pub(crate) fn room_coordinate_with(
     commit_coordinate(bus, command, request, write, view, before_commit)
 }
 
-/// One room's automated resume: the target lane when it committed, `None`
-/// when a refusal or guard left the room unchanged.
-pub(crate) type RuleResume = (
-    wire::TaskStamp,
-    Result<Option<CanonicalUuid>, Outcome<CommandAnswer>>,
-);
-
-/// Issue every automated resume the journal makes ready.
-///
-/// An operator Start or Resume may carry a bounded resume rule. While a
-/// room's latest coordination record carries that rule with budget left,
-/// nothing has put the room aside since, its target acknowledged the request,
-/// and the anchor is pending and unclaimed, the first room publication by
-/// another party that the target has not spoken after is new input: the room
-/// is resumed through the operator's own staging, guards, and refusals,
-/// citing that input. Silence, repeated agreement, a decline, a lapse, a
-/// cancellation, an unseated target, a settled or claimed anchor, and a spent
-/// budget each leave the room unchanged, so an unchanged cycle stops.
-pub(crate) fn room_resumes_by_rule(
-    bus: &Bus,
-    config: &steer::Config,
-    projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
-) -> Result<Vec<RuleResume>, Outcome<CommandAnswer>> {
-    Ok(ready_resumes(bus)?
-        .into_iter()
-        .map(|(directed, evidence)| {
-            let room = directed.body().room.clone();
-            let resumed =
-                room_resume_by_rule(bus, &directed, evidence, config, projects, allocation);
-            (room, resumed)
-        })
-        .collect())
-}
-
-/// Ruled rooms with budget left whose acknowledged request has unanswered
-/// input from another party, each with the input that triggers it.
-fn ready_resumes(
-    bus: &Bus,
-) -> Result<Vec<(JournalHead<RoomCoordinationStarted>, RoomAuthorityStamp)>, Outcome<CommandAnswer>>
-{
-    bus.read(|read| {
-        let mut ready = Vec::new();
-        for directed in read.ruled_room_directions()? {
-            let started = directed.body();
-            let spent = started
-                .automated
-                .as_ref()
-                .map_or(0, |automated| automated.step);
-            if started.rule.as_ref().is_none_or(|rule| spent >= rule.limit) {
-                continue;
-            }
-            let room = &started.room;
-            if read
-                .room_shelving(room)?
-                .is_some_and(|shelved| shelved.position() > directed.position())
-            {
-                continue;
-            }
-            let Some(request) = read.steering_key(&started.key)? else {
-                continue;
-            };
-            if request.body().disposition != wire::Disposition::Acked {
-                continue;
-            }
-            let pending = read.workflow_head(room)?.is_some_and(|workflow| {
-                workflow.body().status == "pending" && workflow.body().completion.is_none()
-            });
-            let claimed = read
-                .claim_head(room)?
-                .is_some_and(|claim| claim.body().disposition == ClaimDisposition::Active);
-            if !pending || claimed {
-                continue;
-            }
-            if let Some((_, evidence)) = read.room_unanswered_input(
-                room,
-                request.position(),
-                &Actor::Lane(request.body().lane),
-            )? {
-                ready.push((directed, evidence));
-            }
-        }
-        Ok(ready)
-    })
-    .map_err(|error| store_fault("room::automation-unreadable", &error.to_string()))
-}
-
-/// Resume the room `directed` names under the resume rule it carries, citing
-/// `evidence` as the new input, through the staging and guards an operator
-/// Resume uses.
-fn room_resume_by_rule(
-    bus: &Bus,
-    directed: &JournalHead<RoomCoordinationStarted>,
-    evidence: RoomAuthorityStamp,
-    config: &steer::Config,
-    projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
-) -> Result<Option<CanonicalUuid>, Outcome<CommandAnswer>> {
-    let started = directed.body();
-    let Some(rule) = started.rule.clone() else {
-        return Ok(None);
-    };
-    let automated = RoomAutomatedResume {
-        rule: started
-            .automated
-            .as_ref()
-            .map_or_else(|| started.publication.clone(), |prior| prior.rule.clone()),
-        step: started.automated.as_ref().map_or(0, |prior| prior.step) + 1,
-        evidence,
-    };
-    if automated.step > rule.limit {
-        return Ok(None);
-    }
-    let snapshot = validated_working_snapshot_for_tasks(
-        bus,
-        Actor::Operator,
-        std::slice::from_ref(&started.room),
-        projects,
-        allocation,
-    )?;
-    let Some(anchor) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.born() == &started.room)
-        .cloned()
-    else {
-        return Ok(None);
-    };
-    let heads = task_heads(&snapshot.answer, anchor.handle())?.clone();
-    let coordination = Coordination::read(bus, &started.room)?;
-    if coordination.directed.as_ref().map(JournalHead::position) != Some(directed.position()) {
-        return Ok(None);
-    }
-    let request = wire::intent::RoomCoordinate {
-        room: anchor.handle().clone(),
-        target: started.target,
-        action: wire::intent::RoomCoordinateAction::Resume,
-        criterion: rule.criterion.clone(),
-        contribution: rule.contribution.clone(),
-        stop: rule.stop.clone(),
-        auto_resume: Some(rule.limit),
-    };
-    // One rule step owns one directive identity, so a repeated evaluation of
-    // the same step is refused as already issued.
-    let identity =
-        blake3::hash(format!("spice:room-resume:{}:{}", automated.rule, automated.step).as_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&identity.as_bytes()[..16]);
-    let issue = Issue {
-        directive: CanonicalUuid::new(uuid::Uuid::from_bytes(bytes)),
-        rule: Some(rule),
-        automated: Some(automated),
-    };
-    let (write, _, lane) = match stage(
-        bus,
-        config,
-        &snapshot,
-        &anchor,
-        &heads,
-        &coordination,
-        &request,
-        issue,
-    ) {
-        Ok(staged) => staged,
-        Err(Outcome::Refusal(_)) => return Ok(None),
-        Err(outcome) => return Err(outcome),
-    };
-    match bus
-        .commit(write)
-        .map_err(|error| store_fault("room::coordination-commit", &error.to_string()))?
-    {
-        CommitOutcome::Committed(_) => Ok(Some(lane)),
-        CommitOutcome::Refused(_) => Ok(None),
-        CommitOutcome::Fault(fault) => {
-            Err(store_fault("room::coordination-commit", &fault.to_string()))
-        }
-    }
-}
-
 /// Who issues one coordination request and what its record carries.
 struct Issue {
+    /// The principal the direction is written as.
+    author: Actor,
     directive: CanonicalUuid,
     rule: Option<RoomResumeRule>,
     automated: Option<RoomAutomatedResume>,
@@ -395,7 +222,7 @@ fn stage(
         issue.automated.as_ref(),
     );
     let control = CoordinationControl::Coordinate(room.clone()).to_string();
-    let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let mut write = JournalWrite::new(issue.author, origin.clone(), at, Producer::CommandDoor);
     coordination.guard(&room, &mut write);
     guard_target_claim(&mut write, lane, &room);
     let (key, _) = crate::resident::append_operator_directive(
@@ -516,7 +343,12 @@ pub(crate) fn room_put_aside(
         Err(outcome) => return outcome,
     };
     let existing_stop = current.stop.clone();
-    let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let mut write = JournalWrite::new(
+        command.actor().clone(),
+        origin.clone(),
+        at,
+        Producer::CommandDoor,
+    );
     guard(&mut write, command.expected().to_vec());
     coordination.guard(&room, &mut write);
     let withdrawn = match stage_withdrawal(

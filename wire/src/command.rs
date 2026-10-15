@@ -180,6 +180,8 @@ pub enum CommandKind {
     PrincipalGrant,
     /// Revoke one role from one principal.
     PrincipalRevoke,
+    /// Retire the capability one principal's admission issued.
+    PrincipalDeauthorize,
 
     /// Read the current lane table at one resident barrier.
     LaneRead,

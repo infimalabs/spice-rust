@@ -26,9 +26,6 @@ async fn server_refuses_an_identity_for_another_app_generation_before_binding() 
 async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind(generation(&app, capabilities))
         .await
         .expect("binds");
@@ -52,9 +49,6 @@ async fn server_binds_ipv4_loopback_and_publishes_that_endpoint() {
 async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),

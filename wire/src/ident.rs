@@ -195,6 +195,9 @@ pub enum Domain {
     /// The exact current text of one task's description or acceptance, which
     /// a replacement of that text names.
     TaskText,
+    /// One capability issued to a born human principal, which the journal
+    /// keeps only as this digest.
+    PrincipalCapability,
 }
 
 impl Domain {
@@ -223,7 +226,8 @@ impl Domain {
             | Self::MediaContent
             | Self::QuoteText
             | Self::CliExport
-            | Self::TaskText => self.product_tag(),
+            | Self::TaskText
+            | Self::PrincipalCapability => self.product_tag(),
             Self::DistTargetPayload
             | Self::DistArtifact
             | Self::InstallArtifact
@@ -291,6 +295,7 @@ impl Domain {
             Self::QuoteText => "spice.quote.text.v1",
             Self::CliExport => "spice.cli.export.v1",
             Self::TaskText => "spice.task.text.v1",
+            Self::PrincipalCapability => "spice.principal.capability.v1",
             _ => panic!("digest-domain tag partition is closed"),
         }
     }

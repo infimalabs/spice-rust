@@ -180,6 +180,9 @@ macro_rules! registered_body {
     (PrincipalRevoked) => {
         crate::principal::PrincipalRevoked
     };
+    (PrincipalDeauthorized) => {
+        crate::principal::PrincipalDeauthorized
+    };
     ($variant:ident) => {
         crate::body::$variant
     };
@@ -520,6 +523,8 @@ vocabulary! {
     PrincipalGranted = "principal::granted" by CommandDoor;
     /// One principal lost a role.
     PrincipalRevoked = "principal::revoked" by CommandDoor;
+    /// One principal's issued capability was retired.
+    PrincipalDeauthorized = "principal::deauthorized" by CommandDoor;
 
     /// The resident recognized a repository commit and bound its receipt verdict.
     CommitLanded = "commit::landed" by ResidentRecognition;

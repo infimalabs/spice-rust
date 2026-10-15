@@ -246,10 +246,6 @@ impl Indexes {
                 births.insert(started.occupant, record);
             } else if let Some(added) = row.fact.read::<journal::crossing::body::TaskAdded>() {
                 let origin = match &row.actor {
-                    journal::crossing::Actor::Operator => {
-                        TaskOrigin::Identity("operator".to_owned())
-                    }
-                    journal::crossing::Actor::Spice => TaskOrigin::Identity("spice".to_owned()),
                     journal::crossing::Actor::Lane(lane) => next.lane_occupants.get(lane).map_or(
                         TaskOrigin::ResidencyIdentity(*lane),
                         |occupant| {
@@ -261,6 +257,7 @@ impl Indexes {
                             )
                         },
                     ),
+                    _ => TaskOrigin::Identity(row.actor.to_string()),
                 };
                 if !matches!(row.actor, journal::crossing::Actor::Lane(_))
                     && added.creation.creator_team().is_some()

@@ -687,7 +687,7 @@ pub(super) fn settle_surface(
 ) -> Outcome<()> {
     match surface {
         Ok(()) => committed_reply(startup.first, startup.last),
-        Err(original) => match drive_shutdown(bus, paths, epoch, seats) {
+        Err(original) => match drive_shutdown(bus, paths, epoch, seats, Actor::Spice) {
             Outcome::Reply(_) => original,
             compensation => store_fault(
                 "resident::compensation-failed",

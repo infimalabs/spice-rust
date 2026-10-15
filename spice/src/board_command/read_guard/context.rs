@@ -34,8 +34,9 @@ pub(super) fn task_origin_threads<'a>(
             continue;
         }
         let actor = match fact.actor {
-            wire::Actor::Operator => "operator".to_owned(),
-            wire::Actor::Spice => "spice".to_owned(),
+            wire::Actor::Operator | wire::Actor::Spice | wire::Actor::Human(_) => {
+                fact.actor.to_string()
+            }
             wire::Actor::Lane(lane) => {
                 let occupant = occupants.get(&lane).copied().or_else(|| {
                     residency
@@ -88,8 +89,12 @@ pub(super) fn task_creator_teams<'a>(
         }
         let creator = match envelope.actor {
             Actor::Lane(_) => added.creation.creator_team(),
-            Actor::Operator | Actor::Spice if added.creation.creator_team().is_none() => None,
-            Actor::Operator | Actor::Spice => {
+            Actor::Operator | Actor::Spice | Actor::Human(_)
+                if added.creation.creator_team().is_none() =>
+            {
+                None
+            }
+            Actor::Operator | Actor::Spice | Actor::Human(_) => {
                 return Err(protocol_fault(
                     "board::task-creator-team-invalid",
                     "a non-lane task creation names a creator team",
@@ -158,8 +163,10 @@ pub(super) fn selected_task_origin_threads(
                         )
                     })?;
                 match &added.0.actor {
-                    wire::Actor::Operator => "operator".to_owned(),
-                    wire::Actor::Spice => "spice".to_owned(),
+                    actor
+                    @ (wire::Actor::Operator | wire::Actor::Spice | wire::Actor::Human(_)) => {
+                        actor.to_string()
+                    }
                     wire::Actor::Lane(_) => match &added.1.creation {
                         body::TaskCreationContext::Transcript { session, .. } => session.clone(),
                         body::TaskCreationContext::Unavailable { .. } => {

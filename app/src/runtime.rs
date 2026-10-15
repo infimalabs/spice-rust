@@ -634,15 +634,15 @@ impl AppRuntime {
     /// Start a changed resident scope without blanking the operator's mounted
     /// transcript while its replacement snapshots settle.
     ///
-    /// Only two operator capabilities may share this presentation cache. A
-    /// downgrade to a lane principal starts empty, so data visible under the
-    /// old capability never crosses an authority boundary. The first message
-    /// snapshot merges by durable card identity, retaining deep history and
-    /// allocation identity while replacing content the new generation changed.
+    /// Only two capabilities of one human principal share this presentation
+    /// cache; any other change of principal starts empty, so data never crosses
+    /// an authority boundary. The first message snapshot merges by durable card
+    /// identity, retaining deep history and allocation identity while
+    /// replacing content the new generation changed.
     pub(crate) fn rehydrate(accepted: &Admitted<Accepted>, previous: &Self) -> Self {
         let mut next = Self::new(accepted);
-        if previous.principal.actor() == &Actor::Operator
-            && next.principal.actor() == &Actor::Operator
+        if matches!(next.principal.actor(), Actor::Human(_))
+            && previous.principal.actor() == next.principal.actor()
         {
             next.message_cards = previous.message_cards.clone();
             next.message_reconnect_pending = true;
@@ -704,7 +704,7 @@ impl AppRuntime {
     #[must_use]
     pub fn subjects(&self) -> Vec<ViewSubject> {
         let mut subjects = vec![ViewSubject::Facts, ViewSubject::Rooms];
-        if self.principal.actor() == &Actor::Operator {
+        if matches!(self.principal.actor(), Actor::Human(_)) {
             subjects.push(ViewSubject::Messages);
             subjects.push(ViewSubject::Quota);
         }

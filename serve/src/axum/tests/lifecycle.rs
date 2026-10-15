@@ -11,9 +11,6 @@ const LOOPBACK_ORIGIN: &str = "http://127.0.0.1:48123";
 async fn authenticated_session_routes_multiple_typed_commands_and_correlates_answers() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, mut control) = Server::bind(generation(&app, capabilities))
         .await
         .expect("binds");
@@ -43,9 +40,6 @@ async fn authenticated_session_routes_multiple_typed_commands_and_correlates_ans
 async fn exact_capability_retirement_cancels_a_held_command_only_socket() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, mut control) = bind_test_server(epoch(), &app, capabilities.clone())
         .await
         .expect("server binds");
@@ -89,7 +83,7 @@ async fn exact_capability_retirement_cancels_a_held_command_only_socket() {
     assert_eq!(response(&mut socket).await.id, sibling_id);
     sibling_sent.wait().await;
 
-    assert!(capabilities.remove(operator(), &wire::Actor::Operator));
+    assert!(capabilities.remove(operator(), &owner()));
     let replacement = next_frame(&mut socket).await;
     assert!(
         wire::decode::<wire::Response<serde_json::Value>>(&replacement).is_err(),
@@ -126,9 +120,6 @@ async fn exact_capability_retirement_cancels_a_held_command_only_socket() {
 async fn dark_drains_an_earlier_same_socket_response_before_closing() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, mut control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -193,9 +184,6 @@ async fn dark_drains_an_earlier_same_socket_response_before_closing() {
 async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind(generation(&app, capabilities))
         .await
         .expect("binds");
@@ -215,7 +203,7 @@ async fn shutdown_closes_partial_upgrade_pre_hello_and_active_sockets() {
         .expect("partial upgrade writes");
     let mut pre_hello = websocket(address).await;
     let (mut active, accepted) = authenticate(address, operator(), epoch()).await;
-    assert_eq!(accepted.actor, wire::Actor::Operator);
+    assert_eq!(accepted.actor, owner());
 
     shutdown.send(()).expect("shutdown requests");
     timeout(ASSERTION_DEADLINE, server_task)
@@ -240,9 +228,6 @@ async fn shutdown_forces_transport_closed_when_a_session_cannot_finish_draining(
     assert_eq!(SESSION_DRAIN_GRACE, Duration::from_secs(1));
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind(generation(&app, capabilities))
         .await
         .expect("binds");
@@ -268,9 +253,6 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     let lane = identity(0xd0);
     let lane_capability = identity(0xd1);
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     capabilities
         .insert(lane_capability, wire::Actor::Lane(lane))
         .expect("lane capability");
@@ -306,7 +288,7 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
     assert!(control.is_empty());
 
     let (mut operator_socket, accepted) = authenticate(address, operator(), epoch()).await;
-    assert_eq!(accepted.actor, wire::Actor::Operator);
+    assert_eq!(accepted.actor, owner());
     let operator_request = identity(0xd3);
     send_change(
         &mut operator_socket,
@@ -387,9 +369,6 @@ async fn operator_lane_replacement_and_reconnect_cross_the_live_door() {
 async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_work() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, mut control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -473,9 +452,6 @@ async fn saturated_queue_orders_concurrent_work_before_dark_and_refuses_later_wo
 async fn a_session_waiting_for_a_slot_still_delivers_the_answer_the_resident_awaits() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, mut control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -535,9 +511,6 @@ async fn a_session_waiting_for_a_slot_still_delivers_the_answer_the_resident_awa
 async fn a_saturated_ordinary_class_cannot_block_an_authenticated_demand() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, mut control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -599,9 +572,6 @@ async fn a_saturated_ordinary_class_cannot_block_an_authenticated_demand() {
 async fn priority_is_three_to_one_and_dark_waits_for_both_classes() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, mut control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -740,9 +710,6 @@ async fn refuse_and_observe(
 async fn shutdown_interrupts_a_queue_reservation_blocked_by_saturation() {
     let app = TestApp::new();
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -809,7 +776,7 @@ fn command_client(address: SocketAddr) {
         .expect("hello sends");
     let opening = socket.read().expect("acceptance").into_data();
     let accepted: wire::Accepted = wire::decode(&opening).expect("accepted frame");
-    assert_eq!(accepted.actor, wire::Actor::Operator);
+    assert_eq!(accepted.actor, owner());
 
     for (id, to, succeeds) in command_cases() {
         let command = wire::Command {
@@ -862,7 +829,7 @@ fn command_cases() -> [(wire::CanonicalUuid, wire::ResidentState, bool); 3] {
 async fn answer_commands(control: &mut Control) {
     for (index, (_, to, _)) in command_cases().into_iter().enumerate() {
         let request = control.recv().await.expect("resident request");
-        assert_eq!(request.command().actor(), &wire::Actor::Operator);
+        assert_eq!(request.command().actor(), &owner());
         assert!(matches!(
             request.command().body(),
             wire::intent::Intent::UpChange(wire::intent::UpChange { state }) if *state == to
@@ -898,9 +865,6 @@ fn state_reply(to: wire::ResidentState) -> wire::Outcome<wire::intent::CommandAn
 #[test]
 fn duplicate_capability_refuses_without_replacing_its_principal() {
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("first registration");
     let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163c5");
 
     assert_eq!(
@@ -918,7 +882,7 @@ fn duplicate_capability_refuses_without_replacing_its_principal() {
             &"1.2.3".parse().expect("fixture release"),
         )
         .expect("original registration survives");
-    assert_eq!(accepted.actor, wire::Actor::Operator);
+    assert_eq!(accepted.actor, owner());
     assert_eq!(accepted.release.as_str(), "1.2.3");
 }
 

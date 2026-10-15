@@ -1017,7 +1017,7 @@ fn board_order(
 #[must_use]
 pub fn owner_label(actor: &Actor, member: Option<&LaneMember>) -> String {
     match actor {
-        Actor::Operator => "Operator".to_owned(),
+        Actor::Operator | Actor::Human(_) => "Operator".to_owned(),
         Actor::Spice => "Spice".to_owned(),
         Actor::Lane(lane) => member.filter(|member| member.lane == *lane).map_or_else(
             || format!("lane {}", watchband::short(*lane)),

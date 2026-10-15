@@ -83,6 +83,7 @@ impl CommandKind {
         Self::PrincipalEdit,
         Self::PrincipalGrant,
         Self::PrincipalRevoke,
+        Self::PrincipalDeauthorize,
         Self::LaneRead,
         Self::LaneJobsRead,
         Self::LaneJobRead,
@@ -206,7 +207,8 @@ impl CommandKind {
             | Self::PrincipalAdmit
             | Self::PrincipalEdit
             | Self::PrincipalGrant
-            | Self::PrincipalRevoke => self.principal_spelling(),
+            | Self::PrincipalRevoke
+            | Self::PrincipalDeauthorize => self.principal_spelling(),
         }
     }
 
@@ -320,6 +322,7 @@ impl CommandKind {
             Self::PrincipalEdit => "principal::edit",
             Self::PrincipalGrant => "principal::grant",
             Self::PrincipalRevoke => "principal::revoke",
+            Self::PrincipalDeauthorize => "principal::deauthorize",
             _ => panic!("command spelling partition is closed"),
         }
     }

@@ -151,13 +151,13 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    /// Publish the journal's current principal role heads to this
-    /// generation's capabilities.
+    /// Bind and retire this generation's capabilities by the principal heads.
     pub(super) fn publish_roles(&self, bus: &Bus) -> CommandResult<()> {
         self.capabilities
-            .roles()
             .publish(super::principal_surface::roles(bus)?)
-            .map_err(|error| Outcome::Fault(error.fault()))
+            .map_err(|error| {
+                super::environment_fault("serve::capability-invalid", &error.to_string())
+            })
     }
 }
 

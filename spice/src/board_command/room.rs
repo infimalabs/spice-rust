@@ -83,7 +83,7 @@ pub(super) fn room_post(
         publication: publication.clone(),
         outcome: post_outcome(attention),
     };
-    let mut write = JournalWrite::new(Actor::Operator, origin, at, Producer::CommandDoor);
+    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     if let Err(error) = write.fact(
         RoomPublished {

@@ -833,6 +833,19 @@ fn proof_manifest_maps_to_the_current_observation_head() {
     );
 }
 
+/// The CLI families whose leaves map to resident command kinds.
+const RESIDENT_FAMILIES: [&str; 9] = [
+    "lane",
+    "board",
+    "room",
+    "group",
+    "principal",
+    "preparation",
+    "task",
+    "doc",
+    "taste",
+];
+
 #[test]
 fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
     let expected = [
@@ -909,6 +922,10 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
             &["principal", "role", "revoke"][..],
             CommandKind::PrincipalRevoke,
         ),
+        (
+            &["principal", "deauthorize"][..],
+            CommandKind::PrincipalDeauthorize,
+        ),
         (&["doc"][..], CommandKind::DocApply),
         (&["doc", "ledger"][..], CommandKind::DocLedger),
         (&["taste", "add"][..], CommandKind::TaskAdd),
@@ -935,20 +952,7 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
     }
     let mapped_family_leaves = crate::cli::contracts()
         .iter()
-        .filter(|contract| {
-            matches!(
-                contract.path[0],
-                "lane"
-                    | "board"
-                    | "room"
-                    | "group"
-                    | "principal"
-                    | "preparation"
-                    | "task"
-                    | "doc"
-                    | "taste"
-            )
-        })
+        .filter(|contract| RESIDENT_FAMILIES.contains(&contract.path[0]))
         .filter(|contract| kind_for(contract.path).is_some())
         .count();
     assert_eq!(mapped_family_leaves, expected.len());

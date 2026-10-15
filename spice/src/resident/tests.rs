@@ -208,7 +208,7 @@ fn resident_shutdown_releases_handles_without_ending_lane_work() {
 
     let shutdown_started = Monotonic::now();
     assert!(matches!(
-        drive_shutdown(&bus, &paths, epoch, &mut seats),
+        drive_shutdown(&bus, &paths, epoch, &mut seats, Actor::Spice),
         Outcome::Reply(_)
     ));
     assert!(

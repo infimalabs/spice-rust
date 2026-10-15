@@ -134,6 +134,7 @@ const PINNED: &[(&str, &str)] = &[
     ("PrincipalProfiled", "principal::profiled"),
     ("PrincipalGranted", "principal::granted"),
     ("PrincipalRevoked", "principal::revoked"),
+    ("PrincipalDeauthorized", "principal::deauthorized"),
     ("CommitLanded", "commit::landed"),
     ("GateFound", "gate::found"),
     ("GateCleared", "gate::cleared"),

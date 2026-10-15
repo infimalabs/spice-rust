@@ -28,9 +28,6 @@ async fn authenticated_socket_pages_member_history_before_the_initial_window() {
         .expect("bus starts");
     commit_stream(&bus, "message history horizon", false);
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -302,9 +299,6 @@ async fn held_history_read_leaves_the_runtime_serving_other_sockets() {
         .expect("bus starts");
     commit_stream(&bus, "held history horizon", false);
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
@@ -373,9 +367,6 @@ async fn one_socket_starts_lane_history_reads_concurrently() {
         .expect("bus starts");
     commit_stream(&bus, "concurrent history horizon", false);
     let capabilities = operator_capabilities();
-    capabilities
-        .insert(operator(), wire::Actor::Operator)
-        .expect("operator capability");
     let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),

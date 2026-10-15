@@ -46,11 +46,11 @@ const PREPARED: &str = "prepared";
 /// items, required task evidence, relevance shadow records, the working-group
 /// partition, and the empty principal head index a predecessor lacks,
 /// replacing its per-route room receipts and per-group heads, before the
-/// schema identity advances.
-/// Current readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 27] = [
+/// schema identity advances. Crossing schema 60 rewrites no row. Current
+/// readers therefore need no execution arm.
+const PREDECESSOR_SCHEMAS: [u32; 28] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59,
+    57, 58, 59, 60,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -61,6 +61,9 @@ const RESIDENCY_SUBSCRIPTIONS_RELEASE: &str = "4047a2a4f";
 /// Release whose formation instants follow the one teamed predicate, so a lone
 /// member under another team's identity is formed.
 const TEAM_FORMATIONS_RELEASE: &str = "schema-60";
+/// First schema whose baseline persists formation instants under the one
+/// teamed predicate.
+const TEAM_FORMATIONS_SCHEMA: u32 = 60;
 /// First schema whose baseline carries the principal head index.
 pub(crate) const PRINCIPAL_HEADS_SCHEMA: u32 = 59;
 /// The principal head index. Admission facts first exist at
@@ -343,7 +346,9 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         }
         create_room_schemas(&transaction, version)?;
     }
-    team_formations::cross(&transaction)?;
+    if version < TEAM_FORMATIONS_SCHEMA {
+        team_formations::cross(&transaction)?;
+    }
     create_principal_heads(&transaction, version)?;
     transaction
         .execute(
@@ -1384,8 +1389,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 60, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 61, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 60;
+PRAGMA user_version = 61;
 "#;

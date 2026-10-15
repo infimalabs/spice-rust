@@ -735,7 +735,7 @@ impl Error for AppSourceError {
 pub struct Discovery {
     /// Published loopback origin.
     pub endpoint: String,
-    /// Operator capability presented only inside a socket hello.
+    /// The discovering principal's capability, presented only inside a hello.
     pub capability: wire::CanonicalUuid,
     /// Resident generation fenced by the endpoint and capability.
     pub epoch: wire::CanonicalUuid,

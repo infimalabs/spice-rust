@@ -834,7 +834,7 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
     let group = wire::rooms::RoomAuthorityStamp::for_micros(DEMO_OOPS_GROUP_MICROS)
         .expect("demo OOPS group stamp is valid");
     let mut write = JournalWrite::new(
-        Actor::Operator,
+        Actor::Spice,
         wire::rooms::working_group_origin(),
         instant("2026-07-11T05:06:00.000000Z"),
         Producer::CommandDoor,

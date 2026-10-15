@@ -1338,6 +1338,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "principal::revoke"
     ),
+    operator!(
+        ["principal", "deauthorize"],
+        "principal deauthorize PRINCIPAL",
+        Command,
+        [PrincipalDeauthorized],
+        Reply,
+        "principal::deauthorize"
+    ),
     row!(
         ["backup"],
         "backup OUTPUT",
