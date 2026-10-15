@@ -34,8 +34,18 @@ fn add_planning(
 }
 
 fn done(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHandle) -> Outcome<CommandAnswer> {
+    claim_task(bus, epoch, seat, &Actor::Lane(seat.lane), task);
+    complete(bus, epoch, seat, task)
+}
+
+/// Complete `task`'s current phase under the claim `seat` already holds.
+fn complete(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    task: &TaskHandle,
+) -> Outcome<CommandAnswer> {
     let lane = Actor::Lane(seat.lane);
-    claim_task(bus, epoch, seat, &lane, task);
     let held = board(bus, epoch, lane.clone());
     let expected = progress_witnesses(&held, at(&held, task), seat.lane, seat.occupant, false)
         .expect("completion witnesses");
@@ -212,6 +222,70 @@ fn plan_intake_releases_its_claim_into_a_passive_design() {
         Some(wire::intent::DesignStanding::Passive),
     );
     clean(&root, reopened);
+}
+
+/// A plan intake's claimant sharpens the Design statement through ordinary
+/// `TaskEdit` authority before advancing; an edit witnessing the head it drew
+/// from after a concurrent edit landed refuses and keeps that edit.
+#[test]
+fn a_plan_intake_claimant_revises_the_statement_and_a_stale_head_refuses() {
+    let (root, bus, epoch, seats) = fixture("planning-design-intake-edit", 1);
+    let design = add_planning(
+        &bus,
+        epoch,
+        "Plan the Design statement",
+        wire::TaskIntent::Design,
+        Some("plan,design"),
+    );
+    let lane = Actor::Lane(seats[0].lane);
+    claim_task(&bus, epoch, &seats[0], &lane, &design);
+    let drawn = statement_witness(at(&board(&bus, epoch, lane.clone()), &design));
+    assert_committed(super::edit::correct(
+        &bus,
+        epoch,
+        lane.clone(),
+        &TaskEdit {
+            title: Some("Sharpened Design statement".to_owned()),
+            description: Some("Who needs this decision, and why now.".to_owned()),
+            ..super::edit::only(&design)
+        },
+    ));
+    let stale = issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskEdit,
+        vec![drawn],
+        &TaskEdit {
+            description: Some("A stale rewrite".to_owned()),
+            ..super::edit::only(&design)
+        },
+    );
+    assert!(
+        matches!(&stale, Outcome::Refusal(refusal) if refusal.reason() == "board::witness-moved"),
+        "an edit drawn from a moved head refuses: {stale:?}",
+    );
+    let view = board(&bus, epoch, Actor::Operator);
+    let heads = at(&view, &design);
+    assert_eq!(heads.presentation_title(), "Sharpened Design statement");
+    assert_eq!(
+        heads.statement.body.description.as_deref(),
+        Some("Who needs this decision, and why now."),
+    );
+    assert_eq!(heads.workflow.body.phase.as_str(), "plan");
+    assert_eq!(
+        heads.claim.as_ref().map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Active),
+        "refining the statement keeps the intake claim",
+    );
+    assert_committed(complete(&bus, epoch, &seats[0], &design));
+    let heads = at(&board(&bus, epoch, Actor::Operator), &design).clone();
+    assert_eq!(heads.presentation_title(), "Sharpened Design statement");
+    assert_eq!(
+        heads.design_standing(),
+        Some(wire::intent::DesignStanding::Passive),
+    );
+    clean(&root, bus);
 }
 
 #[test]

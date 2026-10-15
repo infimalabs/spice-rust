@@ -176,11 +176,8 @@ conversation. Each cited source's availability comes from the
 `room::contribution-sources` read, which any authenticated session may issue
 and the app issues once per cited contribution of a shown Design, at most
 eight in flight, and again after a reconnect; it resolves through the same
-resident path as `spice room history`.
-A lane session submits through the guarded `room::contribute` command from the
-Design view's form. Its sidebar lists the lane's organic Design invitations
-from the room snapshot's `room::noticed` records and carries the exact
-evaluated Design statement and matched terms.
+resident path as `spice room history`. Lanes contribute and receive organic
+Design invitations from their own sessions, never through this surface.
 
 The read view derives its **Design maturity** panel from the bounded per-Design
 measure the room projection folds incrementally from streamed organic notices

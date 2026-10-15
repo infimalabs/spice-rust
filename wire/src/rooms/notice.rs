@@ -11,6 +11,26 @@ use crate::{CanonicalUuid, Seq, SequenceCode, TaskStamp};
 /// Most matched terms one Design awareness record carries.
 pub const DESIGN_NOTICE_TERMS: usize = 12;
 
+/// Most matched terms any surface shows for one notice, however many its
+/// record keeps.
+pub const DESIGN_NOTICE_SHOWN_TERMS: usize = 6;
+
+/// The matched terms a surface shows: each distinct term once, in record
+/// order, at most [`DESIGN_NOTICE_SHOWN_TERMS`].
+#[must_use]
+pub fn shown_notice_terms(terms: &[String]) -> Vec<&str> {
+    let mut shown: Vec<&str> = Vec::with_capacity(DESIGN_NOTICE_SHOWN_TERMS);
+    for term in terms {
+        if shown.len() == DESIGN_NOTICE_SHOWN_TERMS {
+            break;
+        }
+        if !shown.contains(&term.as_str()) {
+            shown.push(term);
+        }
+    }
+    shown
+}
+
 /// The resident invited one lane occupant, at most once, to a passive Design.
 ///
 /// The exact statement and matched terms record the organic relevance
@@ -52,4 +72,24 @@ pub struct DesignReturnDelivered {
     pub occupant: CanonicalUuid,
     /// Fact that won the claim the delivery served.
     pub claim: SequenceCode,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DESIGN_NOTICE_SHOWN_TERMS, shown_notice_terms};
+
+    #[test]
+    fn shown_terms_are_distinct_and_capped_in_record_order() {
+        let terms = [
+            "beta", "alpha", "beta", "gamma", "alpha", "delta", "eps", "zeta", "eta",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            shown_notice_terms(&terms),
+            ["beta", "alpha", "gamma", "delta", "eps", "zeta"]
+        );
+        let many = (0..20).map(|n| format!("term{n:02}")).collect::<Vec<_>>();
+        assert_eq!(shown_notice_terms(&many).len(), DESIGN_NOTICE_SHOWN_TERMS);
+        assert!(shown_notice_terms(&[]).is_empty());
+    }
 }

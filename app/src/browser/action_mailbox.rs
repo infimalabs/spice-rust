@@ -269,7 +269,6 @@ impl PendingKind {
             | Self::PrincipalWrite { .. }
             | Self::Draft { .. }
             | Self::Conclude { .. }
-            | Self::Contribute { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
             | Self::TrustGrant { .. }
@@ -519,17 +518,6 @@ impl ClientAction {
                     .saturating_add(reason)
                     .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>())
             }
-            Self::Contribute {
-                request, expected, ..
-            } => request
-                .room
-                .as_str()
-                .len()
-                .saturating_add(request.text.len())
-                .saturating_add(
-                    request.sources.len() * std::mem::size_of::<wire::rooms::RoomSource>(),
-                )
-                .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>()),
             Self::Steer {
                 message,
                 attachments,

@@ -12,7 +12,6 @@ mod contributions;
 mod conversation;
 #[cfg(test)]
 mod design_standing_tests;
-mod invitations;
 mod standing;
 
 pub use contributions::{Contribution, ContributionGroup};
@@ -355,8 +354,6 @@ pub struct RoomProjection {
     /// Each room's latest put-aside position.
     shelved: BTreeMap<TaskStamp, Seq>,
     relevance: BTreeMap<RoomAuthorityStamp, RoomPositioned<Relevance>>,
-    /// Every Design notice, keyed by the position that recorded it.
-    invitations: BTreeMap<Seq, RoomPositioned<authority::DesignNoticed>>,
     /// Bounded maturity evidence incrementally folded per Design.
     maturity: BTreeMap<TaskStamp, authority::DesignMaturity>,
 }
@@ -381,7 +378,6 @@ impl Default for RoomProjection {
             directed: BTreeMap::new(),
             shelved: BTreeMap::new(),
             relevance: BTreeMap::new(),
-            invitations: BTreeMap::new(),
             maturity: BTreeMap::new(),
         }
     }
@@ -629,7 +625,6 @@ impl RoomProjection {
             .or_else(|| self.conversation.apply(fact))
             .or_else(|| self.apply_preparation_fact(fact))
             .or_else(|| self.apply_steering_fact(fact))
-            .or_else(|| self.apply_notice(fact))
             .unwrap_or(false);
         if fact.kind() != FactKind::RoomMessaged {
             self.messaged.clear();
@@ -734,6 +729,15 @@ impl RoomProjection {
                         )
                     }),
             ),
+            FactKind::DesignNoticed => {
+                Some(fact.read::<authority::DesignNoticed>().is_some_and(|body| {
+                    self.maturity
+                        .entry(body.design.clone())
+                        .or_default()
+                        .observe_notice(&body);
+                    true
+                }))
+            }
             FactKind::RoomRelevanceObserved => Some(
                 fact.read::<authority::RoomRelevanceObserved>()
                     .is_some_and(|body| self.apply_observed(fact.seq(), body.observation)),

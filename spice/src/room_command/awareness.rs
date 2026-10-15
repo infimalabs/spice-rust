@@ -2,7 +2,8 @@
 //!
 //! Each row is one admitted `room::noticed` record, oldest first: the lane and
 //! occupant told, the claimed task and claim it served, the exact Design
-//! statement evaluated, and the organic matched terms. Rows page whole in
+//! statement evaluated, and the organic matched terms as every surface shows
+//! them, distinct and capped. Rows page whole in
 //! journal order; a page that withholds any continues at the first withheld
 //! one. Reading changes nothing.
 
@@ -159,7 +160,10 @@ fn awareness(
                         )
                     })?,
                     statement: body.statement,
-                    terms: body.terms,
+                    terms: wire::rooms::shown_notice_terms(&body.terms)
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect(),
                 });
             }
             Ok((cursor, design, maturity, rows, more))
