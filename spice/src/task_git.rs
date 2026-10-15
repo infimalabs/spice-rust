@@ -39,18 +39,14 @@ const PROCESS_GROUP_GRACE: Duration = Duration::from_millis(100);
 const DESCENDANT_EXIT_GRACE: Duration = Duration::from_millis(500);
 const PROCESS_GROUP_REAP_LIMIT: Duration = Duration::from_secs(1);
 const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
-const CAPTURE_UNOWNED_DIRTY_REMEDY: &str = concat!(
-    "task capture records commits only and the reported paths belong to no claim; ",
-    "preserve them losslessly by running `spice task add TITLE --project PROJECT ",
-    "--origin ORIGIN --flow todo,review --recover` for new execution work, or ",
-    "`spice task recover HANDLE` for an existing ready execution task",
-);
-const CLAIM_UNOWNED_DIRTY_REMEDY: &str = concat!(
-    "release parks a claim's uncommitted work on its task: if a held claim left ",
-    "the reported paths, run `spice task free HANDLE` under that claim; otherwise ",
-    "preserve them losslessly by running `spice task add TITLE --project PROJECT ",
-    "--origin ORIGIN --flow todo,review --recover` for new execution work, or ",
-    "`spice task recover HANDLE` for an existing ready execution task",
+/// One repair direction for work that has not entered a task boundary.
+///
+/// Every claim path uses this exact vocabulary so repository state, rather
+/// than a sequence of refusals, determines the next command.
+pub const UNOWNED_WORK_REMEDY: &str = concat!(
+    "preserve unowned paths and commits with `spice task capture HANDLE` for an ",
+    "existing ready execution task or `spice task capture --title TITLE --project ",
+    "PROJECT` for new execution work",
 );
 
 /// Task facts used to build one durable integration commit message.
@@ -200,11 +196,10 @@ enum Pending {
     },
 }
 
-/// Inspect loose commits without moving the lane or its branch.
+/// Inspect loose commits without moving the lane, its branch, or dirty paths.
 pub fn capture(repository: &Repository) -> Result<Capture, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
-    require_clean_or(root, "task capture", CAPTURE_UNOWNED_DIRTY_REMEDY)?;
     let target = resolve_target(root)?.ok_or_else(|| {
         Error::refusal(
             "git::capture-no-baseline",
@@ -237,6 +232,14 @@ pub fn capture(repository: &Repository) -> Result<Capture, Error> {
         ),
         subject,
     })
+}
+
+/// Whether the lane has tracked, staged, or non-ignored untracked changes.
+pub fn has_dirty_work(repository: &Repository) -> Result<bool, Error> {
+    let root = repository.worktree_root();
+    recover_pending(root)?;
+    required_read(root, &["status", "--porcelain"], "inspect worktree")
+        .map(|status| !status.is_empty())
 }
 
 /// A release-side Git transition prepared before its board fact commits.
@@ -498,7 +501,7 @@ fn prepare_claim_observed(
 ) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
-    require_clean_or(root, "task next", CLAIM_UNOWNED_DIRTY_REMEDY)?;
+    require_clean_or(root, "task next", UNOWNED_WORK_REMEDY)?;
     let before = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     let target = resolve_target(root)?;
     preflight()?;
@@ -521,10 +524,7 @@ fn prepare_claim_observed(
                     ),
                     ahead = ahead
                 ),
-                concat!(
-                    "run task capture for those commits before ",
-                    "requesting task next",
-                ),
+                UNOWNED_WORK_REMEDY,
             ));
         }
         let captured = boundary(

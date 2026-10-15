@@ -887,7 +887,6 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
         (&["lane", "list"][..], CommandKind::BoardRead),
         (&["task", "list"][..], CommandKind::BoardRead),
         (&["task", "next"][..], CommandKind::ClaimWin),
-        (&["task", "recover"][..], CommandKind::ClaimWin),
         (&["task", "status"][..], CommandKind::BoardRead),
         (&["task", "show"][..], CommandKind::BoardRead),
         (&["task", "reclaim"][..], CommandKind::ClaimRenew),

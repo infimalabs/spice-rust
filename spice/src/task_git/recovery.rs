@@ -347,7 +347,7 @@ pub fn synchronize_recovery(
     let mut journaled = manifest;
     let boundary = prepare_claim_observed(
         repository,
-        LooseCommits::Refuse,
+        LooseCommits::Adopt,
         || verify_synchronization_identity(repository, &sealed),
         |boundary| {
             journaled.state = RecoveryState::Syncing {
@@ -406,7 +406,7 @@ fn resume_synchronization(
         let sealed = manifest.clone();
         let resumed = prepare_claim_observed(
             repository,
-            LooseCommits::Refuse,
+            LooseCommits::Adopt,
             || verify_synchronization_identity(repository, &sealed),
             |_| Ok(()),
         )?;
@@ -1011,10 +1011,22 @@ fn path_is_tracked(worktree: &Path, path: &str) -> Result<bool, Error> {
     }
 }
 
-fn restore_tracked_to_head(worktree: &Path, paths: &[PathState]) -> Result<(), Error> {
-    if paths.is_empty() {
-        return Ok(());
+fn path_is_tracked_at_head(worktree: &Path, path: &str) -> Result<bool, Error> {
+    let output = run(
+        worktree,
+        &["ls-tree", "--name-only", "-z", "HEAD", "--", path],
+    )?;
+    if output.success() {
+        Ok(!output.stdout.is_empty())
+    } else {
+        Err(Error::fault(
+            "git::recovery-inspection-failed",
+            output.detail(&format!("inspect HEAD ownership of {path}")),
+        ))
     }
+}
+
+fn restore_tracked_to_head(worktree: &Path, paths: &[PathState]) -> Result<(), Error> {
     let mut owned = vec![
         "restore".to_owned(),
         "--source=HEAD".to_owned(),
@@ -1022,7 +1034,17 @@ fn restore_tracked_to_head(worktree: &Path, paths: &[PathState]) -> Result<(), E
         "--worktree".to_owned(),
         "--".to_owned(),
     ];
-    owned.extend(paths.iter().map(|state| state.path.clone()));
+    let path_start = owned.len();
+    for state in paths {
+        if path_is_tracked(worktree, &state.path)?
+            || path_is_tracked_at_head(worktree, &state.path)?
+        {
+            owned.push(state.path.clone());
+        }
+    }
+    if owned.len() == path_start {
+        return Ok(());
+    }
     let args = owned.iter().map(String::as_str).collect::<Vec<_>>();
     let restored = run(worktree, &args)?;
     if restored.success() {

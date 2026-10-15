@@ -62,21 +62,6 @@ pub(super) fn client_add(
         Err(error) => return refusal("task::preparation-invalid", None, &error.to_string()),
     };
     let claim = matches.get_flag("claim");
-    let recover = matches.get_flag("recover");
-    if recover && intent.is_some() {
-        return refusal(
-            "task::capture-planning",
-            None,
-            "captured implementation cannot become a declared planning task",
-        );
-    }
-    if claim && recover {
-        return refusal(
-            "git::recovery-claim-conflict",
-            None,
-            "choose ordinary --claim or explicit --recover, not both",
-        );
-    }
     let body = TaskAdd {
         preparation,
         intent,
@@ -88,14 +73,10 @@ pub(super) fn client_add(
         origin,
         flow: matches.get_one::<String>("flow").cloned(),
         depends,
-        claim: claim || recover,
+        claim,
         draft: matches.get_flag("draft"),
     };
-    if recover {
-        client_add_recovery(repository, contract, body)
-    } else {
-        submit_task_add(repository, contract, body)
-    }
+    submit_task_add(repository, contract, body)
 }
 
 pub(super) fn client_capture(
@@ -103,6 +84,19 @@ pub(super) fn client_capture(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
+    if matches.get_flag("restore") {
+        if matches.get_one::<String>("HANDLE").is_some()
+            || capture_new_task_fields(matches)
+            || matches.get_flag("steal")
+        {
+            return refusal(
+                "git::recovery-restore-shape",
+                None,
+                "run `spice task capture --restore` without a task handle or task fields",
+            );
+        }
+        return restore_client_recovery(repository);
+    }
     let board = match current_board(
         repository,
         BoardRead::Tasks {
@@ -118,32 +112,68 @@ pub(super) fn client_capture(
     if let Err(outcome) = require_no_planning_implementation(&board, "task capture") {
         return outcome;
     }
-    let stealing = matches.get_flag("steal");
     let task = match matches.get_one::<String>("HANDLE") {
-        Some(written) => {
-            if matches.contains_id("title")
-                || matches.contains_id("project")
-                || matches.contains_id("origin")
-            {
+        Some(written) => match written.parse::<TaskHandle>() {
+            Ok(task) => Some(task),
+            Err(error) => {
                 return refusal(
-                    "task::capture-shape",
+                    "task::handle-invalid",
                     Some(written.clone()),
-                    "name either an existing HANDLE or new-task title/project fields",
+                    &error.to_string(),
                 );
             }
-            match written.parse::<TaskHandle>() {
-                Ok(task) => task,
-                Err(error) => {
-                    return refusal(
-                        "task::handle-invalid",
-                        Some(written.clone()),
-                        &error.to_string(),
-                    );
-                }
-            }
-        }
-        None => return capture_new_task(repository, matches, stealing),
+        },
+        None => None,
     };
+    let pending = match spice::task_git::pending_recovery(repository) {
+        Ok(pending) => pending,
+        Err(error) => return task_git_outcome(error),
+    };
+    if let Some(recovery) = pending {
+        let exact_shape = task.is_some() && !capture_new_task_fields(matches);
+        return resume_pending_client_capture(
+            repository,
+            task.as_ref().filter(|_| exact_shape),
+            recovery,
+        );
+    }
+    let stealing = matches.get_flag("steal");
+    match task {
+        Some(task) => {
+            if capture_new_task_fields(matches) {
+                return refusal(
+                    "task::capture-shape",
+                    Some(task.to_string()),
+                    spice::task_git::UNOWNED_WORK_REMEDY,
+                );
+            }
+            capture_existing_task(repository, contract, task, stealing)
+        }
+        None => capture_new_task(repository, matches, stealing),
+    }
+}
+
+fn capture_new_task_fields(matches: &ArgMatches) -> bool {
+    matches.contains_id("title")
+        || matches.contains_id("project")
+        || matches.contains_id("origin")
+        || matches.contains_id("description")
+        || matches.contains_id("acceptance")
+}
+
+fn capture_existing_task(
+    repository: &Repository,
+    contract: &Contract,
+    task: TaskHandle,
+    stealing: bool,
+) -> Outcome<CommandAnswer> {
+    let dirty = match spice::task_git::has_dirty_work(repository) {
+        Ok(dirty) => dirty,
+        Err(error) => return task_git_outcome(error),
+    };
+    if dirty {
+        return client_capture_recovery(repository, contract, &task, stealing);
+    }
     let read = BoardRead::Tasks {
         tasks: vec![
             task.born()
@@ -187,48 +217,85 @@ fn capture_new_task(
         return refusal(
             "task::steal-handle-missing",
             None,
-            "name the HANDLE of the claim to steal; a new task has no holder",
+            spice::task_git::UNOWNED_WORK_REMEDY,
         );
     }
     let Some(project) = matches.get_one::<String>("project").cloned() else {
         return refusal(
             "task::capture-project-missing",
             None,
-            "supply --project when task capture mints a new task",
+            spice::task_git::UNOWNED_WORK_REMEDY,
         );
     };
-    let candidate = match spice::task_git::capture(repository) {
-        Ok(candidate) => candidate,
+    let dirty = match spice::task_git::has_dirty_work(repository) {
+        Ok(dirty) => dirty,
         Err(error) => return task_git_outcome(error),
     };
-    let title = matches
-        .get_one::<String>("title")
-        .cloned()
-        .unwrap_or(candidate.subject);
+    let written_title = matches.get_one::<String>("title").cloned();
+    let candidate = if dirty && written_title.is_some() {
+        None
+    } else {
+        match spice::task_git::capture(repository) {
+            Ok(candidate) => Some(candidate),
+            Err(error) if error.reason() == "git::nothing-to-capture" && dirty => None,
+            Err(error) if error.reason() == "git::nothing-to-capture" => {
+                return refusal(
+                    "git::nothing-to-capture",
+                    None,
+                    &format!(
+                        "run `spice task add {} --project {project} --claim` for new work with no paths or commits to adopt",
+                        written_title.as_deref().unwrap_or("TITLE"),
+                    ),
+                );
+            }
+            Err(error) => return task_git_outcome(error),
+        }
+    };
+    let title = match written_title.or_else(|| candidate.map(|candidate| candidate.subject)) {
+        Some(title) => title,
+        None => {
+            return refusal(
+                "task::capture-title-missing",
+                None,
+                spice::task_git::UNOWNED_WORK_REMEDY,
+            );
+        }
+    };
     let origin = match parse_origin(matches) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
+    let body = TaskAdd {
+        preparation: None,
+        intent: None,
+        title,
+        project: Some(project),
+        description: matches.get_one::<String>("description").cloned(),
+        acceptance: matches
+            .get_many::<String>("acceptance")
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect(),
+        requirements: wire::EnvironmentRequirements::default(),
+        origin,
+        flow: None,
+        depends: Vec::new(),
+        claim: true,
+        draft: false,
+    };
     let add_contract =
         crate::cli::contract(&["task", "add"]).expect("task add contract is registered");
-    match submit_captured_task(
-        repository,
-        add_contract,
-        TaskAdd {
-            preparation: None,
-            intent: None,
-            title,
-            project: Some(project),
-            description: None,
-            acceptance: Vec::new(),
-            requirements: wire::EnvironmentRequirements::default(),
-            origin,
-            flow: None,
-            depends: Vec::new(),
-            claim: true,
-            draft: false,
-        },
-    ) {
+    let outcome = if dirty {
+        client_add_recovery(repository, add_contract, body)
+    } else {
+        submit_captured_task(repository, add_contract, body)
+    };
+    capture_claim_answer(outcome)
+}
+
+fn capture_claim_answer(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
+    match outcome {
         Outcome::Reply(Reply {
             position,
             body: CommandAnswer::Task(mut answer),
@@ -242,6 +309,10 @@ fn capture_new_task(
                 "atomic capture task creation returned no claim",
             ),
         },
+        reply @ Outcome::Reply(Reply {
+            body: CommandAnswer::Claim(_),
+            ..
+        }) => reply,
         Outcome::Reply(_) => protocol_fault(
             "task::capture-add-answer",
             "atomic capture task creation returned another answer shape",

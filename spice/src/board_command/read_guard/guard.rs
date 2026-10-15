@@ -170,7 +170,7 @@ fn board_witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool
         Witness::Residency { occupant: None, .. } => false,
         Witness::Eligibility { rule } => matches!(
             rule.as_str(),
-            "next" | "capture" | CAPTURE_WORK_RULE | "steal" | "recover"
+            "next" | "capture" | CAPTURE_WORK_RULE | "steal" | "recover" | "recover-steal"
         ),
         Witness::Preview { .. } => true,
         Witness::Barrier { name, digest } => {

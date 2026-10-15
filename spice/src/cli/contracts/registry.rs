@@ -775,17 +775,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "board::next"
     ),
     row!(
-        ["task", "recover"],
-        "task recover [HANDLE] [--restore]",
-        Lane,
-        Command => DirectOrCommitted,
-        [ClaimWon],
-        [Resident, LaneCapability, Toolful],
-        TASK_GIT_TOOLS,
-        Reply,
-        "board::recover"
-    ),
-    row!(
         ["task", "reclaim"],
         "task reclaim [HANDLE] [--lease-seconds SECONDS]",
         Lane,
@@ -800,7 +789,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--intent INTENT] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
-         [--origin ORIGIN] [--claim] [--recover] [--draft]",
+         [--origin ORIGIN] [--claim] [--draft]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskEdited, TaskNoted, ClaimWon],
@@ -814,7 +803,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task plan TITLE [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
-         [--origin ORIGIN] [--claim] [--recover] [--draft]",
+         [--origin ORIGIN] [--claim] [--draft]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskEdited, TaskNoted, ClaimWon],
@@ -828,7 +817,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task design TITLE [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--flow PHASES] [--depends HANDLE...] [--preparation HANDLE] \
          [--requires-journal-schema SCHEMA] [--requires-trust-grant DIGEST] \
-         [--origin ORIGIN] [--claim] [--recover] [--draft]",
+         [--origin ORIGIN] [--claim] [--draft]",
         OperatorOrLane,
         Command,
         [TaskAdded, TaskEdited, TaskNoted, ClaimWon],
@@ -839,9 +828,11 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "capture"],
-        "task capture [HANDLE] [--title TITLE] [--project PROJECT] [--origin ORIGIN] [--steal]",
+        "task capture [HANDLE] [--title TITLE] [--project PROJECT] \
+         [--origin ORIGIN] [--description DESCRIPTION] [--acceptance ACCEPTANCE...] \
+         [--steal] [--restore]",
         OperatorOrLane,
-        Command,
+        Command => DirectOrCommitted,
         [ClaimWon],
         [Resident, Toolful],
         TASK_GIT_TOOLS,
