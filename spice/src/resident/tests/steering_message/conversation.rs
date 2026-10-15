@@ -25,7 +25,7 @@ impl Lanes {
         (record, head.into_body())
     }
 
-    fn conversations(&self) -> Vec<RoomConversed> {
+    pub(super) fn conversations(&self) -> Vec<RoomConversed> {
         self.bus
             .fact_snapshot()
             .expect("facts read")

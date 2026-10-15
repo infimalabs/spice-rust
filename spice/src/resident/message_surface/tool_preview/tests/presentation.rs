@@ -129,8 +129,11 @@ fn acknowledgement_tool_intent_publishes_a_durable_quote_target() {
     );
 }
 
+/// A visible packet presents its own body as the author's outgoing quote even
+/// when the provider settles that block as paraphrased reasoning; the tool
+/// intent repeating its header stays a caption and presents no send.
 #[test]
-fn packet_tool_intent_presents_as_the_authors_outgoing_quote() {
+fn a_streamed_packet_presents_its_visible_body_while_its_repeating_intent_stays_a_caption() {
     let recipient = wire::MessageRecipient {
         address: "6Jv5".parse().expect("fixture address parses"),
         lane: "018f82d4-6f59-7d06-92e3-bce9131163b1"
@@ -144,28 +147,41 @@ fn packet_tool_intent_presents_as_the_authors_outgoing_quote() {
     directives.recipients.insert(recipient.address, recipient);
     let publisher = Messages::default();
     let mut state = MessageState::default();
-    let record = capture_record(
-        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"private"},{"type":"toolCall","id":"call-1","name":"read","intent":"MSG 6Jv5: Check the parser.","arguments":{}}],"stopReason":"toolUse"}}"#,
-        0,
-    );
+    let mut offset = 0;
+    for row in [
+        r#"{"type":"message_start","messageId":"msg-7","message":{"role":"assistant","timestamp":200}}"#,
+        r#"{"type":"message_update","messageId":"msg-7","message":{"role":"assistant"},"assistantMessageEvent":{"type":"text_end","contentIndex":1,"content":"MSG 6Jv5: Check the parser.\nIt rejects empty input."}}"#,
+        r#"{"type":"message_end","messageId":"msg-7","message":{"role":"assistant","timestamp":200,"stopReason":"toolUse","content":[{"type":"thinking","thinking":"paraphrased commentary"},{"type":"toolCall","id":"call-1","name":"read","intent":"MSG 6Jv5: reading the parser","arguments":{}}]}}"#,
+    ] {
+        let record = capture_record(row.as_bytes(), offset);
+        offset += record.locus.length;
+        publish_agent_messages(&publisher, &record, &mut state, Some(&directives))
+            .expect("record presents");
+    }
 
-    publish_agent_messages(&publisher, &record, &mut state, Some(&directives))
-        .expect("packet intent presents");
     let messages = publisher.0.lock().expect("message lock");
-    let prose = messages
+    let sends = messages
         .iter()
-        .find(|message| message.activity == wire::AgentActivityKind::Prose)
-        .expect("packet intent publishes as prose");
-    assert_eq!(prose.text, "> Check the parser.");
+        .filter(|message| !message.sends.is_empty())
+        .collect::<Vec<_>>();
+    let [prose] = sends.as_slice() else {
+        panic!("only the visible block presents a send: {messages:?}")
+    };
+    assert_eq!(prose.activity, wire::AgentActivityKind::Prose);
+    assert_eq!(prose.text, "> Check the parser.\n> It rejects empty input.");
     let [send] = prose.sends.as_slice() else {
-        panic!(
-            "packet intent presents one outgoing send: {:?}",
-            prose.sends
-        )
+        panic!("the packet presents one outgoing send: {:?}", prose.sends)
     };
     assert_eq!(send.from, lane());
     assert_eq!(send.sender, lane());
     assert_eq!(send.recipients, [recipient]);
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.text.contains("reading the parser")
+                || message.activity == wire::AgentActivityKind::Tool),
+        "the intent is only a tool caption: {messages:?}"
+    );
 }
 
 mod acknowledgement;
