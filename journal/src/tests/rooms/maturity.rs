@@ -1,7 +1,6 @@
 use super::*;
 use wire::rooms::{
-    DesignMaturity, DesignNoticeProvenance, DesignNoticed, RoomAuthorityStamp, RoomContributed,
-    RoomContributionKind,
+    DesignMaturity, DesignNoticed, RoomAuthorityStamp, RoomContributed, RoomContributionKind,
 };
 
 fn current_statement(journal: &Journal, task: &TaskStamp) -> Seq {
@@ -20,30 +19,7 @@ fn current_workflow(journal: &Journal, task: &TaskStamp) -> Seq {
 }
 
 fn design(journal: &mut Journal, offset: i64) -> TaskStamp {
-    let design = task(journal, offset, None);
-    let head = statement(journal, &design);
-    let mut write = write();
-    let fact = write
-        .fact(
-            wire::body::TaskEdited {
-                task: design.clone(),
-                revision: 2,
-                dependencies: None,
-                intent: Some(wire::TaskIntentEdit::Set {
-                    intent: wire::TaskIntent::Design,
-                }),
-                evidence: None,
-            },
-            FactCause::Root,
-        )
-        .expect("Design edit builds");
-    write.task_head(fact, move |revision| TaskHead {
-        intent: Some(wire::TaskIntent::Design),
-        revision,
-        ..head
-    });
-    journal.apply(write).expect("Design edit commits");
-    design
+    design_task(journal, offset)
 }
 
 fn noticed(
@@ -55,7 +31,6 @@ fn noticed(
     let body = DesignNoticed {
         design: design.clone(),
         statement: current_statement(journal, design),
-        provenance: DesignNoticeProvenance::Organic,
         lane,
         occupant: lane,
         task: claimed.clone(),
