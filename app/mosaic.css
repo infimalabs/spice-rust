@@ -169,16 +169,15 @@
   overflow: hidden;
   color: var(--ink);
 }
-.mosaic-compaction-label .message-key,
-.mosaic-compaction-agent {
+.mosaic-compaction-label .message-key, .mosaic-compaction-agent, .mosaic-compaction-clause {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mosaic-compaction-agent { color: var(--accent-slot, var(--accent)); }
+.mosaic-compaction-agent { flex: 1 1 auto; color: var(--accent-slot, var(--accent)); }
 .mosaic-compaction-label .message-key { flex: 0 1 auto; }
-.mosaic-compaction-agent {
-  flex: 1 1 auto;
-}
+/* A working-group departure's clause alone yields width; its title keeps the words. */
+.mosaic-compaction-clause { flex: 0 1 auto; color: var(--muted); }
+.mosaic-room-card .mosaic-compaction-context > :not(.mosaic-compaction-clause) { flex-shrink: 0; }
 .mosaic-compaction-age { color: var(--muted); font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
 
 .message-image {
