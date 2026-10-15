@@ -108,6 +108,44 @@ pub(super) fn use_controls() -> Controls {
     }
 }
 
+/// Close every console whose group ended. Each time room authority settles,
+/// reconnects, or moves its partition, the views read the groups that
+/// completed snapshot holds; a loading or reconnecting snapshot reads none, so
+/// it closes nothing.
+#[hook]
+pub(super) fn use_ended_group_closing(
+    surface: &UseStateHandle<super::SurfaceData>,
+    controls: &Controls,
+) {
+    let revision = surface
+        .read()
+        .as_ref()
+        .and_then(settled_partition)
+        .map(|partition| partition.revision);
+    let (surface, views) = (surface.clone(), controls.views.clone());
+    use_effect_with(revision, move |_| {
+        let standing = surface
+            .read()
+            .as_ref()
+            .and_then(settled_partition)
+            .map(|partition| {
+                partition
+                    .groups
+                    .iter()
+                    .map(|group| group.group.clone())
+                    .collect()
+            });
+        views.dispatch(RoomViewAction::Snapshot { standing });
+    });
+}
+
+/// The working-group partition of a completed room snapshot, absent while room
+/// authority loads or awaits a reconnect.
+fn settled_partition(runtime: &AppRuntime) -> Option<&wire::rooms::WorkingGroupPartition> {
+    let projection = runtime.room_projection();
+    (projection.status() == RoomProjectionStatus::Available).then(|| projection.partition())
+}
+
 impl Controls {
     fn update(&self, action: RoomViewAction) {
         self.views.dispatch(action);
