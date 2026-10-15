@@ -1229,6 +1229,47 @@ fn a_sent_msg_names_every_destination_without_its_protocol_header() {
     );
 }
 
+/// A card whose words are only an MSG it sent has no unquoted run to carry its
+/// own lead, so the outgoing lead itself opens with the card's live age.
+#[test]
+fn a_card_that_only_sent_an_msg_leads_it_with_the_cards_age() {
+    let (lane, sender) = (quote_fixture_id("0a"), quote_fixture_id("1a"));
+    let markdown = "> Fixed in review.";
+    let sends = [wire::MessageSend {
+        start: 0,
+        end: u32::try_from(markdown.len()).expect("fixture offset fits"),
+        from: lane,
+        sender,
+        recipients: Vec::new(),
+        operator: true,
+        contexts: Vec::new(),
+        kind: wire::MessageSendKind::Msg,
+        result: None,
+    }];
+    let card = quote_source("message-sent-card", 4_000);
+    let html = render_prose_card_with_media_quotes(
+        markdown,
+        &[],
+        &[],
+        &sends,
+        &[],
+        QuoteRenderContext::new(&QuoteAgents::new(), &QuoteSources::new(), &card),
+        &[],
+    )
+    .html;
+
+    let lead = html
+        .split_once("data-quote-direction=\"outgoing\">")
+        .and_then(|(_, signoff)| signoff.split_once("class=\"message-quote-name\""))
+        .map(|(lead, _)| lead)
+        .expect("outgoing signoff names its sender");
+    assert!(lead.contains("data-quote-age-authored=\"4000\""), "{html}");
+    assert!(
+        lead.contains("data-quote-source=\"message-sent-card\""),
+        "{html}"
+    );
+}
+
 #[test]
 fn ask_and_ans_quotes_carry_typed_badges_and_the_answered_result() {
     let lane = "018f82d4-6f59-7d06-92e3-bce91311650a"

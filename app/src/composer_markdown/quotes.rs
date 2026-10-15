@@ -203,7 +203,7 @@ pub(super) fn signoff_html(
 /// Source attribution is independent of the answer's badge. A peer context
 /// carries the immutable destination proved by its creating message fact; a
 /// delivered direction names every member whose transcript recorded it.
-pub(super) fn directive_signoff_html(
+fn directive_signoff_html(
     context: &wire::MessageDirective,
     target: &str,
     agents: &super::QuoteAgents,
@@ -356,11 +356,16 @@ fn historical_agent<'a>(
         .or_else(|| lane_member_agent(agents, lane))
 }
 
-/// The lead of a packet the card's author sent: its kind when not MSG, exact
-/// authoring occupant, an outgoing arrow, then every addressed occupant and
-/// the operator. A quoted peer context uses the same direction lead with its
-/// own recorded destination; badges never change either side's attribution.
-pub(super) fn send_signoff_html(send: &wire::MessageSend, agents: &super::QuoteAgents) -> String {
+/// The lead of a packet the card's author sent: the card's live age, its kind
+/// when not MSG, exact authoring occupant, an outgoing arrow, then every
+/// addressed occupant and the operator. A quoted peer context uses the same
+/// direction lead with its own recorded destination; badges never change
+/// either side's attribution.
+fn send_signoff_html(
+    send: &wire::MessageSend,
+    agents: &super::QuoteAgents,
+    card: Option<&super::QuoteSource>,
+) -> String {
     let (sender, state) = occupant_agent(agents, send.from, send.sender)
         .map_or((None, "unresolved"), |(agent, state)| (Some(agent), state));
     let label = sender.map_or(UNAVAILABLE, |agent| agent.label.as_str());
@@ -391,16 +396,19 @@ pub(super) fn send_signoff_html(send: &wire::MessageSend, agents: &super::QuoteA
             None,
         ));
     }
-    packet_signoff_html(
-        &packet_kind_html(send.kind, send.result.as_ref()),
-        &sender,
-        &recipients,
-        "outgoing",
-    )
+    let author = QuoteAuthor::Agent {
+        lane: send.from,
+        occupant: send.sender,
+    };
+    let mut lead = card.map_or_else(String::new, |card| {
+        quote_age_slot_html(&author, agents, card)
+    });
+    lead.push_str(&packet_kind_html(send.kind, send.result.as_ref()));
+    packet_signoff_html(&lead, &sender, &recipients, "outgoing")
 }
 
 /// The pill a packet's kind wears when not MSG, with the result an ANS names.
-pub(super) fn packet_kind_html(
+fn packet_kind_html(
     kind: wire::MessageSendKind,
     result: Option<&wire::rooms::QuestionResultRef>,
 ) -> String {
@@ -440,7 +448,7 @@ fn push_recipient_separator(recipients: &mut String) {
 
 /// Task/room contexts the packet recorded, mounted after the quoted body's
 /// final word as the same task chips ordinary authored prose uses.
-pub(super) fn send_contexts_html(send: &wire::MessageSend) -> String {
+fn send_contexts_html(send: &wire::MessageSend) -> String {
     send.contexts
         .iter()
         .map(|context| super::task_chip_html(context, None, ""))
@@ -451,6 +459,85 @@ pub(super) fn send_contexts_html(send: &wire::MessageSend) -> String {
 /// rail wears as any quote wears its speaker's.
 pub(super) fn send_accent(send: &wire::MessageSend, agents: &super::QuoteAgents) -> Option<usize> {
     occupant_agent(agents, send.from, send.sender).map(|(agent, _)| agent.accent)
+}
+
+/// A sent MSG's body reads as the card author's own words, so its hunks keep
+/// the containing message's controls under an outgoing sender-to-recipient
+/// lead.
+pub(super) fn send_attribution(
+    send: &wire::MessageSend,
+    agents: &super::QuoteAgents,
+    card: Option<&super::QuoteSource>,
+) -> super::image_flow::Attribution {
+    super::image_flow::Attribution {
+        controls_target: String::new(),
+        signoff: send_signoff_html(send, agents, card),
+        disposition: String::new(),
+        badge: String::new(),
+        task_tail: send_contexts_html(send),
+    }
+}
+
+pub(super) fn directive_attribution(
+    context: &wire::MessageDirective,
+    agents: &super::QuoteAgents,
+    sources: &super::QuoteSources,
+) -> super::image_flow::Attribution {
+    let target = context.quote_target.to_string();
+    super::image_flow::Attribution {
+        controls_target: target.clone(),
+        signoff: directive_signoff_html(context, &target, agents, sources),
+        disposition: String::new(),
+        badge: directive_badges_html(context),
+        task_tail: task_tail_html(&target),
+    }
+}
+
+/// The quoted directive's classification, then the kind of the MSG, ASK, or
+/// ANS packet that delivered it, in the card head's own pill group.
+fn directive_badges_html(context: &wire::MessageDirective) -> String {
+    let mut badges = context.badge.map_or_else(String::new, directive_badge_html);
+    badges.push_str(&packet_group_html(context.packet, context.result.as_ref()));
+    badges
+}
+
+/// The pill group naming the MSG, ASK, or ANS packet that delivered a quoted
+/// directive; empty when no packet delivered it or an MSG wears none.
+fn packet_group_html(
+    packet: Option<wire::MessageSendKind>,
+    result: Option<&wire::rooms::QuestionResultRef>,
+) -> String {
+    let pill = packet.map_or_else(String::new, |kind| packet_kind_html(kind, result));
+    if pill.is_empty() {
+        return pill;
+    }
+    format!(
+        "<span class=\"message-classification-group\" role=\"group\" \
+         aria-label=\"Packet kind\">{pill}</span>"
+    )
+}
+
+/// The quoted directive's own kind, where its source marker once stood.
+fn directive_badge_html(badge: wire::DirectiveBadge) -> String {
+    let (class, classification, label, text) = match badge {
+        wire::DirectiveBadge::Review => (
+            "message-review-pill",
+            "review",
+            "Review classification",
+            "REVIEW",
+        ),
+        wire::DirectiveBadge::Taste => (
+            "message-taste-pill",
+            "taste",
+            "Taste classification",
+            "TASTE",
+        ),
+    };
+    format!(
+        "<span class=\"message-classification-group\" role=\"group\" \
+         aria-label=\"Directive classification\"><span class=\"{class}\" \
+         data-message-classification=\"{classification}\" aria-label=\"{label}\">{text}</span></span>"
+    )
 }
 
 /// The roster entry naming one exact occupant with no source card to consult:
@@ -469,7 +556,7 @@ fn occupant_agent(
 
 /// Empty portal target that board provenance fills at the quoted content's
 /// trailing edge after the card has rendered.
-pub(super) fn task_tail_html(target: &str) -> String {
+fn task_tail_html(target: &str) -> String {
     let key = match target.parse() {
         Ok(QuoteTarget::Steering { key, .. } | QuoteTarget::SteeringMedia { key, .. }) => key,
         _ => return String::new(),
@@ -533,7 +620,7 @@ fn render(
                     controls_target: target.clone(),
                     signoff,
                     disposition,
-                    badge: super::packet_group_html(*packet, result.as_ref()),
+                    badge: packet_group_html(*packet, result.as_ref()),
                     task_tail,
                 },
                 quote_depth,
