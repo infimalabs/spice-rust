@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
+mod awareness;
 mod decisions;
 mod designs;
 mod fact_bounds;
@@ -41,16 +42,18 @@ const PREPARED: &str = "prepared";
 /// creating facts into steering heads, moves each open Design onto its one
 /// open phase and drops its pending outputs' ordinary dependency on it,
 /// restates every live team's formation instant from immutable topology facts,
-/// and creates the room-authority projection, per-lane room catch-up cursors
-/// and horizons, room coordination heads, room conversation heads, operator
-/// items, required task evidence, relevance shadow records, the working-group
-/// partition, and the empty principal head index a predecessor lacks,
-/// replacing its per-route room receipts and per-group heads, before the
-/// schema identity advances. Crossing schema 60 rewrites no row. Current
-/// readers therefore need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 28] = [
+/// binds retained Design notices to their exact statement and organic
+/// selection provenance, and creates the room-authority projection, per-lane
+/// room catch-up cursors and horizons, room coordination heads, room
+/// conversation heads, operator items, required task evidence, relevance
+/// shadow records, the working-group partition, and the empty principal head
+/// index a predecessor lacks, replacing its per-route room receipts and
+/// per-group heads, before the schema identity advances. The schema-61
+/// principal vocabulary requires no row rewrite. Current readers therefore
+/// need no execution arm.
+const PREDECESSOR_SCHEMAS: [u32; 29] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60,
+    57, 58, 59, 60, 61,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -350,6 +353,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         team_formations::cross(&transaction)?;
     }
     create_principal_heads(&transaction, version)?;
+    awareness::cross(&transaction)?;
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -1389,8 +1393,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 61, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 62, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 61;
+PRAGMA user_version = 62;
 "#;

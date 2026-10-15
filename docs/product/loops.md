@@ -495,13 +495,16 @@ owns each rule summarized here.
   problem-space record, never a decision: it changes no task, claim, group,
   candidate, or authorization, and a concluded Design accepts none.
 - **Design awareness.** A lane whose claimed task matches a passive Design's
-  terms hears one private
-  [background invitation](invariants/identity.md#identity-a-passive-design-invitation-is-background-information-once-per-occupant)
-  naming the Design's handle, title, and one-line pitch and how to read its
-  room, contribute, or leave. Each occupant hears it once; contributing or
-  leaving ends the lane's invitations to that Design. Being invited is not
-  listening, grants no claim, and owes no acknowledgment, and `spice room
-  awareness HANDLE` shows the operator who was invited and on which terms.
+  terms hears one private organic
+  [background invitation](invariants/identity.md#identity-a-passive-design-invitation-is-background-information-once-per-occupant).
+  During the first half-open ten minutes after a Design is filed, at most three
+  deterministically rotated otherwise eligible claimant occupants also hear a
+  seeded invitation without a term match. Each record names its seeded or
+  organic provenance and exact Design statement, and each occupant hears a
+  Design once for life. Contributing or leaving ends that lane's invitations
+  to the Design. Being invited is not listening, grants no claim, and owes no
+  acknowledgment; `spice room awareness HANDLE` shows provenance, statement,
+  recipient, claimed task, and any organic matched terms.
 - **Preparation.** `task plan` declares a Plan with a `plan,review` flow and
   `task design` declares a Design with its one open `design` phase; active Plan
   and Design claims refuse implementation commits. A Design plans Plans; a

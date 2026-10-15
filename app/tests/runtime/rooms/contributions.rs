@@ -387,6 +387,8 @@ fn noticed(position: u64, design: &wire::TaskStamp, lane: &str) -> serde_json::V
         "room::noticed",
         &DesignNoticed {
             design: design.clone(),
+            statement: wire::Seq::new(position).expect("fixture statement"),
+            provenance: wire::rooms::DesignNoticeProvenance::Organic,
             lane: uuid(lane),
             occupant: uuid(REQUEST),
             task: room(),
