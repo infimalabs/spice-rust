@@ -181,7 +181,7 @@ impl TaskOverviewEdge {
     }
 }
 
-/// A preparation edge from the controller that prepared a task to that output.
+/// A then-style edge from a Design controller to one Plan it prepared.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskOverviewPreparation {
     controller: usize,
@@ -200,9 +200,9 @@ impl TaskOverviewPreparation {
     }
 }
 
-/// Complete selected roots plus every direct dependency and preparing
-/// controller, without protocol root/node caps. Missing and out-of-selection
-/// neighbors remain explicit.
+/// Complete selected roots plus every direct dependency and each selected
+/// Plan's preparing Design controller, without protocol root/node caps. Missing
+/// and out-of-selection neighbors remain explicit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskOverviewGraph {
     nodes: Vec<TaskOverviewNode>,
@@ -358,7 +358,11 @@ impl WorkProjection<'_> {
             let Some(&task_index) = by_task.get(output) else {
                 continue;
             };
-            let Some(preparation) = &self.tasks[task_index].row.statement.body.preparation else {
+            let task = &self.tasks[task_index].row.statement.body;
+            if task.intent != Some(wire::TaskIntent::Plan) {
+                continue;
+            }
+            let Some(preparation) = &task.preparation else {
                 continue;
             };
             let controller = neighbor(
