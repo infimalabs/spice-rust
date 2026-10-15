@@ -1,5 +1,5 @@
 use wire::intent::BoardTask;
-use wire::rooms::DesignNoticed;
+use wire::rooms::{DesignNoticeProvenance, DesignNoticed};
 use wire::{CanonicalUuid, SequenceCode, Witness};
 
 use super::{DesignAmendment, DraftNotice, DraftPhase, visible};
@@ -23,6 +23,8 @@ fn uuid(suffix: u32) -> CanonicalUuid {
 
 fn notice(design: &BoardTask, lane: CanonicalUuid, occupant: CanonicalUuid) -> DesignNoticed {
     DesignNoticed {
+        statement: design.statement.position,
+        provenance: DesignNoticeProvenance::Organic,
         design: design.statement.body.born.clone(),
         task: design.statement.body.born.clone(),
         claim: SequenceCode::new(1),
