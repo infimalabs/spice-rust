@@ -133,6 +133,7 @@ impl ActionQueue {
             (stale.lanes(), CurrentRead::Lanes),
             (stale.inbox(), CurrentRead::Inbox),
             (stale.consent(), CurrentRead::Consent),
+            (stale.principals(), CurrentRead::PrincipalDirectory),
             (stale.settings(), CurrentRead::Settings),
             (stale.principals(), CurrentRead::Principals),
         ] {
@@ -237,6 +238,7 @@ pub(crate) enum CurrentRead {
     Board,
     Lanes,
     Inbox,
+    PrincipalDirectory,
     Settings,
     Vendors,
     Consent,
@@ -249,6 +251,7 @@ impl PendingKind {
             Self::Board => Some(CurrentRead::Board),
             Self::Lanes { .. } => Some(CurrentRead::Lanes),
             Self::Inbox { .. } => Some(CurrentRead::Inbox),
+            Self::PrincipalDirectory => Some(CurrentRead::PrincipalDirectory),
             Self::Settings => Some(CurrentRead::Settings),
             Self::Vendors => Some(CurrentRead::Vendors),
             Self::Consent => Some(CurrentRead::Consent),

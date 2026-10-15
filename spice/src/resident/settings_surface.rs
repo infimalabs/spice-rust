@@ -8,11 +8,10 @@
 use bus::Bus;
 use gix::bstr::ByteSlice as _;
 use journal::FactCause;
-use sha2::{Digest as _, Sha256};
 use spice::repository::Repository;
 use wire::intent::{CommandAnswer, GlobalSettingsAnswer, GlobalSettingsSet};
 use wire::principal::{PrincipalDirectory, PrincipalProfile, PrincipalRoles};
-use wire::{Command, HumanIdentity, Outcome, Producer, Reply, ReplyPosition, SeqRange};
+use wire::{Command, Outcome, Producer, Reply, ReplyPosition, SeqRange};
 
 use super::shutdown::current_residency;
 use super::{
@@ -40,32 +39,6 @@ pub(super) fn malformed(value: Option<&str>) -> bool {
     })
 }
 
-fn initials(name: Option<&str>) -> Option<String> {
-    let badge = name
-        .into_iter()
-        .flat_map(|name| name.split_whitespace().take(2))
-        .filter_map(|word| word.chars().next())
-        .flat_map(char::to_uppercase)
-        .collect::<String>();
-    (!badge.is_empty()).then_some(badge)
-}
-
-/// How one recorded profile presents: its name and email, the badge from the
-/// name's first one or two words, and the Gravatar of the email.
-fn identity(profile: &PrincipalProfile) -> HumanIdentity {
-    let gravatar = profile.email.as_ref().map(|email| {
-        format!("{:x}", Sha256::digest(email.to_lowercase().as_bytes()))
-            .parse()
-            .expect("a SHA-256 lowercase hex spelling is a Gravatar hash")
-    });
-    HumanIdentity {
-        initials: initials(profile.name.as_deref()),
-        name: profile.name.clone(),
-        email: profile.email.clone(),
-        gravatar,
-    }
-}
-
 /// The profile the repository's Git `user.name` and `user.email` describe,
 /// which an admission copies when it is given none.
 pub(super) fn git_profile(repository: &Repository) -> CommandResult<PrincipalProfile> {
@@ -88,7 +61,7 @@ pub(super) fn git_profile(repository: &Repository) -> CommandResult<PrincipalPro
 fn answer(fast_mode: bool, roles: &PrincipalRoles) -> GlobalSettingsAnswer {
     GlobalSettingsAnswer {
         fast_mode,
-        principals: PrincipalDirectory::of(roles, identity),
+        principals: PrincipalDirectory::display(roles.heads()),
     }
 }
 
@@ -266,17 +239,19 @@ mod tests {
 
     #[test]
     fn initials_take_the_first_two_words_of_the_recorded_name() {
-        let one_word = identity(&PrincipalProfile {
+        let one_word = PrincipalProfile {
             name: Some("c".to_owned()),
             email: None,
-        });
+        }
+        .identity();
         assert_eq!(one_word.initials.as_deref(), Some("C"));
         assert_eq!(one_word.gravatar, None);
 
-        let three_words = identity(&PrincipalProfile {
+        let three_words = PrincipalProfile {
             name: Some("céline adams third".to_owned()),
             email: Some("git@example.invalid".to_owned()),
-        });
+        }
+        .identity();
         assert_eq!(three_words.initials.as_deref(), Some("CA"));
         assert!(three_words.gravatar.is_some());
     }

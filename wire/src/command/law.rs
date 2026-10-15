@@ -844,6 +844,7 @@ impl CommandKind {
             Self::ConsentDecide => Law::DECIDE,
             Self::TrustPend => Law::PEND,
             Self::TrustGrant | Self::TrustRevoke => Law::TRUST,
+            Self::PrincipalDirectoryRead => Law::READ,
             Self::PrincipalRead => Law::OPERATOR_READ,
             Self::PrincipalAdmit
             | Self::PrincipalEdit

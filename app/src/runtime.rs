@@ -13,13 +13,14 @@ use wire::intent::{
     TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT,
     TaskRelationKind, TaskRelationNodeRef, TaskRelations, TaskRelationsAnswer, VendorCatalogAnswer,
 };
+use wire::principal::PrincipalDirectory;
 use wire::rooms::RoomAuthorityStamp;
 use wire::{
-    Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, Digest, FactKind,
+    Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, Digest, FactKind,
     MessageLocus, Outcome, Packed, Response, Seq, StreamCursor, StreamFrame, ViewSubject,
 };
 
-use crate::pane::{Principal, SteerPane};
+use crate::pane::Principal;
 use crate::socket::Admitted;
 use crate::watchband;
 
@@ -29,6 +30,7 @@ mod conversation_text;
 mod lanes;
 mod member_control;
 mod message_cards;
+mod principal;
 mod principals;
 mod publication;
 mod rooms;
@@ -568,7 +570,9 @@ pub struct AppRuntime {
     /// Operator consent requests, read whenever a `consent::` fact streams.
     consent: ScopedValue<ConsentQueueAnswer>,
     consent_rulings: consent::ConsentRulings,
-    /// The latest settings read, carrying every principal's display identity.
+    /// The latest connected-readable principal display directory.
+    principals: ScopedValue<PrincipalDirectory>,
+    /// The latest operator-only settings read.
     settings: ScopedValue<GlobalSettingsAnswer>,
     /// The latest principal listing, or why the resident refused it to this
     /// principal; read whenever a `principal::` fact streams.
@@ -628,6 +632,7 @@ impl AppRuntime {
             inbox: ScopedValue::new(accepted),
             consent: ScopedValue::new(accepted),
             consent_rulings: consent::ConsentRulings::new(),
+            principals: ScopedValue::new(accepted),
             settings: ScopedValue::new(accepted),
             principal_listing: ScopedValue::new(accepted),
             vendors: ScopedValue::new(accepted),
@@ -694,44 +699,6 @@ impl AppRuntime {
             *self = Self::new(accepted);
             true
         }
-    }
-
-    /// Whether an acceptance belongs to the authority this runtime may retain.
-    #[must_use]
-    pub fn same_scope(&self, accepted: &Admitted<Accepted>) -> bool {
-        self.accepted.scope() == accepted.scope()
-    }
-
-    /// Whether every current snapshot needed for one coherent app is present.
-    #[must_use]
-    pub fn is_hydrated(&self) -> bool {
-        self.board().is_some()
-            && self.lanes().is_some()
-            && self.inbox().is_some()
-            && self.settings().is_some()
-            && self.vendor_catalog().is_some()
-    }
-
-    #[must_use]
-    pub const fn principal(&self) -> &Principal {
-        &self.principal
-    }
-
-    /// Subjects visible to this admitted principal.
-    #[must_use]
-    pub fn subjects(&self) -> Vec<ViewSubject> {
-        let mut subjects = vec![ViewSubject::Facts, ViewSubject::Rooms];
-        if matches!(self.principal.actor(), Actor::Human(_)) {
-            subjects.push(ViewSubject::Messages);
-            subjects.push(ViewSubject::Quota);
-        }
-        subjects
-    }
-
-    /// Whether the principal's steer pane offers this command.
-    #[must_use]
-    pub fn offers(&self, kind: CommandKind) -> bool {
-        SteerPane::over(&self.principal).offers(kind)
     }
 
     #[must_use]
@@ -915,18 +882,6 @@ impl AppRuntime {
     #[must_use]
     pub fn settings(&self) -> Option<&GlobalSettingsAnswer> {
         self.settings.get(&self.principal)
-    }
-
-    /// Every born principal's display identity, absent until settings land.
-    #[must_use]
-    pub fn principals(&self) -> Option<&wire::principal::PrincipalDirectory> {
-        self.settings().map(|settings| &settings.principals)
-    }
-
-    /// How the connected principal presents, absent until settings name it.
-    #[must_use]
-    pub fn own_identity(&self) -> Option<&wire::HumanIdentity> {
-        self.principals()?.identity(self.principal.actor())
     }
 
     /// Vendors this resident generation can seat, absent until the read lands.
@@ -1120,15 +1075,8 @@ impl AppRuntime {
         self.lane_position.is_some_and(|current| position < current)
     }
 
-    pub fn apply_inbox(&mut self, admitted: &Admitted<Response<InboxAnswer>>) {
-        self.apply_response(admitted, |runtime, answer| {
-            runtime.inbox.replace(admitted.scope(), answer.clone());
-        });
-    }
-
-    /// Apply a global settings read or mutation. Its principal identities
-    /// always replace the last read's, while fast mode never moves behind a
-    /// newer journal position already observed.
+    /// Apply a global settings read or mutation. Fast mode never moves behind
+    /// a newer journal position already observed.
     pub fn apply_settings(&mut self, admitted: &Admitted<Response<GlobalSettingsAnswer>>) {
         let position = match &admitted.get().outcome {
             Outcome::Reply(reply) => match reply.position {

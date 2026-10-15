@@ -2,16 +2,13 @@
 
 ## App sidebar
 
-The app owns one browser-local sidebar at the right edge. Its frame — backdrop,
-header, Close, scroll, sheet-local overlay slot, Escape, inert and ARIA wiring,
-and focus return — is content-agnostic.
-
-Exactly one content type occupies the sidebar. Opening different content
-while it is present swaps the content in place without replaying the opening
-transition; Escape, backdrop, or Close then dismisses the sheet and returns
-focus to a surviving launcher. A content-local overlay owns Escape ahead of the
-sheet and leaves the sheet mounted but inert behind it. Reduced-motion mode
-removes the sheet transition.
+The app owns one content-agnostic, browser-local sidebar at the right edge:
+backdrop, header, Close, scroll, sheet-local overlay slot, Escape, inert/ARIA
+wiring, and focus return. Exactly one content type occupies it. Opening another
+swaps in place without replaying the transition; Escape, backdrop, or Close
+dismisses it and returns focus to a surviving launcher. A local overlay takes
+Escape first while the sheet stays mounted and inert. Reduced motion removes
+the transition.
 
 ## Task overview
 
@@ -217,17 +214,17 @@ No roster gesture mounts, reorders, closes, or focuses a view.
 
 ## Who the app names
 
-The app names each human by their principal's recorded profile, never by Git
-configuration. The operator panel's badge and the inbox heading show the
-connected principal's own name, initials, and Gravatar, so two humans connected
-at once each see themselves. Every authored item names its author's principal:
-a task's activity and steps, a room line, and a quote byline, which shows the
-author's initials with the full name as its accessible label. Facts the
-historical `operator` actor recorded read as the earliest-born principal. The
-principal directory rides the global settings read, and any `principal::` fact
-makes the app re-read it, so a profile edit reaches every open app without a
-reconnect. A human whose profile records no name reads as `human <id>`, and the
-historical actor as Operator.
+The app names humans from principal profiles, never Git. The operator panel and
+inbox heading show the connected principal's name, initials, and Gravatar.
+Activity, task steps, room lines, and quote bylines use the author's profile;
+a quote shows initials with the full name as its accessible label. Historical
+`operator` facts name the earliest-born principal.
+
+Before subscribing, the app reads the connected-readable directory and uses
+the caller's roles to select operator-only streams and reads. Any `principal::`
+fact re-reads it: profile edits publish in place; role edits reconnect so reads
+and subjects change together. A profile without a name reads as `human <id>`;
+the historical actor reads as Operator.
 
 ## Principals in the global menu
 
@@ -262,34 +259,30 @@ scroll chaining. At either edge, arrow and page keys continue through the
 containing Spice menu instead of trapping keyboard navigation in Jobs.
 
 Rows show kind (▶ command, ◆ service, ● watch), agent accent and name, observed
-start age, and the complete command in the tooltip. Ended jobs awaiting agent
-delivery use hollow glyphs. Search matches agent, command, or job key; the
-heading counts also filter by kind or unheard endings. Click **Jobs** to clear
-the filters. An unpublished start displays `?`, not an invented age.
+start age, and the complete command on hover; unpublished starts show `?`, and
+ended jobs awaiting delivery use hollow glyphs. Search covers agent, command,
+and job key. Heading counts filter by kind or unheard endings; **Jobs** clears
+filters.
 
-Open a row to inspect its command, working directory, keeper lifecycle, start,
-deadline, and ending evidence. **Summary** and **Output** share the same card;
-previous/next navigate matching jobs without opening another pane. Output is
-the keeper's bounded tail, with an explicit notice when earlier output was
-omitted. Copy copies the complete command or the displayed output. Back returns
-to the list; Escape first cancels a kill confirmation, otherwise returns.
+Inspection shows command, working directory, keeper lifecycle, start, deadline,
+ending evidence, and bounded output tail with an omission notice. **Summary**
+and **Output** share the card; previous/next traverse matching jobs. Copy takes
+the complete command or displayed output. Back returns to the list; Escape
+first cancels a kill confirmation.
 
 **Kill** requires running/starting evidence and current operator authority.
-Confirmation names the exact job key, focuses **Cancel**, and asks the existing
-keeper to terminate that command's process group. Stopping, ended, unavailable,
-and no-longer-cataloged references cannot be killed from the card. A sent stop
-is not replayed after reconnect; refresh reads what the keeper actually did.
-Inspection and operator termination never mark the agent's result as delivered.
-An operator-stopped ending remains eligible for its ordinary agent notification.
+Confirmation names the exact job key, focuses **Cancel**, and asks the keeper
+to stop that process group. Stopping, ended, unavailable, and absent jobs
+cannot be killed. A stop is not replayed after reconnect, and neither
+inspection nor stopping marks the agent's result delivered; an
+operator-stopped ending still receives its ordinary agent notification.
 
-The operator-only `lane::jobs-read`, `lane::job-read`, and `lane::job-stop` reads
-and control operate on the existing keeper records, not a second job store.
-Their job payloads use the native base52 job key and an encoded topology
-revision/lane slot, not a new UUID identity. Changed topology invalidates the
-reference before any stop marker is written; return to the list for a current
-reference. Existing lane summaries and retained keeper data keep their current
-shape. Catalogs refresh while the panel is visible; live inspection refreshes
-while its card is visible. Disconnection and missing records are explicit.
+The operator-only `lane::jobs-read`, `lane::job-read`, and `lane::job-stop`
+operate on keeper records, not a second store. References carry the native
+base52 job key plus encoded topology revision/lane slot. Topology movement
+invalidates a reference before any stop marker; return to the list for a
+current one. Catalogs refresh while shown, live inspection refreshes while
+open, and disconnection or missing records is explicit.
 
 ## Provider quota rows
 

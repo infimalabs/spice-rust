@@ -9,8 +9,8 @@ use serde::Serialize;
 use crate::QuoteResolution;
 use crate::command::CommandKind;
 use crate::principal::{
-    PrincipalAdmit, PrincipalDeauthorize, PrincipalEdit, PrincipalRead, PrincipalRoleRef,
-    PrincipalStanding, PrincipalsAnswer,
+    PrincipalAdmit, PrincipalDeauthorize, PrincipalDirectoryAnswer, PrincipalDirectoryRead,
+    PrincipalEdit, PrincipalRead, PrincipalRoleRef, PrincipalStanding, PrincipalsAnswer,
 };
 use crate::rooms::{
     CandidateCoverageRecord, CandidateCritiqueRecord, CandidateRetain, CandidateWithdraw,
@@ -201,6 +201,8 @@ pub enum BodyShape {
     ReleasePublish,
     /// [`UpChange`]
     UpChange,
+    /// [`PrincipalDirectoryRead`]
+    PrincipalDirectoryRead,
     /// [`PrincipalRead`]
     PrincipalRead,
     /// [`PrincipalAdmit`]
@@ -290,6 +292,8 @@ pub enum AnswerShape {
     Recognition,
     /// [`QuoteResolution`]
     Quote,
+    /// [`PrincipalDirectoryAnswer`]
+    PrincipalDirectory,
     /// [`PrincipalsAnswer`]
     Principals,
     /// [`PrincipalStanding`]
@@ -374,6 +378,8 @@ pub enum CommandAnswer {
     Recognition(RecognitionAnswer),
     /// [`AnswerShape::Quote`]
     Quote(QuoteResolution),
+    /// [`AnswerShape::PrincipalDirectory`]
+    PrincipalDirectory(PrincipalDirectoryAnswer),
     /// [`AnswerShape::Principals`]
     Principals(PrincipalsAnswer),
     /// [`AnswerShape::Principal`]
@@ -421,6 +427,7 @@ impl CommandAnswer {
             Self::Taste(_) => AnswerShape::Taste,
             Self::Recognition(_) => AnswerShape::Recognition,
             Self::Quote(_) => AnswerShape::Quote,
+            Self::PrincipalDirectory(_) => AnswerShape::PrincipalDirectory,
             Self::Principals(_) => AnswerShape::Principals,
             Self::Principal(_) => AnswerShape::Principal,
         }
@@ -501,7 +508,8 @@ impl CommandKind {
             | Self::WorkingGroupMove
             | Self::WorkingGroupArrange
             | Self::WorkingGroupFast => self.working_group_binding(),
-            Self::PrincipalRead
+            Self::PrincipalDirectoryRead
+            | Self::PrincipalRead
             | Self::PrincipalAdmit
             | Self::PrincipalEdit
             | Self::PrincipalGrant
@@ -892,6 +900,8 @@ pub enum Intent {
     ReleasePublish(ReleasePublish),
     /// [`BodyShape::UpChange`]
     UpChange(UpChange),
+    /// [`BodyShape::PrincipalDirectoryRead`]
+    PrincipalDirectoryRead(PrincipalDirectoryRead),
     /// [`BodyShape::PrincipalRead`]
     PrincipalRead(PrincipalRead),
     /// [`BodyShape::PrincipalAdmit`]
@@ -915,7 +925,8 @@ impl Intent {
             | Self::WorkingGroupMove(_)
             | Self::WorkingGroupArrange(_)
             | Self::WorkingGroupFast(_) => self.working_group_shape(),
-            Self::PrincipalRead(_)
+            Self::PrincipalDirectoryRead(_)
+            | Self::PrincipalRead(_)
             | Self::PrincipalAdmit(_)
             | Self::PrincipalEdit(_)
             | Self::PrincipalRoleRef(_)
@@ -1375,7 +1386,8 @@ impl BodyShape {
     fn decode_runtime_control_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::LaneRecall => Intent::LaneRecall(crate::decode(bytes)?),
-            Self::PrincipalRead
+            Self::PrincipalDirectoryRead
+            | Self::PrincipalRead
             | Self::PrincipalAdmit
             | Self::PrincipalEdit
             | Self::PrincipalRoleRef

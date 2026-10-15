@@ -604,12 +604,49 @@ fn stream_door_checks_nested_wire_and_terminal_cursor_epoch() {
 }
 
 #[test]
-fn human_and_lane_stream_authority_come_from_the_admitted_principal() {
-    let operator_session = session(OPERATOR, EPOCH);
-    let operator = acceptance(&operator_session, &format!("human:{PRINCIPAL}"), EPOCH);
-    let operator = AppRuntime::new(&operator);
+fn human_and_lane_stream_authority_come_from_current_principal_roles() {
+    let human_session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&human_session, &format!("human:{PRINCIPAL}"), EPOCH);
+    let mut human = AppRuntime::new(&accepted);
     assert_eq!(
-        operator.subjects(),
+        human.subjects(),
+        vec![ViewSubject::Facts, ViewSubject::Rooms]
+    );
+    assert!(human.offers(CommandKind::PrincipalDirectoryRead));
+    assert!(!human.offers(CommandKind::PrincipalRead));
+    assert!(!human.offers(CommandKind::ConsentDecide));
+
+    let bytes = support::response(
+        WireVersion::CURRENT,
+        uuid(REQUEST),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(seq(41)),
+            body: wire::principal::PrincipalDirectoryAnswer {
+                principals: wire::principal::PrincipalDirectory::display(&[
+                    wire::principal::PrincipalHead {
+                        principal: uuid(PRINCIPAL),
+                        born: seq(1),
+                        profile: wire::principal::PrincipalProfile {
+                            name: Some("Ada Example".to_owned()),
+                            email: None,
+                        },
+                        roles: std::collections::BTreeSet::from([
+                            wire::principal::PrincipalRole::Operator,
+                        ]),
+                        capability: None,
+                    },
+                ]),
+                roles: std::collections::BTreeSet::from([wire::principal::PrincipalRole::Operator]),
+            },
+        }),
+    );
+    let admitted = human_session
+        .admit_frame(&bytes)
+        .expect("principal answer is admitted");
+    assert!(human.apply_principals(&admitted));
+    assert_eq!(
+        human.subjects(),
         vec![
             ViewSubject::Facts,
             ViewSubject::Rooms,
@@ -617,7 +654,14 @@ fn human_and_lane_stream_authority_come_from_the_admitted_principal() {
             ViewSubject::Quota,
         ]
     );
-    assert!(operator.offers(CommandKind::ConsentDecide));
+    assert!(human.offers(CommandKind::ConsentDecide));
+    assert_eq!(
+        human
+            .principals()
+            .and_then(|principals| principals.identity(human.principal().actor()))
+            .and_then(|identity| identity.name.as_deref()),
+        Some("Ada Example")
+    );
 
     let lane_session = session(LANE_CAPABILITY, EPOCH);
     let lane = acceptance(&lane_session, &format!("lane:{LANE}"), EPOCH);

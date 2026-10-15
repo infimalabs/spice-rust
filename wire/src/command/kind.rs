@@ -78,6 +78,7 @@ impl CommandKind {
         Self::TrustPend,
         Self::TrustGrant,
         Self::TrustRevoke,
+        Self::PrincipalDirectoryRead,
         Self::PrincipalRead,
         Self::PrincipalAdmit,
         Self::PrincipalEdit,
@@ -203,7 +204,8 @@ impl CommandKind {
             | Self::ProofRecognize
             | Self::ReleasePublish
             | Self::UpChange => self.runtime_spelling(),
-            Self::PrincipalRead
+            Self::PrincipalDirectoryRead
+            | Self::PrincipalRead
             | Self::PrincipalAdmit
             | Self::PrincipalEdit
             | Self::PrincipalGrant
@@ -322,6 +324,7 @@ impl CommandKind {
             Self::PrincipalEdit => "principal::edit",
             Self::PrincipalGrant => "principal::grant",
             Self::PrincipalRevoke => "principal::revoke",
+            Self::PrincipalDirectoryRead => "principal::directory-read",
             Self::PrincipalDeauthorize => "principal::deauthorize",
             _ => panic!("command spelling partition is closed"),
         }

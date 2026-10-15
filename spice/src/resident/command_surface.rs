@@ -535,6 +535,9 @@ impl<'a> Surface<'a> {
                     reference,
                 ))
             }
+            (CommandKind::PrincipalDirectoryRead, Intent::PrincipalDirectoryRead(_)) => {
+                Some(principal_surface::directory(self.bus, command.actor()))
+            }
             (CommandKind::PrincipalRead, Intent::PrincipalRead(_)) => {
                 Some(principal_surface::read(self.bus))
             }
