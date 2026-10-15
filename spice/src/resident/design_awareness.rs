@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use journal::{GuardError, JournalRead};
-use spice::rooms::awareness::{DesignTerms, pitch, task_terms};
+use spice::rooms::awareness::{CommonTerms, DesignTerms, pitch, task_terms};
 use wire::rooms::DesignNoticed;
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, LaneResidency, Producer, Seq, SequenceCode, TaskStamp,
@@ -184,14 +184,24 @@ pub(in crate::resident) fn plan(
     if designs.is_empty() {
         return Ok(Vec::new());
     }
+    let claims = claims
+        .into_iter()
+        .map(|(entry, claim, occupant)| (entry, claim, occupant, statement_terms(entry)))
+        .collect::<Vec<_>>();
+    let common = CommonTerms::of(
+        entries
+            .iter()
+            .filter(|entry| open(entry))
+            .map(statement_terms),
+    );
     let claimants = claims
         .iter()
-        .map(|(_, claim, occupant)| (claim.lane, *occupant))
+        .map(|(_, claim, occupant, _)| (claim.lane, *occupant))
         .collect();
     let (history, horizon) = noticed(bus, planning.residency.lanes.clone(), claimants)?;
     let mut owed = Vec::new();
     for (design, design_terms) in designs {
-        for (entry, claim, occupant) in &claims {
+        for (entry, claim, occupant, terms) in &claims {
             if design.born() == entry.born()
                 || history
                     .told
@@ -201,7 +211,7 @@ pub(in crate::resident) fn plan(
             {
                 continue;
             }
-            let Some(matched) = design_terms.matched(&claimed_terms(entry)) else {
+            let Some(matched) = design_terms.matched(terms, &common) else {
                 continue;
             };
             // Engagement projects the Design's attention: read it only for a
@@ -265,14 +275,20 @@ fn invitation(
     }
 }
 
-/// Distinctive terms of one claimed task's statement.
-fn claimed_terms(entry: &board::Entry) -> BTreeSet<String> {
+/// Distinctive terms of one task's statement.
+fn statement_terms(entry: &board::Entry) -> BTreeSet<String> {
     let statement = entry.statement();
     task_terms(
         &statement.title,
         statement.description.as_deref(),
         &statement.acceptance,
     )
+}
+
+/// Whether `entry` is open work: pending and not completed.
+fn open(entry: &board::Entry) -> bool {
+    let workflow = entry.workflow();
+    workflow.status == "pending" && workflow.completion.is_none()
 }
 
 /// Whether `entry` is an open Design outside every working group.
