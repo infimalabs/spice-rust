@@ -12,8 +12,9 @@ use spice::repository::Repository;
 use wire::intent::CommandAnswer;
 use wire::principal::{
     PrincipalAdmit, PrincipalAdmitted, PrincipalDeauthorize, PrincipalDeauthorized, PrincipalEdit,
-    PrincipalGranted, PrincipalHead, PrincipalProfile, PrincipalProfiled, PrincipalRevoked,
-    PrincipalRole, PrincipalRoleRef, PrincipalRoles, PrincipalStanding, PrincipalsAnswer,
+    PrincipalGranted, PrincipalHead, PrincipalListing, PrincipalProfile, PrincipalProfiled,
+    PrincipalRevoked, PrincipalRole, PrincipalRoleRef, PrincipalRoles, PrincipalStanding,
+    PrincipalsAnswer,
 };
 use wire::{
     Actor, CanonicalUuid, Command, CommandKind, Outcome, Producer, Refusal, RefusalDiagnostic,
@@ -25,9 +26,28 @@ use super::{
     CommandResult, commit, new_uuid, seq, store_fault, typed_outcome, typed_store_fault, write,
 };
 
-/// Every born principal in birth order at one immutable journal horizon.
+/// Every born principal in birth order at one immutable journal horizon, each
+/// with the commit instant of the admission that bore it.
 pub(super) fn read(bus: &Bus) -> Outcome<CommandAnswer> {
-    let (cursor, heads) = match bus.read(|read| Ok((read.cursor()?, read.principal_heads()?))) {
+    let snapshot = bus.read(|read| {
+        let cursor = read.cursor()?;
+        let mut principals = Vec::new();
+        for head in read.principal_heads()? {
+            let head = head.into_body();
+            let Some(birth) = read.room_fact(head.born)? else {
+                return Err(GuardError::Invalid(format!(
+                    "principal {} names birth {} beyond the read horizon",
+                    head.principal, head.born
+                )));
+            };
+            principals.push(PrincipalListing {
+                admitted: birth.at,
+                head,
+            });
+        }
+        Ok((cursor, principals))
+    });
+    let (cursor, principals) = match snapshot {
         Ok(snapshot) => snapshot,
         Err(error) => {
             return typed_store_fault("principal::journal-unreadable", &error.to_string());
@@ -41,12 +61,7 @@ pub(super) fn read(bus: &Bus) -> Outcome<CommandAnswer> {
     };
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(cursor),
-        body: CommandAnswer::Principals(PrincipalsAnswer {
-            principals: heads
-                .into_iter()
-                .map(journal::JournalHead::into_body)
-                .collect(),
-        }),
+        body: CommandAnswer::Principals(PrincipalsAnswer { principals }),
     })
 }
 

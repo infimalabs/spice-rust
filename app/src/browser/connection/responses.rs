@@ -257,7 +257,8 @@ fn apply_command_response(
         kind @ (PendingKind::Board
         | PendingKind::Settings
         | PendingKind::Vendors
-        | PendingKind::Consent) => apply_scalar_response(session, runtime, kind, bytes)?,
+        | PendingKind::Consent
+        | PendingKind::Principals) => apply_scalar_response(session, runtime, kind, bytes)?,
         PendingKind::ConsentRuling { request } => {
             let admitted: crate::Admitted<Response<wire::intent::ConsentAnswer>> =
                 admit_response(session, bytes)?;
@@ -422,6 +423,9 @@ fn apply_mutating_response(
         PendingKind::SteerSubmission { lane } => CommandApplication::ordinary(
             apply_submission_response(session, handles, id, lane, bytes)?,
         ),
+        PendingKind::PrincipalWrite { respond } => {
+            apply_callback_reply(session, bytes, "Principal change failed", &respond)?
+        }
         kind => apply_task_mutation_response(session, handles, runtime, kind, bytes)?,
     })
 }
@@ -663,6 +667,9 @@ fn apply_scalar_response(
         PendingKind::Settings => runtime.apply_settings(&admit_response(session, bytes)?),
         PendingKind::Vendors => runtime.apply_vendor_catalog(&admit_response(session, bytes)?),
         PendingKind::Consent => runtime.apply_consent_queue(&admit_response(session, bytes)?),
+        PendingKind::Principals => {
+            runtime.apply_principal_listing(&admit_response(session, bytes)?);
+        }
         _ => unreachable!("scalar response partition is closed"),
     }
     Ok(CommandApplication::ordinary(false))

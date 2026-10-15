@@ -906,6 +906,11 @@ async fn dispatch_action(
                 .await
                 .map(Some)
         }
+        ClientAction::Principal { request, respond } => {
+            refresh::send_principal_write(principal, writer, actions, request, respond)
+                .await
+                .map(Some)
+        }
         action @ (ClientAction::Draft { .. }
         | ClientAction::Conclude { .. }
         | ClientAction::Contribute { .. }) => send_task_change(principal, writer, actions, action)
@@ -924,29 +929,11 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
-        ClientAction::TrustGrant {
-            task: _,
-            digest,
-            revision: _,
-        } => send_typed(
-            principal,
-            writer,
-            actions,
-            PendingKind::TrustGrant {
-                digest: digest.clone(),
-            },
-            CommandKind::TrustGrant,
-            vec![Witness::Trust {
-                digest: digest.clone(),
-                standing: wire::TrustState::Pended,
-            }],
-            wire::intent::TrustRef {
-                digest: digest.clone(),
-                worktree: None,
-            },
-        )
-        .await
-        .map(Some),
+        ClientAction::TrustGrant { digest, .. } => {
+            send_trust_grant(principal, writer, actions, digest)
+                .await
+                .map(Some)
+        }
         ClientAction::GlobalSettings(settings) => {
             send_global_settings(principal, writer, actions, settings)
                 .await
@@ -982,6 +969,33 @@ async fn dispatch_action(
                 .map(Some)
         }
     }
+}
+
+/// Grant trust to the pended executable `digest`.
+async fn send_trust_grant(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    digest: &wire::Digest,
+) -> Result<CanonicalUuid, String> {
+    send_typed(
+        principal,
+        writer,
+        actions,
+        PendingKind::TrustGrant {
+            digest: digest.clone(),
+        },
+        CommandKind::TrustGrant,
+        vec![Witness::Trust {
+            digest: digest.clone(),
+            standing: wire::TrustState::Pended,
+        }],
+        wire::intent::TrustRef {
+            digest: digest.clone(),
+            worktree: None,
+        },
+    )
+    .await
 }
 
 /// Wake, drain, or remove one resident member.

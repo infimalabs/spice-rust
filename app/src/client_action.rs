@@ -15,6 +15,8 @@ pub(crate) type PreparationResponse = std::rc::Rc<dyn Fn(Result<wire::intent::Te
 pub(crate) type TaskResponse = std::rc::Rc<dyn Fn(Result<wire::intent::TaskAnswer, String>)>;
 pub(crate) type ContributeResponse =
     std::rc::Rc<dyn Fn(Result<wire::intent::RoomContributeAnswer, String>)>;
+pub(crate) type PrincipalResponse =
+    std::rc::Rc<dyn Fn(Result<wire::principal::PrincipalStanding, String>)>;
 
 /// One complete room publication request retained by the bounded action mailbox.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
@@ -55,6 +57,43 @@ pub(crate) enum PreparationRequest {
         request: wire::rooms::PreparationDecide,
         expected: Vec<wire::Witness>,
     },
+}
+
+/// One principal write, the same command `spice principal` sends.
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+pub(crate) enum PrincipalWrite {
+    Admit(wire::principal::PrincipalAdmit),
+    Edit(wire::principal::PrincipalEdit),
+    Grant(wire::principal::PrincipalRoleRef),
+    Revoke(wire::principal::PrincipalRoleRef),
+    Deauthorize(wire::principal::PrincipalDeauthorize),
+}
+
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+impl PrincipalWrite {
+    pub(crate) const fn kind(&self) -> wire::CommandKind {
+        match self {
+            Self::Admit(_) => wire::CommandKind::PrincipalAdmit,
+            Self::Edit(_) => wire::CommandKind::PrincipalEdit,
+            Self::Grant(_) => wire::CommandKind::PrincipalGrant,
+            Self::Revoke(_) => wire::CommandKind::PrincipalRevoke,
+            Self::Deauthorize(_) => wire::CommandKind::PrincipalDeauthorize,
+        }
+    }
+
+    /// Bytes of operator-supplied text the request carries.
+    pub(crate) fn text_bytes(&self) -> usize {
+        let fields = |name: &Option<String>, email: &Option<String>| {
+            name.as_ref()
+                .map_or(0, String::len)
+                .saturating_add(email.as_ref().map_or(0, String::len))
+        };
+        match self {
+            Self::Admit(admit) => fields(&admit.name, &admit.email),
+            Self::Edit(edit) => fields(&edit.name, &edit.email),
+            Self::Grant(_) | Self::Revoke(_) | Self::Deauthorize(_) => 0,
+        }
+    }
 }
 
 /// One typed task creation, statement revision, or filing, with the heads it
@@ -143,6 +182,12 @@ pub(crate) enum ClientAction {
     Preparation {
         request: PreparationRequest,
         respond: PreparationResponse,
+    },
+    /// Admit a principal, edit a profile, change a role, or retire a
+    /// capability.
+    Principal {
+        request: PrincipalWrite,
+        respond: PrincipalResponse,
     },
     /// Create or file an operator Draft, or revise a task statement.
     Draft {

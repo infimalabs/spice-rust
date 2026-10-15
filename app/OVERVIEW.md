@@ -229,9 +229,29 @@ makes the app re-read it, so a profile edit reaches every open app without a
 reconnect. A human whose profile records no name reads as `human <id>`, and the
 historical actor as Operator.
 
-## Jobs in the global menu
+## Principals in the global menu
 
 Immediately after the operator panel and its inbox, the Spice view shows
+**Principals**, every principal the repository has admitted, oldest first. Each
+reads with its avatar and initials, name with `(you)` on the connected one,
+email, roles, capability standing (issued, local for the earliest-born, whose
+capability each resident generation mints, or revoked), and admission age with
+the exact instant on hover. Its controls send the commands `spice principal`
+sends: **Edit profile** opens a form whose changed fields replace the recorded
+ones, **Grant operator** or **Revoke operator** changes the one role, and
+**Revoke capability** asks once more before retiring an issued capability.
+**Admit a human** takes a required name, an optional email, and the operator
+role; the reply's capability shows once above the list as the opening link
+`ORIGIN/#CAPABILITY` with **Copy link** and **Done**, held only in that panel
+and dropped with its connection. The listing re-reads on every `principal::`
+fact, so another session's change shows at once. The listing is
+operator-only, so a principal without the operator role sees only that the
+section takes it. One change is in flight at a time; its progress and any
+refusal, such as the last operator's revocation, read under the heading.
+
+## Jobs in the global menu
+
+After Principals, the Spice view shows
 **Jobs**, every job every lane keeps, apart from the topology roster. Jobs
 stays ahead of Drafts, OOPS, working groups, resident topology, and the **Provider
 quota** section that ends the view. The list and its full-width inspection card

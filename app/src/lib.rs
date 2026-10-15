@@ -139,6 +139,12 @@ pub(crate) enum PendingKind {
     Vendors,
     /// The operator's pending consent queue.
     Consent,
+    /// Every born principal, read by an operator-role principal.
+    Principals,
+    /// One principal write.
+    PrincipalWrite {
+        respond: client_action::PrincipalResponse,
+    },
     /// One operator ruling on a queued consent request.
     ConsentRuling {
         request: wire::CanonicalUuid,
