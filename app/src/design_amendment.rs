@@ -305,5 +305,4 @@ impl DesignAmendment {
 }
 
 #[cfg(test)]
-#[path = "design_amendment/tests.rs"]
 mod tests;

@@ -1111,6 +1111,18 @@ impl BoardTask {
         )
     }
 }
+/// Whether the current heads describe an open Design.
+///
+/// This is the canonical constant-time rule used by authority and presentation
+/// surfaces. A Design-intent task in an intake phase is ordinary claimed work,
+/// not an open Design.
+#[must_use]
+pub fn is_open_design(intent: Option<crate::TaskIntent>, workflow: &crate::WorkflowHead) -> bool {
+    intent == Some(crate::TaskIntent::Design)
+        && workflow.status == "pending"
+        && workflow.completion.is_none()
+        && workflow.phase.as_str() == "design"
+}
 
 /// One Design's lifecycle standing. An open Design is passive outside every
 /// working group and active inside one; only the operator concludes it.
@@ -1154,6 +1166,7 @@ impl DesignStanding {
             "completed" => Self::Collapsed {
                 reason: collapse_reason.map(str::to_owned),
             },
+            _ if !is_open_design(intent, workflow) => return None,
             _ if grouped => Self::Active,
             _ => Self::Passive,
         })

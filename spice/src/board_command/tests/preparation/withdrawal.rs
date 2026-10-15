@@ -22,16 +22,14 @@ fn retain_citing(
         controller: controller.born().expect("controller stamp"),
         candidate: RoomAuthorityStamp::for_micros(micros).expect("candidate identity"),
     };
-    let expected = vec![
-        Witness::Proposal {
-            proposal: ProposalRef::Candidate {
-                candidate: candidate.clone(),
-            },
-            head: None,
+    let mut expected = transition_witnesses(at(&current, controller));
+    expected.extend(transition_witnesses(at(&current, output)));
+    expected.push(Witness::Proposal {
+        proposal: ProposalRef::Candidate {
+            candidate: candidate.clone(),
         },
-        statement_witness(at(&current, controller)),
-        statement_witness(at(&current, output)),
-    ];
+        head: None,
+    });
     issue(
         bus,
         epoch,
@@ -77,14 +75,12 @@ fn withdraw(
         })
         .expect("withdrawal head reads")
         .map(|head| head.position());
-    let expected = vec![
-        statement_witness(at(&current, controller)),
-        candidate_witness(bus, candidate),
-        Witness::Proposal {
-            proposal: withdrawal,
-            head,
-        },
-    ];
+    let mut expected = transition_witnesses(at(&current, controller));
+    expected.push(candidate_witness(bus, candidate));
+    expected.push(Witness::Proposal {
+        proposal: withdrawal,
+        head,
+    });
     issue(
         bus,
         epoch,

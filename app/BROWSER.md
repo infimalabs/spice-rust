@@ -176,9 +176,9 @@ and the app issues once per cited contribution of a shown Design, at most
 eight in flight, and again after a reconnect; it resolves through the same
 resident path as `spice room history`.
 A lane session submits through the guarded `room::contribute` command from the
-Design view's form. Its sidebar lists the lane's Design invitations from the
-room snapshot's `room::noticed` records, labels each as an organic match or
-bounded early sample, and carries the exact evaluated Design statement.
+Design view's form. Its sidebar lists the lane's organic Design invitations
+from the room snapshot's `room::noticed` records and carries the exact
+evaluated Design statement and matched terms.
 
 The same read view lists every immutable proposal version. An operator uses
 native radios and text fields to accept or reject every output, optionally

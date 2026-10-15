@@ -2,9 +2,9 @@
 //!
 //! Each row is one admitted `room::noticed` record, oldest first: the lane and
 //! occupant told, the claimed task and claim it served, the exact Design
-//! statement evaluated, and whether organic terms or bounded early seeding
-//! selected it. Rows page whole in journal order; a page that withholds any
-//! continues at the first withheld one. Reading changes nothing.
+//! statement evaluated, and the organic matched terms. Rows page whole in
+//! journal order; a page that withholds any continues at the first withheld
+//! one. Reading changes nothing.
 
 use std::fmt;
 
@@ -38,7 +38,6 @@ pub(crate) struct Noticed {
     task: TaskHandle,
     claim: Seq,
     statement: Seq,
-    provenance: wire::rooms::DesignNoticeProvenance,
     terms: Vec<String>,
 }
 
@@ -152,7 +151,6 @@ fn awareness(
                             )
                         })?,
                         statement: body.statement,
-                        provenance: body.provenance,
                         terms: body.terms,
                     });
                 }
@@ -202,14 +200,8 @@ impl fmt::Display for Noticed {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "{} lane {} occupant {} task {} claim {} {} statement {}",
-            self.seq,
-            self.lane,
-            self.occupant,
-            self.task,
-            self.claim,
-            self.provenance,
-            self.statement,
+            "{} lane {} occupant {} task {} claim {} statement {}",
+            self.seq, self.lane, self.occupant, self.task, self.claim, self.statement,
         )?;
         if self.terms.is_empty() {
             Ok(())

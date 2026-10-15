@@ -63,7 +63,7 @@ fn preparation_page(root: &FixtureRoot, words: &[&str]) -> serde_json::Value {
     serde_json::to_value(reply.body).expect("preparation read encodes")
 }
 
-fn transition_witnesses(task: &BoardTask) -> Vec<Witness> {
+pub(super) fn transition_witnesses(task: &BoardTask) -> Vec<Witness> {
     vec![
         statement_witness(task),
         workflow_witness(task),
@@ -327,9 +327,9 @@ fn retain_candidate_version(
         },
         head: None,
     }];
-    expected.push(statement_witness(at(&current, controller)));
+    expected.extend(transition_witnesses(at(&current, controller)));
     for output in outputs {
-        expected.push(statement_witness(at(&current, output)));
+        expected.extend(transition_witnesses(at(&current, output)));
     }
     assert_committed(issue(
         bus,
@@ -367,15 +367,15 @@ fn record_test_critique(
         epoch,
         Actor::Lane(seats[0].lane),
         CommandKind::CandidateCritiqueRecord,
-        vec![
-            statement_witness(at(&current, &controller)),
-            Witness::Proposal {
+        transition_witnesses(at(&current, &controller))
+            .into_iter()
+            .chain([Witness::Proposal {
                 proposal: ProposalRef::Critique {
                     critique: critique.critique.clone(),
                 },
                 head: None,
-            },
-        ],
+            }])
+            .collect(),
         &CandidateCritiqueRecord { critique },
     ));
 }
@@ -400,15 +400,15 @@ pub(super) fn record_test_coverage(
             epoch,
             Actor::Lane(seat.lane),
             CommandKind::CandidateCoverageRecord,
-            vec![
-                statement_witness(at(&current, &controller)),
-                Witness::Proposal {
+            transition_witnesses(at(&current, &controller))
+                .into_iter()
+                .chain([Witness::Proposal {
                     proposal: ProposalRef::Coverage {
                         coverage: coverage.clone(),
                     },
                     head: None,
-                },
-            ],
+                }])
+                .collect(),
             &CandidateCoverageRecord {
                 coverage: CandidateCoverage {
                     coverage: coverage.clone(),
@@ -1180,16 +1180,16 @@ fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
         epoch,
         Actor::Lane(seats[0].lane),
         CommandKind::CandidateRetain,
-        vec![
-            Witness::Proposal {
+        transition_witnesses(at(&current, &plan))
+            .into_iter()
+            .chain(transition_witnesses(at(&current, &task)))
+            .chain([Witness::Proposal {
                 proposal: ProposalRef::Candidate {
                     candidate: candidate.clone(),
                 },
                 head: None,
-            },
-            statement_witness(at(&current, &plan)),
-            statement_witness(at(&current, &task)),
-        ],
+            }])
+            .collect(),
         &CandidateRetain {
             candidate: RetainedCandidate {
                 candidate,

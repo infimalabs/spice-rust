@@ -11,15 +11,22 @@ pub(super) fn default_flow(intent: Option<wire::TaskIntent>, flow: Option<&str>)
     })
 }
 
-/// Refuse a Design whose flow is anything but its one open phase: no lane
-/// step advances or concludes a Design, so another phase could never be
-/// reached.
+/// Admit the direct Design flow and either ordinary claimed intake prefix.
 pub(super) fn admit_design_flow(
     intent: Option<wire::TaskIntent>,
     flow: &[wire::Phase],
 ) -> Result<(), Outcome<CommandAnswer>> {
     if intent != Some(wire::TaskIntent::Design)
-        || matches!(flow, [phase] if phase.as_str() == DESIGN_PHASE)
+        || matches!(
+            flow,
+            [design] if design.as_str() == DESIGN_PHASE
+        )
+        || matches!(
+            flow,
+            [intake, design]
+                if matches!(intake.as_str(), "plan" | "review")
+                    && design.as_str() == DESIGN_PHASE
+        )
     {
         return Ok(());
     }
@@ -27,7 +34,7 @@ pub(super) fn admit_design_flow(
     Err(refusal(
         "task::design-flow",
         Some(flow.join(",")),
-        "a Design walks the one open `design` phase until the operator concludes it; omit --flow",
+        "use one admitted Design route: design, plan,design, or review,design",
     ))
 }
 
@@ -64,8 +71,7 @@ pub(super) fn admit_gather_design(
     }
     if design.is_some_and(|design| {
         design.grouped
-            && design.workflow.body.status == "pending"
-            && design.workflow.body.completion.is_none()
+            && wire::intent::is_open_design(design.statement.body.intent, &design.workflow.body)
     }) {
         return Ok(());
     }
@@ -191,6 +197,8 @@ pub(super) fn bind_preparation(
         || (parent.statement.body.intent.is_none()
             && !constructs_work(parent.workflow.body.phase.as_str())
             && !requires_construction(parent.statement.body.intent, &parent.workflow.body.flow))
+        || (parent.statement.body.intent == Some(wire::TaskIntent::Design)
+            && !wire::intent::is_open_design(parent.statement.body.intent, &parent.workflow.body))
     {
         return Err(refusal(
             "task::preparation-refused",

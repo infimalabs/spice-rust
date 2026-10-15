@@ -51,9 +51,9 @@ const PREPARED: &str = "prepared";
 /// per-group heads, before the schema identity advances. The schema-61
 /// principal vocabulary requires no row rewrite. Current readers therefore
 /// need no execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 29] = [
+const PREDECESSOR_SCHEMAS: [u32; 30] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61,
+    57, 58, 59, 60, 61, 62,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -329,25 +329,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         return Ok(None);
     }
     if version < WHOLE_CANDIDATE_DECISION_SCHEMA {
-        residual::refuse_group_markers(&transaction)?;
-        refuse_creation_omission(&transaction)?;
-        cross_oops_filing(&transaction)?;
-        let vendor_holds = residual::refuse(&transaction)?;
-        cross_residency_subscriptions(&transaction)?;
-        cross_retired_gate_filed(&transaction)?;
-        cross_retired_task_guidance(&transaction)?;
-        residual::cross(&transaction, vendor_holds)?;
-        residual::cross_steering_rooms(&transaction)?;
-        if version >= ROOM_AUTHORITY_SCHEMA {
-            decisions::cross(&transaction)?;
-        }
-        designs::cross(&transaction)?;
-        if (ROOM_CONVERSATION_SCHEMA..ROOM_ITEM_SCHEMA).contains(&version) {
-            transaction
-                .execute_batch("DROP TABLE room_receipts;")
-                .map_err(OpenError::Sqlite)?;
-        }
-        create_room_schemas(&transaction, version)?;
+        cross_legacy_predecessor(&transaction, version)?;
     }
     if version < TEAM_FORMATIONS_SCHEMA {
         team_formations::cross(&transaction)?;
@@ -368,6 +350,32 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         from: version,
         to: SCHEMA_VERSION,
     }))
+}
+
+/// Cross predecessor shapes retired before candidate decisions became whole.
+fn cross_legacy_predecessor(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<(), OpenError> {
+    residual::refuse_group_markers(transaction)?;
+    refuse_creation_omission(transaction)?;
+    cross_oops_filing(transaction)?;
+    let vendor_holds = residual::refuse(transaction)?;
+    cross_residency_subscriptions(transaction)?;
+    cross_retired_gate_filed(transaction)?;
+    cross_retired_task_guidance(transaction)?;
+    residual::cross(transaction, vendor_holds)?;
+    residual::cross_steering_rooms(transaction)?;
+    if version >= ROOM_AUTHORITY_SCHEMA {
+        decisions::cross(transaction)?;
+    }
+    designs::cross(transaction)?;
+    if (ROOM_CONVERSATION_SCHEMA..ROOM_ITEM_SCHEMA).contains(&version) {
+        transaction
+            .execute_batch("DROP TABLE room_receipts;")
+            .map_err(OpenError::Sqlite)?;
+    }
+    create_room_schemas(transaction, version)
 }
 
 /// Create each room projection an authority at `version` lacks; version zero
@@ -1393,8 +1401,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 62, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 63, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 62;
+PRAGMA user_version = 63;
 "#;

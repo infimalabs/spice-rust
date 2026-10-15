@@ -3,8 +3,7 @@
 
 use rusqlite::{Connection, OptionalExtension};
 use wire::rooms::{
-    DESIGN_NOTICE_TERMS, DesignNoticeProvenance, DesignNoticed, DesignReturnDelivered,
-    PreparationDecision, ProposalRef,
+    DESIGN_NOTICE_TERMS, DesignNoticed, DesignReturnDelivered, PreparationDecision, ProposalRef,
 };
 use wire::{Actor, AnyFact, ClaimDisposition, ClaimHead};
 
@@ -112,16 +111,10 @@ fn notice(authority: &impl Authority, actor: &Actor, body: &DesignNoticed) -> Re
             body.design, body.statement
         ));
     }
-    let terms_valid = match body.provenance {
-        DesignNoticeProvenance::Organic => {
-            !body.terms.is_empty() && body.terms.len() <= DESIGN_NOTICE_TERMS
-        }
-        DesignNoticeProvenance::Seeded => body.terms.is_empty(),
-    };
+    let terms_valid = !body.terms.is_empty() && body.terms.len() <= DESIGN_NOTICE_TERMS;
     if !terms_valid {
         return unsound(format!(
-            "{} design awareness for {} carries {} terms",
-            body.provenance,
+            "design awareness for {} carries {} terms",
             body.design,
             body.terms.len()
         ));

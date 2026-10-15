@@ -51,9 +51,7 @@ pub(crate) fn owed_returns(
         let Some(occupant) = occupied.get(&claim.lane) else {
             continue;
         };
-        if statement.intent != Some(wire::TaskIntent::Design)
-            || workflow.status != "pending"
-            || workflow.completion.is_some()
+        if !wire::intent::is_open_design(statement.intent, workflow)
             || claim.disposition != ClaimDisposition::Active
             || !snapshot.facts().grouped(&statement.born)
         {

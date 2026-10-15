@@ -77,13 +77,14 @@ pub(super) fn require_no_pending_controlled_outputs(
 /// gather task offered as an output: a candidate cites its evidence instead.
 fn require_design(
     bus: &Bus,
+    command: &wire::AdmittedCommand,
     controller: &TaskStamp,
     outputs: &[TaskStamp],
 ) -> Result<(), Outcome<CommandAnswer>> {
     let snapshot = bus
         .task_snapshot()
         .map_err(|error| store_fault("preparation::heads-unreadable", &error.to_string()))?;
-    design_controller(task_heads(&snapshot, controller)?, controller)?;
+    require_open_design(command, task_heads(&snapshot, controller)?, controller)?;
     for output in outputs {
         if let Some(heads) = snapshot.task_heads(output)
             && board::gather_task(heads.statement().body(), heads.workflow().body())
@@ -123,11 +124,11 @@ fn require_open_design(
 ) -> Result<(), Outcome<CommandAnswer>> {
     require_transition_witnesses(command, heads)?;
     design_controller(heads, controller)?;
-    if heads.workflow().body().status != "pending" || heads.workflow().body().completion.is_some() {
+    if !wire::intent::is_open_design(heads.statement().body().intent, heads.workflow().body()) {
         return Err(refusal(
             "preparation::controller-not-open",
             Some(controller.to_string()),
-            "decide while the Design is open",
+            "decide after the Design reaches its open design phase",
         ));
     }
     Ok(())
@@ -162,6 +163,7 @@ pub(super) fn retain_candidate(
     }
     if let Err(outcome) = require_design(
         bus,
+        command,
         &request_body.candidate.candidate.controller,
         &request_body.candidate.outputs,
     ) {
@@ -197,6 +199,14 @@ pub(super) fn record_critique(
     if let Err(outcome) = require_proposal_absence(command, &subject) {
         return outcome;
     }
+    if let Err(outcome) = require_design(
+        bus,
+        command,
+        &request_body.critique.critique.candidate.controller,
+        &[],
+    ) {
+        return outcome;
+    }
     record(
         bus,
         command,
@@ -222,6 +232,14 @@ pub(super) fn record_coverage(
         coverage: request_body.coverage.coverage.clone(),
     };
     if let Err(outcome) = require_proposal_absence(command, &subject) {
+        return outcome;
+    }
+    if let Err(outcome) = require_design(
+        bus,
+        command,
+        &request_body.coverage.coverage.candidate.controller,
+        &[],
+    ) {
         return outcome;
     }
     let assessed = ProposalRef::Candidate {
@@ -314,6 +332,16 @@ pub(super) fn record_coverage(
             );
         }
     };
+    commit_coverage(bus, command, request_body, authority, derived)
+}
+
+fn commit_coverage(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    request_body: &CandidateCoverageRecord,
+    authority: CoverageAuthority,
+    derived: Vec<Witness>,
+) -> Outcome<CommandAnswer> {
     let mut coverage = request_body.coverage.clone();
     coverage.authority = authority;
     let controller = coverage.coverage.candidate.controller.clone();

@@ -203,16 +203,23 @@ fn filing_preparation(
             ));
         }
     }
-    if controller.workflow().status != "pending"
-        || controller.workflow().completion.is_some()
+    let controller_open = match controller.statement().intent {
+        Some(wire::TaskIntent::Design) => {
+            wire::intent::is_open_design(controller.statement().intent, controller.workflow())
+        }
+        _ => {
+            controller.workflow().status == "pending"
+                && controller.workflow().completion.is_none()
+                && super::super::planning::requires_construction(
+                    controller.statement().intent,
+                    &controller.workflow().flow,
+                )
+        }
+    };
+    if !controller_open
         || controller
             .claim()
             .is_some_and(|claim| claim.disposition == ClaimDisposition::Active)
-        || !(controller.statement().intent == Some(wire::TaskIntent::Design)
-            || super::super::planning::requires_construction(
-                controller.statement().intent,
-                &controller.workflow().flow,
-            ))
     {
         return Err(refusal(
             "preparation::controller-ineligible",

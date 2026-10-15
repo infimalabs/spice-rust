@@ -388,7 +388,6 @@ fn noticed(position: u64, design: &wire::TaskStamp, lane: &str) -> serde_json::V
         &DesignNoticed {
             design: design.clone(),
             statement: wire::Seq::new(position).expect("fixture statement"),
-            provenance: wire::rooms::DesignNoticeProvenance::Organic,
             lane: uuid(lane),
             occupant: uuid(REQUEST),
             task: room(),
@@ -414,6 +413,8 @@ fn design_board(
         .find(|task| task.statement.body.born == room())
         .expect("room anchor is on the fixture board");
     task.statement.body.intent = Some(wire::TaskIntent::Design);
+    task.workflow.body.flow = vec!["design".parse().expect("fixture phase")];
+    task.workflow.body.phase = "design".parse().expect("fixture phase");
     if settled {
         task.workflow.body.status = "completed".to_owned();
         task.workflow.body.completion =

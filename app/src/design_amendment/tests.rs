@@ -1,5 +1,5 @@
 use wire::intent::BoardTask;
-use wire::rooms::{DesignNoticeProvenance, DesignNoticed};
+use wire::rooms::DesignNoticed;
 use wire::{CanonicalUuid, SequenceCode, Witness};
 
 use super::{DesignAmendment, DraftNotice, DraftPhase, visible};
@@ -24,7 +24,6 @@ fn uuid(suffix: u32) -> CanonicalUuid {
 fn notice(design: &BoardTask, lane: CanonicalUuid, occupant: CanonicalUuid) -> DesignNoticed {
     DesignNoticed {
         statement: design.statement.position,
-        provenance: DesignNoticeProvenance::Organic,
         design: design.statement.body.born.clone(),
         task: design.statement.body.born.clone(),
         claim: SequenceCode::new(1),
@@ -179,6 +178,17 @@ fn visibility_requires_the_noticed_current_occupant_and_an_open_design() {
     assert!(!visible(&design, Some((lane, uuid(3))), &notices));
     assert!(!visible(&design, Some((uuid(4), occupant)), &notices));
     assert!(!visible(&design, Some((lane, occupant)), &[]));
+
+    let mut intake = design.clone();
+    intake.workflow.body.flow = vec![
+        "plan".parse().expect("fixture phase"),
+        "design".parse().expect("fixture phase"),
+    ];
+    intake.workflow.body.phase = "plan".parse().expect("fixture phase");
+    assert!(
+        !visible(&intake, Some((lane, occupant)), &notices),
+        "a Design-intent intake does not expose amendment controls before its design phase",
+    );
 
     let mut settled = design.clone();
     settled.workflow.body.status = "completed".to_owned();

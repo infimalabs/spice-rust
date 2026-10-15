@@ -251,6 +251,8 @@ fn design_passivity_yields_only_to_possession_and_grouping() {
     let design = |value| {
         let mut row = task(value, "alpha.design");
         row.statement.body.intent = Some(wire::TaskIntent::Design);
+        row.workflow.body.flow = vec!["design".parse().expect("fixture phase")];
+        row.workflow.body.phase = "design".parse().expect("fixture phase");
         row
     };
     let mut held = design(1);

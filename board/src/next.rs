@@ -64,9 +64,7 @@ impl ResolvedTasks {
         statement: &wire::TaskHead,
         workflow: &wire::WorkflowHead,
     ) -> bool {
-        statement.intent == Some(TaskIntent::Design)
-            && workflow.status == "pending"
-            && workflow.completion.is_none()
+        wire::intent::is_open_design(statement.intent, workflow)
             && self.unselected.contains(&statement.born)
     }
 
@@ -99,18 +97,21 @@ impl ResolvedTasks {
         self.design(task) == Some(true) && !self.settled(task) && self.active_designs.contains(task)
     }
 
-    /// Whether this statement remains Design-side speculative work rather than
+    /// Whether this row remains Design-side speculative work rather than
     /// execution the allocator may expose in an agent-facing summary.
     ///
-    /// A Design itself stays on its operator-facing planning surface. Work
-    /// controlled by a Design stays there until the same control predicate used
-    /// by allocation releases it. This includes ordinary outputs of an
-    /// authorized Plan once both that Plan and its Design conclude positively.
-    /// A gather task is Design-side evidence work that never carries an
+    /// A Design row itself stays on its operator-facing planning surface only
+    /// after it reaches the open `design` phase. Work controlled by a Design
+    /// stays there until the same control predicate used by allocation releases
+    /// it. A gather task is Design-side evidence work that never carries an
     /// authorization, so it always stays here.
     #[must_use]
-    pub fn speculative_design_work(&self, statement: &wire::TaskHead) -> bool {
-        if statement.intent == Some(TaskIntent::Design) {
+    pub fn speculative_design_work(
+        &self,
+        statement: &wire::TaskHead,
+        workflow: &wire::WorkflowHead,
+    ) -> bool {
+        if wire::intent::is_open_design(statement.intent, workflow) {
             return true;
         }
         statement.preparation.as_ref().is_some_and(|preparation| {
@@ -387,13 +388,17 @@ fn normal_control_wait(
         return false;
     }
     let planning_open = |task: &TaskStamp| {
-        let task = index.get(task).map(|index| &entries[*index]);
-        task.is_some_and(|task| {
-            matches!(
-                task.statement().intent,
-                Some(TaskIntent::Plan | TaskIntent::Design)
-            ) && task.workflow().status == "pending"
-                && task.workflow().completion.is_none()
+        index.get(task).is_some_and(|index| {
+            let task = &entries[*index];
+            match task.statement().intent {
+                Some(TaskIntent::Plan) => {
+                    task.workflow().status == "pending" && task.workflow().completion.is_none()
+                }
+                Some(TaskIntent::Design) => {
+                    wire::intent::is_open_design(task.statement().intent, task.workflow())
+                }
+                None => false,
+            }
         })
     };
     let parent_open = planning_open(&preparation.parent);
@@ -1033,13 +1038,13 @@ fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool 
         && !passive_design(entry)
 }
 
-/// A Design stands active only while the working-group partition holds it.
-/// A Design outside every group is passive: no allocation, capture, steal,
-/// recovery, or room coordination grants it a claim. A claim already held
-/// stays authoritative until its holder parks it.
+/// Whether an open Design stands outside every working group.
+///
+/// A Design-intent row in plan or review intake remains ordinary allocatable
+/// work until its current head reaches `design`.
 #[must_use]
 pub fn passive_design(entry: &Entry) -> bool {
-    entry.statement().intent == Some(wire::TaskIntent::Design) && !entry.grouped()
+    wire::intent::is_open_design(entry.statement().intent, entry.workflow()) && !entry.grouped()
 }
 
 /// Whether a review assignment died with the claim that carried it.

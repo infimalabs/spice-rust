@@ -1,4 +1,5 @@
-//! Cross retained Design notices to provenance-bound statement evidence.
+//! Bind retained Design notices to exact statement evidence and retire their
+//! superseded delivery provenance.
 
 use std::collections::BTreeMap;
 
@@ -8,11 +9,12 @@ use wire::{AnyFact, Envelope, FactKind};
 
 use super::{MigrationError, OpenError};
 
-/// Release that bound every Design notice to its selection path and statement.
-const NOTICE_PROVENANCE_RELEASE: &str = "ROOMS-dW4XHbhwK";
+/// Release that made exact statement evidence the notice authority and
+/// removed the superseded delivery-path classification.
+const NOTICE_STATEMENT_RELEASE: &str = "ROOMS-dW6GpYK65";
 
-/// Add the exact statement current when each retained notice was recorded and
-/// classify the former term-matched path as organic.
+/// Add the exact statement current when an old notice was recorded and remove
+/// the superseded provenance field from every retained notice.
 pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
     let rows = fact_rows(transaction)?;
     let mut revisions = BTreeMap::<String, u64>::new();
@@ -24,13 +26,15 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
                 .get("design")
                 .and_then(Value::as_str)
                 .ok_or_else(|| refusal(seq, "the retained notice names no Design"))?;
-            let revision = revisions.get(design).copied().ok_or_else(|| {
-                refusal(
-                    seq,
-                    "the retained notice predates any provable Design statement",
-                )
-            })?;
-            notice_heads.insert(seq, revision);
+            if !fact.contains_key("statement") {
+                let revision = revisions.get(design).copied().ok_or_else(|| {
+                    refusal(
+                        seq,
+                        "the retained notice predates any provable Design statement",
+                    )
+                })?;
+                notice_heads.insert(seq, revision);
+            }
             continue;
         }
         let envelope: Envelope<AnyFact> = wire::decode(&bytes).map_err(|error| {
@@ -47,9 +51,9 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
     super::residual::rewrite_facts(
         transaction,
         FactKind::DesignNoticed,
-        "json_type(CAST(envelope AS TEXT), '$.fact.provenance') IS NULL OR \
+        "json_type(CAST(envelope AS TEXT), '$.fact.provenance') IS NOT NULL OR \
          json_type(CAST(envelope AS TEXT), '$.fact.statement') IS NULL",
-        NOTICE_PROVENANCE_RELEASE,
+        NOTICE_STATEMENT_RELEASE,
         |seq, fact| cross_notice(seq, fact, &notice_heads),
     )
 }
@@ -97,15 +101,14 @@ fn cross_notice(
     fact: &mut Map<String, Value>,
     notice_heads: &BTreeMap<i64, u64>,
 ) -> Result<(), String> {
-    if fact.contains_key("provenance") || fact.contains_key("statement") {
-        return Err("the retained notice is only partly provenance-bound".to_owned());
+    if !fact.contains_key("statement") {
+        let statement = notice_heads
+            .get(&seq)
+            .copied()
+            .ok_or_else(|| "the retained notice has no recovered statement head".to_owned())?;
+        fact.insert("statement".to_owned(), Value::from(statement));
     }
-    let statement = notice_heads
-        .get(&seq)
-        .copied()
-        .ok_or_else(|| "the retained notice has no recovered statement head".to_owned())?;
-    fact.insert("statement".to_owned(), Value::from(statement));
-    fact.insert("provenance".to_owned(), Value::from("organic"));
+    fact.remove("provenance");
     Ok(())
 }
 
@@ -113,7 +116,7 @@ fn refusal(seq: i64, detail: &str) -> OpenError {
     MigrationError::RetainedRow {
         table: "fact_envelopes",
         row: seq.to_string(),
-        release: NOTICE_PROVENANCE_RELEASE,
+        release: NOTICE_STATEMENT_RELEASE,
         detail: detail.to_owned(),
     }
     .into()

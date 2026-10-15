@@ -197,7 +197,7 @@ pub(super) fn target(snapshot: &bus::TaskSnapshot, projection: &Projection) -> T
 }
 
 fn iced_claim_write(bus: &Bus, digest: &wire::Digest, at: Instant) -> JournalWrite {
-    held_claim_write(bus, at, |statement| {
+    held_claim_write(bus, at, |statement, _| {
         statement.requirements = wire::EnvironmentRequirements::one(
             wire::EnvironmentRequirement::trust_grant(digest.clone()),
         );
@@ -205,18 +205,21 @@ fn iced_claim_write(bus: &Bus, digest: &wire::Digest, at: Instant) -> JournalWri
 }
 
 /// Claim the seeded task for `lane()` on an indefinite lease after `edit`
-/// revises its statement.
+/// revises its statement and workflow.
 pub(super) fn held_claim_write(
     bus: &Bus,
     at: Instant,
-    edit: impl FnOnce(&mut TaskHead),
+    edit: impl FnOnce(&mut TaskHead, &mut wire::WorkflowHead),
 ) -> JournalWrite {
     let snapshot = bus.task_snapshot().expect("seed snapshot reads");
     let heads = &snapshot.tasks()[0];
     let task = heads.statement().body().born.clone();
-    let phase = heads.workflow().body().phase.clone();
     let mut statement = heads.statement().body().clone();
-    edit(&mut statement);
+    let original_workflow = heads.workflow().body().clone();
+    let mut workflow = original_workflow.clone();
+    edit(&mut statement, &mut workflow);
+    let workflow_changed = workflow != original_workflow;
+    let phase = workflow.phase.clone();
     let horizon = spice::claim_lease::indefinite_horizon();
     let occupant = uuid(9);
     let mut write = JournalWrite::new(
@@ -265,6 +268,9 @@ pub(super) fn held_claim_write(
         revision: position,
         ..statement
     });
+    if workflow_changed {
+        write.workflow_head(task.clone(), edited, move |_| workflow);
+    }
     let claim_task = task.clone();
     write.claim_head(claim_task, won, move |position| wire::ClaimHead {
         actor: Actor::Lane(lane()),

@@ -167,8 +167,7 @@ fn contribution_witnesses(
         .collect())
 }
 
-/// Why `anchor` is not an open Design: a Design whose workflow is pending
-/// with no completion.
+/// Why `anchor` is not an open Design at its current workflow head.
 fn not_open_design(anchor: &Entry) -> Option<Outcome<CommandAnswer>> {
     if anchor.statement().intent != Some(wire::TaskIntent::Design) {
         return Some(refusal(
@@ -177,12 +176,16 @@ fn not_open_design(anchor: &Entry) -> Option<Outcome<CommandAnswer>> {
             "contribute to the room of an open Design",
         ));
     }
-    let workflow = anchor.workflow();
-    (workflow.status != "pending" || workflow.completion.is_some()).then(|| {
+    (!wire::intent::is_open_design(anchor.statement().intent, anchor.workflow())).then(|| {
         refusal(
             "room::contribution-design-concluded",
-            Some(format!("{} {}", anchor.handle(), workflow.status)),
-            "a concluded Design accepts no new contribution",
+            Some(format!(
+                "{} {} phase {}",
+                anchor.handle(),
+                anchor.workflow().status,
+                anchor.workflow().phase
+            )),
+            "contribute only after the Design reaches its open design phase",
         )
     })
 }

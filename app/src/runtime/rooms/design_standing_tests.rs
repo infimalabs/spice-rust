@@ -97,8 +97,8 @@ fn group_membership_alone_decides_an_open_designs_activity() {
     retained.workflow.body.phase = "review".parse().expect("fixture phase");
     assert_eq!(
         light(vec![retained]),
-        DesignStanding::Active,
-        "a retained pending Design parked in review reads open by its group",
+        DesignStanding::Unavailable,
+        "Design intent outside the current design phase has no open standing",
     );
 }
 

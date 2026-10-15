@@ -586,27 +586,32 @@ pub(crate) fn require_open_controllers<'a>(
 ) -> Result<(), Refusal> {
     for fact in facts {
         if let Some(wire::rooms::ExecutionAuthorized { authorization }) = fact.read() {
-            let controller = &authorization.candidate.controller;
-            let workflow = stored::<wire::WorkflowHead>(connection, WORKFLOW, controller)?;
-            if !workflow.is_some_and(|(_, head)| head.completion.is_none()) {
+            if !stored_open_design(connection, &authorization.candidate.controller)? {
                 return unsound(format!(
-                    "controller {controller} already concluded and cannot authorize afterward"
+                    "controller {} is not an open Design and cannot authorize output",
+                    authorization.candidate.controller,
                 ));
             }
         } else if let Some(contributed) = fact.read::<wire::rooms::RoomContributed>() {
-            let room = &contributed.room;
-            let statement = stored::<wire::TaskHead>(connection, STATEMENT, room)?;
-            let workflow = stored::<wire::WorkflowHead>(connection, WORKFLOW, room)?;
-            let design =
-                statement.is_some_and(|(_, head)| head.intent == Some(wire::TaskIntent::Design));
-            let open = workflow
-                .is_some_and(|(_, head)| head.status == "pending" && head.completion.is_none());
-            if !(design && open) {
-                return unsound(format!("contribution in {room} names no open Design"));
+            if !stored_open_design(connection, &contributed.room)? {
+                return unsound(format!(
+                    "contribution in {} names no open Design",
+                    contributed.room,
+                ));
             }
         }
     }
     Ok(())
+}
+
+fn stored_open_design(connection: &Connection, task: &TaskStamp) -> Result<bool, Refusal> {
+    let statement = stored::<wire::TaskHead>(connection, STATEMENT, task)?;
+    let workflow = stored::<wire::WorkflowHead>(connection, WORKFLOW, task)?;
+    Ok(statement
+        .zip(workflow)
+        .is_some_and(|((_, statement), (_, workflow))| {
+            wire::intent::is_open_design(statement.intent, &workflow)
+        }))
 }
 
 /// Every output control and execution authorization in this write left the
@@ -648,10 +653,7 @@ pub(crate) fn settle_controls<'a>(
                 }
             }
             let controller = &authorization.candidate.controller;
-            let workflow = stored::<wire::WorkflowHead>(connection, WORKFLOW, controller)?;
-            if !workflow
-                .is_some_and(|(_, head)| head.status == "pending" && head.completion.is_none())
-            {
+            if !stored_open_design(connection, controller)? {
                 return unsound(format!(
                     "authorization at {seq} must leave controller {controller} open"
                 ));

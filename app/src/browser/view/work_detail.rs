@@ -249,7 +249,7 @@ fn render_available(
     let creator_context = crate::view::creator_context_href(&statement.creation, messages);
     let design_room = render
         .runtime
-        .filter(|_| statement.intent == Some(wire::TaskIntent::Design))
+        .filter(|_| row.design_standing().is_some())
         .map_or_else(Html::default, |runtime| {
             super::super::rooms::render_design_room(
                 runtime,

@@ -1,8 +1,7 @@
-//! Organic and bounded early Design invitations remain once per occupant,
-//! retain every standing and engagement suppression, survive restart, and
-//! refuse stale observations.
+//! Organic Design invitations remain once per occupant, retain every standing
+//! and engagement suppression, survive restart, and refuse stale observations.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use wire::rooms::DesignNoticed;
 
@@ -363,16 +362,23 @@ fn surface(lanes: &Lanes) -> SurfaceConfig {
         .config
 }
 
-#[test]
-fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
-    let lanes = Lanes::new("design-awareness");
-    let config = surface(&lanes);
+struct AwarenessFixture {
+    task: wire::TaskHandle,
+    passive: wire::TaskHandle,
+    concluded: wire::TaskHandle,
+    active: wire::TaskHandle,
+    unrelated: wire::TaskHandle,
+    listened: wire::TaskHandle,
+    held: wire::TaskHandle,
+}
+
+fn awareness_fixture(lanes: &Lanes, config: &SurfaceConfig) -> AwarenessFixture {
     let task = lanes.claimed("dVrD245Kc", FIRST);
     let passive = lanes.design("dVrD245Kd", "Room catch-up pagination", PITCH);
     let concluded = lanes.design("dVrD245Km", "Room catch-up retention", MATCHING);
     lanes.close_room(&concluded);
     let active = lanes.design("dVrD245Kn", "Room catch-up ordering", MATCHING);
-    lanes.group(30, &config, &active, true);
+    lanes.group(30, config, &active, true);
     let unrelated = lanes.design("dVrD245Kf", "Working groups", "Arrange the board.");
     let listened = lanes.design("dVrD245Kg", "Room catch-up invitations", MATCHING);
     let held = lanes.design_held(
@@ -385,30 +391,38 @@ fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
     lanes.author(SENDER, &format!("MSG {first}#{listened}: join us here"));
     lanes.account(SENDER);
     let _ = lanes.hear(SENDER, test_uuid(SENDER + 1));
-    let claim = lanes.claim_head(&task);
-    let pending = lanes.pending(FIRST);
+    AwarenessFixture {
+        task,
+        passive,
+        concluded,
+        active,
+        unrelated,
+        listened,
+        held,
+    }
+}
+
+fn assert_planned_invitation(lanes: &Lanes, config: &SurfaceConfig, fixture: &AwarenessFixture) {
     let occupied = BTreeMap::from([
         (test_uuid(FIRST), test_uuid(FIRST + 1)),
         (test_uuid(SECOND), test_uuid(SECOND + 1)),
     ]);
-    let planning = crate::resident::room_catch_up::Planning::load(&lanes.bus, &config)
-        .expect("planning loads");
+    let planning =
+        crate::resident::room_catch_up::Planning::load(&lanes.bus, config).expect("planning loads");
     let planned = crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied)
         .expect("invitations plan");
     let invitation = planned
         .iter()
-        .find(|told| told.lane == test_uuid(FIRST) && told.design == stamp(&passive))
+        .find(|told| told.lane == test_uuid(FIRST) && told.design == stamp(&fixture.passive))
         .expect("passive Design invitation");
-    let current_revision = {
-        let design = stamp(&passive);
-        lanes
-            .bus
-            .read(move |read| read.task_head(&design))
-            .expect("statement reads")
-            .expect("Design statement exists")
-            .body()
-            .revision
-    };
+    let design = stamp(&fixture.passive);
+    let current_revision = lanes
+        .bus
+        .read(move |read| read.task_head(&design))
+        .expect("statement reads")
+        .expect("Design statement exists")
+        .body()
+        .revision;
     assert_eq!(
         invitation.notice.revision,
         wire::SequenceCode::new(current_revision.get()),
@@ -416,42 +430,48 @@ fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
     );
     let background = invitation.notice.background();
     assert_eq!(background.occupant, test_uuid(FIRST + 1));
-    assert_eq!(background.purpose, format!("design:{passive}"));
+    assert_eq!(background.purpose, format!("design:{}", fixture.passive));
     assert!(background.fits(), "the complete invitation fits one kick");
+}
 
-    let mut seated = claimant_seats();
-    lanes.reconcile(&config, &seated);
+fn reconcile_first(
+    lanes: &Lanes,
+    config: &SurfaceConfig,
+    fixture: &AwarenessFixture,
+) -> (Seats, Vec<DesignNoticed>) {
+    let claim = lanes.claim_head(&fixture.task);
+    let pending = lanes.pending(FIRST);
+    let seated = claimant_seats();
+    lanes.reconcile(config, &seated);
     let noticed = lanes.noticed();
     assert_eq!(
         lanes.told(FIRST, test_uuid(FIRST + 1)),
-        [stamp(&passive), stamp(&unrelated), stamp(&held)],
-        "matching Designs stay organic, while one unrelated passive Design is seeded; not \
-         {concluded}, {active}, or {listened}"
+        [stamp(&fixture.passive), stamp(&fixture.held)],
+        "only matching passive Designs are invited; not {}, {}, {}, or {}",
+        fixture.unrelated,
+        fixture.concluded,
+        fixture.active,
+        fixture.listened,
     );
     let row = &noticed[0];
-    assert_eq!(row.task, stamp(&task));
+    assert_eq!(row.task, stamp(&fixture.task));
     assert_eq!(row.terms, TERMS);
-    assert_eq!(
-        row.provenance,
-        wire::rooms::DesignNoticeProvenance::Organic,
-        "term matching keeps its organic provenance"
-    );
-    let passive_stamp = stamp(&passive);
-    let passive_statement = lanes
+    let passive = stamp(&fixture.passive);
+    let statement = lanes
         .bus
-        .read(move |read| read.task_head(&passive_stamp))
+        .read(move |read| read.task_head(&passive))
         .expect("Design statement reads")
         .expect("Design exists")
         .position();
-    assert_eq!(row.statement, passive_statement);
+    assert_eq!(row.statement, statement);
     assert!(
         noticed
             .iter()
-            .all(|row| !(row.lane == test_uuid(SECOND) && row.design == stamp(&held))),
+            .all(|row| !(row.lane == test_uuid(SECOND) && row.design == stamp(&fixture.held))),
         "a lane is never invited to the Design it holds"
     );
     assert_eq!(
-        lanes.claim_head(&task),
+        lanes.claim_head(&fixture.task),
         claim,
         "an invitation moves no claim"
     );
@@ -461,55 +481,72 @@ fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
         "an invitation owes no acknowledgment"
     );
     assert!(
-        !lanes.listens(&config, &stamp(&passive), FIRST),
+        !lanes.listens(config, &stamp(&fixture.passive), FIRST),
         "an invitation adds no room attention"
     );
+    (seated, noticed)
+}
 
-    let mut restarted = claimant_seats();
-    lanes.reconcile(&config, &restarted);
+fn reconcile_restart(
+    lanes: &Lanes,
+    config: &SurfaceConfig,
+    fixture: &AwarenessFixture,
+    noticed: &[DesignNoticed],
+) -> Seats {
+    let restarted = claimant_seats();
+    lanes.reconcile(config, &restarted);
     assert_eq!(
         lanes.noticed(),
         noticed,
         "a restarted resident reads every invitation back and repeats none"
     );
-    let read = lanes.room_read(&["awareness", passive.as_str()]);
+    let read = lanes.room_read(&["awareness", fixture.passive.as_str()]);
     let rows = read["page"]["rows"].as_array().expect("awareness rows");
+    let observed = rows
+        .iter()
+        .map(|row| {
+            (
+                row["lane"].clone(),
+                row["statement"].clone(),
+                row["terms"].clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let expected = noticed
+        .iter()
+        .filter(|told| told.design == stamp(&fixture.passive))
+        .map(|told| {
+            (
+                serde_json::json!(told.lane),
+                serde_json::json!(told.statement),
+                serde_json::json!(told.terms),
+            )
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
-        rows.iter()
-            .map(|row| {
-                (
-                    row["lane"].clone(),
-                    row["provenance"].clone(),
-                    row["statement"].clone(),
-                    row["terms"].clone(),
-                )
-            })
-            .collect::<Vec<_>>(),
-        noticed
-            .iter()
-            .filter(|told| told.design == stamp(&passive))
-            .map(|told| {
-                (
-                    serde_json::json!(told.lane),
-                    serde_json::json!(told.provenance),
-                    serde_json::json!(told.statement),
-                    serde_json::json!(told.terms),
-                )
-            })
-            .collect::<Vec<_>>(),
-        "the operator reads provenance and exact statement with every invitation"
+        observed, expected,
+        "the operator reads exact statement and matched terms with every invitation"
     );
-    assert_eq!(rows[0]["task"], serde_json::json!(task));
-    let read = lanes.room_read(&["awareness", unrelated.as_str()]);
-    let seeded = read["page"]["rows"]
-        .as_array()
-        .expect("seeded awareness rows");
-    assert!(!seeded.is_empty());
+    assert_eq!(rows[0]["task"], serde_json::json!(fixture.task));
+    let read = lanes.room_read(&["awareness", fixture.unrelated.as_str()]);
     assert!(
-        seeded
-            .iter()
-            .all(|row| { row["provenance"] == "seeded" && row["terms"] == serde_json::json!([]) })
+        read["page"]["rows"]
+            .as_array()
+            .expect("unmatched awareness rows")
+            .is_empty(),
+        "an unmatched passive Design receives no synthetic invitation"
     );
+    restarted
+}
+
+#[test]
+fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
+    let lanes = Lanes::new("design-awareness");
+    let config = surface(&lanes);
+    let fixture = awareness_fixture(&lanes, &config);
+    assert_planned_invitation(&lanes, &config, &fixture);
+    let (mut seated, noticed) = reconcile_first(&lanes, &config, &fixture);
+    let mut restarted = reconcile_restart(&lanes, &config, &fixture, &noticed);
     seated.release_all();
     restarted.release_all();
     lanes.finish();
@@ -643,201 +680,6 @@ fn a_lane_that_contributed_or_left_is_never_invited_again() {
     );
     reseated.release_all();
     lanes.finish();
-}
-
-#[test]
-fn seeded_window_is_half_open_and_admits_a_sparse_cohort() {
-    let lanes = Lanes::new("design-awareness-window");
-    let config = surface(&lanes);
-    let design = lanes.design(
-        "dVrD245Kd",
-        "Quantum zephyrs calibrate nebulae",
-        "Vortices measure stellar gradients.",
-    );
-    let _task = lanes.claimed("dVrD245Kc", FIRST);
-    let occupied = BTreeMap::from([(test_uuid(FIRST), test_uuid(FIRST + 1))]);
-    let mut planning = crate::resident::room_catch_up::Planning::load(&lanes.bus, &config)
-        .expect("planning loads");
-    let current = crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied)
-        .expect("current invitations plan");
-    assert_eq!(
-        current.iter().map(|told| &told.design).collect::<Vec<_>>(),
-        [&stamp(&design)],
-        "fewer than three eligible occupants all enter the early cohort"
-    );
-
-    let design_stamp = stamp(&design);
-    let filed = lanes
-        .bus
-        .read(move |read| {
-            let head = read
-                .task_head(&design_stamp)?
-                .ok_or_else(|| journal::GuardError::Invalid("fixture Design missing".to_owned()))?;
-            read.room_fact(head.body().queue_origin)?
-                .map(|envelope| envelope.at)
-                .ok_or_else(|| {
-                    journal::GuardError::Invalid("fixture filing fact missing".to_owned())
-                })
-        })
-        .expect("filing instant reads");
-    planning.at = Instant::new(
-        filed
-            .get()
-            .checked_add(jiff::SignedDuration::from_secs(10 * 60))
-            .expect("fixture window bound"),
-    )
-    .expect("fixture bound is an instant");
-    assert!(
-        crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied)
-            .expect("boundary invitations plan")
-            .is_empty(),
-        "the exact ten-minute bound is outside the half-open seeded window"
-    );
-    lanes.finish();
-}
-
-#[test]
-fn seeded_cohorts_are_rotated_bounded_ordered_and_never_refilled() {
-    let lanes = Lanes::new("design-awareness-cohort");
-    lanes.seat(THIRD);
-    let config = surface(&lanes);
-    let first = lanes.design(
-        "dVrD245Kd",
-        "Quantum zephyrs calibrate nebulae",
-        "Vortices measure stellar gradients.",
-    );
-    let second = lanes.design(
-        "dVrD245Kf",
-        "Ceramic foundries temper alloys",
-        "Kilns measure thermal gradients.",
-    );
-    let tasks = [
-        ("dVrD245Km", SENDER),
-        ("dVrD245Kn", FIRST),
-        ("dVrD245Kp", SECOND),
-        ("dVrD245Kq", THIRD),
-    ]
-    .into_iter()
-    .map(|(stamp, lane)| (test_uuid(lane), lanes.claimed(stamp, lane)))
-    .collect::<BTreeMap<_, _>>();
-    let occupants = [
-        (SENDER, test_uuid(SENDER + 1)),
-        (FIRST, test_uuid(FIRST + 1)),
-        (SECOND, test_uuid(SECOND + 1)),
-        (THIRD, test_uuid(THIRD + 1)),
-    ];
-    let raced = shared_horizon_fourth_candidate(&lanes, &config, &occupants, &tasks, &first);
-    let mut seated = seats(&occupants);
-
-    lanes.reconcile(&config, &seated);
-    let noticed = lanes.noticed();
-    let seeded = |design: &wire::TaskHandle| {
-        noticed
-            .iter()
-            .filter(|notice| notice.design == stamp(design))
-            .map(|notice| {
-                assert_eq!(
-                    notice.provenance,
-                    wire::rooms::DesignNoticeProvenance::Seeded
-                );
-                assert!(notice.terms.is_empty());
-                notice.lane
-            })
-            .collect::<BTreeSet<_>>()
-    };
-    let first_cohort = seeded(&first);
-    let second_cohort = seeded(&second);
-    assert_eq!(first_cohort.len(), 3);
-    assert_eq!(second_cohort.len(), 3);
-    assert_ne!(
-        first_cohort, second_cohort,
-        "adjacent Design stamps rotate the sorted candidate cohort"
-    );
-    let order = noticed
-        .iter()
-        .map(|notice| (notice.task.clone(), notice.design.clone()))
-        .collect::<Vec<_>>();
-    let mut sorted = order.clone();
-    sorted.sort_unstable();
-    assert_eq!(order, sorted, "records commit in task then Design order");
-    assert!(
-        !crate::resident::design_awareness::record(&lanes.bus, &raced)
-            .expect("raced fourth seed is judged"),
-        "a shared-horizon fourth candidate commits nothing after the cap fills"
-    );
-
-    let before = noticed;
-    lanes.reconcile(&config, &seated);
-    lanes.group(40, &config, &first, true);
-    lanes.group(41, &config, &first, false);
-    lanes.reconcile(&config, &seated);
-    assert_eq!(
-        lanes.noticed(),
-        before,
-        "restart and later group transitions neither repeat nor refill a lifetime cohort"
-    );
-    seated.release_all();
-    lanes.finish();
-}
-
-fn shared_horizon_fourth_candidate(
-    lanes: &Lanes,
-    config: &SurfaceConfig,
-    occupants: &[(u8, wire::CanonicalUuid)],
-    tasks: &BTreeMap<wire::CanonicalUuid, wire::TaskHandle>,
-    design: &wire::TaskHandle,
-) -> crate::resident::design_awareness::Told {
-    let occupied = occupants
-        .iter()
-        .map(|(lane, occupant)| (test_uuid(*lane), *occupant))
-        .collect::<BTreeMap<_, _>>();
-    let planning =
-        crate::resident::room_catch_up::Planning::load(&lanes.bus, config).expect("planning loads");
-    let planned = crate::resident::design_awareness::plan(&lanes.bus, &planning, &occupied)
-        .expect("cohorts plan");
-    let design = stamp(design);
-    let planned_lanes = planned
-        .iter()
-        .filter(|told| told.design == design)
-        .map(|told| told.lane)
-        .collect::<BTreeSet<_>>();
-    let (missing_lane, missing_task) = tasks
-        .iter()
-        .find(|(lane, _)| !planned_lanes.contains(lane))
-        .expect("one of four eligible lanes falls outside the cap");
-    let mut raced = planned
-        .iter()
-        .find(|told| told.design == design)
-        .expect("one seeded notice")
-        .clone();
-    let missing_stamp = stamp(missing_task);
-    let (statement, claim) = lanes
-        .bus
-        .read({
-            let task = missing_stamp.clone();
-            move |read| Ok((read.task_head(&task)?, read.claim_head(&task)?))
-        })
-        .expect("missing candidate heads read");
-    raced.lane = *missing_lane;
-    raced.occupant = *occupied
-        .get(missing_lane)
-        .expect("missing lane is occupied");
-    raced.task = missing_stamp;
-    raced.task_statement = statement.expect("missing task exists").position();
-    raced.claim = claim.expect("missing task is claimed").body().claimed;
-
-    assert!(
-        planned
-            .windows(2)
-            .all(|pair| (pair[0].task.clone(), pair[0].design.clone())
-                <= (pair[1].task.clone(), pair[1].design.clone())),
-        "one shared-horizon plan is in task then Design order"
-    );
-    assert_eq!(
-        planned.iter().filter(|told| told.design == design).count(),
-        3
-    );
-    raced
 }
 
 fn observed_invitation(

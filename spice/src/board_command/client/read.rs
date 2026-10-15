@@ -1146,7 +1146,7 @@ pub(super) fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String
     if !active_claimed_by_principal(board, task) {
         return "next: spice task next".to_owned();
     }
-    if task.statement.body.intent == Some(wire::TaskIntent::Design) {
+    if wire::intent::is_open_design(task.statement.body.intent, &task.workflow.body) {
         return format!(
             "next: spice task free {} (only the operator concludes a Design)",
             task.statement.body.handle
@@ -1208,7 +1208,7 @@ pub(in crate::board_command) fn task_status(
     let execution_rows = rows
         .iter()
         .copied()
-        .filter(|entry| !satisfied.speculative_design_work(entry.statement()))
+        .filter(|entry| !satisfied.speculative_design_work(entry.statement(), entry.workflow()))
         .collect::<Vec<_>>();
     let parked = ParkedCounts::measure(board, &entries, &execution_rows, &rows);
     let review = execution_rows
