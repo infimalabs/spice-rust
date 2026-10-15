@@ -343,28 +343,11 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .group-design-pip:is(.done, .collapsed, .deleted, .unavailable) { --app-presence-color: var(--muted); --app-presence-opacity: .35; box-shadow: none; }
 .group-surface .ticker-age.unselected { color: var(--warning); }
 .group-surface .ticker-age:is(.done, .collapsed, .deleted, .unavailable) { color: var(--muted); opacity: .7; }
-/* The group's name closes its status row. */
-.group-surface > .team-toolbar > .team-status-row {
-  grid-template-columns: var(--app-total-tab-inline-size) minmax(0, 1fr) auto;
-  grid-template-rows: minmax(0, 1fr);
-}
 /* The rail mirrors the Design globals: the total closes it and the lanes
    working the group stack toward the start beside it. */
 .group-surface > .team-toolbar > .team-task-rail { grid-template-columns: minmax(0, 1fr) var(--app-total-tab-inline-size); }
 .group-surface .team-task-rail > [data-work-scope="group"] { grid-column: 2; }
 .group-surface .team-task-rail > .team-tasks { grid-column: 1; flex-direction: row-reverse; }
-.group-surface-name {
-  align-self: center;
-  min-width: 0;
-  max-inline-size: 18ch;
-  padding-inline: 6px;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: var(--app-type-status);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .app-presence-pip--work {
   width: var(--app-presence-pip-size);

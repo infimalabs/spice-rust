@@ -1,10 +1,11 @@
 //! A working group's toolbar, the team toolbar's twin read from Designs: an
 //! open-task total and one tab per agent currently working in the group's
 //! Designs, one standing light per Design, and a ticker of the newest room
-//! event across them. Only the name is the group's own; this browser's
-//! placement of the console lives in the panel's arrangement menu, where a
-//! team's arrangement stands. Everything renders from the board, the room
-//! projection, and lane topology on each read.
+//! event across them, where a team's ticker shows its newest words. Like a
+//! team toolbar it shows no name; this browser's placement of the console
+//! lives in the panel's arrangement menu, where a team's arrangement stands.
+//! Everything renders from the board, the room projection, and lane topology
+//! on each read.
 
 use wire::rooms::RoomAuthorityStamp;
 use yew::prelude::*;
@@ -17,13 +18,7 @@ use crate::runtime::{DesignStanding, RoomEvent};
 use crate::watchband;
 use crate::work::{WorkCounts, WorkScope};
 
-pub(super) fn render(
-    render: &GroupRender<'_, '_>,
-    view: &GroupView,
-    name: &str,
-    channels: &[Channel],
-    loaded: bool,
-) -> Html {
+pub(super) fn render(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Channel]) -> Html {
     let standings = channels
         .iter()
         .map(|channel| {
@@ -46,7 +41,6 @@ pub(super) fn render(
                     {for channels.iter().zip(&standings).map(|(channel, standing)| render_light(channel, *standing))}
                 </span>
                 {render_ticker(render, channels, &standings)}
-                <strong class="group-surface-name" aria-busy={(!loaded).to_string()}>{name.to_owned()}</strong>
             </div>
         </header>
     }

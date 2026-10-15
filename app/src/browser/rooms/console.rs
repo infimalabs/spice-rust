@@ -20,9 +20,7 @@ use wire::rooms::{RoomAuthorityStamp, RoomPublicationContent};
 use wire::{QuoteTarget, TaskStamp};
 use yew::prelude::*;
 
-use super::{
-    ComposerFocus, Controls, anchor_label, render_event, render_preparation, room_post_notice,
-};
+use super::{ComposerFocus, Controls, anchor_label, card, render_preparation, room_post_notice};
 use crate::AppRuntime;
 use crate::browser::clock::Age;
 use crate::browser::sender::{SenderHandle, admit_action};
@@ -137,7 +135,7 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
             data-team-weight={watchband::team_visual_weight(channels.len()).to_string()}
             onclick={panel::dismissal(render.controls, &view.group)}
         >
-            {toolbar::render(render, view, &name, &channels, loaded)}
+            {toolbar::render(render, view, &channels)}
             {panel::render_arrangement(render.controls, view, index, &name)}
             if absent {
                 <p class="room-unavailable">{"Shared group authority is unavailable. This local view remains in place."}</p>
@@ -285,34 +283,35 @@ fn room_card(
         report: &report,
         sender: render.sender,
     };
-    let body = html! {
-        <>
+    // As on a team prose card, the age leads the words and the island keeps
+    // only actions.
+    let island = quote.map_or_else(Html::default, |quote| {
+        html! {
             <div class="message-controls" role="group" aria-label={format!("Publication controls for {}", channel.label)}>
-                <div class="message-controls-meta">
-                    <Age
-                        authored={display_millis}
-                        class="relative-age"
-                        title={publication.to_string()}
-                        href={Some(AttrValue::from(crate::view::card_href(&source_id)))}
-                        label={format!("Link to publication in {}", channel.label)}
-                    />
-                </div>
+                <div class="message-controls-meta"></div>
                 <div class="message-controls-actions">
-                    if let Some(quote) = quote {
-                        <span class="message-actions app-control-rail">
-                            <button
-                                class="app-card-action app-card-action--quote"
-                                type="button"
-                                title="Quote this message"
-                                aria-label="Quote this message"
-                                onclick={quote}
-                            ><span class="app-card-action__icon" aria-hidden="true">{"❝"}</span></button>
-                        </span>
-                    }
+                    <span class="message-actions app-control-rail">
+                        <button
+                            class="app-card-action app-card-action--quote"
+                            type="button"
+                            title="Quote this message"
+                            aria-label="Quote this message"
+                            onclick={quote}
+                        ><span class="app-card-action__icon" aria-hidden="true">{"❝"}</span></button>
+                    </span>
                 </div>
             </div>
-            {render_event(render.runtime, Some(controls), publication, event)}
-        </>
+        }
+    });
+    let anchor = card::Anchor {
+        id: &source_id,
+        label: format!("Link to publication in {}", channel.label),
+        island,
+    };
+    let body = html! {
+        <div class="mosaic-message-content">
+            {card::render_face(render.runtime, Some(controls), publication, event, Some(anchor))}
+        </div>
     };
     ActivityCard::Room {
         accent: channel.accent,

@@ -819,8 +819,12 @@
   padding: 0;
   list-style: none;
 }
-.room-contribution-card > header { flex-wrap: wrap; gap: 4px 8px; }
-.room-contribution-author { margin-inline-end: auto; }
+/* A room card's words lead with their signoff as a team card's prose does,
+   and keep the line breaks their author wrote. */
+.room-card-face .room-card-words { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+/* A room-only badge names a contribution's kind or a recorded event in words
+   on the neutral tone: contributions are evidence, never authority. */
+.team-surface .message-room-pill { --message-inline-pill-accent: var(--muted); text-transform: uppercase; }
 .room-contribution-sources ul {
   display: grid;
   gap: 4px;
@@ -838,8 +842,8 @@
 }
 .room-contribution-source-state { color: var(--muted); }
 .room-contribution-sources li[data-source-state="unavailable"] .room-contribution-source-state,
-.room-card p.room-contribution-sources-failed { color: var(--danger); }
-.room-card p.room-contribution-sources-none { color: var(--muted); font-size: var(--app-type-meta); }
+.room-card-face p.room-contribution-sources-failed { color: var(--danger); }
+.room-card-face p.room-contribution-sources-none { color: var(--muted); font-size: var(--app-type-meta); }
 
 .room-contribute,
 .room-invitations { display: grid; gap: 8px; font-size: var(--app-type-detail); }
@@ -983,14 +987,6 @@
 
 .room-flow-card > header { gap: 6px; }
 .room-flow-route { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-
-.room-flow-verb {
-  padding: 0 5px;
-  border: var(--app-edge-soft);
-  border-radius: var(--app-radius-control);
-  color: var(--muted);
-  font-size: var(--app-type-meta);
-}
 
 /* Receipt and result rows keep one geometry in every state: a settling
    receipt or result rewrites content in place and never moves later cards. */

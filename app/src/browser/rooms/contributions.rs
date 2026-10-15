@@ -9,8 +9,8 @@ use wire::TaskStamp;
 use wire::rooms::{RoomAuthorityStamp, RoomContributionKind, RoomSource, RoomSourceView};
 use yew::prelude::*;
 
+use super::card::{Badge, Face, Speaker};
 use crate::AppRuntime;
-use crate::browser::clock::Age;
 use crate::browser::view::chrome::CopyButton;
 use crate::runtime::{Contribution, ContributionSources, RoomEvent, RoomEventKind};
 
@@ -62,13 +62,12 @@ pub(super) fn render_groups(runtime: &AppRuntime, design: &TaskStamp) -> Html {
     }
 }
 
-/// One contribution event as its room-history card, or `None` for any other
-/// event.
-pub(super) fn render_card(
+/// One contribution event's card face, or `None` for any other event.
+pub(super) fn face(
     runtime: &AppRuntime,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
-) -> Option<Html> {
+) -> Option<Face> {
     let RoomEventKind::Contributed {
         lane,
         contribution,
@@ -78,7 +77,7 @@ pub(super) fn render_card(
     else {
         return None;
     };
-    Some(render_entry(
+    Some(entry_face(
         runtime,
         &Contribution {
             publication,
@@ -91,31 +90,31 @@ pub(super) fn render_card(
     ))
 }
 
+/// The badge one contribution kind wears beside its author.
+pub(super) const fn badge(kind: RoomContributionKind) -> Badge {
+    Badge::Kind {
+        kind: kind.as_str(),
+        label: kind_label(kind),
+    }
+}
+
+fn entry_face(runtime: &AppRuntime, entry: &Contribution<'_>) -> Face {
+    Face {
+        speaker: Some(Speaker {
+            name: super::conversation::lane_label(runtime, entry.lane),
+            lane: Some(entry.lane),
+        }),
+        receivers: String::new(),
+        badge: Some(badge(entry.contribution)),
+        words: entry.text.to_owned(),
+        tail: render_sources(runtime, entry.publication, entry.sources),
+    }
+}
+
 fn render_entry(runtime: &AppRuntime, entry: &Contribution<'_>) -> Html {
-    let publication = entry.publication.to_string();
-    let label = kind_label(entry.contribution);
-    let author = super::conversation::lane_label(runtime, entry.lane);
     html! {
-        <article
-            class="room-card room-contribution-card"
-            key={publication.clone()}
-            data-publication={publication.clone()}
-            data-contribution-kind={entry.contribution.as_str()}
-            tabindex="0"
-            aria-label={format!("{label} from {author}")}
-        >
-            <header>
-                <strong>{label}</strong>
-                <span class="room-contribution-author">{author}</span>
-                <Age
-                    authored={entry.publication.micros() / 1_000}
-                    class="relative-age"
-                    title={publication.clone()}
-                />
-                <code>{publication}</code>
-            </header>
-            <p class="room-contribution-text">{entry.text}</p>
-            {render_sources(runtime, entry.publication, entry.sources)}
+        <article class="room-card" key={entry.publication.to_string()} tabindex="0">
+            {super::card::render(runtime, entry.publication, entry_face(runtime, entry), None)}
         </article>
     }
 }

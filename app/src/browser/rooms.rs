@@ -14,6 +14,7 @@ use wire::rooms::{
 use wire::{CommandKind, TaskStamp};
 use yew::prelude::*;
 
+mod card;
 mod conversation;
 
 use super::roster::{self, RosterView, Wording};
@@ -589,23 +590,19 @@ fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {
     }
 }
 
-fn render_event(
-    runtime: &AppRuntime,
-    controls: Option<conversation::CardControls<'_>>,
-    publication: &RoomAuthorityStamp,
-    event: &crate::runtime::RoomEvent,
-) -> Html {
-    if let Some(card) = conversation::render_card(runtime, controls, publication, event)
-        .or_else(|| contributions::render_card(runtime, publication, event))
-    {
-        return card;
-    }
-    let (kind, body) = event_summary(runtime, event);
-    html! {
-        <article class="room-card" key={publication.to_string()} data-publication={publication.to_string()} tabindex="0">
-            <header><strong>{kind}</strong><code>{publication.to_string()}</code></header>
-            <p>{body}</p>
-        </article>
+/// A recorded room event outside the conversation and contribution families,
+/// as a card face: its kind as the badge and its summary as the words.
+fn summary_face(runtime: &AppRuntime, event: &crate::runtime::RoomEvent) -> card::Face {
+    let (label, words) = event_summary(runtime, event);
+    card::Face {
+        speaker: None,
+        receivers: String::new(),
+        badge: Some(card::Badge::Kind {
+            kind: "event",
+            label,
+        }),
+        words,
+        tail: Html::default(),
     }
 }
 

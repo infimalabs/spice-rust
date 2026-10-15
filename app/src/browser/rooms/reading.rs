@@ -6,7 +6,7 @@
 use wire::intent::BoardTask;
 use yew::prelude::*;
 
-use super::{Controls, RoomProjectionStatus, render_event};
+use super::{Controls, RoomProjectionStatus, card};
 use crate::AppRuntime;
 use crate::browser::sender::SenderHandle;
 
@@ -48,7 +48,7 @@ pub(in crate::browser) fn render_design_room(
                         </header>
                         if let Some(events) = events.filter(|events| !events.is_empty()) {
                             {for events.into_iter().rev().map(|(publication, event)| {
-                                render_event(runtime, None, publication, event)
+                                card::render_card(runtime, None, publication, event)
                             })}
                         } else {
                             <p class="room-empty">{"No room publications."}</p>
