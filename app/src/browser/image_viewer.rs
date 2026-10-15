@@ -350,6 +350,7 @@ fn use_action_keys(host: NodeRef, editing: UseStateHandle<bool>) -> Callback<Key
             || event.alt_key()
             || event.ctrl_key()
             || event.meta_key()
+            || event.shift_key()
             || typing(&event)
         {
             return;
