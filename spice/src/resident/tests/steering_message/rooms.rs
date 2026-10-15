@@ -811,7 +811,8 @@ fn an_unknown_context_refuses_every_route() {
     assert!(
         matches!(
             outcomes.as_slice(),
-            [Err(steering::Unpublished::Refused { reason, .. })] if reason == "msg::context-unknown"
+            [Err(steering::Unpublished::AuthorDirected { reason, .. })]
+                if reason == "msg::context-unknown"
         ),
         "{outcomes:?}"
     );

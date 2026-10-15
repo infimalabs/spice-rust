@@ -216,7 +216,8 @@ pub(in crate::resident) enum Kick {
     },
     /// A claim this lane held lapsed; addressed to the lane's current occupant.
     ClaimLapse(ClaimLapseNotice),
-    /// An MSG packet this exact occupant authored missed some or every address.
+    /// An authored packet reached someone but missed an address, or its
+    /// grammar refused before durable judgment.
     MessageRefused(MessageRefusalNotice),
     /// An MSG packet this exact occupant authored was recorded in rooms.
     MessageRecorded(MessageRecordedNotice),
@@ -545,7 +546,8 @@ impl<W: Write + Send + 'static> Driver<W> {
         let _sent = self.background("narration", &message);
     }
 
-    /// Tell this exact occupant which addresses an MSG packet it authored missed.
+    /// Tell this exact occupant which addresses a partly delivered packet it
+    /// authored missed, or which grammar refusal prevented durable judgment.
     fn deliver_message_refusal(&self, notice: &MessageRefusalNotice) {
         let _ = self.background(&format!("msg:{}", notice.packet), &notice.text());
     }
@@ -1051,8 +1053,8 @@ pub(in crate::resident) fn confirmed_background_notice(
     confirmed_background::send(paths, lane, notice)
 }
 
-/// Privately tell the exact authoring occupant which addresses its MSG packet
-/// did not reach.
+/// Privately tell the exact authoring occupant about a partial-delivery miss
+/// or grammar refusal.
 pub(in crate::resident) fn message_refused(
     paths: &RuntimePaths,
     lane: CanonicalUuid,

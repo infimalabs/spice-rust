@@ -53,7 +53,7 @@ pub(super) fn reconcile(
                 continue;
             };
             let control = wire::review_feedback_control(&feedback.task, feedback.reviewed);
-            let directive = identity(&control);
+            let directive = super::super::steering::internal_directive_identity(&control);
             if super::super::steering::control_standing(bus, directive, feedback.lane, &control)?
                 .is_some()
             {
@@ -298,13 +298,6 @@ fn feedback_text(handle: &wire::TaskHandle, finding: &str) -> String {
          nothing else to capture or act on because follow-ups are already boarded!—continue \
          working your current task."
     )
-}
-
-fn identity(control: &str) -> CanonicalUuid {
-    let digest = blake3::hash(format!("spice:{control}").as_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&digest.as_bytes()[..16]);
-    CanonicalUuid::new(uuid::Uuid::from_bytes(bytes))
 }
 
 #[cfg(test)]

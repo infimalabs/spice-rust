@@ -96,6 +96,9 @@ pub(super) fn report(
             }
         }
         Ok(Published::Already) | Err(Unpublished::Withheld | Unpublished::Failed(_)) => {}
+        Err(Unpublished::AuthorDirected { reason, detail }) => {
+            teller.wake(reason, detail, diagnostic);
+        }
         Err(Unpublished::Refused { reason, detail }) => {
             teller.tell(reason, detail, 0, diagnostic);
         }
@@ -131,9 +134,41 @@ impl Teller<'_> {
         )
     }
 
+    /// Record the refusal and wake the author through the durable directive.
+    fn wake(&self, reason: &str, detail: &str, diagnostic: &mut dyn io::Write) {
+        self.record_refusal(reason, detail, 0, diagnostic);
+        notify_inbox(self.paths, self.record.lane);
+    }
+
     /// Record the refusal and, under [`Refusals::Notify`], tell the author
     /// privately, with how many recipients the packet did reach.
     fn tell(&self, reason: &str, detail: &str, reached: usize, diagnostic: &mut dyn io::Write) {
+        self.record_refusal(reason, detail, reached, diagnostic);
+        if self.refusals == Refusals::Notify {
+            crate::resident::supervisor::command::message_refused(
+                self.paths,
+                self.record.lane,
+                MessageRefusalNotice {
+                    occupant: self.record.author,
+                    packet: self.packet(),
+                    header: bounded(self.header),
+                    line: self.locus.line,
+                    column: self.locus.column,
+                    reached,
+                    reason: reason.to_owned(),
+                    detail: bounded(detail),
+                },
+            );
+        }
+    }
+
+    fn record_refusal(
+        &self,
+        reason: &str,
+        detail: &str,
+        reached: usize,
+        diagnostic: &mut dyn io::Write,
+    ) {
         let (record, locus) = (self.record, self.locus);
         let _ = writeln!(
             diagnostic,
@@ -147,22 +182,6 @@ impl Teller<'_> {
             locus.line,
             locus.column,
         );
-        if self.refusals == Refusals::Notify {
-            crate::resident::supervisor::command::message_refused(
-                self.paths,
-                record.lane,
-                MessageRefusalNotice {
-                    occupant: record.author,
-                    packet: self.packet(),
-                    header: bounded(self.header),
-                    line: locus.line,
-                    column: locus.column,
-                    reached,
-                    reason: reason.to_owned(),
-                    detail: bounded(detail),
-                },
-            );
-        }
     }
 
     /// Record what the packet published beyond its deliveries and, under
@@ -381,7 +400,7 @@ impl MessageRefusalNotice {
 }
 
 /// At most [`NOTICE_TEXT_BYTES`] of `text`, cut at a character boundary.
-fn bounded(text: &str) -> String {
+pub(super) fn bounded(text: &str) -> String {
     if text.len() <= NOTICE_TEXT_BYTES {
         return text.to_owned();
     }

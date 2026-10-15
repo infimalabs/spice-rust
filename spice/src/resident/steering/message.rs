@@ -19,10 +19,11 @@
 //! startup — finds the published directive instead of sending again, while
 //! the same body authored at another locus is another message.
 //!
-//! A packet that publishes to no one journals one `steer::withheld` fact
-//! before its author hears the refusal. That fact is the packet's settled
-//! judgment: a later reread finds it and leaves the packet unpublished even
-//! when the refusal's cause has since changed. A packet the grammar refuses
+//! A packet that publishes to no one atomically journals one
+//! `steer::withheld` fact and one resident control directive that wakes its
+//! author with the refusal. Their source-locus identity makes every later
+//! reread a no-op. A packet that reaches anyone still reports only its missed
+//! addresses in a private background notice. A packet the grammar refuses
 //! needs no record, since its text refuses identically on every read.
 //!
 //! ASK, ANS, and an MSG naming `operator` also write one `room::conversed`
@@ -145,6 +146,8 @@ pub(in crate::resident) struct Conversed {
 pub(in crate::resident) enum Unpublished {
     /// The packet itself, or the residency it named, refuses publication.
     Refused { reason: String, detail: String },
+    /// The refusal was journaled with one waking directive to its author.
+    AuthorDirected { reason: String, detail: String },
     /// An earlier judgment refused this packet; it stays unpublished.
     Withheld,
     /// The resident could not decide; the packet may publish on a later read.
@@ -154,8 +157,9 @@ pub(in crate::resident) enum Unpublished {
 /// Publish every MSG packet one authored record holds.
 ///
 /// Returns each packet's outcome in source order. Recipients are told their
-/// inboxes changed; each address a packet did not reach is written to
-/// `diagnostic` and, under [`Refusals::Notify`], privately to its author.
+/// inboxes changed. Partial misses and grammar refusals reach `diagnostic` and,
+/// under [`Refusals::Notify`], a private background notice; a wholly withheld
+/// packet instead opens its one waking directive.
 pub(in crate::resident) fn publish_authored(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -208,8 +212,10 @@ fn publish_record(
                         Ok(publication) => settle(
                             bus,
                             epoch,
+                            config.expiry().get(),
                             record,
                             &locus,
+                            &text[message.header.clone()],
                             publish_resolved(
                                 bus,
                                 epoch,
@@ -260,8 +266,8 @@ fn publish_record(
 /// message. Every record after a lane's current session declaration was
 /// written by the occupant that declared it; rereading them publishes what is
 /// missing, finds the rest already published, and leaves every packet an
-/// earlier judgment withheld unpublished. Refusals are diagnostics only: the
-/// author heard them live, or is gone.
+/// earlier judgment withheld unpublished. A newly judged whole refusal opens
+/// its durable author directive; grammar refusals remain diagnostics only.
 ///
 /// Recovery runs before this resident seats any new occupant, so a packet a
 /// crash left unjudged resolves against no occupant born after the previous
@@ -422,25 +428,40 @@ fn withheld_packets(
     .map_err(|error| error.to_string())
 }
 
-/// Record a packet the residency refused as withheld before anyone hears it.
+/// Atomically record a packet the residency refused and direct its author.
 ///
 /// A refusal that cannot be recorded is undecided: the author is not told,
 /// and a later read may judge the packet again.
 fn settle(
     bus: &Bus,
     epoch: CanonicalUuid,
+    lifetime: Duration,
     record: &AuthoredRecord<'_>,
     locus: &TranscriptLocus,
+    header: &str,
     outcome: Result<Published, Unpublished>,
 ) -> Result<Published, Unpublished> {
     let Err(Unpublished::Refused { reason, detail }) = outcome else {
         return outcome;
     };
+    let Some(control) = wire::packet_withheld_control(locus) else {
+        return Err(Unpublished::Failed(typed_store_fault(
+            "steer::packet-locus-unsourced",
+            "a withheld authored packet has no transcript source",
+        )));
+    };
+    let directive = internal_directive_identity(&control);
+    if control_standing(bus, directive, record.lane, &control)
+        .map_err(|outcome| Unpublished::Failed(typed_outcome(outcome)))?
+        .is_some()
+    {
+        return Err(Unpublished::Withheld);
+    }
     let at = current_instant().map_err(Unpublished::Failed)?;
     let origin =
         resident_origin(epoch).map_err(|outcome| Unpublished::Failed(typed_outcome(outcome)))?;
-    let mut write = JournalWrite::new(Actor::Lane(record.lane), origin, at, Producer::AckScanner);
-    write
+    let mut write = JournalWrite::new(Actor::Spice, origin, at, Producer::AckScanner);
+    let withheld = write
         .fact(
             wire::body::SteerWithheld {
                 from: record.lane,
@@ -454,8 +475,27 @@ fn settle(
         .map_err(|error| {
             Unpublished::Failed(typed_store_fault("steer::fact-invalid", &error.to_string()))
         })?;
+    append_internal_directive(
+        bus,
+        &mut write,
+        epoch,
+        InternalDirective {
+            directive,
+            lane: record.lane,
+            text: format!(
+                "Your packet `{}` was withheld: {reason}: {}",
+                notice::bounded(header),
+                notice::bounded(&detail)
+            ),
+            control,
+            lifetime,
+            cause: FactCause::Pending(withheld),
+            published: at,
+        },
+    )
+    .map_err(|outcome| Unpublished::Failed(typed_outcome(outcome)))?;
     commit(bus, write).map_err(|outcome| Unpublished::Failed(typed_outcome(outcome)))?;
-    Err(Unpublished::Refused { reason, detail })
+    Err(Unpublished::AuthorDirected { reason, detail })
 }
 
 /// Publish one packet, resolving again when the residency moves under it.
