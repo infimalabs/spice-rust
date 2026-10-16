@@ -198,44 +198,6 @@ pub(super) fn render_capacity(runtime: Option<&AppRuntime>) -> Html {
     }
 }
 
-/// The connected principal's avatar beside the name and email its recorded
-/// profile carries, as read-only reference rows, then their personal inbox.
-/// Until the principal directory arrives both rows say they are loading, so
-/// later admission moves no section below them.
-pub(super) fn render_operator(runtime: Option<&AppRuntime>, inbox: Html) -> Html {
-    let directory = runtime.and_then(AppRuntime::principals);
-    let unresolved = wire::HumanIdentity::default();
-    let operator = runtime
-        .and_then(AppRuntime::own_identity)
-        .unwrap_or(&unresolved);
-    let fact = |label: &'static str, key: &'static str, value: Option<&String>| {
-        let (state, text) = match (directory, value) {
-            (None, _) => ("loading", "loading".to_owned()),
-            (Some(_), None) => ("unset", format!("Your profile records no {key}")),
-            (Some(_), Some(value)) => ("ready", value.clone()),
-        };
-        html! {
-            <div data-state={state}>
-                <dt>{label}</dt>
-                <dd title={text.clone()}>{text}</dd>
-            </div>
-        }
-    };
-    html! {
-        <section class="app-sheet-section app-spice-operator" data-operator-member="">
-            <h2>{"You"}</h2>
-            <div class="app-spice-operator-identity">
-                {super::render_operator_avatar(operator)}
-                <dl class="app-spice-operator-facts">
-                    {fact("Name", "name", operator.name.as_ref())}
-                    {fact("Email", "email", operator.email.as_ref())}
-                </dl>
-            </div>
-            {inbox}
-        </section>
-    }
-}
-
 fn render_product_version(identity: Option<&AppIdentity>, update: Option<&AppUpdate>) -> Html {
     let IdentityPresentation {
         label,

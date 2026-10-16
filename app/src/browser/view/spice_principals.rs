@@ -1,8 +1,9 @@
-//! The principals an operator-role principal manages from the global menu:
-//! each born human with their initials, code and identity, roles, capability,
-//! and admission time, and the admission, one-time capability handoff, profile
-//! edit, operator role, and capability retirement `spice principal` offers,
-//! through its commands.
+//! The Principals section of the global menu: the connected principal's own
+//! row, which seats their personal inbox, and for an operator-role principal
+//! every born human with their initials, code and identity, roles,
+//! capability, and admission time, beside the admission, one-time capability
+//! handoff, profile edit, operator role, and capability retirement
+//! `spice principal` offers, through its commands.
 
 use super::super::clock::Age;
 use super::chrome::CopyButton;
@@ -22,11 +23,15 @@ struct PrincipalsProps {
     /// Every born principal, or why the resident refused this principal the
     /// listing; absent until the first read answers.
     listing: Option<Result<PrincipalsAnswer, AttrValue>>,
+    /// Whether this connection may read the listing at all.
+    manages: bool,
     directory: Option<PrincipalDirectory>,
     actor: wire::Actor,
     scope: SessionScope,
     online: bool,
     on_action: Callback<ClientAction, bool>,
+    /// The connected principal's personal inbox, seated in their own row.
+    inbox: Html,
 }
 
 /// A capability the resident handed off once, until the operator dismisses it.
@@ -54,17 +59,30 @@ enum Open {
 type OpenState = UseStateHandle<Option<(SessionScope, Open)>>;
 type Send = Callback<(&'static str, PrincipalWrite)>;
 
+/// The Principals section with `inbox` seated in the connected principal's
+/// row. The inbox stands there whether or not this connection may list
+/// principals, and while that listing loads or is refused.
 pub(super) fn render(
     connection: &Connection,
     runtime: Option<&AppRuntime>,
     sender: &SenderHandle,
+    inbox: Html,
 ) -> Html {
     let Some(runtime) = runtime else {
-        return Html::default();
+        return html! {
+            <section
+                class="app-sheet-section app-spice-principals"
+                aria-labelledby={HEADING}
+                data-principals=""
+            >
+                <h2 id={HEADING}>{"Principals"}</h2>
+                <ul class="app-spice-principal-list">
+                    {render_self(None, None, inbox)}
+                </ul>
+            </section>
+        };
     };
-    if !runtime.offers(CommandKind::PrincipalRead) {
-        return Html::default();
-    }
+    let manages = runtime.offers(CommandKind::PrincipalRead);
     let listing = runtime.principal_listing().map(|listing| {
         listing
             .cloned()
@@ -77,7 +95,16 @@ pub(super) fn render(
     let sender = sender.clone();
     let on_action = Callback::from(move |action| admit_action(&sender, action));
     html! {
-        <Principals {listing} {directory} {actor} {scope} {online} {on_action} />
+        <Principals
+            {listing}
+            {manages}
+            {directory}
+            {actor}
+            {scope}
+            {online}
+            {on_action}
+            {inbox}
+        />
     }
 }
 
@@ -96,13 +123,20 @@ fn principals_view(props: &PrincipalsProps) -> Html {
         .map(|(_, open)| *open);
     let send = use_send(props, &progress, &handoff, &open);
     let ready = props.online && !matches!(progress_now, Some(Progress::Sending(_)));
-    let body = match &props.listing {
-        None => html! { <p class="app-empty-state">{"Loading principals…"}</p> },
-        Some(Err(reason)) => html! {
-            <p class="app-empty-state" data-principals-refused={reason.clone()}>
-                {"Managing principals takes the operator role."}
-            </p>
-        },
+    let own_self = || {
+        let principal = match &props.actor {
+            wire::Actor::Human(principal) => Some(*principal),
+            _ => None,
+        };
+        let identity = props.directory.as_ref().map(|directory| {
+            directory
+                .identity(&props.actor)
+                .cloned()
+                .unwrap_or_default()
+        });
+        render_self(principal, identity.as_ref(), props.inbox.clone())
+    };
+    let (rows, note, admit) = match props.listing.as_ref().filter(|_| props.manages) {
         Some(Ok(answer)) => {
             let roles =
                 PrincipalRoles::new(answer.principals.iter().map(|listing| listing.head.clone()));
@@ -112,26 +146,46 @@ fn principals_view(props: &PrincipalsProps) -> Html {
                 .first()
                 .map(|listing| listing.head.principal);
             let row = |listing: &PrincipalListing| {
+                let own = own == Some(listing.head.principal);
                 render_principal(&PrincipalRow {
                     listing,
                     directory: props.directory.as_ref(),
-                    own: own == Some(listing.head.principal),
+                    own,
                     bootstrap: bootstrap == Some(listing.head.principal),
                     open: open_now,
                     ready,
                     scope: props.scope,
                     set_open: &open,
                     send: &send,
+                    inbox: own.then_some(&props.inbox),
                 })
             };
-            html! {
-                <>
-                    <ul class="app-spice-principal-list">
-                        {for answer.principals.iter().map(row)}
-                    </ul>
-                    {render_admit(open_now == Some(Open::Admit), ready, props.scope, &open, &send)}
-                </>
+            let mut rows = answer.principals.iter().map(row).collect::<Vec<_>>();
+            if own.is_none() {
+                rows.insert(0, own_self());
             }
+            let admit = render_admit(
+                open_now == Some(Open::Admit),
+                ready,
+                props.scope,
+                &open,
+                &send,
+            );
+            (rows, Html::default(), admit)
+        }
+        unlisted => {
+            let note = match unlisted {
+                None if props.manages => {
+                    html! { <p class="app-empty-state">{"Loading principals…"}</p> }
+                }
+                Some(Err(reason)) => html! {
+                    <p class="app-empty-state" data-principals-refused={reason.clone()}>
+                        {"Managing principals takes the operator role."}
+                    </p>
+                },
+                _ => Html::default(),
+            };
+            (vec![own_self()], note, Html::default())
         }
     };
     let status = progress_now.map(|progress| match progress {
@@ -157,8 +211,53 @@ fn principals_view(props: &PrincipalsProps) -> Html {
             <h2 id={HEADING}>{"Principals"}</h2>
             {handoff_now}
             {status}
-            {body}
+            <ul class="app-spice-principal-list">{for rows}</ul>
+            {note}
+            {admit}
         </section>
+    }
+}
+
+/// The connected principal's own row before, or without, the managed
+/// listing: avatar, name, and email from the principal directory, which reads
+/// as loading until it arrives, then the personal inbox. Its key and child
+/// slots match the managed row's, so the listing's arrival keeps the inbox.
+fn render_self(
+    principal: Option<wire::CanonicalUuid>,
+    identity: Option<&wire::HumanIdentity>,
+    inbox: Html,
+) -> Html {
+    let unresolved = wire::HumanIdentity::default();
+    let shown = identity.unwrap_or(&unresolved);
+    let name = match (identity, principal) {
+        (None, _) => "Loading…".to_owned(),
+        (Some(identity), Some(principal)) => display_name(principal, identity.name.as_deref()),
+        (Some(identity), None) => identity.name.clone().unwrap_or_else(|| "You".to_owned()),
+    };
+    html! {
+        <li
+            class="app-spice-principal"
+            key={principal.map_or_else(|| "self".to_owned(), |principal| principal.to_string())}
+            data-principal={principal.map(|principal| principal.to_string())}
+            data-own="true"
+            data-state={identity.is_none().then_some("loading")}
+        >
+            <div class="app-spice-principal-identity">
+                {super::render_operator_avatar(shown)}
+                <div class="app-spice-principal-facts">
+                    <strong>
+                        {name}
+                        <span class="app-spice-principal-own">{" (you)"}</span>
+                    </strong>
+                    if let Some(email) = shown.email.as_deref() {
+                        <span>{email.to_owned()}</span>
+                    }
+                </div>
+            </div>
+            {Html::default()}
+            {Html::default()}
+            {inbox}
+        </li>
     }
 }
 
@@ -245,6 +344,8 @@ struct PrincipalRow<'a> {
     scope: SessionScope,
     set_open: &'a OpenState,
     send: &'a Send,
+    /// The personal inbox the connected principal's own row seats.
+    inbox: Option<&'a Html>,
 }
 
 impl PrincipalRow<'_> {
@@ -307,6 +408,7 @@ fn render_principal(row: &PrincipalRow<'_>) -> Html {
     html! {
         <li
             class="app-spice-principal"
+            key={principal.to_string()}
             data-principal={principal.to_string()}
             data-own={row.own.then_some("true")}
         >
@@ -358,6 +460,7 @@ fn render_principal(row: &PrincipalRow<'_>) -> Html {
                 }
             </div>
             {form}
+            {row.inbox.cloned().unwrap_or_default()}
         </li>
     }
 }

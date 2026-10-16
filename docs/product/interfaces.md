@@ -258,15 +258,16 @@ own the rules; this section fixes the surfaces.
   issued, ending that principal's sessions.
 
 Every one of these is an operator-role command. The app's global menu shows
-**Principals** after the connected human's own panel and sends the same
-commands: each principal reads with its avatar and initials, name, code and
-identity, email, roles, capability standing, and admission time, beside Edit
-profile, Grant or Revoke operator, and Revoke capability. Admit a human takes a
-required name, an optional email, and the operator role, and the reply's
+**Principals**, whose connected human's own row seats their personal inbox,
+and sends the same commands: each principal reads with its avatar and
+initials, name, code and identity, email, roles, capability standing, and
+admission time, beside Edit profile, Grant or Revoke operator, and Revoke
+capability. Admit a human takes a required name, an optional email, and the
+operator role, and the reply's
 capability shows once in that panel as the opening link with a copy control;
 nothing stores it, and a replayed admission never shows it again. A principal
-without the operator role sees the section say so, because the resident refuses
-it the listing.
+without the operator role sees only their own row and personal inbox there,
+because the resident refuses it the listing.
 
 Facts the historical `operator` actor recorded read as the earliest-born
 principal, and every authored item names its author's principal. A principal's

@@ -62,36 +62,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Identity facts are dense reference rows: labels sit beside their values and
-   the section stands tighter. */
-.app-spice-sidebar-content > .app-spice-operator {
-  gap: 8px;
-  padding-block: 12px;
-}
-/* The avatar stands beside the Git name and email rows it is drawn from. */
-.app-spice-operator-identity {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-.app-spice-operator .operator-avatar {
-  flex-basis: 40px;
-  width: 40px;
-  height: 40px;
-  font-size: var(--app-type-label);
-}
-.app-spice-operator-facts {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: baseline;
-  gap: 6px 10px;
-  min-width: 0;
-  margin: 0;
-}
-.app-spice-operator-facts > div { display: contents; }
-.app-spice-operator-facts > :is([data-state="loading"], [data-state="unset"]) > dd { color: var(--muted); }
 /* The fixed-width weekly percentage stands centered above the Spice button,
    outside the anchor's box, so the button never moves as quota state loads or
    becomes unavailable. */
@@ -106,20 +76,6 @@
   text-align: center;
 }
 .app-spice-capacity:is([data-state="loading"], [data-state="unavailable"], [data-quota-stale]) { color: var(--muted); }
-.app-spice-operator-facts dt {
-  color: var(--muted);
-  font: 700 var(--app-type-2xs)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-}
-.app-spice-operator-facts dd {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  font: var(--app-type-meta)/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* Each principal is one identity row over its controls; an open form or the
    one-time capability handoff stands beneath. */
 .app-spice-principal-list {
@@ -156,6 +112,10 @@
 }
 .app-spice-principal-facts > span,
 .app-spice-principal-own { color: var(--muted); }
+.app-spice-principal[data-state="loading"] .app-spice-principal-facts > strong { color: var(--muted); }
+/* The connected principal's inbox stands inside their own row, beneath its
+   controls, so it reads as theirs. */
+.app-spice-principal > .room-inbox { margin-top: 4px; }
 .app-spice-principal-form,
 .app-spice-principal-handoff {
   display: grid;
