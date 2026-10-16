@@ -87,6 +87,8 @@ fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -
         tags: Vec::new(),
         priority: None,
         taste: None,
+        document_slug: None,
+        taste_proposal: None,
         dependencies: Vec::new(),
         provenance: "task:BOARD-root".parse::<Origin>().expect("origin"),
         creation: wire::body::TaskCreationContext::unavailable(

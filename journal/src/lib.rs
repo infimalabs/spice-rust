@@ -18,7 +18,9 @@
 /// facts and their partition head before strict fact readers admit them.
 /// Schema 67 lifts task priority and taste-review standing out of statement
 /// tags into typed statement fields, which an older release would drop.
-pub const SCHEMA_VERSION: u32 = 67;
+/// Schema 68 lifts document slugs and taste-proposal evidence out of statement
+/// tags into typed statement fields, which an older release would drop.
+pub const SCHEMA_VERSION: u32 = 68;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

@@ -26,7 +26,7 @@ the tasks it would touch, and applies only that exact digest.
   digest that already has a `DocApplied` fact returns that receipt. Any refusal
   writes no task or document fact.
 - **Matching is project plus slug.** A row matches on its exact project and
-  internal `document-slug:<slug>` tag; the same slug in another project is a
+  typed document slug field; the same slug in another project is a
   different task. Context-free classification places documents in
   `task.document`.
 

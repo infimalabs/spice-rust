@@ -126,10 +126,9 @@ pub(super) fn document_handles(
         .iter()
         .filter(|node| node.kind != dialect::NodeKind::SyntheticRoot)
         .map(|node| {
-            let marker = document_slug_tag(&node.slug);
             board.tasks.iter().find_map(|task| {
                 (task.statement.body.project == project
-                    && task.statement.body.tags.contains(&marker))
+                    && task.statement.body.document_slug.as_deref() == Some(node.slug.as_str()))
                 .then(|| task.statement.body.handle.clone())
             })
         })
@@ -153,10 +152,6 @@ pub(super) fn document_handles(
             })
         })
         .collect())
-}
-
-pub(super) fn document_slug_tag(slug: &str) -> String {
-    format!("document-slug:{slug}")
 }
 
 pub(super) fn board_barrier(board: &BoardAnswer) -> Digest {

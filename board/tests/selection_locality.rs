@@ -80,6 +80,8 @@ fn statement(name: &str) -> TaskHead {
         tags: Vec::new(),
         priority: None,
         taste: None,
+        document_slug: None,
+        taste_proposal: None,
         dependencies: Vec::new(),
         provenance: "task:BOARD-root".parse::<Origin>().expect("origin"),
         creation: wire::body::TaskCreationContext::unavailable(

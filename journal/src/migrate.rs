@@ -13,6 +13,7 @@ mod fact_bounds;
 mod maturity;
 mod residual;
 mod settings_receipts;
+mod task_markers;
 mod task_standing;
 mod team_formations;
 mod working_groups;
@@ -56,12 +57,13 @@ const PREPARED: &str = "prepared";
 /// heads. Finally it crosses every retained settings command answer from the
 /// retired operator field to the current principal directory, each entry
 /// carrying its principal's code, makes retained working-group activity
-/// stance explicit, and lifts task priority and taste-review standing from
-/// statement tags into typed fields before the schema identity advances.
+/// stance explicit, and lifts task priority, taste-review standing, document
+/// slugs, and taste-proposal evidence from statement tags into typed fields
+/// before the schema identity advances.
 /// Current readers therefore need no release-specific execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 34] = [
+const PREDECESSOR_SCHEMAS: [u32; 35] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61, 62, 63, 64, 65, 66,
+    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -348,6 +350,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     create_principal_heads(&transaction, version)?;
     working_groups::cross(&transaction)?;
     task_standing::cross(&transaction)?;
+    task_markers::cross(&transaction)?;
     settings_receipts::cross(&transaction)?;
     awareness::cross(&transaction)?;
     maturity::cross(&transaction)?;
@@ -1421,8 +1424,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 67, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 68, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 67;
+PRAGMA user_version = 68;
 "#;
