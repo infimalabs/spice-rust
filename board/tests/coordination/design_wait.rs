@@ -89,6 +89,66 @@ fn an_open_design_waits_while_its_released_work_is_in_progress() {
     );
 }
 
+#[test]
+fn decided_rejections_end_selection_wait_without_releasing_outputs() {
+    let design =
+        || planning("DECIDE-design", wire::TaskIntent::Design, Standing::Open).with_grouped(true);
+    let rejected = |name| rejected_output(name, "DECIDE-design");
+    let wait = |entries: &[Entry]| {
+        board::work_waits(entries, &environment())
+            .get(&stamp("DECIDE-design"))
+            .copied()
+    };
+
+    let all_rejected = vec![
+        design(),
+        rejected("DECIDE-first"),
+        rejected("DECIDE-second"),
+    ];
+    assert_eq!(wait(&all_rejected), None);
+    assert!(first_eligible(&all_rejected));
+    for output in &all_rejected[1..] {
+        assert_eq!(output.statement().authorization, None);
+        assert!(output.preparation_decision().is_some());
+        assert!(
+            !board::eligible_entry(
+                &board::resolved_tasks(&all_rejected),
+                output,
+                &Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e408")),
+                &environment(),
+            ),
+            "a rejection decides selection but grants no execution authority"
+        );
+    }
+
+    let mixed = vec![
+        design(),
+        released_output(
+            "DECIDE-accepted",
+            "DECIDE-design",
+            "DECIDE-design",
+            workflow("todo"),
+        ),
+        rejected("DECIDE-rejected"),
+    ];
+    assert_eq!(
+        wait(&mixed),
+        Some(board::WorkWait::Workflow),
+        "released work, not the decided rejection, holds the Design"
+    );
+
+    let still_undecided = vec![
+        design(),
+        rejected("DECIDE-rejected"),
+        named_output("DECIDE-undecided", "DECIDE-design", "DECIDE-design"),
+    ];
+    assert_eq!(
+        wait(&still_undecided),
+        Some(board::WorkWait::Selection),
+        "an output awaiting its first decision still holds the Design"
+    );
+}
+
 /// A filed output `name` under `controller`'s control: selected by that Design
 /// when it is the preparing `parent`, otherwise prepared by `parent`.
 fn released_output(name: &str, parent: &str, controller: &str, workflow: WorkflowHead) -> Entry {
@@ -103,4 +163,13 @@ fn released_output(name: &str, parent: &str, controller: &str, workflow: Workflo
         decision: wire::SequenceCode::new(1),
     });
     admitted(head, workflow, None, None).expect("released output")
+}
+
+fn rejected_output(name: &str, controller: &str) -> Entry {
+    named_output(name, controller, controller).with_preparation_decision(Some(
+        wire::rooms::DecisionRef {
+            controller: stamp(controller),
+            decision: wire::SequenceCode::new(1),
+        },
+    ))
 }

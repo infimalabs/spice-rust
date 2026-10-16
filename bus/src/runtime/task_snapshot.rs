@@ -3,6 +3,10 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+mod persistent_index;
+
+use persistent_index::PersistentIndex;
+
 use super::*;
 /// Deterministic work performed by one live-allocation projection.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -178,6 +182,11 @@ impl TerminalIndex {
     }
 }
 
+type RetainedCandidateIndex =
+    PersistentIndex<journal::crossing::rooms::CandidateRef, Box<[journal::crossing::TaskStamp]>>;
+type PreparationDecisionIndex =
+    PersistentIndex<journal::crossing::TaskStamp, journal::crossing::rooms::DecisionRef>;
+
 /// Answers derived from the whole history, advanced once per commit so no
 /// later read walks the history for them.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -211,6 +220,10 @@ struct Indexes {
     /// The reason each Design's collapse recorded, shared until a commit
     /// records another conclusion.
     collapse_reasons: Arc<HashMap<journal::crossing::TaskStamp, String>>,
+    /// Retained candidate outputs indexed without copying prior candidates.
+    retained_candidates: RetainedCandidateIndex,
+    /// Latest preparation decision that ruled on each output.
+    preparation_decisions: PreparationDecisionIndex,
 }
 
 impl Indexes {
@@ -271,6 +284,30 @@ impl Indexes {
                 {
                     next.duplicate_task_origins.insert(added.task);
                 }
+            } else if let Some(retained) = row
+                .fact
+                .read::<journal::crossing::rooms::CandidateRetained>()
+            {
+                next.retained_candidates = next.retained_candidates.pushed(HashMap::from([(
+                    retained.candidate.candidate,
+                    retained.candidate.outputs.into_boxed_slice(),
+                )]));
+            } else if let Some(decided) = row
+                .fact
+                .read::<journal::crossing::rooms::PreparationDecided>()
+            {
+                let decision = decided.decision.decision;
+                if let Some(outputs) = next
+                    .retained_candidates
+                    .get(decided.decision.outcome.candidate())
+                {
+                    let decisions = outputs
+                        .iter()
+                        .cloned()
+                        .map(|output| (output, decision.clone()))
+                        .collect();
+                    next.preparation_decisions = next.preparation_decisions.pushed(decisions);
+                }
             } else if let Some(pended) = row.fact.read::<journal::crossing::body::TrustPended>() {
                 next.trust_surfaces.insert(pended.surface, pended.digest);
             } else if let Some(moved) = row
@@ -291,17 +328,17 @@ impl Indexes {
                     // A phase advance also records a terminal answer, but its task stays
                     // allocatable in the next phase and keeps its creation origin.
                     if terminal.status == "completed" {
-                        next.retire_task_origin(&done.task);
+                        next.retire_task(&done.task);
                     }
                 }
             } else if let Some(deleted) = row.fact.read::<journal::crossing::body::TaskDeleted>() {
-                next.retire_task_origin(&deleted.task);
+                next.retire_task(&deleted.task);
             } else if let Some(closed) = row.fact.read::<journal::crossing::body::TaskClosed>() {
-                next.retire_task_origin(&closed.task);
+                next.retire_task(&closed.task);
             } else if let Some(concluded) =
                 row.fact.read::<journal::crossing::body::TaskConcluded>()
             {
-                next.retire_task_origin(&concluded.task);
+                next.retire_task(&concluded.task);
                 if let journal::crossing::body::DesignConclusion::Collapsed { reason } =
                     concluded.conclusion
                 {
@@ -318,7 +355,7 @@ impl Indexes {
         next
     }
 
-    fn retire_task_origin(&mut self, task: &journal::crossing::TaskStamp) {
+    fn retire_task(&mut self, task: &journal::crossing::TaskStamp) {
         self.task_origins.remove(task);
         self.duplicate_task_origins.remove(task);
         self.invalid_creator_teams.remove(task);
@@ -488,6 +525,15 @@ impl TaskFacts {
         operation: journal::crossing::CanonicalUuid,
     ) -> Option<journal::crossing::Seq> {
         self.indexes.terminals.get(task, operation)
+    }
+
+    /// Latest preparation decision that ruled on one still-live output.
+    #[must_use]
+    pub fn preparation_decision(
+        &self,
+        output: &journal::crossing::TaskStamp,
+    ) -> Option<&journal::crossing::rooms::DecisionRef> {
+        self.indexes.preparation_decisions.get(output)
     }
 
     /// Immutable terminal-index levels probed by the same lookup.

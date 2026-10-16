@@ -459,6 +459,7 @@ pub struct Entry {
     creator_team: Option<wire::CanonicalUuid>,
     explicit_release: bool,
     grouped: bool,
+    preparation_decision: Option<wire::rooms::DecisionRef>,
     phase_handoff: Option<PhaseHandoff>,
     project: Project,
     family: Family,
@@ -521,6 +522,7 @@ impl Entry {
             creator_team: None,
             explicit_release: false,
             grouped: false,
+            preparation_decision: None,
             phase_handoff: None,
             project,
             family,
@@ -632,6 +634,19 @@ impl Entry {
     #[must_use]
     pub const fn grouped(&self) -> bool {
         self.grouped
+    }
+
+    /// Attach the latest preparation decision that ruled on this output.
+    #[must_use]
+    pub fn with_preparation_decision(mut self, decision: Option<wire::rooms::DecisionRef>) -> Self {
+        self.preparation_decision = decision;
+        self
+    }
+
+    /// Latest preparation decision that ruled on this output.
+    #[must_use]
+    pub const fn preparation_decision(&self) -> Option<&wire::rooms::DecisionRef> {
+        self.preparation_decision.as_ref()
     }
 
     /// Validated and classified project.

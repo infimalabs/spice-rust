@@ -979,6 +979,7 @@ pub(super) fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<C
                     .with_creator_team(heads.creator_team)
                     .with_explicit_release(heads.explicit_release)
                     .with_grouped(heads.grouped)
+                    .with_preparation_decision(heads.preparation_decision.clone())
             })
         })
         .collect()

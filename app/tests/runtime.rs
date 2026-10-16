@@ -291,6 +291,7 @@ fn board_task(
         lease: None,
         explicit_release: false,
         grouped: false,
+        preparation_decision: None,
         collapse_reason: None,
         controlled: Vec::new(),
         stranded: None,

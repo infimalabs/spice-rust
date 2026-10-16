@@ -35,7 +35,8 @@ pub(super) fn dispatch_preparation(
 }
 
 /// Refuse concluding a Design done while any live output it constructed
-/// directly still lacks that Design's exact execution authorization.
+/// directly still lacks that Design's exact execution authorization. A
+/// rejected output is decided for scheduling but remains unaccepted here.
 ///
 /// A Plan concludes like any reviewed task; its outputs then wait only for
 /// that positive boundary and ordinary dependencies. Collapse, operator close,
@@ -52,7 +53,7 @@ pub(super) fn require_no_pending_controlled_outputs(
         .entries
         .iter()
         .filter(|entry| {
-            board::unselected_output_of(entry.statement(), entry.workflow())
+            board::unaccepted_output_of(entry.statement(), entry.workflow())
                 == Some(controller.born())
         })
         .map(|entry| entry.handle().to_string())
