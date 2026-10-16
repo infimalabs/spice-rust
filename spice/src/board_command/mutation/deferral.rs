@@ -113,7 +113,7 @@ fn validate_filing_entry(
             "use task file only for a row whose filing standing is OOPS or Draft",
         ));
     }
-    if entry.workflow().completion.is_some() {
+    if !entry.workflow().status.is_pending() {
         return Err(refusal(
             "task::settled",
             Some(entry.handle().to_string()),
@@ -208,8 +208,7 @@ fn filing_preparation(
             wire::intent::is_open_design(controller.statement().intent, controller.workflow())
         }
         _ => {
-            controller.workflow().status == "pending"
-                && controller.workflow().completion.is_none()
+            controller.workflow().status.is_pending()
                 && super::super::planning::requires_construction(
                     controller.statement().intent,
                     &controller.workflow().flow,
@@ -543,9 +542,8 @@ fn deferral_transition(
     deferral: Option<Instant>,
     projects: &ProjectPolicy,
 ) -> Result<DeferralTransition, Outcome<CommandAnswer>> {
-    // Settled is the question, not completed. A withdrawn task carries the same
-    // completion instant and never becomes workable again.
-    if entry.workflow().completion.is_some() {
+    // Settled work never becomes workable again.
+    if !entry.workflow().status.is_pending() {
         return Err(refusal(
             "task::settled",
             Some(task.to_string()),
@@ -570,10 +568,9 @@ fn deferral_transition(
     workflow.deferral = deferral;
     if releases_claim
         && workflow.phase.as_str() == "review"
-        && workflow.assignment.as_ref() == Some(command.actor())
+        && workflow.status.reviewer() == Some(command.actor())
     {
-        workflow.assignment = None;
-        workflow.review = "unassigned".to_owned();
+        workflow.status = wire::WorkflowStatus::pending();
     }
     let post = if deferral.is_none() {
         Some(

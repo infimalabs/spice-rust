@@ -91,11 +91,8 @@ impl Lanes {
         seed.workflow_head(task.clone(), added, move |_| wire::WorkflowHead {
             flow: vec![phase.clone()],
             phase,
-            status: "pending".to_owned(),
-            review: "unassigned".to_owned(),
-            assignment: None,
+            status: wire::WorkflowStatus::pending(),
             deferral: None,
-            completion: None,
             generation: 0,
         });
         if let Some(lane) = holder {
@@ -127,11 +124,8 @@ impl Lanes {
         close.workflow_head(task, closed, move |_| wire::WorkflowHead {
             flow: vec![phase.clone()],
             phase,
-            status: "completed".to_owned(),
-            review: "closed".to_owned(),
-            assignment: None,
+            status: wire::WorkflowStatus::closed(at),
             deferral: None,
-            completion: Some(at),
             generation: 0,
         });
         commit(&self.bus, close).expect("closure commits");

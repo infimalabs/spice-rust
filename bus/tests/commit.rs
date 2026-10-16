@@ -6,7 +6,7 @@ use bus::{Bus, CommitOutcome};
 use journal::crossing::{
     Actor, CanonicalUuid, ClaimCell, ClaimDisposition, ClaimHead, Command, CommandKind, Digest,
     EnvironmentRequirements, Origin, Phase, Producer, Seq, TaskFiling, TaskHandle, TaskHead,
-    TrustHead, TrustState, WireVersion, Witness, WorkflowHead, body, intent,
+    TrustHead, TrustState, WireVersion, Witness, WorkflowHead, WorkflowStatus, body, intent,
 };
 use journal::{FactCause, GuardError, Journal, JournalGuard, JournalWrite};
 
@@ -410,7 +410,7 @@ fn completion_terminal_lookup_probes_logarithmic_levels() {
                     validation: "terminal lookup fixture".to_owned(),
                     terminal: Some(body::TaskCompletionTerminal {
                         operation,
-                        status: "completed".to_owned(),
+                        status: body::TaskCompletionStatus::Completed,
                         next: None,
                     }),
                     git: None,
@@ -460,7 +460,7 @@ fn terminal_index_distinguishes_stamp_widths_for_the_same_moment() {
         validation: "stamp-width fixture".to_owned(),
         terminal: Some(body::TaskCompletionTerminal {
             operation,
-            status: "completed".to_owned(),
+            status: body::TaskCompletionStatus::Completed,
             next: None,
         }),
         git: None,
@@ -585,11 +585,8 @@ fn terminal_workflow_with_an_active_claim_is_an_allocation_fault() {
         move |_| WorkflowHead {
             flow: vec![task_phase.clone()],
             phase: task_phase,
-            status: "completed".to_owned(),
-            review: "unassigned".to_owned(),
-            assignment: None,
+            status: WorkflowStatus::completed(instant("2030-04-12T18:44:10.271Z")),
             deferral: None,
-            completion: Some(instant("2030-04-12T18:44:10.271Z")),
             generation: 0,
         }
     });
@@ -896,11 +893,8 @@ fn append_retained_task(
     write.workflow_head(task, pending, move |_| WorkflowHead {
         flow: vec![task_phase.clone()],
         phase: task_phase,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     pending
@@ -925,11 +919,8 @@ fn append_retained_dependency(write: &mut JournalWrite, cause: Seq) -> journal::
     write.workflow_head(task, pending, move |_| WorkflowHead {
         flow: vec![task_phase.clone()],
         phase: task_phase,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     pending
@@ -968,11 +959,8 @@ fn append_retained_terminal(
     write.workflow_head(task, done, move |_| WorkflowHead {
         flow: vec![task_phase.clone()],
         phase: task_phase,
-        status: "completed".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: WorkflowStatus::completed(instant("2030-04-12T18:44:10.271Z")),
         deferral: None,
-        completion: Some(instant("2030-04-12T18:44:10.271Z")),
         generation: 0,
     });
     done
@@ -1113,11 +1101,8 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
     write.workflow_head(stamp(), fact, move |_| WorkflowHead {
         flow: vec![phase_for_head.clone()],
         phase: phase_for_head,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
 

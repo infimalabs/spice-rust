@@ -29,7 +29,7 @@ impl Transition {
     ) -> Result<Self, PhaseRefusal> {
         bind_claim(entry, active)?;
         let workflow = entry.workflow();
-        if workflow.status == "completed" || workflow.completion.is_some() {
+        if !workflow.status.is_pending() {
             return Err(PhaseRefusal::Completed);
         }
 
@@ -72,17 +72,25 @@ impl Transition {
     pub fn complete(entry: &Entry, active: &Active<'_>, at: Instant) -> Result<Self, PhaseRefusal> {
         bind_claim(entry, active)?;
         let workflow = entry.workflow();
-        if workflow.status == "completed" || workflow.completion.is_some() {
+        if !workflow.status.is_pending() {
             return Err(PhaseRefusal::Completed);
         }
         if workflow.flow.last() != Some(&workflow.phase) {
             return Err(PhaseRefusal::NotFinal(workflow.phase.clone()));
         }
 
+        let review = match workflow.status.review() {
+            Some(wire::WorkflowReview::Clean) => wire::WorkflowCompletionReview::Clean,
+            Some(wire::WorkflowReview::Unassigned | wire::WorkflowReview::Assigned { .. }) => {
+                wire::WorkflowCompletionReview::Unassigned
+            }
+            None => unreachable!("pending workflow has a live review"),
+        };
         let mut next = workflow.clone();
-        next.status = "completed".to_owned();
-        next.completion = Some(at);
-        next.assignment = None;
+        next.status = wire::WorkflowStatus::Settled {
+            at,
+            conclusion: wire::WorkflowConclusion::Positive { review },
+        };
         Ok(Self {
             task: entry.handle().clone(),
             kind: TransitionKind::Complete {

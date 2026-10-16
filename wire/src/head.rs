@@ -13,6 +13,13 @@ use crate::envelope::{Actor, Origin, Seq};
 use crate::ident::{CanonicalUuid, Digest, Instant};
 use crate::witness::{Disposition, Phase, TaskStamp};
 
+mod workflow;
+
+pub use workflow::{
+    WorkflowCompletionReview, WorkflowConclusion, WorkflowHead, WorkflowNegative, WorkflowReview,
+    WorkflowStatus,
+};
+
 /// One allocator locality coordinate captured when a claim is won.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -425,62 +432,6 @@ pub struct TaskHead {
     pub creation: crate::body::TaskCreationContext,
     /// Fact that established this statement revision.
     pub revision: Seq,
-}
-
-/// One current task workflow.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WorkflowHead {
-    /// Ordered phases the task walks.
-    pub flow: Vec<Phase>,
-    /// Current phase.
-    pub phase: Phase,
-    /// Current workflow status.
-    pub status: String,
-    /// Current review state.
-    pub review: String,
-    /// Actor assigned to the current phase, when assignment applies.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub assignment: Option<Actor>,
-    /// Wakeable deferral deadline.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub deferral: Option<Instant>,
-    /// Completion instant.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub completion: Option<Instant>,
-    /// Durable task mutation generation.
-    ///
-    /// A task opens at zero, which is also the baseline every task written
-    /// before this field existed carries, so zero is stored as absence. Every
-    /// journal transaction that changes its statement, notes, deferral, or
-    /// workflow advances this exactly once; claim, lease, and notification
-    /// maintenance preserve it. The journal assigns it at commit, so a value
-    /// a writer builds into a proposed head is not authority.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub generation: u64,
-}
-
-impl WorkflowHead {
-    /// Whether this workflow concluded positively.
-    ///
-    /// Completion counts; deletion and operator closure settle a task without
-    /// approving anything it controls.
-    #[must_use]
-    pub fn concluded_positively(&self) -> bool {
-        self.status == "completed" && self.review != "closed"
-    }
 }
 
 /// Current disposition of the most recent winning claim.

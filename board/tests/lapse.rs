@@ -413,11 +413,8 @@ fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
     write.workflow_head(born(), fact, move |_| WorkflowHead {
         flow,
         phase,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     if residency {
@@ -506,8 +503,7 @@ fn assign_review_elsewhere(journal: &mut Journal, reviewer: Actor) {
         .expect("heads before the reassignment")
         .expect("the fixture task is on the board");
     let mut next = selected.workflow().body().clone();
-    next.assignment = Some(reviewer.clone());
-    next.review = "assigned".to_owned();
+    next.status = wire::WorkflowStatus::assigned(reviewer.clone());
     let mut write = JournalWrite::new(
         Actor::Operator,
         "task:BOARD-a1".parse().expect("assignment origin"),
@@ -542,8 +538,8 @@ fn lapsing_a_review_claim_releases_its_assignment_in_the_same_transaction() {
         .expect("heads before the lapse")
         .expect("the fixture task is on the board");
     let assigned = before.workflow().body().clone();
-    assert_eq!(assigned.assignment, Some(Actor::Lane(uuid(20))));
-    assert_eq!(assigned.review, "assigned");
+    assert_eq!(assigned.status.reviewer(), Some(&Actor::Lane(uuid(20))));
+    assert_eq!(assigned.review_str(), "assigned");
 
     let expired = lapse(&mut journal, lapse_request(32, 20)).expect("lapse review claim");
     assert_eq!(expired.first(), expired.last());
@@ -553,8 +549,8 @@ fn lapsing_a_review_claim_releases_its_assignment_in_the_same_transaction() {
         entry.claim().expect("claim").disposition,
         ClaimDisposition::Lapsed
     );
-    assert_eq!(entry.workflow().assignment, None);
-    assert_eq!(entry.workflow().review, "unassigned");
+    assert_eq!(entry.workflow().status.reviewer(), None);
+    assert_eq!(entry.workflow().review_str(), "unassigned");
     assert_eq!(entry.workflow().phase.as_str(), "review");
     assert_eq!(entry.workflow().flow, assigned.flow);
     let heads = journal
@@ -631,8 +627,8 @@ fn lapsing_a_review_claim_assigned_elsewhere_leaves_the_workflow_head_alone() {
         .expect("the fixture task remains");
     assert_eq!(after.workflow(), before.workflow());
     assert_eq!(
-        after.workflow().body().assignment,
-        Some(Actor::Lane(uuid(25)))
+        after.workflow().body().status.reviewer(),
+        Some(&Actor::Lane(uuid(25)))
     );
     assert_eq!(
         after.claim().expect("claim head").body().disposition,

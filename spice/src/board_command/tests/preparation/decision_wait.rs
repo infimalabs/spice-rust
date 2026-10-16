@@ -34,7 +34,13 @@ fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
         at(&after_mixed, &rejected).statement.body.authorization,
         None
     );
-    assert_eq!(at(&after_mixed, &rejected).workflow.body.status, "pending");
+    assert!(
+        at(&after_mixed, &rejected)
+            .workflow
+            .body
+            .status
+            .is_pending()
+    );
     assert_eq!(
         at(&after_mixed, &accepted).statement.body.authorization,
         Some(mixed_decision)
@@ -60,7 +66,7 @@ fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
         Some(rejection)
     );
     assert_eq!(at(&decided, &undecided).statement.body.authorization, None);
-    assert_eq!(at(&decided, &undecided).workflow.body.status, "pending");
+    assert!(at(&decided, &undecided).workflow.body.status.is_pending());
     assert!(open_awaiting_selection(&bus, epoch).is_empty());
     assert!(
         open_workflow_waiting(&bus, epoch).contains(&design.born().expect("Design stamp")),
@@ -147,7 +153,7 @@ fn a_later_open_candidate_shadows_an_older_verdict_until_decided_or_withdrawn() 
     assert_eq!(decision_of(&bus), Some(renewed));
     let current = board(&bus, epoch, Actor::Operator);
     assert_eq!(at(&current, &output).statement.body.authorization, None);
-    assert_eq!(at(&current, &output).workflow.body.status, "pending");
+    assert!(at(&current, &output).workflow.body.status.is_pending());
     clean(&root, bus);
 }
 

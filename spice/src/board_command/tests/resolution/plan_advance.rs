@@ -404,7 +404,7 @@ fn selected_plan_reads_gate_completion_with_current_reverse_child_heads() {
     );
     assert_eq!(named.tasks.len(), 2);
     assert_eq!(at(&named, &plan).workflow.body.phase.as_str(), "plan");
-    assert_eq!(at(&named, &child).workflow.body.status, "pending");
+    assert!(at(&named, &child).workflow.body.status.is_pending());
     assert!(
         named
             .tasks

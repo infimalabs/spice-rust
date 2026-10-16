@@ -705,10 +705,6 @@ pub enum TaskError {
     DuplicatePhase(wire::Phase),
     /// Current station is not a member of its declared flow.
     PhaseOutsideFlow(wire::Phase),
-    /// Workflow status is outside the release-one vocabulary.
-    WorkflowStatus(String),
-    /// Completion presence disagrees with workflow status.
-    CompletionMismatch { status: String },
 }
 
 fn admit_workflow(workflow: &WorkflowHead) -> Result<(), TaskError> {
@@ -724,17 +720,7 @@ fn admit_workflow(workflow: &WorkflowHead) -> Result<(), TaskError> {
     if !seen.contains(&workflow.phase) {
         return Err(TaskError::PhaseOutsideFlow(workflow.phase.clone()));
     }
-    match workflow.status.as_str() {
-        "pending" if workflow.completion.is_none() => Ok(()),
-        // A withdrawal is terminal like a completion and carries the same
-        // instant, which is what keeps every reader that asks "is this task
-        // still open" correct without asking about deletion by name.
-        "completed" | "deleted" if workflow.completion.is_some() => Ok(()),
-        "pending" | "completed" | "deleted" => Err(TaskError::CompletionMismatch {
-            status: workflow.status.clone(),
-        }),
-        _ => Err(TaskError::WorkflowStatus(workflow.status.clone())),
-    }
+    Ok(())
 }
 
 impl fmt::Display for TaskError {
@@ -753,13 +739,6 @@ impl fmt::Display for TaskError {
                     "current phase {phase} is outside the workflow flow"
                 )
             }
-            Self::WorkflowStatus(status) => {
-                write!(formatter, "workflow status {status:?} is unknown")
-            }
-            Self::CompletionMismatch { status } => write!(
-                formatter,
-                "workflow status {status:?} disagrees with completion presence"
-            ),
         }
     }
 }

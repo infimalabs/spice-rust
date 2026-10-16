@@ -945,8 +945,8 @@ fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
     let assigned = board(&bus, epoch, Actor::Operator);
     let assigned_heads = at(&assigned, &task);
     assert_eq!(
-        assigned_heads.workflow.body.assignment,
-        Some(Actor::Operator)
+        assigned_heads.workflow.body.status.reviewer(),
+        Some(&Actor::Operator)
     );
     assert_committed(issue(
         &bus,
@@ -966,7 +966,7 @@ fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
 
     let steal_board = board(&bus, epoch, reviewer.clone());
     let steal_heads = at(&steal_board, &task);
-    assert_eq!(steal_heads.workflow.body.assignment, None);
+    assert_eq!(steal_heads.workflow.body.status.reviewer(), None);
     assert_eq!(
         steal_heads.claim.as_ref().expect("claim").body.disposition,
         ClaimDisposition::Freed
@@ -994,7 +994,7 @@ fn stealing_takes_an_assigned_review_after_the_previous_holder_freed_it() {
 
     let after = board(&bus, epoch, reviewer.clone());
     let stolen = at(&after, &task);
-    assert_eq!(stolen.workflow.body.assignment, Some(reviewer.clone()));
+    assert_eq!(stolen.workflow.body.status.reviewer(), Some(&reviewer));
     let claim = stolen.claim.as_ref().expect("claim");
     assert_eq!(claim.body.actor, reviewer);
     assert_eq!(claim.body.disposition, ClaimDisposition::Active);

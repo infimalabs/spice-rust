@@ -280,6 +280,37 @@ pub struct TaskDone {
     pub source: SourceBoundary,
 }
 
+/// Workflow status retained by a replayable task completion.
+///
+/// A claimant completion either advances to another pending phase or
+/// positively completes the workflow; deletion and negative settlement are
+/// operator actions and cannot occur through this fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskCompletionStatus {
+    /// The completion advanced to another live phase.
+    Pending,
+    /// The completion positively settled the task.
+    Completed,
+}
+
+impl TaskCompletionStatus {
+    /// Stable response spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Completed => "completed",
+        }
+    }
+}
+
+impl std::fmt::Display for TaskCompletionStatus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 /// Durable fields needed to reconstruct one terminal task response.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -287,7 +318,7 @@ pub struct TaskCompletionTerminal {
     /// Identity returned by the initiating running acknowledgement.
     pub operation: CanonicalUuid,
     /// Workflow status returned by the completing transaction.
-    pub status: String,
+    pub status: TaskCompletionStatus,
     /// Exact next action projected by that transaction.
     #[serde(
         default,

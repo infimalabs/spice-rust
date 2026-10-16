@@ -42,7 +42,7 @@ impl<'a> Inventory<'a> {
         let mut drafts = Vec::new();
         let mut hidden = BTreeMap::<&str, Vec<&Entry>>::new();
         for entry in entries {
-            if entry.workflow().status != "pending" || entry.workflow().completion.is_some() {
+            if !entry.workflow().status.is_pending() {
                 continue;
             }
             if entry.is_oops() {

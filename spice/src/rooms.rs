@@ -1096,11 +1096,8 @@ mod tests {
         let workflow = WorkflowHead {
             flow: vec![phase()],
             phase: phase(),
-            status: "pending".to_owned(),
-            review: "unassigned".to_owned(),
-            assignment: None,
+            status: wire::WorkflowStatus::pending(),
             deferral: None,
-            completion: None,
             generation: 0,
         };
         let claim = ClaimHead {

@@ -58,11 +58,8 @@ fn entries() -> Vec<board::Entry> {
             let workflow = wire::WorkflowHead {
                 flow: vec![phase.clone()],
                 phase,
-                status: "pending".to_owned(),
-                review: "unassigned".to_owned(),
-                assignment: None,
+                status: wire::WorkflowStatus::pending(),
                 deferral: None,
-                completion: None,
                 generation: 0,
             };
             board::Entry::new(statement, workflow, None, None, &projects).expect("entry")

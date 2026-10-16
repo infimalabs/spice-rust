@@ -150,9 +150,11 @@ impl Seats {
 
 impl From<&BoardAnswer> for BoardView {
     fn from(answer: &BoardAnswer) -> Self {
-        let (room_anchors, tasks) = answer.tasks.iter().cloned().partition(|task| {
-            task.workflow.body.status != "pending" || task.workflow.body.completion.is_some()
-        });
+        let (room_anchors, tasks) = answer
+            .tasks
+            .iter()
+            .cloned()
+            .partition(|task| !task.workflow.body.status.is_pending());
         let offer = answer.offer.clone();
         let environment = answer.environment();
         Self {

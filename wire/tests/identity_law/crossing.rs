@@ -346,7 +346,6 @@ fn any_fact<F: wire::Body>(fact: Fact<F>) -> AnyFact {
 
 /// Task statement and workflow heads.
 fn cover_task_heads() {
-    let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
     let task = stamp("1kKRRsDP");
 
     law(
@@ -415,11 +414,8 @@ fn cover_task_heads() {
                     "review".parse().expect("phase"),
                 ],
                 phase: "todo".parse().expect("phase"),
-                status: "pending".to_owned(),
-                review: "unassigned".to_owned(),
-                assignment: Some(Actor::Operator),
+                status: wire::WorkflowStatus::assigned(Actor::Operator),
                 deferral: Some(at("2030-04-12T18:44:09.271Z")),
-                completion: None,
                 generation: 0,
             },
             WorkflowHead {
@@ -428,11 +424,8 @@ fn cover_task_heads() {
                     "review".parse().expect("phase"),
                 ],
                 phase: "review".parse().expect("phase"),
-                status: "completed".to_owned(),
-                review: "clean".to_owned(),
-                assignment: Some(Actor::Lane(first_uuid)),
+                status: wire::WorkflowStatus::reviewed(at("2030-04-12T18:44:09.272Z")),
                 deferral: None,
-                completion: Some(at("2030-04-12T18:44:09.272Z")),
                 generation: 0,
             },
         ],
