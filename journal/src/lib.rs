@@ -14,8 +14,9 @@
 /// per-Design maturity and notice projections. Schema 64 crosses retained
 /// settings answers from their single operator identity to a principal
 /// directory; schema 65 gives each of that directory's entries its principal's
-/// code.
-pub const SCHEMA_VERSION: u32 = 65;
+/// code. Schema 66 makes the activity stance explicit in retained working-group
+/// facts and their partition head before strict fact readers admit them.
+pub const SCHEMA_VERSION: u32 = 66;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

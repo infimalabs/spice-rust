@@ -14,6 +14,7 @@ mod maturity;
 mod residual;
 mod settings_receipts;
 mod team_formations;
+mod working_groups;
 
 #[cfg(test)]
 pub(crate) use fact_bounds::bounds_sql;
@@ -53,11 +54,12 @@ const PREPARED: &str = "prepared";
 /// predecessor lacks, replacing its per-route room receipts and per-group
 /// heads. Finally it crosses every retained settings command answer from the
 /// retired operator field to the current principal directory, each entry
-/// carrying its principal's code, before the schema identity advances. Current
+/// carrying its principal's code, and makes retained working-group activity
+/// stance explicit before the schema identity advances. Current
 /// readers therefore need no release-specific execution arm.
-const PREDECESSOR_SCHEMAS: [u32; 32] = [
+const PREDECESSOR_SCHEMAS: [u32; 33] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61, 62, 63, 64,
+    57, 58, 59, 60, 61, 62, 63, 64, 65,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -344,6 +346,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         team_formations::cross(&transaction)?;
     }
     create_principal_heads(&transaction, version)?;
+    working_groups::cross(&transaction)?;
     settings_receipts::cross(&transaction)?;
     awareness::cross(&transaction)?;
     maturity::cross(&transaction)?;
@@ -1418,8 +1421,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 65, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 66, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 65;
+PRAGMA user_version = 66;
 "#;
