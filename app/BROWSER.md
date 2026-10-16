@@ -340,10 +340,12 @@ it answers.
 
 Each quote layer ends with one task target after its speaker's last word,
 filled with origin-task badges; it repeats on no other hunk, and Play never
-reads it. An isolated task-handle chip's hover title is its surrounding
+reads it. The badges remain in ordinary inline flow, with no floated placement
+or reserved minimum height, so the prose uses its full line and wraps the badge
+only when needed. An isolated task-handle chip's hover title is its surrounding
 activity prose, or `Open task HANDLE` alone. Directly trailing sentence
-punctuation stays on the chip's line without preventing a break before it. A
-quote's rail shows its speaker: an agent's or peer lane's quote wears that
+punctuation stays on the chip's line without preventing a break before it.
+A quote's rail shows its speaker: an agent's or peer lane's quote wears that
 lane's accent; a direction card's quote wears its first receiving member's;
 other operator, Spice, taste, broadcast, review, and unattributed
 quotes take the neutral accent; an
