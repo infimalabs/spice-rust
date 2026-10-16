@@ -162,10 +162,11 @@ Chat, whose team plane holds its history; a lane with no Chat seat stays a
 plain label.
 
 A design's composer posts the guarded native room-post command to exactly that
-design's room on **Post** or Control/Command+Enter. Its empty back reads the
-Design's current title and handle; standing, workflow phase, and current
-claimant; then its room-post and directly prepared open-task counts. Those
-facts come from the current board and room projection on every render. Quoting
+design's room on **Post** or Control/Command+Enter. Its empty back uses three
+lines ordered from durable context to live detail: handle then current title;
+workflow phase and standing then claimant; directly prepared open-task count
+then room-post count. Those facts come from the current board and room
+projection on every render. Quoting
 an operator-authored card drafts a
 `spice://quote/v1/room/ROOM/PUBLICATION/DIGEST` shard above that design's
 composer, the same shard a team composer drafts, and steering delivery expands
