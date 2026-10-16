@@ -162,8 +162,9 @@ presence pips beneath the team total and the live ticker in the rest. The
 status band is the console's top edge, for a team and a working group alike.
 Where two consoles touch, each band rounds its touching top corner with the
 same radius as the lane-top tabs. Only the earlier console draws the dividing
-rule, so its top rule turns down its end edge into that faint rule, while the
-later band's rounded top rule tapers away against it. A corner at the browser
+rule, a hairline half the width of the app's ordinary edge, so its top rule
+turns down its end edge into that faint rule, while the later band's rounded
+top rule tapers away against it. A corner at the browser
 edge stays square. Pips follow canonical member order and distinguish active,
 queued, waiting, bound, and unbound states without encoding agent identity. The
 ticker keeps relative age, status, prefix, accent, accessible label, and
