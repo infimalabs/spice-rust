@@ -637,6 +637,8 @@ fn response(record: &Object, locus: Locus) -> Events {
 fn compaction(record: &Object, locus: Locus) -> Events {
     if optional_boolean(record, "aborted")? == Some(true)
         || optional_boolean(record, "skipped")? == Some(true)
+        || (record.get("type").and_then(Value::as_str) == Some("auto_compaction_end")
+            && record.get("result").and_then(Value::as_object).is_none())
     {
         return Ok(Vec::new());
     }

@@ -555,6 +555,18 @@ fn session_file_bookkeeping_is_owned_ambiently_and_says_nothing() {
     );
 }
 
+/// A provider method can fail before omp falls through to another compaction
+/// method. Its `auto_compaction_end` closes the attempt, not the compaction.
+#[test]
+fn a_failed_compaction_attempt_stays_silent() {
+    const FAILED_REMOTE: &[u8] = br#"{"type":"auto_compaction_end","action":"remote","aborted":false,"willRetry":false,"errorMessage":"Auto-compaction failed: remote input exceeds the context window; trying the next preferred compaction method."}"#;
+
+    assert!(
+        decoded(FAILED_REMOTE).events().is_empty(),
+        "a failed method must not add a compaction boundary"
+    );
+}
+
 /// Both records of one compaction name the same boundary.
 ///
 /// omp announces a compaction on the stream and writes it again into its own
