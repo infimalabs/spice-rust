@@ -24,7 +24,7 @@ const WORKFLOW: &str = r#"{
   "flow": ["todo", "review"],
   "phase": "todo",
   "status": "pending",
-  "review": "unassigned",
+  "review": "assigned",
   "assignment": "lane:018f82d4-6f59-7d06-92e3-bce913116302",
   "deferral": "2030-04-12T18:44:09.271Z"
 }"#;
