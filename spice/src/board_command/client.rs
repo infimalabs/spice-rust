@@ -361,6 +361,9 @@ fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
                 return Outcome::Reply(existing_next_claim_reply(&board, task));
             }
             NextWorkState::Candidate { task } => task,
+            NextWorkState::DesignRequest { request } => {
+                return Outcome::Reply(design_request_reply(&board, request));
+            }
             NextWorkState::Dry {
                 board: counts,
                 team,
@@ -442,6 +445,27 @@ fn existing_next_claim_reply(board: &BoardAnswer, task: &NextWorkTask) -> Reply<
     }
 }
 
+fn design_request_reply(
+    board: &BoardAnswer,
+    request: &wire::intent::DesignRequest,
+) -> Reply<CommandAnswer> {
+    let terms = request.terms.join(", ");
+    let design = &request.design;
+    let text = format!(
+        "Design request {design} \"{}\" at statement revision {} matches completed task {} on: \
+         {terms}.\nPitch: {}\nRead its room with `spice room history {design}` \
+         (`spice://task/{design}/room`). Answer exactly once with `spice room contribute {design} \
+         reason-for|reason-against|evidence|question TEXT` or `spice room leave {design} --clause \
+         TEXT`. Until either answer publishes, `spice task next` returns this request instead of \
+         allocating. It grants no claim, starts no work, and adds no room listening.",
+        request.title, request.statement, request.task, request.pitch,
+    );
+    Reply {
+        position: ReplyPosition::Snapshot(board.cursor),
+        body: CommandAnswer::Text(TextAnswer { text }),
+    }
+}
+
 fn next_drain_readout(board: &BoardAnswer) -> Option<Reply<DrainReadout>> {
     let NextWorkState::Dry {
         board: counts,
@@ -489,6 +513,7 @@ fn retryable_task_next(outcome: &Outcome<CommandAnswer>) -> bool {
                     Some(
                         "board::witness-moved: allocator projection changed"
                             | "board::witness-moved: allocator subscription head changed"
+                            | "board::witness-moved: Design request projection changed"
                     )
                 )
     )

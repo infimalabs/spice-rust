@@ -190,19 +190,20 @@ conversation. Each cited source's availability comes from the
 `room::contribution-sources` read, which any authenticated session may issue
 and the app issues once per cited contribution of a shown Design, at most
 eight in flight, and again after a reconnect; it resolves through the same
-resident path as `spice room history`. Lanes contribute and receive organic
-Design invitations from their own sessions, never through this surface.
+resident path as `spice room history`. This read-only surface never creates or
+answers the completion-bound Design requests delivered through a lane's own
+session.
 
 The read view derives its **Design maturity** panel from the bounded per-Design
-measure the room projection folds incrementally from streamed organic notices
-and contributions, never by folding rendered room history. It shows
-contribution kinds and distinct lanes, organic reach, recent statement-head
-invitation yield, folded older-head and unattributed historical totals, and
-every missing substantive dimension. Fresh has no contributions; steeped
-requires reason-for, reason-against, evidence, and three contributing lanes.
-Questions and broad invitation reach cannot satisfy it. A steeped panel adds a
-neutral operator-attention cue, and the member holding or last claiming a
-steeped Design lists it as Steeped in its seat panel's attention items when
+measure the room projection folds incrementally from streamed requests and
+contributions, never by folding rendered room history. It shows contribution
+kinds and distinct lanes, requested reach, recent statement-head request
+yield, folded older-head and unattributed historical totals, and every missing
+substantive dimension. Fresh has no contributions; steeped requires
+reason-for, reason-against, evidence, and three contributing lanes. Questions
+and broad requested reach cannot satisfy it. A steeped panel adds a neutral
+operator-attention cue, and the member holding or last claiming a steeped
+Design lists it as Steeped in its seat panel's attention items when
 nothing more pressing applies. Neither is a danger or workflow state; maturity
 never blocks or authorizes a Design decision.
 

@@ -65,7 +65,7 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
             })?
             .unwrap_or_else(DesignMaturity::default);
         match (notice, contribution) {
-            (Some(notice), None) => maturity.observe_notice(&notice),
+            (Some(notice), None) => maturity.observe_request(&notice),
             (None, Some(contribution)) => maturity.observe_contribution(&contribution),
             _ => unreachable!("one typed maturity fact was selected"),
         }

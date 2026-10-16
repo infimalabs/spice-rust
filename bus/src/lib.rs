@@ -30,7 +30,8 @@ mod runtime {
     use occupant_address::{AddressRead, BirthRecord};
     mod task_snapshot;
     pub use task_snapshot::{
-        AllocationFault, AllocationRead, AllocationWork, TaskFacts, TaskOrigin, context_opening,
+        AllocationFault, AllocationRead, AllocationWork, LaneCompletion, TaskFacts, TaskOrigin,
+        context_opening,
     };
     use task_snapshot::{
         TaskHeadStore, TaskSnapshotState, advance_task_snapshot, invalidate_task_snapshot,
@@ -1387,7 +1388,7 @@ mod runtime {
 pub use runtime::{
     AddressProof, AddressRefusal, AllocationFault, AllocationRead, AllocationWork, AppHeads,
     BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CommitOutcome,
-    CommitSubscriber, DependencyStanding, JournalCommit, JournalTransaction,
+    CommitSubscriber, DependencyStanding, JournalCommit, JournalTransaction, LaneCompletion,
     MAX_STEERING_PRESENTATION_KEYS, OccupantBirth, SteeringPresentation, SteeringPublication,
     SteeringSnapshot, TaskFacts, TaskOrigin, TaskSnapshot, TranscriptSession, TranscriptSessions,
     context_opening, journal_seat_addresses,

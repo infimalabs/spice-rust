@@ -1,8 +1,6 @@
-//! What a Design's occupied claimant is told privately after an authority
-//! change: matching open Designs ([`super::design_awareness`]) and the
-//! operator's newest return of its own active Design
-//! ([`crate::board_command::owed_returns`]). A return is recorded as consumed
-//! only after its exact occupant's supervisor confirms enqueue.
+//! Private Design input due after authority changes: completion requests are
+//! recorded for `task next`, then the newest return of a lane's own active
+//! Design is delivered and durably consumed.
 
 use serde::{Deserialize, Serialize};
 use wire::CanonicalUuid;
@@ -25,12 +23,6 @@ pub(in crate::resident) struct BackgroundNotice {
 }
 
 impl BackgroundNotice {
-    /// Whether this notice fits one best-effort kick datagram.
-    pub(in crate::resident) fn fits(&self) -> bool {
-        serde_json::to_vec(&Kick::Background(self.clone()))
-            .is_ok_and(|encoded| encoded.len() <= KICK_BYTES)
-    }
-
     /// Whether this notice and a maximum-size confirmation route fit one kick
     /// datagram.
     fn confirmed_fits(&self) -> bool {
@@ -45,10 +37,10 @@ impl BackgroundNotice {
     }
 }
 
-/// Tell every occupied claimant what its Design input owes it: matching open
-/// Designs, then the newest return of an active Design it holds. Return
-/// delivery is confirmed before its durable consumption record; either failure
-/// is reported and retried on the next authority change.
+/// Record completion-bound Design requests, then tell every occupied claimant
+/// the newest return of an active Design it holds. Return delivery is confirmed
+/// before its durable consumption record; either failure is retried on the
+/// next authority change.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -57,7 +49,7 @@ pub(in crate::resident) fn reconcile(
     completions: &mut super::design_awareness::CompletionCursor,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    super::design_awareness::reconcile(bus, paths, config, seats, completions, diagnostic)?;
+    super::design_awareness::reconcile(bus, config, seats, completions, diagnostic)?;
     let occupied = super::design_awareness::occupied(seats);
     if occupied.is_empty() {
         return Ok(());

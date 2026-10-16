@@ -42,6 +42,8 @@ struct Presented {
 pub(in crate::resident) struct Planning {
     pub(in crate::resident) residency: wire::ResidencyHead,
     pub(in crate::resident) entries: Vec<board::Entry>,
+    pub(in crate::resident) facts: bus::TaskFacts,
+    pub(in crate::resident) horizon: Option<Seq>,
     rooms: BTreeMap<TaskStamp, usize>,
     pub(in crate::resident) at: Instant,
 }
@@ -263,12 +265,16 @@ impl Planning {
             .enumerate()
             .map(|(index, entry)| (entry.born().clone(), index))
             .collect();
+        let facts = snapshot.facts().clone();
+        let horizon = snapshot.cursor();
         let at = Instant::new(jiff::Timestamp::now()).map_err(|error| {
             environment_fault("room::catch-up-clock-invalid", &error.to_string())
         })?;
         Ok(Self {
             residency,
             entries,
+            facts,
+            horizon,
             rooms,
             at,
         })

@@ -734,7 +734,7 @@ impl RoomProjection {
                     self.maturity
                         .entry(body.design.clone())
                         .or_default()
-                        .observe_notice(&body);
+                        .observe_request(&body);
                     true
                 }))
             }

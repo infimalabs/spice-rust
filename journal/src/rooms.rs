@@ -386,7 +386,7 @@ impl Projection {
             Change::MaturityNotice { seq, notice } => {
                 self.notices.insert((notice.design.to_string(), seq), ());
                 self.update_maturity(&notice.design, |maturity| {
-                    maturity.observe_notice(&notice);
+                    maturity.observe_request(&notice);
                 })?;
             }
             Change::MaturityContribution(contribution) => {
