@@ -307,8 +307,8 @@ fn require_lane_progress(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
         "task::design-open",
         Some(entry.handle().to_string()),
         &format!(
-            "a Design stays open until the operator concludes it; retain your proposal and \
-             notes, then checkpoint and run `spice task free {}`",
+            "a Design stays open until the operator concludes it; end this pass with one \
+             `spice preparation propose PROPOSAL_JSON`, which releases your claim on {}",
             entry.handle()
         ),
     ))

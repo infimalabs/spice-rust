@@ -6,7 +6,7 @@ pub(super) enum NextTransition {
     Settled,
     Review,
     Done,
-    Free,
+    Propose,
     Wake,
     File,
     Next,
@@ -18,7 +18,7 @@ impl NextTransition {
         match self {
             Self::Review => Some(format!("spice task review {task}").into_boxed_str()),
             Self::Done => Some("spice task done".into()),
-            Self::Free => Some(format!("spice task free {task}").into_boxed_str()),
+            Self::Propose => Some("spice preparation propose PROPOSAL_JSON".into()),
             Self::Wake => Some(format!("spice task wake {task}").into_boxed_str()),
             Self::File => Some(format!("spice task file {task}").into_boxed_str()),
             Self::Next => Some("spice task next".into()),
@@ -85,10 +85,11 @@ pub(super) fn accepted_transition(
         {
             return NextTransition::Review;
         }
-        // Only the open Design phase stays operator-owned. Intake phases use
-        // their ordinary plan/review transitions.
+        // Only the open Design phase stays operator-owned: its holder ends a
+        // pass with one proposal. Intake phases use their ordinary
+        // plan/review transitions.
         if wire::intent::is_open_design(entry.statement().intent, entry.workflow()) {
-            return NextTransition::Free;
+            return NextTransition::Propose;
         }
         return NextTransition::Done;
     }

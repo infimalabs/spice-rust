@@ -206,11 +206,10 @@ kinds and distinct lanes, requested reach, recent statement-head request
 yield, folded older-head and unattributed historical totals, and every missing
 substantive dimension. Fresh has no contributions; steeped requires
 reason-for, reason-against, evidence, and three contributing lanes. Questions
-and broad requested reach cannot satisfy it. A steeped panel adds a neutral
-operator-attention cue, and the member holding or last claiming a steeped
-Design lists it as Steeped in its seat panel's attention items when
-nothing more pressing applies. Neither is a danger or workflow state; maturity
-never blocks or authorizes a Design decision.
+and broad requested reach cannot satisfy it. Steeped maturity makes the
+Design's first pass ready for a lane, which the standing's pass cycle shows;
+it is not a danger or workflow state, and maturity never blocks or authorizes
+a Design decision.
 
 The same read view lists every immutable proposal version. An operator uses
 native radios and text fields to accept or reject every output, optionally

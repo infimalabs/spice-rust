@@ -238,7 +238,7 @@ fn only_an_undecided_proposal_holds_the_design_for_selection() {
             "WAIT-design",
             true,
             DesignCycleFacts {
-                undecided: true,
+                proposal: Some(seq(12)),
                 ..input_since
             },
         ),

@@ -265,6 +265,7 @@ fn retain(
         },
         head: None,
     });
+    expected.push(super::super::residency(&current, seat));
     issue(
         bus,
         epoch,

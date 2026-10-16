@@ -25,7 +25,7 @@ pub(crate) struct ParkedCounts {
     pub(crate) stale: usize,
     pub(crate) blocked: usize,
     pub(crate) workflow_waiting: usize,
-    pub(crate) selection: usize,
+    pub(crate) designs: wire::rooms::DesignCycleCounts,
     pub(crate) deferred: usize,
     pub(crate) oops: usize,
 }
@@ -33,8 +33,8 @@ pub(crate) struct ParkedCounts {
 impl ParkedCounts {
     /// Measure possession and set-aside states among authority-filtered
     /// execution rows, and the resident's gate partition among every routed
-    /// row. Design-side selection and control therefore remain visible without
-    /// inflating execution possession.
+    /// row. Each open Design counts once, in the cycle state the resident
+    /// judged, never as an execution gate.
     pub(in crate::board_command) fn measure(
         board: &BoardAnswer,
         entries: &[Entry],
@@ -58,15 +58,23 @@ impl ParkedCounts {
             blocked: wait_rows
                 .iter()
                 .filter(|entry| board.blocked.contains(entry.born()))
+                .filter(|entry| !board.design_cycles.contains_key(entry.born()))
                 .count(),
             workflow_waiting: wait_rows
                 .iter()
                 .filter(|entry| board.workflow_waiting.contains(entry.born()))
+                .filter(|entry| !board.design_cycles.contains_key(entry.born()))
                 .count(),
-            selection: wait_rows
+            designs: wait_rows
                 .iter()
-                .filter(|entry| board.awaiting_selection.contains(entry.born()))
-                .count(),
+                .filter_map(|entry| board.design_cycles.get(entry.born()))
+                .fold(
+                    wire::rooms::DesignCycleCounts::default(),
+                    |mut counts, cycle| {
+                        counts.observe(*cycle);
+                        counts
+                    },
+                ),
             deferred: execution_rows
                 .iter()
                 .filter(|entry| entry.workflow().deferral.is_some())
@@ -97,6 +105,8 @@ impl ParkedCounts {
     /// The `board:` line: every non-zero category with its reason, or the
     /// one sentence for a board holding nothing else this lane can see.
     fn board_line(self) -> String {
+        let designs = wire::rooms::DesignCycle::ALL
+            .map(|cycle| (self.designs.get(cycle), cycle.label(), design_reason(cycle)));
         let parked = [
             (self.active, "active", "held by other lanes"),
             (
@@ -112,17 +122,15 @@ impl ParkedCounts {
             (
                 self.workflow_waiting,
                 "waiting",
-                "following normal Plan or Design workflow",
+                "following normal Plan workflow or advancing prerequisites",
             ),
-            (
-                self.selection,
-                "selection",
-                "awaiting the operator's Design selection",
-            ),
-            (self.deferred, "deferred", "until their scheduled time"),
-            (self.oops, "oops", "parked on the deferred triage board"),
         ]
         .into_iter()
+        .chain(designs)
+        .chain([
+            (self.deferred, "deferred", "until their scheduled time"),
+            (self.oops, "oops", "parked on the deferred triage board"),
+        ])
         .filter(|(count, _, _)| *count > 0)
         .map(|(count, label, reason)| format!("{count} {label} ({reason})"))
         .collect::<Vec<_>>();
@@ -130,6 +138,22 @@ impl ParkedCounts {
             "board: nothing else visible to this lane".to_owned()
         } else {
             format!("board: {}", parked.join(", "))
+        }
+    }
+}
+
+/// Who moves Designs in `cycle` forward, as the drain readout names it.
+const fn design_reason(cycle: wire::rooms::DesignCycle) -> &'static str {
+    match cycle {
+        wire::rooms::DesignCycle::GatheringInput => {
+            "Designs whose contributors or operator supply the next input"
+        }
+        wire::rooms::DesignCycle::ReadyForProposal => {
+            "Designs a lane claims to record one proposal"
+        }
+        wire::rooms::DesignCycle::AwaitingDecision => "Designs whose proposal the operator decides",
+        wire::rooms::DesignCycle::WaitingOnSelectedWork => {
+            "Designs waiting for the work they selected to finish"
         }
     }
 }
@@ -228,7 +252,7 @@ impl DrainReadout {
                 stale: board.stale,
                 blocked: board.blocked,
                 workflow_waiting: board.workflow_waiting,
-                selection: board.selection,
+                designs: board.designs,
                 deferred: board.deferred,
                 oops: board.oops,
             },

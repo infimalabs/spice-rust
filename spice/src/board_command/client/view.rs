@@ -64,9 +64,8 @@ pub(crate) enum Standing {
     Ready,
     /// Unclaimed review-phase work.
     Review,
-    /// A Design whose remaining conclusion waits on the operator's selection
-    /// of an output it constructed.
-    Selection,
+    /// A Design whose proposal waits on the operator's decision.
+    AwaitingDecision,
     /// A claim whose lease lapsed.
     Stale,
     /// Execution work whose unresolved gate has no advancing path.
@@ -88,7 +87,7 @@ impl Standing {
             Self::Active => "active",
             Self::Ready => "ready",
             Self::Review => "review",
-            Self::Selection => "selection",
+            Self::AwaitingDecision => "awaiting-decision",
             Self::Stale => "stale",
             Self::Blocked => "blocked",
             Self::Workflow => "waiting",
@@ -105,6 +104,9 @@ pub(crate) struct BoardRow {
     pub(crate) handle: TaskHandle,
     pub(crate) standing: Standing,
     pub(crate) phase: String,
+    /// An open Design's pass-cycle state, as the resident judged it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) cycle: Option<wire::rooms::DesignCycle>,
     pub(crate) project: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) lane: Option<CanonicalUuid>,
@@ -115,13 +117,15 @@ impl std::fmt::Display for BoardRow {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "{}  {:<7}  {}  {}  {}",
+            "{}  {:<7}  {}",
             self.handle,
             self.standing.label(),
-            self.phase,
-            self.project,
-            self.title
-        )
+            self.phase
+        )?;
+        if let Some(cycle) = self.cycle {
+            write!(formatter, " ({})", cycle.label())?;
+        }
+        write!(formatter, "  {}  {}", self.project, self.title)
     }
 }
 
@@ -139,7 +143,7 @@ pub(crate) struct PostureCounts {
     pub(crate) blocked: usize,
     pub(crate) workflow_waiting: usize,
     pub(crate) deferred: usize,
-    pub(crate) selection: usize,
+    pub(crate) awaiting_decision: usize,
     pub(crate) pending: usize,
     /// Typed OOPS rows across the visible board.
     pub(crate) oops: usize,
@@ -432,8 +436,8 @@ fn standing(
     }
     if workflow.deferral.is_some() {
         Standing::Deferred
-    } else if answer.awaiting_selection.contains(entry.born()) {
-        Standing::Selection
+    } else if answer.awaiting_selection(entry.born()) {
+        Standing::AwaitingDecision
     } else if answer.workflow_waiting.contains(entry.born()) {
         Standing::Workflow
     } else if answer.blocked.contains(entry.born()) {
@@ -462,6 +466,7 @@ fn row(
         handle: entry.handle().clone(),
         standing,
         phase: entry.workflow().phase.as_str().to_owned(),
+        cycle: board.design_cycles.get(entry.born()).copied(),
         project: entry.project().as_str().to_owned(),
         lane: entry
             .claim()
@@ -532,14 +537,14 @@ fn posture(
             Standing::Blocked => counts.blocked += 1,
             Standing::Workflow => counts.workflow_waiting += 1,
             Standing::Deferred => counts.deferred += 1,
-            Standing::Selection => counts.selection += 1,
+            Standing::AwaitingDecision => counts.awaiting_decision += 1,
             Standing::Pending | Standing::Closed => counts.pending += 1,
         }
         if matches!(
             standing,
             Standing::Ready
                 | Standing::Review
-                | Standing::Selection
+                | Standing::AwaitingDecision
                 | Standing::Workflow
                 | Standing::Blocked
         ) {
@@ -550,7 +555,7 @@ fn posture(
     let work = admit(board, standings, &work, request)?;
     let mut text = format!(
         "board for {} at cursor {}: {} visible, {} open on this route\n\
-         active {} ready {} review {} selection {} blocked {} waiting {} deferred {} stale {} \
+         active {} ready {} review {} awaiting-decision {} blocked {} waiting {} deferred {} stale {} \
          pending {} oops {} drafts {}\n\
          claim ",
         board.principal,
@@ -560,7 +565,7 @@ fn posture(
         counts.active,
         counts.ready,
         counts.review,
-        counts.selection,
+        counts.awaiting_decision,
         counts.blocked,
         counts.workflow_waiting,
         counts.deferred,

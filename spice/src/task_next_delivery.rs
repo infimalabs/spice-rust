@@ -77,7 +77,7 @@ mod tests {
                     stale: 0,
                     blocked: 0,
                     workflow_waiting: 0,
-                    selection: 0,
+                    designs: Default::default(),
                     deferred: 0,
                     oops: 0,
                 },

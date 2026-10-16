@@ -191,7 +191,7 @@ fn cli_standings_consume_the_residents_three_way_wait_partition() {
     current.offer.clear();
     current.blocked = vec![blocked_born];
     current.workflow_waiting = vec![waiting_born];
-    current.awaiting_selection = vec![selection_born];
+    current.design_cycles = [(selection_born, wire::rooms::DesignCycle::AwaitingDecision)].into();
 
     let current = posture(&current, None);
     let standing = |handle: &TaskHandle| {
@@ -205,12 +205,12 @@ fn cli_standings_consume_the_residents_three_way_wait_partition() {
     };
     assert_eq!(standing(&blocked), Standing::Blocked);
     assert_eq!(standing(&waiting), Standing::Workflow);
-    assert_eq!(standing(&selection), Standing::Selection);
+    assert_eq!(standing(&selection), Standing::AwaitingDecision);
     assert_eq!(
         (
             current.counts.blocked,
             current.counts.workflow_waiting,
-            current.counts.selection,
+            current.counts.awaiting_decision,
         ),
         (1, 1, 1)
     );

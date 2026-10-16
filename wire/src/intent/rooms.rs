@@ -406,6 +406,9 @@ pub struct RoomCoordinationView {
     /// The anchor's Design lifecycle standing; absent for a non-Design anchor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub design: Option<crate::intent::DesignStanding>,
+    /// The anchor's pass cycle while it is an open Design.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycle: Option<crate::rooms::DesignCyclePresentation>,
     /// Presentation instruction local consumers apply without persisting geometry.
     pub hide: bool,
 }

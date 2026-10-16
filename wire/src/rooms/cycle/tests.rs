@@ -403,6 +403,12 @@ fn an_undecided_proposal_holds_selection_until_decided_or_withdrawn() {
         DesignCycle::AwaitingDecision,
         "a decision of an older proposal leaves the latest one undecided"
     );
+    let facts = stale.cycles.facts(&design());
+    assert_eq!(
+        (facts.proposal, facts.decision),
+        (Seq::new(2), Seq::new(3)),
+        "the owed action cites the still-undecided proposal and the latest decision"
+    );
 
     let mut shadowed = Journal::new();
     shadowed.lane(&proposed(10, vec![task(OUTPUT)]));
@@ -412,6 +418,11 @@ fn an_undecided_proposal_holds_selection_until_decided_or_withdrawn() {
         shadowed.cycle(false),
         DesignCycle::AwaitingDecision,
         "withdrawing a later proposal leaves an earlier undecided one owed"
+    );
+    assert_eq!(
+        shadowed.cycles.facts(&design()).proposal,
+        Seq::new(1),
+        "the owed action cites the earlier proposal, not the withdrawn one"
     );
 }
 

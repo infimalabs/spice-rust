@@ -9,6 +9,8 @@ mod room;
 use room::dispatch_room_client;
 mod design_request;
 use design_request::design_request_reply;
+mod cycle;
+use cycle::{design_cycle, design_cycle_lines, design_cycle_next, design_holder_next};
 
 /// Execute one generated board-family CLI leaf.
 pub(crate) fn run(matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
@@ -432,7 +434,7 @@ fn existing_next_claim_reply(board: &BoardAnswer, task: &NextWorkTask) -> Reply<
             "next: spice task review {handle} --finding clean --note \"description current; ...\""
         )
     } else if wire::intent::is_open_design(task.statement.body.intent, &task.workflow.body) {
-        format!("next: spice task free {handle} (only the operator concludes a Design)")
+        design_holder_next(&handle)
     } else {
         "next: spice task done --validation \"...\"".to_owned()
     };

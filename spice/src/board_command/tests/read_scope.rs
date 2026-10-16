@@ -326,7 +326,6 @@ fn open_read_offers_the_full_board_allocation_order_from_its_bounded_rows() {
         [waiting.born().expect("waiting stamp")],
         "an ordinary unsettled dependency waits behind advancing work"
     );
-    assert!(open.awaiting_selection.is_empty());
     let offered = open
         .offer
         .iter()

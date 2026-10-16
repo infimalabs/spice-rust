@@ -492,6 +492,12 @@ impl ClaimHead {
     pub const fn is_stale(&self, workflow: &WorkflowHead) -> bool {
         self.acknowledged < workflow.generation
     }
+
+    /// Whether a lane still holds this claim; ended claims keep their head.
+    #[must_use]
+    pub const fn is_active(&self) -> bool {
+        matches!(self.disposition, ClaimDisposition::Active)
+    }
 }
 
 /// One current claim lease.

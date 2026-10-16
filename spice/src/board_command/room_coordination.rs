@@ -82,10 +82,28 @@ pub(crate) fn room_coordination_read(
             Ok(context) => context,
             Err(outcome) => return outcome,
         };
-    let view = match project(bus, anchor.handle(), &heads, &coordination, false) {
+    let mut view = match project(bus, anchor.handle(), &heads, &coordination, false) {
         Ok(view) => view,
         Err(outcome) => return outcome,
     };
+    // The working snapshot holds the whole live board, so this is the same
+    // resolution an Open read judges every Design by.
+    let availability = if anchor.claim().is_some_and(wire::ClaimHead::is_active) {
+        wire::rooms::DesignAvailability::Claimed
+    } else if view.design == Some(wire::intent::DesignStanding::Active) {
+        wire::rooms::DesignAvailability::Unclaimed
+    } else {
+        wire::rooms::DesignAvailability::Passive
+    };
+    view.cycle =
+        board::design_cycle(&anchor, &board::resolved_tasks(&snapshot.entries)).map(|cycle| {
+            wire::rooms::DesignCyclePresentation::new(
+                cycle,
+                heads.design_cycle,
+                anchor.handle(),
+                availability,
+            )
+        });
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(snapshot.cursor),
         body: CommandAnswer::RoomCoordination(view),
@@ -263,6 +281,7 @@ fn stage(
         stop: None,
         rule,
         design: heads.design_standing(),
+        cycle: None,
         hide: false,
     };
     Ok((write, view, lane))
@@ -391,6 +410,7 @@ pub(crate) fn room_put_aside(
         stop: visible_stop,
         rule: None,
         design: heads.design_standing(),
+        cycle: None,
         hide: true,
     };
     if let Err(error) = write.command_result(
@@ -1001,6 +1021,7 @@ fn project(
         stop,
         rule,
         design: heads.design_standing(),
+        cycle: None,
         hide,
     })
 }

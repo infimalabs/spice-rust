@@ -5,9 +5,13 @@
 //! here is a roster of authority, and rendering it mounts no view and wakes
 //! no lane.
 
+use wasm_bindgen::JsCast as _;
 use wire::intent::{BoardTask, DesignStanding};
-use wire::rooms::{RoomProgressStanding, RoomRelevanceClass, RoomRelevanceVerdict, RoomSourceView};
-use wire::{Disposition, TaskStamp};
+use wire::rooms::{
+    DesignCyclePresentation, DesignPassEnd, RoomProgressStanding, RoomRelevanceClass,
+    RoomRelevanceVerdict, RoomSourceView,
+};
+use wire::{Disposition, SequenceCode, TaskStamp};
 use yew::prelude::*;
 
 use crate::AppRuntime;
@@ -35,6 +39,15 @@ pub(super) fn render_standing(
     let coordination = projection.coordination_standing(room);
     let relevance = projection.relevance(room).collect::<Vec<_>>();
     let lifecycle = row.and_then(BoardTask::design_standing);
+    let cycle = row.and_then(|row| {
+        let cycle = *runtime.board()?.design_cycles.get(room)?;
+        Some(DesignCyclePresentation::new(
+            cycle,
+            row.design_cycle,
+            &row.statement.body.handle,
+            row.design_availability(),
+        ))
+    });
     let settled = lifecycle.as_ref().map_or_else(
         || {
             matches!(
@@ -52,8 +65,9 @@ pub(super) fn render_standing(
                     {standing.to_string()}
                 </p>
             }
+            {cycle.as_ref().map_or_else(Html::default, |cycle| render_cycle(room, cycle))}
             <p class="room-standing-next" data-room-next="">
-                {next_action(settled, lifecycle.as_ref(), coordination.as_ref(), &participants)}
+                {next_action(settled, lifecycle.as_ref(), coordination.as_ref(), &participants, cycle.as_ref())}
             </p>
             {coordination.as_ref().map_or_else(Html::default, render_coordination)}
             {render_lanes(runtime, &participants)}
@@ -67,19 +81,17 @@ pub(super) fn render_standing(
     }
 }
 
-/// The one next useful action the current authority supports.
+/// The one next useful action the current authority supports. An open
+/// Design's cycle names it once no coordination obligation is outstanding.
 fn next_action(
     settled: bool,
     lifecycle: Option<&DesignStanding>,
     coordination: Option<&CoordinationStanding<'_>>,
     participants: &[RoomParticipant],
+    cycle: Option<&DesignCyclePresentation>,
 ) -> String {
     if settled {
         return "The anchor is settled; nothing remains to coordinate.".to_owned();
-    }
-    if lifecycle == Some(&DesignStanding::Passive) {
-        return "Set the Design's working group to Explore or Converge before coordinating a lane onto it; if ungrouped, group it first."
-            .to_owned();
     }
     let owed = participants.iter().any(|participant| {
         participant.reasons.iter().any(|reason| {
@@ -89,23 +101,87 @@ fn next_action(
             )
         })
     });
-    match coordination {
-        Some(standing) if standing.request == Some(Disposition::Live) => format!(
+    match (coordination, cycle) {
+        (Some(standing), _) if standing.request == Some(Disposition::Live) => format!(
             "Wait for {} to acknowledge request {}.",
             standing.record.value.target, standing.record.value.key
         ),
         _ if owed => "Wait for the receipts and results lanes owe below.".to_owned(),
-        Some(standing) if matches!(standing.automation, ResumeAutomation::Armed { .. }) => {
+        (Some(standing), _) if matches!(standing.automation, ResumeAutomation::Armed { .. }) => {
             format!(
                 "Wait for new input from another party; the rule then resumes {}.",
                 standing.record.value.target
             )
         }
-        Some(standing) if !standing.put_aside => format!(
+        (_, Some(cycle)) => format!("Next ({}): {}", cycle.actor.label(), cycle.action),
+        _ if lifecycle == Some(&DesignStanding::Passive) => "Set the Design's working group to \
+            Explore or Converge before coordinating a lane onto it; if ungrouped, group it first."
+            .to_owned(),
+        (Some(standing), None) if !standing.put_aside => format!(
             "Read {}'s contribution, then Resume or put the room aside.",
             standing.record.value.target
         ),
         _ => "Start coordination to ask one lane for the next contribution.".to_owned(),
+    }
+}
+
+/// The resident's pass cycle for one open Design: what it waits on, who
+/// acts, how the last pass ended, and the exact proposal or decision it
+/// cites.
+fn render_cycle(room: &TaskStamp, cycle: &DesignCyclePresentation) -> Html {
+    let last_pass = cycle.last_pass.map(|end| match end {
+        DesignPassEnd::Proposed => "The last pass ended with a proposal, which released its claim.",
+        DesignPassEnd::Abandoned => {
+            "The last pass was abandoned: its claim ended without a proposal."
+        }
+    });
+    html! {
+        <div
+            class="room-standing-cycle"
+            data-design-cycle={cycle.cycle.key()}
+            data-cycle-actor={cycle.actor.label()}
+        >
+            <p>
+                {"Pass cycle: "}<strong>{cycle.cycle.label()}</strong>
+                {" · next: "}<strong>{cycle.actor.label()}</strong>
+            </p>
+            if let (Some(end), Some(text)) = (cycle.last_pass, last_pass) {
+                <p data-last-pass={end.label()}>{text}</p>
+            }
+            if let Some(proposal) = cycle.proposal {
+                <p>{"Proposal awaiting decision: "}{fact_link(room, proposal)}</p>
+            }
+            if let Some(decision) = cycle.decision {
+                <p>{"Latest decision: "}{fact_link(room, decision)}</p>
+            }
+        </div>
+    }
+}
+
+/// A link to the exact proposal or decision fact. On the Design's read view
+/// it focuses that record in place; elsewhere it opens the read view.
+fn fact_link(room: &TaskStamp, fact: SequenceCode) -> Html {
+    let code = fact.to_string();
+    let onclick = {
+        let selector = format!("[data-fact=\"{code}\"]");
+        Callback::from(move |event: MouseEvent| {
+            let Some(element) = web_sys::window()
+                .and_then(|window| window.document())
+                .and_then(|document| document.query_selector(&selector).ok().flatten())
+            else {
+                return;
+            };
+            event.prevent_default();
+            element.scroll_into_view();
+            if let Ok(element) = element.dyn_into::<web_sys::HtmlElement>() {
+                let _ = element.focus();
+            }
+        })
+    };
+    html! {
+        <a href={crate::view::design_href(room)} data-cycle-fact={code.clone()} {onclick}>
+            <code>{code}</code>
+        </a>
     }
 }
 

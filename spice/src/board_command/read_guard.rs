@@ -150,7 +150,7 @@ fn validated_snapshot_from_with_occupant(
             offer: Vec::new(),
             blocked: Vec::new(),
             workflow_waiting: Vec::new(),
-            awaiting_selection: Vec::new(),
+            design_cycles: Default::default(),
             origins: Default::default(),
             notes: Default::default(),
             acknowledgments: Default::default(),
@@ -746,18 +746,25 @@ pub(super) fn read_board(
         Err(outcome) => return outcome,
     };
     if matches!(read, BoardRead::Open | BoardRead::All { .. }) {
-        let waits = board::work_waits(&snapshot.entries, &snapshot.answer.environment());
+        let resolved = board::resolved_tasks(&snapshot.entries);
+        let environment = snapshot.answer.environment();
+        let waits = board::work_waits_resolved(&snapshot.entries, &resolved, &environment);
         for (task, wait) in waits {
             match wait {
                 board::WorkWait::Blocked => snapshot.answer.blocked.push(task.clone()),
                 board::WorkWait::Workflow => {
                     snapshot.answer.workflow_waiting.push(task.clone());
                 }
-                board::WorkWait::Selection => {
-                    snapshot.answer.awaiting_selection.push(task.clone());
-                }
+                board::WorkWait::Selection => {}
             }
         }
+        snapshot.answer.design_cycles = board::design_cycles(&snapshot.entries, &resolved);
+    } else {
+        snapshot.answer.design_cycles =
+            match next_work::scoped_design_cycles(&observed, projects, &snapshot) {
+                Ok(cycles) => cycles,
+                Err(outcome) => return outcome,
+            };
     }
     if matches!(read, BoardRead::Open) {
         snapshot.answer.offer = board_offer(&snapshot.entries, &snapshot.answer);

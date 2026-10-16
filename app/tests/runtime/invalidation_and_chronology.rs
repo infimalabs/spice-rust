@@ -145,7 +145,7 @@ fn task_head_rows() -> Vec<StaleRow> {
                     },
                 },
             }),
-            [false, false, false],
+            [true, false, false],
         ),
         (
             serde_json::json!({
@@ -171,7 +171,7 @@ fn task_head_rows() -> Vec<StaleRow> {
                     "groups": [{"group": "dVsYdDj7f", "anchors": ["1kKRRsDP"], "stance": "explore"}],
                 },
             }),
-            [false, false, false],
+            [true, false, false],
         ),
     ]
 }

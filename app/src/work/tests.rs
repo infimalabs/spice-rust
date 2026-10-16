@@ -126,7 +126,7 @@ pub(crate) fn board(tasks: Vec<BoardTask>) -> BoardView {
         offer: Vec::new(),
         blocked: std::collections::BTreeSet::new(),
         workflow_waiting: std::collections::BTreeSet::new(),
-        awaiting_selection: std::collections::BTreeSet::new(),
+        design_cycles: std::collections::BTreeMap::new(),
         quote_tasks: std::rc::Rc::default(),
         environment: Environment::journal_schema(1).expect("fixture schema"),
         seats: crate::runtime::Seats::new(residency(), std::collections::BTreeMap::new()),
@@ -214,7 +214,9 @@ fn lifecycle_precedence_follows_task_status_standings() {
     // repeats those rows in the generic blocker set.
     board.blocked.extend([3, 4, 5, 9, 10].map(stamp));
     board.workflow_waiting.insert(stamp(9));
-    board.awaiting_selection.insert(stamp(10));
+    board
+        .design_cycles
+        .insert(stamp(10), wire::rooms::DesignCycle::AwaitingDecision);
     let projection = WorkProjection::from_board(&board);
 
     assert_eq!(
@@ -287,7 +289,9 @@ fn design_passivity_yields_only_to_possession_active_stance_and_selection() {
         design(7),
     ]);
     board.blocked.insert(stamp(6));
-    board.awaiting_selection.insert(stamp(7));
+    board
+        .design_cycles
+        .insert(stamp(7), wire::rooms::DesignCycle::AwaitingDecision);
     let projection = WorkProjection::from_board(&board);
 
     assert_eq!(
@@ -628,7 +632,9 @@ fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
     ]);
     board.workflow_waiting.insert(stamp(5));
     board.blocked.insert(stamp(8));
-    board.awaiting_selection.insert(stamp(9));
+    board
+        .design_cycles
+        .insert(stamp(9), wire::rooms::DesignCycle::AwaitingDecision);
     let projection = WorkProjection::from_board(&board);
     let marks = |scope: &WorkScope| {
         projection

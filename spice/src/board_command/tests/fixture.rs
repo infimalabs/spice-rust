@@ -438,7 +438,12 @@ pub(super) fn open_gated(bus: &Bus, epoch: CanonicalUuid) -> BTreeSet<TaskStamp>
     open.blocked
         .into_iter()
         .chain(open.workflow_waiting)
-        .chain(open.awaiting_selection)
+        .chain(
+            open.design_cycles
+                .into_iter()
+                .filter(|(_, cycle)| *cycle == wire::rooms::DesignCycle::AwaitingDecision)
+                .map(|(task, _)| task),
+        )
         .collect()
 }
 
@@ -454,9 +459,10 @@ pub(super) fn open_awaiting_selection(bus: &Bus, epoch: CanonicalUuid) -> BTreeS
         .map(|(task, _)| task.clone())
         .collect::<BTreeSet<_>>();
     let awaiting = open
-        .awaiting_selection
-        .iter()
-        .cloned()
+        .design_cycles
+        .into_iter()
+        .filter(|(_, cycle)| *cycle == wire::rooms::DesignCycle::AwaitingDecision)
+        .map(|(task, _)| task)
         .collect::<BTreeSet<_>>();
     assert_eq!(
         awaiting, classified,

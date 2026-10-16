@@ -108,7 +108,7 @@ pub(crate) fn read_next_work(
         offer: Vec::new(),
         blocked: Vec::new(),
         workflow_waiting: Vec::new(),
-        awaiting_selection: Vec::new(),
+        design_cycles: Default::default(),
         origins: Default::default(),
         history: None,
         notes: Default::default(),
@@ -171,6 +171,28 @@ type FrontierProjection<'a> = (
     Vec<&'a journal::TaskHeads>,
     bus::AllocationWork,
 );
+
+/// Every open Design's cycle among a scoped read's rows, judged against the
+/// live frontier: the same resolution live allocation uses, since the scoped
+/// rows need not include the work those Designs released.
+pub(in crate::board_command) fn scoped_design_cycles(
+    observed: &bus::TaskSnapshot,
+    projects: &ProjectPolicy,
+    snapshot: &ValidatedSnapshot,
+) -> Result<
+    std::collections::BTreeMap<wire::TaskStamp, wire::rooms::DesignCycle>,
+    Outcome<CommandAnswer>,
+> {
+    if !snapshot
+        .entries
+        .iter()
+        .any(|entry| wire::intent::is_open_design(entry.statement().intent, entry.workflow()))
+    {
+        return Ok(std::collections::BTreeMap::new());
+    }
+    let (_, live, ..) = project_frontier(observed, projects, &snapshot.answer.residency.body)?;
+    Ok(board::design_cycles(&snapshot.entries, &live))
+}
 
 pub(in crate::board_command) fn project_frontier<'a>(
     observed: &'a bus::TaskSnapshot,
@@ -306,7 +328,7 @@ fn dry_counts(
         stale: 0,
         blocked: 0,
         workflow_waiting: 0,
-        selection: 0,
+        designs: wire::rooms::DesignCycleCounts::default(),
         deferred: 0,
         oops: entries
             .iter()
@@ -319,11 +341,14 @@ fn dry_counts(
     };
     let waits = board::work_waits(entries, environment);
     for entry in visible.filter(|entry| entry.is_filed() && entry.workflow().status.is_pending()) {
-        match waits.get(entry.born()) {
-            Some(board::WorkWait::Blocked) => counts.blocked += 1,
-            Some(board::WorkWait::Workflow) => counts.workflow_waiting += 1,
-            Some(board::WorkWait::Selection) => counts.selection += 1,
-            None => {}
+        if let Some(cycle) = board::design_cycle(entry, satisfied) {
+            counts.designs.observe(cycle);
+        } else {
+            match waits.get(entry.born()) {
+                Some(board::WorkWait::Blocked) => counts.blocked += 1,
+                Some(board::WorkWait::Workflow) => counts.workflow_waiting += 1,
+                Some(board::WorkWait::Selection) | None => {}
+            }
         }
         if satisfied.speculative_design_work(entry.statement(), entry.workflow()) {
             continue;

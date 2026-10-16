@@ -43,13 +43,16 @@ impl Stale {
     /// finer mapping on the closed vocabulary prevents a second app-local
     /// registry from drifting when task facts are added.
     pub fn widen(&mut self, kind: FactKind) {
-        // Execution authorization completes its controller and authorizes its
-        // selected outputs, changing allocator eligibility; a working-group
-        // move changes which settled Designs the board carries as room anchors.
-        if matches!(
-            kind,
-            FactKind::ExecutionAuthorized | FactKind::WorkingGroupMoved
-        ) {
+        // The board carries every open Design's pass cycle and standing, so a
+        // fact that moves cycle evidence (including execution authorization,
+        // which also changes allocator eligibility) or the working-group
+        // partition and stances moves the board.
+        if wire::rooms::DesignCycles::concerns(kind)
+            || matches!(
+                kind,
+                FactKind::WorkingGroupMoved | FactKind::WorkingGroupsArranged
+            )
+        {
             self.board = true;
         }
         match kind.as_str().split_once("::") {
