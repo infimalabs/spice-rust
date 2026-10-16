@@ -1008,7 +1008,6 @@ fn retained_task_head(task: journal::crossing::TaskStamp, index: usize, seq: Seq
     TaskHead {
         preparation: None,
         authorization: None,
-        engagement: None,
         evidence: Vec::new(),
         intent: None,
         born: task,
@@ -1077,7 +1076,6 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
     write.task_head(fact, move |seq| TaskHead {
         preparation: None,
         authorization: None,
-        engagement: None,
         evidence: Vec::new(),
         intent: None,
         born: task_for_head,

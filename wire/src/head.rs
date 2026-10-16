@@ -298,17 +298,6 @@ pub struct TaskHead {
         deserialize_with = "crate::optional::present"
     )]
     pub authorization: Option<crate::rooms::DecisionRef>,
-    /// Retained pre-cutover working-group partition position.
-    ///
-    /// This is decoder evidence owned by release `4b805a018`, not current
-    /// execution authority. Writable journal open refuses a statement carrying
-    /// it before runtime selection or allocation can observe it.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub engagement: Option<Seq>,
     /// Question results, asked in this task's room, that must be answered
     /// before any positive phase completion; answered means available for
     /// assessment, never accepted.

@@ -827,12 +827,6 @@ fn apply_heads(
             apply_transcript_head(transaction, &row)?;
             continue;
         }
-        if row.table == "task_heads"
-            && let HeadKey::Text(stamp) = &row.key
-        {
-            crate::rooms::require_engagement(transaction, stamp, &row.body)
-                .map_err(room_refusal)?;
-        }
         ledger.settle(transaction, &mut row)?;
         let statement = format!(
             "INSERT INTO {table}({key}, head_seq, body) VALUES (?1, ?2, ?3) \

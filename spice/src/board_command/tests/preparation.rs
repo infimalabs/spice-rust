@@ -698,17 +698,6 @@ fn assert_controlled_output_refusal(outcome: Outcome<CommandAnswer>, outputs: &[
             "refusal omitted pending output {output}: {observed}"
         );
     }
-    let detail = refusal
-        .diagnostic()
-        .and_then(wire::RefusalDiagnostic::detail)
-        .expect("refusal names the authorization or settlement repair");
-    assert!(
-        detail.contains("spice preparation decide")
-            && detail.contains("close or delete")
-            && !detail.contains("working group")
-            && !detail.contains("engag"),
-        "controlled-output repair must not offer group engagement: {detail}"
-    );
 }
 
 #[test]
@@ -965,24 +954,6 @@ fn add_prepared(
     TaskHandle::for_project("board.test", &born)
 }
 
-/// Move `design` into `to`, or out of every group, at the current partition
-/// revision.
-fn move_design(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    design: TaskStamp,
-    to: Option<&RoomAuthorityStamp>,
-) {
-    assert_committed(move_design_now(bus, epoch, &design, to));
-}
-
-fn engagement(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> Option<Seq> {
-    at(&board(bus, epoch, Actor::Operator), task)
-        .statement
-        .body
-        .engagement
-}
-
 fn review_clean(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -1021,46 +992,6 @@ mod decision_wait;
 mod returned;
 mod selected_plan;
 mod withdrawal;
-
-#[test]
-fn working_group_moves_organize_designs_without_authorizing_outputs() {
-    let (root, bus, epoch, _seats) = fixture("preparation-group-organization", 1);
-    let design = add_controller(
-        &bus,
-        epoch,
-        "Grouped design",
-        wire::TaskIntent::Design,
-        None,
-    );
-    let current = add_output(&bus, epoch, &design, "Current output");
-
-    let group = RoomAuthorityStamp::for_micros(1_760_000_000_000_000).expect("fixture group");
-    move_design(&bus, epoch, stamp("Grouped design"), Some(&group));
-    let later = add_output(&bus, epoch, &design, "Later output");
-    for output in [&current, &later] {
-        assert_eq!(
-            engagement(&bus, epoch, output),
-            None,
-            "group organization granted output authority"
-        );
-    }
-
-    move_design(&bus, epoch, stamp("Grouped design"), None);
-    let regroup = RoomAuthorityStamp::for_micros(1_760_000_000_000_001).expect("fixture group");
-    move_design(&bus, epoch, stamp("Grouped design"), Some(&regroup));
-    for output in [&current, &later] {
-        assert_eq!(
-            engagement(&bus, epoch, output),
-            None,
-            "regrouping granted output authority"
-        );
-    }
-    assert_controlled_output_refusal(
-        conclude(&bus, epoch, Actor::Operator, &design, done_conclusion()),
-        &[&current, &later],
-    );
-    clean(&root, bus);
-}
 
 #[test]
 fn a_design_awaiting_selection_waits_on_the_operator_until_its_outputs_settle() {

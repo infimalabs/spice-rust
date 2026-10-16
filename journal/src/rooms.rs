@@ -31,7 +31,6 @@ use wire::{
 mod awareness;
 mod conversation;
 mod coordination;
-mod engagement;
 mod evidence;
 mod relevance;
 mod sql;
@@ -45,7 +44,6 @@ pub(crate) use coordination::{
     Direction, Record as CoordinationRecord, SCHEMA_SQL as COORDINATION_SCHEMA_SQL,
     require_writes as require_coordination_writes,
 };
-pub(crate) use engagement::require_transition as require_engagement;
 pub(crate) use evidence::{SCHEMA_SQL as EVIDENCE_SCHEMA_SQL, fold as fold_evidence};
 pub(crate) use relevance::SCHEMA_SQL as RELEVANCE_SCHEMA_SQL;
 pub(crate) const MATURITY_SCHEMA_SQL: &str = r#"

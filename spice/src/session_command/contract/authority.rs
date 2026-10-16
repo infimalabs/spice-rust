@@ -127,7 +127,6 @@ fn task_added(
     write.task_head(fact, move |position| wire::TaskHead {
         preparation,
         authorization: None,
-        engagement: None,
         evidence: Vec::new(),
         intent,
         born: statement_task,
