@@ -576,16 +576,15 @@ fn render_design_composer(
     }
 }
 
-/// The Design's current board and room facts, laid out like a lane composer's
-/// back. The placeholder is recomputed from the current projections each render.
+/// The Design's current board and room facts, with each line ordered from its
+/// durable context to its most frequently changing detail.
 fn design_composer_placeholder(runtime: &AppRuntime, channel: &Channel) -> String {
     let projection = runtime.room_projection();
     let board = runtime.board();
     let row = board.and_then(|board| board.row(&channel.stamp));
-    let title = row.map_or_else(
-        || channel.label.clone(),
-        |row| crate::composer_markdown::inline::plain_text(&row.presentation_title),
-    );
+    let title = row
+        .map(|row| crate::composer_markdown::inline::plain_text(&row.presentation_title))
+        .filter(|title| title != &channel.label);
     let phase = row.map_or_else(
         || "phase unavailable".to_owned(),
         |row| row.workflow.body.phase.to_string(),
@@ -621,20 +620,17 @@ fn design_composer_placeholder(runtime: &AppRuntime, channel: &Channel) -> Strin
     let associated = board.map_or(0, |board| {
         crate::runtime::prepared_open_count(board, &channel.stamp)
     });
+    let (title_separator, title) = title.as_deref().map_or(("", ""), |title| (" · ", title));
     format!(
-        "{title}, {}\n{standing}, {phase}, {claimant}\n{posts} {}, {associated} {}",
+        "{}{title_separator}{title}\n{phase} · {standing} · {claimant}\n{associated} {} · {posts} {}",
         channel.label,
-        count_label(posts, "room post"),
-        count_label(associated, "open associated task"),
+        count_label(associated, "open task", "open tasks"),
+        count_label(posts, "room post", "room posts"),
     )
 }
 
-fn count_label(count: usize, singular: &str) -> String {
-    if count == 1 {
-        singular.to_owned()
-    } else {
-        format!("{singular}s")
-    }
+fn count_label<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if count == 1 { singular } else { plural }
 }
 
 /// A settled design's room takes no new posts, so its composer names that
