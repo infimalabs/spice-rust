@@ -113,7 +113,7 @@ pub(super) fn client_candidate_retain(
         let proposal = ProposalRef::Candidate {
             candidate: candidate.candidate.clone(),
         };
-        let mut expected = task_witnesses(board)?;
+        let mut expected = task_witnesses(board, &candidate.candidate.controller)?;
         expected.push(Witness::Proposal {
             proposal,
             head: None,
@@ -140,7 +140,7 @@ pub(super) fn client_candidate_critique(
         let proposal = ProposalRef::Critique {
             critique: critique.critique.clone(),
         };
-        let mut expected = task_witnesses(board)?;
+        let mut expected = task_witnesses(board, &critique.critique.candidate.controller)?;
         expected.push(Witness::Proposal {
             proposal,
             head: None,
@@ -167,7 +167,7 @@ pub(super) fn client_candidate_cover(
         let proposal = ProposalRef::Coverage {
             coverage: input.coverage.clone(),
         };
-        let mut expected = task_witnesses(board)?;
+        let mut expected = task_witnesses(board, &input.coverage.candidate.controller)?;
         expected.push(Witness::Proposal {
             proposal,
             head: None,
@@ -270,7 +270,7 @@ pub(super) fn client_candidate_withdraw(
     };
     let tasks = vec![withdrawal.candidate.controller.clone()];
     submit_with_tasks(repository, contract, tasks, false, |board| {
-        let mut expected = task_witnesses(board)?;
+        let mut expected = task_witnesses(board, &withdrawal.candidate.controller)?;
         expected.push(Witness::Proposal {
             proposal: candidate,
             head: Some(candidate_head),
@@ -452,12 +452,17 @@ fn task<'a>(
         })
 }
 
-fn task_witnesses(board: &BoardAnswer) -> Result<Vec<Witness>, Outcome<CommandAnswer>> {
-    Ok(board
+fn task_witnesses(
+    board: &BoardAnswer,
+    controller: &TaskStamp,
+) -> Result<Vec<Witness>, Outcome<CommandAnswer>> {
+    let mut expected = board
         .tasks
         .iter()
         .flat_map(|task| [statement_witness(task), workflow_witness(task)])
-        .collect())
+        .collect::<Vec<_>>();
+    expected.push(claim_witness(task(board, controller)?));
+    Ok(expected)
 }
 
 fn transition_witnesses(task: &BoardTask) -> Vec<Witness> {
