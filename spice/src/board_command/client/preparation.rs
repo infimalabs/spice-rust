@@ -448,7 +448,7 @@ fn with_cycle(
         tasks: vec![design.clone()],
         dependencies: false,
         claims: false,
-        notes: false,
+        history: false,
     };
     if let Ok(board) = current_board(repository, read)
         && let Some(task) = board
@@ -496,7 +496,7 @@ where
             tasks,
             dependencies: false,
             claims,
-            notes: false,
+            history: false,
         },
     ) {
         Ok(board) => board,

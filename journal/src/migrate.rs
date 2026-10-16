@@ -13,6 +13,7 @@ mod fact_bounds;
 mod maturity;
 mod provenance;
 mod residual;
+mod retained_notes;
 mod settings_receipts;
 mod task_markers;
 mod task_standing;
@@ -65,14 +66,16 @@ const PREPARED: &str = "prepared";
 /// and taste-proposal evidence from retired statement tags into typed fields,
 /// then discards every remaining tag before the schema identity advances. Each
 /// taste hold takes the matches and recheck count its retired audit notes
-/// recorded, and the notes stay as history no reader parses.
+/// recorded. Last, every retained task note that is not a taste-review audit
+/// joins its task's room projection at its own position, folded exactly as
+/// verification replays it.
 /// Before any of that decodes a typed statement head, it resolves every
 /// retained task provenance spelling into the closed provenance type. Current
 /// readers therefore need no release-specific execution arm. Retained terminal
 /// review fields cross before any migration decodes a typed workflow head.
-const PREDECESSOR_SCHEMAS: [u32; 41] = [
+const PREDECESSOR_SCHEMAS: [u32; 42] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
+    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -375,6 +378,17 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     settings_receipts::cross(&transaction)?;
     awareness::cross(&transaction)?;
     maturity::cross(&transaction)?;
+    retained_notes::cross(&transaction)?;
+    advance_identity(&transaction)?;
+    transaction.commit().map_err(OpenError::Sqlite)?;
+    Ok(Some(Migration {
+        from: version,
+        to: SCHEMA_VERSION,
+    }))
+}
+
+/// Name the crossed authority the current schema.
+fn advance_identity(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
     transaction
         .execute(
             "UPDATE journal_schema SET version = ?1 WHERE singleton = 1",
@@ -383,13 +397,9 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         .map_err(OpenError::Sqlite)?;
     transaction
         .pragma_update(None, "user_version", SCHEMA_VERSION)
-        .map_err(OpenError::Sqlite)?;
-    transaction.commit().map_err(OpenError::Sqlite)?;
-    Ok(Some(Migration {
-        from: version,
-        to: SCHEMA_VERSION,
-    }))
+        .map_err(OpenError::Sqlite)
 }
+
 fn cross_shape_predecessor(
     transaction: &rusqlite::Transaction<'_>,
     version: u32,
@@ -1446,8 +1456,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 74, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 75, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 74;
+PRAGMA user_version = 75;
 "#;

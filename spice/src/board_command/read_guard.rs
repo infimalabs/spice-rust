@@ -155,7 +155,6 @@ fn validated_snapshot_from_with_occupant(
             workflow_waiting: Vec::new(),
             design_cycles: Default::default(),
             origins: Default::default(),
-            notes: Default::default(),
             acknowledgments: Default::default(),
             closures: Default::default(),
             steps: Default::default(),
@@ -794,7 +793,9 @@ pub(super) fn read_board(
         });
     }
     if let BoardRead::Tasks {
-        tasks, notes: true, ..
+        tasks,
+        history: true,
+        ..
     } = read
     {
         // Only named rows the snapshot admitted, so a hidden task's notes stay hidden.
@@ -811,7 +812,6 @@ pub(super) fn read_board(
             Err(outcome) => return outcome,
         };
         let record = task_detail::task_record(observed.facts(), &named, &roles);
-        snapshot.answer.notes = record.notes;
         snapshot.answer.acknowledgments = record.acknowledgments;
         snapshot.answer.closures = record.closures;
         snapshot.answer.steps = record.steps;
@@ -1007,12 +1007,15 @@ pub(super) fn read_ledger(
     node.acceptance = statement.acceptance.clone();
     node.priority = statement.priority.map(board::priority_to_document);
     node.description = statement.description.clone().unwrap_or_default();
-    let mut annotations = snapshot
-        .facts
+    let publications = match super::room::room_publications(bus, &statement.born) {
+        Ok(publications) => publications,
+        Err(outcome) => return outcome,
+    };
+    let mut annotations = publications
         .iter()
         .filter_map(|envelope| {
-            let (task, note) = recorded_note(envelope)?;
-            (task == statement.born).then_some((envelope.seq, note_annotation(&note)))
+            let (_, note) = recorded_note(envelope)?;
+            Some((envelope.seq, note_annotation(&note)))
         })
         .collect::<Vec<_>>();
     annotations.extend(ledger_step_annotations(

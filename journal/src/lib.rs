@@ -30,7 +30,9 @@
 /// Schema 73 makes each retained Design pass proposal's justification explicit.
 /// Schema 74 lifts each taste hold's evidence out of its statement's audit
 /// notes into the typed hold, which an older release cannot decode.
-pub const SCHEMA_VERSION: u32 = 74;
+/// Schema 75 indexes each retained task note that is not a taste-review audit
+/// into its task's room, which an older release's room reads cannot present.
+pub const SCHEMA_VERSION: u32 = 75;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

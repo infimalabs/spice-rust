@@ -1180,10 +1180,8 @@ mod runtime {
                 publication,
                 answer,
             } => {
-                let _ = answer.send(journal.read(move |read| {
-                    read.room_publication_seq(&room, &publication)?
-                        .map_or(Ok(None), |seq| read.room_fact(seq))
-                }));
+                let _ = answer
+                    .send(journal.read(move |read| read.room_publication(&room, &publication)));
             }
             JournalRead::Residency { answer } => {
                 let _ = answer.send(journal.read(|read| read.residency_head()));

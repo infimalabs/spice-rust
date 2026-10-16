@@ -494,7 +494,7 @@ fn add_task_noted_under_a_second_ask(
             tasks: vec![born.clone()],
             dependencies: false,
             claims: false,
-            notes: true,
+            history: true,
         },
     )
     else {
@@ -742,7 +742,7 @@ fn read_task(bus: &Bus, epoch: CanonicalUuid, task: &wire::TaskStamp) -> BoardAn
             tasks: vec![task.clone()],
             dependencies: false,
             claims: false,
-            notes: true,
+            history: true,
         },
     )
     else {
@@ -758,7 +758,6 @@ fn rendered_task(answer: &BoardAnswer, task: &TaskHandle, origin_context: Option
         at(answer, task),
         &[],
         TaskShowHistory {
-            notes: &[],
             acknowledgments: &answer.acknowledgments[&born],
             ..TaskShowHistory::default()
         },

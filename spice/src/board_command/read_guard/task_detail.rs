@@ -2,7 +2,7 @@ use base64::Engine as _;
 
 use super::*;
 
-/// Read one task and its notes from one immutable journal barrier.
+/// Read one task's current evidence from one immutable journal barrier.
 pub(in crate::board_command) fn read_task_detail(
     bus: &Bus,
     repository: Option<&Repository>,
@@ -50,7 +50,6 @@ pub(in crate::board_command) fn read_task_detail(
         Err(outcome) => return outcome,
     };
     let mut record = task_record(observed.facts(), &selected, &roles);
-    let notes = record.notes.remove(&detail.task).unwrap_or_default();
     let closure = record.closures.remove(&detail.task);
     let origin_request = match &task.statement.body.provenance {
         wire::TaskProvenance::Steering(key) => {
@@ -66,7 +65,6 @@ pub(in crate::board_command) fn read_task_detail(
         CommandAnswer::TaskDetail(Box::new(wire::intent::TaskDetailAnswer {
             task,
             media,
-            notes,
             closure,
             origin_request,
         })),
@@ -77,11 +75,6 @@ pub(in crate::board_command) fn read_task_detail(
 /// position.
 #[derive(Default)]
 pub(super) struct TaskRecord {
-    /// Every note retained from before notes became room observations. A
-    /// task's authored observations are its room's publications, which the
-    /// room section reads, so they never repeat here.
-    pub(super) notes:
-        std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskDetailNote>>,
     /// Every task or claim fact whose origin is an acknowledged steering key,
     /// and every operator directive a holder acknowledged while holding it.
     pub(super) acknowledgments:
@@ -94,23 +87,20 @@ pub(super) struct TaskRecord {
         std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskDetailStep>>,
 }
 
-/// The task note one fact records: an authored observation in a task's room,
-/// or a note retained from before notes became room observations.
+/// The authored observation one fact publishes in a task's room, with that
+/// room's task.
 pub(in crate::board_command) fn recorded_note(
     envelope: &wire::Envelope<wire::AnyFact>,
 ) -> Option<(wire::TaskStamp, String)> {
-    if let Some(published) = envelope.fact.read::<wire::rooms::RoomPublished>() {
-        let wire::rooms::RoomPublicationContent::Authored { text } = published.content else {
-            return None;
-        };
-        return Some((published.room, text));
-    }
-    let noted = envelope.fact.read::<body::TaskNoted>()?;
-    Some((noted.task, noted.note))
+    let published = envelope.fact.read::<wire::rooms::RoomPublished>()?;
+    let wire::rooms::RoomPublicationContent::Authored { text } = published.content else {
+        return None;
+    };
+    Some((published.room, text))
 }
 
-/// Read the named tasks' notes, closures, workflow steps, and acknowledgments
-/// from the snapshot's facts, naming each author as `roles` resolves it.
+/// Read the named tasks' closures, workflow steps, and acknowledgments from
+/// the snapshot's facts, naming each author as `roles` resolves it.
 pub(super) fn task_record(
     facts: &bus::TaskFacts,
     tasks: &std::collections::BTreeSet<wire::TaskStamp>,
@@ -134,20 +124,6 @@ pub(super) fn task_record(
                 });
         }
         let note = recorded_note(envelope).filter(|(task, _)| tasks.contains(task));
-        if let Some((task, text)) = &note
-            && envelope.fact.kind() == wire::FactKind::TaskNoted
-        {
-            record
-                .notes
-                .entry(task.clone())
-                .or_default()
-                .push(wire::intent::TaskDetailNote {
-                    position: envelope.seq,
-                    at: envelope.at,
-                    author: roles.author(&envelope.actor),
-                    text: text.clone(),
-                });
-        }
         if let Some(closed) = envelope.fact.read::<body::TaskClosed>()
             && tasks.contains(&closed.task)
         {

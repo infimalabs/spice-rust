@@ -185,6 +185,6 @@ fn single_task_read(task: &TaskHandle) -> BoardRead {
                 .expect("a parsed handle carries a canonical task stamp"),
         ],
         dependencies: false,
-        notes: false,
+        history: false,
     }
 }

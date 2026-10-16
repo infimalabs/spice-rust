@@ -1,27 +1,20 @@
 use super::*;
 use app::TaskDetailState;
 use std::collections::{BTreeMap, BTreeSet};
-use wire::Actor;
-use wire::intent::{TaskDetailAnswer, TaskDetailNote};
+use wire::intent::TaskDetailAnswer;
 
-fn detail_answer(label: &str, text: &str) -> TaskDetailAnswer {
+fn detail_answer(label: &str, title: &str) -> TaskDetailAnswer {
     TaskDetailAnswer {
         task: board_task(
             label,
             "unused",
-            "Selected task",
+            title,
             "canvas.detail",
             wire::TaskFiling::Filed,
             None,
             wire::EnvironmentRequirements::default(),
         ),
         media: Vec::new(),
-        notes: vec![TaskDetailNote {
-            position: seq(41),
-            at: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
-            author: Actor::Operator,
-            text: text.to_owned(),
-        }],
         closure: None,
         origin_request: None,
     }
@@ -91,26 +84,6 @@ fn task_phase_fact(task: &wire::TaskStamp, position: u64) -> serde_json::Value {
 }
 
 #[test]
-fn repeated_detail_answers_replace_instead_of_duplicating_notes() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = AppRuntime::new(&accepted);
-    let task = fixture_stamp("detail-replay");
-    let response = detail_response(&session, detail_answer("detail-replay", "one note"));
-
-    assert!(runtime.show_task_details([task.clone()]));
-    assert_eq!(runtime.task_detail(&task), Some(&TaskDetailState::Loading));
-    runtime.apply_task_detail(&task, &response);
-    runtime.apply_task_detail(&task, &response);
-
-    let Some(TaskDetailState::Available(answer)) = runtime.task_detail(&task) else {
-        panic!("replayed detail response was not retained")
-    };
-    assert_eq!(answer.notes.len(), 1);
-
-    assert_eq!(answer.notes[0].text, "one note");
-}
-#[test]
 fn detail_refusal_replaces_loading_with_explicit_unavailable_state() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
@@ -161,11 +134,11 @@ fn task_fact_rereads_only_the_affected_shown_detail() {
 
     assert!(matches!(
         runtime.task_detail(&affected),
-        Some(TaskDetailState::Refreshing(answer)) if answer.notes[0].text == "affected note"
+        Some(TaskDetailState::Refreshing(answer)) if answer.task.presentation_title == "affected note"
     ));
     assert!(matches!(
         runtime.task_detail(&untouched),
-        Some(TaskDetailState::Available(answer)) if answer.notes[0].text == "untouched note"
+        Some(TaskDetailState::Available(answer)) if answer.task.presentation_title == "untouched note"
     ));
     assert_eq!(
         runtime.take_task_detail_reads(usize::MAX, |_| false),
@@ -178,7 +151,7 @@ fn task_fact_rereads_only_the_affected_shown_detail() {
     );
     assert!(matches!(
         runtime.task_detail(&affected),
-        Some(TaskDetailState::Available(answer)) if answer.notes[0].text == "refreshed note"
+        Some(TaskDetailState::Available(answer)) if answer.task.presentation_title == "refreshed note"
     ));
     let head = admitted_stream(&session, &fact_frame(task_phase_fact(&affected, 46)));
     assert_eq!(
@@ -260,7 +233,7 @@ fn a_command_settling_after_deselection_creates_no_hidden_detail_demand() {
     assert!(matches!(
         runtime.task_detail(&shown),
         Some(TaskDetailState::Refreshing(answer))
-            if answer.notes[0].text == "before the command"
+            if answer.task.presentation_title == "before the command"
     ));
     assert_eq!(
         runtime.take_task_detail_reads(usize::MAX, |_| false),
@@ -302,7 +275,7 @@ fn a_refresh_settling_after_deselection_is_read_again_when_shown_again() {
     runtime.apply_task_detail(&task, &answer("current"));
     assert!(matches!(
         runtime.task_detail(&task),
-        Some(TaskDetailState::Available(answer)) if answer.notes[0].text == "current"
+        Some(TaskDetailState::Available(answer)) if answer.task.presentation_title == "current"
     ));
 }
 
@@ -455,7 +428,7 @@ fn reconnect_rereads_every_shown_detail_and_forgets_the_rest() {
 
     assert!(matches!(
         runtime.task_detail(&shown),
-        Some(TaskDetailState::Refreshing(answer)) if answer.notes[0].text == "before the drop"
+        Some(TaskDetailState::Refreshing(answer)) if answer.task.presentation_title == "before the drop"
     ));
     assert_eq!(
         runtime.task_detail(&pending),

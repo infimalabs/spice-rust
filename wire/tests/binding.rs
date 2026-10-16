@@ -13,10 +13,9 @@ use std::collections::BTreeSet;
 
 use wire::intent::{
     AnswerShape, BoardStatement, BoardTask, CommandAnswer, OriginRequest, Positioned,
-    ProjectVisibility, TaskDetailAnswer, TaskDetailClosure, TaskDetailNote, TaskRelationEdge,
-    TaskRelationFrontier, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef,
-    TaskRelationTruncation, TaskRelationsAnswer, TaskTimelineAnswer, TaskTimelineEntry,
-    TaskTimelineEvent,
+    ProjectVisibility, TaskDetailAnswer, TaskDetailClosure, TaskRelationEdge, TaskRelationFrontier,
+    TaskRelationKind, TaskRelationNode, TaskRelationNodeRef, TaskRelationTruncation,
+    TaskRelationsAnswer, TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LaneResidency,
@@ -433,7 +432,7 @@ fn spelled_board_task() -> serde_json::Value {
 }
 
 #[test]
-fn task_detail_answer_round_trips_attributed_note_identity() {
+fn task_detail_answer_round_trips_through_its_registered_shape() {
     let task: BoardTask =
         serde_json::from_value(spelled_board_task()).expect("board task fixture decodes");
     let expected = TaskDetailAnswer {
@@ -442,12 +441,6 @@ fn task_detail_answer_round_trips_attributed_note_identity() {
             wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
                 .expect("fixture media admits"),
         ],
-        notes: vec![TaskDetailNote {
-            position: seq(7),
-            at: instant("2026-08-01T06:47:19.000Z"),
-            author: Actor::Operator,
-            text: "One durable observation.".to_owned(),
-        }],
         closure: Some(TaskDetailClosure {
             position: seq(9),
             at: instant("2026-08-01T06:52:03.000Z"),

@@ -222,7 +222,7 @@ fn scoped_reads_preserve_completed_dependencies_and_claim_conflicts_without_unre
             tasks: vec![selected.born().expect("task stamp")],
             dependencies: true,
             claims: true,
-            notes: false,
+            history: false,
         },
     );
     assert_eq!(
@@ -254,7 +254,7 @@ fn scoped_reads_preserve_completed_dependencies_and_claim_conflicts_without_unre
             tasks: vec![completed.born().expect("task stamp")],
             dependencies: false,
             claims: false,
-            notes: false,
+            history: false,
         },
     );
     assert_eq!(handles(&exact), [completed.clone()].into());

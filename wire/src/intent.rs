@@ -41,12 +41,11 @@ pub use board::{
     TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_EDGE_LIMIT, TASK_RELATION_FRONTIER_LIMIT,
     TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT, TASK_TIMELINE_LANE_LIMIT,
     TASK_TIMELINE_PAGE_LIMIT_MAX, TaskAcknowledgment, TaskClaimContext, TaskDetail,
-    TaskDetailAnswer, TaskDetailClosure, TaskDetailNote, TaskDetailStep, TaskGitContext,
-    TaskGitContextKind, TaskHistoryCursor, TaskHistoryPage, TaskLifecycleKind, TaskRelationEdge,
-    TaskRelationFrontier, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef,
-    TaskRelationTruncation, TaskRelations, TaskRelationsAnswer, TaskStep, TaskStranding,
-    TaskTimeline, TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent, TaskTranscriptRecovery,
-    TextAnswer, is_open_design,
+    TaskDetailAnswer, TaskDetailClosure, TaskDetailStep, TaskGitContext, TaskGitContextKind,
+    TaskHistoryCursor, TaskHistoryPage, TaskLifecycleKind, TaskRelationEdge, TaskRelationFrontier,
+    TaskRelationKind, TaskRelationNode, TaskRelationNodeRef, TaskRelationTruncation, TaskRelations,
+    TaskRelationsAnswer, TaskStep, TaskStranding, TaskTimeline, TaskTimelineAnswer,
+    TaskTimelineEntry, TaskTimelineEvent, TaskTranscriptRecovery, TextAnswer, is_open_design,
 };
 pub use jobs::{
     KeptJob, LaneJobAnswer, LaneJobCatalog, LaneJobPhase, LaneJobRef, LaneJobScope, LaneJobsAnswer,

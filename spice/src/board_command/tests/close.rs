@@ -234,7 +234,6 @@ fn a_live_claim_refuses_the_closure_until_it_is_forced_and_then_names_the_holder
         (Actor::Operator, "done already", "todo", Some(lane)),
         "the detail names who closed it, why, where it stood, and whose claim it took"
     );
-    assert!(detail.notes.is_empty(), "the validation is not also a note");
     clean(&root, bus);
 }
 

@@ -264,6 +264,7 @@ impl JournalRead<'_> {
                 break;
             }
             let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
+            let fact = crate::rooms::presented(fact).map_err(GuardError::Invalid)?;
             if !matches!(
                 fact.fact.kind(),
                 wire::FactKind::RoomPublished
@@ -319,6 +320,21 @@ impl JournalRead<'_> {
                 })
         })
         .transpose()
+    }
+
+    /// One room publication through the current horizon as room reads present
+    /// it, absent when `publication` names none in `room`.
+    pub fn room_publication(
+        &self,
+        room: &wire::TaskStamp,
+        publication: &RoomAuthorityStamp,
+    ) -> Result<Option<wire::Envelope<wire::AnyFact>>, GuardError> {
+        let Some(seq) = self.room_publication_seq(room, publication)? else {
+            return Ok(None);
+        };
+        self.room_fact(seq)?
+            .map(|fact| crate::rooms::presented(fact).map_err(GuardError::Invalid))
+            .transpose()
     }
 
     /// The first room publication strictly after `after`, through the current
@@ -497,6 +513,7 @@ impl JournalRead<'_> {
                 break;
             }
             let (fact, length) = decode_bounded_fact(row, seq, 1, 2, 3)?;
+            let fact = crate::rooms::presented(fact).map_err(GuardError::Invalid)?;
             decoded = decoded.saturating_add(length);
             facts.push(fact);
         }

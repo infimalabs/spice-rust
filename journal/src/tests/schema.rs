@@ -14,6 +14,7 @@ mod principals;
 mod probe;
 mod provenance;
 mod retained;
+mod retained_notes;
 mod settings_receipts;
 mod task_markers;
 mod task_standing;
@@ -54,10 +55,12 @@ const SHAPE_PREDECESSOR_SCHEMA: u32 = 55;
 
 /// Return a current fixture to a predecessor's shape and identity.
 fn restore_predecessor(journal: &Journal, predecessor: u32) {
+    // Every predecessor's rooms held no retained task note.
     let rooms = if predecessor < crate::migrate::ROOM_AUTHORITY_SCHEMA {
         "DROP TABLE room_publications; DROP TABLE proposal_heads; DROP TABLE authorization_heads;"
     } else {
-        ""
+        "DELETE FROM room_publications WHERE seq IN \
+         (SELECT seq FROM fact_envelopes WHERE kind = 'task::noted');"
     };
     let cursors = if predecessor < crate::migrate::ROOM_CURSOR_SCHEMA {
         "DROP TABLE room_cursors;"
