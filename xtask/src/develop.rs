@@ -98,6 +98,8 @@ pub enum RefreshError {
     BuildOutputSilent,
     /// Generating the worktree dSYM failed and was not suppressed by `--no-symbols`.
     Symbols(String),
+    /// The final executable does not link or report the staged canvas archive.
+    Canvas(String),
     /// The installer refused the refresh.
     #[cfg(not(target_arch = "wasm32"))]
     Install(spice::install::InstallError),
@@ -164,6 +166,7 @@ impl fmt::Display for RefreshError {
                 write!(formatter, "cargo build named no spice executable")
             }
             Self::Symbols(detail) => write!(formatter, "symbol generation failed: {detail}"),
+            Self::Canvas(detail) => write!(formatter, "canvas link refused: {detail}"),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Install(error) => write!(formatter, "install refused: {error}"),
             #[cfg(not(target_arch = "wasm32"))]

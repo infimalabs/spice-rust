@@ -1,0 +1,16 @@
+[package]
+name = "canvas"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The symbols resolve only against the object `xtask` links into the final
+# executable, so no test harness of this crate could link.
+[lib]
+test = false
+doctest = false
+
+[lints]
+workspace = true

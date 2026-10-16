@@ -1121,6 +1121,7 @@ mod tests {
             target: ReleaseTarget::Aarch64AppleDarwin,
             source: digest(),
             app: digest(),
+            canvas: digest(),
             native: digest(),
             symbols: None,
             pins: BuildPins {

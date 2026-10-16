@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::manifest::{
-    APP_FILES, BuildPins, MacSymbolMetadata, ProofEnvironment, ProofReceipt, ProofStanding,
+    BuildPins, MacSymbolMetadata, ProofEnvironment, ProofReceipt, ProofStanding,
     RELEASE_MANIFEST_VERSION, ReleaseManifestTarget, TargetPayload,
 };
 
@@ -226,16 +226,12 @@ impl Fixture {
             cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
             proof_container: format!("sha256:{}", "1".repeat(64)),
         };
-        let app_members = APP_FILES
-            .iter()
-            .map(|file| (format!("app/{file}"), format!("asset:{file}").into_bytes()))
-            .collect::<Vec<_>>();
         let battery = Digest::compute(Domain::ProofBattery, b"battery");
         let staged = [
             ReleaseTarget::Aarch64AppleDarwin,
             ReleaseTarget::X86_64UnknownLinuxMusl,
         ]
-        .map(|target| stage_target(&stage, target, &source, &app, &pins, &app_members, &battery));
+        .map(|target| stage_target(&stage, target, &source, &app, &pins, &battery));
         let targets = staged
             .iter()
             .map(|target| target.manifest.clone())
@@ -285,11 +281,10 @@ fn stage_target(
     source: &Digest,
     app: &Digest,
     pins: &BuildPins,
-    app_members: &[(String, Vec<u8>)],
     battery: &Digest,
 ) -> StagedFixtureTarget {
     let executable = format!("native:{target}").into_bytes();
-    let mut inventory = stage_inventory(stage, app_members, &executable);
+    let mut inventory = stage_inventory(stage, &executable);
     let native = Digest::compute(Domain::DistArtifact, &executable);
     let symbols = (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
         let metadata = MacSymbolMetadata {
@@ -317,6 +312,7 @@ fn stage_target(
         target,
         source: source.clone(),
         app: app.clone(),
+        canvas: Digest::compute(Domain::DistArtifact, b"canvas archive"),
         native,
         symbols: symbols.clone(),
         pins: pins.clone(),
@@ -382,40 +378,15 @@ fn stage_target(
     }
 }
 
-fn stage_inventory(
-    stage: &Path,
-    app_members: &[(String, Vec<u8>)],
-    executable: &[u8],
-) -> Vec<InventoryEntry> {
-    let mut inventory = app_members
-        .iter()
-        .map(|(path, bytes)| InventoryEntry {
-            path: path.clone(),
-            mode: 0o644,
-            bytes: bytes.len() as u64,
-            digest: Digest::compute(Domain::DistArtifact, bytes),
-        })
-        .collect::<Vec<_>>();
-    inventory.push(InventoryEntry {
+fn stage_inventory(stage: &Path, executable: &[u8]) -> Vec<InventoryEntry> {
+    let entry = InventoryEntry {
         path: "bin/spice".to_owned(),
         mode: 0o755,
         bytes: executable.len() as u64,
         digest: Digest::compute(Domain::DistArtifact, executable),
-    });
-    inventory.sort_by(|left, right| left.path.cmp(&right.path));
-    for entry in &inventory {
-        let bytes = if entry.path == "bin/spice" {
-            executable
-        } else {
-            app_members
-                .iter()
-                .find(|(path, _)| path == &entry.path)
-                .map(|(_, bytes)| bytes.as_slice())
-                .expect("inventory app path has fixture bytes")
-        };
-        write_object_file(stage, entry, bytes);
-    }
-    inventory
+    };
+    write_object_file(stage, &entry, executable);
+    vec![entry]
 }
 
 impl Drop for Fixture {

@@ -243,13 +243,6 @@ impl StagedPackage {
                 root,
             };
             staged.publish(acquired.member(PACKAGE_DOCUMENT_PATH)?)?;
-            for member in acquired
-                .members
-                .iter()
-                .filter(|member| member.path().starts_with("app/"))
-            {
-                staged.publish(member)?;
-            }
             staged.publish(acquired.member(&acquired.payload_path)?)?;
             staged.publish(acquired.member(&acquired.executable_path)?)?;
             if let Some(symbols_path) = &acquired.symbols_path {
@@ -340,9 +333,9 @@ impl std::error::Error for Error {}
 mod tests {
     use super::*;
     use wire::manifest::{
-        APP_FILES, BuildPins, InventoryEntry, MacSymbolMetadata, PROOF_RECEIPT_VERSION,
-        ProductVersion, ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION,
-        ReleaseManifest, ReleaseManifestTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
+        BuildPins, InventoryEntry, MacSymbolMetadata, PROOF_RECEIPT_VERSION, ProductVersion,
+        ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION, ReleaseManifest,
+        ReleaseManifestTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
     };
     use wire::{Digest, Domain};
 
@@ -417,16 +410,6 @@ mod tests {
                 0o644,
             );
         }
-        for file in APP_FILES {
-            assert_eq!(
-                fs::read(staged_root.join("app").join(file)).unwrap(),
-                acquired
-                    .member(&format!("app/{file}"))
-                    .unwrap()
-                    .read_bounded(proof::PACKAGE_DOCUMENT_LIMIT)
-                    .unwrap(),
-            );
-        }
 
         drop(staged);
         assert!(!staged_root.exists());
@@ -457,11 +440,6 @@ mod tests {
         ];
         let source = Digest::compute(Domain::DistSourceCommit, b"source");
         let app_identity = Digest::compute(Domain::DistArtifact, b"app generation");
-        let mut app = APP_FILES
-            .iter()
-            .map(|file| ((*file).to_owned(), file.as_bytes().to_vec()))
-            .collect::<Vec<_>>();
-        app.sort_by(|left, right| left.0.cmp(&right.0));
         let battery = Digest::compute(Domain::ProofBattery, b"battery");
         let environment =
             ProofEnvironment::native(Digest::compute(Domain::ProofNativeRunner, b"runner"));
@@ -472,7 +450,7 @@ mod tests {
 
         for target in TARGETS {
             let (executable, payload, proof, sealed) =
-                target_evidence(target, &source, &app_identity, &app, &battery, &environment);
+                target_evidence(target, &source, &app_identity, &battery, &environment);
             executables.push(executable);
             payloads.push(payload);
             proofs.push(proof);
@@ -499,11 +477,6 @@ mod tests {
             notes_identity,
             inline("release/notes.md", 0o644, notes),
             inline("release/manifest.json", 0o644, &manifest),
-            app.iter()
-                .map(|(file, bytes)| {
-                    proof::PackageAppInput::new(file, inline(&format!("app/{file}"), 0o644, bytes))
-                })
-                .collect(),
             TARGETS
                 .into_iter()
                 .enumerate()
@@ -556,7 +529,6 @@ mod tests {
         target: ReleaseTarget,
         source: &Digest,
         app_identity: &Digest,
-        app: &[(String, Vec<u8>)],
         battery: &Digest,
         environment: &ProofEnvironment,
     ) -> (Vec<u8>, Vec<u8>, Vec<u8>, ReleaseManifestTarget) {
@@ -569,21 +541,12 @@ mod tests {
             cargo_mutants: "cargo-mutants 27.0.0".to_owned(),
             proof_container: format!("spice/proof@sha256:{}", "1".repeat(64)),
         };
-        let mut inventory = app
-            .iter()
-            .map(|(file, bytes)| InventoryEntry {
-                path: format!("app/{file}"),
-                mode: 0o644,
-                bytes: bytes.len() as u64,
-                digest: Digest::compute(Domain::DistArtifact, bytes),
-            })
-            .collect::<Vec<_>>();
-        inventory.push(InventoryEntry {
+        let mut inventory = vec![InventoryEntry {
             path: "bin/spice".to_owned(),
             mode: 0o755,
             bytes: executable.len() as u64,
             digest: native.clone(),
-        });
+        }];
         let symbols = (target == ReleaseTarget::Aarch64AppleDarwin).then(|| {
             let metadata = MacSymbolMetadata {
                 path: "symbols/spice.dSYM.json".to_owned(),
@@ -608,6 +571,7 @@ mod tests {
             target,
             source: source.clone(),
             app: app_identity.clone(),
+            canvas: Digest::compute(Domain::DistArtifact, b"canvas archive"),
             native,
             symbols: symbols.clone(),
             pins_digest: Digest::compute(

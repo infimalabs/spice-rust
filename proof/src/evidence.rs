@@ -632,21 +632,12 @@ mod tests {
         };
         let app = Digest::compute(Domain::DistArtifact, b"app generation");
         let native = Digest::compute(Domain::DistArtifact, b"native");
-        let mut inventory = wire::manifest::APP_FILES
-            .iter()
-            .map(|file| InventoryEntry {
-                path: format!("app/{file}"),
-                mode: 0o644,
-                bytes: file.len() as u64,
-                digest: Digest::compute(Domain::DistArtifact, file.as_bytes()),
-            })
-            .collect::<Vec<_>>();
-        inventory.push(InventoryEntry {
+        let mut inventory = vec![InventoryEntry {
             path: "bin/spice".to_owned(),
             mode: 0o755,
             bytes: 6,
             digest: native.clone(),
-        });
+        }];
         let symbols = crate::test_support::symbols(target, &native, &mut inventory);
         inventory.sort_by(|left, right| left.path.cmp(&right.path));
         TargetPayload {
@@ -654,6 +645,7 @@ mod tests {
             target,
             source: Digest::compute(Domain::DistArtifact, b"source"),
             app,
+            canvas: Digest::compute(Domain::DistArtifact, b"canvas archive"),
             native,
             symbols,
             pins_digest: Digest::compute(

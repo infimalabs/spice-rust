@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dist::{
-    AppBundle, AppFile, BuildError, Builder, FilePublisher, Pipeline, PublishError, Publisher,
-    RequiredPins, StagedTarget,
+    BuildError, Builder, Canvas, FilePublisher, Pipeline, PublishError, Publisher, RequiredPins,
+    StagedTarget,
 };
 use sill::{
     Argv, Cancellation, Completion, Deadlines, Environment, Output, ProcessGroup, Redaction,
@@ -63,6 +63,9 @@ pub struct TargetBuild {
     pub source: Digest,
     pub staged: StagedTarget,
     pub symbols: Option<MacSymbols>,
+    /// Uncompressed app files the payload no longer carries beside the
+    /// executable, which links them as the canvas archive instead.
+    pub app_tree: u64,
     pub commands: Vec<CommandRecord>,
 }
 
@@ -306,6 +309,8 @@ fn stage_with<E: Executor>(
         source: &source,
         symbols: None,
         symbol_artifact: None,
+        canvas: None,
+        executable: None,
     };
     let mut publisher = GuardedPublisher {
         inner: FilePublisher::new(root.join("dist/stage")),
@@ -323,10 +328,16 @@ fn stage_with<E: Executor>(
         &mut publisher,
     )?;
     let symbols = builder.symbols.take();
+    let app_tree = builder
+        .canvas
+        .as_ref()
+        .expect("a staged target read its canvas")
+        .tree();
     Ok(TargetBuild {
         target,
         source: source.digest,
         staged,
+        app_tree,
         symbols,
         commands: executor.records(),
     })
@@ -438,38 +449,23 @@ struct CommandBuilder<'a, E> {
     source: &'a SourceGuard,
     symbols: Option<MacSymbols>,
     symbol_artifact: Option<Vec<u8>>,
+    canvas: Option<crate::app::StagedCanvas>,
+    executable: Option<PathBuf>,
 }
 
 impl<E: Executor> Builder for CommandBuilder<'_, E> {
-    fn build_app(&mut self) -> Result<AppBundle, BuildError> {
+    fn build_app(&mut self) -> Result<Canvas, BuildError> {
         self.run(CommandSpec::new("app-build", &self.programs.xtask, ["app"]))?;
-        read_lane_app_bundle(self.root)
-    }
-
-    fn embed_app(&mut self, app: &AppBundle) -> Result<AppBundle, BuildError> {
-        if read_lane_app_bundle(self.root)? != *app {
-            return Err(BuildError::new(
-                "staged app changed between app and embedding commands",
-            ));
-        }
-        self.run(CommandSpec::new(
-            "embed-build",
-            &self.programs.cargo,
-            cargo_build_arguments("serve", self.target, self.target_dir),
-        ))?;
-        let observed = read_lane_app_bundle(self.root)?;
-        if observed != *app {
-            return Err(BuildError::new(
-                "staged app changed while the embedding command ran",
-            ));
-        }
-        Ok(observed)
+        let staged = crate::app::StagedCanvas::read(self.root).map_err(build_error)?;
+        let canvas = staged.canvas().clone();
+        self.canvas = Some(staged);
+        Ok(canvas)
     }
 
     fn build_native(
         &mut self,
         target: ReleaseTarget,
-        app: &AppBundle,
+        canvas: &Canvas,
     ) -> Result<Vec<u8>, BuildError> {
         if target != self.target {
             return Err(BuildError::new(format!(
@@ -477,15 +473,17 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
                 self.target
             )));
         }
-        if read_lane_app_bundle(self.root)? != *app {
-            return Err(BuildError::new(
-                "app generation changed between embedding and native commands",
-            ));
-        }
+        let staged = self
+            .canvas
+            .as_ref()
+            .filter(|staged| staged.canvas() == canvas)
+            .ok_or_else(|| {
+                BuildError::new("native build names a canvas the app build did not stage")
+            })?;
         let native = self.run(CommandSpec::new(
             "native-build",
             &self.programs.cargo,
-            native_cargo_arguments(target, self.target_dir),
+            native_cargo_arguments(target, self.target_dir, staged).map_err(build_error)?,
         ))?;
         let executable = cargo_executable(&native.stdout)?;
         #[cfg(unix)]
@@ -504,7 +502,22 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
             )?);
             self.symbols = Some(symbols.public);
         }
+        self.executable = Some(executable);
         Ok(native)
+    }
+
+    fn report_version(&mut self) -> Result<String, BuildError> {
+        let executable = self
+            .executable
+            .as_ref()
+            .ok_or_else(|| BuildError::new("no final executable has been built"))?;
+        let report = self.run(CommandSpec::new(
+            "canvas-version",
+            executable,
+            ["--version"],
+        ))?;
+        String::from_utf8(report.stdout)
+            .map_err(|_| BuildError::new("final executable version report is not UTF-8"))
     }
 
     fn take_symbol_artifact(&mut self) -> Option<Vec<u8>> {
@@ -512,57 +525,44 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
     }
 }
 
-fn read_lane_app_bundle(root: &Path) -> Result<AppBundle, BuildError> {
-    let source = spice::serve::AppSource::resolve(root).map_err(build_error)?;
-    let generation = source.current_generation().map_err(build_error)?;
-    let files = generation
-        .files()
-        .map(|(file, served)| AppFile::new(file.into_owned(), served.bytes().to_vec()))
-        .collect();
-    Ok(AppBundle::new(generation.identity().clone(), files))
-}
-
-#[cfg(test)]
-fn read_lane_app_asset(root: &Path, route: &str) -> Result<Vec<u8>, BuildError> {
-    let source = spice::serve::AppSource::resolve(root).map_err(build_error)?;
-    let generation = source.current_generation().map_err(build_error)?;
-    let asset = spice::serve::APP
-        .asset(route)
-        .ok_or_else(|| BuildError::new(format!("lane app route {route} is absent")))?;
-    generation
-        .served(asset)
-        .map(spice::serve::ServedAsset::into_bytes)
-        .map_err(build_error)
-}
-
-fn cargo_build_arguments(package: &str, target: ReleaseTarget, target_dir: &Path) -> Vec<OsString> {
-    [
-        OsString::from("build"),
-        OsString::from("--locked"),
-        OsString::from("--release"),
-        OsString::from("-p"),
-        OsString::from(package),
-        OsString::from("--target"),
-        OsString::from(target.as_str()),
-        OsString::from("--target-dir"),
-        target_dir.as_os_str().to_owned(),
+/// Ask Cargo for the exact linked binary carrying `canvas`, and retain line
+/// tables only for the macOS build whose dSYM consumes them. Keeping the
+/// profile override on this target-specific command leaves the Linux
+/// executable bytes unchanged. `cargo rustc` hands the link argument to the
+/// final executable alone, so no dependency rebuilds when the archive changes.
+fn native_cargo_arguments(
+    target: ReleaseTarget,
+    target_dir: &Path,
+    canvas: &crate::app::StagedCanvas,
+) -> Result<Vec<OsString>, crate::app::AppBuildError> {
+    let object = match target {
+        ReleaseTarget::Aarch64AppleDarwin => dist::ObjectTarget::MacAarch64,
+        ReleaseTarget::X86_64UnknownLinuxMusl => dist::ObjectTarget::LinuxX86_64,
+    };
+    let mut arguments: Vec<OsString> = [
+        "rustc",
+        "--locked",
+        "--release",
+        "-p",
+        "spice",
+        "--bin",
+        "spice",
+        "--target",
+        target.as_str(),
+        "--target-dir",
     ]
-    .into()
-}
-
-/// Ask Cargo for the exact linked binary, and retain line tables only for the
-/// macOS build whose dSYM consumes them. Keeping the profile override on this
-/// target-specific command leaves the Linux executable bytes unchanged.
-fn native_cargo_arguments(target: ReleaseTarget, target_dir: &Path) -> Vec<OsString> {
-    let mut arguments = cargo_build_arguments("spice", target, target_dir);
-    arguments.extend([OsString::from("--message-format=json-render-diagnostics")]);
+    .map(OsString::from)
+    .into();
+    arguments.push(target_dir.as_os_str().to_owned());
+    arguments.push(OsString::from("--message-format=json-render-diagnostics"));
     if target == ReleaseTarget::Aarch64AppleDarwin {
         arguments.extend([
             OsString::from("--config"),
             OsString::from("profile.release.debug=\"line-tables-only\""),
         ]);
     }
-    arguments
+    arguments.extend(canvas.link_arguments(target_dir, object)?);
+    Ok(arguments)
 }
 
 impl<E: Executor> CommandBuilder<'_, E> {
@@ -1101,8 +1101,8 @@ impl SystemExecutor {
     ///
     /// `rustc` is the five-rank answer [`ReleaseEnvironment::rustc`] resolved
     /// at this workspace-root working directory. Naming it as `RUSTC` freezes
-    /// that answer at Cargo's highest rank, so app-build, embed-build, and
-    /// native-build cannot select a compiler different from either
+    /// that answer at Cargo's highest rank, so app-build and native-build
+    /// cannot select a compiler different from either
     /// [`observe_pins`] call. `CARGO_BUILD_RUSTC` is intentionally not copied:
     /// the resolved `RUSTC` outranks it and already incorporates its answer.
     fn new(
@@ -1291,7 +1291,26 @@ fn render_records(output: &mut impl Write, build: &TargetBuild) -> Result<(), Ta
         build.staged.payload_digest,
         build.staged.payload_path.display()
     )
-    .map_err(TargetBuildError::Output)
+    .map_err(TargetBuildError::Output)?;
+    render_canvas(output, &build.staged.canvas, build.app_tree).map_err(TargetBuildError::Output)
+}
+
+/// Name the linked canvas and what linking it moved: the executable grows by
+/// the archive bytes while the payload sheds the uncompressed app tree.
+pub(crate) fn render_canvas(
+    output: &mut impl Write,
+    canvas: &Canvas,
+    app_tree: u64,
+) -> io::Result<()> {
+    writeln!(
+        output,
+        "[canvas] generation={} archive={} executable=+{} app-tree=-{} net={:+}",
+        canvas.generation(),
+        canvas.archive(),
+        canvas.bytes(),
+        app_tree,
+        i128::from(canvas.bytes()) - i128::from(app_tree),
+    )
 }
 
 fn render_command_records(

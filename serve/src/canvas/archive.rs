@@ -4,7 +4,8 @@
 //! [`CanvasArchive::write`] is the only writer and [`CanvasArchive::admit`]
 //! the only reader. Every member is one gzip stream under a fixed header, so a
 //! browser receives the stored bytes directly under `Content-Encoding: gzip`.
-//! Admission inflates only the shell: the archive bytes digest and the
+//! Admission inflates only the shell; [`CanvasMember::inflate`] yields any
+//! other member's original bytes on demand. The archive bytes digest and the
 //! executable signature that carries them are the integrity authority, and the
 //! ZIP CRC fields are structural evidence compared between headers.
 

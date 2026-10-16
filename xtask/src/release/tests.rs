@@ -7,14 +7,13 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 const COMMIT: &str = "1111111111111111111111111111111111111111";
 const MOVED: &str = "2222222222222222222222222222222222222222";
 const TEST_WASM: &[u8] = b"lane-built wasm";
-const TEST_HTML: &[u8] = b"lane-built shell";
 const GENERATION: &str = "6666666666666666666666666666666666666666666666666666666666666666";
 const UUID: &str = "11111111-2222-3333-4444-555555555555";
 const OTHER_UUID: &str = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
-const STRIPPED_NATIVE: &[u8] = b"stripped native executable";
 
 struct Fixture {
     root: PathBuf,
+    archive: Vec<u8>,
 }
 
 impl Fixture {
@@ -25,26 +24,40 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join("dist/stage")).expect("fixture stage directory");
-        let app = root
+        let generations = root
             .join(spice::serve::APP_STAGE)
-            .join(spice::serve::APP_STAGE_GENERATIONS)
-            .join(GENERATION);
+            .join(spice::serve::APP_STAGE_GENERATIONS);
+        let app = generations.join(GENERATION);
         fs::create_dir_all(&app).expect("fixture app generation");
-        for asset in spice::serve::APP.assets() {
-            let contents = match asset.file() {
-                "app_bg.wasm" => TEST_WASM,
-                "app.html" => TEST_HTML,
-                _ => b"lane-built app asset",
-            };
-            fs::write(app.join(asset.file()), contents).expect("write lane-built app asset");
-        }
+        let shell = format!("<main id=\"app\" data-app-generation=\"{GENERATION}\"></main>");
+        let files = spice::serve::APP
+            .assets()
+            .iter()
+            .map(|asset| {
+                let contents = match asset.file() {
+                    "app_bg.wasm" => TEST_WASM,
+                    "app.html" => shell.as_bytes(),
+                    _ => b"lane-built app asset",
+                };
+                fs::write(app.join(asset.file()), contents).expect("write lane-built app asset");
+                (asset.file(), contents)
+            })
+            .collect::<Vec<_>>();
+        let archive = spice::serve::canvas::CanvasArchive::write(files).expect("archive writes");
+        fs::write(
+            generations
+                .join(GENERATION)
+                .with_extension(spice::serve::canvas::ARCHIVE_EXTENSION),
+            &archive,
+        )
+        .expect("write lane canvas archive");
         fs::write(
             root.join(spice::serve::APP_STAGE)
                 .join(spice::serve::APP_STAGE_CURRENT),
             format!("{GENERATION}\n"),
         )
         .expect("write lane app pointer");
-        Self { root }
+        Self { root, archive }
     }
 
     fn programs(&self) -> Programs {
@@ -82,6 +95,7 @@ impl Drop for Fixture {
 struct FakeExecutor {
     root: PathBuf,
     target: ReleaseTarget,
+    archive: Vec<u8>,
     trunk: RefCell<String>,
     trunk_drift_after_native: Cell<bool>,
     refusing: Cell<Option<&'static str>>,
@@ -100,6 +114,13 @@ impl FakeExecutor {
         Self {
             root: root.to_path_buf(),
             target,
+            archive: fs::read(
+                root.join(spice::serve::APP_STAGE)
+                    .join(spice::serve::APP_STAGE_GENERATIONS)
+                    .join(GENERATION)
+                    .with_extension(spice::serve::canvas::ARCHIVE_EXTENSION),
+            )
+            .expect("fixture archive reads"),
             trunk: RefCell::new(PINNED_TRUNK.to_owned()),
             trunk_drift_after_native: Cell::new(false),
             refusing: Cell::new(None),
@@ -130,8 +151,8 @@ impl Executor for FakeExecutor {
                 .join("release/spice");
             fs::create_dir_all(destination.parent().expect("native parent"))
                 .expect("native directory");
-            fs::copy(env::current_exe().expect("test executable"), &destination)
-                .expect("copy real compiled executable");
+            fs::write(&destination, linked(&self.archive, b"linked"))
+                .expect("link fixture executable");
             self.native_ran.set(true);
         }
         if command.label == "dsym-generate" && !refused {
@@ -146,8 +167,11 @@ impl Executor for FakeExecutor {
             fs::write(dwarf, b"fixture DWARF").expect("write derived DWARF member");
         }
         if command.label == "native-strip" && !refused {
-            fs::write(PathBuf::from(&command.arguments[1]), STRIPPED_NATIVE)
-                .expect("strip exact linked executable fixture");
+            fs::write(
+                PathBuf::from(&command.arguments[1]),
+                linked(&self.archive, b"stripped"),
+            )
+            .expect("strip exact linked executable fixture");
             if self.moved_symbols_after_uuid.get() {
                 let dwarf = dsym_path(Path::new(&command.arguments[1]))
                     .join("Contents/Resources/DWARF/spice");
@@ -184,9 +208,10 @@ impl Executor for FakeExecutor {
             }
             "executable-uuid" => self.executable_uuid.borrow().clone(),
             "dsym-uuid" => self.dsym_uuid.borrow().clone(),
-            "app-build" | "embed-build" | "dsym-generate" | "native-strip" => {
+            "app-build" | "dsym-generate" | "native-strip" => {
                 format!("{} complete\n", command.label).into_bytes()
             }
+            "canvas-version" => format!("spice 0.0.0 app {GENERATION}\n").into_bytes(),
             "source-status" if self.tracked_dirty.get() => b" M xtask/src/lib.rs\n".to_vec(),
             "source-status" => self.untracked.borrow().clone().into_bytes(),
             label => panic!("unexpected command label {label}"),
@@ -206,6 +231,14 @@ impl Executor for FakeExecutor {
     fn records(&self) -> Vec<CommandRecord> {
         self.records.borrow().clone()
     }
+}
+
+/// A linkable ELF object whose `.spice_canvas` holds `archive`, followed by
+/// `tag` so each processing step leaves distinct executable bytes.
+fn linked(archive: &[u8], tag: &[u8]) -> Vec<u8> {
+    let mut image = dist::canvas_object(archive, dist::ObjectTarget::LinuxX86_64);
+    image.extend(tag);
+    image
 }
 
 #[test]
@@ -238,27 +271,11 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
                 .iter()
                 .map(|record| record.label)
                 .collect::<Vec<_>>(),
-            ["app-build", "embed-build", "native-build"]
+            ["app-build", "native-build"]
         );
         assert_eq!(build_records[0].arguments, [OsString::from("app")]);
         assert_eq!(build_records[0].program, programs.xtask);
-        assert_eq!(
-            build_records[1].arguments,
-            cargo_arguments(&fixture.root, "serve", target)
-        );
-        assert_eq!(build_records[1].program, programs.cargo);
-        assert_eq!(
-            build_records[2].arguments,
-            native_cargo_arguments(target, &fixture.root.join("target/release-appliance"))
-        );
-        assert_eq!(build_records[2].program, programs.cargo);
-        assert_eq!(
-            build_records[2]
-                .arguments
-                .iter()
-                .any(|argument| argument == "profile.release.debug=\"line-tables-only\""),
-            target == ReleaseTarget::Aarch64AppleDarwin
-        );
+        let staged = assert_native_build(build_records[1], &programs, target, &fixture.root);
         let rust_observations = build
             .commands
             .iter()
@@ -287,13 +304,33 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
             build.staged.payload.app,
             GENERATION.parse().expect("fixture generation is canonical")
         );
-        assert_complete_app_inventory(&build.staged.payload);
-        let native = if target == ReleaseTarget::Aarch64AppleDarwin {
-            STRIPPED_NATIVE.to_vec()
-        } else {
-            fs::read(env::current_exe().expect("test executable"))
-                .expect("read real compiled executable")
-        };
+        assert_eq!(
+            build.staged.payload.canvas,
+            Digest::compute(Domain::DistArtifact, &fixture.archive)
+        );
+        assert_eq!(build.staged.canvas, *staged.canvas());
+        let mut inventory = vec!["bin/spice"];
+        if target == ReleaseTarget::Aarch64AppleDarwin {
+            inventory.push("symbols/spice.dSYM.json");
+        }
+        assert_eq!(
+            build
+                .staged
+                .payload
+                .inventory
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            inventory
+        );
+        let native = linked(
+            &fixture.archive,
+            if target == ReleaseTarget::Aarch64AppleDarwin {
+                b"stripped"
+            } else {
+                b"linked"
+            },
+        );
         assert_eq!(
             build.staged.payload.native,
             Digest::compute(Domain::DistArtifact, &native)
@@ -330,7 +367,6 @@ fn expected_labels(target: ReleaseTarget) -> Vec<&'static str> {
         "trunk-version",
         "mutants-version",
         "app-build",
-        "embed-build",
         "native-build",
     ];
     if target == ReleaseTarget::Aarch64AppleDarwin {
@@ -342,6 +378,7 @@ fn expected_labels(target: ReleaseTarget) -> Vec<&'static str> {
         ]);
     }
     expected.extend([
+        "canvas-version",
         "source-commit",
         "source-status",
         "rust-version",
@@ -350,6 +387,37 @@ fn expected_labels(target: ReleaseTarget) -> Vec<&'static str> {
         "mutants-version",
     ]);
     expected
+}
+
+/// The native build runs Cargo, carries line tables only for the dSYM target,
+/// and links last an object carrying exactly the staged archive.
+fn assert_native_build(
+    record: &CommandRecord,
+    programs: &Programs,
+    target: ReleaseTarget,
+    root: &Path,
+) -> crate::app::StagedCanvas {
+    assert_eq!(record.program, programs.cargo);
+    assert_eq!(
+        record
+            .arguments
+            .iter()
+            .any(|argument| argument == "profile.release.debug=\"line-tables-only\""),
+        target == ReleaseTarget::Aarch64AppleDarwin
+    );
+    let link = record
+        .arguments
+        .last()
+        .and_then(|argument| argument.to_str())
+        .and_then(|argument| argument.strip_prefix("link-arg="))
+        .expect("the native build links the canvas object last");
+    let object = fs::read(link).expect("the canvas object is written");
+    let staged = crate::app::StagedCanvas::read(root).expect("fixture canvas is staged");
+    staged
+        .canvas()
+        .verify_linked(&object)
+        .expect("the linked object carries exactly the staged archive");
+    staged
 }
 
 fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBuild) {
@@ -446,33 +514,6 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
     );
 }
 
-fn assert_complete_app_inventory(payload: &wire::manifest::TargetPayload) {
-    let mut expected = vec![
-        "app/app.html",
-        "app/app.module",
-        "app/app_bg.wasm",
-        "app/chrome.css",
-        "app/composer.css",
-        "app/mosaic.css",
-        "app/responsive.css",
-        "app/spice_sidebar.css",
-        "app/style.css",
-        "app/work.css",
-        "bin/spice",
-    ];
-    if payload.target == ReleaseTarget::Aarch64AppleDarwin {
-        expected.push("symbols/spice.dSYM.json");
-    }
-    assert_eq!(
-        payload
-            .inventory
-            .iter()
-            .map(|entry| entry.path.as_str())
-            .collect::<Vec<_>>(),
-        expected,
-    );
-}
-
 fn release_environment(cargo_target_dir: Option<&str>) -> ReleaseEnvironment {
     ReleaseEnvironment::new(
         Some(OsString::from("/tool/bin")),
@@ -493,7 +534,7 @@ fn release_environment(cargo_target_dir: Option<&str>) -> ReleaseEnvironment {
 ///
 /// `programs.rustc` is the workspace-root, selected-`CARGO_HOME`, five-rank
 /// answer. Installing it as `RUSTC` puts that answer at Cargo's highest rank
-/// for app-build, embed-build, and native-build; copying `CARGO_BUILD_RUSTC`
+/// for app-build and native-build; copying `CARGO_BUILD_RUSTC`
 /// would be a second, lower-ranked answer rather than additional authority.
 #[test]
 fn system_executor_overrides_machine_local_cargo_build_state() {
@@ -790,20 +831,19 @@ fn source_movement_after_build_preserves_the_previous_target_pointer() {
             .into_iter()
             .filter(|label| label.ends_with("-build"))
             .collect::<Vec<_>>(),
-        ["app-build", "embed-build", "native-build"]
+        ["app-build", "native-build"]
     );
 }
 
 /// A build command that refuses is the only thing that says the step failed.
 ///
-/// Every artifact this step is followed by reading already exists: the app
-/// artifact is tracked, so it is present in any checkout the appliance is
-/// allowed to build from, and the embedded shell beside it is too. A build
-/// that ignored the exit status would therefore read the bytes that were
-/// already there, name their digests in the payload, and publish a target
-/// pointer for a build that never ran. The exit status is the whole of the
-/// difference, so the refusal has to be asserted where nothing else can
-/// stand in for it.
+/// Every artifact this step is followed by reading already exists: the staged
+/// app generation and its canvas archive are present in any checkout the
+/// appliance has built from before. A build that ignored the exit status would
+/// therefore read the bytes that were already there, name their digests in the
+/// payload, and publish a target pointer for a build that never ran. The exit
+/// status is the whole of the difference, so the refusal has to be asserted
+/// where nothing else can stand in for it.
 #[test]
 fn a_refusing_build_command_publishes_no_pointer_over_the_previous_one() {
     let fixture = Fixture::new();
@@ -836,8 +876,8 @@ fn a_refusing_build_command_publishes_no_pointer_over_the_previous_one() {
         "the refusal has to stop the first build step, not be noticed later"
     );
     assert!(
-        read_lane_app_asset(&fixture.root, "/app_bg.wasm").is_ok(),
-        "the artifact the ignored status would have published must still be readable"
+        crate::app::StagedCanvas::read(&fixture.root).is_ok(),
+        "the archive the ignored status would have linked must still be readable"
     );
 
     assert_macos_failure("dsym-generate", |executor| {
@@ -913,12 +953,8 @@ fn tool_drift_after_build_preserves_the_previous_target_pointer() {
             .into_iter()
             .filter(|label| label.ends_with("-build"))
             .collect::<Vec<_>>(),
-        ["app-build", "embed-build", "native-build"]
+        ["app-build", "native-build"]
     );
-}
-
-fn cargo_arguments(root: &Path, package: &str, target: ReleaseTarget) -> Vec<OsString> {
-    cargo_build_arguments(package, target, &root.join("target/release-appliance"))
 }
 
 /// A throwaway tree whose Cargo configs a resolver walk can be aimed at.

@@ -11,6 +11,7 @@ use wire::manifest::{
 };
 use wire::{Digest, Domain};
 
+use crate::canvas::Canvas;
 use crate::pins::{PinError, RequiredPins};
 
 const DATA_MODE: u32 = 0o644;
@@ -21,7 +22,6 @@ const SYMBOL_PATH: &str = "symbols/spice.dSYM.json";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BuildStep {
     App,
-    Embed,
     Native,
 }
 
@@ -43,52 +43,20 @@ impl BuildError {
 
 /// Heavyweight build implementation supplied by the executable rim.
 pub trait Builder {
-    fn build_app(&mut self) -> Result<AppBundle, BuildError>;
-    fn embed_app(&mut self, app: &AppBundle) -> Result<AppBundle, BuildError>;
+    /// Build the app and admit its staged canvas archive as generation G.
+    fn build_app(&mut self) -> Result<Canvas, BuildError>;
+    /// Link `canvas` into the executable, then derive symbols, strip, and sign
+    /// it, and answer the final bytes.
     fn build_native(
         &mut self,
         target: ReleaseTarget,
-        app: &AppBundle,
+        canvas: &Canvas,
     ) -> Result<Vec<u8>, BuildError>;
+    /// Run the final executable once and answer its version report.
+    fn report_version(&mut self) -> Result<String, BuildError>;
 
     fn take_symbol_artifact(&mut self) -> Option<Vec<u8>> {
         None
-    }
-}
-
-/// One browser-app member returned by a concrete build adapter.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppFile {
-    path: String,
-    bytes: Vec<u8>,
-}
-
-impl AppFile {
-    #[must_use]
-    pub fn new(path: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
-        Self {
-            path: path.into(),
-            bytes: bytes.into(),
-        }
-    }
-}
-
-/// Complete immutable app generation produced before the native build.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppBundle {
-    generation: Digest,
-    files: Vec<AppFile>,
-}
-
-impl AppBundle {
-    #[must_use]
-    pub const fn new(generation: Digest, files: Vec<AppFile>) -> Self {
-        Self { generation, files }
-    }
-
-    #[must_use]
-    pub const fn generation(&self) -> &Digest {
-        &self.generation
     }
 }
 
@@ -144,6 +112,8 @@ pub struct StagedTarget {
     pub payload_bytes: Vec<u8>,
     pub payload_digest: Digest,
     pub payload_path: PathBuf,
+    /// The canvas archive linked into the staged executable.
+    pub canvas: Canvas,
 }
 
 /// Pin-guarded deterministic stage assembly.
@@ -183,7 +153,7 @@ impl Pipeline {
         let payload = make_payload(
             target,
             source,
-            built.app,
+            &built.canvas,
             built.symbols,
             self.pins.get(),
             &built.artifacts,
@@ -203,6 +173,7 @@ impl Pipeline {
             payload_bytes,
             payload_digest,
             payload_path,
+            canvas: built.canvas,
         })
     }
 }
@@ -241,7 +212,7 @@ struct Artifact {
 }
 
 struct BuiltArtifacts {
-    app: Digest,
+    canvas: Canvas,
     symbols: Option<MacSymbolMetadata>,
     artifacts: Vec<Artifact>,
 }
@@ -250,44 +221,26 @@ fn build_artifacts<B: Builder>(
     target: ReleaseTarget,
     builder: &mut B,
 ) -> Result<BuiltArtifacts, StageError> {
-    let app = builder.build_app().map_err(|source| StageError::Build {
+    let canvas = builder.build_app().map_err(|source| StageError::Build {
         step: BuildStep::App,
         source,
     })?;
-    let embedded = builder
-        .embed_app(&app)
-        .map_err(|source| StageError::Build {
-            step: BuildStep::Embed,
-            source,
-        })?;
-    if embedded != app {
-        return Err(StageError::Build {
-            step: BuildStep::Embed,
-            source: BuildError::new("app generation changed during embedding"),
-        });
-    }
     let native = builder
-        .build_native(target, &embedded)
+        .build_native(target, &canvas)
         .map_err(|source| StageError::Build {
             step: BuildStep::Native,
             source,
         })?;
+    canvas.verify_linked(&native).map_err(native_build_error)?;
+    let report = builder
+        .report_version()
+        .map_err(|source| StageError::Build {
+            step: BuildStep::Native,
+            source,
+        })?;
+    canvas.verify_report(&report).map_err(native_build_error)?;
     let symbols = builder.take_symbol_artifact();
-    let mut files = embedded.files;
-    files.sort_by(|left, right| left.path.cmp(&right.path));
-    wire::manifest::renderer::validate_bundle(
-        files
-            .iter()
-            .map(|file| (file.path.as_str(), file.bytes.as_slice())),
-    )
-    .map_err(|error| StageError::Build {
-        step: BuildStep::App,
-        source: BuildError::new(error),
-    })?;
-    let mut artifacts = files
-        .into_iter()
-        .map(|file| artifact(format!("app/{}", file.path), DATA_MODE, file.bytes))
-        .collect::<Vec<_>>();
+    let mut artifacts = Vec::new();
     let native = artifact("bin/spice", EXECUTABLE_MODE, native);
     let symbols = match (target, symbols) {
         (ReleaseTarget::Aarch64AppleDarwin, Some(bytes)) => {
@@ -307,7 +260,7 @@ fn build_artifacts<B: Builder>(
     };
     artifacts.push(native);
     Ok(BuiltArtifacts {
-        app: embedded.generation,
+        canvas,
         symbols,
         artifacts,
     })
@@ -342,10 +295,10 @@ fn symbol_artifact(
     Ok((artifact, metadata))
 }
 
-fn native_build_error(message: impl Into<String>) -> StageError {
+fn native_build_error(message: impl ToString) -> StageError {
     StageError::Build {
         step: BuildStep::Native,
-        source: BuildError::new(message),
+        source: BuildError::new(message.to_string()),
     }
 }
 
@@ -362,7 +315,7 @@ fn artifact(path: impl Into<String>, mode: u32, bytes: Vec<u8>) -> Artifact {
 fn make_payload(
     target: ReleaseTarget,
     source: Digest,
-    app: Digest,
+    canvas: &Canvas,
     symbols: Option<MacSymbolMetadata>,
     pins: &BuildPins,
     artifacts: &[Artifact],
@@ -375,7 +328,8 @@ fn make_payload(
         version: TARGET_PAYLOAD_VERSION,
         target,
         source,
-        app,
+        app: canvas.generation().clone(),
+        canvas: canvas.archive().clone(),
         native: artifacts
             .iter()
             .find(|artifact| artifact.path == "bin/spice")

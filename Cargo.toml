@@ -6,6 +6,7 @@ members = [
     "board",
     "bus",
     "serve",
+    "canvas",
     "consent",
     "dialect",
     "dist",

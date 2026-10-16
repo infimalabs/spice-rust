@@ -335,6 +335,21 @@ impl AppSelection {
     fn resolve(self, repository: &Repository) -> CommandResult<serve::canvas::CanvasAssets> {
         match self {
             Self::Installed(executable) => {
+                match spice::version::canvas() {
+                    None => {
+                        return Err(environment_fault(
+                            "serve::canvas-archive-absent",
+                            "this installed executable links no canvas archive; reinstall it with `spice dev xtask -- install`",
+                        ));
+                    }
+                    Some(Err(error)) => {
+                        return Err(environment_fault(
+                            "serve::canvas-archive-invalid",
+                            &error.to_string(),
+                        ));
+                    }
+                    Some(Ok(_)) => {}
+                }
                 spice::install::installed_app_source(repository, &executable)
                     .map(serve::canvas::CanvasAssets::DevelopmentDirectory)
                     .map_err(installed_app_refusal)

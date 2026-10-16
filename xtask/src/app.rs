@@ -236,6 +236,99 @@ fn archive_path(generations: &Path, identity: &Digest) -> PathBuf {
         .with_extension(ARCHIVE_EXTENSION)
 }
 
+/// The current staged generation's canvas archive, read once and admitted as
+/// that generation: the one input every appliance build links.
+pub struct StagedCanvas {
+    canvas: dist::Canvas,
+    tree: u64,
+    bytes: Vec<u8>,
+}
+
+impl StagedCanvas {
+    /// Read `generations/G.zip` for the generation the current pointer names.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an unadmitted current generation, an unreadable archive, and an
+    /// archive that does not admit as G.
+    pub fn read(root: &Path) -> Result<Self, AppBuildError> {
+        let generation = spice::serve::AppSource::resolve(root)
+            .and_then(|source| source.current_generation())
+            .map_err(|error| AppBuildError::GeneratedStage(error.to_string()))?
+            .identity()
+            .clone();
+        let bytes = read_regular(&archive_path(
+            &root
+                .join(spice::serve::APP_STAGE)
+                .join(spice::serve::APP_STAGE_GENERATIONS),
+            &generation,
+        ))?;
+        let tree = CanvasArchive::admit_generation(&bytes, &generation)
+            .map_err(AppBuildError::Canvas)?
+            .members()
+            .map(|(_, member)| u64::from(member.size()))
+            .sum();
+        Ok(Self {
+            canvas: dist::Canvas::new(generation, &bytes),
+            tree,
+            bytes,
+        })
+    }
+
+    #[must_use]
+    pub const fn canvas(&self) -> &dist::Canvas {
+        &self.canvas
+    }
+
+    /// Uncompressed bytes of the generation's app files.
+    #[must_use]
+    pub const fn tree(&self) -> u64 {
+        self.tree
+    }
+
+    /// Write the object carrying this archive for `target` under
+    /// `build_root`, and answer the `cargo rustc` arguments that link it into
+    /// the `spice` executable.
+    ///
+    /// The object's name carries the archive digest, so Cargo relinks exactly
+    /// when the archive changes. The arguments end with the `--` that hands
+    /// the rest to the final rustc, so they come last.
+    ///
+    /// # Errors
+    ///
+    /// Any failure writing the object.
+    pub fn link_arguments(
+        &self,
+        build_root: &Path,
+        target: dist::ObjectTarget,
+    ) -> Result<[std::ffi::OsString; 5], AppBuildError> {
+        let directory = build_root.join("canvas");
+        fs::create_dir_all(&directory).map_err(|source| AppBuildError::Io {
+            path: directory.clone(),
+            source,
+        })?;
+        let path = directory.join(format!("{}.{}.o", self.canvas.archive(), target.name()));
+        let destination = atomic::Destination::new(&path).map_err(AppBuildError::Atomic)?;
+        let mut staged = destination.stage().map_err(AppBuildError::Atomic)?;
+        staged
+            .write_all(&dist::canvas_object(&self.bytes, target))
+            .map_err(|source| AppBuildError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        staged.commit().map_err(AppBuildError::Atomic)?;
+        let mut link = std::ffi::OsString::from("link-arg=");
+        link.push(&path);
+        Ok([
+            "--features".into(),
+            "spice/canvas".into(),
+            "--".into(),
+            "-C".into(),
+            link,
+        ])
+    }
+}
+
 /// Remove every generation older than the newest [`RETAINED_GENERATIONS`],
 /// with its archive, never the one just published.
 ///
