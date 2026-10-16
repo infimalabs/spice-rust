@@ -718,8 +718,6 @@ pub struct BoardStatement {
     /// Filing standing, independent of project identity and visibility.
     #[serde(default, skip_serializing_if = "crate::TaskFiling::is_filed")]
     pub filing: crate::TaskFiling,
-    /// Authored task labels.
-    pub tags: Vec<String>,
     /// Declared scheduling priority.
     #[serde(
         default,
@@ -797,7 +795,6 @@ impl From<&crate::TaskHead> for BoardStatement {
             requirements: statement.requirements.clone(),
             project: statement.project.clone(),
             filing: statement.filing,
-            tags: statement.tags.clone(),
             priority: statement.priority,
             taste: statement.taste,
             document_slug: statement.document_slug.clone(),
@@ -831,7 +828,6 @@ impl BoardStatement {
             requirements: self.requirements.clone(),
             project: self.project.clone(),
             filing: self.filing,
-            tags: self.tags.clone(),
             priority: self.priority,
             taste: self.taste,
             document_slug: self.document_slug.clone(),

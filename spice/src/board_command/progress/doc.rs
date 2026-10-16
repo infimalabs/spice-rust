@@ -20,7 +20,6 @@ struct DocTaskSpec {
     annotations: Vec<String>,
     project: String,
     acceptance: Vec<String>,
-    tags: Vec<String>,
     document_slug: String,
     priority: Option<wire::TaskPriority>,
     taste: Option<wire::TasteHold>,
@@ -308,7 +307,6 @@ fn doc_task_spec(
             "revise the authored task statement so it passes taste review before applying it",
         ));
     }
-    let tags = node.tags.clone();
     let mut taste = None;
     let released = resync_taste_hold(
         &plan.snapshot,
@@ -328,7 +326,6 @@ fn doc_task_spec(
         annotations: node.annotations.clone(),
         project,
         acceptance: node.acceptance.clone(),
-        tags,
         document_slug: node.slug.clone(),
         priority: node.priority.map(board::priority_from_document),
         taste,
@@ -428,7 +425,6 @@ fn edit_doc_task(
     statement.description = spec.description;
     statement.project = spec.project;
     statement.acceptance = spec.acceptance;
-    statement.tags = spec.tags;
     statement.document_slug = Some(spec.document_slug);
     statement.priority = spec.priority;
     statement.taste = spec.taste;
@@ -489,7 +485,6 @@ fn add_doc_task(
                 requirements: wire::EnvironmentRequirements::default(),
                 project: spec.project.clone(),
                 filing: wire::TaskFiling::Filed,
-                tags: spec.tags.clone(),
                 priority: spec.priority,
                 taste: spec.taste,
                 document_slug: Some(spec.document_slug.clone()),
@@ -519,7 +514,6 @@ fn add_doc_task(
         requirements: wire::EnvironmentRequirements::default(),
         project: spec.project,
         filing: wire::TaskFiling::Filed,
-        tags: spec.tags,
         priority: spec.priority,
         taste: spec.taste,
         document_slug: Some(spec.document_slug),

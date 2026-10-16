@@ -63,14 +63,14 @@ fn authored_document_apply_is_atomic_idempotent_and_barrier_bound() {
     let initial = apply_document(
         &bus,
         epoch,
-        "# Goal\n\n- First task\n  Acceptance: original acceptance\n  Flow: todo, review\n  Tags: original\n- Second task\n  After: first-task\n",
+        "# Goal\n\n- First task\n  Acceptance: original acceptance\n  Flow: todo, review\n- Second task\n  After: first-task\n",
         &initial_board,
     );
     assert_initial_document(&bus, &initial);
     let edited = apply_document(
         &bus,
         epoch,
-        "# Goal\n\n- First task\n  Flow: verify\n  Tags: revised\n- Second task\n",
+        "# Goal\n\n- First task\n  Flow: verify\n- Second task\n",
         &initial.board,
     );
     assert_edited_document(&bus, &initial, &edited);
@@ -266,7 +266,7 @@ fn authored_document_apply_refuses_to_edit_a_withdrawn_task() {
     let initial = apply_document(
         &bus,
         epoch,
-        "# Goal\n\n- First task\n  Tags: original\n",
+        "# Goal\n\n- First task\n  Priority: low\n",
         &initial_board,
     );
     let withdrawn = initial
@@ -295,7 +295,7 @@ fn authored_document_apply_refuses_to_edit_a_withdrawn_task() {
     ));
 
     let barrier = board(&bus, epoch, Actor::Operator);
-    let changed = board::Preview::classify("# Goal\n\n- First task\n  Tags: revised\n")
+    let changed = board::Preview::classify("# Goal\n\n- First task\n  Priority: high\n")
         .expect("changed document previews");
     let document = dialect::emit(changed.document());
     let changed = board::Preview::classify(&document).expect("normal document previews");
@@ -827,8 +827,6 @@ fn assert_edited_document(bus: &Bus, initial: &AppliedDocument, edited: &Applied
     assert_eq!(edited.answer.touched, initial.answer.touched);
     assert_eq!(edited.board.tasks.len(), 3);
     let first = at(&edited.board, &edited.answer.touched[1]);
-    assert!(first.statement.body.tags.contains(&"revised".to_owned()));
-    assert!(!first.statement.body.tags.contains(&"original".to_owned()));
     assert!(
         first.statement.body.acceptance.is_empty(),
         "document edits replace absent acceptance instead of treating it as a patch"

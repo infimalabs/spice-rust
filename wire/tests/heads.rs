@@ -14,7 +14,6 @@ const TASK: &str = r#"{
   "description": "Keep complete task context on the current statement",
   "acceptance": ["Every authored field survives the head round trip"],
   "project": "wire",
-  "tags": ["genesis", "wire"],
   "dependencies": ["1kKRRsDQ"],
   "provenance": "task:1kKRRsDQ",
   "creation": { "kind": "unavailable", "reason": "operator-actor" },
@@ -141,7 +140,6 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
             "provenance",
             "queue_origin",
             "revision",
-            "tags",
             "title",
         ],
     );

@@ -649,7 +649,6 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 requirements: wire::EnvironmentRequirements::default(),
                 project: "wire.binding".to_owned(),
                 filing: wire::TaskFiling::Filed,
-                tags: vec!["binding".to_owned()],
                 priority: Some(wire::TaskPriority::High),
                 taste: Some(wire::TasteHold::Prepended),
                 document_slug: None,

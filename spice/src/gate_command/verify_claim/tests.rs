@@ -183,7 +183,6 @@ fn statement() -> TaskHead {
         requirements: wire::EnvironmentRequirements::default(),
         project: "gate.selection".to_owned(),
         filing: wire::TaskFiling::Filed,
-        tags: Vec::new(),
         priority: None,
         taste: None,
         document_slug: None,

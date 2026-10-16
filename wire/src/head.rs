@@ -350,8 +350,6 @@ pub struct TaskHead {
     /// Filing standing, independent of project identity and visibility.
     #[serde(default, skip_serializing_if = "TaskFiling::is_filed")]
     pub filing: TaskFiling,
-    /// Authored task labels.
-    pub tags: Vec<String>,
     /// Declared scheduling priority.
     #[serde(
         default,

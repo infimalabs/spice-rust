@@ -302,7 +302,6 @@ fn render_available(
                     {assignment_fact(workflow.assignment.as_ref(), render)}
                     {statement.priority.map_or_else(Html::default, |priority| fact("Priority", priority.to_string()))}
                     {statement.taste.map_or_else(Html::default, |_| fact("Taste review", "Required".to_owned()))}
-                    {fact("Tags", if statement.tags.is_empty() { "None".to_owned() } else { statement.tags.join(", ") })}
                     {deadline_fact("Deferral", workflow.deferral.as_ref(), "None")}
                     {instant_fact("Completion", workflow.completion.as_ref(), "Open")}
                 </dl>

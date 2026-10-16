@@ -37,6 +37,7 @@ fn duplicate_identity_refuses() {
 #[test]
 fn unsupported_field_refuses_instead_of_becoming_silent_metadata() {
     assert_refusal("# Goal\nOwner: mei\n", RefusalCode::UnsupportedField);
+    assert_refusal("# Goal\nTags: release\n", RefusalCode::UnsupportedField);
 }
 
 #[test]

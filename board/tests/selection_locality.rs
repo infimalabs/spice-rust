@@ -77,7 +77,6 @@ fn statement(name: &str) -> TaskHead {
         requirements: wire::EnvironmentRequirements::default(),
         project: "board.kernel".to_owned(),
         filing: wire::TaskFiling::Filed,
-        tags: Vec::new(),
         priority: None,
         taste: None,
         document_slug: None,

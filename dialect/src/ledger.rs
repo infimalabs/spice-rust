@@ -115,10 +115,6 @@ impl<'a> Renderer<'a> {
         if let Some(due) = &node.due {
             self.lines.push(format!("{pad}Due: {due}"));
         }
-        if !node.tags.is_empty() {
-            self.lines
-                .push(format!("{pad}Tags: {}", node.tags.join(", ")));
-        }
         self.emit_description(node, content_col);
         for annotation in &node.annotations {
             self.blank();
@@ -159,7 +155,6 @@ impl<'a> Renderer<'a> {
             && node.priority.is_none()
             && node.flow.is_empty()
             && node.due.is_none()
-            && node.tags.is_empty()
             && node.description.is_empty()
             && node.annotations.is_empty()
     }

@@ -43,7 +43,6 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
                 requirements: wire::EnvironmentRequirements::EMPTY,
                 project: project.to_owned(),
                 filing: wire::TaskFiling::Filed,
-                tags: Vec::new(),
                 priority: None,
                 taste: None,
                 document_slug: None,

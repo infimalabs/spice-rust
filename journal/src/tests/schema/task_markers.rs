@@ -1,5 +1,5 @@
 //! Retained document-slug and taste-proposal tags cross into typed statement
-//! fields.
+//! fields, while every generic statement tag is discarded.
 
 use super::*;
 
@@ -41,6 +41,28 @@ fn rows(journal: &Journal) -> Vec<Vec<u8>> {
         .unwrap()
 }
 
+fn assert_no_statement_tags(journal: &Journal) {
+    let heads: i64 = journal
+        .connection
+        .query_row(
+            "SELECT count(*) FROM task_heads
+             WHERE json_type(CAST(body AS TEXT), '$.tags') IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let facts: i64 = journal
+        .connection
+        .query_row(
+            "SELECT count(*) FROM fact_envelopes WHERE kind = 'task::added'
+             AND json_type(CAST(envelope AS TEXT), '$.fact.tags') IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!((heads, facts), (0, 0));
+}
+
 #[test]
 fn writable_crossing_lifts_marker_tags_into_typed_fields_once() {
     let mut journal = predecessor(
@@ -68,7 +90,7 @@ fn writable_crossing_lifts_marker_tags_into_typed_fields_once() {
         )
         .unwrap();
     let head: TaskHead = wire::decode(&body).unwrap();
-    assert_eq!(head.tags, ["alpha", "omega"]);
+    assert_no_statement_tags(&journal);
     assert_eq!(head.document_slug.as_deref(), Some("intro"));
     assert_eq!(head.taste_proposal, None);
 
@@ -82,7 +104,6 @@ fn writable_crossing_lifts_marker_tags_into_typed_fields_once() {
         .unwrap();
     let envelope: Envelope<AnyFact> = wire::decode(&bytes).unwrap();
     let added = envelope.fact.read::<wire::body::TaskAdded>().unwrap();
-    assert_eq!(added.tags, ["alpha", "omega"]);
     assert_eq!(added.document_slug, None);
     assert_eq!(
         added.taste_proposal,
@@ -99,6 +120,65 @@ fn writable_crossing_lifts_marker_tags_into_typed_fields_once() {
         None
     );
     assert_eq!(rows(&journal), crossed);
+}
+
+#[test]
+fn schema_sixty_six_lifts_every_meaning_before_discarding_tags() {
+    let mut journal = predecessor(
+        json!(["priority:high", "document-slug:intro", "gate-finding"]),
+        json!([
+            "taste-review:required",
+            "taste-proposal",
+            format!("taste-finding:{FINDING}"),
+            format!("taste-occurrence:{OCCURRENCE}"),
+            "taste-recurrence:3",
+            "gate-finding"
+        ]),
+    );
+    restore_predecessor(&journal, 66);
+    crate::migrate::admit(&mut journal.connection)
+        .unwrap()
+        .unwrap();
+
+    let body: Vec<u8> = journal
+        .connection
+        .query_row(
+            "SELECT body FROM task_heads WHERE stamp = '1kKRRsDP'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let head: TaskHead = wire::decode(&body).unwrap();
+    assert_eq!(head.priority, Some(wire::TaskPriority::High));
+    assert_eq!(head.document_slug.as_deref(), Some("intro"));
+
+    let bytes: Vec<u8> = journal
+        .connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE kind = 'task::added'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let envelope: Envelope<AnyFact> = wire::decode(&bytes).unwrap();
+    let added = envelope.fact.read::<wire::body::TaskAdded>().unwrap();
+    assert_eq!(added.taste, Some(wire::TasteHold::Authored));
+    assert_eq!(added.taste_proposal.as_ref().unwrap().recurrence, 3);
+    assert_no_statement_tags(&journal);
+}
+
+#[test]
+fn schema_sixty_nine_discards_untyped_retired_labels() {
+    let mut journal = predecessor(
+        json!(["gate-finding", "gate-severity:high"]),
+        json!(["gate-finding"]),
+    );
+    restore_predecessor(&journal, 69);
+    let migration = crate::migrate::admit(&mut journal.connection)
+        .unwrap()
+        .unwrap();
+    assert_eq!((migration.from(), migration.to()), (69, SCHEMA_VERSION));
+    assert_no_statement_tags(&journal);
 }
 
 #[test]

@@ -225,7 +225,6 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
                 "born": born,
                 "queue_origin": 1,
                 "project": "canvas.fidelity",
-                "tags": [],
                 "dependencies": [],
                 "provenance": format!("task:{born}"),
                 "creation": {

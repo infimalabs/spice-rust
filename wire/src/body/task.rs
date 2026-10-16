@@ -144,8 +144,6 @@ pub struct TaskAdded {
     /// Initial filing standing.
     #[serde(default, skip_serializing_if = "crate::TaskFiling::is_filed")]
     pub filing: crate::TaskFiling,
-    /// Authored labels carried on the statement.
-    pub tags: Vec<String>,
     /// Declared scheduling priority the statement opens with.
     #[serde(
         default,
