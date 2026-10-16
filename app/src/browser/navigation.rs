@@ -1,29 +1,29 @@
-//! Hash-history ownership for durable Chat locations.
+//! Hash-history ownership for durable Chat and Work locations.
 //!
-//! Task overviews are browser-local overlays. Their complete selection never
-//! enters the URL or creates a history entry; browser Back and Forward own
-//! plain Chat and retained-card anchors. A Design permalink is an arrival, not
-//! a location: it opens that Design's read view and leaves the location Chat.
+//! Work routes open their current task set over Chat. Project, task,
+//! relationship, and caller-composed overviews remain browser-local. A Design
+//! permalink is an arrival, not a location: it opens that Design's read view
+//! and leaves the location Chat.
 
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::Closure;
 use yew::prelude::*;
 
 use super::SurfaceData;
-use crate::view::{AppRoute, NormalizedAppLocation, normalize_app_location};
-use crate::work::{TaskOverviewSelection, WorkProjection, WorkScope};
+use crate::view::{AppRoute, NormalizedAppLocation, OverviewRouteIntent, normalize_app_location};
+use crate::work::{TaskOverviewContext, TaskOverviewSelection, WorkProjection, WorkScope};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Intent {
-    /// Open every task in one current board scope without changing location.
+    /// Open every task in one current board scope at its durable Work route.
     Work(WorkScope),
-    /// Open every task in one exact project without changing location.
+    /// Open every task in one exact project as a browser-local overview.
     Project(String),
     /// Open this exact durable task without changing location.
     Task(wire::TaskStamp),
     /// Open a caller-derived complete selection, such as a relationship lead.
     Overview(TaskOverviewSelection),
-    /// Close the browser-local task overview.
+    /// Close the task overview and its Work route, when it owns one.
     CloseTask,
 }
 
@@ -50,32 +50,23 @@ pub(super) struct DesignLink {
     pub(super) design: wire::TaskStamp,
 }
 
-/// Translate one reader intent against the current board.
+/// Translate one reader intent against the current board and durable route.
 pub(super) fn intent_callback(
     local_selection: UseStateHandle<Option<TaskOverviewSelection>>,
     surface: UseStateHandle<SurfaceData>,
+    route: AppRoute,
+    replace_route: Callback<AppRoute>,
 ) -> Callback<Intent> {
     Callback::from(move |intent| match intent {
         Intent::Work(scope) => {
-            local_selection.set(Some(
-                surface
-                    .read()
-                    .as_ref()
-                    .and_then(|runtime| {
-                        runtime.board().map(|board| {
-                            WorkProjection::from_board_and_lanes(board, runtime.lanes())
-                                .overview_for_scope(scope.clone())
-                        })
-                    })
-                    .unwrap_or_else(|| {
-                        TaskOverviewSelection::new(
-                            [],
-                            crate::work::TaskOverviewContext::Scope(scope),
-                        )
-                    }),
-            ));
+            replace_overview_route(
+                &route,
+                &replace_route,
+                OverviewRouteIntent::Work(scope.route()),
+            );
         }
         Intent::Project(project) => {
+            replace_overview_route(&route, &replace_route, OverviewRouteIntent::BrowserLocal);
             local_selection.set(Some(
                 surface
                     .read()
@@ -87,30 +78,43 @@ pub(super) fn intent_callback(
                         })
                     })
                     .unwrap_or_else(|| {
-                        TaskOverviewSelection::new(
-                            [],
-                            crate::work::TaskOverviewContext::Project(project),
-                        )
+                        TaskOverviewSelection::new([], TaskOverviewContext::Project(project))
                     }),
             ));
         }
         Intent::Task(task) => {
+            replace_overview_route(&route, &replace_route, OverviewRouteIntent::BrowserLocal);
             local_selection.set(Some(TaskOverviewSelection::task(task)));
         }
         Intent::Overview(selection) => {
+            replace_overview_route(&route, &replace_route, OverviewRouteIntent::BrowserLocal);
             local_selection.set(Some(selection));
         }
         Intent::CloseTask => {
             local_selection.set(None);
+            replace_overview_route(&route, &replace_route, OverviewRouteIntent::Close);
         }
     })
 }
 
+fn replace_overview_route(
+    route: &AppRoute,
+    replace_route: &Callback<AppRoute>,
+    intent: OverviewRouteIntent,
+) {
+    if let Some(route) = route.overview_transition(intent) {
+        replace_route.emit(route);
+    }
+}
+
 #[hook]
-pub(super) fn use_route() -> (
+pub(super) fn use_route(
+    local_selection: UseStateHandle<Option<TaskOverviewSelection>>,
+) -> (
     AppRoute,
     Option<RouteNotice>,
     Callback<RouteRefusal>,
+    Callback<AppRoute>,
     Option<DesignLink>,
 ) {
     let location = use_state(location_route);
@@ -152,16 +156,17 @@ pub(super) fn use_route() -> (
             arrive(&location);
             let rehydrate = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
                 let next = location_route();
+                local_selection.set(None);
                 arrive(&next);
                 location.set(next);
             });
             let window = web_sys::window().expect("app navigation requires a browser window");
             window
-                .add_event_listener_with_callback("popstate", rehydrate.as_ref().unchecked_ref())
-                .expect("app navigation requires popstate");
+                .add_event_listener_with_callback("hashchange", rehydrate.as_ref().unchecked_ref())
+                .expect("app navigation requires hashchange");
             move || {
                 let _ = window.remove_event_listener_with_callback(
-                    "popstate",
+                    "hashchange",
                     rehydrate.as_ref().unchecked_ref(),
                 );
             }
@@ -179,7 +184,14 @@ pub(super) fn use_route() -> (
         });
     }
 
-    let navigate = {
+    let replace = {
+        let location = location.clone();
+        Callback::from(move |route: AppRoute| {
+            write_location(&route.path());
+            location.set(location_route());
+        })
+    };
+    let refuse = {
         let location = location.clone();
         Callback::from(move |refusal: RouteRefusal| {
             write_location(&refusal.route.path());
@@ -190,7 +202,8 @@ pub(super) fn use_route() -> (
     (
         location.route().clone(),
         (*notice).clone(),
-        navigate,
+        refuse,
+        replace,
         (*link).clone(),
     )
 }

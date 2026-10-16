@@ -330,11 +330,13 @@ fn use_team_drag(surface: &SurfaceData) -> watchband::TeamDragState {
 
 #[function_component(AppRouter)]
 fn app_router() -> Html {
-    let (route, notice, navigate, design) = navigation::use_route();
+    let local_selection = use_state(|| None::<crate::work::TaskOverviewSelection>);
+    let (route, notice, navigate, replace_route, design) =
+        navigation::use_route(local_selection.clone());
     html! {
         <toast::ToastProvider>
             <RouteNotice {notice} />
-            <App {route} {navigate} {design} />
+            <App {route} {navigate} {replace_route} {design} {local_selection} />
         </toast::ToastProvider>
     }
 }
@@ -359,7 +361,9 @@ fn route_notice(properties: &RouteNoticeProperties) -> Html {
 struct AppProperties {
     route: AppRoute,
     navigate: Callback<navigation::RouteRefusal>,
+    replace_route: Callback<AppRoute>,
     design: Option<navigation::DesignLink>,
+    local_selection: UseStateHandle<Option<crate::work::TaskOverviewSelection>>,
 }
 
 struct AppState {
@@ -517,8 +521,19 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let surface = use_state(SurfaceData::default);
     let spice_sidebar_open = use_state(|| false);
     let card_target_status = use_state(|| None::<card_target::Status>);
-    let local_selection =
-        use_local_overview(&route, properties.design.as_ref(), &spice_sidebar_open);
+    let local_selection = properties.local_selection.clone();
+    use_design_link(
+        properties.design.as_ref(),
+        &local_selection,
+        &spice_sidebar_open,
+    );
+    use_work_route(
+        &route,
+        &surface,
+        &local_selection,
+        &spice_sidebar_open,
+        properties.navigate.clone(),
+    );
     let work_map = use_state(view::WorkMapState::default);
     let identity = use_state(|| None::<AppIdentity>);
     let app_update = use_state(|| None::<AppUpdate>);
@@ -542,36 +557,19 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let composer_drag = use_composer_drag(&surface);
     let composer_slots = watchband::use_composer_slots();
     let team_drag = use_team_drag(&surface);
-    let navigate = navigation::intent_callback(local_selection.clone(), surface.clone());
-    let requested_content = if *spice_sidebar_open {
-        Some(sidebar::Content::Spice)
-    } else {
-        (*local_selection).clone().map(sidebar::Content::Tasks)
-    };
-    let close_sidebar = {
-        let spice_sidebar_open = spice_sidebar_open.clone();
-        let navigate = navigate.clone();
-        Callback::from(move |()| {
-            if *spice_sidebar_open {
-                spice_sidebar_open.set(false);
-            } else {
-                navigate.emit(navigation::Intent::CloseTask);
-            }
-        })
-    };
-    let sidebar = sidebar::use_controls(
-        *spice_sidebar_open || work_detail_mounted(&surface),
-        sidebar::Request {
-            content: requested_content,
-            leaving: route.card_target().is_some(),
-        },
-        close_sidebar,
+    let navigate = navigation::intent_callback(
+        local_selection.clone(),
+        surface.clone(),
+        route.clone(),
+        properties.replace_route.clone(),
     );
-    let selected_task = sidebar
-        .content
-        .as_ref()
-        .and_then(sidebar::Content::tasks)
-        .cloned();
+    let (sidebar, selected_task) = use_task_sidebar(
+        &route,
+        &surface,
+        &spice_sidebar_open,
+        &local_selection,
+        &navigate,
+    );
     let task_detail = task_detail::use_controls(
         sender.clone(),
         surface.clone(),
@@ -630,6 +628,49 @@ fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
         },
         speech_runtime,
     )
+}
+
+#[hook]
+fn use_task_sidebar(
+    route: &AppRoute,
+    surface: &UseStateHandle<SurfaceData>,
+    spice_sidebar_open: &UseStateHandle<bool>,
+    selection: &UseStateHandle<Option<crate::work::TaskOverviewSelection>>,
+    navigate: &Callback<navigation::Intent>,
+) -> (
+    sidebar::Controls,
+    Option<crate::work::TaskOverviewSelection>,
+) {
+    let requested_content = if **spice_sidebar_open {
+        Some(sidebar::Content::Spice)
+    } else {
+        (**selection).clone().map(sidebar::Content::Tasks)
+    };
+    let close_sidebar = {
+        let spice_sidebar_open = spice_sidebar_open.clone();
+        let navigate = navigate.clone();
+        Callback::from(move |()| {
+            if *spice_sidebar_open {
+                spice_sidebar_open.set(false);
+            } else {
+                navigate.emit(navigation::Intent::CloseTask);
+            }
+        })
+    };
+    let sidebar = sidebar::use_controls(
+        **spice_sidebar_open || work_detail_mounted(surface),
+        sidebar::Request {
+            content: requested_content,
+            leaving: route.card_target().is_some(),
+        },
+        close_sidebar,
+    );
+    let selected_task = sidebar
+        .content
+        .as_ref()
+        .and_then(sidebar::Content::tasks)
+        .cloned();
+    (sidebar, selected_task)
 }
 
 /// Open a task linked from an agent message through one callback that keeps its
@@ -738,24 +779,67 @@ fn teamed_lane_count(surface: &SurfaceData) -> usize {
         })
 }
 
-/// A task overview is browser-local, so any durable route change ends it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WorkRoutePresentation {
+    Pending,
+    Missing(String),
+    Ready(crate::work::TaskOverviewSelection),
+}
+
+/// Keep a route-owned Work overview synchronized with current board,
+/// topology, and working-group authority.
 #[hook]
-fn use_local_overview(
+fn use_work_route(
     route: &AppRoute,
-    design: Option<&navigation::DesignLink>,
+    surface: &SurfaceData,
+    selection: &UseStateHandle<Option<crate::work::TaskOverviewSelection>>,
     spice_sidebar_open: &UseStateHandle<bool>,
-) -> UseStateHandle<Option<crate::work::TaskOverviewSelection>> {
-    let selection = use_state(|| None::<crate::work::TaskOverviewSelection>);
-    {
-        let selection = selection.clone();
-        use_effect_with(route.clone(), move |_| {
-            if selection.is_some() {
-                selection.set(None);
-            }
+    refuse: Callback<navigation::RouteRefusal>,
+) {
+    let presentation = route.work_route().map(|route| {
+        let surface = surface.read();
+        let runtime = surface.as_ref();
+        let work = project_work(runtime);
+        let groups = runtime.and_then(|runtime| {
+            (runtime.room_projection().status() == crate::runtime::RoomProjectionStatus::Available)
+                .then(|| runtime.room_projection().partition())
         });
-    }
-    use_design_link(design, &selection, spice_sidebar_open);
-    selection
+        match crate::work::resolve_work_route(route, work.as_ref(), groups) {
+            crate::work::WorkRouteResolution::Pending => WorkRoutePresentation::Pending,
+            crate::work::WorkRouteResolution::Missing => {
+                WorkRoutePresentation::Missing(route.path())
+            }
+            crate::work::WorkRouteResolution::Resolved(scope) => {
+                let overview = if let Some(work) = work {
+                    work.overview_for_scope(scope)
+                } else {
+                    crate::work::TaskOverviewSelection::new(
+                        [],
+                        crate::work::TaskOverviewContext::Scope(scope),
+                    )
+                };
+                WorkRoutePresentation::Ready(overview)
+            }
+        }
+    });
+    let selection = selection.clone();
+    let spice_sidebar_open = spice_sidebar_open.clone();
+    use_effect_with(presentation, move |presentation| match presentation {
+        Some(WorkRoutePresentation::Ready(overview)) => {
+            spice_sidebar_open.set(false);
+            if selection.as_ref() != Some(overview) {
+                selection.set(Some(overview.clone()));
+            }
+        }
+        Some(WorkRoutePresentation::Missing(path)) => {
+            selection.set(None);
+            refuse.emit(navigation::RouteRefusal {
+                route: AppRoute::chat(),
+                text: format!("Work scope `{path}` is unavailable; opened Chat."),
+            });
+        }
+        Some(WorkRoutePresentation::Pending) | None => {}
+    });
 }
 
 /// A Design permalink arrival opens that Design's read view as the task

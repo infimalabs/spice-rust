@@ -103,14 +103,63 @@ pub(crate) fn creator_context_href<'a>(
         .then(|| card_href(&target.target()))
 }
 
-/// One admitted durable Chat URL state.
+/// One admitted durable app URL state.
 ///
-/// Task overviews are browser-local overlays and therefore never refine this
-/// route or create history entries.
+/// Chat/card and Work scopes are durable locations. A Work route opens its
+/// task-set overview over the still-mounted Chat surface.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AppRoute {
-    card: Option<String>,
+pub(crate) enum AppRoute {
+    Chat { card: Option<String> },
+    Work(WorkRoute),
+}
+
+/// Stable identity carried by one durable Work route.
+///
+/// Team and working-group membership is deliberately absent: the current
+/// topology and group partition resolve it after hydration.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum WorkRoute {
+    AllOpen,
+    Stem(WorkRouteStem),
+    Planning { stem: Option<WorkRouteStem> },
+    Team(wire::CanonicalUuid),
+    Group(wire::rooms::RoomAuthorityStamp),
+}
+
+/// Location effect of one task-overview navigation intent.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) enum OverviewRouteIntent {
+    Work(WorkRoute),
+    BrowserLocal,
+    Close,
+}
+
+/// One visibility-qualified project stem in a Work route.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorkRouteStem {
+    hidden: bool,
+    stem: String,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl WorkRouteStem {
+    #[must_use]
+    pub(crate) fn new(hidden: bool, stem: String) -> Option<Self> {
+        valid_work_stem(&stem).then_some(Self { hidden, stem })
+    }
+
+    #[must_use]
+    pub(crate) const fn hidden(&self) -> bool {
+        self.hidden
+    }
+
+    #[must_use]
+    pub(crate) fn stem(&self) -> &str {
+        &self.stem
+    }
 }
 
 /// Settled evidence for the data a durable route names.
@@ -124,48 +173,103 @@ pub(crate) struct RouteEvidence {
 impl AppRoute {
     #[must_use]
     pub(crate) const fn chat() -> Self {
-        Self { card: None }
+        Self::Chat { card: None }
     }
 
     pub(crate) fn card(target: String) -> Option<Self> {
-        valid_card_target(&target).then_some(Self { card: Some(target) })
+        valid_card_target(&target).then_some(Self::Chat { card: Some(target) })
+    }
+
+    #[must_use]
+    pub(crate) const fn work(route: WorkRoute) -> Self {
+        Self::Work(route)
     }
 
     /// Parse one exact canonical path; any other spelling is not a route.
     #[must_use]
     pub(crate) fn from_path(path: &str) -> Option<Self> {
         let mut segments = path.strip_prefix('/')?.split('/');
-        match (
+        let route = match (
             segments.next()?,
             segments.next(),
             segments.next(),
             segments.next(),
+            segments.next(),
         ) {
-            ("chat", None, None, None) => Some(Self::chat()),
-            ("chat", Some(CARD_SEGMENT), Some(target), None) => Self::card(target.to_owned()),
-            _ => None,
-        }
+            ("chat", None, None, None, None) => Self::chat(),
+            ("chat", Some(CARD_SEGMENT), Some(target), None, None) => {
+                return Self::card(target.to_owned());
+            }
+            ("work", None, None, None, None) => Self::work(WorkRoute::AllOpen),
+            ("work", Some("stem"), Some(visibility), Some(stem), None) => {
+                Self::work(WorkRoute::Stem(parse_work_stem(visibility, stem)?))
+            }
+            ("work", Some("planning"), None, None, None) => {
+                Self::work(WorkRoute::Planning { stem: None })
+            }
+            ("work", Some("planning"), Some(visibility), Some(stem), None) => {
+                Self::work(WorkRoute::Planning {
+                    stem: Some(parse_work_stem(visibility, stem)?),
+                })
+            }
+            ("work", Some("team"), Some(team), None, None) => {
+                Self::work(WorkRoute::Team(team.parse().ok()?))
+            }
+            ("work", Some("group"), Some(group), None, None) => {
+                Self::work(WorkRoute::Group(group.parse().ok()?))
+            }
+            _ => return None,
+        };
+        Some(route)
     }
 
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     #[must_use]
     pub(crate) fn card_target(&self) -> Option<&str> {
-        self.card.as_deref()
+        match self {
+            Self::Chat { card } => card.as_deref(),
+            Self::Work(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn work_route(&self) -> Option<&WorkRoute> {
+        match self {
+            Self::Work(route) => Some(route),
+            Self::Chat { .. } => None,
+        }
     }
 
     /// The one canonical path spelling this route.
     #[must_use]
     pub(crate) fn path(&self) -> String {
-        self.card.as_ref().map_or_else(
-            || "/chat".to_owned(),
-            |card| format!("/chat/{CARD_SEGMENT}/{card}"),
-        )
+        match self {
+            Self::Chat { card: None } => "/chat".to_owned(),
+            Self::Chat { card: Some(card) } => format!("/chat/{CARD_SEGMENT}/{card}"),
+            Self::Work(route) => route.path(),
+        }
+    }
+
+    /// Route replacement required by one overview transition.
+    #[must_use]
+    pub(crate) fn overview_transition(&self, intent: OverviewRouteIntent) -> Option<Self> {
+        match intent {
+            OverviewRouteIntent::Work(route) => Some(Self::Work(route)),
+            OverviewRouteIntent::BrowserLocal | OverviewRouteIntent::Close
+                if self.work_route().is_some() =>
+            {
+                Some(Self::chat())
+            }
+            OverviewRouteIntent::BrowserLocal | OverviewRouteIntent::Close => None,
+        }
     }
 
     /// Refuse a missing Chat card back to plain Chat.
     #[must_use]
     pub(crate) fn unavailable(&self, evidence: RouteEvidence) -> Option<(Self, String)> {
-        let card = self.card.as_ref()?;
+        let Self::Chat { card: Some(card) } = self else {
+            return None;
+        };
         (evidence.card == Some(false)).then(|| {
             (
                 Self::chat(),
@@ -173,6 +277,52 @@ impl AppRoute {
             )
         })
     }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl WorkRoute {
+    #[must_use]
+    pub(crate) fn path(&self) -> String {
+        match self {
+            Self::AllOpen => "/work".to_owned(),
+            Self::Stem(stem) => format!(
+                "/work/stem/{}/{}",
+                work_visibility_segment(stem),
+                stem.stem()
+            ),
+            Self::Planning { stem: None } => "/work/planning".to_owned(),
+            Self::Planning { stem: Some(stem) } => format!(
+                "/work/planning/{}/{}",
+                work_visibility_segment(stem),
+                stem.stem()
+            ),
+            Self::Team(team) => format!("/work/team/{team}"),
+            Self::Group(group) => format!("/work/group/{group}"),
+        }
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn parse_work_stem(visibility: &str, stem: &str) -> Option<WorkRouteStem> {
+    let hidden = match visibility {
+        "public" => false,
+        "hidden" => true,
+        _ => return None,
+    };
+    WorkRouteStem::new(hidden, stem.to_owned())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn work_visibility_segment(stem: &WorkRouteStem) -> &'static str {
+    if stem.hidden { "hidden" } else { "public" }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn valid_work_stem(stem: &str) -> bool {
+    !stem.is_empty()
+        && stem
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
 #[cfg(any(target_arch = "wasm32", test))]

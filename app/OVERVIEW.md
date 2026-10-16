@@ -16,6 +16,27 @@ Task activation opens the overview for the complete selected task set: an
 ordered, stable-deduplicated list derived from the locally admitted board in
 its offered order. Every selected root stays visible however large the set.
 
+Work-scope selections are durable overlay locations with one canonical grammar:
+`#/work` for all open execution work; `#/work/stem/public/{stem}` and
+`#/work/stem/hidden/{stem}` for one visibility-qualified execution stem;
+`#/work/planning` for all Design-owned work;
+`#/work/planning/public/{stem}` and
+`#/work/planning/hidden/{stem}` for one planning stem;
+`#/work/team/{uuid}` for a team; and `#/work/group/{room-stamp}` for a working
+group. A stem is its admitted lowercase `[0-9a-z_]+` spelling and occupies one
+literal path segment. Team and group routes retain only stable identity:
+hydrated lane topology and working-group authority supply current membership,
+and subsequent authority changes refresh the open selection. All-open and
+all-planning remain valid when empty; a missing stem, team, or group returns to
+Chat once the authority that decides it is available.
+
+Opening a Work control replaces the current location with its canonical path.
+Closing that route-owned overview replaces it with `#/chat`. Opening a project,
+one task, a relationship lead, or another composed task set releases a Work
+location before opening the browser-local selection. Reload, bookmark,
+Back/Forward, direct hash edits, and `hashchange` all rehydrate the same
+route-owned scope without creating a separate Work page or unmounting Chat.
+
 The admitted-board graph renders first, including every selected root, roots
 with no edges, and explicit outside-board or outside-selection neighbors. The
 same graph offers Dependency, Lineage, Reviews, and Lifecycle lenses. A

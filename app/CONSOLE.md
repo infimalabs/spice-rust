@@ -2,13 +2,15 @@
 
 Every team surface, populated or empty, keeps its Chat composer and message
 plane mounted. There is no Work/Chat mode, local Work pane, or mode-owned
-scroll state. Chat is the only durable location, `#/chat`, extended by
-`/card/{target}` for a retained card; any other location normalizes to Chat
-with the unavailable-location notice. Work, task, and direction controls are
-browser-local overview actions that create no history entry and claim no
-restorable URL. A Design permalink, `#/chat/design/{stamp}`, is an arrival
+scroll state. Chat is the base durable location, `#/chat`, extended by
+`/card/{target}` for a retained card. A durable `#/work...` location opens the
+current scope's task overview over that same mounted Chat surface; closing it
+returns the location to `#/chat`. Project, individual-task, relationship, and
+caller-composed selections remain browser-local and release any Work location
+before opening. A Design permalink, `#/chat/design/{stamp}`, is an arrival
 rather than a location: it opens [that Design's read view](DESIGNS.md#reading-a-design)
-and replaces itself with `#/chat`.
+and replaces itself with `#/chat`. Every unrecognized location likewise
+normalizes to Chat with the unavailable-location notice.
 
 Wide, narrow, short, empty, one-member, and multi-member consoles keep a usable
 header, composer, and stream without a nested vertical scroller. Side-by-side
