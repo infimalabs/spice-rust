@@ -102,7 +102,8 @@ pub use head::{
     ResidencyHead, ResidentState, SeatRefusal, SteeringHead, TapeLocus, TaskEvidenceEdit,
     TaskFiling, TaskHead, TaskIntent, TaskIntentEdit, TaskPreparation, TaskPriority, TasteHold,
     TasteProposal, TeamSubscription, TranscriptSourceHead, TranscriptStreamKey, TrustHead,
-    TrustState, WitnessClass, WitnessHead, WorkflowHead,
+    TrustState, WitnessClass, WitnessHead, WorkflowCompletionReview, WorkflowConclusion,
+    WorkflowHead, WorkflowNegative, WorkflowReview, WorkflowStatus,
 };
 pub use hello::{
     Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,

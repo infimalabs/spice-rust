@@ -162,11 +162,8 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
     seed.workflow_head(task, added, move |_| wire::WorkflowHead {
         flow: vec!["todo".parse().expect("fixture phase")],
         phase: "todo".parse().expect("fixture phase"),
-        status: "pending".into(),
-        review: "unassigned".into(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     added

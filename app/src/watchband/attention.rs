@@ -267,7 +267,7 @@ fn held_attention(
         _ if steeped.contains(&row.statement.body.born) => TaskAttention::Steeped,
         _ => return None,
     };
-    let assigned = match row.workflow.body.assignment.as_ref() {
+    let assigned = match row.workflow.body.status.reviewer() {
         Some(Actor::Lane(lane)) => Some(*lane),
         _ => None,
     };

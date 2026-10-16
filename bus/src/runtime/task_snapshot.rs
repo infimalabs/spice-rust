@@ -481,7 +481,7 @@ impl Indexes {
             self.terminals = self.terminals.pushed(&task, terminal.operation, row.seq);
             // A phase advance also records a terminal answer, but its task stays
             // allocatable in the next phase and keeps its creation origin.
-            if terminal.status == "completed" {
+            if terminal.status == journal::crossing::body::TaskCompletionStatus::Completed {
                 self.retire_task(&task);
             }
         }

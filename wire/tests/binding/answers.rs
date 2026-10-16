@@ -2,20 +2,16 @@ use wire::intent::AnswerShape;
 
 /// One successful reply body for every declared answer shape.
 ///
-/// The board task row spells every optional the shape carries -- `assignment`,
-/// `deferral`, and `completion` together, alongside `claim` and `lease` -- so
-/// each `skip_serializing_if` field is decoded and re-encoded here rather than
-/// only in a downstream crate. That makes the row a shape witness, not a
-/// reachable board state: no phase both defers and completes.
+/// The board task row is a reachable assigned workflow with a deferral,
+/// alongside claim and lease state. Terminal workflow documents and their
+/// completion instants are covered independently in `binding.rs`; combining
+/// live assignment with terminal completion would violate the workflow type.
 ///
-/// Round-tripping alone cannot hold that claim. An absent optional decodes to
-/// `None` and re-encodes skipped, so deleting one of those keys leaves the
-/// encoded value and the spelling equal and `every_answer_re_encodes_unchanged`
-/// stays green. What holds it is
-/// [`the_board_task_row_is_the_struct_this_crate_declares`], which builds the
-/// row as a struct literal naming every field and asserts it encodes to exactly
-/// the JSON below: a deleted optional makes the two spellings disagree, and a
-/// field added to the DTO fails this crate's build.
+/// Round-tripping alone cannot prove that the row's DTO still names every
+/// field. [`the_board_task_row_is_the_struct_this_crate_declares`] builds it as
+/// a struct literal and asserts that it encodes to exactly the JSON below, so
+/// a field added to the DTO fails this crate's build and a changed spelling
+/// fails the equality.
 pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     (
         AnswerShape::Report,
@@ -75,10 +71,9 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
           "flow": ["todo", "review"],
           "phase": "todo",
           "status": "pending",
-          "review": "unassigned",
+          "review": "assigned",
           "assignment": "operator",
-          "deferral": "2026-08-01T07:07:19.000Z",
-          "completion": "2026-08-01T08:07:19.000Z"
+          "deferral": "2026-08-01T07:07:19.000Z"
         }
       },
       "claim": {

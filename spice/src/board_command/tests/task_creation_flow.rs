@@ -470,7 +470,7 @@ fn an_ambient_plan_releases_its_output_on_positive_completion_without_selection(
         },
     ));
     let concluded = board(&bus, epoch, worker.clone());
-    assert_eq!(at(&concluded, &plan).workflow.body.status, "completed");
+    assert!(at(&concluded, &plan).workflow.body.status.is_completed());
     assert_eq!(at(&concluded, &child).statement.body.authorization, None);
     offered(
         true,

@@ -314,7 +314,7 @@ fn complete_author_phase(bus: &Bus, task: &TaskStamp) {
     let mut workflow = heads.workflow().body().clone();
     workflow.flow = vec!["todo".parse().unwrap(), "review".parse().unwrap()];
     workflow.phase = "review".parse().expect("review phase");
-    workflow.review = "unassigned".to_owned();
+    workflow.status = wire::WorkflowStatus::pending();
     write.workflow_head(task.clone(), done, move |_| workflow);
     write.claim_head(task.clone(), done, move |fact| wire::ClaimHead {
         fact,
@@ -363,8 +363,7 @@ fn claim_review(
         )
         .expect("review claim builds");
     let mut workflow = heads.workflow().body().clone();
-    workflow.assignment = Some(actor.clone());
-    workflow.review = "assigned".to_owned();
+    workflow.status = wire::WorkflowStatus::assigned(actor.clone());
     write.workflow_head(task.clone(), won, move |_| workflow);
     let phase = "review".parse().expect("review phase");
     write.claim_head(task.clone(), won, move |fact| wire::ClaimHead {
@@ -397,10 +396,11 @@ fn complete_review(bus: &Bus, task: &TaskStamp, lane: CanonicalUuid, verdict: wi
     let heads = &snapshot.tasks()[0];
     let claim = heads.claim().expect("review claim").body().clone();
     let actor = Actor::Lane(lane);
+    let at = now();
     let mut write = JournalWrite::new(
         actor.clone(),
         format!("task:{task}").parse().expect("task origin"),
-        now(),
+        at,
         Producer::CommandDoor,
     );
     let reviewed = write
@@ -420,18 +420,10 @@ fn complete_review(bus: &Bus, task: &TaskStamp, lane: CanonicalUuid, verdict: wi
         )
         .expect("review completion builds");
     let mut workflow = heads.workflow().body().clone();
-    match verdict {
-        wire::body::Verdict::Clean => {
-            workflow.status = "completed".to_owned();
-            workflow.review = "clean".to_owned();
-        }
-        wire::body::Verdict::Finding => {
-            workflow.status = "pending".to_owned();
-            workflow.review = "unassigned".to_owned();
-            workflow.completion = None;
-        }
-    }
-    workflow.assignment = None;
+    workflow.status = match verdict {
+        wire::body::Verdict::Clean => wire::WorkflowStatus::reviewed(at),
+        wire::body::Verdict::Finding => wire::WorkflowStatus::pending(),
+    };
     write.workflow_head(task.clone(), reviewed, move |_| workflow);
     write.claim_head(task.clone(), reviewed, move |fact| wire::ClaimHead {
         fact,

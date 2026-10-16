@@ -280,11 +280,8 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
     write.workflow_head(workflow_task, fact, move |_| WorkflowHead {
         flow,
         phase: phase("todo"),
-        status: "pending".to_owned(),
-        review: "none".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     task

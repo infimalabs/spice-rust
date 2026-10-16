@@ -125,11 +125,8 @@ fn workflow(current: &str) -> WorkflowHead {
     WorkflowHead {
         flow: vec![phase("todo"), phase("review")],
         phase: phase(current),
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     }
 }
@@ -178,8 +175,7 @@ fn claimed_entry(name: &str, current: &str) -> Entry {
 
 fn completed_entry(name: &str) -> Entry {
     let mut completed = workflow("review");
-    completed.status = "completed".to_owned();
-    completed.completion = Some(instant("2026-08-01T06:06:00.000Z"));
+    completed.status = wire::WorkflowStatus::completed(instant("2026-08-01T06:06:00.000Z"));
     admitted(
         statement(name),
         completed,
@@ -305,13 +301,6 @@ fn statement_views_preserve_project_family_handle_and_dependency_heads() {
         admitted(statement("BOARD-a1"), duplicate_phase, None, None),
         Err(board::TaskError::DuplicatePhase(_))
     ));
-
-    let mut unknown_status = workflow("todo");
-    unknown_status.status = "mystery".to_owned();
-    assert!(matches!(
-        admitted(statement("BOARD-a1"), unknown_status, None, None),
-        Err(board::TaskError::WorkflowStatus(_))
-    ));
 }
 
 #[test]
@@ -322,8 +311,7 @@ fn board_graph_views_render_independent_relations_in_stable_order() {
     alpha_head.provenance = wire::TaskProvenance::Parentless;
     alpha_head.dependencies.push(stamp("BOARD-b2"));
     let mut alpha_workflow = workflow("review");
-    alpha_workflow.review = "assigned".to_owned();
-    alpha_workflow.assignment = Some(reviewer.clone());
+    alpha_workflow.status = wire::WorkflowStatus::assigned(reviewer.clone());
     let alpha = admitted(
         alpha_head,
         alpha_workflow,
@@ -434,8 +422,7 @@ fn live_graphs_exclude_settled_history_but_name_direct_dependencies() {
     )
     .expect("live entry");
     let mut settled_workflow = workflow("review");
-    settled_workflow.status = "completed".to_owned();
-    settled_workflow.completion = Some(instant("2026-08-01T07:00:00.000Z"));
+    settled_workflow.status = wire::WorkflowStatus::completed(instant("2026-08-01T07:00:00.000Z"));
     let settled = admitted(
         settled_head,
         settled_workflow,
@@ -1008,11 +995,10 @@ fn live_frontier_selection_distinguishes_settled_open_and_missing_dependencies()
     let deleted_stamp = stamp("BOARD-deleted");
     let missing_stamp = stamp("BOARD-missing");
     let mut completed_workflow = workflow("todo");
-    completed_workflow.status = "completed".to_owned();
-    completed_workflow.completion = Some(instant("2026-08-01T06:10:00.000Z"));
+    completed_workflow.status =
+        wire::WorkflowStatus::completed(instant("2026-08-01T06:10:00.000Z"));
     let mut deleted_workflow = workflow("todo");
-    deleted_workflow.status = "deleted".to_owned();
-    deleted_workflow.completion = Some(instant("2026-08-01T06:10:00.000Z"));
+    deleted_workflow.status = wire::WorkflowStatus::deleted(instant("2026-08-01T06:10:00.000Z"));
     let completed =
         admitted(statement("BOARD-completed"), completed_workflow, None, None).expect("completed");
     let deleted =
@@ -1090,21 +1076,25 @@ enum Standing {
 }
 
 fn planning(name: &str, intent: wire::TaskIntent, standing: Standing) -> Entry {
-    let settled = |status: &str, review: &str| WorkflowHead {
-        status: status.to_owned(),
-        review: review.to_owned(),
-        completion: Some(instant("2026-08-01T06:00:00.000Z")),
-        ..workflow("review")
-    };
+    let at = instant("2026-08-01T06:00:00.000Z");
     let workflow = match standing {
         Standing::Open if intent == wire::TaskIntent::Design => WorkflowHead {
             flow: vec![phase("design")],
             ..workflow("design")
         },
         Standing::Open => workflow("todo"),
-        Standing::Positive => settled("completed", "clean"),
-        Standing::Closed => settled("completed", "closed"),
-        Standing::Deleted => settled("deleted", "unassigned"),
+        Standing::Positive => WorkflowHead {
+            status: wire::WorkflowStatus::reviewed(at),
+            ..workflow("review")
+        },
+        Standing::Closed => WorkflowHead {
+            status: wire::WorkflowStatus::closed(at),
+            ..workflow("review")
+        },
+        Standing::Deleted => WorkflowHead {
+            status: wire::WorkflowStatus::deleted(at),
+            ..workflow("review")
+        },
     };
     let head = TaskHead {
         intent: Some(intent),

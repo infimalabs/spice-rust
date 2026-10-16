@@ -141,10 +141,12 @@ fn gated_closure(
 }
 
 fn pending(entry: &Entry) -> bool {
-    entry.workflow().status == "pending" && entry.workflow().completion.is_none()
+    entry.workflow().status.is_pending()
 }
 
 fn settled_negatively(entry: &Entry) -> bool {
-    entry.workflow().status == "deleted"
-        || (entry.workflow().status == "completed" && entry.workflow().review == "closed")
+    matches!(
+        entry.workflow().status.conclusion(),
+        Some(wire::WorkflowConclusion::Negative(_))
+    )
 }

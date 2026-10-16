@@ -140,7 +140,12 @@ fn require_unblocked_selection(
     controller: &journal::TaskHeads,
 ) -> Result<(), Outcome<CommandAnswer>> {
     for dependency in &controller.statement().body().dependencies {
-        if task_heads(snapshot, dependency)?.workflow().body().status == "pending" {
+        if task_heads(snapshot, dependency)?
+            .workflow()
+            .body()
+            .status
+            .is_pending()
+        {
             return Err(refusal(
                 "preparation::controller-blocked",
                 Some(dependency.to_string()),
@@ -611,8 +616,7 @@ fn output_is_authorizable(
     candidate: &wire::rooms::CandidateRef,
     output: &TaskStamp,
 ) -> bool {
-    heads.workflow().body().status == "pending"
-        && heads.workflow().body().completion.is_none()
+    heads.workflow().body().status.is_pending()
         && !active_claim(heads)
         && heads.statement().body().authorization.is_none()
         && !board::gather_task(heads.statement().body(), heads.workflow().body())
@@ -746,8 +750,7 @@ pub(super) fn adopt_output(
             return outcome;
         }
     }
-    if output_heads.workflow().body().status != "pending"
-        || output_heads.workflow().body().completion.is_some()
+    if !output_heads.workflow().body().status.is_pending()
         || active_claim(output_heads)
         || output_heads.statement().body().preparation.is_some()
         || output_heads.statement().body().authorization.is_some()
@@ -759,8 +762,7 @@ pub(super) fn adopt_output(
             "adopt only pending, unclaimed, uncontrolled ordinary work; running or completed work remains reference-only",
         );
     }
-    if parent_heads.workflow().body().status != "pending"
-        || parent_heads.workflow().body().completion.is_some()
+    if !parent_heads.workflow().body().status.is_pending()
         || active_claim(parent_heads)
         || !requires_construction(
             parent_heads.statement().body().intent,

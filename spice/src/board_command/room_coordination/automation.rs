@@ -74,9 +74,9 @@ fn ready_resumes(bus: &Bus) -> Result<Vec<Ready>, Outcome<CommandAnswer>> {
             if request.body().disposition != wire::Disposition::Acked {
                 continue;
             }
-            let pending = read.workflow_head(room)?.is_some_and(|workflow| {
-                workflow.body().status == "pending" && workflow.body().completion.is_none()
-            });
+            let pending = read
+                .workflow_head(room)?
+                .is_some_and(|workflow| workflow.body().status.is_pending());
             let claimed = read
                 .claim_head(room)?
                 .is_some_and(|claim| claim.body().disposition == ClaimDisposition::Active);

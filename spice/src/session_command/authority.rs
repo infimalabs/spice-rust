@@ -499,7 +499,7 @@ fn held_claim(entry: &Entry) -> HeldClaimView {
         handle: entry.handle().to_string(),
         project: statement.project.clone(),
         phase: entry.workflow().phase.to_string(),
-        status: entry.workflow().status.clone(),
+        status: entry.workflow().status.as_str().to_owned(),
         title: statement.title.clone(),
         lease_expiry: entry.lease().map(|lease| lease.expiry.to_string()),
         flow: entry

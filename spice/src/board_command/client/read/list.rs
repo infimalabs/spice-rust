@@ -266,19 +266,15 @@ pub(in crate::board_command::client) fn actor_route_matches(
 }
 
 fn list_status_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
-    let pending = task.workflow.body.status == "pending"
-        && task.workflow.body.completion.is_none()
-        && task.workflow.body.deferral.is_none();
-    let waiting = task.workflow.body.status == "pending"
-        && task.workflow.body.completion.is_none()
-        && task.workflow.body.deferral.is_some();
+    let pending = task.workflow.body.status.is_pending() && task.workflow.body.deferral.is_none();
+    let waiting = task.workflow.body.status.is_pending() && task.workflow.body.deferral.is_some();
     match options.status {
         Some(TaskListStatus::Pending) => pending,
         Some(TaskListStatus::Waiting) => waiting,
-        Some(TaskListStatus::Completed) => task.workflow.body.status == "completed",
+        Some(TaskListStatus::Completed) => task.workflow.body.status.is_completed(),
         // A withdrawal leaves the row readable but off the working board, so the
         // only way to reach one is to ask for it by name or to ask for all.
-        Some(TaskListStatus::Deleted) => task.workflow.body.status == "deleted",
+        Some(TaskListStatus::Deleted) => task.workflow.body.status.is_deleted(),
         None if options.all => true,
         None => {
             pending
@@ -297,17 +293,19 @@ fn task_relevance(board: &BoardAnswer, task: &BoardTask) -> u8 {
     }) {
         return 0;
     }
-    if task.workflow.body.status == "pending" && task.workflow.body.completion.is_none() {
+    if task.workflow.body.status.is_pending() {
         return if task.workflow.body.deferral.is_none() {
             1
         } else {
             2
         };
     }
-    match task.workflow.body.status.as_str() {
-        "completed" => 3,
-        "deleted" => 4,
-        _ => 5,
+    if task.workflow.body.status.is_completed() {
+        3
+    } else if task.workflow.body.status.is_deleted() {
+        4
+    } else {
+        unreachable!("workflow status is live, completed, or deleted")
     }
 }
 
@@ -326,10 +324,12 @@ fn render_task_list_row(task: &BoardTask, title: &str) -> String {
     // A terminal row shows how it ended, not the phase it stopped in. Falling
     // through to the phase would print a withdrawn task as `[todo]`, which is
     // the one thing it is not, and the predecessor prints `[deleted]` here.
-    let state = match task.workflow.body.status.as_str() {
-        "completed" => "done",
-        "deleted" => "deleted",
-        _ => task.workflow.body.phase.as_str(),
+    let state = if task.workflow.body.status.is_completed() {
+        "done"
+    } else if task.workflow.body.status.is_deleted() {
+        "deleted"
+    } else {
+        task.workflow.body.phase.as_str()
     };
     let priority = task
         .statement

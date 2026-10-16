@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn scope_selection_uses_offer_order_and_excludes_terminal_tasks() {
         let mut settled = task(4, "alpha.done");
-        settled.workflow.body.completion = Some(
+        settled.workflow.body.status = wire::WorkflowStatus::completed(
             "2026-09-23T06:00:00.000Z"
                 .parse()
                 .expect("fixture completion"),

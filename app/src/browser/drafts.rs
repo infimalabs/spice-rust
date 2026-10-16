@@ -305,15 +305,11 @@ pub(super) fn render_oops_file_notice(controls: &Controls, row: &BoardTask) -> H
 }
 
 fn open_draft(task: &BoardTask) -> bool {
-    task.statement.body.filing.is_draft()
-        && task.workflow.body.status == "pending"
-        && task.workflow.body.completion.is_none()
+    task.statement.body.filing.is_draft() && task.workflow.body.status.is_pending()
 }
 
 fn open_oops(task: &BoardTask) -> bool {
-    task.statement.body.filing.is_oops()
-        && task.workflow.body.status == "pending"
-        && task.workflow.body.completion.is_none()
+    task.statement.body.filing.is_oops() && task.workflow.body.status.is_pending()
 }
 
 /// The editable content of a new Draft, or of `row` when it exists.

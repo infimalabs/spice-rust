@@ -282,11 +282,8 @@ fn board_task(
             body: wire::WorkflowHead {
                 flow: vec!["todo".parse().expect("fixture phase")],
                 phase: "todo".parse().expect("fixture phase"),
-                status: "pending".to_owned(),
-                review: "unassigned".to_owned(),
-                assignment: None,
+                status: wire::WorkflowStatus::pending(),
                 deferral: None,
-                completion: None,
                 generation: 0,
             },
         },
@@ -1276,7 +1273,7 @@ fn browser_state_retains_oops_rows_with_their_authored_prose_and_public_project(
     assert_eq!(oops.statement.body.project, "app.correctness");
     assert_eq!(oops.statement.body.filing, wire::TaskFiling::Oops);
     assert!(!oops.visibility.is_hidden());
-    assert_eq!(oops.workflow.body.status, "pending");
+    assert!(oops.workflow.body.status.is_pending());
     let oops_json = serde_json::to_value(oops).expect("browser row serializes");
     assert_eq!(oops_json["presentation_title"], title);
     assert_eq!(

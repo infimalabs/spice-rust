@@ -522,7 +522,7 @@ impl<'a> WorkTask<'a> {
             .as_ref()
             .filter(|claim| claim.body.disposition == ClaimDisposition::Active)
             .map(|claim| &claim.body.actor)
-            .or(self.row.workflow.body.assignment.as_ref())
+            .or_else(|| self.row.workflow.body.status.reviewer())
     }
 
     #[must_use]
@@ -986,7 +986,7 @@ fn work_dependencies<'a>(
                 born,
                 task,
                 satisfied: task.is_none_or(|dependency| {
-                    board.tasks[dependency].workflow.body.completion.is_some()
+                    !board.tasks[dependency].workflow.body.status.is_pending()
                 }),
             }
         })
@@ -1128,7 +1128,7 @@ fn stem_key(task: &BoardTask) -> StemKey<'_> {
 /// that answer, and the allocator never offers a hidden row.
 fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> WorkAvailability {
     let workflow = &task.workflow.body;
-    if workflow.status != "pending" || workflow.completion.is_some() {
+    if !workflow.status.is_pending() {
         return WorkAvailability::Terminal;
     }
     if task.statement.body.filing.is_draft() {
