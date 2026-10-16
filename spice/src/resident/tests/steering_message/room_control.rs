@@ -357,10 +357,11 @@ fn the_operator_answers_only_its_own_pending_questions() {
 #[test]
 fn the_operator_replies_to_a_lane_item_as_direction() {
     let lanes = Lanes::new("control-reply");
+    let room = lanes.room("dVrD244Jd");
     let key = lanes.direct(SENDER, 20, "ship when green");
     lanes
-        .say(SENDER, &format!("MSG #{key}: shipped"))
-        .expect("the MSG publishes");
+        .say(SENDER, &format!("MSG #{key} #{room}: shipped"))
+        .expect("the room MSG publishes");
     let question = asked(&lanes.say(SENDER, &format!("ASK #{key}: and then?")));
     let told = lanes
         .inbox_items(&[])
@@ -394,6 +395,18 @@ fn the_operator_replies_to_a_lane_item_as_direction() {
         .filter(|directive| directive.text == format!("RE #{key}: merge it"))
         .count();
     assert_eq!(returned, 1, "the reply returns once to the lane");
+    let history = lanes.room_page(&[room.as_str()]);
+    let texts = history["page"]["rows"]
+        .as_array()
+        .expect("room history rows")
+        .iter()
+        .map(|row| row["content"]["text"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        texts,
+        [Some("shipped"), Some("merge it")],
+        "the reply records in the room its item names"
+    );
     assert_eq!(reason(&reply(83, &told, "again")), "room::item-settled");
     lanes.finish();
 }
@@ -539,11 +552,17 @@ fn operator_items_page_and_settle_exactly() {
             QuestionResultState::Declined { .. }
         ));
     }
+    let directions = lanes.pending(SENDER).len();
     committed(&lanes.dispose(76, RoomReceiptDisposition::Ack, &[told.clone()], "seen"));
     assert!(matches!(
         lanes.item_state(&told),
         RoomReceiptState::Acked { .. }
     ));
+    assert_eq!(
+        lanes.pending(SENDER).len(),
+        directions,
+        "settling the item sends no reply"
+    );
     assert!(lanes.inbox_items(&[]).is_empty());
     lanes.finish();
 }
