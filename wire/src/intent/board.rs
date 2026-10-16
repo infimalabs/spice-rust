@@ -1348,6 +1348,13 @@ pub struct BoardAnswer {
     pub schema: u32,
     /// Greatest durable fact position covered by every returned head.
     pub cursor: crate::Seq,
+    /// Current repository OOPS generation, absent before its first transition.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub oops_generation: Option<Positioned<crate::OopsGenerationHead>>,
     /// Principal derived from the capability that requested this snapshot.
     pub principal: Actor,
     /// Public project route captured by the authority that validated the tasks.

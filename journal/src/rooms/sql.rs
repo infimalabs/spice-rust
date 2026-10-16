@@ -20,6 +20,7 @@ pub(crate) struct Stored<'a> {
     connection: &'a Connection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
     task_statements: BTreeMap<String, Seq>,
+    task_intents: BTreeMap<String, Option<wire::TaskIntent>>,
     active_claims: BTreeMap<String, Option<Seq>>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
     directions: BTreeMap<String, Direction>,
@@ -32,6 +33,7 @@ impl<'a> Stored<'a> {
             connection,
             tasks: BTreeMap::new(),
             task_statements: BTreeMap::new(),
+            task_intents: BTreeMap::new(),
             active_claims: BTreeMap::new(),
             transcripts: BTreeMap::new(),
             directions: BTreeMap::new(),
@@ -67,6 +69,25 @@ impl Authority for Stored<'_> {
 
     fn set_task(&mut self, task: &TaskStamp, preparation: Option<TaskPreparation>) {
         self.tasks.insert(task.as_str().to_owned(), preparation);
+    }
+    fn task_intent(&self, task: &TaskStamp) -> Result<Option<Option<wire::TaskIntent>>, Refusal> {
+        if let Some(intent) = self.task_intents.get(task.as_str()) {
+            return Ok(Some(intent.clone()));
+        }
+        let body = self
+            .connection
+            .query_row(
+                "SELECT body FROM task_heads WHERE stamp = ?1",
+                [task.as_str()],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()?;
+        body.map(|body| Ok(wire::decode::<wire::TaskHead>(&body)?.intent))
+            .transpose()
+    }
+
+    fn set_task_intent(&mut self, task: &TaskStamp, intent: Option<wire::TaskIntent>) {
+        self.task_intents.insert(task.to_string(), intent);
     }
     fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal> {
         if let Some(statement) = self.task_statements.get(task.as_str()) {
@@ -189,6 +210,16 @@ impl Authority for Stored<'_> {
             .connection
             .query_row(
                 "SELECT body FROM group_partition WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+    fn oops_generation(&self) -> Result<Option<Vec<u8>>, Refusal> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT body FROM oops_generation_head WHERE singleton = 1",
                 [],
                 |row| row.get(0),
             )
@@ -381,7 +412,9 @@ fn apply(connection: &Connection, change: Change) -> Result<(), Refusal> {
                 params![room, publication, sql(seq)],
             )?;
         }
-        Change::GroupPartition { seq, body } => put_partition(connection, seq, &body)?,
+        singleton @ (Change::GroupPartition { .. } | Change::OopsGeneration { .. }) => {
+            apply_singleton(connection, singleton)?
+        }
         Change::Proposal { subject, row } => insert_proposal(connection, &subject, &row)?,
         Change::Authorization { outputs, row } => {
             for output in outputs {
@@ -449,6 +482,14 @@ fn apply(connection: &Connection, change: Change) -> Result<(), Refusal> {
     Ok(())
 }
 
+fn apply_singleton(connection: &Connection, change: Change) -> Result<(), rusqlite::Error> {
+    match change {
+        Change::GroupPartition { seq, body } => put_partition(connection, seq, &body),
+        Change::OopsGeneration { seq, body } => put_oops_generation(connection, seq, &body),
+        _ => unreachable!("only singleton projection changes reach this helper"),
+    }
+}
+
 /// Fold a leave only into a Design whose maturity a request or contribution
 /// already began; any other room has no maturity to answer.
 fn observe_leave(connection: &Connection, leave: &wire::rooms::RoomLeft) -> Result<(), Refusal> {
@@ -500,6 +541,19 @@ fn put_partition(connection: &Connection, seq: u64, body: &[u8]) -> Result<(), r
     Ok(())
 }
 
+fn put_oops_generation(
+    connection: &Connection,
+    seq: u64,
+    body: &[u8],
+) -> Result<(), rusqlite::Error> {
+    connection.execute(
+        "INSERT INTO oops_generation_head(singleton, head_seq, body) VALUES (1, ?1, ?2) \
+         ON CONFLICT(singleton) DO UPDATE SET head_seq = excluded.head_seq, body = excluded.body",
+        params![sql(seq), body],
+    )?;
+    Ok(())
+}
+
 fn insert_proposal(
     connection: &Connection,
     subject: &str,
@@ -541,6 +595,18 @@ fn load_maturity(
     Ok((notices, maturity))
 }
 
+fn load_oops_generation(
+    connection: &Connection,
+) -> Result<Option<(u64, Vec<u8>)>, rusqlite::Error> {
+    connection
+        .query_row(
+            "SELECT head_seq, body FROM oops_generation_head WHERE singleton = 1",
+            [],
+            |row| Ok((unsql(row.get(0)?), row.get(1)?)),
+        )
+        .optional()
+}
+
 impl Projection {
     /// Read every stored projection row.
     pub(crate) fn load(connection: &Connection) -> Result<Self, rusqlite::Error> {
@@ -553,6 +619,7 @@ impl Projection {
             )?,
             notices,
             maturity,
+            oops_generation: load_oops_generation(connection)?,
             partition: connection
                 .query_row(
                     "SELECT head_seq, body FROM group_partition WHERE singleton = 1",
@@ -635,9 +702,9 @@ pub(crate) fn write_projection(
 ) -> Result<(), rusqlite::Error> {
     connection.execute_batch(
         "DELETE FROM room_publications; DELETE FROM design_notices; DELETE FROM design_maturity; \
-         DELETE FROM group_partition; DELETE FROM proposal_heads; DELETE FROM authorization_heads; \
-         DELETE FROM room_cursors; DELETE FROM room_horizons; DELETE FROM room_directions; \
-         DELETE FROM room_shelvings; DELETE FROM task_evidence;",
+         DELETE FROM oops_generation_head; DELETE FROM group_partition; DELETE FROM proposal_heads; \
+         DELETE FROM authorization_heads; DELETE FROM room_cursors; DELETE FROM room_horizons; \
+         DELETE FROM room_directions; DELETE FROM room_shelvings; DELETE FROM task_evidence;",
     )?;
     for ((room, publication), seq) in &projection.publications {
         connection.execute(
@@ -656,6 +723,9 @@ pub(crate) fn write_projection(
             "INSERT INTO design_maturity(design, body) VALUES (?1, ?2)",
             params![design, body],
         )?;
+    }
+    if let Some((seq, body)) = &projection.oops_generation {
+        put_oops_generation(connection, *seq, body)?;
     }
     if let Some((seq, body)) = &projection.partition {
         put_partition(connection, *seq, body)?;

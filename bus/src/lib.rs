@@ -154,6 +154,7 @@ mod runtime {
         allocation_faults: Arc<[AllocationFault]>,
         trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
         residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
+        oops_generation: Option<JournalHead<journal::crossing::OopsGenerationHead>>,
         materialization_steps: u64,
         task_head_update_visits: usize,
     }
@@ -290,6 +291,14 @@ mod runtime {
         #[must_use]
         pub fn residency(&self) -> Option<&JournalHead<journal::crossing::ResidencyHead>> {
             self.residency.as_ref()
+        }
+
+        /// Current repository OOPS generation at this board barrier.
+        #[must_use]
+        pub fn oops_generation(
+            &self,
+        ) -> Option<&JournalHead<journal::crossing::OopsGenerationHead>> {
+            self.oops_generation.as_ref()
         }
 
         /// Number of bounded retained-fact pages applied for this generation.

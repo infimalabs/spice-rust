@@ -38,6 +38,7 @@ const PINNED: &[(&str, &str)] = &[
     ("TaskDeleted", "task::deleted"),
     ("TaskClosed", "task::closed"),
     ("TaskConcluded", "task::concluded"),
+    ("OopsGenerationAdvanced", "oops::generation"),
     ("OutputControlled", "task::controlled"),
     ("ClaimWon", "claim::won"),
     ("ClaimCarried", "claim::carried"),

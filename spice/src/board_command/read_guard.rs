@@ -140,6 +140,7 @@ fn validated_snapshot_from_with_occupant(
         answer: BoardAnswer {
             schema: journal::SCHEMA_VERSION,
             cursor,
+            oops_generation: observed.oops_generation().map(positioned),
             principal,
             project_policy: BoardProjectPolicy {
                 public_min_depth: projects.public_min_depth(),

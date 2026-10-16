@@ -24,13 +24,14 @@ fn add_line(
     text: &str,
 ) -> TaskHandle {
     let current = board(bus, epoch, Actor::Operator);
+    let generation = current.oops_generation.as_ref();
     let mut expected = vec![
         Witness::Absence {
             task: report.clone(),
         },
-        Witness::Barrier {
-            name: "board".parse().expect("board barrier name"),
-            digest: board_barrier(&current),
+        Witness::OopsGeneration {
+            head: generation.map(|head| head.position),
+            design: generation.and_then(|head| head.body.design.clone()),
         },
     ];
     if let Some(heads) = current
@@ -65,26 +66,24 @@ fn add_line(
 }
 
 #[test]
-fn concurrent_first_reports_cannot_open_two_oops_designs() {
+fn concurrent_distinct_first_reports_converge_on_one_oops_design() {
     let (root, bus, epoch, _seats) = fixture("oops-design-first-race", 0);
-    let design_stamp = task(1_760_000_000_100_000);
-    let first_stamp = task(1_760_000_000_100_001);
-    let second_stamp = task(1_760_000_000_100_002);
-    let initial = board(&bus, epoch, Actor::Operator);
-    let expected = |report: TaskStamp| {
+    let first_design = task(1_760_000_000_100_000);
+    let second_design = task(1_760_000_000_100_001);
+    let first_report = task(1_760_000_000_100_002);
+    let second_report = task(1_760_000_000_100_003);
+    let expected = |design: TaskStamp, report: TaskStamp| {
         vec![
             Witness::Absence { task: report },
-            Witness::Absence {
-                task: design_stamp.clone(),
-            },
-            Witness::Barrier {
-                name: "board".parse().expect("board barrier name"),
-                digest: board_barrier(&initial),
+            Witness::Absence { task: design },
+            Witness::OopsGeneration {
+                head: None,
+                design: None,
             },
         ]
     };
-    let add = |text: &str| TaskOopsAdd {
-        design: design_stamp.clone(),
+    let add = |design: TaskStamp, text: &str| TaskOopsAdd {
+        design,
         title: text.to_owned(),
         description: text.to_owned(),
         origin: Some(fixture_origin()),
@@ -95,22 +94,31 @@ fn concurrent_first_reports_cannot_open_two_oops_designs() {
         epoch,
         Actor::Operator,
         CommandKind::TaskOopsAdd,
-        expected(first_stamp),
-        &add("First concurrent report"),
+        expected(first_design.clone(), first_report),
+        &add(first_design.clone(), "First concurrent report"),
     ));
-    let facts = fact_count(&bus);
-    let refused = issue(
+    let stale = issue(
         &bus,
         epoch,
         Actor::Operator,
         CommandKind::TaskOopsAdd,
-        expected(second_stamp),
-        &add("Second concurrent report"),
+        expected(second_design.clone(), second_report.clone()),
+        &add(second_design, "Second concurrent report"),
     );
-    assert!(matches!(refused, Outcome::Refusal(_)), "{refused:?}");
-    assert_eq!(fact_count(&bus), facts);
+    assert!(
+        matches!(&stale, Outcome::Refusal(refusal) if refusal.reason() == "board::witness-moved"),
+        "{stale:?}"
+    );
+    add_line(
+        &bus,
+        epoch,
+        &first_design,
+        second_report,
+        "Second concurrent report",
+    );
+    let current = board(&bus, epoch, Actor::Operator);
     assert_eq!(
-        board(&bus, epoch, Actor::Operator)
+        current
             .tasks
             .iter()
             .filter(|heads| {
@@ -120,6 +128,64 @@ fn concurrent_first_reports_cannot_open_two_oops_designs() {
             .count(),
         1
     );
+    assert_eq!(
+        current
+            .tasks
+            .iter()
+            .filter(|heads| {
+                heads.statement.body.intent == Some(wire::TaskIntent::Plan)
+                    && heads
+                        .statement
+                        .body
+                        .preparation
+                        .as_ref()
+                        .is_some_and(|preparation| preparation.controller == first_design)
+            })
+            .count(),
+        2
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn unrelated_board_churn_does_not_refuse_oops_intake() {
+    let (root, bus, epoch, _seats) = fixture("oops-design-unrelated-churn", 0);
+    let design = task(1_760_000_000_150_000);
+    let report = task(1_760_000_000_150_001);
+    let expected = vec![
+        Witness::Absence {
+            task: report.clone(),
+        },
+        Witness::Absence {
+            task: design.clone(),
+        },
+        Witness::OopsGeneration {
+            head: None,
+            design: None,
+        },
+    ];
+    add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "1B6QBLpz",
+        "Unrelated board mutation",
+        Some("todo"),
+    );
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskOopsAdd,
+        expected,
+        &TaskOopsAdd {
+            design,
+            title: "Report after unrelated churn".to_owned(),
+            description: "Report after unrelated churn".to_owned(),
+            origin: Some(fixture_origin()),
+            project: Some("board.test".to_owned()),
+        },
+    ));
     clean(&root, bus);
 }
 

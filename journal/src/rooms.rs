@@ -98,6 +98,15 @@ CREATE TABLE group_partition (
 ) STRICT;
 "#;
 
+/// Singleton repository OOPS-generation head.
+pub(crate) const OOPS_GENERATION_SCHEMA_SQL: &str = r#"
+CREATE TABLE oops_generation_head (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+    body BLOB NOT NULL
+) STRICT;
+"#;
+
 /// Per-lane room catch-up cursors, created with the current schema.
 pub(crate) const CURSOR_SCHEMA_SQL: &str = r#"
 CREATE TABLE room_cursors (
@@ -178,6 +187,8 @@ pub(crate) struct Projection {
     pub(crate) notices: BTreeMap<(String, u64), ()>,
     /// Design to its canonical bounded maturity accumulator.
     pub(crate) maturity: BTreeMap<String, Vec<u8>>,
+    /// Repository OOPS generation's head position and canonical body.
+    pub(crate) oops_generation: Option<(u64, Vec<u8>)>,
     /// The working-group partition's head position and canonical body.
     pub(crate) partition: Option<(u64, Vec<u8>)>,
     /// Canonical proposal subject to its write-once head.
@@ -211,6 +222,10 @@ pub(crate) trait Authority {
     fn task(&self, task: &TaskStamp) -> Result<Option<Option<TaskPreparation>>, Refusal>;
     /// Record a task birth or an admitted output control.
     fn set_task(&mut self, task: &TaskStamp, preparation: Option<TaskPreparation>);
+    /// Declared intent of an existing task.
+    fn task_intent(&self, task: &TaskStamp) -> Result<Option<Option<wire::TaskIntent>>, Refusal>;
+    /// Record an admitted task's declared intent.
+    fn set_task_intent(&mut self, task: &TaskStamp, intent: Option<wire::TaskIntent>);
     /// Current statement head position of one task, when it exists.
     fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal>;
     /// Record one task statement mutation.
@@ -236,6 +251,8 @@ pub(crate) trait Authority {
     fn horizon(&self, lane: &str) -> Result<bool, Refusal>;
     /// The canonical body of the current working-group partition.
     fn group_partition(&self) -> Result<Option<Vec<u8>>, Refusal>;
+    /// Canonical body of the current repository OOPS generation.
+    fn oops_generation(&self) -> Result<Option<Vec<u8>>, Refusal>;
     /// The canonical body of one proposal head.
     fn proposal(&self, subject: &str) -> Result<Option<Vec<u8>>, Refusal>;
     /// The actor that recorded one proposal head.
@@ -296,6 +313,10 @@ pub(crate) enum Change {
         seq: u64,
         body: Vec<u8>,
     },
+    OopsGeneration {
+        seq: u64,
+        body: Vec<u8>,
+    },
     Proposal {
         subject: String,
         row: ProposalRow,
@@ -347,6 +368,9 @@ impl Projection {
             }
             Change::GroupPartition { seq, body } => {
                 self.partition = Some((seq, body));
+            }
+            Change::OopsGeneration { seq, body } => {
+                self.oops_generation = Some((seq, body));
             }
             Change::Proposal { subject, row } => {
                 self.proposals.insert(subject, row);
@@ -432,6 +456,7 @@ impl Projection {
 pub(crate) struct History {
     projection: Projection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
+    task_intents: BTreeMap<String, Option<wire::TaskIntent>>,
     task_statements: BTreeMap<String, Seq>,
     active_claims: BTreeMap<String, Seq>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
@@ -476,6 +501,13 @@ impl Authority for History {
 
     fn set_task(&mut self, task: &TaskStamp, preparation: Option<TaskPreparation>) {
         self.tasks.insert(task.as_str().to_owned(), preparation);
+    }
+    fn task_intent(&self, task: &TaskStamp) -> Result<Option<Option<wire::TaskIntent>>, Refusal> {
+        Ok(self.task_intents.get(task.as_str()).cloned())
+    }
+
+    fn set_task_intent(&mut self, task: &TaskStamp, intent: Option<wire::TaskIntent>) {
+        self.task_intents.insert(task.to_string(), intent);
     }
     fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal> {
         Ok(self.task_statements.get(task.as_str()).copied())
@@ -543,6 +575,13 @@ impl Authority for History {
         Ok(self
             .projection
             .partition
+            .as_ref()
+            .map(|(_, body)| body.clone()))
+    }
+    fn oops_generation(&self) -> Result<Option<Vec<u8>>, Refusal> {
+        Ok(self
+            .projection
+            .oops_generation
             .as_ref()
             .map(|(_, body)| body.clone()))
     }
@@ -689,6 +728,9 @@ pub(crate) fn fold(
     actor: &Actor,
     fact: &AnyFact,
 ) -> Result<(), Refusal> {
+    if let Some(body) = fact.read::<wire::body::OopsGenerationAdvanced>() {
+        return advance_oops_generation(authority, seq, &body);
+    }
     for task in fact.revised_tasks() {
         authority.set_task_statement(task, seq);
     }
@@ -713,10 +755,12 @@ pub(crate) fn fold(
     }
     if let Some((task, preparation)) = fact.task_preparation() {
         authority.set_task(task, preparation.cloned());
+        if let Some((_, intent)) = fact.declared_intent() {
+            authority.set_task_intent(task, intent);
+        }
         return Ok(());
     }
-    if let Some((task, _)) = fact.declared_intent() {
-        // Creation returned above, so this is an edit changing declared intent.
+    if let Some((task, intent)) = fact.declared_intent() {
         // Intent is what separates an associated preparation from a gated
         // output, so an associated task keeps the intent it was created with.
         if let Some(Some(preparation)) = authority.task(task)? {
@@ -725,6 +769,7 @@ pub(crate) fn fold(
                 preparation.controller
             ));
         }
+        authority.set_task_intent(task, intent);
         return Ok(());
     }
     if let Some(body) = fact.read::<wire::body::JournalIngested>() {
@@ -783,6 +828,49 @@ pub(crate) fn fold(
         return store_partition(authority, seq, &current, &arranged.partition);
     }
     fold_preparation(authority, seq, actor, fact).unwrap_or(Ok(()))
+}
+
+fn advance_oops_generation(
+    authority: &mut impl Authority,
+    seq: Seq,
+    advanced: &wire::body::OopsGenerationAdvanced,
+) -> Result<(), Refusal> {
+    let current = authority
+        .oops_generation()?
+        .map(|body| wire::decode::<wire::OopsGenerationHead>(&body))
+        .transpose()?
+        .unwrap_or_default();
+    if current.revision.checked_add(1) != Some(advanced.revision)
+        || advanced.from != current.design
+        || advanced.from.is_some() == advanced.to.is_some()
+    {
+        return unsound(format!(
+            "OOPS generation transition at {seq} does not advance its exact preceding head"
+        ));
+    }
+    if let Some(design) = &advanced.to {
+        match authority.task_intent(design)? {
+            Some(Some(wire::TaskIntent::OpportunisticDesign)) => {}
+            Some(_) => {
+                return unsound(format!(
+                    "OOPS generation at {seq} names task {design} without opportunistic Design intent"
+                ));
+            }
+            None => {
+                return unsound(format!(
+                    "OOPS generation at {seq} names absent task {design}"
+                ));
+            }
+        }
+    }
+    let head = wire::OopsGenerationHead {
+        revision: advanced.revision,
+        design: advanced.to.clone(),
+    };
+    authority.change(Change::OopsGeneration {
+        seq: seq.get(),
+        body: wire::encode(&head)?,
+    })
 }
 
 /// Admit one candidate, critique, coverage, decision, withdrawal, or

@@ -331,6 +331,7 @@ fn board_response_with_requirements(
         blocked: Vec::new(),
         workflow_waiting: Vec::new(),
         design_cycles: Default::default(),
+        oops_generation: None,
         origins: Default::default(),
         acknowledgments: Default::default(),
         closures: Default::default(),

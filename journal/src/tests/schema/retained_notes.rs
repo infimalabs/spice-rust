@@ -4,6 +4,7 @@ use super::*;
 use wire::rooms::{RoomAuthorityStamp, RoomPublicationContent, RoomPublished};
 
 const TASK: &str = "1kKRRsDP";
+const PREDECESSOR_SCHEMA: u32 = crate::migrate::RETAINED_NOTES_SCHEMA - 1;
 
 fn at(text: &str) -> Instant {
     text.parse().unwrap()
@@ -64,7 +65,7 @@ fn retained_notes_cross_into_their_rooms_once_without_audits() {
     );
     note(&mut journal, TASK, "second observation", later);
     let current = index(&journal);
-    restore_predecessor(&journal, SCHEMA_VERSION - 1);
+    restore_predecessor(&journal, PREDECESSOR_SCHEMA);
     assert_eq!(index(&journal), [], "a predecessor's rooms hold no note");
 
     let migration = crate::migrate::admit(&mut journal.connection)
@@ -72,7 +73,7 @@ fn retained_notes_cross_into_their_rooms_once_without_audits() {
         .unwrap();
     assert_eq!(
         (migration.from(), migration.to()),
-        (SCHEMA_VERSION - 1, SCHEMA_VERSION)
+        (PREDECESSOR_SCHEMA, SCHEMA_VERSION)
     );
     assert_eq!(
         index(&journal),
@@ -121,7 +122,7 @@ fn notes_sharing_one_identity_in_a_room_roll_back_the_crossing() {
     let mut journal = authority_fixture();
     let instant = "2030-04-12T18:44:09.001Z";
     note(&mut journal, TASK, "taken", instant);
-    restore_predecessor(&journal, SCHEMA_VERSION - 1);
+    restore_predecessor(&journal, PREDECESSOR_SCHEMA);
     // Position 1003 shares position 3's last three digits in one millisecond.
     let mut same = fact(
         1_003,
@@ -138,5 +139,5 @@ fn notes_sharing_one_identity_in_a_room_roll_back_the_crossing() {
         .connection
         .query_row("SELECT version FROM journal_schema", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, SCHEMA_VERSION - 1);
+    assert_eq!(version, PREDECESSOR_SCHEMA);
 }

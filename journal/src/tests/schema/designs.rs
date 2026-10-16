@@ -296,3 +296,79 @@ fn an_undecodable_open_design_refuses_before_design_shape_migration() {
         "a refused crossing leaves the predecessor identity"
     );
 }
+
+#[test]
+fn retained_opportunistic_design_initializes_one_verified_generation() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let design = add(
+        &mut journal,
+        Shape {
+            offset: 100,
+            intent: Some(wire::TaskIntent::OpportunisticDesign),
+            flow: &["design"],
+            phase: "design",
+            status: "pending",
+            review: "none",
+            preparation: None,
+            dependencies: Vec::new(),
+        },
+    );
+    restore_predecessor(&journal, crate::migrate::OOPS_GENERATION_SCHEMA - 1);
+    let migration = crate::migrate::admit(&mut journal.connection)
+        .expect("retained OOPS authority crosses")
+        .expect("predecessor crosses");
+    assert_eq!(
+        (migration.from(), migration.to()),
+        (crate::migrate::OOPS_GENERATION_SCHEMA - 1, SCHEMA_VERSION)
+    );
+    let body = journal
+        .connection
+        .query_row(
+            "SELECT body FROM oops_generation_head WHERE singleton = 1",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .expect("generation head exists");
+    assert_eq!(
+        wire::decode::<wire::OopsGenerationHead>(&body).expect("generation head decodes"),
+        wire::OopsGenerationHead {
+            revision: 1,
+            design: Some(design),
+        }
+    );
+    journal.verify().expect("crossed generation verifies");
+}
+
+#[test]
+fn retained_ambiguous_opportunistic_designs_refuse_their_owning_schema() {
+    let mut journal = Journal::in_memory().expect("journal");
+    for offset in [200, 201] {
+        add(
+            &mut journal,
+            Shape {
+                offset,
+                intent: Some(wire::TaskIntent::OpportunisticDesign),
+                flow: &["design"],
+                phase: "design",
+                status: "pending",
+                review: "none",
+                preparation: None,
+                dependencies: Vec::new(),
+            },
+        );
+    }
+    restore_predecessor(&journal, crate::migrate::OOPS_GENERATION_SCHEMA - 1);
+    let error = crate::migrate::admit(&mut journal.connection)
+        .expect_err("ambiguous OOPS authority refuses");
+    assert!(
+        matches!(
+            error,
+            OpenError::Migration(MigrationError::RetainedRow {
+                table: "task_heads",
+                release: "schema-76",
+                ..
+            })
+        ),
+        "{error}"
+    );
+}
