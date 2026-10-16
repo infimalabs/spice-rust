@@ -56,7 +56,7 @@ fn retain_citing(
 
 /// Withdraw `candidate` as `actor`, witnessed as the withdraw client
 /// witnesses it.
-fn withdraw(
+pub(super) fn withdraw(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,
