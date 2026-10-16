@@ -576,7 +576,8 @@ owns each rule summarized here.
   proposal or abandonment. Contributions, operator room posts, nudges, returned
   or rejecting decisions, and the final settlement of released work count;
   asks, notices, leaves, and group movement do not. Until then the Design
-  gathers input, awaits the operator's decision, or waits on its released work.
+  gathers input, awaits the operator's decision, or waits on its released
+  work, deferred work included.
 
   A Design
   [stays open until the operator concludes it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
@@ -621,10 +622,11 @@ owns each rule summarized here.
   acceptance-bearing executable tasks under itself; those tasks wait for its
   positive review and their ordinary dependencies, with no Design proposal,
   selection, or execution authorization. A selected Plan therefore runs, and
-  its own review releases its tasks. An open Design with an output it
-  constructed that is still unselected
+  its own review releases its tasks. An open Design with an undecided proposal
   [waits on the operator](invariants/identity.md#work-a-design-awaiting-selection-waits-on-the-operator-without-a-new-state):
   no lane is offered or woken for it, and status counts it under `selection`.
+  An output a pass constructed without proposing it awaits no decision; it
+  stays gated, and its Design follows the pass cycle.
 
   A [gather task](invariants/identity.md#work-a-gather-task-collects-evidence-for-an-active-design)
   tries an idea for an open, active Design without the operator authorizing
