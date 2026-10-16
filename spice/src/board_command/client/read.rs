@@ -121,21 +121,6 @@ pub(super) fn client_show(
                 Ok(artifacts) => artifacts,
                 Err(outcome) => return outcome,
             };
-            let acknowledgments = board
-                .acknowledgments
-                .get(&task.statement.body.born)
-                .map_or(&[][..], Vec::as_slice);
-            let origin_context = if options.context {
-                match task_show_origin_context(
-                    repository,
-                    &task_acknowledgment_keys(&task.statement.body.provenance, acknowledgments),
-                ) {
-                    Ok(context) => context,
-                    Err(outcome) => return outcome,
-                }
-            } else {
-                None
-            };
             let principals = if options.history {
                 match task_show_principals(repository) {
                     Ok(principals) => Some(principals),
@@ -152,23 +137,26 @@ pub(super) fn client_show(
             } else {
                 None
             };
+            let history = TaskShowHistory::of(&board, task, principals.as_ref());
+            let origin_context = if options.context {
+                match task_show_origin_context(
+                    repository,
+                    &task_acknowledgment_keys(
+                        &task.statement.body.provenance,
+                        history.acknowledgments,
+                    ),
+                ) {
+                    Ok(context) => context,
+                    Err(outcome) => return outcome,
+                }
+            } else {
+                None
+            };
             let text = match task_show_bounded(
                 &board,
                 task,
                 &artifacts,
-                TaskShowHistory {
-                    notes: board
-                        .notes
-                        .get(&task.statement.body.born)
-                        .map_or(&[], Vec::as_slice),
-                    acknowledgments,
-                    closure: board.closures.get(&task.statement.body.born),
-                    steps: board
-                        .steps
-                        .get(&task.statement.body.born)
-                        .map_or(&[], Vec::as_slice),
-                    principals: principals.as_ref(),
-                },
+                history,
                 origin_context.as_deref(),
                 room,
                 &options,
@@ -371,6 +359,25 @@ pub(in crate::board_command) struct TaskShowHistory<'a> {
     pub(in crate::board_command) closure: Option<&'a wire::intent::TaskDetailClosure>,
     pub(in crate::board_command) steps: &'a [wire::intent::TaskDetailStep],
     pub(in crate::board_command) principals: Option<&'a PrincipalDirectory>,
+}
+
+impl<'a> TaskShowHistory<'a> {
+    /// `task`'s history as a notes-bearing `board` read carries it, with
+    /// `principals` naming its human authors when they were read.
+    pub(in crate::board_command) fn of(
+        board: &'a BoardAnswer,
+        task: &BoardTask,
+        principals: Option<&'a PrincipalDirectory>,
+    ) -> Self {
+        let born = &task.statement.body.born;
+        Self {
+            notes: board.notes.get(born).map_or(&[], Vec::as_slice),
+            acknowledgments: board.acknowledgments.get(born).map_or(&[], Vec::as_slice),
+            closure: board.closures.get(born),
+            steps: board.steps.get(born).map_or(&[], Vec::as_slice),
+            principals,
+        }
+    }
 }
 
 fn task_flow_line(flow: &[wire::Phase]) -> String {

@@ -83,6 +83,29 @@ fn detail_with_repository(
     .expect("board command owns task detail")
 }
 
+/// Append a note as a release before room observations recorded it.
+fn retained_note(bus: &Bus, actor: Actor, task: &wire::TaskStamp, text: &str) {
+    let mut write = JournalWrite::new(
+        actor,
+        format!("task:{task}").parse().expect("fixture origin"),
+        Instant::new(jiff::Timestamp::now()).expect("current fixture instant"),
+        Producer::CommandDoor,
+    );
+    write
+        .fact(
+            body::TaskNoted {
+                task: task.clone(),
+                note: text.to_owned(),
+            },
+            FactCause::Root,
+        )
+        .expect("retained note builds");
+    assert!(matches!(
+        bus.commit(write).expect("retained note reaches writer"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
 #[test]
 fn task_detail_returns_one_task_and_ordered_attributed_notes() {
     let (root, bus, epoch, seats) = fixture("task-detail", 1);
@@ -98,20 +121,21 @@ fn task_detail_returns_one_task_and_ordered_attributed_notes() {
         (Actor::Operator, "operator observation"),
         (Actor::Lane(seats[0].lane), "resident observation"),
     ] {
-        assert_committed(issue(
-            &bus,
-            epoch,
-            actor,
-            CommandKind::TaskNote,
-            vec![Witness::Existence {
-                task: statement.clone(),
-            }],
-            &TaskNote {
-                task: task.clone(),
-                note: text.to_owned(),
-            },
-        ));
+        retained_note(&bus, actor, &statement, text);
     }
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskNote,
+        vec![Witness::Existence {
+            task: statement.clone(),
+        }],
+        &TaskNote {
+            task: task.clone(),
+            note: "room observation".to_owned(),
+        },
+    ));
 
     let Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(position),
@@ -159,22 +183,19 @@ fn task_show_prints_only_the_named_tasks_notes() {
     let dependency_born = stamp("task-show-notes-dependency");
     let dependency = add_born(&bus, epoch, dependency_born.clone(), "Dependency task");
     super::hidden::add_dependency(&bus, epoch, &shown, &dependency);
-    let note = |task: &TaskHandle, born: &wire::TaskStamp, text: &str| {
-        assert_committed(issue(
-            &bus,
-            epoch,
-            Actor::Operator,
-            CommandKind::TaskNote,
-            vec![Witness::Existence { task: born.clone() }],
-            &TaskNote {
-                task: task.clone(),
-                note: text.to_owned(),
-            },
-        ));
-    };
-    note(&shown, &shown_born, "first line\n\nthird line");
-    note(&dependency, &dependency_born, "dependency evidence");
-    note(&shown, &shown_born, "later evidence");
+    retained_note(
+        &bus,
+        Actor::Operator,
+        &shown_born,
+        "first line\n\nthird line",
+    );
+    retained_note(
+        &bus,
+        Actor::Operator,
+        &dependency_born,
+        "dependency evidence",
+    );
+    retained_note(&bus, Actor::Operator, &shown_born, "later evidence");
 
     let read = |notes: bool| match issue(
         &bus,

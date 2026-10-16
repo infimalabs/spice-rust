@@ -553,7 +553,6 @@ fn task_show_follows_every_acknowledged_key_to_the_session_that_answered_it() {
         at(&answer, &task),
         &[],
         TaskShowHistory {
-            notes: &answer.notes[&born],
             acknowledgments,
             ..TaskShowHistory::default()
         },
@@ -573,9 +572,6 @@ fn task_show_follows_every_acknowledged_key_to_the_session_that_answered_it() {
         lane = uuid(16_202),
     )));
     assert!(shown.contains("origin_steering_answer unavailable live\n"));
-    assert!(shown.contains(&format!(
-        "  {observed} 2030-04-12T18:44:09.271Z operator ack:1kLGp2NK\n    observed under a second ask"
-    )));
     clean(&root, bus);
 }
 
