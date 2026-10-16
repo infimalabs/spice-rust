@@ -452,6 +452,23 @@ impl Lanes {
             _ => None,
         }
     }
+
+    /// `task next` admitted from a snapshot taken before later commits.
+    fn next_from(
+        &self,
+        config: &SurfaceConfig,
+        observed: &bus::TaskSnapshot,
+        lane: u8,
+    ) -> Result<Option<wire::intent::NextWorkState>, Outcome<wire::intent::CommandAnswer>> {
+        crate::board_command::read_next_work(
+            &self.bus,
+            observed,
+            Actor::Lane(test_uuid(lane)),
+            &config.projects,
+            &config.allocation,
+        )
+        .map(|answer| answer.next)
+    }
 }
 
 #[test]
@@ -728,6 +745,56 @@ fn a_design_edit_keeps_the_request_owed() {
         lanes.noticed().len(),
         1,
         "the edit records no second request"
+    );
+    lanes.finish();
+}
+
+#[test]
+fn request_admission_ignores_unrelated_writes_and_refuses_relevant_races() {
+    let lanes = Lanes::new("design-request-admission");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let task = lanes.claimed("dVrD245Kc", FIRST);
+    let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    lanes.complete(&task, MATCHING);
+
+    let stale = lanes.bus.task_snapshot().expect("task snapshot reads");
+    lanes.retitle(&design, "Page room catch-up by cursor");
+    let Err(Outcome::Refusal(refusal)) = lanes.next_from(&config, &stale, FIRST) else {
+        panic!("a Design edit after selection must refuse the stale admission");
+    };
+    assert_eq!(refusal.reason(), "board::witness-moved");
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::witness),
+        Some("room::awareness-stale: the Design statement moved")
+    );
+    assert!(lanes.noticed().is_empty(), "a stale plan records nothing");
+
+    let planned = lanes.bus.task_snapshot().expect("task snapshot reads");
+    let _unrelated = lanes.claimed("dVrD245Kp", SECOND);
+    let Ok(Some(wire::intent::NextWorkState::DesignRequest { request })) =
+        lanes.next_from(&config, &planned, FIRST)
+    else {
+        panic!("unrelated work committed after selection must not refuse admission");
+    };
+    assert_eq!(request.design, design);
+    assert_eq!(lanes.noticed().len(), 1);
+
+    let Err(Outcome::Refusal(refusal)) = lanes.next_from(&config, &planned, FIRST) else {
+        panic!("replaying the recorded plan must refuse rather than record twice");
+    };
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::witness),
+        Some("room::awareness-stale: the occupant already has this request")
+    );
+    assert_eq!(
+        lanes.noticed().len(),
+        1,
+        "one completion records one request"
     );
     lanes.finish();
 }
