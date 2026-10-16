@@ -16,11 +16,13 @@ record exactly once. An exact-session resume reports its earlier messages and
 renders none, and a state record that reports no message count infers none.
 
 A successful compaction names the strategy reported by its completion:
-`snapcompact` renders as **snap**compacted, while another method precedes
-“compacted context” by name. The method uses the same `--focus` accent as FULL
-in FULL SEND. A completion with no method keeps the plain “compacted context”
-label. Boundary reconciliation carries a live completion's method onto the
-timestamped preserved record, so paging and reconnect render the same label.
+`snapcompact` renders as snapcompacted, while another method precedes
+“compacted context” by name. The method reads quieter than the label it
+prefixes: regular weight in the console's muted base-flavor neutral, never an
+agent, lane, or Design accent. A completion with no method keeps the plain
+“compacted context” label. Boundary reconciliation carries a live
+completion's method onto the timestamped preserved record, so paging and
+reconnect render the same label.
 
 Older history pages when a placed member frontier is near the viewport, the
 reader reaches the plane's trailing edge, or a member lacks composer prose.
