@@ -451,6 +451,12 @@ fn present_review_node(
 /// ELK's layered layout routes every edge orthogonally from its own attachment
 /// point and spaces parallel runs apart, so each edge stays traceable from
 /// source to target.
+///
+/// Mermaid roots that layout with included children, so ELK never separates
+/// connected components and every unconnected root would share the first
+/// layer: one column. Invisible links from [`row_links`] instead pack whole
+/// components into rows, which ELK stacks in shared layers as a near-square
+/// grid without moving any drawn edge.
 fn mermaid_source(nodes: &[Node], edges: &[Edge]) -> String {
     let mut source = String::from("---\nconfig:\n  layout: elk\n---\nflowchart LR\n");
     for node in nodes {
@@ -460,6 +466,9 @@ fn mermaid_source(nodes: &[Node], edges: &[Edge]) -> String {
     for edge in edges {
         writeln!(source, "  n{} -->|{}| n{}", edge.from, edge.label, edge.to)
             .expect("String writes are infallible");
+    }
+    for (from, to) in row_links(nodes.len(), edges) {
+        writeln!(source, "  n{from} ~~~ n{to}").expect("String writes are infallible");
     }
     let selected = nodes
         .iter()
@@ -472,6 +481,113 @@ fn mermaid_source(nodes: &[Node], edges: &[Edge]) -> String {
         source.push_str("  classDef selected stroke-width:3px\n");
     }
     source
+}
+
+/// One connected component of the drawn graph, in node order.
+struct Component {
+    /// Layers the component spans left to right.
+    depth: usize,
+    /// The first node in its first layer.
+    root: usize,
+    /// The first node in its last layer.
+    sink: usize,
+}
+
+/// Invisible links that place connected components side by side in rows.
+///
+/// Components keep node order. Each row takes whole components left to right
+/// while their layers fit a budget of `max(⌈√nodes⌉, deepest component)`, so
+/// a component never splits and the rows approach a square grid. Each link
+/// joins one component's sink to the next component's root, so links never
+/// join two nodes of one component. A single component needs no links.
+fn row_links(node_count: usize, edges: &[Edge]) -> Vec<(usize, usize)> {
+    let components = components(node_count, edges);
+    if components.len() < 2 {
+        return Vec::new();
+    }
+    let side = node_count.isqrt();
+    let side = if side * side < node_count {
+        side + 1
+    } else {
+        side
+    };
+    let budget = components
+        .iter()
+        .map(|component| component.depth)
+        .fold(side, usize::max);
+    let mut links = Vec::new();
+    let mut used = 0;
+    let mut previous: Option<&Component> = None;
+    for component in &components {
+        match previous {
+            Some(previous) if used + component.depth <= budget => {
+                links.push((previous.sink, component.root));
+            }
+            _ => used = 0,
+        }
+        used += component.depth;
+        previous = Some(component);
+    }
+    links
+}
+
+/// Connected components ordered by their first node, each with its
+/// longest-path layering. Kahn's order assigns layers, so a cycle leaves its
+/// nodes at the layer their acyclic predecessors reach and still terminates.
+fn components(node_count: usize, edges: &[Edge]) -> Vec<Component> {
+    let mut neighbors = vec![Vec::new(); node_count];
+    let mut successors = vec![Vec::new(); node_count];
+    let mut incoming = vec![0usize; node_count];
+    for edge in edges {
+        neighbors[edge.from].push(edge.to);
+        neighbors[edge.to].push(edge.from);
+        successors[edge.from].push(edge.to);
+        incoming[edge.to] += 1;
+    }
+
+    let mut layer = vec![0usize; node_count];
+    let mut ready = (0..node_count)
+        .filter(|&node| incoming[node] == 0)
+        .collect::<VecDeque<_>>();
+    while let Some(node) = ready.pop_front() {
+        for &next in &successors[node] {
+            layer[next] = layer[next].max(layer[node] + 1);
+            incoming[next] -= 1;
+            if incoming[next] == 0 {
+                ready.push_back(next);
+            }
+        }
+    }
+
+    let mut seen = vec![false; node_count];
+    let mut components = Vec::new();
+    for start in 0..node_count {
+        if seen[start] {
+            continue;
+        }
+        seen[start] = true;
+        let mut members = vec![start];
+        let mut cursor = 0;
+        while let Some(&node) = members.get(cursor) {
+            cursor += 1;
+            for &next in &neighbors[node] {
+                if !seen[next] {
+                    seen[next] = true;
+                    members.push(next);
+                }
+            }
+        }
+        members.sort_unstable();
+        let last = members.iter().map(|&node| layer[node]).max().unwrap_or(0);
+        let first = members.iter().map(|&node| layer[node]).min().unwrap_or(0);
+        let at = |wanted| members.iter().copied().find(|&node| layer[node] == wanted);
+        components.push(Component {
+            depth: last - first + 1,
+            root: at(first).unwrap_or(start),
+            sink: at(last).unwrap_or(start),
+        });
+    }
+    components
 }
 
 fn compact(value: &str) -> String {

@@ -167,3 +167,33 @@ fn design_plan_outputs_flow_without_shortcutting_nested_work() {
         "inherited Design control does not shortcut the Plan-to-task dependency",
     );
 }
+
+fn then(from: usize, to: usize) -> Edge {
+    Edge {
+        from,
+        to,
+        label: "then",
+    }
+}
+
+#[test]
+fn disconnected_components_pack_into_rows_of_whole_components() {
+    assert_eq!(row_links(6, &[]), [(0, 1), (1, 2), (3, 4), (4, 5)]);
+    assert!(row_links(3, &[then(0, 1), then(1, 2)]).is_empty());
+
+    // Ten nodes budget four layers: the three-layer chain fills its row, the
+    // two-layer fan opens the next from its first last-layer node, and the
+    // unconnected tasks fill rows behind it.
+    let mixed = [then(0, 1), then(1, 2), then(3, 4), then(3, 5)];
+    assert_eq!(row_links(10, &mixed), [(4, 6), (6, 7), (8, 9)]);
+
+    // A chain deeper than the square side widens the budget and keeps a row.
+    let deep = [then(0, 1), then(1, 2), then(2, 3), then(3, 4)];
+    assert_eq!(row_links(8, &deep), [(5, 6), (6, 7)]);
+}
+
+#[test]
+fn a_cycle_still_packs_deterministically() {
+    let cycle = [then(0, 1), then(1, 2), then(2, 0)];
+    assert_eq!(row_links(4, &cycle), [(0, 3)]);
+}
