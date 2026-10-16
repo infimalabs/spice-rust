@@ -179,6 +179,26 @@ impl<W: Write + Send + 'static> Driver<W> {
         )
     }
 
+    /// A driver that reads pending steering and a resumed seat's notice when
+    /// releasing its first prompt, and serves no `spice://` read.
+    pub(super) fn with_startup_readers(
+        stdin: W,
+        read_inbox: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
+        read_resume: impl Fn() -> String + Send + Sync + 'static,
+    ) -> Arc<Self> {
+        let server: UriServer = Box::new(|_, _| Err(vendor::omp::URI_SERVED.to_owned()));
+        Self::with_server(
+            stdin,
+            read_inbox,
+            || None,
+            read_resume,
+            || true,
+            server,
+            steer::Key::for_identity(crate::resident::new_uuid()),
+            None,
+        )
+    }
+
     /// A driver that reads a resumed seat's notice through `read_resume` and
     /// serves no `spice://` read.
     pub(super) fn resuming(

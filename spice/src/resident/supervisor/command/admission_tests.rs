@@ -213,12 +213,11 @@ fn a_turn_starting_before_any_delivery_still_admits_each_once_in_order() {
     }
 }
 
-/// A seat woken for steering states its authority, a resumed seat's pending
-/// count included, in the first prompt; omp runs whatever reaches it idle as
-/// a turn of its own, so the direction that prompt counts must reach omp
-/// after it rather than be answered in a turn ahead of it.
+/// A seat woken for steering puts its authority and the current pending inbox
+/// in the first prompt. Nothing starts ahead of that prompt, and the pending
+/// item is part of it rather than a second turn.
 #[test]
-fn steering_pending_while_the_first_turn_is_held_follows_that_prompt_once() {
+fn steering_pending_while_the_first_turn_is_held_joins_that_prompt_once() {
     for first_turn in [FirstTurn::Fresh, FirstTurn::Resumed] {
         let mut seat = Seat::new();
         let mut omp = Omp::default();
@@ -236,10 +235,15 @@ fn steering_pending_while_the_first_turn_is_held_follows_that_prompt_once() {
         omp.settle();
 
         assert!(omp.refused.is_empty(), "{:?}", omp.refused);
+        assert_eq!(omp.handed.len(), 1, "one first turn: {:?}", omp.handed);
+        let prompt = &omp.handed[0];
+        let first = prompt.find(FIRST).expect("the first prompt is present");
+        let direction = prompt
+            .find(&format!("direction {EARLIER}"))
+            .expect("pending steering is present");
         assert!(
-            position(&omp.handed, FIRST) < position(&omp.handed, &format!("direction {EARLIER}")),
-            "the first prompt precedes the direction it counts: {:?}",
-            omp.handed
+            first < direction,
+            "startup context leads steering: {prompt}"
         );
     }
 }

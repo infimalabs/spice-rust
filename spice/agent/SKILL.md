@@ -11,11 +11,12 @@ Spice started you. The neutral initial prompt is not the operator's request.
 The installed release serves this authoritative document at
 `spice://SKILL.md`; edit package source, never the installation.
 
-Fresh starts and compactions receive `# Spice briefing`, binding as of its
-read; later tool calls are newer. `# Task already assigned` means continue it
-before allocation and do not repeat its reads. ACK/NAK pending keys; the notice
-needs none. `# Seat resumed` instead names the held claim (unknown is not none)
-and pending count; continue context. `spice session briefing` refreshes it.
+Fresh starts/compactions receive `# Spice briefing`; later reads are newer.
+Their first prompt also carries all pending steering: ACK/NAK each key, no
+inbox discovery read. `# Task already assigned` means continue before
+allocation, without repeated reads or notice ACK. `# Seat resumed` names the
+held claim (unknown is not none); continue context. Refresh with
+`spice session briefing`.
 
 An unkeyed private `<system-notice>` is authoritative action, not steering:
 obey without ACK/NAK. An assignment requires immediate `spice task show`; a
