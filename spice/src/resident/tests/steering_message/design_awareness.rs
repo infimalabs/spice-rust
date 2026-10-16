@@ -751,44 +751,52 @@ fn a_new_completion_invites_its_unchanged_occupant_without_restart_backfill() {
 }
 
 #[test]
-fn completion_overlap_made_only_of_board_common_terms_invites_nothing() {
+fn words_common_across_recent_work_carry_no_match_on_a_quiet_board() {
     let lanes = Lanes::new("design-awareness-completion-common");
     lanes.vacate(FIRST);
     lanes.renew(FIRST, test_uuid(FIRST));
     let config = surface(&lanes);
-    let task = lanes.seed_task(
-        "dVrD245Kc",
-        "Lane room cursor",
-        Some("Retained lane room cursor."),
-        None,
-        Some(test_uuid(FIRST)),
-    );
-    let _design = lanes.design(
-        "dVrD245Kd",
-        "Room cursor lane",
-        "Retained room cursor lane.",
-    );
     for index in 0..8 {
         let stamp = wire::TaskStamp::for_micros(20_000 + index)
             .expect("fixture stamp")
             .to_string();
-        lanes.seed_task(
+        let finished = lanes.seed_task(
             &stamp,
             "Lane room cursor",
             Some("Retained lane room cursor."),
             None,
-            None,
+            Some(test_uuid(SECOND)),
         );
+        lanes.complete(&finished, "Retained lane room cursor.");
     }
+    let task = lanes.seed_task(
+        "dVrD245Kc",
+        "Lane room cursor",
+        Some("Retained lane room cursor. Paginate bounded catch-up publications."),
+        None,
+        Some(test_uuid(FIRST)),
+    );
+    let generic = lanes.design(
+        "dVrD245Kd",
+        "Room cursor lane",
+        "Retained room cursor lane.",
+    );
+    let distinctive = lanes.design("dVrD245Km", "Room catch-up pagination", PITCH);
     let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
         .expect("completion cursor starts");
     lanes.complete(&task, "Retained lane room cursor.");
     let occupant = test_uuid(FIRST);
     let mut seated = seats(&[(FIRST, occupant)]);
     lanes.reconcile_completions(&config, &seated, &mut completions);
+    let told = lanes.told(FIRST, occupant);
     assert!(
-        lanes.noticed().is_empty(),
-        "board-common completion terms provide no match weight"
+        !told.contains(&stamp(&generic)),
+        "words common across completed work carry no match while few tasks are open"
+    );
+    assert_eq!(
+        told,
+        [stamp(&distinctive)],
+        "distinctive shared words still invite"
     );
     seated.release_all();
     lanes.finish();

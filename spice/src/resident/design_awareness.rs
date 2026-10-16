@@ -6,11 +6,13 @@
 //! background information only, adding no attention, participation, steering,
 //! claim, wake, or acknowledgment.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
 use journal::{GuardError, JournalRead};
 use spice::rooms::awareness::{
-    COMPLETION_VALIDATION_BYTES, CommonTerms, DesignTerms, completion_terms, pitch, task_terms,
+    COMMON_TERM_WINDOW, COMPLETION_VALIDATION_BYTES, CommonTerms, DesignTerms, completion_terms,
+    pitch, task_terms,
 };
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::DesignNoticed;
@@ -324,12 +326,7 @@ pub(in crate::resident) fn plan(
     if designs.is_empty() {
         return Ok(Vec::new());
     }
-    let common = CommonTerms::of(
-        entries
-            .iter()
-            .filter(|entry| open(entry))
-            .map(statement_terms),
-    );
+    let common = CommonTerms::of(recent_statements(entries).map(statement_terms));
     let claimants = candidates
         .iter()
         .map(|candidate| (candidate.lane, candidate.occupant))
@@ -436,10 +433,17 @@ fn statement_terms(entry: &board::Entry) -> BTreeSet<String> {
     )
 }
 
-/// Whether `entry` is open work: pending and not completed.
-fn open(entry: &board::Entry) -> bool {
-    let workflow = entry.workflow();
-    workflow.status == "pending" && workflow.completion.is_none()
+/// The [`COMMON_TERM_WINDOW`] task statements most recently revised, open or
+/// completed.
+fn recent_statements(entries: &[board::Entry]) -> impl Iterator<Item = &board::Entry> {
+    let mut recent = entries.iter().collect::<Vec<_>>();
+    if recent.len() > COMMON_TERM_WINDOW {
+        recent.select_nth_unstable_by_key(COMMON_TERM_WINDOW, |entry| {
+            Reverse(entry.statement().revision)
+        });
+        recent.truncate(COMMON_TERM_WINDOW);
+    }
+    recent.into_iter()
 }
 
 /// Whether `entry` is an open Design inactive under its group stance.
