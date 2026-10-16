@@ -216,6 +216,13 @@ select, input, textarea { border-radius: var(--app-radius-control); }
 
 /* Shared application materials. Placement remains with each surface; these
    classes own the visual recipe and semantic state exactly once. */
+/* One lit thumb face serves both sliders and compact selectors; only its local
+   accent changes. The gradients and catches are the no-filter fallback too. */
+:is(.team-slider:is([data-stop="1"], [data-stop="2"]), .app-theme-selector) {
+  --app-slider-thumb-accent: var(--team-slider-accent, var(--focus));
+  --app-slider-thumb-face: radial-gradient(ellipse 82% 36% at 50% -8%, color-mix(in srgb, var(--app-highlight-source) 42%, transparent), transparent 76%), radial-gradient(ellipse 84% 42% at 50% 108%, color-mix(in srgb, var(--app-slider-thumb-accent) 28%, transparent), transparent 72%), linear-gradient(90deg, color-mix(in srgb, var(--app-slider-thumb-accent) 18%, transparent), transparent 14%, transparent 86%, color-mix(in srgb, var(--app-highlight-source) 18%, transparent)), linear-gradient(color-mix(in srgb, var(--app-highlight-source) 2.5%, transparent), color-mix(in srgb, var(--app-highlight-source) 2.5%, transparent));
+  --app-slider-thumb-shadow: var(--team-control-rest, inset 0 1px 0 color-mix(in srgb, var(--app-highlight-source) 12%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--app-highlight-source) 8%, transparent)), inset 2px -2px 1px -1px color-mix(in srgb, var(--app-highlight-source) 58%, transparent), inset -2px 2px 1px -1px color-mix(in srgb, var(--app-highlight-source) 34%, transparent), inset 5px -4px 2px -5px color-mix(in srgb, var(--app-highlight-source) 55%, transparent), inset -5px 4px 2px -5px color-mix(in srgb, var(--app-shadow-source) 45%, transparent), inset 0 0 2px color-mix(in srgb, var(--app-shadow-source) 48%, transparent), inset 0 -4px 6px -4px color-mix(in srgb, var(--app-slider-thumb-accent) 38%, transparent), 0 2px 4px color-mix(in srgb, var(--app-shadow-source) 22%, transparent);
+}
 .app-horn-tabs {
   display: flex;
   align-items: flex-end;
