@@ -22,7 +22,7 @@ const TOOL_PARTIAL: &[u8] = br#"{"type":"tool_execution_update","toolCallId":"ca
 const JOB_PARTIAL: &[u8] = br#"{"type":"tool_execution_update","toolCallId":"call_2","toolName":"job","partialResult":{"content":[{"type":"text","text":"[job dW3w7qC4G] serve\nready on 8080"}]}}"#;
 const TOOL_STREAM: &[u8] = br#"{"type":"tool_stream_update","toolCallId":"call_1","toolName":"edit","update":{"path":"src/lib.rs","diff":"+done"}}"#;
 const TOOL_END: &[u8] = br#"{"type":"tool_execution_end","toolCallId":"call_1","toolName":"bash","result":{"content":[{"type":"text","text":"ok"}]},"isError":false}"#;
-const COMPACTION: &[u8] = br#"{"type":"auto_compaction_end","action":"context-full","result":{"summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000},"aborted":false,"willRetry":false}"#;
+const COMPACTION: &[u8] = br#"{"type":"auto_compaction_end","action":"snapcompact","result":{"summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000},"aborted":false,"willRetry":false}"#;
 const FAILURE: &[u8] = br#"{"id":"spice-prompt","type":"response","command":"prompt","success":false,"error":"Agent is already processing"}"#;
 const TRANSCRIPT_SESSION: &[u8] = br#"{"type":"session","version":3,"id":"01a0a807-666f-7524-be0d-2ee476b6c15c","timestamp":"2026-09-16T02:24:12.399Z","cwd":"/work/tree"}"#;
 const TRANSCRIPT_MESSAGE: &[u8] = br#"{"type":"message","id":"93bc66b5","parentId":"1ded9227","timestamp":"2026-09-16T02:24:25.341Z","message":{"role":"assistant","content":[{"type":"text","text":"echo: second thing"}],"usage":{"input":120,"output":9,"cacheRead":0,"cacheWrite":0},"stopReason":"stop"}}"#;
@@ -181,7 +181,9 @@ fn compaction_and_refusals_are_typed_while_lifecycle_frames_stay_silent() {
     let compaction = decoded(COMPACTION);
     assert!(matches!(
         compaction.events(),
-        [Event::Compaction(compaction)] if compaction.summary.as_deref() == Some("so far")
+        [Event::Compaction(compaction)]
+            if compaction.summary.as_deref() == Some("so far")
+                && compaction.method.as_deref() == Some("snapcompact")
     ));
     let failure = decoded(FAILURE);
     assert!(matches!(
@@ -550,9 +552,8 @@ fn session_file_bookkeeping_is_owned_ambiently_and_says_nothing() {
     let compaction = decoded(
         br#"{"type":"compaction","id":"k1","parentId":"d1","timestamp":"2026-09-16T06:43:23.000Z","summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000}"#,
     );
-    assert!(
-        matches!(compaction.events(), [Event::Compaction(record)] if record.summary.as_deref() == Some("so far"))
-    );
+    assert!(matches!(compaction.events(), [Event::Compaction(record)]
+            if record.summary.as_deref() == Some("so far") && record.method.is_none()));
 }
 
 /// A provider method can fail before omp falls through to another compaction

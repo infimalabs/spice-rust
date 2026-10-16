@@ -28,6 +28,7 @@ fn prose_message() -> AgentMessage {
         authored_synthetic: false,
         observed: None,
         activity: AgentActivityKind::Prose,
+        compaction_method: None,
         final_answer: false,
         acknowledgement: None,
         text: "settled".to_owned(),
@@ -380,23 +381,16 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
     let compaction = AgentMessage {
         activity: AgentActivityKind::Compaction,
         text: "Context compacted".to_owned(),
+        compaction_method: Some("snapcompact".to_owned()),
         unavailable_tool_terminals: vec!["Bash: cargo test".to_owned()],
         ..prose
     };
     let encoded = wire::encode(&compaction).expect("compaction activity encodes");
     assert!(String::from_utf8_lossy(&encoded).contains(r#""activity":"compaction""#));
-    assert_eq!(
-        wire::decode::<AgentMessage>(&encoded)
-            .expect("explicit compaction decodes")
-            .unavailable_tool_terminals,
-        ["Bash: cargo test"],
-    );
-    assert_eq!(
-        wire::decode::<AgentMessage>(&encoded)
-            .expect("explicit compaction decodes")
-            .activity,
-        AgentActivityKind::Compaction
-    );
+    let decoded = wire::decode::<AgentMessage>(&encoded).expect("explicit compaction decodes");
+    assert_eq!(decoded.unavailable_tool_terminals, ["Bash: cargo test"],);
+    assert_eq!(decoded.activity, AgentActivityKind::Compaction);
+    assert_eq!(decoded.compaction_method.as_deref(), Some("snapcompact"));
 
     let unknown = String::from_utf8(encoded)
         .expect("wire is utf-8")

@@ -652,9 +652,25 @@ fn compaction(record: &Object, locus: Locus) -> Events {
         .map(str::to_owned);
     Ok(vec![Event::Compaction(Compaction {
         summary,
+        method: compaction_method(record, body),
         boundary: compaction_boundary(record, body),
         locus,
     })])
+}
+
+/// Successful strategy named by either spelling OMP has emitted.
+fn compaction_method(record: &Object, body: &Object) -> Option<String> {
+    for source in [record, body] {
+        for field in ["method", "action"] {
+            if let Some(method) = source.get(field).and_then(Value::as_str) {
+                let method = method.trim();
+                if !method.is_empty() {
+                    return Some(method.to_owned());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Vendor identity both records of one compaction carry.

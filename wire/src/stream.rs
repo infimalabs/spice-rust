@@ -573,6 +573,17 @@ pub struct AgentMessage {
     /// Visible activity kind. Its absent wire spelling means prose.
     #[serde(default, skip_serializing_if = "AgentActivityKind::is_prose")]
     pub activity: AgentActivityKind,
+    /// Successful compaction strategy reported for a compaction activity.
+    ///
+    /// The captured completion carries this even when the vendor's preserved
+    /// session record does not. Boundary reconciliation transfers it to the
+    /// timestamped record so reloads retain the same label.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub compaction_method: Option<String>,
     /// Whether the vendor explicitly marked this prose as the final answer.
     #[serde(default, skip_serializing_if = "is_false")]
     pub final_answer: bool,
@@ -745,6 +756,7 @@ mod message_retention_tests {
             authored_synthetic: false,
             observed: None,
             activity: AgentActivityKind::Prose,
+            compaction_method: None,
             final_answer: false,
             acknowledgement: None,
             text: "fixture".to_owned(),

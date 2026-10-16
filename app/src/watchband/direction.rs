@@ -175,6 +175,7 @@ mod tests {
             authored_synthetic: false,
             observed: None,
             activity: AgentActivityKind::Direction,
+            compaction_method: None,
             final_answer: false,
             acknowledgement: None,
             text,

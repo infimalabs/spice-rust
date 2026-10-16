@@ -175,6 +175,7 @@
 }
 .mosaic-compaction-agent { flex: 1 1 auto; color: var(--accent-slot, var(--accent)); }
 .mosaic-compaction-label .message-key { flex: 0 1 auto; }
+.mosaic-compaction-method { color: var(--focus); }
 /* A working-group departure's clause alone yields width; its title keeps the words. */
 .mosaic-compaction-clause { flex: 0 1 auto; color: var(--muted); }
 .mosaic-room-card .mosaic-compaction-context > :not(.mosaic-compaction-clause) { flex-shrink: 0; }

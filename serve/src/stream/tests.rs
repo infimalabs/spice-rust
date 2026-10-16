@@ -46,6 +46,7 @@ fn message(lane: u8, offset: u64) -> AgentMessage {
         authored_synthetic: false,
         observed: None,
         activity: wire::AgentActivityKind::Prose,
+        compaction_method: None,
         final_answer: false,
         acknowledgement: None,
         text: format!("lane {lane:02x} message {offset}"),
