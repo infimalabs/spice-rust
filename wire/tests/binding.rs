@@ -652,6 +652,8 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 tags: vec!["binding".to_owned()],
                 priority: Some(wire::TaskPriority::High),
                 taste: Some(wire::TasteHold::Prepended),
+                document_slug: None,
+                taste_proposal: None,
                 dependencies: vec!["1kKRRsDQ".parse().expect("a task stamp")],
                 provenance: "task:1kKRRsDP".parse().expect("an origin"),
                 creation: wire::body::TaskCreationContext::unavailable(

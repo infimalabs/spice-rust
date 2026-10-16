@@ -996,12 +996,7 @@ pub(super) fn read_ledger(
     let node = &mut document.nodes[root];
     node.acceptance = statement.acceptance.clone();
     node.priority = statement.priority.map(board::priority_to_document);
-    node.tags = statement
-        .tags
-        .iter()
-        .filter(|tag| !tag.starts_with("document-slug:"))
-        .cloned()
-        .collect();
+    node.tags.clone_from(&statement.tags);
     node.description = statement.description.clone().unwrap_or_default();
     let mut annotations = snapshot
         .facts

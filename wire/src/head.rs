@@ -305,6 +305,19 @@ pub enum TasteHold {
     Prepended,
 }
 
+/// Recurrence evidence a resident-filed taste proposal carries about the
+/// correction theme it proposes to track.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TasteProposal {
+    /// Stable identity of the recurring correction theme.
+    pub finding: crate::Digest,
+    /// Identity of the exact independent-locus set this filing covers.
+    pub occurrence: crate::Digest,
+    /// Number of independent transcript loci supporting this occurrence.
+    pub recurrence: usize,
+}
+
 /// One current task statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -353,6 +366,21 @@ pub struct TaskHead {
         deserialize_with = "crate::optional::present"
     )]
     pub taste: Option<TasteHold>,
+    /// Slug of the task-document node a document apply placed this task
+    /// under; a document row matches its task by project plus this slug.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub document_slug: Option<String>,
+    /// Evidence of a resident-filed taste proposal; absent on every other task.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub taste_proposal: Option<TasteProposal>,
     /// Tasks that must complete first.
     pub dependencies: Vec<TaskStamp>,
     /// Declared Plan or Design intent, stable across every phase change.

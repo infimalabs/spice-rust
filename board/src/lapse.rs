@@ -630,6 +630,8 @@ mod tests {
                     tags: Vec::new(),
                     priority: None,
                     taste: None,
+                    document_slug: None,
+                    taste_proposal: None,
                     depends: Vec::new(),
                     flow: vec![phase.clone()],
                     phase: phase.clone(),
@@ -657,6 +659,8 @@ mod tests {
             tags: Vec::new(),
             priority: None,
             taste: None,
+            document_slug: None,
+            taste_proposal: None,
             dependencies: Vec::new(),
             provenance: wire::TaskProvenance::Task(born()),
             creation: body::TaskCreationContext::unavailable(

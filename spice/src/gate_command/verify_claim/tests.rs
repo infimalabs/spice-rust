@@ -186,6 +186,8 @@ fn statement() -> TaskHead {
         tags: Vec::new(),
         priority: None,
         taste: None,
+        document_slug: None,
+        taste_proposal: None,
         dependencies: Vec::new(),
         provenance: wire::TaskProvenance::Parentless,
         creation: wire::body::TaskCreationContext::unavailable(

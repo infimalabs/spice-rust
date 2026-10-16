@@ -101,8 +101,8 @@ pub use head::{
     LaneRenewalRecord, LaneRenewalState, LaneResidency, LaneSession, LeaseHead, RenewalIdentity,
     ResidencyHead, ResidentState, SeatRefusal, SteeringHead, TapeLocus, TaskEvidenceEdit,
     TaskFiling, TaskHead, TaskIntent, TaskIntentEdit, TaskPreparation, TaskPriority, TasteHold,
-    TeamSubscription, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState,
-    WitnessClass, WitnessHead, WorkflowHead,
+    TasteProposal, TeamSubscription, TranscriptSourceHead, TranscriptStreamKey, TrustHead,
+    TrustState, WitnessClass, WitnessHead, WorkflowHead,
 };
 pub use hello::{
     Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,

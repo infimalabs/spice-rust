@@ -467,18 +467,22 @@ fn prepare_followup_policy(
     Ok((flow, phase, taste, taste_review))
 }
 
+/// Whether the command witnesses `task`'s intended absent birth stamp.
+fn absence_witnessed(context: &FollowupContext<'_>, task: &wire::TaskStamp) -> bool {
+    context
+        .command
+        .expected()
+        .iter()
+        .any(|witness| matches!(witness, Witness::Absence { task: absent } if absent == task))
+}
+
 /// Add one statement that must follow the reviewed task.
 fn create_followup(
     write: &mut JournalWrite,
     context: &FollowupContext<'_>,
     followup: &ReviewFollowup,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    let witnessed = context
-        .command
-        .expected()
-        .iter()
-        .any(|witness| matches!(witness, Witness::Absence { task } if *task == followup.task));
-    if !witnessed {
+    if !absence_witnessed(context, &followup.task) {
         return Err(protocol_fault(
             "review::followup-witness-invalid",
             "each review follow-up requires its own intended absent birth stamp",
@@ -521,6 +525,8 @@ fn create_followup(
         tags: Vec::new(),
         priority: None,
         taste,
+        document_slug: None,
+        taste_proposal: None,
         dependencies: Vec::new(),
         provenance: context.origin.provenance.clone(),
         creation: creation.context(),
@@ -564,6 +570,8 @@ fn create_followup(
                 tags: Vec::new(),
                 priority: None,
                 taste: statement.taste,
+                document_slug: None,
+                taste_proposal: None,
                 depends: statement.dependencies.clone(),
                 flow,
                 phase,

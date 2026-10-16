@@ -517,6 +517,8 @@ where
             tags: prepared.statement.tags.clone(),
             priority: prepared.statement.priority,
             taste: prepared.statement.taste,
+            document_slug: prepared.statement.document_slug.clone(),
+            taste_proposal: prepared.statement.taste_proposal.clone(),
             depends: prepared.statement.dependencies.clone(),
             flow: prepared.flow,
             phase: prepared.phase,
@@ -635,6 +637,8 @@ fn prepare_task(
         tags: Vec::new(),
         priority: None,
         taste: None,
+        document_slug: None,
+        taste_proposal: None,
         dependencies: add
             .depends
             .iter()

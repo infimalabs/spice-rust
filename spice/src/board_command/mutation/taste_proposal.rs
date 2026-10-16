@@ -1,10 +1,5 @@
 use super::*;
 
-const PROPOSAL_TAG: &str = "taste-proposal";
-const FINDING_TAG_PREFIX: &str = "taste-finding:";
-const OCCURRENCE_TAG_PREFIX: &str = "taste-occurrence:";
-const RECURRENCE_TAG_PREFIX: &str = "taste-recurrence:";
-
 #[derive(Clone)]
 struct ProposalObservation {
     project: String,
@@ -20,11 +15,6 @@ enum ProposalPlan {
         predecessor: Option<TaskHandle>,
         observation: ProposalObservation,
     },
-}
-
-struct ProposalMetadata {
-    occurrence: Digest,
-    recurrence: usize,
 }
 
 pub(in crate::board_command) fn taste_proposal_add(
@@ -119,12 +109,11 @@ pub(in crate::board_command) fn taste_proposal_add(
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
-    prepared.statement.tags = vec![
-        PROPOSAL_TAG.to_owned(),
-        format!("{FINDING_TAG_PREFIX}{}", add.finding),
-        format!("{OCCURRENCE_TAG_PREFIX}{}", add.occurrence),
-        format!("{RECURRENCE_TAG_PREFIX}{}", add.recurrence),
-    ];
+    prepared.statement.taste_proposal = Some(wire::TasteProposal {
+        finding: add.finding.clone(),
+        occurrence: add.occurrence.clone(),
+        recurrence: add.recurrence,
+    });
     let post = prepared_entry(&prepared, projects);
     commit_prepared_task(
         bus,
@@ -235,38 +224,18 @@ fn proposal_plan(
     })
 }
 
-fn proposal_metadata(entry: &Entry) -> Result<ProposalMetadata, Outcome<CommandAnswer>> {
-    let description = entry.statement().description.as_deref();
-    let occurrence = unique_tag(&entry.statement().tags, OCCURRENCE_TAG_PREFIX)
-        .and_then(|value| value.parse::<Digest>().ok())
-        .or_else(|| {
-            description
-                .and_then(|body| description_value(body, "Occurrence identity: "))
-                .and_then(|value| value.parse().ok())
-        });
-    let recurrence = unique_tag(&entry.statement().tags, RECURRENCE_TAG_PREFIX)
-        .and_then(|value| value.parse::<usize>().ok())
-        .or_else(|| {
-            description
-                .and_then(|body| description_value(body, "Recurrence count: "))
-                .and_then(|value| value.parse().ok())
-        });
-    match (occurrence, recurrence) {
-        (Some(occurrence), Some(recurrence)) if recurrence >= 2 => Ok(ProposalMetadata {
-            occurrence,
-            recurrence,
-        }),
-        _ => Err(state_fault(
-            entry.statement().project.as_str(),
-            "proposal metadata is missing or invalid",
-        )),
-    }
-}
-
-fn unique_tag<'a>(tags: &'a [String], prefix: &str) -> Option<&'a str> {
-    let mut values = tags.iter().filter_map(|tag| tag.strip_prefix(prefix));
-    let value = values.next()?;
-    values.next().is_none().then_some(value)
+fn proposal_metadata(entry: &Entry) -> Result<&wire::TasteProposal, Outcome<CommandAnswer>> {
+    entry
+        .statement()
+        .taste_proposal
+        .as_ref()
+        .filter(|proposal| proposal.recurrence >= 2)
+        .ok_or_else(|| {
+            state_fault(
+                entry.statement().project.as_str(),
+                "proposal metadata is missing or invalid",
+            )
+        })
 }
 
 fn description_value<'a>(description: &'a str, prefix: &str) -> Option<&'a str> {

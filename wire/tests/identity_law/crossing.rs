@@ -368,6 +368,8 @@ fn cover_task_heads() {
                 tags: vec!["guard".to_owned()],
                 priority: None,
                 taste: None,
+                document_slug: None,
+                taste_proposal: None,
                 dependencies: Vec::new(),
                 provenance: wire::TaskProvenance::Parentless,
                 creation: body::TaskCreationContext::unavailable(
@@ -393,6 +395,8 @@ fn cover_task_heads() {
                 tags: vec!["guard".to_owned(), "review".to_owned()],
                 priority: None,
                 taste: None,
+                document_slug: None,
+                taste_proposal: None,
                 dependencies: vec![stamp("1kKRRsDQ")],
                 provenance: "task:1kKRRsDP".parse().expect("origin"),
                 creation: body::TaskCreationContext::unavailable(

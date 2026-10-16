@@ -84,7 +84,7 @@ enum EvidenceError {
     TooMany(usize),
     ProposalFinding(TaskHandle),
     ProposalStanding(TaskHandle),
-    ProposalDescription(TaskHandle),
+    ProposalEvidence(TaskHandle),
 }
 
 struct MiningSnapshot {
@@ -608,39 +608,17 @@ fn prior_proposals(
             .get(&added.task)
             .cloned()
             .ok_or_else(|| EvidenceError::ProposalStanding(fallback.clone()))?;
-        let description = added
-            .description
-            .as_deref()
-            .ok_or_else(|| EvidenceError::ProposalDescription(handle.clone()))?;
-        let occurrence = parse_occurrence(description)
-            .ok_or_else(|| EvidenceError::ProposalDescription(handle.clone()))?;
-        let recurrence = added
-            .description
-            .as_deref()
-            .and_then(parse_recurrence)
-            .ok_or_else(|| EvidenceError::ProposalDescription(handle.clone()))?;
+        let proposal = added
+            .taste_proposal
+            .ok_or_else(|| EvidenceError::ProposalEvidence(handle.clone()))?;
         proposals.entry(finding).or_default().push(PriorProposal {
             completed,
             handle,
-            occurrence,
-            recurrence,
+            occurrence: proposal.occurrence,
+            recurrence: proposal.recurrence,
         });
     }
     Ok(proposals)
-}
-
-fn parse_recurrence(description: &str) -> Option<usize> {
-    description.lines().find_map(|line| {
-        line.strip_prefix("Recurrence count: ")
-            .and_then(|count| count.parse().ok())
-    })
-}
-
-fn parse_occurrence(description: &str) -> Option<Digest> {
-    description.lines().find_map(|line| {
-        line.strip_prefix("Occurrence identity: ")
-            .and_then(|identity| identity.parse().ok())
-    })
 }
 
 fn plan(
@@ -797,8 +775,8 @@ fn evidence_fault(error: EvidenceError) -> Outcome<TasteMiningReport> {
         EvidenceError::ProposalStanding(task) => {
             format!("hidden taste proposal {task} has no current workflow standing")
         }
-        EvidenceError::ProposalDescription(task) => {
-            format!("hidden taste proposal {task} has no admitted recurrence count")
+        EvidenceError::ProposalEvidence(task) => {
+            format!("hidden taste proposal {task} carries no proposal evidence")
         }
     };
     fault(FaultClass::Store, "taste::mining-evidence-invalid", detail)

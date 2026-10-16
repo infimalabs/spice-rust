@@ -734,6 +734,20 @@ pub struct BoardStatement {
         deserialize_with = "crate::optional::present"
     )]
     pub taste: Option<crate::TasteHold>,
+    /// Task-document node slug that places this task under a document row.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub document_slug: Option<String>,
+    /// Evidence of a resident-filed taste proposal.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub taste_proposal: Option<crate::TasteProposal>,
     /// Tasks that must complete first.
     pub dependencies: Vec<crate::TaskStamp>,
     /// Declared Plan or Design intent.
@@ -786,6 +800,8 @@ impl From<&crate::TaskHead> for BoardStatement {
             tags: statement.tags.clone(),
             priority: statement.priority,
             taste: statement.taste,
+            document_slug: statement.document_slug.clone(),
+            taste_proposal: statement.taste_proposal.clone(),
             dependencies: statement.dependencies.clone(),
             intent: statement.intent,
             preparation: statement.preparation.clone(),
@@ -818,6 +834,8 @@ impl BoardStatement {
             tags: self.tags.clone(),
             priority: self.priority,
             taste: self.taste,
+            document_slug: self.document_slug.clone(),
+            taste_proposal: self.taste_proposal.clone(),
             dependencies: self.dependencies.clone(),
             intent: self.intent,
             preparation: self.preparation.clone(),

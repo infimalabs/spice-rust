@@ -20,7 +20,9 @@
 /// tags into typed statement fields, which an older release would drop.
 /// Schema 68 closes task statement provenance and resolves every retained
 /// spelling into it.
-pub const SCHEMA_VERSION: u32 = 68;
+/// Schema 69 lifts document slugs and taste-proposal evidence out of statement
+/// tags into typed statement fields, which an older release would drop.
+pub const SCHEMA_VERSION: u32 = 69;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
