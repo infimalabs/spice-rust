@@ -713,6 +713,7 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .app-fact-grid > div { min-width: 0; }
 .app-fact-grid dt { color: var(--muted); font-weight: 700; }
 .app-fact-grid dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.app-origin-request { margin: 4px 0 0; white-space: pre-wrap; }
 .app-fact-link {
   padding: 0;
   border: 0;

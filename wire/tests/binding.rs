@@ -12,10 +12,11 @@
 use std::collections::BTreeSet;
 
 use wire::intent::{
-    AnswerShape, BoardStatement, BoardTask, CommandAnswer, Positioned, ProjectVisibility,
-    TaskDetailAnswer, TaskDetailClosure, TaskDetailNote, TaskRelationEdge, TaskRelationFrontier,
-    TaskRelationKind, TaskRelationNode, TaskRelationNodeRef, TaskRelationTruncation,
-    TaskRelationsAnswer, TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent,
+    AnswerShape, BoardStatement, BoardTask, CommandAnswer, OriginRequest, Positioned,
+    ProjectVisibility, TaskDetailAnswer, TaskDetailClosure, TaskDetailNote, TaskRelationEdge,
+    TaskRelationFrontier, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef,
+    TaskRelationTruncation, TaskRelationsAnswer, TaskTimelineAnswer, TaskTimelineEntry,
+    TaskTimelineEvent,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LaneResidency,
@@ -459,6 +460,10 @@ fn task_detail_answer_round_trips_attributed_note_identity() {
                     .expect("fixture lane"),
             )),
         }),
+        origin_request: Some(OriginRequest {
+            text: "Show the request behind this origin".to_owned(),
+            truncated: false,
+        }),
     };
     let bytes = wire::encode(&expected).expect("task detail answer encodes");
     let CommandAnswer::TaskDetail(actual) = AnswerShape::TaskDetail
@@ -468,6 +473,28 @@ fn task_detail_answer_round_trips_attributed_note_identity() {
         panic!("task detail shape decoded another answer")
     };
     assert_eq!(*actual, expected);
+}
+
+#[test]
+fn origin_request_preview_keeps_short_requests_whole_and_bounds_long_ones() {
+    let limit = wire::intent::ORIGIN_REQUEST_PREVIEW_LIMIT;
+    let whole = "é".repeat(limit);
+    assert_eq!(
+        OriginRequest::preview(&whole),
+        OriginRequest {
+            text: whole.clone(),
+            truncated: false,
+        },
+    );
+    let long = format!("{whole}ü and more");
+    assert_eq!(
+        OriginRequest::preview(&long),
+        OriginRequest {
+            text: whole,
+            truncated: true,
+        },
+        "a long request keeps exactly the bound's characters, cut on a character boundary",
+    );
 }
 
 #[test]
@@ -484,13 +511,22 @@ fn task_relations_answer_round_trips_discriminated_nodes_and_frontier() {
     let expected = TaskRelationsAnswer {
         snapshot: seq(7),
         roots: vec![task.clone()],
-        nodes: vec![TaskRelationNode::Task {
-            task,
-            handle: "SPICE-1kKRRsDP".parse().expect("fixture task handle"),
-            title: "Inspect bounded relationships".to_owned(),
-            phase: "todo".parse().expect("fixture phase"),
-            status: wire::WorkflowStatusKind::Pending,
-        }],
+        nodes: vec![
+            TaskRelationNode::Task {
+                task,
+                handle: "SPICE-1kKRRsDP".parse().expect("fixture task handle"),
+                title: "Inspect bounded relationships".to_owned(),
+                phase: "todo".parse().expect("fixture phase"),
+                status: wire::WorkflowStatusKind::Pending,
+            },
+            TaskRelationNode::Origin {
+                origin: "ack:dWDbyhgRP".parse().expect("fixture origin"),
+                request: Some(OriginRequest {
+                    text: "Show the request".to_owned(),
+                    truncated: true,
+                }),
+            },
+        ],
         edges: Vec::new(),
         truncation: Some(TaskRelationTruncation {
             frontier: vec![TaskRelationFrontier { depth: 1, edge }],

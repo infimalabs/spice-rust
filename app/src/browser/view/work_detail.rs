@@ -316,7 +316,7 @@ fn render_available(
             <section class="app-sheet-section">
                 <h3>{"Provenance"}</h3>
                 <dl class="app-fact-grid">
-                    {fact("Origin", statement.provenance.to_string())}
+                    {origin_fact(&statement.provenance, answer.origin_request.as_ref())}
                     {fact("Origin thread", row.origin_thread.clone())}
                     {creator_team_fact(row.creator_team, render)}
                     {fact("Queue fact", statement.queue_origin.to_string())}
@@ -391,6 +391,28 @@ fn render_activity(
 
 fn fact(label: &'static str, value: String) -> Html {
     html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
+}
+
+/// The task's origin key, followed by the request a steering origin names.
+fn origin_fact(
+    origin: &wire::TaskProvenance,
+    request: Option<&wire::intent::OriginRequest>,
+) -> Html {
+    let Some(request) = request else {
+        return fact("Origin", origin.to_string());
+    };
+    html! {
+        <div>
+            <dt>{"Origin"}</dt>
+            <dd>
+                <code>{origin.to_string()}</code>
+                <p class="app-origin-request">
+                    {request.text.clone()}
+                    if request.truncated { {"…"} }
+                </p>
+            </dd>
+        </div>
+    }
 }
 
 fn project_fact(render: &WorkDetailRender<'_, '_>, project: &str) -> Html {
