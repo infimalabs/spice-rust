@@ -17,7 +17,7 @@ fn answer(task: &wire::TaskStamp, snapshot: u64) -> Box<TaskRelationsAnswer> {
             handle: wire::TaskHandle::for_project("app.overview", task),
             title: "Shown task".to_owned(),
             phase: "todo".parse().expect("fixture phase"),
-            status: "pending".to_owned(),
+            status: wire::WorkflowStatusKind::Pending,
         }],
         edges: Vec::new(),
         truncation: None,
