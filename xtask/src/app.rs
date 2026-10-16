@@ -9,6 +9,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::release::ReleaseEnvironment;
+use spice::serve::canvas::{ARCHIVE_EXTENSION, CanvasArchive};
 use wire::{Digest, Domain};
 
 mod renderer;
@@ -64,6 +65,12 @@ fn app_from(
     let sources = source::SourceSnapshot::capture(root)?;
     let source_identity = sources.identity().clone();
     if let Some(identity) = current_generation_of(root, &source_identity) {
+        let generations = root
+            .join(spice::serve::APP_STAGE)
+            .join(spice::serve::APP_STAGE_GENERATIONS);
+        if !archive_path(&generations, &identity).is_file() {
+            publish_archive(&generations, &identity)?;
+        }
         return writeln!(
             output,
             "[app] {} generation {identity} from selected sources {} ({source_identity}) is \
@@ -183,6 +190,7 @@ fn publish_generation(
             source,
         })?;
     }
+    publish_archive(&generations, identity)?;
 
     let pointer = stage.join(spice::serve::APP_STAGE_CURRENT);
     let destination = atomic::Destination::new(&pointer).map_err(AppBuildError::Atomic)?;
@@ -195,8 +203,41 @@ fn publish_generation(
     prune_generations(&generations, identity)
 }
 
+/// Write `generations/G.zip`, the canvas archive of generation G, beside its
+/// directory, and admit it as G before any pointer can name G.
+fn publish_archive(generations: &Path, identity: &Digest) -> Result<(), AppBuildError> {
+    let generation = generations.join(identity.as_str());
+    let files = generation_files(&generation)?
+        .into_iter()
+        .map(|file| {
+            let bytes = read_regular(&generation.join(file.as_ref()))?;
+            Ok((file, bytes))
+        })
+        .collect::<Result<Vec<_>, AppBuildError>>()?;
+    let archive = CanvasArchive::write(
+        files
+            .iter()
+            .map(|(file, bytes)| (file.as_ref(), bytes.as_slice())),
+    )
+    .map_err(AppBuildError::Canvas)?;
+    CanvasArchive::admit_generation(&archive, identity).map_err(AppBuildError::Canvas)?;
+    let path = archive_path(generations, identity);
+    let destination = atomic::Destination::new(&path).map_err(AppBuildError::Atomic)?;
+    let mut staged = destination.stage().map_err(AppBuildError::Atomic)?;
+    staged
+        .write_all(&archive)
+        .map_err(|source| AppBuildError::Io { path, source })?;
+    staged.commit().map_err(AppBuildError::Atomic)
+}
+
+fn archive_path(generations: &Path, identity: &Digest) -> PathBuf {
+    generations
+        .join(identity.as_str())
+        .with_extension(ARCHIVE_EXTENSION)
+}
+
 /// Remove every generation older than the newest [`RETAINED_GENERATIONS`],
-/// never the one just published.
+/// with its archive, never the one just published.
 ///
 /// Age is the directory's modification time, which a rename into the store
 /// sets at publication. A generation that cannot be removed is left in place:
@@ -208,6 +249,7 @@ fn prune_generations(generations: &Path, current: &Digest) -> Result<(), AppBuil
             source,
         })?
         .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
         .filter(|entry| entry.file_name() != OsStr::new(current.as_str()))
         .filter_map(|entry| {
             let modified = entry.metadata().ok()?.modified().ok()?;
@@ -216,6 +258,7 @@ fn prune_generations(generations: &Path, current: &Digest) -> Result<(), AppBuil
         .collect::<Vec<_>>();
     published.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
     for (_, stale) in published.into_iter().skip(RETAINED_GENERATIONS) {
+        let _ = fs::remove_file(stale.with_extension(ARCHIVE_EXTENSION));
         let _ = fs::remove_dir_all(stale);
     }
     Ok(())
@@ -559,6 +602,7 @@ pub enum AppBuildError {
     SourceIdentity(String),
     GeneratedStage(String),
     Atomic(atomic::Error),
+    Canvas(spice::serve::canvas::CanvasArchiveError),
 }
 
 impl fmt::Display for AppBuildError {
@@ -580,6 +624,7 @@ impl fmt::Display for AppBuildError {
                 write!(formatter, "generated app stage refused: {reason}")
             }
             Self::Atomic(error) => write!(formatter, "app generation publication failed: {error}"),
+            Self::Canvas(error) => write!(formatter, "app generation archive refused: {error}"),
         }
     }
 }

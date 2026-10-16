@@ -1,10 +1,13 @@
-//! Loopback operator surface, atomic app generations, derived reads, and causal thread walks.
+//! Loopback operator surface, atomic app generations, the canvas archive, derived reads, and
+//! causal thread walks.
 
 #![forbid(unsafe_code)]
 
 mod asset;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod axum;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod canvas;
 pub mod config;
 #[cfg(not(target_arch = "wasm32"))]
 mod roles;
