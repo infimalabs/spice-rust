@@ -79,6 +79,7 @@ fn listening(
                 format!("recent contribution {publication}")
             }
             Reason::Invitation { key } => format!("invitation {key}"),
+            Reason::Asked { task: work } => format!("asked after {}", task(work)),
             Reason::Delivery { key } => format!("owed receipt {key}"),
             Reason::Result { key } => format!("owed result {key}"),
             Reason::Coordination { key } => format!("coordination request {key}"),

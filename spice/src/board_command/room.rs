@@ -279,10 +279,11 @@ fn bounded_room_publications(
 }
 
 /// One room's listeners: lanes with native work or duties in it, lanes that
-/// posted in it within the activity window, and lanes a `MSG ADDRESS#ROOM`
-/// route addressed within that window. An addressed lane hears the room
-/// without becoming a participant until it posts; a lane's leave ends its
-/// activity and earlier invitations, never its native work or duties.
+/// posted in it within the activity window, lanes a `MSG ADDRESS#ROOM` route
+/// addressed within that window, and lanes a recorded Design request asked
+/// about it. An addressed or asked lane hears the room without becoming a
+/// participant until it posts; a lane's leave ends its activity, earlier
+/// invitations, and earlier requests, never its native work or duties.
 pub(crate) fn project_attention(
     bus: &Bus,
     entries: &[Entry],
@@ -302,6 +303,7 @@ pub(crate) fn project_attention(
     let since = Instant::new(since)
         .map_err(|error| environment_fault("room::activity-window-invalid", &error.to_string()))?;
     let mut duties = room_invitations(bus, room, residency, since)?;
+    duties.extend(room_asks(bus, room)?);
     duties.extend(room_native_duties(bus, room)?);
     derive_room_attention(
         room,
@@ -351,6 +353,54 @@ fn room_invitations(
                 key: head.body().key.clone(),
                 at: head.body().published,
             },
+            standing: RoomDutyStanding::Owed,
+        })
+        .collect())
+}
+
+/// The newest recorded Design request that asked each lane about `room`,
+/// read through the per-Design notice index; a non-Design room has none.
+fn room_asks(bus: &Bus, room: &wire::TaskStamp) -> Result<Vec<RoomDuty>, Outcome<CommandAnswer>> {
+    let probe = room.clone();
+    let (rows, more) = bus
+        .read(move |read| {
+            let mut rows = Vec::new();
+            let mut after = None;
+            for _ in 0..ROOM_PUBLICATION_PAGES {
+                let page = read.design_notices(&probe, after, journal::FactReadBudget::RETAINED)?;
+                rows.extend(page.rows);
+                let Some(continuation) = page.continuation else {
+                    return Ok((rows, false));
+                };
+                after = Some(continuation);
+            }
+            Ok((rows, true))
+        })
+        .map_err(|error| store_fault("room::asks-unreadable", &error.to_string()))?;
+    if more {
+        return Err(refusal(
+            "room::attention-budget",
+            Some(format!(
+                "Design requests for {room} exceed {} bounded pages",
+                ROOM_PUBLICATION_PAGES
+            )),
+            "reduce retained room traffic before retrying",
+        ));
+    }
+    let mut newest = std::collections::BTreeMap::new();
+    for envelope in rows {
+        if let Some(noticed) = envelope.fact.read::<wire::rooms::DesignNoticed>()
+            && noticed.design == *room
+        {
+            newest.insert(noticed.lane, (noticed.task, envelope.at));
+        }
+    }
+    Ok(newest
+        .into_iter()
+        .map(|(lane, (task, at))| RoomDuty {
+            room: room.clone(),
+            lane,
+            kind: RoomDutyKind::Asked { task, at },
             standing: RoomDutyStanding::Owed,
         })
         .collect())

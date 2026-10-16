@@ -265,6 +265,58 @@ impl Lanes {
         );
     }
 
+    /// Post one operator message to `design` and return the listeners its
+    /// reply reports.
+    fn post_listeners(
+        &self,
+        id: u8,
+        config: &SurfaceConfig,
+        design: &wire::TaskHandle,
+    ) -> Vec<CanonicalUuid> {
+        let request = wire::rooms::RoomPost {
+            room: design.clone(),
+            text: "Operator input for the room.".to_owned(),
+            grooming: None,
+        };
+        let task = stamp(design);
+        let statement = self
+            .bus
+            .read(move |read| read.task_head(&task))
+            .expect("Design head reads")
+            .expect("the Design exists");
+        let command = self.command(
+            id,
+            Actor::Operator,
+            CommandKind::RoomPost,
+            vec![Witness::Task {
+                task: stamp(design),
+                head: statement.position(),
+            }],
+            &request,
+        );
+        let outcome = crate::board_command::dispatch_with_repository(
+            &self.bus,
+            &command,
+            None,
+            &config.projects,
+            &config.allocation,
+        )
+        .expect("room post dispatches");
+        let Outcome::Reply(wire::Reply {
+            body: wire::intent::CommandAnswer::RoomPost(answer),
+            ..
+        }) = outcome
+        else {
+            panic!("room post commits: {outcome:?}");
+        };
+        match answer.outcome {
+            wire::rooms::RoomPostOutcome::RecordedWithListeners { listeners } => {
+                listeners.iter().map(|listener| listener.lane).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// Stand `design` in the fixture working group, then select its stance.
     fn group(
         &self,
@@ -569,17 +621,27 @@ fn contribution_discharges_the_request_and_suppresses_that_design_forever() {
 }
 
 #[test]
-fn leave_discharges_the_request() {
-    let lanes = Lanes::new("design-request-leave");
+fn an_asked_lane_hears_later_posts_until_it_leaves_and_is_never_asked_again() {
+    let lanes = Lanes::new("design-request-listening");
     align_completion_lane(&lanes);
     let config = surface(&lanes);
     let task = lanes.claimed("dVrD245Kc", FIRST);
     let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    assert!(lanes.post_listeners(70, &config, &design).is_empty());
+
     lanes.complete(&task, MATCHING);
     assert!(lanes.request(&config, FIRST).is_some());
+    assert_eq!(
+        lanes.post_listeners(71, &config, &design),
+        vec![test_uuid(FIRST)]
+    );
 
-    lanes.leave(60, &config, FIRST, &design);
+    lanes.leave(72, &config, FIRST, &design);
+    assert!(lanes.post_listeners(73, &config, &design).is_empty());
+    let later = lanes.claimed("dVrD245Kp", FIRST);
+    lanes.complete(&later, MATCHING);
     assert!(lanes.request(&config, FIRST).is_none());
+    assert!(lanes.post_listeners(74, &config, &design).is_empty());
     lanes.finish();
 }
 

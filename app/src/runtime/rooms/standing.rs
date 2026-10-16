@@ -81,7 +81,8 @@ impl RoomProjection {
     /// presence at `now_micros`. Contribution history and native duties stay;
     /// only activity and invitations leave once they age past
     /// [`ROOM_ACTIVITY_SECONDS`], and a leave later than the lane's latest
-    /// contribution ends its activity and every invitation it postdates.
+    /// contribution ends its activity and every invitation or Design request
+    /// it postdates.
     pub fn participants(
         &self,
         room: &TaskStamp,
@@ -117,7 +118,7 @@ impl RoomProjection {
                         Some(publication),
                     ),
                     RoomEventKind::Left { lane, clause } => {
-                        leaves.insert(*lane, (publication, clause));
+                        leaves.insert(*lane, (publication, clause, event.position));
                         continue;
                     }
                     RoomEventKind::Contributed { lane, .. } => {
@@ -152,13 +153,21 @@ impl RoomProjection {
                     }
                 }
             }
-            leaves.retain(|lane, (left, _)| latest.get(lane).is_none_or(|latest| *left > *latest));
+            leaves.retain(|lane, (left, ..)| latest.get(lane).is_none_or(|latest| *left > *latest));
             for (lane, publication, key) in invitations {
                 if leaves
                     .get(&lane)
-                    .is_none_or(|(left, _)| publication > *left)
+                    .is_none_or(|(left, ..)| publication > *left)
                 {
                     add(lane, ParticipantReason::Invitation(key));
+                }
+            }
+            for (lane, (asked, task)) in &state.asked {
+                if leaves
+                    .get(lane)
+                    .is_none_or(|(.., position)| asked > position)
+                {
+                    add(*lane, ParticipantReason::Asked(task.clone()));
                 }
             }
             for (lane, publication) in latest {
@@ -166,7 +175,7 @@ impl RoomProjection {
                     add(lane, ParticipantReason::Activity(publication.clone()));
                 }
             }
-            for (lane, (publication, clause)) in leaves {
+            for (lane, (publication, clause, _)) in leaves {
                 add(
                     lane,
                     ParticipantReason::Left {

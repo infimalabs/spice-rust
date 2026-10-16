@@ -261,6 +261,14 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
             "Invited",
             format!("A room packet addressed this lane under key {key}"),
         ),
+        ParticipantReason::Asked(task) => (
+            "invitation",
+            "Asked",
+            format!(
+                "A Design request asked this lane after it completed {}",
+                task_label(runtime, task)
+            ),
+        ),
         ParticipantReason::Work(task) => (
             "work",
             "Working",

@@ -816,6 +816,67 @@ fn a_leave_ends_activity_until_the_lane_contributes_again() {
 }
 
 #[test]
+fn an_asked_lane_stands_asked_until_it_leaves() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    for frame in opening(&session) {
+        runtime.apply_stream(&frame);
+    }
+    let reasons = |runtime: &AppRuntime| {
+        participants(runtime, after_message(2))
+            .into_iter()
+            .find(|participant| participant.lane == uuid(THIRD_LANE))
+            .map(|participant| participant.reasons)
+    };
+    live(
+        &mut runtime,
+        &session,
+        envelope(
+            9,
+            "room::noticed",
+            &wire::rooms::DesignNoticed {
+                design: room(),
+                statement: wire::Seq::new(1).expect("fixture statement"),
+                lane: uuid(THIRD_LANE),
+                occupant: uuid(REQUEST),
+                task: room(),
+                claim: wire::SequenceCode::new(9),
+                terms: vec!["rooms".to_owned()],
+            },
+        ),
+    );
+    assert_eq!(
+        reasons(&runtime),
+        Some(vec![app::ParticipantReason::Asked(room())])
+    );
+
+    let left = later_publication(1);
+    live(
+        &mut runtime,
+        &session,
+        envelope(
+            10,
+            "room::left",
+            &wire::rooms::RoomLeft {
+                room: room(),
+                publication: left.clone(),
+                lane: uuid(THIRD_LANE),
+                clause: "not my problem space".to_owned(),
+            },
+        ),
+    );
+    assert_eq!(
+        reasons(&runtime),
+        Some(vec![app::ParticipantReason::Left {
+            publication: left,
+            clause: "not my problem space".to_owned(),
+        }]),
+        "a leave ends the asked reason"
+    );
+}
+
+#[test]
 fn only_a_leave_divides_a_working_group_plane() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
