@@ -186,10 +186,7 @@ pub(in crate::board_command) fn project_frontier<'a>(
     let mut prior = None;
     for heads in frontier {
         let statement = heads.statement().body();
-        if matches!(
-            heads.workflow().body().status.as_str(),
-            "completed" | "deleted"
-        ) {
+        if !heads.workflow().body().status.is_pending() {
             return Err(protocol_fault(
                 "board::allocation-index-invalid",
                 "live frontier contains a terminal workflow",
