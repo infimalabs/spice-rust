@@ -201,10 +201,8 @@ fn context_tasks(
                     .tasks()
                     .iter()
                     .filter(|child| {
-                        matches!(
-                            child.workflow().body().status.as_str(),
-                            "pending" | "completed"
-                        ) && substantive_acceptance(&child.statement().body().acceptance)
+                        !child.workflow().body().status.is_deleted()
+                            && substantive_acceptance(&child.statement().body().acceptance)
                             && child
                                 .statement()
                                 .body()
