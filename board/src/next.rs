@@ -301,6 +301,9 @@ pub enum WorkWait {
 /// or another normal wait. Missing authority, missing prerequisites, cycles,
 /// and distinct parked states terminate the chain as human-actionable blocked
 /// work.
+/// A lapsed claim is transparent while walking a dependency path: its own
+/// stale standing stays outside this partition, while its underlying gate
+/// decides whether a dependent waits neutrally or is blocked.
 #[must_use]
 pub fn work_waits<'a>(
     entries: &'a [Entry],
@@ -320,6 +323,12 @@ pub fn work_waits<'a>(
         .iter()
         .zip(states)
         .filter_map(|(entry, state)| {
+            if entry
+                .claim()
+                .is_some_and(|claim| claim.disposition == ClaimDisposition::Lapsed)
+            {
+                return None;
+            }
             let wait = match state {
                 Progress::Neutral => WorkWait::Workflow,
                 Progress::Blocked => WorkWait::Blocked,
@@ -378,9 +387,6 @@ fn progress(
         || entry.project().visibility().is_hidden()
         || workflow.deferral.is_some()
         || passive_design(entry)
-        || entry
-            .claim()
-            .is_some_and(|claim| claim.disposition == ClaimDisposition::Lapsed)
     {
         states[task] = Progress::Distinct;
         return Progress::Distinct;

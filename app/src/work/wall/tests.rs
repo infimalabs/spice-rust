@@ -30,6 +30,16 @@ fn only_chains_agents_cannot_move_are_walls() {
     cycle_b.statement.body.dependencies = vec![stamp(10)];
     let mut closed_or_settled = task(12, "wall.chain");
     closed_or_settled.statement.body.dependencies = vec![stamp(7), stamp(99)];
+    let mut stale = task(13, "wall.stale");
+    stale.claim = Some(claim(&stale, ClaimDisposition::Lapsed));
+    let mut behind_stale = task(14, "wall.stale");
+    behind_stale.statement.body.dependencies = vec![stamp(13)];
+    let mut stale_deferred = task(15, "wall.stale");
+    stale_deferred.claim = Some(claim(&stale_deferred, ClaimDisposition::Lapsed));
+    stale_deferred.workflow.body.deferral =
+        Some("2026-09-24T06:00:00.000Z".parse().expect("deferral"));
+    let mut behind_stale_deferred = task(16, "wall.stale");
+    behind_stale_deferred.statement.body.dependencies = vec![stamp(15)];
 
     let mut board = board(vec![
         active,
@@ -44,9 +54,15 @@ fn only_chains_agents_cannot_move_are_walls() {
         cycle_a,
         cycle_b,
         closed_or_settled,
+        stale,
+        behind_stale,
+        stale_deferred,
+        behind_stale_deferred,
     ]);
     // The resident's gate holds back every row waiting on an unsettled prerequisite.
     board.blocked.extend([3, 4, 8, 9, 10, 11, 12].map(stamp));
+    board.workflow_waiting.insert(stamp(14));
+    board.blocked.insert(stamp(16));
     let work = WorkProjection::from_board(&board);
     let mut walls = DependencyWalls::new(&work);
     let mut walls_of = |index: usize| {
@@ -73,5 +89,16 @@ fn only_chains_agents_cannot_move_are_walls() {
         walls_of(11),
         [Some(DependencyWall::Unreachable(&stamp(7))), None],
         "a closed prerequisite is a wall; one the open board omits settled",
+    );
+    assert_eq!(
+        walls_of(13),
+        [None],
+        "a claimable stale prerequisite is still moving work"
+    );
+    let mut walls = DependencyWalls::new(&work);
+    assert_eq!(
+        walls.wall(15, &work.tasks()[15].dependencies()[0]),
+        Some((14, DependencyWall::Deferred(&stamp(15)))),
+        "a stale prerequisite exposes its human-actionable wall"
     );
 }
