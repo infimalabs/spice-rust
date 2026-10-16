@@ -505,6 +505,11 @@ pub(super) fn add_project(
     add_project_with_acceptance(bus, epoch, actor, task, title, project, flow, &[])
 }
 
+/// An admitted authored creation cause for fixtures that need any one.
+pub(super) fn fixture_origin() -> wire::Origin {
+    "ack:fixtures".parse().expect("fixture origin is valid")
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "task fixtures retain the command's authored fields"
@@ -521,9 +526,7 @@ pub(super) fn add_project_with_acceptance(
 ) -> TaskHandle {
     let born = stamp(task);
     let task = TaskHandle::for_project(project, &born);
-    let origin = "fixture:board-command"
-        .parse()
-        .expect("fixture origin is valid");
+    let origin = fixture_origin();
     assert_committed(issue(
         bus,
         epoch,

@@ -1191,9 +1191,9 @@ impl TaskRelationInvalidation {
             })
             .collect();
         let origin_target = (kind == FactKind::TaskAdded)
-            .then(|| fact.origin().as_str().strip_prefix("task:"))
+            .then(|| fact.origin().as_str().parse::<wire::TaskProvenance>().ok())
             .flatten()
-            .and_then(|task| task.parse().ok());
+            .and_then(|origin| origin.parent().cloned());
         Some(Self {
             kind,
             task,

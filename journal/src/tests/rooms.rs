@@ -199,7 +199,7 @@ fn task_with_intent(
         priority: None,
         taste: None,
         dependencies: Vec::new(),
-        provenance: "task:rooms".parse().expect("provenance"),
+        provenance: wire::TaskProvenance::Parentless,
         creation: wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::OperatorActor,
         ),

@@ -709,7 +709,7 @@ fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
             "Creation provenance survives"
         ]
     );
-    assert_eq!(statement.provenance, origin);
+    assert_eq!(statement.provenance.origin(), Some(origin.clone()));
     assert_eq!(creation_fact_origin(&bus, &task), origin);
     assert_eq!(at(&answer, &task).origin_thread, "operator");
 

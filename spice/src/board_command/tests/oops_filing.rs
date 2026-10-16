@@ -12,7 +12,7 @@ fn add_parked(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
         &TaskOopsAdd {
             title: format!("Triage {name}"),
             description: format!("Evidence for {name}"),
-            origin: Some("fixture:oops-filing".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             project: Some("board.test".to_owned()),
         },
     ));
@@ -35,7 +35,7 @@ fn add_design(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
             description: None,
             acceptance: vec!["The bounded grooming batch records its disposition".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
-            origin: Some("fixture:oops-grooming".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             flow: Some("design".to_owned()),
             depends: Vec::new(),
             intent: Some(wire::TaskIntent::Design),
@@ -292,7 +292,7 @@ fn task_add_oops_dependency_refuses(
                 description: None,
                 acceptance: Vec::new(),
                 requirements: wire::EnvironmentRequirements::default(),
-                origin: Some("fixture:oops-filing".parse().expect("fixture origin")),
+                origin: Some(fixture_origin()),
                 flow: Some("todo".to_owned()),
                 depends: vec![forged_oops],
                 claim: false,

@@ -7,8 +7,8 @@
 
 use board::Entry;
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Instant, LeaseHead, Origin, Phase, Seq,
-    TaskHead, TaskStamp, WorkflowHead,
+    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Instant, LeaseHead, Phase, Seq, TaskHead,
+    TaskStamp, WorkflowHead,
 };
 
 fn stamp(text: &str) -> TaskStamp {
@@ -88,7 +88,7 @@ fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -
         priority: None,
         taste: None,
         dependencies: Vec::new(),
-        provenance: "task:BOARD-root".parse::<Origin>().expect("origin"),
+        provenance: wire::TaskProvenance::Task(stamp("BOARD-r1")),
         creation: wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::SpiceActor,
         ),

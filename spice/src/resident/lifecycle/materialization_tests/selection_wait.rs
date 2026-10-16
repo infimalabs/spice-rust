@@ -84,12 +84,7 @@ fn output_write(at: Instant) -> JournalWrite {
     let origin = format!("task:{}", handle(OUTPUT_MOMENT))
         .parse::<Origin>()
         .expect("output origin");
-    let mut write = JournalWrite::new(
-        Actor::Lane(lane()),
-        origin.clone(),
-        at,
-        Producer::CommandDoor,
-    );
+    let mut write = JournalWrite::new(Actor::Lane(lane()), origin, at, Producer::CommandDoor);
     let added = write
         .fact(
             body::TaskAdded {
@@ -115,6 +110,7 @@ fn output_write(at: Instant) -> JournalWrite {
         )
         .expect("output fact builds");
     let born = output.clone();
+    let provenance = wire::TaskProvenance::Task(output.clone());
     write.task_head(added, move |position| TaskHead {
         preparation: Some(preparation),
         authorization: None,
@@ -132,7 +128,7 @@ fn output_write(at: Instant) -> JournalWrite {
         priority: None,
         taste: None,
         dependencies: Vec::new(),
-        provenance: origin,
+        provenance,
         creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: position,
     });

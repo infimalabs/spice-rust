@@ -28,7 +28,7 @@ const TASK_HEAD: &str = r#"{
   "project": "wire",
   "tags": [],
   "dependencies": [],
-  "provenance": "repo:genesis",
+  "provenance": "parentless",
   "creation": { "kind": "unavailable", "reason": "operator-actor" },
   "revision": 10
 }"#;

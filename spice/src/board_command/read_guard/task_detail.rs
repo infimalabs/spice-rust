@@ -135,7 +135,13 @@ pub(super) fn task_record(
                 },
             );
         }
-        let Some(key) = super::task_steering_origin_token(&envelope.origin) else {
+        let Some(key) = envelope
+            .origin
+            .as_str()
+            .parse::<wire::TaskProvenance>()
+            .ok()
+            .and_then(|origin| origin.steering_key().map(str::to_owned))
+        else {
             continue;
         };
         let kind = envelope.fact.kind();
@@ -150,7 +156,7 @@ pub(super) fn task_record(
                 wire::intent::TaskAcknowledgment {
                     position: envelope.seq,
                     kind,
-                    key: key.to_owned(),
+                    key,
                 },
             );
         }

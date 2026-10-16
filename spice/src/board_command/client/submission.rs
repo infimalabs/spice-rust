@@ -509,28 +509,18 @@ fn steering_origin_key(
     let Some(origin) = origin else {
         return Ok(None);
     };
-    let text = origin.as_str();
-    if let Some(key) = text
-        .strip_prefix("steering:")
-        .or_else(|| text.strip_prefix("steer:"))
-    {
-        return Err(refusal(
-            "task::steering-origin-noncanonical",
-            Some(text.to_owned()),
-            &format!("use --origin ack:{key}"),
-        ));
-    }
-    text.strip_prefix("ack:")
+    authored_provenance(origin)?
+        .steering_key()
         .map(|key| {
-            key.parse::<steer::Key>().map(Some).map_err(|error| {
+            key.parse::<steer::Key>().map_err(|error| {
                 refusal(
                     "task::steering-origin-invalid",
-                    Some(text.to_owned()),
+                    Some(origin.to_string()),
                     &error.to_string(),
                 )
             })
         })
-        .unwrap_or(Ok(None))
+        .transpose()
 }
 
 fn steering_attachments(
@@ -816,17 +806,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn steering_origin_admission_refuses_aliases_and_accepts_ack() {
-        for written in ["steering:1kLGp2NJ", "steer:1kLGp2NJ"] {
+    fn authored_origins_refuse_every_other_spelling_naming_the_canonical_form() {
+        for (written, reason, canonical) in [
+            (
+                "steering:1kLGp2NJ",
+                "task::origin-noncanonical",
+                Some("ack:1kLGp2NJ"),
+            ),
+            (
+                "steer:1kLGp2NJ",
+                "task::origin-noncanonical",
+                Some("ack:1kLGp2NJ"),
+            ),
+            ("gate:complexity", "task::origin-invalid", None),
+            ("operator:draft", "task::origin-invalid", None),
+        ] {
             let origin: wire::Origin = written.parse().expect("fixture origin");
-            let failure =
-                steering_origin_key(Some(&origin)).expect_err("noncanonical origin refuses");
-            assert!(matches!(
-                &failure,
-                Outcome::Refusal(refusal)
-                    if refusal.reason() == "task::steering-origin-noncanonical"
-                        && refusal.explanation().contains("ack:1kLGp2NJ")
-            ));
+            let failure = steering_origin_key(Some(&origin)).expect_err("origin refuses");
+            let Outcome::Refusal(refusal) = &failure else {
+                panic!("{written} did not refuse: {failure:?}")
+            };
+            assert_eq!(refusal.reason(), reason, "{written}");
+            if let Some(canonical) = canonical {
+                assert!(refusal.explanation().contains(canonical), "{written}");
+            }
         }
 
         let canonical: wire::Origin = "ack:1kLGp2NJ".parse().expect("canonical origin");
@@ -834,5 +837,10 @@ mod tests {
             .expect("canonical origin is admitted")
             .expect("canonical origin carries a steering key");
         assert_eq!(key.as_str(), "1kLGp2NJ");
+        let parent: wire::Origin = "task:CARDS-1kRYkKfc".parse().expect("parent origin");
+        assert_eq!(
+            steering_origin_key(Some(&parent)).expect("parent admitted"),
+            None
+        );
     }
 }

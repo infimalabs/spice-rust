@@ -155,9 +155,7 @@ fn drain_guidance_follows_lane_ownership_across_add_release_and_wake() {
     let lane = Actor::Lane(seats[0].lane);
     let first_stamp = stamp("DRAIN-first001");
     let first = TaskHandle::for_project("board.test", &first_stamp);
-    let origin: wire::Origin = "fixture:drain-continuation"
-        .parse()
-        .expect("fixture origin is valid");
+    let origin = fixture_origin();
     let add = |title: &str| drain_add(title, &origin);
     let idle_add = assert_committed(issue(
         &bus,

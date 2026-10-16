@@ -244,7 +244,7 @@ fn add_born(bus: &Bus, epoch: CanonicalUuid, born: wire::TaskStamp, title: &str)
             description: None,
             acceptance: Vec::new(),
             requirements: wire::EnvironmentRequirements::default(),
-            origin: Some("fixture:identity".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             flow: Some("todo".to_owned()),
             depends: Vec::new(),
             claim: false,

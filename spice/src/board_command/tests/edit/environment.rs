@@ -44,7 +44,7 @@ fn appliance_requirement_holds_a_task_until_a_later_appliance_runs() {
             requirements: wire::EnvironmentRequirements::one(
                 wire::EnvironmentRequirement::appliance_after(running.clone()),
             ),
-            origin: Some("fixture:environment".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             flow: Some("todo".to_owned()),
             depends: Vec::new(),
             claim: false,
@@ -306,7 +306,7 @@ fn add_blocked_requirement(
             description: None,
             acceptance: Vec::new(),
             requirements: requirements.clone(),
-            origin: Some("fixture:environment".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             flow: Some("todo".to_owned()),
             depends: Vec::new(),
             claim: false,

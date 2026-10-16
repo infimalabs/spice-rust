@@ -326,7 +326,7 @@ fn present_remote_node(
         TaskRelationNode::Origin { origin } => Node {
             id,
             kind: "ACK / origin",
-            label: format!("Origin · {}", compact(origin.as_str())),
+            label: format!("Origin · {}", compact(&origin.to_string())),
             detail: origin.to_string(),
             diagram: format!("Origin\n{origin}"),
             task: None,

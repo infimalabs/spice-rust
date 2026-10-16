@@ -195,13 +195,11 @@ fn relationship_tasks(
         }
         if let Some(parent) = statement
             .provenance
-            .as_str()
-            .strip_prefix("task:")
-            .and_then(|value| value.parse::<TaskStamp>().ok())
-            .filter(|parent| tasks.contains_key(parent))
+            .parent()
+            .filter(|parent| tasks.contains_key(*parent))
         {
             reverse_origins
-                .entry(parent)
+                .entry(parent.clone())
                 .or_default()
                 .insert(task.clone());
         }
@@ -242,10 +240,9 @@ fn relationship_tasks(
             neighbors.extend(
                 statement
                     .provenance
-                    .as_str()
-                    .strip_prefix("task:")
-                    .and_then(|value| value.parse::<TaskStamp>().ok())
-                    .filter(|parent| tasks.contains_key(parent)),
+                    .parent()
+                    .filter(|parent| tasks.contains_key(*parent))
+                    .cloned(),
             );
             neighbors.extend(reverse_origins.get(&task).into_iter().flatten().cloned());
         }
@@ -328,18 +325,16 @@ fn candidates(
     let row = tasks[task];
     if relations.contains(&TaskRelationKind::Origin) {
         let origin = &row.statement.body.provenance;
-        let target = origin
-            .as_str()
-            .strip_prefix("task:")
-            .and_then(|value| value.parse::<TaskStamp>().ok())
-            .filter(|parent| tasks.contains_key(parent))
-            .map_or_else(
-                || TaskRelationNode::Origin {
-                    origin: origin.clone(),
-                },
-                |parent| task_node(tasks[&parent]),
-            );
-        candidates.push(candidate(TaskRelationKind::Origin, source.clone(), target));
+        let target = match origin.parent() {
+            Some(parent) if tasks.contains_key(parent) => Some(task_node(tasks[parent])),
+            _ if *origin == wire::TaskProvenance::Parentless => None,
+            _ => Some(TaskRelationNode::Origin {
+                origin: origin.clone(),
+            }),
+        };
+        if let Some(target) = target {
+            candidates.push(candidate(TaskRelationKind::Origin, source.clone(), target));
+        }
         if let Some(children) = reverse_origins.get(task) {
             for child in children {
                 let target = task_node(tasks[child]);
@@ -440,15 +435,12 @@ fn reverse_origins(
 ) -> BTreeMap<TaskStamp, BTreeSet<TaskStamp>> {
     let mut reverse = BTreeMap::<TaskStamp, BTreeSet<TaskStamp>>::new();
     for (task, row) in tasks {
-        let parent = row
-            .statement
-            .body
-            .provenance
-            .as_str()
-            .strip_prefix("task:")
-            .and_then(|value| value.parse::<TaskStamp>().ok());
-        if let Some(parent) = parent.filter(|parent| tasks.contains_key(parent)) {
-            reverse.entry(parent).or_default().insert(task.clone());
+        let parent = row.statement.body.provenance.parent();
+        if let Some(parent) = parent.filter(|parent| tasks.contains_key(*parent)) {
+            reverse
+                .entry(parent.clone())
+                .or_default()
+                .insert(task.clone());
         }
     }
     reverse

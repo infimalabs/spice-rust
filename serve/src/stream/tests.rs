@@ -404,7 +404,7 @@ fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
         priority: None,
         taste: None,
         dependencies: Vec::new(),
-        provenance: "task:rooms".parse().expect("provenance"),
+        provenance: wire::TaskProvenance::Parentless,
         creation,
         revision,
     });
