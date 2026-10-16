@@ -77,6 +77,10 @@ footprint](../docs/product/invariants/lifecycle.md#surface-a-changing-region-hol
 retained reads and their feedback follow [Retained task detail does not move
 for background
 feedback](../docs/product/invariants/lifecycle.md#surface-retained-task-detail-does-not-move-for-background-feedback).
+Task save, reconciliation, close, delete, and reconnect feedback shares the
+app's lower out-of-flow toast area. Task lifecycle and ordinary action results
+own separate stacked slots there, so either may replace or dismiss its own
+message without covering or clearing the other at desktop or narrow widths.
 
 Every selected task owns a full detail section below the graph. Ownership and
 claim, state and contract, project and team, timestamps and lifecycle, origin

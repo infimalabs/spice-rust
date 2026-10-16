@@ -370,14 +370,16 @@ path.image-annotation-hit { fill: none; }
   font: 700 var(--annotation-label-size)/1 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 .image-annotation-loading { text-align: center; color: var(--muted); }
-/* Out of flow, so showing or clearing a result never moves what is beneath it. */
+/* Out of flow; independently owned notices stack in one lower area without moving or overlapping content. */
+.toast-area { position: fixed; inset: auto 16px 24px; z-index: 10; display: grid; gap: 8px; justify-items: center; width: auto; height: auto; max-width: none; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; overflow: visible; pointer-events: none; }
 .toast {
   position: fixed; inset: auto 16px 24px; z-index: 10; width: fit-content; height: auto; max-width: 36rem; margin: 0 auto; padding: 7px 14px;
   color: inherit; overflow: visible;
   border-radius: var(--app-radius-overlay); font-size: var(--app-type-toast); overflow-wrap: anywhere;
   transition: opacity var(--app-motion-settle) var(--app-ease-standard), translate var(--app-motion-settle) var(--app-ease-standard), visibility var(--app-motion-settle) allow-discrete;
 }
-.toast--task-feedback { inset-block: 24px auto; }
+.toast-area .toast { position: static; inset: auto; max-width: min(36rem, 100%); margin: 0; }
+.toast:empty { display: none; }
 .toast[data-shown="false"] { opacity: 0; translate: 0 8px; visibility: hidden; }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
 .composer-shard-image-open {
