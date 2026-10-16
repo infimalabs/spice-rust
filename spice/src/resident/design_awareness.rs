@@ -5,7 +5,7 @@
 //! choice directly when it races the resident recognition pass.
 
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
 use journal::{GuardError, JournalRead};
 use spice::rooms::awareness::{
@@ -27,6 +27,29 @@ const STALE: &str = "room::awareness-stale";
 const COMPLETION_PAGE_ROWS: usize = 64;
 /// Aggregate completion envelope bytes decoded in one reconciliation pass.
 const COMPLETION_PAGE_BYTES: usize = 256 * 1024;
+
+#[derive(Clone, Copy)]
+struct RecentStatement<'a>(&'a wire::TaskHead);
+
+impl PartialEq for RecentStatement<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.revision == other.0.revision
+    }
+}
+
+impl Eq for RecentStatement<'_> {}
+
+impl PartialOrd for RecentStatement<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RecentStatement<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.revision.cmp(&other.0.revision)
+    }
+}
 
 /// One Design request and the journal position its planning read covered.
 #[derive(Clone)]
@@ -178,7 +201,7 @@ fn plan(
         return Vec::new();
     }
     let entries = &planning.entries;
-    let common = CommonTerms::of(recent_statements(entries).map(statement_terms));
+    let common = common_terms(entries.iter().map(board::Entry::statement));
     let facts = &planning.facts;
     let mut requested: BTreeMap<CanonicalUuid, BTreeSet<TaskStamp>> = BTreeMap::new();
     let mut owed = Vec::new();
@@ -266,27 +289,27 @@ fn planned_request(
     }
 }
 
-/// Distinctive terms of one task's statement.
-fn statement_terms(entry: &board::Entry) -> BTreeSet<String> {
-    let statement = entry.statement();
-    task_terms(
-        &statement.title,
-        statement.description.as_deref(),
-        &statement.acceptance,
-    )
-}
-
-/// The [`COMMON_TERM_WINDOW`] task statements most recently revised, open or
-/// completed.
-fn recent_statements(entries: &[board::Entry]) -> impl Iterator<Item = &board::Entry> {
-    let mut recent = entries.iter().collect::<Vec<_>>();
-    if recent.len() > COMMON_TERM_WINDOW {
-        recent.select_nth_unstable_by_key(COMMON_TERM_WINDOW, |entry| {
-            Reverse(entry.statement().revision)
-        });
-        recent.truncate(COMMON_TERM_WINDOW);
+/// Common vocabulary in the [`COMMON_TERM_WINDOW`] task statements most
+/// recently revised, open or completed.
+fn common_terms<'a>(statements: impl Iterator<Item = &'a wire::TaskHead>) -> CommonTerms {
+    let mut recent = BinaryHeap::with_capacity(COMMON_TERM_WINDOW + 1);
+    for statement in statements {
+        recent.push(Reverse(RecentStatement(statement)));
+        if recent.len() > COMMON_TERM_WINDOW {
+            recent.pop();
+        }
     }
-    recent.into_iter()
+    CommonTerms::of(
+        recent
+            .into_iter()
+            .map(|Reverse(RecentStatement(statement))| {
+                task_terms(
+                    &statement.title,
+                    statement.description.as_deref(),
+                    &statement.acceptance,
+                )
+            }),
+    )
 }
 
 /// Whether `entry` is an open Design inactive under its group stance.
@@ -398,7 +421,12 @@ pub(crate) fn project_request(
         return Ok(None);
     }
 
-    let common = CommonTerms::of(recent_statements(entries).map(statement_terms));
+    let common = common_terms(
+        observed
+            .tasks()
+            .iter()
+            .map(|heads| heads.statement().body()),
+    );
     let completed_terms = completion_terms(
         &task_statement.title,
         task_statement.description.as_deref(),

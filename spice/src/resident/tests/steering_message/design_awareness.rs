@@ -399,41 +399,81 @@ fn only_a_completion_owes_the_best_single_design_request() {
 }
 
 #[test]
-fn common_recent_work_does_not_create_a_design_match() {
-    let lanes = Lanes::new("design-request-common-terms");
-    align_completion_lane(&lanes);
-    let config = surface(&lanes);
-    for index in 0..8 {
-        let stamp = wire::TaskStamp::for_micros(20_000 + index)
-            .expect("fixture stamp")
-            .to_string();
-        let task = lanes.claimed(&stamp, FIRST);
-        lanes.complete(&task, "Retained lane room cursor.");
+fn resident_and_next_use_the_same_completed_statement_window() {
+    let mut selected = None;
+    for (tag, next_first) in [
+        ("design-request-common-next-first", true),
+        ("design-request-common-resident-first", false),
+    ] {
+        let lanes = Lanes::new(tag);
+        align_completion_lane(&lanes);
+        let config = surface(&lanes);
+        for index in 0..8 {
+            let stamp = wire::TaskStamp::for_micros(20_000 + index)
+                .expect("fixture stamp")
+                .to_string();
+            let task = lanes.seed_task(
+                &stamp,
+                "Lane room cursor retained publication bounded",
+                None,
+                None,
+                Some(test_uuid(FIRST)),
+            );
+            lanes.complete(&task, "fixture completion");
+        }
+        let task = lanes.seed_task(
+            "dVrD245Kc",
+            "Lane room cursor retained publication bounded",
+            Some("Catchup pagination snapshot."),
+            None,
+            Some(test_uuid(FIRST)),
+        );
+        let _generic = lanes.design(
+            "dVrD245Kd",
+            "Lane room cursor retained publication bounded",
+            "Lane room cursor retained publication bounded.",
+        );
+        let distinctive = lanes.design(
+            "dVrD245Km",
+            "Catchup pagination snapshot",
+            "Catchup pagination snapshot.",
+        );
+        let mut completions =
+            crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+                .expect("completion cursor starts");
+        let mut seated = claimant_seats();
+
+        lanes.complete(&task, "Lane room cursor retained publication bounded.");
+        let request = if next_first {
+            let request = lanes
+                .request(&config, FIRST)
+                .expect("task next chooses the distinctive Design");
+            lanes.reconcile_completions(&config, &seated, &mut completions);
+            request
+        } else {
+            lanes.reconcile_completions(&config, &seated, &mut completions);
+            lanes
+                .request(&config, FIRST)
+                .expect("resident choice is returned by task next")
+        };
+
+        assert_eq!(request.design, distinctive);
+        assert_eq!(request.terms, ["catchup", "pagination", "snapshot"]);
+        let notices = lanes.noticed();
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].design, stamp(&distinctive));
+        assert_eq!(notices[0].terms, request.terms);
+        if let Some(previous) = &selected {
+            assert_eq!(
+                previous, &request.terms,
+                "both execution orders choose the same matched terms"
+            );
+        } else {
+            selected = Some(request.terms);
+        }
+        seated.release_all();
+        lanes.finish();
     }
-    let task = lanes.seed_task(
-        "dVrD245Kc",
-        "Lane room cursor",
-        Some("Retained lane room cursor. Paginate bounded catch-up publications."),
-        None,
-        Some(test_uuid(FIRST)),
-    );
-    let _generic = lanes.design(
-        "dVrD245Kd",
-        "Room cursor lane",
-        "Retained room cursor lane.",
-    );
-    let distinctive = lanes.design("dVrD245Km", "Room catch-up pagination", PITCH);
-
-    lanes.complete(&task, "Retained lane room cursor.");
-
-    assert_eq!(
-        lanes
-            .request(&config, FIRST)
-            .expect("distinctive completed work owes a request")
-            .design,
-        distinctive
-    );
-    lanes.finish();
 }
 
 #[test]
