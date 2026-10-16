@@ -531,6 +531,111 @@ fn resident_catch_up_reconciles_only_commit_changed_authority() {
     lanes.finish();
 }
 
+/// Recording a Design request changes room attention by itself: the asked lane
+/// receives already-unread context without waiting for another room post.
+#[test]
+fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
+    let lanes = Lanes::new("room-catch-up-design-request");
+    let prior = lanes.held_room("dVrD245Kc", FIRST);
+    let design = lanes.seed_task(
+        "dVrD245Kd",
+        "Design",
+        Some("Decide how room context should reach an asked lane."),
+        Some(wire::TaskIntent::Design),
+        None,
+    );
+    let first_lane = test_uuid(FIRST);
+    let repository = Repository::discover(&lanes.root).expect("fixture repository resolves");
+    let startup = load_startup_surface(&repository).expect("fixture surface loads");
+    let mut seats = Seats::new();
+    seats
+        .seat_detached(
+            first_lane,
+            test_uuid(FIRST + 1),
+            Box::new(DetachedFixture {
+                dropped: Arc::new(AtomicU64::new(0)),
+            }),
+        )
+        .expect("listener seat");
+    let mut diagnostics = Vec::new();
+    room_catch_up::reconcile(
+        &lanes.bus,
+        &lanes.paths,
+        &startup.config,
+        &seats,
+        &mut diagnostics,
+    )
+    .expect("startup catch-up establishes the lane horizon");
+
+    append_room_publication(&lanes, &design);
+    let design_stamp = design.born().expect("fixture Design has a birth");
+    let statement = lanes
+        .bus
+        .read({
+            let design = design_stamp.clone();
+            move |read| read.task_head(&design)
+        })
+        .expect("Design statement reads")
+        .expect("Design statement exists")
+        .body()
+        .revision;
+    let mut request = write(Actor::Spice, lanes.epoch, Producer::ResidentRecognition)
+        .expect("request write starts");
+    request
+        .fact(
+            wire::rooms::DesignNoticed {
+                design: design_stamp.clone(),
+                statement,
+                lane: first_lane,
+                occupant: test_uuid(FIRST + 1),
+                task: prior.born().expect("fixture prior task has a birth"),
+                claim: wire::SequenceCode::new(1),
+                terms: vec!["context".to_owned(), "room".to_owned()],
+            },
+            FactCause::Root,
+        )
+        .expect("Design request is valid");
+    let noticed = commit(&lanes.bus, request).expect("Design request commits");
+    let mut expected_rooms = BTreeSet::new();
+    expected_rooms.insert(design_stamp);
+    let changes =
+        room_catch_up::changes(&lanes.bus, noticed).expect("Design request changes classify");
+    assert_eq!(
+        changes,
+        room_catch_up::Changes {
+            authority: false,
+            lanes: BTreeSet::new(),
+            rooms: expected_rooms,
+        }
+    );
+    room_catch_up::reconcile_commit(
+        &lanes.bus,
+        &lanes.paths,
+        &startup.config,
+        &seats,
+        &changes,
+        &mut diagnostics,
+    )
+    .expect("Design request room reconciles");
+
+    let notice = room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane))
+        .expect("asked lane receives unread room context");
+    assert!(notice.text.contains("appended before accounting"));
+    assert!(notice.text.contains("asked after"));
+    assert!(
+        notice
+            .text
+            .contains(&format!("leave: spice room leave {design} --clause TEXT"))
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&diagnostics)
+    );
+    seats.release_all();
+    lanes.finish();
+}
+
 /// A room-bound delivery's terminal steering fact publishes no room row, but
 /// commit classification still names the exact room whose attention changed.
 #[test]

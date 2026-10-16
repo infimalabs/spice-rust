@@ -305,6 +305,9 @@ pub(in crate::resident) fn changes(
             for envelope in &page.rows {
                 let fact = &envelope.fact;
                 changes.authority |= changes_task_attention(fact);
+                if let Some(noticed) = fact.read::<wire::rooms::DesignNoticed>() {
+                    changes.rooms.insert(noticed.design);
+                }
                 if let Some(delivered) = fact.read::<RoomDelivered>() {
                     changes.lanes.insert(delivered.hunk.head.lane);
                 }
