@@ -1,7 +1,7 @@
 //! Bounded advisory maturity for one Design.
 //!
-//! The accumulator consumes admitted organic notices and typed contributions in
-//! journal order. It retains exact detail for a fixed recent statement window,
+//! The accumulator consumes admitted Design requests and typed contributions
+//! in journal order. It retains exact detail for a fixed recent statement window,
 //! folds older heads into one aggregate, and caps every retained lane set. The
 //! resulting evidence never changes task, claim, group, decision, or execution
 //! authority.
@@ -48,18 +48,18 @@ impl DesignContributionCounts {
     }
 }
 
-/// One recent statement head's invitation and contribution evidence.
+/// One recent statement head's request and contribution evidence.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignMaturityHead {
     /// Exact Design statement head shared by these records.
     pub statement: Seq,
-    /// Organic notice records at this head, including repeat lanes.
-    pub organic_notices: u64,
-    /// Distinct invited lanes retained in sorted order.
-    pub invited_lanes: Vec<CanonicalUuid>,
-    /// More distinct invited lanes existed than the retained bound.
-    pub invited_lanes_truncated: bool,
+    /// Request records at this head, including repeat lanes.
+    pub requests: u64,
+    /// Distinct requested lanes retained in sorted order.
+    pub requested_lanes: Vec<CanonicalUuid>,
+    /// More distinct requested lanes existed than the retained bound.
+    pub requested_lanes_truncated: bool,
     /// Contribution records at this head, including repeat lanes.
     pub contributions: u64,
     /// Distinct contributing lanes retained in sorted order.
@@ -72,25 +72,25 @@ impl DesignMaturityHead {
     fn new(statement: Seq) -> Self {
         Self {
             statement,
-            organic_notices: 0,
-            invited_lanes: Vec::new(),
-            invited_lanes_truncated: false,
+            requests: 0,
+            requested_lanes: Vec::new(),
+            requested_lanes_truncated: false,
             contributions: 0,
             contributing_lanes: Vec::new(),
             contributing_lanes_truncated: false,
         }
     }
 
-    /// Number of retained lanes both invited and contributing at this head.
+    /// Number of retained lanes both requested and contributing at this head.
     #[must_use]
-    pub fn invited_contributors(&self) -> usize {
-        intersection_count(&self.invited_lanes, &self.contributing_lanes)
+    pub fn requested_contributors(&self) -> usize {
+        intersection_count(&self.requested_lanes, &self.contributing_lanes)
     }
 
     /// Whether the displayed intersection may omit lanes beyond a bound.
     #[must_use]
     pub const fn yield_truncated(&self) -> bool {
-        self.invited_lanes_truncated || self.contributing_lanes_truncated
+        self.requested_lanes_truncated || self.contributing_lanes_truncated
     }
 }
 
@@ -100,16 +100,16 @@ impl DesignMaturityHead {
 pub struct DesignMaturityOlder {
     /// Distinct statement heads folded here.
     pub statement_heads: u64,
-    /// Organic notice records across those heads.
-    pub organic_notices: u64,
-    /// Sum of each head's distinct invited lanes.
-    pub invited_lane_heads: u64,
+    /// Request records across those heads.
+    pub requests: u64,
+    /// Sum of each head's distinct requested lanes.
+    pub requested_lane_heads: u64,
     /// Contribution records across those heads.
     pub contributions: u64,
     /// Sum of each head's distinct contributing lanes.
     pub contributing_lane_heads: u64,
-    /// Sum of each head's invited/contributing lane intersection.
-    pub invited_contributor_lane_heads: u64,
+    /// Sum of each head's requested/contributing lane intersection.
+    pub requested_contributor_lane_heads: u64,
     /// At least one folded head exceeded a retained lane bound.
     pub truncated: bool,
 }
@@ -136,12 +136,12 @@ pub struct DesignMaturity {
     pub contributing_lanes: Vec<CanonicalUuid>,
     /// More distinct contributing lanes existed than the retained bound.
     pub contributing_lanes_truncated: bool,
-    /// Organic notice records across all statement heads.
-    pub organic_notices: u64,
-    /// Distinct organically invited lanes retained in sorted order.
-    pub organic_lanes: Vec<CanonicalUuid>,
-    /// More distinct organically invited lanes existed than the retained bound.
-    pub organic_lanes_truncated: bool,
+    /// Request records across all statement heads.
+    pub requests: u64,
+    /// Distinct requested lanes retained in sorted order.
+    pub requested_lanes: Vec<CanonicalUuid>,
+    /// More distinct requested lanes existed than the retained bound.
+    pub requested_lanes_truncated: bool,
     /// Exact recent statement heads, oldest first.
     pub recent_heads: Vec<DesignMaturityHead>,
     /// Fixed-size aggregate of older statement heads.
@@ -193,19 +193,19 @@ pub enum DesignMaturityState {
 }
 
 impl DesignMaturity {
-    /// Fold one admitted organic notice.
-    pub fn observe_notice(&mut self, notice: &DesignNoticed) {
-        self.organic_notices = self.organic_notices.saturating_add(1);
+    /// Fold one admitted Design request.
+    pub fn observe_request(&mut self, notice: &DesignNoticed) {
+        self.requests = self.requests.saturating_add(1);
         insert_bounded(
-            &mut self.organic_lanes,
-            &mut self.organic_lanes_truncated,
+            &mut self.requested_lanes,
+            &mut self.requested_lanes_truncated,
             notice.lane,
         );
         self.observe_head(notice.statement, |head| {
-            head.organic_notices = head.organic_notices.saturating_add(1);
+            head.requests = head.requests.saturating_add(1);
             insert_bounded(
-                &mut head.invited_lanes,
-                &mut head.invited_lanes_truncated,
+                &mut head.requested_lanes,
+                &mut head.requested_lanes_truncated,
                 notice.lane,
             );
         });
@@ -239,7 +239,7 @@ impl DesignMaturity {
         });
     }
 
-    /// Current advisory maturity state. Invitation reach and questions never
+    /// Current advisory maturity state. Requested reach and questions never
     /// satisfy a dimension.
     #[must_use]
     pub fn state(&self) -> DesignMaturityState {
@@ -288,17 +288,17 @@ impl DesignMaturity {
     fn fold_older(&mut self, head: DesignMaturityHead) {
         let older = &mut self.older_heads;
         older.statement_heads = older.statement_heads.saturating_add(1);
-        older.organic_notices = older.organic_notices.saturating_add(head.organic_notices);
-        older.invited_lane_heads = older
-            .invited_lane_heads
-            .saturating_add(head.invited_lanes.len() as u64);
+        older.requests = older.requests.saturating_add(head.requests);
+        older.requested_lane_heads = older
+            .requested_lane_heads
+            .saturating_add(head.requested_lanes.len() as u64);
         older.contributions = older.contributions.saturating_add(head.contributions);
         older.contributing_lane_heads = older
             .contributing_lane_heads
             .saturating_add(head.contributing_lanes.len() as u64);
-        older.invited_contributor_lane_heads = older
-            .invited_contributor_lane_heads
-            .saturating_add(head.invited_contributors() as u64);
+        older.requested_contributor_lane_heads = older
+            .requested_contributor_lane_heads
+            .saturating_add(head.requested_contributors() as u64);
         older.truncated |= head.yield_truncated();
     }
 }
@@ -382,11 +382,11 @@ mod tests {
     fn substantive_breadth_alone_crosses_steeped() {
         let mut maturity = DesignMaturity::default();
         for lane in 1..=12 {
-            maturity.observe_notice(&notice(10, lane));
+            maturity.observe_request(&notice(10, lane));
         }
         assert_eq!(maturity.state(), DesignMaturityState::Fresh);
-        assert_eq!(maturity.organic_notices, 12);
-        assert_eq!(maturity.organic_lanes.len(), 12);
+        assert_eq!(maturity.requests, 12);
+        assert_eq!(maturity.requested_lanes.len(), 12);
 
         maturity.observe_contribution(&contribution(Some(10), 1, RoomContributionKind::Question));
         maturity.observe_contribution(&contribution(Some(10), 1, RoomContributionKind::Question));
@@ -416,8 +416,8 @@ mod tests {
     fn head_yield_history_and_memory_are_bounded() {
         let mut maturity = DesignMaturity::default();
         for statement in 1..=6 {
-            maturity.observe_notice(&notice(statement, 1));
-            maturity.observe_notice(&notice(statement, 2));
+            maturity.observe_request(&notice(statement, 1));
+            maturity.observe_request(&notice(statement, 2));
             maturity.observe_contribution(&contribution(
                 Some(statement),
                 2,
@@ -439,14 +439,14 @@ mod tests {
             maturity
                 .recent_heads
                 .iter()
-                .all(|head| head.invited_contributors() == 1)
+                .all(|head| head.requested_contributors() == 1)
         );
         assert_eq!(maturity.older_heads.statement_heads, 2);
-        assert_eq!(maturity.older_heads.invited_contributor_lane_heads, 2);
+        assert_eq!(maturity.older_heads.requested_contributor_lane_heads, 2);
         assert_eq!(maturity.unrecorded_head.contributions, 1);
         assert_eq!(maturity.unrecorded_head.contributing_lanes, vec![lane(9)]);
         for lane in 10..=100 {
-            maturity.observe_notice(&notice(6, lane));
+            maturity.observe_request(&notice(6, lane));
             maturity.observe_contribution(&contribution(
                 Some(6),
                 lane,
@@ -457,9 +457,9 @@ mod tests {
             .recent_heads
             .last()
             .expect("current statement head");
-        assert_eq!(current.invited_lanes.len(), DESIGN_MATURITY_LANE_LIMIT);
+        assert_eq!(current.requested_lanes.len(), DESIGN_MATURITY_LANE_LIMIT);
         assert_eq!(current.contributing_lanes.len(), DESIGN_MATURITY_LANE_LIMIT);
-        assert!(current.invited_lanes_truncated);
+        assert!(current.requested_lanes_truncated);
         assert!(current.contributing_lanes_truncated);
         assert_eq!(
             maturity.contributing_lanes.len(),

@@ -3,9 +3,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+mod allocation;
 mod persistent_index;
 mod selection;
 
+use allocation::{advance as advance_allocation_index, rebuild as rebuild_allocation_index};
 use selection::CandidateSelection;
 
 use super::*;
@@ -87,6 +89,16 @@ pub enum TaskOrigin {
     Identity(String),
     /// A lane creation whose occupant is resolved from current residency.
     ResidencyIdentity(journal::crossing::CanonicalUuid),
+}
+
+/// Newest completed claim retained for one lane's natural-break request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LaneCompletion {
+    pub at: journal::crossing::Seq,
+    pub occupant: journal::crossing::CanonicalUuid,
+    pub task: journal::crossing::TaskStamp,
+    pub operation: journal::crossing::CanonicalUuid,
+    pub validation: String,
 }
 
 /// Persistent logarithmic completion-terminal lookup.
@@ -191,6 +203,21 @@ struct Indexes {
     terminals: TerminalIndex,
     claims:
         HashMap<journal::crossing::Actor, (journal::crossing::Seq, journal::crossing::ClaimCell)>,
+    lane_completions: HashMap<journal::crossing::CanonicalUuid, LaneCompletion>,
+    design_notices: HashMap<
+        (
+            journal::crossing::CanonicalUuid,
+            journal::crossing::CanonicalUuid,
+        ),
+        (
+            journal::crossing::Seq,
+            journal::crossing::rooms::DesignNoticed,
+        ),
+    >,
+    noticed_designs:
+        Arc<HashMap<journal::crossing::CanonicalUuid, Arc<HashSet<journal::crossing::TaskStamp>>>>,
+    room_publications:
+        Arc<HashMap<journal::crossing::Actor, Arc<HashSet<journal::crossing::TaskStamp>>>>,
     context_anchors: HashMap<
         (
             journal::crossing::CanonicalUuid,
@@ -244,114 +271,220 @@ impl Indexes {
     fn advanced(&self, rows: &[journal::crossing::Envelope<journal::crossing::AnyFact>]) -> Self {
         let mut next = self.clone();
         for row in rows {
-            if let Some(declared) = row
-                .fact
-                .read::<journal::crossing::body::LaneSessionDeclared>()
-            {
-                next.lane_sessions
-                    .insert((declared.lane, declared.occupant), declared.identity);
-            } else if let Some(started) = row.fact.read::<journal::crossing::body::LaneStarted>() {
-                next.lane_occupants.insert(started.lane, started.occupant);
-                next.context_anchors
-                    .insert((started.lane, started.occupant), row.seq);
-                let births = Arc::make_mut(&mut next.births);
-                let record = BirthRecord::recorded(
-                    births.get(&started.occupant).copied(),
-                    started.lane,
-                    row.seq,
-                );
-                births.insert(started.occupant, record);
-            } else if let Some(added) = row.fact.read::<journal::crossing::body::TaskAdded>() {
-                let origin = match &row.actor {
-                    journal::crossing::Actor::Lane(lane) => next.lane_occupants.get(lane).map_or(
-                        TaskOrigin::ResidencyIdentity(*lane),
-                        |occupant| {
-                            TaskOrigin::Identity(
-                                next.lane_sessions
-                                    .get(&(*lane, *occupant))
-                                    .cloned()
-                                    .unwrap_or_else(|| occupant.to_string()),
-                            )
-                        },
-                    ),
-                    _ => TaskOrigin::Identity(row.actor.to_string()),
-                };
-                if !matches!(row.actor, journal::crossing::Actor::Lane(_))
-                    && added.creation.creator_team().is_some()
-                {
-                    next.invalid_creator_teams.insert(added.task.clone());
-                }
-                if next
-                    .task_origins
-                    .insert(added.task.clone(), origin)
-                    .is_some()
-                {
-                    next.duplicate_task_origins.insert(added.task);
-                }
-            } else if let Some(retained) = row
-                .fact
-                .read::<journal::crossing::rooms::CandidateRetained>()
-            {
-                next.candidate_selection.retain(retained.candidate);
-            } else if let Some(decided) = row
-                .fact
-                .read::<journal::crossing::rooms::PreparationDecided>()
-            {
-                next.candidate_selection.decide(
-                    decided.decision.outcome.candidate(),
-                    decided.decision.decision,
-                );
-            } else if let Some(withdrawn) = row
-                .fact
-                .read::<journal::crossing::rooms::CandidateWithdrawn>()
-            {
-                next.candidate_selection
-                    .withdraw(&withdrawn.withdrawal.candidate);
-            } else if let Some(pended) = row.fact.read::<journal::crossing::body::TrustPended>() {
-                next.trust_surfaces.insert(pended.surface, pended.digest);
-            } else if let Some(moved) = row
-                .fact
-                .read::<journal::crossing::rooms::WorkingGroupMoved>()
-            {
-                next.replace_partition(moved.partition);
-            } else if let Some(arranged) = row
-                .fact
-                .read::<journal::crossing::rooms::WorkingGroupsArranged>()
-            {
-                next.replace_partition(arranged.partition);
-            } else if let Some(done) = row.fact.read::<journal::crossing::body::TaskDone>() {
-                if let Some(terminal) = done.terminal {
-                    next.terminals = next
-                        .terminals
-                        .pushed(&done.task, terminal.operation, row.seq);
-                    // A phase advance also records a terminal answer, but its task stays
-                    // allocatable in the next phase and keeps its creation origin.
-                    if terminal.status == "completed" {
-                        next.retire_task(&done.task);
-                    }
-                }
-            } else if let Some(deleted) = row.fact.read::<journal::crossing::body::TaskDeleted>() {
-                next.retire_task(&deleted.task);
-            } else if let Some(closed) = row.fact.read::<journal::crossing::body::TaskClosed>() {
-                next.retire_task(&closed.task);
-            } else if let Some(concluded) =
-                row.fact.read::<journal::crossing::body::TaskConcluded>()
-            {
-                next.retire_task(&concluded.task);
-                if let journal::crossing::body::DesignConclusion::Collapsed { reason } =
-                    concluded.conclusion
-                {
-                    Arc::make_mut(&mut next.collapse_reasons).insert(concluded.task, reason);
-                }
-            } else if let Some(won) = row.fact.read::<journal::crossing::body::ClaimWon>() {
-                next.claims.insert(won.actor, (row.seq, won.cell));
-            } else if let Some(freed) = row.fact.read::<journal::crossing::body::ClaimFreed>() {
-                next.explicit_releases.insert(freed.task, row.seq);
-            } else if let Some(opened) = context_opening(&row.fact) {
-                next.context_anchors.insert(opened, row.seq);
-            }
+            next.observe_publication(row);
+            next.observe(row);
         }
         next
+    }
+
+    fn observe_publication(
+        &mut self,
+        row: &journal::crossing::Envelope<journal::crossing::AnyFact>,
+    ) {
+        if let Some(room) = row.fact.room_record() {
+            let rooms = Arc::make_mut(&mut self.room_publications)
+                .entry(row.actor.clone())
+                .or_default();
+            Arc::make_mut(rooms).insert(room.clone());
+        }
+    }
+
+    fn observe(&mut self, row: &journal::crossing::Envelope<journal::crossing::AnyFact>) {
+        use journal::crossing::FactKind;
+
+        match row.fact.kind() {
+            FactKind::LaneSessionDeclared | FactKind::LaneStarted => self.observe_lane(row),
+            FactKind::TaskAdded => self.observe_task_added(row),
+            FactKind::CandidateRetained
+            | FactKind::PreparationDecided
+            | FactKind::CandidateWithdrawn
+            | FactKind::TrustPended => self.observe_selection(row),
+            FactKind::WorkingGroupMoved
+            | FactKind::WorkingGroupsArranged
+            | FactKind::DesignNoticed => self.observe_design(row),
+            FactKind::TaskDone
+            | FactKind::TaskDeleted
+            | FactKind::TaskClosed
+            | FactKind::TaskConcluded
+            | FactKind::ClaimWon
+            | FactKind::ClaimFreed => self.observe_task_authority(row),
+            _ => {
+                if let Some(opened) = context_opening(&row.fact) {
+                    self.context_anchors.insert(opened, row.seq);
+                }
+            }
+        }
+    }
+
+    fn observe_lane(&mut self, row: &journal::crossing::Envelope<journal::crossing::AnyFact>) {
+        if let Some(declared) = row
+            .fact
+            .read::<journal::crossing::body::LaneSessionDeclared>()
+        {
+            self.lane_sessions
+                .insert((declared.lane, declared.occupant), declared.identity);
+            return;
+        }
+        let Some(started) = row.fact.read::<journal::crossing::body::LaneStarted>() else {
+            return;
+        };
+        self.lane_occupants.insert(started.lane, started.occupant);
+        self.context_anchors
+            .insert((started.lane, started.occupant), row.seq);
+        let births = Arc::make_mut(&mut self.births);
+        let record = BirthRecord::recorded(
+            births.get(&started.occupant).copied(),
+            started.lane,
+            row.seq,
+        );
+        births.insert(started.occupant, record);
+    }
+
+    fn observe_task_added(
+        &mut self,
+        row: &journal::crossing::Envelope<journal::crossing::AnyFact>,
+    ) {
+        let Some(added) = row.fact.read::<journal::crossing::body::TaskAdded>() else {
+            return;
+        };
+        let origin = match &row.actor {
+            journal::crossing::Actor::Lane(lane) => self.lane_occupants.get(lane).map_or(
+                TaskOrigin::ResidencyIdentity(*lane),
+                |occupant| {
+                    TaskOrigin::Identity(
+                        self.lane_sessions
+                            .get(&(*lane, *occupant))
+                            .cloned()
+                            .unwrap_or_else(|| occupant.to_string()),
+                    )
+                },
+            ),
+            _ => TaskOrigin::Identity(row.actor.to_string()),
+        };
+        if !matches!(row.actor, journal::crossing::Actor::Lane(_))
+            && added.creation.creator_team().is_some()
+        {
+            self.invalid_creator_teams.insert(added.task.clone());
+        }
+        if self
+            .task_origins
+            .insert(added.task.clone(), origin)
+            .is_some()
+        {
+            self.duplicate_task_origins.insert(added.task);
+        }
+    }
+
+    fn observe_selection(&mut self, row: &journal::crossing::Envelope<journal::crossing::AnyFact>) {
+        if let Some(retained) = row
+            .fact
+            .read::<journal::crossing::rooms::CandidateRetained>()
+        {
+            self.candidate_selection.retain(retained.candidate);
+        } else if let Some(decided) = row
+            .fact
+            .read::<journal::crossing::rooms::PreparationDecided>()
+        {
+            self.candidate_selection.decide(
+                decided.decision.outcome.candidate(),
+                decided.decision.decision,
+            );
+        } else if let Some(withdrawn) = row
+            .fact
+            .read::<journal::crossing::rooms::CandidateWithdrawn>()
+        {
+            self.candidate_selection
+                .withdraw(&withdrawn.withdrawal.candidate);
+        } else if let Some(pended) = row.fact.read::<journal::crossing::body::TrustPended>() {
+            self.trust_surfaces.insert(pended.surface, pended.digest);
+        }
+    }
+
+    fn observe_design(&mut self, row: &journal::crossing::Envelope<journal::crossing::AnyFact>) {
+        if let Some(moved) = row
+            .fact
+            .read::<journal::crossing::rooms::WorkingGroupMoved>()
+        {
+            self.replace_partition(moved.partition);
+        } else if let Some(arranged) = row
+            .fact
+            .read::<journal::crossing::rooms::WorkingGroupsArranged>()
+        {
+            self.replace_partition(arranged.partition);
+        } else if let Some(noticed) = row.fact.read::<journal::crossing::rooms::DesignNoticed>() {
+            let designs = Arc::make_mut(&mut self.noticed_designs)
+                .entry(noticed.occupant)
+                .or_default();
+            Arc::make_mut(designs).insert(noticed.design.clone());
+            self.design_notices
+                .insert((noticed.lane, noticed.occupant), (row.seq, noticed));
+        }
+    }
+
+    fn observe_task_authority(
+        &mut self,
+        row: &journal::crossing::Envelope<journal::crossing::AnyFact>,
+    ) {
+        if let Some(done) = row.fact.read::<journal::crossing::body::TaskDone>() {
+            self.observe_done(row, done);
+        } else if let Some(deleted) = row.fact.read::<journal::crossing::body::TaskDeleted>() {
+            self.retire_task(&deleted.task);
+        } else if let Some(closed) = row.fact.read::<journal::crossing::body::TaskClosed>() {
+            self.retire_task(&closed.task);
+        } else if let Some(concluded) = row.fact.read::<journal::crossing::body::TaskConcluded>() {
+            self.retire_task(&concluded.task);
+            if let journal::crossing::body::DesignConclusion::Collapsed { reason } =
+                concluded.conclusion
+            {
+                Arc::make_mut(&mut self.collapse_reasons).insert(concluded.task, reason);
+            }
+        } else if let Some(won) = row.fact.read::<journal::crossing::body::ClaimWon>() {
+            self.claims.insert(won.actor, (row.seq, won.cell));
+        } else if let Some(freed) = row.fact.read::<journal::crossing::body::ClaimFreed>() {
+            self.explicit_releases.insert(freed.task, row.seq);
+        }
+    }
+
+    fn observe_done(
+        &mut self,
+        row: &journal::crossing::Envelope<journal::crossing::AnyFact>,
+        done: journal::crossing::body::TaskDone,
+    ) {
+        let journal::crossing::body::TaskDone {
+            task,
+            mut validation,
+            terminal,
+            ..
+        } = done;
+        if let (journal::crossing::Actor::Lane(lane), Some(terminal)) = (&row.actor, &terminal)
+            && let Some(occupant) = self.lane_occupants.get(lane).copied()
+        {
+            let mut end = validation
+                .len()
+                .min(journal::crossing::rooms::COMPLETION_VALIDATION_BYTES);
+            while !validation.is_char_boundary(end) {
+                end -= 1;
+            }
+            validation.truncate(end);
+            self.lane_completions.insert(
+                *lane,
+                LaneCompletion {
+                    at: row.seq,
+                    task: task.clone(),
+                    operation: terminal.operation,
+                    validation,
+                    occupant,
+                },
+            );
+        }
+        if let Some(terminal) = terminal {
+            self.terminals = self.terminals.pushed(&task, terminal.operation, row.seq);
+            // A phase advance also records a terminal answer, but its task stays
+            // allocatable in the next phase and keeps its creation origin.
+            if terminal.status == "completed" {
+                self.retire_task(&task);
+            }
+        }
     }
 
     fn retire_task(&mut self, task: &journal::crossing::TaskStamp) {
@@ -558,6 +691,57 @@ impl TaskFacts {
         actor: &journal::crossing::Actor,
     ) -> Option<(journal::crossing::Seq, journal::crossing::ClaimCell)> {
         self.indexes.claims.get(actor).cloned()
+    }
+
+    /// Newest completed claim observed for one lane.
+    #[must_use]
+    pub fn latest_lane_completion(
+        &self,
+        lane: journal::crossing::CanonicalUuid,
+    ) -> Option<&LaneCompletion> {
+        self.indexes.lane_completions.get(&lane)
+    }
+
+    /// Newest durable Design request recorded for this exact lane occupant.
+    #[must_use]
+    pub fn latest_design_notice(
+        &self,
+        lane: journal::crossing::CanonicalUuid,
+        occupant: journal::crossing::CanonicalUuid,
+    ) -> Option<(
+        journal::crossing::Seq,
+        &journal::crossing::rooms::DesignNoticed,
+    )> {
+        self.indexes
+            .design_notices
+            .get(&(lane, occupant))
+            .map(|(at, notice)| (*at, notice))
+    }
+
+    /// Whether this occupant was already told about this Design.
+    #[must_use]
+    pub fn design_was_noticed(
+        &self,
+        occupant: journal::crossing::CanonicalUuid,
+        design: &journal::crossing::TaskStamp,
+    ) -> bool {
+        self.indexes
+            .noticed_designs
+            .get(&occupant)
+            .is_some_and(|designs| designs.contains(design))
+    }
+
+    /// Whether this actor has ever published in this room.
+    #[must_use]
+    pub fn published_in_room(
+        &self,
+        actor: &journal::crossing::Actor,
+        room: &journal::crossing::TaskStamp,
+    ) -> bool {
+        self.indexes
+            .room_publications
+            .get(actor)
+            .is_some_and(|rooms| rooms.contains(room))
     }
 
     /// Whether this task's current claim head was established by an explicit release.
@@ -1252,194 +1436,6 @@ fn advance_trust(
             task_head_update_visits,
         }))
     })
-}
-
-struct AllocationIndex {
-    frontier: Arc<[journal::TaskHeads]>,
-    references: Arc<HashMap<journal::crossing::TaskStamp, usize>>,
-    standing: Arc<HashMap<journal::crossing::TaskStamp, DependencyStanding>>,
-    faults: Arc<[AllocationFault]>,
-}
-
-fn rebuild_allocation_index(tasks: &[journal::TaskHeads]) -> Result<AllocationIndex, GuardError> {
-    let mut frontier = Vec::new();
-    let mut references = HashMap::new();
-    let mut faults = Vec::new();
-    let mut prior = None;
-    for heads in tasks {
-        let task = heads.statement().body().born.clone();
-        if prior.as_ref().is_some_and(|prior| prior >= &task) {
-            return Err(GuardError::Invalid(
-                "task snapshot heads are not in unique task-stamp order".to_owned(),
-            ));
-        }
-        prior = Some(task.clone());
-        match task_standing(heads) {
-            DependencyStanding::Open => {
-                add_dependencies(&mut references, allocation_references(heads));
-                frontier.push(heads.clone());
-            }
-            DependencyStanding::Completed
-            | DependencyStanding::Closed
-            | DependencyStanding::Deleted => {
-                if actively_claimed(heads) {
-                    faults.push(AllocationFault::ActiveTerminal { task });
-                }
-            }
-        }
-    }
-    let mut standing = HashMap::with_capacity(references.len());
-    for heads in tasks {
-        let task = &heads.statement().body().born;
-        if references.contains_key(task) {
-            standing.insert(task.clone(), task_standing(heads));
-        }
-    }
-    Ok(AllocationIndex {
-        frontier: Arc::from(frontier),
-        references: Arc::new(references),
-        standing: Arc::new(standing),
-        faults: Arc::from(faults),
-    })
-}
-
-fn advance_allocation_index(
-    read: &journal::JournalRead<'_>,
-    prior: &TaskSnapshot,
-    moved: &[journal::TaskHeads],
-) -> Result<AllocationIndex, GuardError> {
-    if moved.is_empty() {
-        return Ok(AllocationIndex {
-            frontier: Arc::clone(&prior.allocation_frontier),
-            references: Arc::clone(&prior.dependency_references),
-            standing: Arc::clone(&prior.dependency_standing),
-            faults: Arc::clone(&prior.allocation_faults),
-        });
-    }
-    let mut frontier = prior.allocation_frontier.to_vec();
-    let mut references = (*prior.dependency_references).clone();
-    let mut standing = (*prior.dependency_standing).clone();
-    let mut faults = prior.allocation_faults.to_vec();
-    let mut resolve = std::collections::HashSet::new();
-    for heads in moved {
-        let task = heads.statement().body().born.clone();
-        faults.retain(|fault| fault.task() != &task);
-        if let Ok(index) = frontier.binary_search_by(|kept| kept.statement().body().born.cmp(&task))
-        {
-            let old = frontier.remove(index);
-            remove_dependencies(&mut references, &mut standing, allocation_references(&old));
-        }
-        match task_standing(heads) {
-            DependencyStanding::Open => {
-                for dependency in allocation_references(heads) {
-                    if references.get(dependency).copied().unwrap_or(0) == 0 {
-                        resolve.insert(dependency.clone());
-                    }
-                }
-                add_dependencies(&mut references, allocation_references(heads));
-                let index = frontier
-                    .binary_search_by(|kept| kept.statement().body().born.cmp(&task))
-                    .unwrap_or_else(|index| index);
-                frontier.insert(index, heads.clone());
-            }
-            DependencyStanding::Completed
-            | DependencyStanding::Closed
-            | DependencyStanding::Deleted => {
-                if actively_claimed(heads) {
-                    faults.push(AllocationFault::ActiveTerminal { task: task.clone() });
-                }
-            }
-        }
-        if references.contains_key(&task) {
-            resolve.insert(task);
-        }
-    }
-    faults.sort_by(|left, right| left.task().cmp(right.task()));
-    for task in resolve {
-        if !references.contains_key(&task) {
-            standing.remove(&task);
-            continue;
-        }
-        let heads = match moved.binary_search_by(|heads| heads.statement().body().born.cmp(&task)) {
-            Ok(index) => Some(moved[index].clone()),
-            Err(_) => read.task_heads_for(&task)?,
-        };
-        match heads {
-            Some(heads) => {
-                standing.insert(task, task_standing(&heads));
-            }
-            None => {
-                standing.remove(&task);
-            }
-        }
-    }
-    Ok(AllocationIndex {
-        frontier: Arc::from(frontier),
-        references: Arc::new(references),
-        standing: Arc::new(standing),
-        faults: Arc::from(faults),
-    })
-}
-
-fn allocation_references(
-    heads: &journal::TaskHeads,
-) -> impl Iterator<Item = &journal::crossing::TaskStamp> {
-    let statement = heads.statement().body();
-    statement.dependencies.iter().chain(
-        statement
-            .preparation
-            .iter()
-            .flat_map(|preparation| [&preparation.parent, &preparation.controller]),
-    )
-}
-
-fn add_dependencies<'a>(
-    references: &mut HashMap<journal::crossing::TaskStamp, usize>,
-    dependencies: impl Iterator<Item = &'a journal::crossing::TaskStamp>,
-) {
-    for dependency in dependencies {
-        *references.entry(dependency.clone()).or_default() += 1;
-    }
-}
-
-fn remove_dependencies<'a>(
-    references: &mut HashMap<journal::crossing::TaskStamp, usize>,
-    standing: &mut HashMap<journal::crossing::TaskStamp, DependencyStanding>,
-    dependencies: impl Iterator<Item = &'a journal::crossing::TaskStamp>,
-) {
-    for dependency in dependencies {
-        let Some(count) = references.get_mut(dependency) else {
-            continue;
-        };
-        *count -= 1;
-        if *count == 0 {
-            references.remove(dependency);
-            standing.remove(dependency);
-        }
-    }
-}
-
-fn task_standing(heads: &journal::TaskHeads) -> DependencyStanding {
-    match heads.workflow().body().status.as_str() {
-        "completed" if heads.workflow().body().review == "closed" => DependencyStanding::Closed,
-        "completed" => DependencyStanding::Completed,
-        "deleted" => DependencyStanding::Deleted,
-        _ => DependencyStanding::Open,
-    }
-}
-
-fn actively_claimed(heads: &journal::TaskHeads) -> bool {
-    heads.claim().is_some_and(|claim| {
-        claim.body().disposition == journal::crossing::ClaimDisposition::Active
-    })
-}
-
-impl AllocationFault {
-    fn task(&self) -> &journal::crossing::TaskStamp {
-        match self {
-            Self::ActiveTerminal { task } => task,
-        }
-    }
 }
 
 enum BuildStep {

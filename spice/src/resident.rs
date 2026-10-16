@@ -203,7 +203,7 @@ mod capture;
 mod command_surface;
 mod consent_surface;
 mod daemon;
-mod design_awareness;
+pub(crate) mod design_awareness;
 mod design_input;
 mod lane_recovery;
 mod lane_surface;

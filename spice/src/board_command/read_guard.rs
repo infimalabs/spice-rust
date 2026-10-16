@@ -13,6 +13,8 @@ pub(super) use task_relations::read_task_relations;
 mod task_timeline;
 pub(super) use task_timeline::read_task_timeline;
 mod next_work;
+#[cfg(test)]
+pub(crate) use next_work::read_next_work;
 mod task_selection;
 mod working;
 use context::{
@@ -717,7 +719,7 @@ pub(super) fn read_board(
         Err(error) => return store_fault("board::heads-unreadable", &error.to_string()),
     };
     if matches!(read, BoardRead::Next) {
-        return match next_work::read_next_work(&observed, principal, projects, allocation) {
+        return match next_work::read_next_work(bus, &observed, principal, projects, allocation) {
             Ok(answer) => snapshot_reply(answer.cursor, CommandAnswer::Board(Box::new(answer))),
             Err(outcome) => outcome,
         };

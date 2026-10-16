@@ -15,6 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+pub use wire::rooms::COMPLETION_VALIDATION_BYTES;
 use wire::rooms::DESIGN_NOTICE_TERMS;
 
 /// Fewest letters a word needs to count as a term.
@@ -31,8 +32,6 @@ pub const COMMON_TERM_MIN_STATEMENTS: usize = 8;
 /// A term in more than this fraction, numerator over denominator, of the
 /// window's statements is common.
 pub const COMMON_TERM_SHARE: (usize, usize) = (1, 4);
-/// Most bytes of completion validation admitted to one matching profile.
-pub const COMPLETION_VALIDATION_BYTES: usize = 4 * 1024;
 /// Most distinct terms retained in one completion matching profile.
 pub const COMPLETION_PROFILE_TERMS: usize = 256;
 

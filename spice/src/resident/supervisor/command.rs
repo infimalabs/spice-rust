@@ -206,8 +206,6 @@ pub(in crate::resident) enum Kick {
     /// A claim this exact occupant held ended; an assignment notice for it
     /// that is still queued is withdrawn rather than delivered stale.
     TaskAssignmentEnded(TaskAssignmentEnd),
-    /// A private best-effort background notice for this exact occupant.
-    Background(crate::resident::design_input::BackgroundNotice),
     /// A private background notice whose exact occupant must confirm enqueue.
     BackgroundConfirmed {
         notice: crate::resident::design_input::BackgroundNotice,
@@ -1029,15 +1027,6 @@ pub(in crate::resident) fn answer(
     send(paths, lane, &Kick::Answer { request, confirmed });
 }
 
-/// Privately tell the exact occupant one keyless background notice.
-pub(in crate::resident) fn background_notice(
-    paths: &RuntimePaths,
-    lane: CanonicalUuid,
-    notice: crate::resident::design_input::BackgroundNotice,
-) {
-    send(paths, lane, &Kick::Background(notice));
-}
-
 /// Queue one keyless background notice for the exact occupant and wait until
 /// that supervisor confirms its driver accepted the notice.
 ///
@@ -1243,10 +1232,6 @@ pub(in crate::resident) fn listen_for_kicks(
                             driver.withdraw_task_assignment(&ended);
                         }
                         Ok(Kick::TaskAssignmentEnded(_)) => {}
-                        Ok(Kick::Background(notice)) if notice.occupant == occupant => {
-                            let _ = driver.background(&notice.purpose, &notice.text);
-                        }
-                        Ok(Kick::Background(_)) => {}
                         Ok(Kick::BackgroundConfirmed {
                             notice,
                             request,

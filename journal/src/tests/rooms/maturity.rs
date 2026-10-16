@@ -171,7 +171,7 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
     ];
     let mut expected = DesignMaturity::default();
     for notice in &notices {
-        expected.observe_notice(notice);
+        expected.observe_request(notice);
     }
     for contribution in &contributions {
         expected.observe_contribution(contribution);
@@ -188,6 +188,6 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
     assert_eq!(actual, expected);
     assert_eq!(page.rows.len(), notices.len());
     assert_eq!(actual.unrecorded_head.contributions, 1);
-    assert_eq!(actual.recent_heads[0].invited_contributors(), 3);
+    assert_eq!(actual.recent_heads[0].requested_contributors(), 3);
     assert_eq!(actual.state(), wire::rooms::DesignMaturityState::Steeped);
 }

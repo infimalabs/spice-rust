@@ -1,12 +1,15 @@
-//! Resident records of private background notices about open Designs.
+//! Resident records of completion-bound requests for open passive Designs.
 //!
-//! Each record is the durable read of who was told what; none is a room
-//! publication, so none adds room attention, participation, steering, or wake.
+//! Each record durably chooses one request. It is not a room publication and
+//! adds no room attention, participation, steering, claim, assignment, or wake.
 
 use serde::{Deserialize, Serialize};
 
 use super::DecisionRef;
 use crate::{CanonicalUuid, Seq, SequenceCode, TaskStamp};
+
+/// Most bytes of completion validation retained for Design request matching.
+pub const COMPLETION_VALIDATION_BYTES: usize = 4 * 1024;
 
 /// Most matched terms one Design awareness record carries.
 pub const DESIGN_NOTICE_TERMS: usize = 12;
@@ -31,26 +34,26 @@ pub fn shown_notice_terms(terms: &[String]) -> Vec<&str> {
     shown
 }
 
-/// The resident invited one lane occupant, at most once, to a passive Design.
+/// One completed claim requested one lane occupant's input on a passive Design.
 ///
-/// The exact statement and matched terms record the organic relevance
-/// decision. The record is background information only: it is no room
-/// publication, so it adds no room attention, participation, steering, claim,
-/// or wake.
+/// The exact statement and matched terms record the deterministic relevance
+/// choice. The record is request state only: it is no room publication and
+/// grants no room attention, participation, steering, claim, assignment, or
+/// wake.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignNoticed {
-    /// The passive Design the occupant was invited to.
+    /// Passive Design whose room accepts the answer.
     pub design: TaskStamp,
-    /// Exact Design statement head evaluated for this invitation.
+    /// Exact Design statement head evaluated for this request.
     pub statement: Seq,
-    /// Logical lane told.
+    /// Logical lane that completed the matching task.
     pub lane: CanonicalUuid,
-    /// Occupant invited; each Design invites one occupant at most once.
+    /// Occupant that completed the matching task.
     pub occupant: CanonicalUuid,
-    /// Task the lane's claim holds.
+    /// Task that completed.
     pub task: TaskStamp,
-    /// Fact that won that claim.
+    /// Fact that won the completed claim.
     pub claim: SequenceCode,
     /// Matched terms in ascending order.
     pub terms: Vec<String>,
