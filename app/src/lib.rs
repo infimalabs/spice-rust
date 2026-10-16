@@ -78,6 +78,8 @@ pub mod runtime;
 pub mod socket;
 pub mod speech_owner;
 pub mod speech_queue;
+#[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
+mod speech_rate;
 pub mod state;
 pub mod view;
 pub mod voice_spread;

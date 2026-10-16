@@ -7,12 +7,9 @@ use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{Event, SpeechSynthesis, SpeechSynthesisUtterance, SpeechSynthesisVoice};
 
 use crate::speech_owner::PlaybackOwnership;
+use crate::speech_rate::system_rate;
 use crate::voice_spread::{self, OfferedVoice};
 use wire::CanonicalUuid;
-
-const REFERENCE_WORDS_PER_MINUTE: f32 = 175.0;
-const MIN_SYSTEM_RATE: f32 = 0.5;
-const MAX_SYSTEM_RATE: f32 = 2.0;
 
 /// How many offered voice names a refusal names before eliding the rest, so
 /// a browser carrying hundreds of voices still yields one readable sentence.
@@ -176,10 +173,7 @@ impl Controller {
         let utterance = SpeechSynthesisUtterance::new_with_text(text)
             .map_err(|_| "system speech utterance could not be created".to_owned())?;
         utterance.set_voice(voice.as_ref());
-        utterance.set_rate(
-            (words_per_minute as f32 / REFERENCE_WORDS_PER_MINUTE)
-                .clamp(MIN_SYSTEM_RATE, MAX_SYSTEM_RATE),
-        );
+        utterance.set_rate(system_rate(words_per_minute));
         let ended = Closure::wrap(Box::new(move |_event: Event| on_end()) as Box<dyn FnMut(_)>);
         let failed = Closure::wrap(
             Box::new(move |event: Event| on_error(system_failure(&event))) as Box<dyn FnMut(_)>,
