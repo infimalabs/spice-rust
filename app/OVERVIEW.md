@@ -163,7 +163,13 @@ returns focus to the same summary without changing any entered values. A new
 Draft needs a title and an admitted public project, and takes an optional Plan
 or Design intent, description, and acceptance. Recording one opens it in task
 detail, which shows the full editor beside the Draft's contract. **Save Draft**
-writes only the fields that changed, including project, intent, and flow.
+writes only the fields that changed, including project, intent, and flow. The
+editor's fields are browser-local: live board, room, connection, and task-detail
+refreshes never rewrite text, selection, or focus. A newer admitted revision of
+the same Draft updates only the fields the operator has not changed, or still
+holds as their landed Save sent them, and the next Save witnesses that revision.
+A refused Save keeps every typed field for retry, and opening another Draft
+starts from that Draft's latest admitted content.
 **File** validates the Draft as a complete ordinary Task, Plan, or Design. A
 refusal names the field or filing option to repair and leaves the Draft
 unchanged. Success replaces the Draft with its Filed task, which the allocator
