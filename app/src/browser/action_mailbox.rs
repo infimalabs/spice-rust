@@ -276,7 +276,7 @@ impl PendingKind {
             | Self::MemberLane { .. }
             | Self::LaneRetune { .. }
             | Self::TeamConfigure { .. }
-            | Self::TeamArrange
+            | Self::TeamArrange { .. }
             | Self::Steer
             | Self::SteerSubmission { .. }
             | Self::Note { .. }
@@ -1182,6 +1182,7 @@ mod tests {
                 team: id(suffix),
                 lanes: vec![id(suffix), id(suffix + 1)],
             }],
+            respond: None,
         }
     }
 

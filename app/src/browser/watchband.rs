@@ -364,7 +364,7 @@ fn render_compose(
                 team_controls,
                 &controls.set_automatic_speech,
                 sender,
-                arrange_refusal(can_arrange, topology),
+                arrange_refusal(can_arrange),
                 can_configure,
                 ready,
                 dormant,
@@ -698,18 +698,9 @@ struct AgentTeamControl {
     activate: Callback<MouseEvent>,
 }
 
-/// Why the team menu cannot open arrangement choices, if it cannot.
-fn arrange_refusal(
-    can_arrange: bool,
-    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
-) -> Option<&'static str> {
-    if !can_arrange {
-        Some("Team arrangement is unavailable")
-    } else if !watchband::rearrangeable(topology) {
-        Some("No other team to swap with or join")
-    } else {
-        None
-    }
+/// Why the team menu cannot open its shared actions, if it cannot.
+fn arrange_refusal(can_arrange: bool) -> Option<&'static str> {
+    (!can_arrange).then_some("Team arrangement is unavailable")
 }
 
 /// The client action one team roster change asks for at `topology_revision`;
@@ -737,6 +728,7 @@ pub(in crate::browser) fn team_action(
                 .into_iter()
                 .map(|(team, lanes)| TeamArrangement { team, lanes })
                 .collect(),
+            respond: None,
         },
     })
 }

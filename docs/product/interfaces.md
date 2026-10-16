@@ -117,8 +117,9 @@ task handles instead.
 | Group membership | Open Design tasks only | `group::design-only`: choose a Design whose current phase is `design`, or finish its admitted intake first |
 | Partition revision | the one read | `group::partition-moved`: read the groups and retry |
 | Group stance | Passive, Explore, or Converge on one standing group at the partition revision read | `group::missing`, `group::stance-unchanged`, or `group::partition-moved`: read the groups and retry only if authority changed |
+| Group disband | one standing group at the partition revision read | `group::missing` or `group::partition-moved`: read the groups and retry only if authority changed |
 | Design possession | open Design in an Explore or Converge group | `claim::design-passive` on capture, steal, or recovery and `room::design-passive` on coordination: finish intake, group it if needed, then run `spice group stance GROUP explore` or `converge` |
-| Deactivating a held Design | a holder address proved by its seat or its claimed occupant's birth | `room::holder-address-unavailable`: the move or stance change records nothing; free or reseat the holder and retry |
+| Deactivating a held Design | a holder address proved by its seat or its claimed occupant's birth | `room::holder-address-unavailable`: the move, disband, or stance change records nothing; free or reseat the holder and retry |
 | Gather task creation | the bare `gather` flow without intent, created directly under an open Design in an Explore or Converge group | `task::gather-design`: make the group active, then create it while holding the Design or with `--preparation DESIGN` |
 | Candidate outputs | no gather task | `preparation::gather-output`: cite the gather task's note or artifact as a candidate reference instead |
 | Automated resumes per rule | 1 through 8 | `room::auto-resume-out-of-range` |

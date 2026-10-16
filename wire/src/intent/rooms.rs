@@ -8,7 +8,8 @@ use crate::rooms::{
     RoomSourceUnavailable, RoomSourceView,
 };
 pub use crate::rooms::{
-    WorkingGroupArrange, WorkingGroupFast, WorkingGroupMove, WorkingGroupStanceSet,
+    WorkingGroupArrange, WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove,
+    WorkingGroupStanceSet,
 };
 use crate::{OccupantAddress, SequenceCode, TaskHandle, TaskStamp};
 
@@ -488,6 +489,8 @@ pub enum WorkingGroupChangeStatus {
     Ended,
     /// The whole partition was restated.
     Arranged,
+    /// One group ended and every Design it held became ungrouped.
+    Disbanded,
     /// One group's fast-mode flag was set.
     Retuned,
     /// One group's shared activity stance was set.

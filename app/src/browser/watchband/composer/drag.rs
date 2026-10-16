@@ -517,6 +517,7 @@ fn composer_drag_finish(
                     .into_iter()
                     .map(|(team, lanes)| TeamArrangement { team, lanes })
                     .collect(),
+                respond: None,
             },
         );
         event.prevent_default();

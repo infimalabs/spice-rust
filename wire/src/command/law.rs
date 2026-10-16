@@ -578,6 +578,7 @@ impl CommandKind {
             | Self::RoomConversationText => Law::OPERATOR_READ,
             Self::WorkingGroupMove
             | Self::WorkingGroupArrange
+            | Self::WorkingGroupDisband
             | Self::WorkingGroupFast
             | Self::WorkingGroupStance => Law::GROUP,
             Self::GlobalSettingsSet => Law::SETTINGS,
@@ -748,6 +749,7 @@ impl CommandKind {
             self,
             Self::WorkingGroupMove
                 | Self::WorkingGroupArrange
+                | Self::WorkingGroupDisband
                 | Self::WorkingGroupFast
                 | Self::WorkingGroupStance
         ) && let Some(stray) = expected.iter().find_map(|witness| match witness {

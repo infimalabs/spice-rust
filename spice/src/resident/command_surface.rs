@@ -391,6 +391,16 @@ impl<'a> Surface<'a> {
                     &self.config.allocation,
                 )
             }
+            (CommandKind::WorkingGroupDisband, Intent::WorkingGroupDisband(request)) => {
+                crate::board_command::disband_working_group(
+                    self.bus,
+                    command,
+                    request,
+                    &self.config.steering,
+                    &self.config.projects,
+                    &self.config.allocation,
+                )
+            }
             (CommandKind::WorkingGroupStance, Intent::WorkingGroupStance(request)) => {
                 crate::board_command::set_working_group_stance(
                     self.bus,

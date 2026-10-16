@@ -486,6 +486,17 @@ fn submit_change(
                 .collect(),
         }),
     };
+    submit_group_change(sender, controls, change, revision);
+}
+
+/// Send one already-typed working-group change at the observed partition
+/// revision and report its authoritative outcome.
+pub(super) fn submit_group_change(
+    sender: &SenderHandle,
+    controls: &Controls,
+    change: GroupChange,
+    revision: u64,
+) {
     let respond = {
         let controls = controls.clone();
         Rc::new(
@@ -497,6 +508,9 @@ fn submit_change(
                             "Design moved; its group ended with its last design.".to_owned()
                         }
                         WorkingGroupChangeStatus::Arranged => "Working groups arranged.".to_owned(),
+                        WorkingGroupChangeStatus::Disbanded => {
+                            "Working group disbanded.".to_owned()
+                        }
                         WorkingGroupChangeStatus::Retuned => "Group fast mode set.".to_owned(),
                         WorkingGroupChangeStatus::Stanced => "Group stance set.".to_owned(),
                     },

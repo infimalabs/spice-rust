@@ -603,9 +603,10 @@ owns each rule summarized here.
 - **Organization and foreground.** The
   [working-group partition](invariants/identity.md#identity-working-groups-are-one-guarded-partition-of-designs)
   is shared repository organization and stance authority read by `spice group
-  list` and changed by `spice group move`, `spice group arrange`, and `spice
-  group stance`. Open consoles, their order, drafts, speech, and focus are this
-  browser's foreground and are never shared.
+  list` and changed by `spice group move`, `spice group arrange`, `spice group
+  disband`, and `spice group stance`. Disbanding leaves every Design ungrouped;
+  open consoles, their order, drafts, speech, and focus are this browser's
+  foreground and are never shared.
 - **Design standing.** An open Design in an Explore or Converge group is
   [active](invariants/identity.md#work-working-group-standing-makes-a-design-active-or-passive):
   the allocator offers it and capture, steal, gather creation, and room

@@ -326,11 +326,13 @@ Pick up a team from its pip matrix: dropping on the middle of another team
 swaps the two teams' positions; dropping on either outer edge joins the source
 into that team, which keeps its identity, primary composer, and member order and
 appends the source members in order. The pip stack and the team menu open the
-same **Swap positions** and **Join into** choices by keyboard or tap; Escape
-returns focus to whichever opened them. Joins stop at six members: a target
+same **Swap positions** and **Join into** choices by keyboard or tap, and the
+menu's **Disband team** leaves every member as an unassigned lone seat. Escape
+returns focus to whichever opened the menu. Joins stop at six members: a target
 that would make a seventh is shown unavailable and sends nothing. Every
-accepted arrangement sends the complete topology at the drawn revision;
-cancellation, a changed revision, or a removed source sends nothing.
+accepted arrangement, including disbanding, sends the complete topology at the
+drawn revision. **Disband team** toasts its typed refusal and refreshes that
+topology; cancellation or a removed source sends nothing.
 
 ## Lane menu
 

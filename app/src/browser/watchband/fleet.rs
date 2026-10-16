@@ -190,7 +190,7 @@ fn render_team_toolbar(
     standings: &[Standing],
     render: &FleetRender<'_, '_>,
 ) -> Html {
-    let can_arrange = render.can_arrange_teams && watchband::rearrangeable(&render.topology);
+    let can_arrange = render.can_arrange_teams;
     let id = team.lane;
     let control = render.team_controls.current(team.lane, team.subscription);
     let arrangement_context = arrangement::Context {

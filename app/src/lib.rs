@@ -181,7 +181,9 @@ pub(crate) enum PendingKind {
         life: Option<wire::intent::TeamLife>,
         fast_mode: Option<bool>,
     },
-    TeamArrange,
+    TeamArrange {
+        respond: Option<client_action::ArrangementResponse>,
+    },
     Steer,
     SteerSubmission {
         lane: wire::CanonicalUuid,

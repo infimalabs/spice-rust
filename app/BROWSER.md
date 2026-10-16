@@ -84,19 +84,22 @@ revision. A group exists only while designs belong to it: it is never created
 empty, never named, and never removed as an object. Its card is labelled from
 its lead design, member zero, as a team is from its host. A group's **Open**
 mounts its console, as a team's watchband shows it, and is the only foreground
-action. In that console a design's menu carries **New working group** and
-**Leave group**, the twins of an agent's **Create new team** and **Leave all
-teams**: the first moves the design alone into a fresh group and is offered
-only while its group holds another design; the second takes it out of its
-group. They and every drop send one `group::move` or `group::arrange`
-witnessing the partition revision the browser last folded; the console's stance
-slider sends `group::stance` under that same revision. A change that partition
-revision no longer matches is refused rather than merged. A group whose last
-design leaves ends, and once a completed room snapshot lacks the group, every
-browser closes that group's open console and forgets it, so a reload does not
-restore it. Ending a group moves no task: its designs and the work they
-produced stay on the board. While room authority loads or reconnects, an open
-console keeps its last label and geometry and closes nothing.
+action. The console's group menu can move or close that browser-local console;
+its **Disband working group** action sends `group::disband` at the displayed
+partition revision, leaves every Design ungrouped, and causes every browser to
+close the vanished group's console after authoritative room state arrives.
+In that console a design's menu carries **New working group** and **Leave
+group**, the twins of an agent's **Create new team** and **Leave all teams**:
+the first moves the design alone into a fresh group and is offered only while
+its group holds another design; the second takes it out of its group. They and
+every drop send one `group::move` or `group::arrange` witnessing the partition
+revision the browser last folded; the console's stance slider sends
+`group::stance` under that same revision. A change that partition revision no
+longer matches is refused rather than merged. A group whose last design leaves
+or which is disbanded ends. Ending a group moves no task: its designs and the
+work they produced stay on the board. While room authority loads or
+reconnects, an open console keeps its last label and geometry and closes
+nothing.
 
 **Designs** lists the open Design tasks no group holds, as Unassigned Agents
 lists lanes in no team; each tile there reads open, passive, while a grouped

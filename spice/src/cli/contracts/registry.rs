@@ -666,6 +666,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "group::arrange"
     ),
     operator!(
+        ["group", "disband"],
+        "group disband GROUP",
+        Command,
+        [WorkingGroupsArranged],
+        Reply,
+        "group::disband"
+    ),
+    operator!(
         ["group", "stance"],
         "group stance GROUP STANCE",
         Command,

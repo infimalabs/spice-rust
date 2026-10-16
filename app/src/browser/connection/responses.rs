@@ -361,7 +361,7 @@ fn apply_mutating_response(
         // it means this client lost its optimistic revision, so it immediately
         // re-reads the winning table rather than retaining the stale render.
         PendingKind::Lanes { rebases } => {
-            let (refresh, applied) =
+            let (refresh, applied, _) =
                 apply_lane_response(session, handles, runtime, &rebases, false, bytes)?;
             CommandApplication {
                 refresh,
@@ -369,9 +369,12 @@ fn apply_mutating_response(
                 publish: true,
             }
         }
-        PendingKind::TeamArrange => {
-            let (refresh, applied) =
+        PendingKind::TeamArrange { respond } => {
+            let (refresh, applied, issue) =
                 apply_lane_response(session, handles, runtime, &[], true, bytes)?;
+            if let Some(respond) = respond {
+                respond(issue.map_or(Ok(()), Err));
+            }
             CommandApplication {
                 refresh,
                 lane_authority: applied,
@@ -691,9 +694,10 @@ fn apply_lane_response(
     rebases: &[CanonicalUuid],
     refresh_on_failure: bool,
     bytes: &[u8],
-) -> Result<(bool, bool), String> {
+) -> Result<(bool, bool, Option<String>), String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
         admit_response(session, bytes)?;
+    let issue = outcome_issue("Team arrangement failed", &admitted.get().outcome);
     let rebase_lanes = handles.submissions.queue.borrow().awaiting_lanes(rebases);
     let reply = matches!(&admitted.get().outcome, wire::Outcome::Reply(_));
     let applied = runtime.apply_lanes(&admitted);
@@ -747,7 +751,7 @@ fn apply_lane_response(
             .is_empty();
     let refresh = needs_followup
         || (refresh_on_failure && topology_mutation_requires_refresh(&admitted.get().outcome));
-    Ok((refresh, applied))
+    Ok((refresh, applied, issue))
 }
 
 /// Prefix of every renewal refusal.

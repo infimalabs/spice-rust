@@ -374,6 +374,26 @@ pub fn transfer_member(
     Some(arranged)
 }
 
+/// End one formed team and replace its row with one unassigned lone-seat row
+/// per member, preserving the member order at the team's position.
+#[must_use]
+pub fn disband(
+    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    team: CanonicalUuid,
+) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
+    let source_at = teams.iter().position(|(standing, _)| *standing == team)?;
+    let members = &teams[source_at].1;
+    if !wire::head::teamed(team, members.iter().copied()) {
+        return None;
+    }
+    let mut arranged = teams.to_vec();
+    arranged.splice(
+        source_at..=source_at,
+        members.iter().map(|member| (*member, vec![*member])),
+    );
+    Some(arranged)
+}
+
 /// The teams in one topology, in the order the app drew them.
 ///
 /// These are the rows the fleet renders and an arrangement can target. A row
@@ -1080,8 +1100,8 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_TEAM_VISUAL_WEIGHT, MILLIS_PER_DAY, agent_message_attribution, agent_message_label,
-        directive_context_prose, first_nonquoted_prose, short, swap_members, task_elapsed_label,
-        task_elapsed_label_deadline_millis, task_remaining_label,
+        directive_context_prose, disband, first_nonquoted_prose, short, swap_members,
+        task_elapsed_label, task_elapsed_label_deadline_millis, task_remaining_label,
         task_remaining_label_deadline_millis, team_label_in, team_visual_weight,
         ticker_accessible_label, ticker_chunks, tool_media_description, transfer_member,
     };
@@ -1217,6 +1237,26 @@ mod tests {
         );
         assert_eq!(transfer_member(&topology, id(2), id(10)), None);
         assert_eq!(transfer_member(&topology, id(2), id(99)), None);
+    }
+
+    #[test]
+    fn disbanding_a_team_leaves_each_agent_unassigned_in_member_order() {
+        let topology = vec![
+            (id(10), vec![id(1), id(2), id(3)]),
+            (id(20), vec![id(4), id(5)]),
+        ];
+
+        assert_eq!(
+            disband(&topology, id(10)),
+            Some(vec![
+                (id(1), vec![id(1)]),
+                (id(2), vec![id(2)]),
+                (id(3), vec![id(3)]),
+                (id(20), vec![id(4), id(5)]),
+            ]),
+        );
+        assert_eq!(disband(&topology, id(99)), None);
+        assert_eq!(disband(&[(id(1), vec![id(1)])], id(1)), None);
     }
 
     #[test]

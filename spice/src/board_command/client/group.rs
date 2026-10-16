@@ -2,9 +2,24 @@ use super::*;
 
 use wire::intent::{WorkingGroupAnchor, WorkingGroupPage, WorkingGroupRead};
 use wire::rooms::{
-    RoomAuthorityStamp, WorkingGroup, WorkingGroupArrange, WorkingGroupMove, WorkingGroupStance,
-    WorkingGroupStanceSet,
+    RoomAuthorityStamp, WorkingGroup, WorkingGroupArrange, WorkingGroupDisband, WorkingGroupMove,
+    WorkingGroupStance, WorkingGroupStanceSet,
 };
+
+pub(super) fn dispatch_client(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Option<Outcome<CommandAnswer>> {
+    Some(match contract.path {
+        ["group", "list"] => client_group_list(repository, contract, matches),
+        ["group", "move"] => client_group_move(repository, contract, matches),
+        ["group", "arrange"] => client_group_arrange(repository, contract, matches),
+        ["group", "disband"] => client_group_disband(repository, contract, matches),
+        ["group", "stance"] => client_group_stance(repository, contract, matches),
+        _ => return None,
+    })
+}
 
 pub(super) fn client_group_list(
     repository: &Repository,
@@ -110,6 +125,35 @@ pub(super) fn client_group_arrange(
             revision: page.revision,
         }],
         &WorkingGroupArrange { groups },
+    ))
+}
+
+/// End one standing group at the partition revision observed immediately
+/// before the write.
+pub(super) fn client_group_disband(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let Some(written_group) = matches.get_one::<String>("GROUP") else {
+        return refusal("group::identity-missing", None, "name the working group");
+    };
+    let group = match group(written_group) {
+        Ok(group) => group,
+        Err(outcome) => return outcome,
+    };
+    let page = match observed(repository) {
+        Ok(page) => page,
+        Err(outcome) => return outcome,
+    };
+    render_change(crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::WorkingGroupDisband,
+        vec![Witness::Group {
+            revision: page.revision,
+        }],
+        &WorkingGroupDisband { group },
     ))
 }
 
@@ -267,6 +311,7 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
                         wire::intent::WorkingGroupChangeStatus::Moved => "moved",
                         wire::intent::WorkingGroupChangeStatus::Ended => "moved; its group ended",
                         wire::intent::WorkingGroupChangeStatus::Arranged => "arranged",
+                        wire::intent::WorkingGroupChangeStatus::Disbanded => "disbanded",
                         wire::intent::WorkingGroupChangeStatus::Retuned => "fast mode set",
                         wire::intent::WorkingGroupChangeStatus::Stanced => "stance set",
                     }

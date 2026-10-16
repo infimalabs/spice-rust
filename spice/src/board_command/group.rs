@@ -7,8 +7,9 @@ use wire::intent::{
     WorkingGroupRead, WorkingGroupStanceSet, WorkingGroupView,
 };
 use wire::rooms::{
-    RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupMoved,
-    WorkingGroupPartition, WorkingGroupStance, WorkingGroupsArranged, working_group_origin,
+    RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupDisband,
+    WorkingGroupMoved, WorkingGroupPartition, WorkingGroupStance, WorkingGroupsArranged,
+    working_group_origin,
 };
 
 type Designs<'a> = Partition<&'a RoomAuthorityStamp, &'a TaskStamp>;
@@ -414,6 +415,79 @@ pub(super) fn set_working_group_fast(
     )
 }
 
+/// End one standing group and leave all of its Designs ungrouped. An active
+/// group deactivates each affected room under that Design's task origin.
+pub(crate) fn disband_working_group(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    request: &WorkingGroupDisband,
+    config: &steer::Config,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> (Outcome<CommandAnswer>, Option<wire::CanonicalUuid>) {
+    let current = match bus.read(|read| current_partition(read)) {
+        Ok(current) => current,
+        Err(error) => {
+            return (
+                store_fault("group::read-unavailable", &error.to_string()),
+                None,
+            );
+        }
+    };
+    let revision = match next_revision(command, current.revision) {
+        Ok(revision) => revision,
+        Err(outcome) => return (outcome, None),
+    };
+    let Some(group) = current
+        .groups
+        .iter()
+        .find(|group| group.group == request.group)
+    else {
+        return (
+            refusal(
+                "group::missing",
+                Some(request.group.to_string()),
+                "the working group no longer stands; read the working groups and retry",
+            ),
+            None,
+        );
+    };
+    let deactivations = if group.stance.is_active() {
+        match read_deactivations(bus, group.anchors.clone(), projects, allocation) {
+            Ok(deactivations) => deactivations,
+            Err(outcome) => return (outcome, None),
+        }
+    } else {
+        Vec::new()
+    };
+    let mut partition = current.clone();
+    partition.revision = revision;
+    partition
+        .groups
+        .retain(|group| group.group != request.group);
+    partition.fast.retain(|group| group != &request.group);
+    let fact = WorkingGroupsArranged {
+        from: current,
+        partition,
+    };
+    let outcome = change_partition(
+        bus,
+        command,
+        working_group_origin(),
+        revision,
+        WorkingGroupChangeStatus::Disbanded,
+        Vec::new(),
+        |write, _| {
+            write
+                .fact(fact, FactCause::Root)
+                .map(drop)
+                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))
+        },
+        request.clone(),
+    );
+    finish_deactivations(bus, command, config, outcome, deactivations)
+}
+
 /// Set one standing group's shared activity stance. A transition to Passive
 /// commits each affected room's deactivation under that Design's task origin.
 pub(crate) fn set_working_group_stance(
@@ -461,36 +535,11 @@ pub(crate) fn set_working_group_stance(
             None,
         );
     }
-    let previous_stance = group.stance;
-    let anchors = group.anchors.clone();
-    let deactivations = if previous_stance.is_active() && !request.stance.is_active() {
-        let handles = match bus.read(move |read| {
-            anchors
-                .iter()
-                .map(|born| {
-                    read.task_head(born).map(|head| {
-                        head.map(|head| TaskHandle::for_project(&head.body().project, born))
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()
-        }) {
-            Ok(handles) => handles,
-            Err(error) => {
-                return (
-                    store_fault("group::read-unavailable", &error.to_string()),
-                    None,
-                );
-            }
-        };
-        let mut deactivations = Vec::new();
-        for handle in handles.into_iter().flatten() {
-            match Deactivation::read(bus, &handle, projects, allocation) {
-                Ok(Some(deactivation)) => deactivations.push(deactivation),
-                Ok(None) => {}
-                Err(outcome) => return (outcome, None),
-            }
+    let deactivations = if group.stance.is_active() && !request.stance.is_active() {
+        match read_deactivations(bus, group.anchors.clone(), projects, allocation) {
+            Ok(deactivations) => deactivations,
+            Err(outcome) => return (outcome, None),
         }
-        deactivations
     } else {
         Vec::new()
     };
@@ -516,6 +565,43 @@ pub(crate) fn set_working_group_stance(
         },
         request.clone(),
     );
+    finish_deactivations(bus, command, config, outcome, deactivations)
+}
+
+fn read_deactivations(
+    bus: &Bus,
+    anchors: Vec<TaskStamp>,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> Result<Vec<Deactivation>, Outcome<CommandAnswer>> {
+    let handles = bus
+        .read(move |read| {
+            anchors
+                .iter()
+                .map(|born| {
+                    read.task_head(born).map(|head| {
+                        head.map(|head| TaskHandle::for_project(&head.body().project, born))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|error| store_fault("group::read-unavailable", &error.to_string()))?;
+    let mut deactivations = Vec::new();
+    for handle in handles.into_iter().flatten() {
+        if let Some(deactivation) = Deactivation::read(bus, &handle, projects, allocation)? {
+            deactivations.push(deactivation);
+        }
+    }
+    Ok(deactivations)
+}
+
+fn finish_deactivations(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    config: &steer::Config,
+    outcome: Outcome<CommandAnswer>,
+    deactivations: Vec<Deactivation>,
+) -> (Outcome<CommandAnswer>, Option<wire::CanonicalUuid>) {
     if !matches!(
         &outcome,
         Outcome::Reply(Reply {

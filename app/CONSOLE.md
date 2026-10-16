@@ -82,11 +82,13 @@ none:
   as it sends one member's draft.
 - **Idle** follows the team rule. With no composer holding text, no quote
   drafted, and no post in flight, the panel rests dark with SEND as flush glass.
-- **Team arrangement menu** becomes the group arrangement menu, in the same
-  place and with the same menu, focus, and Escape behavior. It moves this
-  browser's console left or right or closes it. Swap and join have no analog:
-  membership moves one design at a time through its own menu or the Working
-  groups roster, never by merging groups.
+- **Team arrangement menu** becomes the group menu, in the same place and with
+  the same focus and Escape behavior. It moves this browser's console left or
+  right or closes it; **Disband working group** instead ends the shared group
+  and leaves every Design ungrouped. Its guarded `group::disband` result or
+  typed refusal is shown in the catalog notice. Swap and join have no analog:
+  membership otherwise moves one design at a time through its own menu or the
+  Working groups roster, never by merging groups.
 - **Team TURBO** becomes group TURBO, in the same place. It shows the group's
   durable resident fast-mode flag, off until engaged, and a press sends the
   admitted `group::fast` command naming the group at the partition revision it
