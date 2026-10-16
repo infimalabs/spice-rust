@@ -48,7 +48,7 @@ pub(crate) fn read_next_work(
     };
     let state = if let Some(index) = held {
         NextWorkState::Active {
-            task: next_task(frontier_heads[index]),
+            task: next_task(frontier_heads[index], &principal),
         }
     } else if let Some(request) = design_request {
         NextWorkState::DesignRequest { request }
@@ -69,7 +69,7 @@ pub(crate) fn read_next_work(
             )
         })?;
         NextWorkState::Candidate {
-            task: next_task(heads),
+            task: next_task(heads, &principal),
         }
     } else {
         NextWorkState::Dry {
@@ -302,9 +302,11 @@ pub(in crate::board_command) fn project_frontier<'a>(
     Ok((entries, satisfied, origin_threads, frontier_heads, work))
 }
 
-fn next_task(heads: &journal::TaskHeads) -> NextWorkTask {
+fn next_task(heads: &journal::TaskHeads, principal: &wire::Actor) -> NextWorkTask {
+    let mut statement = positioned(heads.statement());
+    withhold_taste_findings(principal, &mut statement.body.taste);
     NextWorkTask {
-        statement: positioned(heads.statement()),
+        statement,
         workflow: positioned(heads.workflow()),
         claim: heads.claim().map(positioned),
         lease: heads.lease().map(positioned),

@@ -27,7 +27,10 @@
 /// by leaving the room, which an older release's projection cannot decode.
 /// Schema 72 crosses retained terminal review fields into the typed workflow
 /// state without changing their positive or negative standing.
-pub const SCHEMA_VERSION: u32 = 73;
+/// Schema 73 makes each retained Design pass proposal's justification explicit.
+/// Schema 74 lifts each taste hold's evidence out of its statement's audit
+/// notes into the typed hold, which an older release cannot decode.
+pub const SCHEMA_VERSION: u32 = 74;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

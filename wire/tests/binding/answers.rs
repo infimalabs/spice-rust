@@ -57,7 +57,20 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
           "acceptance": ["the row decodes", "the row re-encodes unchanged"],
           "project": "wire.binding",
           "priority": "high",
-          "taste": "prepended",
+          "taste": {
+            "plan": "prepended",
+            "matches": [{
+              "field": "acceptance",
+              "line": 1,
+              "taste": "compatibility",
+              "finding": {
+                "trigger": "compatibility",
+                "column": 12,
+                "message": "Keep one current path."
+              }
+            }],
+            "rechecks": 2
+          },
           "dependencies": ["1kKRRsDQ"],
           "provenance": "task:1kKRRsDP",
           "creation": { "kind": "unavailable", "reason": "operator-actor" },

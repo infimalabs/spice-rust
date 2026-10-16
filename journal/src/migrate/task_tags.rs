@@ -5,7 +5,7 @@ use rusqlite::{Transaction, params};
 use serde_json::{Map, Value};
 use wire::FactKind;
 
-use super::{OpenError, residual, task_markers, task_standing};
+use super::{OpenError, residual, task_markers, task_standing, taste_holds};
 
 /// Last release whose statement schema retained a generic tag field.
 const TASK_TAGS_RELEASE: &str = "b1c4a6044";
@@ -17,13 +17,22 @@ fn carries_tags(column: &str, path: &str) -> String {
 
 /// Cross every retained task creation fact after older fact shapes are current,
 /// then prove every statement head has the current strict shape.
-pub(super) fn cross_facts(transaction: &Transaction<'_>) -> Result<(), OpenError> {
+///
+/// A hold a creation fact's tags declared takes its evidence from `audits` in
+/// the same rewrite, because the rewritten fact must decode as current.
+pub(super) fn cross_facts(
+    transaction: &Transaction<'_>,
+    audits: &taste_holds::Audits,
+) -> Result<(), OpenError> {
     residual::rewrite_facts(
         transaction,
         FactKind::TaskAdded,
         &carries_tags("envelope", "$.fact.tags"),
         TASK_TAGS_RELEASE,
-        |_, fact| cross_statement(fact),
+        |seq, fact| {
+            cross_statement(fact)?;
+            taste_holds::lift_opened(seq, fact, audits)
+        },
     )?;
     canonicalize_heads(transaction)
 }

@@ -727,7 +727,20 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 project: "wire.binding".to_owned(),
                 filing: wire::TaskFiling::Filed,
                 priority: Some(wire::TaskPriority::High),
-                taste: Some(wire::TasteHold::Prepended),
+                taste: Some(wire::TasteHold {
+                    plan: wire::TastePlan::Prepended,
+                    matches: vec![wire::TasteMatch {
+                        field: wire::StatementField::Acceptance,
+                        line: 1,
+                        taste: "compatibility".to_owned(),
+                        finding: Some(wire::TasteFinding {
+                            trigger: "compatibility".to_owned(),
+                            column: 12,
+                            message: "Keep one current path.".to_owned(),
+                        }),
+                    }],
+                    rechecks: 2,
+                }),
                 document_slug: None,
                 taste_proposal: None,
                 dependencies: vec!["1kKRRsDQ".parse().expect("a task stamp")],

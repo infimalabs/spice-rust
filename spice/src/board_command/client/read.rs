@@ -468,8 +468,9 @@ pub(in crate::board_command) fn task_show_bounded(
             ),
         ]);
     }
-    if statement.taste.is_some() {
+    if let Some(hold) = &statement.taste {
         lines.push("taste_review required".to_owned());
+        lines.extend(hold.matches.iter().map(taste_match_line));
     }
     lines.extend(requirement_lines(board, statement, &environment));
     lines.push(format!(
@@ -922,6 +923,24 @@ fn creation_context_lines(statement: &wire::intent::BoardStatement) -> Vec<Strin
                 output.into(),
             ]
         }
+    }
+}
+
+/// One place a taste held the statement: where it sits and which taste, plus
+/// what matched and the taste's message when the reader may see them.
+fn taste_match_line(found: &wire::TasteMatch) -> String {
+    let place = format!(
+        "  {} line {} taste {}",
+        found.field.as_str(),
+        found.line,
+        found.taste
+    );
+    match &found.finding {
+        Some(finding) => format!(
+            "{place} trigger {:?} column {}: {}",
+            finding.trigger, finding.column, finding.message
+        ),
+        None => place,
     }
 }
 

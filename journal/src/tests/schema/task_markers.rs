@@ -127,7 +127,6 @@ fn schema_sixty_six_lifts_every_meaning_before_discarding_tags() {
     let mut journal = predecessor(
         json!(["priority:high", "document-slug:intro", "gate-finding"]),
         json!([
-            "taste-review:required",
             "taste-proposal",
             format!("taste-finding:{FINDING}"),
             format!("taste-occurrence:{OCCURRENCE}"),
@@ -162,7 +161,6 @@ fn schema_sixty_six_lifts_every_meaning_before_discarding_tags() {
         .unwrap();
     let envelope: Envelope<AnyFact> = wire::decode(&bytes).unwrap();
     let added = envelope.fact.read::<wire::body::TaskAdded>().unwrap();
-    assert_eq!(added.taste, Some(wire::TasteHold::Authored));
     assert_eq!(added.taste_proposal.as_ref().unwrap().recurrence, 3);
     assert_no_statement_tags(&journal);
 }

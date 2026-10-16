@@ -341,13 +341,11 @@ fn admit_plan_transition(
         transition.kind(),
         board::TransitionKind::Complete { phase } if phase.as_str() == "plan"
     );
-    if entry.statement().taste.is_some() {
-        // Every recheck writes its own audit, and the first one was written
-        // when the task was filed. A lane that rewords and refuses again can
-        // only tell progress from stasis if the refusal says how many reads
-        // the statement has already survived.
-        let rechecks = taste_rechecks(&snapshot.facts, entry.born()).saturating_sub(1);
-        let standing = match rechecks {
+    if let Some(hold) = &entry.statement().taste {
+        // A lane that rewords and refuses again can only tell progress from
+        // stasis if the refusal says how many reads the statement has already
+        // survived.
+        let standing = match hold.rechecks {
             0 => "the filed statement has not been revised".to_owned(),
             1 => "one revision has been rechecked and the statement still matches".to_owned(),
             count => {

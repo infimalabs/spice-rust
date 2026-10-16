@@ -99,11 +99,12 @@ pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState,
     LaneRenewalRecord, LaneRenewalState, LaneResidency, LaneSession, LeaseHead, RenewalIdentity,
-    ResidencyHead, ResidentState, SeatRefusal, SteeringHead, TapeLocus, TaskEvidenceEdit,
-    TaskFiling, TaskHead, TaskIntent, TaskIntentEdit, TaskPreparation, TaskPriority, TasteHold,
-    TasteProposal, TeamSubscription, TranscriptSourceHead, TranscriptStreamKey, TrustHead,
-    TrustState, WitnessClass, WitnessHead, WorkflowCompletionReview, WorkflowConclusion,
-    WorkflowHead, WorkflowNegative, WorkflowReview, WorkflowStatus, WorkflowStatusKind,
+    ResidencyHead, ResidentState, SeatRefusal, StatementField, SteeringHead, TapeLocus,
+    TaskEvidenceEdit, TaskFiling, TaskHead, TaskIntent, TaskIntentEdit, TaskPreparation,
+    TaskPriority, TasteFinding, TasteHold, TasteMatch, TastePlan, TasteProposal, TeamSubscription,
+    TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,
+    WorkflowCompletionReview, WorkflowConclusion, WorkflowHead, WorkflowNegative, WorkflowReview,
+    WorkflowStatus, WorkflowStatusKind,
 };
 pub use hello::{
     Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,

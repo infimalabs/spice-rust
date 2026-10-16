@@ -26,7 +26,6 @@ struct DocTaskSpec {
     dependencies: Vec<wire::TaskStamp>,
     flow: Vec<wire::Phase>,
     initial: wire::Phase,
-    taste_review: Option<TasteReview>,
     released: Option<ReleasedPlan>,
 }
 
@@ -289,14 +288,14 @@ fn doc_task_spec(
         &node.acceptance,
     )?;
     let was_required = existing.is_some_and(|entry| entry.statement().taste.is_some());
-    let taste_review_required = taste_review.as_ref().is_some_and(TasteReview::required);
+    let matched = taste_review.as_ref().filter(|review| review.required());
     if taste_review.is_none() && was_required {
         return Err(environment_fault(
             "task::taste-policy-unavailable",
             "an existing taste review cannot clear without repository policy authority",
         ));
     }
-    if taste_review_required
+    if matched.is_some()
         && existing.is_some_and(|entry| {
             entry.statement().taste.is_none() && entry.workflow().phase.as_str() != "plan"
         })
@@ -308,13 +307,7 @@ fn doc_task_spec(
         ));
     }
     let mut taste = None;
-    let released = resync_taste_hold(
-        &plan.snapshot,
-        existing,
-        taste_review_required,
-        &mut flow,
-        &mut taste,
-    )?;
+    let released = resync_taste_hold(&plan.snapshot, existing, matched, &mut flow, &mut taste)?;
     let initial = flow[0].clone();
     Ok(DocTaskSpec {
         born: task
@@ -332,8 +325,6 @@ fn doc_task_spec(
         dependencies,
         flow,
         initial,
-        taste_review: (was_required || taste_review_required)
-            .then(|| taste_review.expect("repository-backed review has a verdict")),
         released,
     })
 }
@@ -416,7 +407,6 @@ fn edit_doc_task(
             "apply authored edits only to pending task statements",
         ));
     }
-    let taste_review = spec.taste_review.clone();
     let revision = u32::try_from(existing.statement().revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
@@ -447,15 +437,10 @@ fn edit_doc_task(
         revision: position,
         ..statement
     });
-    let mut last = edited;
-    if let Some(review) = taste_review.as_ref() {
-        last =
-            append_taste_review_audit(write, existing.born(), review, FactCause::Pending(edited))?;
+    match spec.released {
+        Some(released) => released.write(write, existing.born(), edited),
+        None => Ok(edited),
     }
-    if let Some(released) = spec.released {
-        last = released.write(write, existing.born(), edited)?;
-    }
-    Ok(last)
 }
 
 fn add_doc_task(
@@ -471,8 +456,6 @@ fn add_doc_task(
             "a newly authored document task has no creation-time transcript capture",
         )
     })?;
-    let taste_review = spec.taste_review.clone();
-    let audit_task = spec.born.clone();
     let added = write
         .fact(
             body::TaskAdded {
@@ -486,7 +469,7 @@ fn add_doc_task(
                 project: spec.project.clone(),
                 filing: wire::TaskFiling::Filed,
                 priority: spec.priority,
-                taste: spec.taste,
+                taste: spec.taste.clone(),
                 document_slug: Some(spec.document_slug.clone()),
                 taste_proposal: None,
                 depends: spec.dependencies.clone(),
@@ -530,9 +513,6 @@ fn add_doc_task(
         deferral: None,
         generation: 0,
     });
-    if let Some(review) = taste_review.as_ref() {
-        return append_taste_review_audit(write, &audit_task, review, FactCause::Pending(added));
-    }
     Ok(added)
 }
 

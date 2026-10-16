@@ -304,8 +304,8 @@ fn create_task<B: serde::Serialize>(
             Err(outcome) => return outcome,
         }
     };
-    let taste_review_required = taste_review.as_ref().is_some_and(TasteReview::required);
-    if taste_review_required && captures_implementation(command) {
+    let taste_review = taste_review.filter(TasteReview::required);
+    if taste_review.is_some() && captures_implementation(command) {
         return refusal(
             "task::capture-taste-review",
             Some("captured implementation requires taste-reviewed task prose".to_owned()),
@@ -315,8 +315,8 @@ fn create_task<B: serde::Serialize>(
     if let Err(outcome) = admit_prepared(&snapshot, command, add, filing, &mut prepared) {
         return outcome;
     }
-    if taste_review_required {
-        hold_for_taste(&mut prepared.flow, &mut prepared.statement.taste);
+    if let Some(review) = &taste_review {
+        hold_for_taste(&mut prepared.flow, &mut prepared.statement.taste, review);
         prepared.phase = prepared.flow[0].clone();
         prepared.workflow.flow.clone_from(&prepared.flow);
         prepared.workflow.phase.clone_from(&prepared.phase);
@@ -339,7 +339,6 @@ fn create_task<B: serde::Serialize>(
         &snapshot,
         prepared,
         post,
-        taste_review.as_ref().filter(|review| review.required()),
         dependency_witnesses,
         |_| {},
         added_claim,
@@ -463,7 +462,6 @@ fn commit_prepared_task<B, F>(
     snapshot: &ValidatedSnapshot,
     prepared: PreparedTask,
     post: Entry,
-    taste_review: Option<&TasteReview>,
     dependency_witnesses: Vec<Witness>,
     extra_guard: F,
     added_claim: Option<PreparedClaim>,
@@ -515,7 +513,7 @@ where
             project: prepared.project,
             filing: prepared.statement.filing,
             priority: prepared.statement.priority,
-            taste: prepared.statement.taste,
+            taste: prepared.statement.taste.clone(),
             document_slug: prepared.statement.document_slug.clone(),
             taste_proposal: prepared.statement.taste_proposal.clone(),
             depends: prepared.statement.dependencies.clone(),
@@ -529,16 +527,6 @@ where
         Ok(fact) => fact,
         Err(error) => return store_fault("task::add-build", &error.to_string()),
     };
-    if let Some(review) = taste_review
-        && let Err(outcome) = append_taste_review_audit(
-            &mut write,
-            &prepared.born,
-            review,
-            FactCause::Pending(added),
-        )
-    {
-        return outcome;
-    }
     let statement = prepared.statement;
     write.task_head(added, move |position| TaskHead {
         queue_origin: position,

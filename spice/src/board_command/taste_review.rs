@@ -1,35 +1,16 @@
-use std::collections::BTreeSet;
-
-use wire::TasteHold;
+use wire::{StatementField, TasteHold, TasteMatch, TastePlan};
 
 use super::*;
 
-/// Opening words of every durable taste-review audit note.
-pub(super) const AUDIT_PREFIX: &str = "taste-review audit ";
-
-/// What a lane reads where the operator reads a matched token or a taste's
-/// own message.
-const WITHHELD: &str = "withheld";
-
-/// Audit fields that name the match itself rather than where it sits.
-const WITHHELD_QUOTED: [&str; 2] = ["trigger=", "message="];
-
-/// Audit fields that locate the match precisely enough to swap one word.
-const WITHHELD_PLAIN: [&str; 1] = ["column="];
-
+/// One read of a statement against the complete current taste policy.
 #[derive(Clone, Debug)]
 pub(super) struct TasteReview {
-    required: bool,
-    audit: String,
+    matches: Vec<TasteMatch>,
 }
 
 impl TasteReview {
-    pub(super) const fn required(&self) -> bool {
-        self.required
-    }
-
-    pub(super) fn audit(&self) -> &str {
-        &self.audit
+    pub(super) fn required(&self) -> bool {
+        !self.matches.is_empty()
     }
 }
 
@@ -58,12 +39,41 @@ pub(super) fn validate_acceptance(acceptance: &[String]) -> Result<(), Outcome<C
 /// A flow that already opens in plan keeps that phase as authored; only a plan
 /// phase this inserts is recorded as prepended, so the hold's clearance can
 /// withdraw exactly what the hold added.
-pub(super) fn hold_for_taste(flow: &mut Vec<wire::Phase>, taste: &mut Option<TasteHold>) {
-    if flow.first().is_some_and(|phase| phase.as_str() == "plan") {
-        *taste = Some(TasteHold::Authored);
+pub(super) fn hold_for_taste(
+    flow: &mut Vec<wire::Phase>,
+    taste: &mut Option<TasteHold>,
+    review: &TasteReview,
+) {
+    let plan = if flow.first().is_some_and(|phase| phase.as_str() == "plan") {
+        TastePlan::Authored
     } else {
         flow.insert(0, phase("plan"));
-        *taste = Some(TasteHold::Prepended);
+        TastePlan::Prepended
+    };
+    *taste = Some(TasteHold {
+        plan,
+        matches: review.matches.clone(),
+        rechecks: 0,
+    });
+}
+
+/// Keep a revised statement the policy still matches under its hold.
+///
+/// A standing hold records the new matches and one more recheck; a statement
+/// not yet held opens a hold in the plan phase its flow already carries.
+pub(super) fn keep_taste_hold(taste: &mut Option<TasteHold>, review: &TasteReview) {
+    match taste {
+        Some(hold) => {
+            hold.matches.clone_from(&review.matches);
+            hold.rechecks = hold.rechecks.saturating_add(1);
+        }
+        None => {
+            *taste = Some(TasteHold {
+                plan: TastePlan::Authored,
+                matches: review.matches.clone(),
+                rechecks: 0,
+            });
+        }
     }
 }
 
@@ -76,7 +86,9 @@ pub(super) fn clear_taste_review(
     taste: &mut Option<TasteHold>,
     workflow: &wire::WorkflowHead,
 ) -> Option<wire::WorkflowHead> {
-    let prepended = taste.take() == Some(TasteHold::Prepended);
+    let prepended = taste
+        .take()
+        .is_some_and(|hold| hold.plan == TastePlan::Prepended);
     let in_prepended_phase = workflow.phase.as_str() == "plan"
         && workflow.flow.first() == Some(&workflow.phase)
         && workflow.flow.len() > 1;
@@ -91,30 +103,25 @@ pub(super) fn clear_taste_review(
 
 /// Carry a document task's taste hold into the statement its document rewrites.
 ///
-/// A new task is held like any other. An existing held task keeps its hold
-/// while it still matches and, once it no longer does, returns to the workflow
-/// its hold displaced.
+/// A new task is held like any other. An existing task the policy still
+/// matches keeps or opens its hold and, once a held task no longer matches,
+/// returns to the workflow its hold displaced.
 pub(super) fn resync_taste_hold(
     snapshot: &ValidatedSnapshot,
     existing: Option<&Entry>,
-    required: bool,
+    matched: Option<&TasteReview>,
     flow: &mut Vec<wire::Phase>,
     taste: &mut Option<TasteHold>,
 ) -> Result<Option<ReleasedPlan>, Outcome<CommandAnswer>> {
     let Some(entry) = existing else {
-        if required {
-            hold_for_taste(flow, taste);
+        if let Some(review) = matched {
+            hold_for_taste(flow, taste, review);
         }
         return Ok(None);
     };
-    let mut held = entry.statement().taste;
-    if held.is_none() {
-        if required {
-            *taste = Some(TasteHold::Authored);
-        }
-        return Ok(None);
-    }
-    if required {
+    let mut held = entry.statement().taste.clone();
+    if let Some(review) = matched {
+        keep_taste_hold(&mut held, review);
         *taste = held;
         return Ok(None);
     }
@@ -250,11 +257,15 @@ pub(super) fn task_taste_review(
     } else {
         listen::ProseRole::Assistant
     };
-    let fields = std::iter::once(("title", title))
-        .chain(description.map(|text| ("description", text)))
-        .chain(acceptance.iter().map(|text| ("acceptance", text.as_str())))
+    let fields = std::iter::once((StatementField::Title, title))
+        .chain(description.map(|text| (StatementField::Description, text)))
+        .chain(
+            acceptance
+                .iter()
+                .map(|text| (StatementField::Acceptance, text.as_str())),
+        )
         .collect::<Vec<_>>();
-    let mut evidence = BTreeSet::new();
+    let mut matches = Vec::<TasteMatch>::new();
     // Task prose has no repository path, extension, or gate phase. A taste
     // constrained to one of those axes is inapplicable here, not unresolved.
     let applicable = bag
@@ -299,124 +310,33 @@ pub(super) fn task_taste_review(
             )
         })?;
         for hit in hits {
-            evidence.insert(format!(
-                "field={field:?} taste={:?} trigger={:?} message={:?} line={} column={}",
-                hit.taste().as_str(),
-                hit.trigger(),
-                hit.message(),
-                hit.line(),
-                hit.column(),
-            ));
+            let found = TasteMatch {
+                field: *field,
+                line: hit.line(),
+                taste: hit.taste().as_str().to_owned(),
+                finding: Some(wire::TasteFinding {
+                    trigger: hit.trigger().to_owned(),
+                    column: hit.column(),
+                    message: hit.message().to_owned(),
+                }),
+            };
+            if !matches.contains(&found) {
+                matches.push(found);
+            }
         }
     }
-    let required = !evidence.is_empty();
-    let outcome = if required { "required" } else { "clear" };
-    Ok(Some(TasteReview {
-        required,
-        audit: format!(
-            "{AUDIT_PREFIX}policy={} outcome={outcome} matches=[{}]",
-            taste::bag_identity(bag),
-            evidence.into_iter().collect::<Vec<_>>().join("; "),
-        ),
-    }))
+    Ok(Some(TasteReview { matches }))
 }
 
-pub(super) fn append_taste_review_audit(
-    write: &mut JournalWrite,
-    task: &wire::TaskStamp,
-    review: &TasteReview,
-    cause: FactCause,
-) -> Result<PendingFact, Outcome<CommandAnswer>> {
-    write
-        .fact(
-            body::TaskNoted {
-                task: task.clone(),
-                note: review.audit().to_owned(),
-            },
-            cause,
-        )
-        .map_err(|error| store_fault("task::taste-audit-build", &error.to_string()))
-}
-
-/// How many times the current policy has read one task's statement.
+/// Withhold what each taste match found from a lane's read of one hold.
 ///
-/// Every recheck appends its own audit, so the task's own notes count them
-/// without a second policy run.
-pub(super) fn taste_rechecks(facts: &bus::TaskFacts, task: &wire::TaskStamp) -> usize {
-    facts
-        .iter()
-        .filter_map(|envelope| envelope.fact.read::<body::TaskNoted>())
-        .filter(|noted| &noted.task == task && noted.note.starts_with(AUDIT_PREFIX))
-        .count()
-}
-
-/// Project one durable audit into what a lane may read of it.
-///
-/// `spice task show` and the plan-completion refusal already withhold the
-/// matched token and the taste's own message, because an author who is told
-/// the word swaps the word instead of rewriting the statement. The durable
-/// note keeps both for the operator who owns the policy; a lane reads the
-/// same note with the match itself, and the column that pinpoints it,
-/// withheld. The field and line remain: they name the passage to rewrite.
-///
-/// Returns `None` for a note that is not a taste-review audit.
-pub(super) fn lane_audit(note: &str) -> Option<String> {
-    if !note.starts_with(AUDIT_PREFIX) {
-        return None;
+/// The lane still reads which field, line, and taste held its statement; the
+/// matched text and the taste's message stay with the operator, because an
+/// author told the word swaps the word instead of rewriting the statement.
+pub(super) fn withhold_taste_findings(principal: &Actor, taste: &mut Option<TasteHold>) {
+    if matches!(principal, Actor::Lane(_))
+        && let Some(hold) = taste
+    {
+        hold.withhold_findings();
     }
-    let mut lane = String::with_capacity(note.len());
-    let mut rest = note;
-    while let Some((before, key, after)) = next_withheld_field(rest) {
-        lane.push_str(before);
-        lane.push_str(key);
-        lane.push_str(WITHHELD);
-        rest = after;
-    }
-    lane.push_str(rest);
-    Some(lane)
-}
-
-/// Split the audit at its next withheld field: text before it, the field's
-/// key, and the text after its value.
-///
-/// An unmeasurable value withholds the rest of the note rather than releasing
-/// it: this projection exists to keep a match from reaching its author, so a
-/// note it cannot read must end there.
-fn next_withheld_field(audit: &str) -> Option<(&str, &str, &str)> {
-    let mut earliest: Option<(usize, &str)> = None;
-    for key in WITHHELD_QUOTED.iter().chain(WITHHELD_PLAIN.iter()) {
-        if let Some(at) = audit.find(key)
-            && earliest.is_none_or(|(found, _)| at < found)
-        {
-            earliest = Some((at, key));
-        }
-    }
-    let (at, key) = earliest?;
-    let value = &audit[at + key.len()..];
-    let end = if WITHHELD_QUOTED.contains(&key) {
-        quoted_width(value).unwrap_or(value.len())
-    } else {
-        value
-            .find(|character: char| !character.is_ascii_digit())
-            .unwrap_or(value.len())
-    };
-    Some((&audit[..at], key, &value[end..]))
-}
-
-/// Width of one `{:?}` rendered value, counting the escapes that rendering
-/// wrote into it.
-fn quoted_width(value: &str) -> Option<usize> {
-    let bytes = value.as_bytes();
-    if bytes.first() != Some(&b'"') {
-        return None;
-    }
-    let mut index = 1;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'\\' => index += 2,
-            b'"' => return Some(index + 1),
-            _ => index += 1,
-        }
-    }
-    None
 }
