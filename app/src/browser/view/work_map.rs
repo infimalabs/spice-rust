@@ -347,7 +347,7 @@ fn map_targets(
             .iter()
             .filter_map(|node| {
                 let task = node.task.as_ref()?;
-                let tone = task_tone(work, task, node.status.as_deref());
+                let tone = task_tone(work, task, node.status.as_ref());
                 Some(overlay::MapNodeTarget {
                     id: node.id.clone(),
                     task: task.clone(),
@@ -374,7 +374,7 @@ struct TaskTone {
 fn task_tone(
     work: &WorkProjection<'_>,
     task: &TaskStamp,
-    status: Option<&str>,
+    status: Option<&wire::WorkflowStatusKind>,
 ) -> Option<TaskTone> {
     let Some(task) = work
         .tasks()
@@ -382,9 +382,9 @@ fn task_tone(
         .find(|candidate| candidate.row().statement.body.born == *task)
     else {
         return match status? {
-            "completed" => Some(settled_tone(false)),
-            "deleted" => Some(settled_tone(true)),
-            _ => None,
+            wire::WorkflowStatusKind::Completed => Some(settled_tone(false)),
+            wire::WorkflowStatusKind::Deleted => Some(settled_tone(true)),
+            wire::WorkflowStatusKind::Pending => None,
         };
     };
     let availability = task.availability();

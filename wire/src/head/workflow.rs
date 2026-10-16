@@ -226,16 +226,28 @@ impl WorkflowStatus {
         }
     }
 
+    /// Closed canonical spelling retained by presentation-only projections.
+    #[must_use]
+    pub const fn kind(&self) -> WorkflowStatusKind {
+        match self {
+            Self::Pending(_) => WorkflowStatusKind::Pending,
+            Self::Settled {
+                conclusion:
+                    WorkflowConclusion::Positive { .. }
+                    | WorkflowConclusion::Negative(WorkflowNegative::Closed),
+                ..
+            } => WorkflowStatusKind::Completed,
+            Self::Settled {
+                conclusion: WorkflowConclusion::Negative(WorkflowNegative::Deleted),
+                ..
+            } => WorkflowStatusKind::Deleted,
+        }
+    }
+
     /// Canonical wire and operator-facing status spelling.
     #[must_use]
     pub const fn as_str(&self) -> &'static str {
-        if self.is_deleted() {
-            "deleted"
-        } else if self.is_completed() {
-            "completed"
-        } else {
-            "pending"
-        }
+        self.kind().as_str()
     }
 }
 
@@ -297,12 +309,34 @@ impl WorkflowHead {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+/// Closed canonical status spelling used at summary wire boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum WorkflowStatusWire {
+pub enum WorkflowStatusKind {
+    /// Work remains live.
     Pending,
+    /// Work settled either positively or by operator closure.
     Completed,
+    /// Work was withdrawn.
     Deleted,
+}
+
+impl WorkflowStatusKind {
+    /// Stable wire and operator-facing spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Completed => "completed",
+            Self::Deleted => "deleted",
+        }
+    }
+}
+
+impl std::fmt::Display for WorkflowStatusKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -319,7 +353,7 @@ enum WorkflowReviewWire {
 struct WorkflowHeadWire {
     flow: Vec<Phase>,
     phase: Phase,
-    status: WorkflowStatusWire,
+    status: WorkflowStatusKind,
     review: WorkflowReviewWire,
     #[serde(
         default,
@@ -350,19 +384,19 @@ impl Serialize for WorkflowHead {
     {
         let (status, review, assignment, completion) = match &self.status {
             WorkflowStatus::Pending(WorkflowReview::Unassigned) => (
-                WorkflowStatusWire::Pending,
+                WorkflowStatusKind::Pending,
                 WorkflowReviewWire::Unassigned,
                 None,
                 None,
             ),
             WorkflowStatus::Pending(WorkflowReview::Assigned { reviewer }) => (
-                WorkflowStatusWire::Pending,
+                WorkflowStatusKind::Pending,
                 WorkflowReviewWire::Assigned,
                 Some(reviewer.clone()),
                 None,
             ),
             WorkflowStatus::Pending(WorkflowReview::Clean) => (
-                WorkflowStatusWire::Pending,
+                WorkflowStatusKind::Pending,
                 WorkflowReviewWire::Clean,
                 None,
                 None,
@@ -374,7 +408,7 @@ impl Serialize for WorkflowHead {
                         review: WorkflowCompletionReview::Unassigned,
                     },
             } => (
-                WorkflowStatusWire::Completed,
+                WorkflowStatusKind::Completed,
                 WorkflowReviewWire::Unassigned,
                 None,
                 Some(*at),
@@ -386,7 +420,7 @@ impl Serialize for WorkflowHead {
                         review: WorkflowCompletionReview::Clean,
                     },
             } => (
-                WorkflowStatusWire::Completed,
+                WorkflowStatusKind::Completed,
                 WorkflowReviewWire::Clean,
                 None,
                 Some(*at),
@@ -395,7 +429,7 @@ impl Serialize for WorkflowHead {
                 at,
                 conclusion: WorkflowConclusion::Negative(WorkflowNegative::Closed),
             } => (
-                WorkflowStatusWire::Completed,
+                WorkflowStatusKind::Completed,
                 WorkflowReviewWire::Closed,
                 None,
                 Some(*at),
@@ -404,7 +438,7 @@ impl Serialize for WorkflowHead {
                 at,
                 conclusion: WorkflowConclusion::Negative(WorkflowNegative::Deleted),
             } => (
-                WorkflowStatusWire::Deleted,
+                WorkflowStatusKind::Deleted,
                 WorkflowReviewWire::Closed,
                 None,
                 Some(*at),
@@ -433,16 +467,16 @@ impl<'de> Deserialize<'de> for WorkflowHead {
 
         let wire = WorkflowHeadWire::deserialize(deserializer)?;
         let status = match (wire.status, wire.review, wire.assignment, wire.completion) {
-            (WorkflowStatusWire::Pending, WorkflowReviewWire::Unassigned, None, None) => {
+            (WorkflowStatusKind::Pending, WorkflowReviewWire::Unassigned, None, None) => {
                 WorkflowStatus::pending()
             }
-            (WorkflowStatusWire::Pending, WorkflowReviewWire::Assigned, Some(reviewer), None) => {
+            (WorkflowStatusKind::Pending, WorkflowReviewWire::Assigned, Some(reviewer), None) => {
                 WorkflowStatus::Pending(WorkflowReview::Assigned { reviewer })
             }
-            (WorkflowStatusWire::Pending, WorkflowReviewWire::Clean, None, None) => {
+            (WorkflowStatusKind::Pending, WorkflowReviewWire::Clean, None, None) => {
                 WorkflowStatus::Pending(WorkflowReview::Clean)
             }
-            (WorkflowStatusWire::Completed, WorkflowReviewWire::Unassigned, None, Some(at)) => {
+            (WorkflowStatusKind::Completed, WorkflowReviewWire::Unassigned, None, Some(at)) => {
                 WorkflowStatus::Settled {
                     at,
                     conclusion: WorkflowConclusion::Positive {
@@ -450,7 +484,7 @@ impl<'de> Deserialize<'de> for WorkflowHead {
                     },
                 }
             }
-            (WorkflowStatusWire::Completed, WorkflowReviewWire::Clean, None, Some(at)) => {
+            (WorkflowStatusKind::Completed, WorkflowReviewWire::Clean, None, Some(at)) => {
                 WorkflowStatus::Settled {
                     at,
                     conclusion: WorkflowConclusion::Positive {
@@ -458,13 +492,13 @@ impl<'de> Deserialize<'de> for WorkflowHead {
                     },
                 }
             }
-            (WorkflowStatusWire::Completed, WorkflowReviewWire::Closed, None, Some(at)) => {
+            (WorkflowStatusKind::Completed, WorkflowReviewWire::Closed, None, Some(at)) => {
                 WorkflowStatus::Settled {
                     at,
                     conclusion: WorkflowConclusion::Negative(WorkflowNegative::Closed),
                 }
             }
-            (WorkflowStatusWire::Deleted, WorkflowReviewWire::Closed, None, Some(at)) => {
+            (WorkflowStatusKind::Deleted, WorkflowReviewWire::Closed, None, Some(at)) => {
                 WorkflowStatus::Settled {
                     at,
                     conclusion: WorkflowConclusion::Negative(WorkflowNegative::Deleted),

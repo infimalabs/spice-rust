@@ -3,13 +3,18 @@ use wire::intent::{TaskRelationEdge, TaskRelationKind, TaskRelationNode, TaskRel
 use super::*;
 use crate::work::tests::{board, stamp, task};
 
-fn remote_task(value: i64, title: &str, phase: &str, status: &str) -> TaskRelationNode {
+fn remote_task(
+    value: i64,
+    title: &str,
+    phase: &str,
+    status: wire::WorkflowStatusKind,
+) -> TaskRelationNode {
     TaskRelationNode::Task {
         task: stamp(value),
         handle: wire::TaskHandle::for_project("remote.fixture", &stamp(value)),
         title: title.to_owned(),
         phase: phase.parse().expect("fixture phase"),
-        status: status.to_owned(),
+        status,
     }
 }
 
@@ -57,8 +62,18 @@ fn enrichment_resolves_a_missing_selected_task_in_place() {
     assert_eq!(unresolved.nodes[1].kind, "Missing task");
 
     let enriched = answer(vec![
-        remote_task(1, "remote title", "review", "pending"),
-        remote_task(2, "Completed prerequisite", "review", "completed"),
+        remote_task(
+            1,
+            "remote title",
+            "review",
+            wire::WorkflowStatusKind::Pending,
+        ),
+        remote_task(
+            2,
+            "Completed prerequisite",
+            "review",
+            wire::WorkflowStatusKind::Completed,
+        ),
     ]);
     let resolved = project(Some(&enriched));
     let tasks = resolved
@@ -84,13 +99,18 @@ fn enrichment_resolves_a_missing_selected_task_in_place() {
         )
     );
     assert_eq!(completed.detail, "review · completed");
-    assert_eq!(completed.status.as_deref(), Some("completed"));
+    assert_eq!(completed.status, Some(wire::WorkflowStatusKind::Completed));
     assert_eq!(resolved.edges.len(), 1);
     assert_eq!((resolved.edges[0].from, resolved.edges[0].to), (1, 0));
     assert!(resolved.source.contains("Completed prerequisite"));
     assert!(!resolved.source.contains("Missing from the admitted board"));
 
-    let mut elsewhere = answer(vec![remote_task(1, "remote title", "review", "pending")]);
+    let mut elsewhere = answer(vec![remote_task(
+        1,
+        "remote title",
+        "review",
+        wire::WorkflowStatusKind::Pending,
+    )]);
     elsewhere.edges.clear();
     assert_eq!(project(Some(&elsewhere)).nodes[1].kind, "Missing task");
 }

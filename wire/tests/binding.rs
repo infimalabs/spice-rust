@@ -489,7 +489,7 @@ fn task_relations_answer_round_trips_discriminated_nodes_and_frontier() {
             handle: "SPICE-1kKRRsDP".parse().expect("fixture task handle"),
             title: "Inspect bounded relationships".to_owned(),
             phase: "todo".parse().expect("fixture phase"),
-            status: "pending".to_owned(),
+            status: wire::WorkflowStatusKind::Pending,
         }],
         edges: Vec::new(),
         truncation: Some(TaskRelationTruncation {

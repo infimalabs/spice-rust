@@ -376,7 +376,7 @@ pub enum TaskRelationNode {
         handle: crate::TaskHandle,
         title: String,
         phase: crate::Phase,
-        status: String,
+        status: crate::WorkflowStatusKind,
     },
     /// One non-task cause; a parentless task has no origin node.
     Origin { origin: crate::TaskProvenance },

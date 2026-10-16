@@ -29,7 +29,7 @@ pub(crate) struct Node {
     pub(crate) task: Option<TaskStamp>,
     /// Workflow status the typed enrichment reports for a task the admitted
     /// board lacks, such as a completed prerequisite.
-    pub(crate) status: Option<String>,
+    pub(crate) status: Option<wire::WorkflowStatusKind>,
     diagram: String,
     pub(crate) selected: bool,
 }
@@ -263,7 +263,7 @@ fn present_local_node(
             }) => Some((
                 format!("{handle} · {}", compact_title(title)),
                 format!("{phase} · {status}"),
-                Some(status.clone()),
+                Some(*status),
             )),
             _ => None,
         });
@@ -319,7 +319,7 @@ fn present_remote_node(
                 detail: format!("Phase {phase} · {status}"),
                 diagram: format!("{handle}\n{title}\nPhase {phase} — {status}"),
                 task: Some(task.clone()),
-                status: Some(status.clone()),
+                status: Some(*status),
                 selected: selection.tasks().contains(task),
             }
         }

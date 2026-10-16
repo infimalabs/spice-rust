@@ -17,7 +17,7 @@ mod workflow;
 
 pub use workflow::{
     WorkflowCompletionReview, WorkflowConclusion, WorkflowHead, WorkflowNegative, WorkflowReview,
-    WorkflowStatus,
+    WorkflowStatus, WorkflowStatusKind,
 };
 
 /// One allocator locality coordinate captured when a claim is won.
