@@ -42,7 +42,7 @@ fn release_transition(
     .expect("releasing a claim preserves a valid task entry")
     .with_explicit_release(true)
     .with_grouped(entry.grouped())
-    .with_design_active(entry.design_is_active());
+    .with_design(entry.design());
     Ok(ReleaseTransition {
         post,
         claimed: claim.claimed,

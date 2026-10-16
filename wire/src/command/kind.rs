@@ -41,6 +41,7 @@ impl CommandKind {
         Self::PreparationDecide,
         Self::CandidateWithdraw,
         Self::OutputAdopt,
+        Self::DesignNudge,
         Self::GlobalSettingsRead,
         Self::GlobalSettingsSet,
         Self::VendorCatalog,
@@ -148,6 +149,7 @@ impl CommandKind {
             | Self::PreparationDecide
             | Self::CandidateWithdraw
             | Self::OutputAdopt
+            | Self::DesignNudge
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TasteProposalAdd
@@ -249,7 +251,8 @@ impl CommandKind {
             | Self::CandidateCoverageRecord
             | Self::PreparationDecide
             | Self::CandidateWithdraw
-            | Self::OutputAdopt => self.preparation_spelling(),
+            | Self::OutputAdopt
+            | Self::DesignNudge => self.preparation_spelling(),
             Self::TaskAdd => "task::add",
             Self::TaskOopsAdd => "task::oops-add",
             Self::TasteProposalAdd => "taste::proposal-add",
@@ -298,6 +301,7 @@ impl CommandKind {
             Self::PreparationDecide => "preparation::decide",
             Self::CandidateWithdraw => "preparation::withdraw",
             Self::OutputAdopt => "preparation::adopt",
+            Self::DesignNudge => "preparation::nudge",
             _ => panic!("preparation command spelling partition is closed"),
         }
     }

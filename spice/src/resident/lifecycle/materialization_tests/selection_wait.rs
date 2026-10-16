@@ -16,13 +16,19 @@ fn a_held_design_awaiting_selection_wakes_its_lane_only_for_operator_direction()
             workflow.phase = "design".parse().expect("fixture phase");
         }),
     );
+    commit_and_advance(
+        &bus,
+        &projects,
+        &mut projection,
+        nudge_write(&task(TASK_MOMENT), instant(2)),
+    );
     assert_eq!(
         resolution(&bus, &projection),
         Resolution::Attempt {
             trigger: Trigger::HeldClaim,
             lane: lane(),
         },
-        "a held Design with no unselected output resumes its lane"
+        "a held, nudged Design with no unselected output resumes its lane"
     );
 
     commit_and_advance(&bus, &projects, &mut projection, output_write(instant(3)));

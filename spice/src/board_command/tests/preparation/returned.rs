@@ -289,6 +289,15 @@ fn feedback_remains_owed_when_the_claim_moves_before_consumption() {
         .pop()
         .expect("first holder is owed input");
     fixture.free(0);
+    // Freeing without a proposal abandons the pass; the operator readies the next.
+    let current = board(&fixture.bus, fixture.epoch, Actor::Operator);
+    assert_committed(nudge_design(
+        &fixture.bus,
+        fixture.epoch,
+        Actor::Operator,
+        &current,
+        &fixture.design,
+    ));
     fixture.claim(1);
     assert!(record_return(&fixture.bus, &stale).is_err());
     assert_eq!(

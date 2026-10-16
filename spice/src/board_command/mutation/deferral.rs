@@ -440,7 +440,7 @@ fn file_unfiled(
     ) {
         Ok(post) => post
             .with_grouped(entry.grouped())
-            .with_design_active(entry.design_is_active()),
+            .with_design(entry.design()),
         Err(error) => {
             return refusal(
                 "task::filing-refused",
@@ -589,7 +589,7 @@ fn deferral_transition(
                 )
             })?
             .with_grouped(entry.grouped())
-            .with_design_active(entry.design_is_active()),
+            .with_design(entry.design()),
         )
     } else {
         None

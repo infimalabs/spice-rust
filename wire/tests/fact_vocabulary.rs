@@ -73,6 +73,7 @@ const PINNED: &[(&str, &str)] = &[
     ("PreparationDecided", "proposal::decided"),
     ("CandidateWithdrawn", "proposal::withdrawn"),
     ("ExecutionAuthorized", "proposal::authorized"),
+    ("DesignNudged", "proposal::nudged"),
     ("DocApplied", "doc::applied"),
     ("GlobalSettingsChanged", "settings::changed"),
     ("SteerSent", "steer::sent"),

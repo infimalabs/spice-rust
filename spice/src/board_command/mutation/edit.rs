@@ -115,7 +115,7 @@ fn prepare_correction(
         )
     })?
     .with_grouped(entry.grouped())
-    .with_design_active(entry.design_is_active());
+    .with_design(entry.design());
     // A cleared taste hold publishes its own released workflow. A Draft route
     // replaces the workflow it read, so a concurrent workflow change refuses.
     let workflow = if released.is_none() && workflow != *entry.workflow() {

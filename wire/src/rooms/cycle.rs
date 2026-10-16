@@ -1,0 +1,499 @@
+//! Proposal-backed Design pass cycle.
+//!
+//! An open Design alternates between passes and the input those passes need.
+//! A pass ends at its boundary: the claim release that a proposal recorded, or
+//! a proposal-less free or lapse that abandoned it. Before any boundary the
+//! Design is ready only when its maturity is `Steeped` or the operator nudged
+//! it. After a boundary only counted input recorded later refills it: a typed
+//! contribution, an operator-authored room post, a nudge, decision feedback
+//! that returned or rejected work, or the final settlement of released work.
+//! Requests, notices, asks, leaves, group membership, and unrelated facts are
+//! inert.
+//!
+//! [`DesignCycles`] folds those authorities in journal order, one fact at a
+//! time, so replay is bounded by the facts it reads and never rescans a room.
+
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+use super::maturity::maturity_unmet;
+use super::{
+    CandidateRef, CandidateWithdrawn, DecisionOutcome, DesignContributionCounts, DesignProposed,
+    ExecutionAuthorized, OutputControlled, OutputVerdict, PreparationDecided, RoomContributed,
+    RoomDestination, RoomPosted, RoomPublicationContent, RoomPublicationKind, RoomPublished,
+};
+use crate::body::{
+    ClaimFreed, ClaimLapsed, TaskAdded, TaskClosed, TaskCompletionStatus, TaskConcluded,
+    TaskDeleted, TaskDone,
+};
+use crate::{Actor, AnyFact, CanonicalUuid, FactKind, Seq, TaskHandle, TaskStamp};
+
+/// Ask an open Design to take its next pass.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignNudge {
+    /// The open Design to nudge.
+    pub design: TaskHandle,
+}
+
+/// The operator asked one open Design to take its next pass.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignNudged {
+    /// The nudged Design.
+    pub design: TaskStamp,
+}
+
+/// What one open Design's pass cycle waits on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DesignCycle {
+    /// No counted input has arrived since the last pass boundary.
+    GatheringInput,
+    /// Counted input arrived; a lane may claim the Design and propose.
+    ReadyForProposal,
+    /// The operator has not decided the latest proposal or an output it named.
+    AwaitingDecision,
+    /// Accepted work is still running and no later input arrived.
+    WaitingOnSelectedWork,
+}
+
+/// Who acts next on one Design's pass cycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DesignCycleActor {
+    /// Contributing lanes or the operator supply input.
+    Contributors,
+    /// A lane claims the Design and records one proposal.
+    Lane,
+    /// The operator decides the exact proposal.
+    Operator,
+    /// The work the Design released finishes.
+    SelectedWork,
+}
+
+impl DesignCycle {
+    /// Operator-facing name of this state.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::GatheringInput => "gathering input",
+            Self::ReadyForProposal => "ready for proposal",
+            Self::AwaitingDecision => "awaiting decision",
+            Self::WaitingOnSelectedWork => "waiting on selected work",
+        }
+    }
+
+    /// Who moves this Design forward.
+    #[must_use]
+    pub const fn next_actor(self) -> DesignCycleActor {
+        match self {
+            Self::GatheringInput => DesignCycleActor::Contributors,
+            Self::ReadyForProposal => DesignCycleActor::Lane,
+            Self::AwaitingDecision => DesignCycleActor::Operator,
+            Self::WaitingOnSelectedWork => DesignCycleActor::SelectedWork,
+        }
+    }
+
+    /// The exact action that moves `design` forward.
+    #[must_use]
+    pub fn next_action(self, design: &TaskHandle) -> String {
+        match self {
+            Self::GatheringInput => format!(
+                "contribute with `spice room contribute {design}`, post in its room, or nudge \
+                 it with `spice preparation nudge {design}`"
+            ),
+            Self::ReadyForProposal => {
+                format!("a lane claims {design} and records one `spice preparation propose`")
+            }
+            Self::AwaitingDecision => format!(
+                "the operator decides the undecided proposal under {design} with \
+                 `spice preparation decide`"
+            ),
+            Self::WaitingOnSelectedWork => format!(
+                "finish the work {design} released, or add counted input for an earlier pass"
+            ),
+        }
+    }
+}
+
+/// How the latest pass boundary ended its claim.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DesignPassEnd {
+    /// The pass recorded a proposal and released its claim with it.
+    Proposed,
+    /// The claim was freed or lapsed with no proposal.
+    Abandoned,
+}
+
+/// Compact cycle evidence one Design carries into allocation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignCycleFacts {
+    /// The Design's maturity is `Steeped`.
+    #[serde(default)]
+    pub steeped: bool,
+    /// The operator nudged the Design at least once.
+    #[serde(default)]
+    pub nudged: bool,
+    /// Latest pass boundary: a proposal or a claim release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizon: Option<Seq>,
+    /// How the latest claim release ended its pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<DesignPassEnd>,
+    /// Latest counted input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Seq>,
+    /// Latest settlement of work this Design released.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled: Option<Seq>,
+    /// The latest proposal still awaits the operator's decision.
+    #[serde(default)]
+    pub undecided: bool,
+}
+
+impl DesignCycleFacts {
+    /// Whether no cycle authority has touched this task.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The cycle state, given whether an output this Design constructed still
+    /// lacks a decision and whether work it released is still running.
+    #[must_use]
+    pub fn cycle(self, unselected: bool, working: bool) -> DesignCycle {
+        if self.undecided || unselected {
+            DesignCycle::AwaitingDecision
+        } else if self.counted(working) {
+            DesignCycle::ReadyForProposal
+        } else if working {
+            DesignCycle::WaitingOnSelectedWork
+        } else {
+            DesignCycle::GatheringInput
+        }
+    }
+
+    fn counted(self, working: bool) -> bool {
+        let Some(horizon) = self.horizon else {
+            return self.steeped || self.nudged;
+        };
+        self.input.is_some_and(|input| input > horizon)
+            || (!working && self.settled.is_some_and(|settled| settled > horizon))
+    }
+}
+
+/// One open Design's standing and pass-cycle evidence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DesignFacts {
+    /// A working group with an active stance holds the Design.
+    pub active: bool,
+    /// Its pass-cycle evidence.
+    pub cycle: DesignCycleFacts,
+}
+
+/// One Design's fold state.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct DesignCycleFold {
+    /// Up to three distinct contributing lanes; maturity needs no more.
+    lanes: Vec<CanonicalUuid>,
+    counts: DesignContributionCounts,
+    /// The latest proposal's identity.
+    proposal: Option<CandidateRef>,
+    /// A proposal arrived since the latest claim release.
+    proposed: bool,
+    facts: DesignCycleFacts,
+}
+
+impl DesignCycleFold {
+    fn input(&mut self, seq: Seq) {
+        self.facts.input = Some(seq);
+    }
+
+    fn boundary(&mut self, seq: Seq) {
+        self.facts.horizon = Some(self.facts.horizon.map_or(seq, |horizon| horizon.max(seq)));
+    }
+
+    fn contributed(&mut self, seq: Seq, contribution: &RoomContributed) {
+        self.input(seq);
+        if self.facts.steeped {
+            return;
+        }
+        self.counts.observe(contribution.contribution);
+        if self.lanes.len() < 3 && !self.lanes.contains(&contribution.lane) {
+            self.lanes.push(contribution.lane);
+        }
+        self.facts.steeped = maturity_unmet(self.lanes.len(), self.counts).is_empty();
+    }
+
+    fn proposed(&mut self, seq: Seq, candidate: &CandidateRef) {
+        self.boundary(seq);
+        self.proposal = Some(candidate.clone());
+        self.proposed = true;
+        self.facts.undecided = true;
+    }
+
+    fn decided(&mut self, seq: Seq, outcome: &DecisionOutcome) {
+        if self.proposal.as_ref() == Some(outcome.candidate()) {
+            self.facts.undecided = false;
+        }
+        let feedback = match outcome {
+            DecisionOutcome::Returned { .. } => true,
+            DecisionOutcome::Resolved { outputs, .. } => outputs
+                .iter()
+                .any(|output| output.verdict == OutputVerdict::Rejected),
+            DecisionOutcome::Accepted { .. } => false,
+        };
+        if feedback {
+            self.input(seq);
+        }
+    }
+
+    fn withdrawn(&mut self, candidate: &CandidateRef) {
+        if self.proposal.as_ref() == Some(candidate) {
+            self.facts.undecided = false;
+        }
+    }
+
+    fn released(&mut self, seq: Seq) {
+        self.boundary(seq);
+        self.facts.end = Some(if self.proposed {
+            DesignPassEnd::Proposed
+        } else {
+            DesignPassEnd::Abandoned
+        });
+        self.proposed = false;
+    }
+}
+
+/// Pass-cycle evidence for every Design, folded from journal facts in order.
+///
+/// Claim releases are folded for every task because a statement's intent is
+/// not known here; a settled task's fold is dropped. Released work maps each
+/// authorized output or Plan-constructed task to its controlling Design so
+/// its settlement reaches that Design.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DesignCycles {
+    designs: HashMap<TaskStamp, DesignCycleFold>,
+    released_work: HashMap<TaskStamp, TaskStamp>,
+}
+
+impl DesignCycles {
+    /// Whether `kind` can change any Design's cycle evidence.
+    #[must_use]
+    pub const fn concerns(kind: FactKind) -> bool {
+        matches!(
+            kind,
+            FactKind::RoomContributed
+                | FactKind::RoomPublished
+                | FactKind::RoomPosted
+                | FactKind::DesignNudged
+                | FactKind::DesignProposed
+                | FactKind::PreparationDecided
+                | FactKind::CandidateWithdrawn
+                | FactKind::ExecutionAuthorized
+                | FactKind::TaskAdded
+                | FactKind::OutputControlled
+                | FactKind::ClaimFreed
+                | FactKind::ClaimLapsed
+                | FactKind::TaskDone
+                | FactKind::TaskClosed
+                | FactKind::TaskDeleted
+                | FactKind::TaskConcluded
+        )
+    }
+
+    /// Current evidence for `design`; empty when nothing has touched it.
+    #[must_use]
+    pub fn facts(&self, design: &TaskStamp) -> DesignCycleFacts {
+        self.designs
+            .get(design)
+            .map(|fold| fold.facts)
+            .unwrap_or_default()
+    }
+
+    /// Every Design whose cycle evidence `fact` may change and that the fact
+    /// does not already name as its task subject or a mutated task.
+    ///
+    /// Settled released work reaches its controller through the settled
+    /// task's own preparation, so a caller refreshing cached Designs also
+    /// refreshes each changed task's controller.
+    #[must_use]
+    pub fn subjects(fact: &AnyFact) -> Vec<&TaskStamp> {
+        if let Some(contribution) = fact.as_body::<RoomContributed>() {
+            vec![&contribution.room]
+        } else if let Some(published) = fact.as_body::<RoomPublished>() {
+            vec![&published.room]
+        } else if let Some(posted) = fact.as_body::<RoomPosted>() {
+            posted_rooms(posted)
+        } else if let Some(nudged) = fact.as_body::<DesignNudged>() {
+            vec![&nudged.design]
+        } else if let Some(proposed) = fact.as_body::<DesignProposed>() {
+            vec![&proposed.candidate.candidate.controller]
+        } else if let Some(decided) = fact.as_body::<PreparationDecided>() {
+            vec![&decided.decision.outcome.candidate().controller]
+        } else if let Some(withdrawn) = fact.as_body::<CandidateWithdrawn>() {
+            vec![&withdrawn.withdrawal.candidate.controller]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Fold one fact at journal position `seq` authored by `actor`.
+    pub fn observe(&mut self, seq: Seq, actor: &Actor, fact: &AnyFact) {
+        match fact.kind() {
+            FactKind::RoomContributed
+            | FactKind::RoomPublished
+            | FactKind::RoomPosted
+            | FactKind::DesignNudged => self.observe_input(seq, actor, fact),
+            FactKind::DesignProposed
+            | FactKind::PreparationDecided
+            | FactKind::CandidateWithdrawn
+            | FactKind::ExecutionAuthorized => self.observe_proposal(seq, fact),
+            FactKind::TaskAdded | FactKind::OutputControlled => self.observe_control(fact),
+            FactKind::ClaimFreed
+            | FactKind::ClaimLapsed
+            | FactKind::TaskDone
+            | FactKind::TaskClosed
+            | FactKind::TaskDeleted
+            | FactKind::TaskConcluded => self.observe_task(seq, fact),
+            _ => {}
+        }
+    }
+
+    fn design(&mut self, design: &TaskStamp) -> &mut DesignCycleFold {
+        self.designs.entry(design.clone()).or_default()
+    }
+
+    fn observe_input(&mut self, seq: Seq, actor: &Actor, fact: &AnyFact) {
+        if let Some(contribution) = fact.as_body::<RoomContributed>() {
+            self.design(&contribution.room)
+                .contributed(seq, contribution);
+        } else if let Some(nudged) = fact.as_body::<DesignNudged>() {
+            let design = self.design(&nudged.design);
+            design.facts.nudged = true;
+            design.input(seq);
+        } else if matches!(actor, Actor::Operator | Actor::Human(_)) {
+            self.observe_operator_post(seq, fact);
+        }
+    }
+
+    /// An operator's authored room post or MSG/ANS counts; an ASK requests
+    /// input rather than supplying it.
+    fn observe_operator_post(&mut self, seq: Seq, fact: &AnyFact) {
+        if let Some(published) = fact.as_body::<RoomPublished>() {
+            if matches!(published.content, RoomPublicationContent::Authored { .. }) {
+                self.design(&published.room).input(seq);
+            }
+        } else if let Some(posted) = fact.as_body::<RoomPosted>()
+            && !matches!(posted.operation, RoomPublicationKind::Ask { .. })
+        {
+            for room in posted_rooms(posted) {
+                self.design(room).input(seq);
+            }
+        }
+    }
+
+    fn observe_proposal(&mut self, seq: Seq, fact: &AnyFact) {
+        if let Some(proposed) = fact.as_body::<DesignProposed>() {
+            let candidate = &proposed.candidate.candidate;
+            self.design(&candidate.controller).proposed(seq, candidate);
+        } else if let Some(decided) = fact.as_body::<PreparationDecided>() {
+            let outcome = &decided.decision.outcome;
+            self.design(&outcome.candidate().controller)
+                .decided(seq, outcome);
+        } else if let Some(withdrawn) = fact.as_body::<CandidateWithdrawn>() {
+            let candidate = &withdrawn.withdrawal.candidate;
+            self.design(&candidate.controller).withdrawn(candidate);
+        } else if let Some(authorized) = fact.as_body::<ExecutionAuthorized>() {
+            let controller = &authorized.authorization.decision.controller;
+            for output in &authorized.authorization.selected_outputs {
+                self.released_work
+                    .insert(output.clone(), controller.clone());
+            }
+        }
+    }
+
+    /// Record Plan-constructed work: a task whose immediate parent is not its
+    /// controller was released by that Plan, never by a Design selection.
+    fn observe_control(&mut self, fact: &AnyFact) {
+        let preparation = if let Some(added) = fact.as_body::<TaskAdded>() {
+            added
+                .preparation
+                .as_ref()
+                .map(|preparation| (&added.task, preparation))
+        } else {
+            fact.as_body::<OutputControlled>()
+                .map(|controlled| (&controlled.output, &controlled.preparation))
+        };
+        if let Some((task, preparation)) = preparation
+            && preparation.parent != preparation.controller
+        {
+            self.released_work
+                .insert(task.clone(), preparation.controller.clone());
+        }
+    }
+
+    fn observe_task(&mut self, seq: Seq, fact: &AnyFact) {
+        let settled = if let Some(freed) = fact.as_body::<ClaimFreed>() {
+            self.design(&freed.task).released(seq);
+            return;
+        } else if let Some(lapsed) = fact.as_body::<ClaimLapsed>() {
+            self.design(&lapsed.task).released(seq);
+            return;
+        } else if let Some(done) = fact.as_body::<TaskDone>() {
+            if !done
+                .terminal
+                .as_ref()
+                .is_some_and(|terminal| terminal.status == TaskCompletionStatus::Completed)
+            {
+                return;
+            }
+            &done.task
+        } else if let Some(closed) = fact.as_body::<TaskClosed>() {
+            &closed.task
+        } else if let Some(deleted) = fact.as_body::<TaskDeleted>() {
+            &deleted.task
+        } else if let Some(concluded) = fact.as_body::<TaskConcluded>() {
+            &concluded.task
+        } else {
+            return;
+        };
+        self.designs.remove(settled);
+        if let Some(controller) = self.released_work.remove(settled)
+            && let Some(design) = self.designs.get_mut(&controller)
+        {
+            design.facts.settled = Some(seq);
+        }
+    }
+}
+
+/// Each distinct room an operator post addresses: task routes, route
+/// contexts, and an answer's own context.
+fn posted_rooms(posted: &RoomPosted) -> Vec<&TaskStamp> {
+    let answered = match &posted.operation {
+        RoomPublicationKind::Ans { context, .. } => context.as_ref(),
+        RoomPublicationKind::Msg {} | RoomPublicationKind::Ask { .. } => None,
+    };
+    let mut rooms = posted
+        .routes
+        .iter()
+        .flat_map(|route| {
+            let destination = match &route.destination {
+                RoomDestination::Task { task } => Some(task),
+                RoomDestination::Operator {} | RoomDestination::Lane { .. } => None,
+            };
+            destination.into_iter().chain(route.context.as_ref())
+        })
+        .chain(answered)
+        .collect::<Vec<_>>();
+    rooms.sort_unstable();
+    rooms.dedup();
+    rooms
+}
+
+#[cfg(test)]
+mod tests;

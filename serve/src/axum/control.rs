@@ -58,6 +58,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::PreparationDecide
         | CommandKind::CandidateWithdraw
         | CommandKind::OutputAdopt
+        | CommandKind::DesignNudge
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TasteProposalAdd

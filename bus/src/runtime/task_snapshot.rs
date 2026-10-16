@@ -247,6 +247,9 @@ struct Indexes {
     collapse_reasons: Arc<HashMap<journal::crossing::TaskStamp, String>>,
     /// Candidate-version precedence classifying outputs for selection waiting.
     candidate_selection: CandidateSelection,
+    /// Pass-cycle evidence for every Design, shared until a commit records a
+    /// fact the cycle reads.
+    design_cycles: Arc<journal::crossing::rooms::DesignCycles>,
 }
 
 impl Indexes {
@@ -292,7 +295,11 @@ impl Indexes {
     fn observe(&mut self, row: &journal::crossing::Envelope<journal::crossing::AnyFact>) {
         use journal::crossing::FactKind;
 
-        match row.fact.kind() {
+        let kind = row.fact.kind();
+        if journal::crossing::rooms::DesignCycles::concerns(kind) {
+            Arc::make_mut(&mut self.design_cycles).observe(row.seq, &row.actor, &row.fact);
+        }
+        match kind {
             FactKind::LaneSessionDeclared | FactKind::LaneStarted => self.observe_lane(row),
             FactKind::TaskAdded => self.observe_task_added(row),
             FactKind::DesignProposed
@@ -848,6 +855,18 @@ impl TaskFacts {
     #[must_use]
     pub fn design_is_active(&self, task: &journal::crossing::TaskStamp) -> bool {
         self.indexes.active_designs.contains(task)
+    }
+
+    /// One open Design's standing and pass-cycle evidence.
+    #[must_use]
+    pub fn design(
+        &self,
+        task: &journal::crossing::TaskStamp,
+    ) -> journal::crossing::rooms::DesignFacts {
+        journal::crossing::rooms::DesignFacts {
+            active: self.design_is_active(task),
+            cycle: self.indexes.design_cycles.facts(task),
+        }
     }
 
     /// The reason the operator's collapse of Design `task` recorded.

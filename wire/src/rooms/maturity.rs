@@ -37,7 +37,7 @@ impl DesignContributionCounts {
         self.reason_for + self.reason_against + self.evidence + self.question
     }
 
-    fn observe(&mut self, kind: RoomContributionKind) {
+    pub(crate) fn observe(&mut self, kind: RoomContributionKind) {
         let count = match kind {
             RoomContributionKind::ReasonFor => &mut self.reason_for,
             RoomContributionKind::ReasonAgainst => &mut self.reason_against,
@@ -291,19 +291,7 @@ impl DesignMaturity {
         if self.contributions.total() == 0 {
             return DesignMaturityState::Fresh;
         }
-        let mut unmet = Vec::with_capacity(4);
-        if self.contributing_lanes.len() < 3 {
-            unmet.push(DesignMaturityRequirement::ThreeContributingLanes);
-        }
-        if self.contributions.reason_for == 0 {
-            unmet.push(DesignMaturityRequirement::ReasonFor);
-        }
-        if self.contributions.reason_against == 0 {
-            unmet.push(DesignMaturityRequirement::ReasonAgainst);
-        }
-        if self.contributions.evidence == 0 {
-            unmet.push(DesignMaturityRequirement::Evidence);
-        }
+        let unmet = maturity_unmet(self.contributing_lanes.len(), self.contributions);
         if unmet.is_empty() {
             DesignMaturityState::Steeped
         } else {
@@ -349,6 +337,28 @@ impl DesignMaturity {
             .saturating_add(head.requested_decliners() as u64);
         older.truncated |= head.yield_truncated();
     }
+}
+
+/// Every substantive dimension still unmet with `lanes` distinct contributing
+/// lanes and `counts` typed contributions; empty exactly when `Steeped`.
+pub(crate) fn maturity_unmet(
+    lanes: usize,
+    counts: DesignContributionCounts,
+) -> Vec<DesignMaturityRequirement> {
+    let mut unmet = Vec::with_capacity(4);
+    if lanes < 3 {
+        unmet.push(DesignMaturityRequirement::ThreeContributingLanes);
+    }
+    if counts.reason_for == 0 {
+        unmet.push(DesignMaturityRequirement::ReasonFor);
+    }
+    if counts.reason_against == 0 {
+        unmet.push(DesignMaturityRequirement::ReasonAgainst);
+    }
+    if counts.evidence == 0 {
+        unmet.push(DesignMaturityRequirement::Evidence);
+    }
+    unmet
 }
 
 fn insert_bounded(lanes: &mut Vec<CanonicalUuid>, truncated: &mut bool, lane: CanonicalUuid) {

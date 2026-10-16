@@ -187,6 +187,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::PreparationDecide
         | CommandKind::CandidateWithdraw
         | CommandKind::OutputAdopt
+        | CommandKind::DesignNudge
         | CommandKind::GlobalSettingsRead
         | CommandKind::GlobalSettingsSet
         | CommandKind::VendorCatalog
@@ -451,6 +452,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["preparation", "decide"]
             | ["preparation", "withdraw"]
             | ["preparation", "adopt"]
+            | ["preparation", "nudge"]
             | ["task", "list"]
             | ["task", "status"]
             | ["task", "show"]

@@ -502,11 +502,11 @@ fn claim_phase(selected: &Entry, actor: &wire::Actor) -> wire::intent::ClaimPhas
         (Some(deliverable), true) => Some(
             format!(
                 "{deliverable}; {}",
-                board::phase::released_reminder(selected.handle())
+                board::phase::released_reminder(selected)
             )
             .into_boxed_str(),
         ),
-        (None, true) => Some(board::phase::released_reminder(selected.handle()).into_boxed_str()),
+        (None, true) => Some(board::phase::released_reminder(selected).into_boxed_str()),
     };
     wire::intent::ClaimPhase {
         name: workflow.phase.clone(),

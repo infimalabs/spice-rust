@@ -64,6 +64,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["preparation", "decide"] => CommandKind::PreparationDecide,
         ["preparation", "withdraw"] => CommandKind::CandidateWithdraw,
         ["preparation", "adopt"] => CommandKind::OutputAdopt,
+        ["preparation", "nudge"] => CommandKind::DesignNudge,
         ["group", verb] => return group_kind_for(verb),
         ["principal", verb @ ..] => return principal_kind_for(verb),
         ["task", verb] => return task_kind_for(verb),

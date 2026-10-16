@@ -186,9 +186,27 @@ pub const SELF_HANDOFF_DELIVERABLE: &str = "the current phase deliverable remain
 ///
 /// A freed row ranks last rather than being excluded, so it returns once the
 /// lane has nothing else. Freeing it again would only repeat the loop; the
-/// lasting answer is to state what the row waits on.
+/// lasting answer is to state what the row waits on. An open Design never
+/// waits that way: its pass cycle already says why it returned, so a pass
+/// that ended in a proposal points at the decision and input since, and an
+/// abandoned pass is finished with one proposal.
 #[must_use]
-pub fn released_reminder(task: &wire::TaskHandle) -> String {
+pub fn released_reminder(entry: &Entry) -> String {
+    let task = entry.handle();
+    if wire::intent::is_open_design(entry.statement().intent, entry.workflow()) {
+        return match entry.design().cycle.end {
+            Some(wire::rooms::DesignPassEnd::Proposed) => format!(
+                "your earlier pass of {task} ended in a proposal; this pass answers the \
+                 operator's decision and the input recorded since, read through \
+                 `spice preparation show {task}`, and ends with one `spice preparation propose`"
+            ),
+            Some(wire::rooms::DesignPassEnd::Abandoned) | None => format!(
+                "your earlier pass of {task} ended without a proposal; finish this pass with \
+                 one `spice preparation propose`, recommending conclude or collapse when no \
+                 further work is warranted"
+            ),
+        };
+    }
     format!(
         "you freed {task} earlier; if it still cannot proceed, record why instead of \
          freeing it again: \

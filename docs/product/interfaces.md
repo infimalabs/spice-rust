@@ -68,7 +68,7 @@ commands mean; this section fixes their operand bodies and bounds.
 one canonical JSON object. Unknown fields refuse, nothing is lenient, and a
 malformed body refuses with `preparation::argument-invalid`, giving the parse
 detail and a complete body that command accepts. `preparation adopt` takes two
-task handles instead.
+task handles instead, and `preparation nudge` one open Design's handle.
 
 - **Values.** A task is its bare nine-character birth stamp, without the
   project prefix (`dVzdhh8Nx` for `REPOSIT-dVzdhh8Nx`). A candidate is

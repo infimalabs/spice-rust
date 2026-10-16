@@ -90,6 +90,8 @@ pub enum CommandKind {
     CandidateWithdraw,
     /// Adopt pending existing work under preparation control.
     OutputAdopt,
+    /// Ask one open Design to take its next pass.
+    DesignNudge,
     /// Read durable global app settings.
     GlobalSettingsRead,
     /// Replace the durable global fast-mode setting.
