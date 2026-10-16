@@ -197,11 +197,6 @@ impl SelectionIndex {
 /// Design.
 const GATHER_PHASE: &str = "gather";
 
-/// Marks a plan phase the board inserted at the head of a flow to hold a task
-/// for taste review, as opposed to one the author's route named. Only a marked
-/// phase leaves with its hold.
-pub const TASTE_PLAN_TAG: &str = "taste-review:plan-prepended";
-
 /// Whether an authored route with `intent` and `flow` is a gather route: no
 /// declared intent and the one `gather` phase. It holds no commit authority,
 /// lands nothing, and is never a preparation output awaiting selection; any
@@ -216,7 +211,7 @@ pub fn gather_route(intent: Option<TaskIntent>, flow: &[wire::Phase]) -> bool {
 /// changes what a task is, only which phase it waits in.
 #[must_use]
 pub fn gather_task(statement: &wire::TaskHead, workflow: &wire::WorkflowHead) -> bool {
-    let held = statement.tags.iter().any(|tag| tag == TASTE_PLAN_TAG);
+    let held = statement.taste == Some(wire::TasteHold::Prepended);
     let route = match workflow.flow.as_slice() {
         [first, authored @ ..] if held && first.as_str() == "plan" => authored,
         authored => authored,

@@ -51,6 +51,8 @@ fn add(journal: &mut Journal, shape: Shape<'_>) -> TaskStamp {
                 project: "designs".to_owned(),
                 filing: wire::TaskFiling::Filed,
                 tags: Vec::new(),
+                priority: None,
+                taste: None,
                 depends: shape.dependencies.clone(),
                 flow: flow.clone(),
                 phase: phase(shape.flow[0]),
@@ -79,6 +81,8 @@ fn add(journal: &mut Journal, shape: Shape<'_>) -> TaskStamp {
         project: "designs".to_owned(),
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
+        priority: None,
+        taste: None,
         dependencies,
         provenance: "task:designs".parse().expect("provenance"),
         creation: wire::body::TaskCreationContext::unavailable(

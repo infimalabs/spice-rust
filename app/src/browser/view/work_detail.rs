@@ -300,7 +300,8 @@ fn render_available(
                     {fact("Flow", workflow.flow.iter().map(ToString::to_string).collect::<Vec<_>>().join(" → "))}
                     {fact("Review", workflow.review.clone())}
                     {assignment_fact(workflow.assignment.as_ref(), render)}
-                    {priority_fact(&statement.tags)}
+                    {statement.priority.map_or_else(Html::default, |priority| fact("Priority", priority.to_string()))}
+                    {statement.taste.map_or_else(Html::default, |_| fact("Taste review", "Required".to_owned()))}
                     {fact("Tags", if statement.tags.is_empty() { "None".to_owned() } else { statement.tags.join(", ") })}
                     {deadline_fact("Deferral", workflow.deferral.as_ref(), "None")}
                     {instant_fact("Completion", workflow.completion.as_ref(), "Open")}
@@ -520,14 +521,6 @@ fn actor_name(actor: &wire::Actor, render: &WorkDetailRender<'_, '_>) -> String 
         member,
         render.runtime.and_then(AppRuntime::principals),
     )
-}
-
-fn priority_fact(tags: &[String]) -> Html {
-    tags.iter()
-        .find_map(|tag| tag.strip_prefix("priority:"))
-        .map_or_else(Html::default, |priority| {
-            fact("Priority", priority.to_owned())
-        })
 }
 
 fn render_possession(row: &wire::intent::BoardTask, render: &WorkDetailRender<'_, '_>) -> Html {

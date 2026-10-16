@@ -172,7 +172,7 @@ fn urgency_is_durable_queue_age_and_ignores_unrelated_edits() {
     let mut edited_head = statement("BOARD-b2");
     edited_head.queue_origin = plain.statement().queue_origin;
     edited_head.revision = seq(99);
-    edited_head.tags.push("priority:high".to_owned());
+    edited_head.priority = Some(wire::TaskPriority::High);
     edited_head.dependencies.push(stamp("BOARD-d4"));
     let edited = admitted(edited_head, workflow("review"), None, None).expect("valid heads");
     let mut newer_head = statement("BOARD-c3");
@@ -211,7 +211,7 @@ fn urgency_band_changes_only_the_winner_inside_one_priority_class() {
 #[test]
 fn independent_handoff_prefers_a_peer_then_returns_to_its_prior_author() {
     let mut independent_head = statement("BOARD-a1");
-    independent_head.tags.push("priority:critical".to_owned());
+    independent_head.priority = Some(wire::TaskPriority::Critical);
     let prior = Actor::Spice;
     let independent = admitted(
         independent_head,
@@ -315,7 +315,7 @@ fn continuation_handoff_sticks_to_its_prior_author_then_opens_to_peers() {
         instant("2026-08-01T06:00:03.000Z"),
     )));
     let mut critical_head = statement("BOARD-z1");
-    critical_head.tags.push("priority:critical".to_owned());
+    critical_head.priority = Some(wire::TaskPriority::Critical);
     let critical =
         admitted(critical_head, workflow("todo"), None, None).expect("critical peer work");
     let entries = [continuation.clone(), critical];
@@ -367,7 +367,7 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
     let second = entry("BOARD-b2");
 
     let mut blocked_head = statement("BOARD-z9");
-    blocked_head.tags.push("priority:critical".to_owned());
+    blocked_head.priority = Some(wire::TaskPriority::Critical);
     blocked_head.dependencies.push(stamp("WIRE-missing"));
     let blocked =
         admitted(blocked_head, workflow("todo"), None, None).expect("valid blocked heads");
@@ -375,7 +375,7 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
     let mut assigned_workflow = workflow("todo");
     assigned_workflow.assignment = Some(Actor::Operator);
     let mut assigned_head = statement("BOARD-y8");
-    assigned_head.tags.push("priority:critical".to_owned());
+    assigned_head.priority = Some(wire::TaskPriority::Critical);
     let assigned =
         admitted(assigned_head, assigned_workflow, None, None).expect("valid assigned heads");
 
@@ -383,7 +383,7 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
     let mut deferred_workflow = workflow("todo");
     deferred_workflow.deferral = Some(instant("2026-08-01T07:00:00.000Z"));
     let mut deferred_head = statement("BOARD-w6");
-    deferred_head.tags.push("priority:critical".to_owned());
+    deferred_head.priority = Some(wire::TaskPriority::Critical);
     let deferred =
         admitted(deferred_head, deferred_workflow, None, None).expect("valid deferred heads");
 
@@ -391,7 +391,7 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
     completed_workflow.status = "completed".to_owned();
     completed_workflow.completion = Some(instant("2026-08-01T06:30:00.000Z"));
     let mut completed_head = statement("BOARD-v5");
-    completed_head.tags.push("priority:critical".to_owned());
+    completed_head.priority = Some(wire::TaskPriority::Critical);
     let completed =
         admitted(completed_head, completed_workflow, None, None).expect("valid completed heads");
     let ordered = [
@@ -419,11 +419,11 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
 fn prerequisite_inherits_the_critical_priority_it_directly_unblocks() {
     let prerequisite = entry("BOARD-z1");
     let mut critical_head = statement("BOARD-c1");
-    critical_head.tags.push("priority:critical".to_owned());
+    critical_head.priority = Some(wire::TaskPriority::Critical);
     critical_head.dependencies.push(stamp("BOARD-z1"));
     let critical = admitted(critical_head, workflow("todo"), None, None).expect("critical task");
     let mut medium_head = statement("BOARD-m1");
-    medium_head.tags.push("priority:medium".to_owned());
+    medium_head.priority = Some(wire::TaskPriority::Medium);
     let medium = admitted(medium_head, workflow("todo"), None, None).expect("medium task");
     let ordered = [prerequisite.clone(), critical.clone(), medium.clone()];
     let reversed = [medium, critical, prerequisite];
@@ -443,11 +443,11 @@ fn prerequisite_inherits_priority_through_a_two_edge_chain() {
     second_head.dependencies.push(stamp("BOARD-z1"));
     let second = admitted(second_head, workflow("todo"), None, None).expect("second prerequisite");
     let mut critical_head = statement("BOARD-c1");
-    critical_head.tags.push("priority:critical".to_owned());
+    critical_head.priority = Some(wire::TaskPriority::Critical);
     critical_head.dependencies.push(stamp("BOARD-z2"));
     let critical = admitted(critical_head, workflow("todo"), None, None).expect("critical task");
     let mut medium_head = statement("BOARD-m1");
-    medium_head.tags.push("priority:medium".to_owned());
+    medium_head.priority = Some(wire::TaskPriority::Medium);
     let medium = admitted(medium_head, workflow("todo"), None, None).expect("medium task");
     let entries = [first, second, critical, medium];
 
@@ -458,7 +458,7 @@ fn prerequisite_inherits_priority_through_a_two_edge_chain() {
 #[test]
 fn priority_inheritance_terminates_on_a_dependency_cycle() {
     let mut first_head = statement("BOARD-z1");
-    first_head.tags.push("priority:critical".to_owned());
+    first_head.priority = Some(wire::TaskPriority::Critical);
     first_head.dependencies.push(stamp("BOARD-z2"));
     let first = admitted(first_head, workflow("todo"), None, None).expect("first cycle entry");
     let mut second_head = statement("BOARD-z2");
@@ -522,7 +522,7 @@ fn downstream_weight_precedes_native_urgency_and_handle_order() {
 #[test]
 fn effective_priority_precedes_greater_downstream_weight() {
     let mut priority_head = statement("BOARD-z9");
-    priority_head.tags.push("priority:medium".to_owned());
+    priority_head.priority = Some(wire::TaskPriority::Medium);
     let priority =
         admitted(priority_head, workflow("todo"), None, None).expect("higher-priority candidate");
     let weighted = entry("BOARD-a1");
@@ -623,7 +623,7 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
             let mut statement = statement(handle);
             statement.project = project.to_owned();
             if project == "task.unrelated" {
-                statement.tags.push("priority:critical".to_owned());
+                statement.priority = Some(wire::TaskPriority::Critical);
             }
             let mut workflow = workflow("todo");
             workflow.assignment = assignment;

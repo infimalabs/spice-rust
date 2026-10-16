@@ -117,6 +117,8 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
                 project: "rim.recovery".into(),
                 filing: wire::TaskFiling::Filed,
                 tags: Vec::new(),
+                priority: None,
+                taste: None,
                 depends: Vec::new(),
                 flow: vec!["todo".parse().expect("fixture phase")],
                 phase: "todo".parse().expect("fixture phase"),
@@ -144,6 +146,8 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
         project: "rim.recovery".into(),
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
+        priority: None,
+        taste: None,
         dependencies: Vec::new(),
         provenance: "resident:018f82d4-6f59-7d06-92e3-000000000001"
             .parse()

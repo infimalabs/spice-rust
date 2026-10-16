@@ -21,6 +21,8 @@ struct DocTaskSpec {
     project: String,
     acceptance: Vec<String>,
     tags: Vec<String>,
+    priority: Option<wire::TaskPriority>,
+    taste: Option<wire::TasteHold>,
     dependencies: Vec<wire::TaskStamp>,
     flow: Vec<wire::Phase>,
     initial: wire::Phase,
@@ -269,7 +271,6 @@ fn doc_task_spec(
         .clone()
         .unwrap_or_else(|| "task.document".to_owned());
     validate_acceptance(&node.acceptance)?;
-    refuse_system_tags(&node.tags)?;
     let mut flow = if node.flow.is_empty() {
         task_flow(None, &node.acceptance)?
     } else {
@@ -295,7 +296,7 @@ fn doc_task_spec(
         None,
         &node.acceptance,
     )?;
-    let was_required = existing.is_some_and(|entry| has_taste_review(&entry.statement().tags));
+    let was_required = existing.is_some_and(|entry| entry.statement().taste.is_some());
     let taste_review_required = taste_review.as_ref().is_some_and(TasteReview::required);
     if taste_review.is_none() && was_required {
         return Err(environment_fault(
@@ -305,7 +306,7 @@ fn doc_task_spec(
     }
     if taste_review_required
         && existing.is_some_and(|entry| {
-            !has_taste_review(&entry.statement().tags) && entry.workflow().phase.as_str() != "plan"
+            entry.statement().taste.is_none() && entry.workflow().phase.as_str() != "plan"
         })
     {
         return Err(refusal(
@@ -316,15 +317,13 @@ fn doc_task_spec(
     }
     let mut tags = node.tags.clone();
     tags.push(document_slug_tag(&node.slug));
-    if let Some(priority) = node.priority {
-        tags.push(format!("priority:{priority}"));
-    }
+    let mut taste = None;
     let released = resync_taste_hold(
         &plan.snapshot,
         existing,
         taste_review_required,
         &mut flow,
-        &mut tags,
+        &mut taste,
     )?;
     let initial = flow[0].clone();
     Ok(DocTaskSpec {
@@ -338,6 +337,8 @@ fn doc_task_spec(
         project,
         acceptance: node.acceptance.clone(),
         tags,
+        priority: node.priority.map(board::priority_from_document),
+        taste,
         dependencies,
         flow,
         initial,
@@ -435,6 +436,8 @@ fn edit_doc_task(
     statement.project = spec.project;
     statement.acceptance = spec.acceptance;
     statement.tags = spec.tags;
+    statement.priority = spec.priority;
+    statement.taste = spec.taste;
     statement.dependencies = spec.dependencies;
     let dependencies = (statement.dependencies != existing.statement().dependencies)
         .then(|| statement.dependencies.clone());
@@ -493,6 +496,8 @@ fn add_doc_task(
                 project: spec.project.clone(),
                 filing: wire::TaskFiling::Filed,
                 tags: spec.tags.clone(),
+                priority: spec.priority,
+                taste: spec.taste,
                 depends: spec.dependencies.clone(),
                 flow: spec.flow.clone(),
                 phase: spec.initial.clone(),
@@ -520,6 +525,8 @@ fn add_doc_task(
         project: spec.project,
         filing: wire::TaskFiling::Filed,
         tags: spec.tags,
+        priority: spec.priority,
+        taste: spec.taste,
         dependencies: spec.dependencies,
         provenance: statement_origin,
         creation: statement_creation,

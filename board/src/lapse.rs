@@ -628,6 +628,8 @@ mod tests {
                     project: "board.possession".to_owned(),
                     filing: wire::TaskFiling::Filed,
                     tags: Vec::new(),
+                    priority: None,
+                    taste: None,
                     depends: Vec::new(),
                     flow: vec![phase.clone()],
                     phase: phase.clone(),
@@ -654,6 +656,8 @@ mod tests {
             project: "board.possession".to_owned(),
             filing: wire::TaskFiling::Filed,
             tags: Vec::new(),
+            priority: None,
+            taste: None,
             dependencies: Vec::new(),
             provenance: origin,
             creation: body::TaskCreationContext::unavailable(

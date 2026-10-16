@@ -420,7 +420,7 @@ fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
 
 fn existing_next_claim_reply(board: &BoardAnswer, task: &NextWorkTask) -> Reply<CommandAnswer> {
     let handle = TaskHandle::for_project(&task.statement.body.project, &task.statement.body.born);
-    let next = if has_taste_review(&task.statement.body.tags) {
+    let next = if task.statement.body.taste.is_some() {
         format!("next: spice task modify {handle} --title \"...\"")
     } else if task.workflow.body.phase.as_str() == "review" {
         format!(

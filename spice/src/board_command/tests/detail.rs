@@ -356,7 +356,7 @@ fn task_show_prints_the_authored_statement_whole() {
         "x".repeat(300)
     );
     row.statement.body.description = Some(description);
-    row.statement.body.tags.push("priority:high".to_owned());
+    row.statement.body.priority = Some(wire::TaskPriority::High);
     let show = |context: bool| {
         task_show_bounded(
             &answer,

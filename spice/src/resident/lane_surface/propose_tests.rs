@@ -444,6 +444,8 @@ pub(in crate::resident) fn seed_task_claim(
         project: "task.claim".to_owned(),
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
+        priority: None,
+        taste: None,
         dependencies: Vec::new(),
         provenance: origin,
         creation: wire::body::TaskCreationContext::unavailable(
@@ -516,6 +518,8 @@ fn append_seed_claim_facts(
                 project: "task.claim".to_owned(),
                 filing: wire::TaskFiling::Filed,
                 tags: Vec::new(),
+                priority: None,
+                taste: None,
                 depends: Vec::new(),
                 flow: vec![phase.clone()],
                 phase: phase.clone(),

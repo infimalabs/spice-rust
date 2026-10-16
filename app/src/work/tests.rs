@@ -45,6 +45,8 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
                 project: project.to_owned(),
                 filing: wire::TaskFiling::Filed,
                 tags: Vec::new(),
+                priority: None,
+                taste: None,
                 dependencies: Vec::new(),
                 provenance: format!("task:{born}").parse().expect("fixture origin"),
                 creation: wire::body::TaskCreationContext::unavailable(

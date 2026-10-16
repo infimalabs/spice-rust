@@ -14,6 +14,7 @@ mod principals;
 mod probe;
 mod retained;
 mod settings_receipts;
+mod task_standing;
 mod vendor_holds;
 mod working_groups;
 
@@ -135,7 +136,7 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
 fn predecessor_authority_crosses_once_to_the_current_shape_without_rewriting_rows() {
     for predecessor in [
         33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 56, 58, 59,
-        60, 61, 62, 63, 64, 65,
+        60, 61, 62, 63, 64, 65, 66,
     ] {
         let scratch = Scratch::new();
         let path = scratch.path().join("authority.sqlite3");

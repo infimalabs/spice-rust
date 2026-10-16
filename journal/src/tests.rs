@@ -874,6 +874,8 @@ fn task_head() -> TaskHead {
         project: "journal".to_owned(),
         filing: wire::TaskFiling::Filed,
         tags: vec!["journal".to_owned()],
+        priority: None,
+        taste: None,
         dependencies: Vec::new(),
         provenance: "task:1kKRRsDP".parse().expect("provenance"),
         creation: wire::body::TaskCreationContext::unavailable(

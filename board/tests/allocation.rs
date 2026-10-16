@@ -107,8 +107,8 @@ fn fixture() -> Journal {
         Producer::CommandDoor,
     );
     let tasks = [
-        ("BOARD-b2", "priority:medium"),
-        ("BOARD-a1", "priority:high"),
+        ("BOARD-b2", wire::TaskPriority::Medium),
+        ("BOARD-a1", wire::TaskPriority::High),
     ];
     for (index, (name, priority)) in tasks.into_iter().enumerate() {
         let task = stamp(name);
@@ -125,7 +125,9 @@ fn fixture() -> Journal {
                     requirements: wire::EnvironmentRequirements::default(),
                     project: "board.allocate".to_owned(),
                     filing: wire::TaskFiling::Filed,
-                    tags: vec![priority.to_owned()],
+                    tags: Vec::new(),
+                    priority: Some(priority),
+                    taste: None,
                     depends: Vec::new(),
                     flow: flow.flow.clone(),
                     phase: flow.phase.clone(),
@@ -153,7 +155,9 @@ fn fixture() -> Journal {
             requirements: wire::EnvironmentRequirements::default(),
             project: "board.allocate".to_owned(),
             filing: wire::TaskFiling::Filed,
-            tags: vec![priority.to_owned()],
+            tags: Vec::new(),
+            priority: Some(priority),
+            taste: None,
             dependencies: Vec::new(),
             provenance: statement_origin,
             creation: body::TaskCreationContext::unavailable(

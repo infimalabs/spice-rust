@@ -367,6 +367,8 @@ fn cover_task_heads() {
                 project: "gate".to_owned(),
                 filing: wire::TaskFiling::Filed,
                 tags: vec!["guard".to_owned()],
+                priority: None,
+                taste: None,
                 dependencies: Vec::new(),
                 provenance: "repo:genesis".parse().expect("origin"),
                 creation: body::TaskCreationContext::unavailable(
@@ -391,6 +393,8 @@ fn cover_task_heads() {
                 project: "gate".to_owned(),
                 filing: wire::TaskFiling::Oops,
                 tags: vec!["guard".to_owned(), "review".to_owned()],
+                priority: None,
+                taste: None,
                 dependencies: vec![stamp("1kKRRsDQ")],
                 provenance: "task:1kKRRsDP".parse().expect("origin"),
                 creation: body::TaskCreationContext::unavailable(

@@ -16,7 +16,9 @@
 /// directory; schema 65 gives each of that directory's entries its principal's
 /// code. Schema 66 makes the activity stance explicit in retained working-group
 /// facts and their partition head before strict fact readers admit them.
-pub const SCHEMA_VERSION: u32 = 66;
+/// Schema 67 lifts task priority and taste-review standing out of statement
+/// tags into typed statement fields, which an older release would drop.
+pub const SCHEMA_VERSION: u32 = 67;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

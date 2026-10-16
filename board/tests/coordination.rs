@@ -111,6 +111,8 @@ fn statement(name: &str) -> TaskHead {
         project: "board.kernel".to_owned(),
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
+        priority: None,
+        taste: None,
         dependencies: Vec::new(),
         provenance: format!("task:{born}").parse::<Origin>().expect("origin"),
         creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
@@ -208,6 +210,8 @@ fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journa
                 project: statement.project.clone(),
                 filing: statement.filing,
                 tags: statement.tags.clone(),
+                priority: statement.priority,
+                taste: statement.taste,
                 depends: statement.dependencies.clone(),
                 flow: workflow.flow.clone(),
                 phase: workflow.phase.clone(),
@@ -611,7 +615,7 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
         let mut head = statement(name);
         head.project = project.to_owned();
         if critical {
-            head.tags.push("priority:critical".to_owned());
+            head.priority = Some(wire::TaskPriority::Critical);
         }
         Entry::new(head, workflow("todo"), None, None, &projects).expect("fixture entry")
     };
@@ -620,7 +624,7 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
         let mut head = statement("BOARD-oops");
         head.project = "board.correctness".to_owned();
         head.filing = wire::TaskFiling::Oops;
-        head.tags.push("priority:critical".to_owned());
+        head.priority = Some(wire::TaskPriority::Critical);
         Entry::new(head, workflow("todo"), None, None, &projects).expect("OOPS fixture entry")
     };
     let hidden_maxim = admitted("BOARD-maxim", ".maxim_proposal.theme_2", true);
@@ -747,7 +751,7 @@ fn environment_is_the_final_eligibility_filter_and_never_ranking_or_task_state()
         .checked_add(1)
         .expect("fixture schema advances");
     let mut blocked_head = statement("BOARD-environment-blocked");
-    blocked_head.tags.push("priority:critical".to_owned());
+    blocked_head.priority = Some(wire::TaskPriority::Critical);
     blocked_head.requirements = wire::EnvironmentRequirements::one(
         wire::EnvironmentRequirement::journal_schema(required_schema)
             .expect("future schema is positive"),

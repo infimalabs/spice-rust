@@ -157,16 +157,16 @@ fn review_taste(
         statement.description.as_deref(),
         &statement.acceptance,
     )?;
-    let was_required = has_taste_review(&statement.tags);
+    let was_required = statement.taste.is_some();
     let mut released = None;
     match review.as_ref().map(TasteReview::required) {
         Some(false) => {
-            if let Some(workflow) = clear_taste_review(&mut statement.tags, entry.workflow()) {
+            if let Some(workflow) = clear_taste_review(&mut statement.taste, entry.workflow()) {
                 released = Some(ReleasedPlan::observe(snapshot, entry.born(), workflow)?);
             }
         }
         Some(true) if was_required || entry.workflow().phase.as_str() == "plan" => {
-            require_taste_review(&mut statement.tags);
+            statement.taste.get_or_insert(wire::TasteHold::Authored);
         }
         Some(true) => {
             return Err(refusal(
@@ -250,7 +250,7 @@ fn corrected_statement(
         statement.intent = intent.intent();
     }
     if let Some(priority) = &edit.priority {
-        correct_priority(&mut statement.tags, priority)?;
+        statement.priority = Some(declared_priority(priority)?);
     }
     if let Some(requested) = &edit.project {
         statement.project = corrected_project(entry, projects, requested)?;
@@ -287,18 +287,14 @@ fn corrected_flow(entry: &Entry, flow: &str) -> Result<Vec<wire::Phase>, Outcome
     phases(Some(flow))
 }
 
-fn correct_priority(tags: &mut Vec<String>, priority: &str) -> Result<(), Outcome<CommandAnswer>> {
-    // Refuse rather than store a priority the allocator would silently ignore.
-    let Some(declared) = board::priority_from_authored(priority) else {
-        return Err(refusal(
+fn declared_priority(priority: &str) -> Result<wire::TaskPriority, Outcome<CommandAnswer>> {
+    board::priority_from_authored(priority).ok_or_else(|| {
+        refusal(
             "task::edit-priority-unknown",
             Some(priority.to_owned()),
             "name one of critical, high, medium, low, or none, or the letter the board prints",
-        ));
-    };
-    tags.retain(|tag| !tag.starts_with(board::PRIORITY_TAG_PREFIX));
-    tags.push(board::priority_tag(declared));
-    Ok(())
+        )
+    })
 }
 
 fn corrected_project(

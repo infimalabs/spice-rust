@@ -428,7 +428,10 @@ pub(in crate::board_command) fn task_show_bounded(
         format!("title {}", task.presentation_title()),
         format!("project {}", statement.project),
         format!("filing {}", statement.filing.as_str()),
-        format!("priority {}", task_priority(&statement.tags).unwrap_or("-")),
+        format!(
+            "priority {}",
+            statement.priority.map_or("-", wire::TaskPriority::as_str)
+        ),
         format!(
             "intent {}",
             statement.intent.map_or("-", wire::TaskIntent::as_str)
@@ -457,7 +460,7 @@ pub(in crate::board_command) fn task_show_bounded(
             ),
         ]);
     }
-    if has_taste_review(&statement.tags) {
+    if statement.taste.is_some() {
         lines.push("taste_review required".to_owned());
     }
     lines.extend(requirement_lines(board, statement, &environment));
@@ -582,9 +585,7 @@ fn task_show_context_lines(
     ));
     lines.extend(git_context_lines(task));
     lines.extend(parked_commit_lines(task));
-    let tags = visible_tags(&statement.tags)
-        .filter(|tag| !tag.starts_with(board::PRIORITY_TAG_PREFIX))
-        .collect::<Vec<_>>();
+    let tags = &statement.tags;
     if tags.is_empty() {
         lines.push("tags -".to_owned());
     } else {
@@ -1076,12 +1077,6 @@ fn git_context_lines(task: &BoardTask) -> Vec<String> {
     lines
 }
 
-/// The authored priority a task's tags carry.
-fn task_priority(tags: &[String]) -> Option<&str> {
-    tags.iter()
-        .find_map(|tag| tag.strip_prefix(board::PRIORITY_TAG_PREFIX))
-}
-
 fn push_bulleted(lines: &mut Vec<String>, text: &str) {
     let mut parts = text.lines();
     if let Some(first) = parts.next() {
@@ -1105,7 +1100,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
         return Vec::new();
     }
     let handle = &statement.handle;
-    if has_taste_review(&statement.tags) {
+    if statement.taste.is_some() {
         return vec![
             "phase_guidance:".to_owned(),
             "  phase:plan is holding this task for taste review.".to_owned(),
@@ -1178,7 +1173,7 @@ pub(super) fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String
     if !task.statement.body.filing.is_filed() {
         return format!("next: spice task file {}", task.statement.body.handle);
     }
-    if has_taste_review(&task.statement.body.tags) {
+    if task.statement.body.taste.is_some() {
         return format!(
             "next: spice task modify {} --title \"...\"",
             task.statement.body.handle,
@@ -1247,7 +1242,7 @@ pub(in crate::board_command) fn task_status(
     let holds = rows
         .iter()
         .copied()
-        .filter(|entry| has_taste_review(&entry.statement().tags))
+        .filter(|entry| entry.statement().taste.is_some())
         .map(|entry| entry.handle().to_string())
         .collect::<Vec<_>>();
     let taste_review = if holds.is_empty() {

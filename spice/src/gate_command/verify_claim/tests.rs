@@ -185,6 +185,8 @@ fn statement() -> TaskHead {
         project: "gate.selection".to_owned(),
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
+        priority: None,
+        taste: None,
         dependencies: Vec::new(),
         provenance: "task:fixture".parse().expect("fixture origin"),
         creation: wire::body::TaskCreationContext::unavailable(

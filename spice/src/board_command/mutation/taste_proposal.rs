@@ -119,13 +119,13 @@ pub(in crate::board_command) fn taste_proposal_add(
         Ok(prepared) => prepared,
         Err(outcome) => return outcome,
     };
-    let tags = vec![
+    prepared.statement.tags = vec![
         PROPOSAL_TAG.to_owned(),
         format!("{FINDING_TAG_PREFIX}{}", add.finding),
         format!("{OCCURRENCE_TAG_PREFIX}{}", add.occurrence),
         format!("{RECURRENCE_TAG_PREFIX}{}", add.recurrence),
     ];
-    let post = prepared_entry(&mut prepared, &tags, projects);
+    let post = prepared_entry(&prepared, projects);
     commit_prepared_task(
         bus,
         command,
@@ -134,7 +134,6 @@ pub(in crate::board_command) fn taste_proposal_add(
         &snapshot,
         prepared,
         post,
-        tags,
         None,
         dependency_witnesses,
         move |write| guard_proposal_observation(write, observation),

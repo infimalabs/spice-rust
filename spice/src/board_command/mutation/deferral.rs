@@ -312,7 +312,7 @@ fn draft_filing(
     )?;
     let taste_review = review.filter(TasteReview::required);
     if taste_review.is_some() {
-        hold_for_taste(&mut workflow.flow, &mut statement.tags);
+        hold_for_taste(&mut workflow.flow, &mut statement.taste);
         workflow.phase = workflow.flow[0].clone();
     }
     Ok(DraftFiling {

@@ -234,6 +234,77 @@ impl TaskFiling {
     }
 }
 
+/// Declared scheduling priority of a task.
+///
+/// Absence is distinct from [`Self::None`]: a task that declared `none` still
+/// outranks one that declared nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskPriority {
+    /// Ahead of every other declared priority.
+    Critical,
+    /// Ahead of medium.
+    High,
+    /// Ahead of low.
+    Medium,
+    /// Ahead of none.
+    Low,
+    /// Declared, and ahead only of undeclared work.
+    None,
+}
+
+impl TaskPriority {
+    /// Every priority, strongest first.
+    pub const ALL: [Self; 5] = [
+        Self::Critical,
+        Self::High,
+        Self::Medium,
+        Self::Low,
+        Self::None,
+    ];
+
+    /// Stable lower-case spelling shared by the wire and the command line.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Critical => "critical",
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+            Self::None => "none",
+        }
+    }
+
+    /// The priority one exact stored spelling names.
+    #[must_use]
+    pub fn from_wire(text: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|priority| priority.as_str() == text)
+    }
+}
+
+impl std::fmt::Display for TaskPriority {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Board-owned hold keeping a task in a plan phase until its statement passes
+/// taste review.
+///
+/// Authors never write it; task creation, filing, and statement edits set it
+/// from the repository taste policy, and an edit that passes clears it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TasteHold {
+    /// Held in a plan phase the authored flow already carried.
+    Authored,
+    /// Held in a plan phase the hold prepended to the authored flow; clearing
+    /// the hold withdraws that phase.
+    Prepended,
+}
+
 /// One current task statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -268,6 +339,20 @@ pub struct TaskHead {
     pub filing: TaskFiling,
     /// Authored task labels.
     pub tags: Vec<String>,
+    /// Declared scheduling priority.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub priority: Option<TaskPriority>,
+    /// Board-owned taste-review hold; absent while the statement is not held.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub taste: Option<TasteHold>,
     /// Tasks that must complete first.
     pub dependencies: Vec<TaskStamp>,
     /// Declared Plan or Design intent, stable across every phase change.
