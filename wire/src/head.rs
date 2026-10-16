@@ -619,6 +619,24 @@ pub struct LeaseHead {
     pub epoch: CanonicalUuid,
 }
 
+/// Current repository OOPS generation.
+///
+/// No stored head means revision zero and vacancy. Every later head is folded
+/// from one [`crate::body::OopsGenerationAdvanced`] fact.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OopsGenerationHead {
+    /// Monotone transition revision.
+    pub revision: u64,
+    /// Sole current open opportunistic Design, absent between generations.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub design: Option<TaskStamp>,
+}
+
 /// Closed classes of authoritative witness heads.
 ///
 /// This classifies seven stored predicate-head rows. Command preconditions use

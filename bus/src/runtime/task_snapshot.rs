@@ -1409,6 +1409,7 @@ fn advance_trust(
             return Ok(BuildStep::Pending(build));
         }
         let residency = read.residency_head().map_err(BusReadError::Head)?;
+        let oops_generation = read.oops_generation().map_err(BusReadError::Head)?;
         if read.cursor().map_err(BusReadError::Head)? != build.cursor {
             return Err(BusReadError::Head(GuardError::Invalid(
                 "task snapshot authority moved during completion".to_owned(),
@@ -1448,6 +1449,7 @@ fn advance_trust(
             allocation_faults: allocation.faults,
             trust: Arc::from(build.trust),
             residency,
+            oops_generation,
             materialization_steps: build.steps,
             task_head_update_visits,
         }))

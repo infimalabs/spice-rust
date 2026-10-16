@@ -73,6 +73,13 @@ fn witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool, Guar
         | Witness::Preview { .. }
         | Witness::Barrier { .. } => board_witness_holds(read, witness),
         Witness::Group { revision } => Ok(partition_revision(read)? == *revision),
+        Witness::OopsGeneration { head, design } => {
+            let observed = read.oops_generation()?;
+            Ok(
+                observed.as_ref().map(journal::JournalHead::position) == *head
+                    && observed.and_then(|head| head.into_body().design) == *design,
+            )
+        }
         Witness::Proposal { proposal, head } => {
             Ok(read.proposal_head(proposal)?.map(|head| head.position()) == *head)
         }

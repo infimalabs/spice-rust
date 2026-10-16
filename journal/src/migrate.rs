@@ -12,6 +12,7 @@ mod designs;
 mod fact_bounds;
 mod maturity;
 mod oops_design;
+mod oops_generation;
 mod provenance;
 mod residual;
 mod retained_notes;
@@ -74,9 +75,9 @@ const PREPARED: &str = "prepared";
 /// retained task provenance spelling into the closed provenance type. Current
 /// readers therefore need no release-specific execution arm. Retained terminal
 /// review fields cross before any migration decodes a typed workflow head.
-const PREDECESSOR_SCHEMAS: [u32; 43] = [
+const PREDECESSOR_SCHEMAS: [u32; 44] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75,
+    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -126,9 +127,13 @@ pub(crate) const DESIGN_MATURITY_SCHEMA: u32 = 63;
 /// First schema whose Design pass proposals and output decisions carry their
 /// current explicit shape.
 const DESIGN_PASS_SCHEMA: u32 = 73;
+/// First schema whose room projection indexes retained task notes.
+pub(crate) const RETAINED_NOTES_SCHEMA: u32 = 76;
+/// First schema whose baseline carries the repository OOPS-generation head.
+pub(crate) const OOPS_GENERATION_SCHEMA: u32 = 77;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
-const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
+const ROOM_SCHEMA_STEPS: [(u32, &str); 11] = [
     (ROOM_AUTHORITY_SCHEMA, crate::rooms::SCHEMA_SQL),
     (ROOM_CURSOR_SCHEMA, crate::rooms::CURSOR_SCHEMA_SQL),
     (
@@ -145,6 +150,10 @@ const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
     (ROOM_RELEVANCE_SCHEMA, crate::rooms::RELEVANCE_SCHEMA_SQL),
     (GROUP_PARTITION_SCHEMA, crate::rooms::GROUP_SCHEMA_SQL),
     (DESIGN_MATURITY_SCHEMA, crate::rooms::MATURITY_SCHEMA_SQL),
+    (
+        OOPS_GENERATION_SCHEMA,
+        crate::rooms::OOPS_GENERATION_SCHEMA_SQL,
+    ),
 ];
 const RETIRED_GATE_FILED_KIND: &str = "gate::filed";
 const RETIRED_GATE_FILED_RELEASE: &str = "595da8d81";
@@ -380,12 +389,17 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     }
     create_principal_heads(&transaction, version)?;
     working_groups::cross(&transaction)?;
+    if version < OOPS_GENERATION_SCHEMA {
+        oops_generation::cross(&transaction)?;
+    }
     task_tags::cross_facts(&transaction, &taste_audits)?;
     taste_holds::cross_facts(&transaction, &taste_audits)?;
     settings_receipts::cross(&transaction)?;
     awareness::cross(&transaction)?;
     maturity::cross(&transaction)?;
-    retained_notes::cross(&transaction)?;
+    if version < RETAINED_NOTES_SCHEMA {
+        retained_notes::cross(&transaction)?;
+    }
     advance_identity(&transaction)?;
     transaction.commit().map_err(OpenError::Sqlite)?;
     Ok(Some(Migration {
@@ -1330,8 +1344,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 76, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 77, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 76;
+PRAGMA user_version = 77;
 "#;

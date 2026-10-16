@@ -33,7 +33,9 @@
 /// ordinary Plans controlled by one repository-owned opportunistic Design.
 /// Schema 76 indexes each retained task note that is not a taste-review audit
 /// into its task's room, which an older release's room reads cannot present.
-pub const SCHEMA_VERSION: u32 = 76;
+/// Schema 77 gives the repository-owned OOPS Design generation one typed
+/// singleton authority.
+pub const SCHEMA_VERSION: u32 = 77;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
@@ -101,11 +103,12 @@ pub mod crossing {
         Actor, AnyFact, CanonicalUuid, ClaimCell, ClaimDisposition, ClaimHead, Command,
         CommandKind, Digest, Envelope, Environment, EnvironmentRequirement,
         EnvironmentRequirements, Fact, FactKind, FindingHead, Instant, JournalCursor,
-        LaneResidency, LaneSession, LeaseHead, OccupantAddress, Origin, Packed, Phase, Producer,
-        ResidencyHead, ResidentState, SeatAddress, Seq, SteeringHead, TapeLocus, TaskFiling,
-        TaskHandle, TaskHead, TaskProvenance, TaskStamp, TranscriptSourceHead, TranscriptStreamKey,
-        TrustHead, TrustState, WireVersion, Witness, WitnessHead, WorkflowCompletionReview,
-        WorkflowConclusion, WorkflowHead, WorkflowNegative, WorkflowReview, WorkflowStatus,
+        LaneResidency, LaneSession, LeaseHead, OccupantAddress, OopsGenerationHead, Origin, Packed,
+        Phase, Producer, ResidencyHead, ResidentState, SeatAddress, Seq, SteeringHead, TapeLocus,
+        TaskFiling, TaskHandle, TaskHead, TaskProvenance, TaskStamp, TranscriptSourceHead,
+        TranscriptStreamKey, TrustHead, TrustState, WireVersion, Witness, WitnessHead,
+        WorkflowCompletionReview, WorkflowConclusion, WorkflowHead, WorkflowNegative,
+        WorkflowReview, WorkflowStatus,
     };
 }
 

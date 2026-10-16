@@ -522,6 +522,32 @@ pub struct TaskConcluded {
     pub conclusion: DesignConclusion,
 }
 
+/// The repository OOPS generation advanced between vacant and current state.
+///
+/// The singleton projection folds only these transitions. `from` must equal
+/// the preceding head, `to` must alternate between vacancy and one Design, and
+/// `revision` advances exactly once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OopsGenerationAdvanced {
+    /// Revision assigned to this transition.
+    pub revision: u64,
+    /// Generation current before this transition.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub from: Option<TaskStamp>,
+    /// Generation current after this transition.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub to: Option<TaskStamp>,
+}
+
 /// Exclusive possession was minted from the current eligibility and claim heads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimWon {
