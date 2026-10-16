@@ -351,6 +351,53 @@ fn the_operator_answers_only_its_own_pending_questions() {
     lanes.finish();
 }
 
+/// A reply returns once to the lane whose MSG opened the item, as operator
+/// direction citing the direction it concerned, and settles that item; a
+/// question's item takes an answer instead.
+#[test]
+fn the_operator_replies_to_a_lane_item_as_direction() {
+    let lanes = Lanes::new("control-reply");
+    let key = lanes.direct(SENDER, 20, "ship when green");
+    lanes
+        .say(SENDER, &format!("MSG #{key}: shipped"))
+        .expect("the MSG publishes");
+    let question = asked(&lanes.say(SENDER, &format!("ASK #{key}: and then?")));
+    let told = lanes
+        .inbox_items(&[])
+        .into_iter()
+        .find(|(_, verb)| verb == "msg")
+        .map(|(item, _)| RoomReceiptRef::new(item.parse().expect("item key")))
+        .expect("the MSG opened an item");
+    let reply = |id, item: &RoomReceiptRef, text: &str| {
+        lanes.operate(
+            id,
+            RoomControl::Reply {
+                item: item.clone(),
+                text: text.to_owned(),
+            },
+        )
+    };
+
+    assert_eq!(
+        reason(&reply(80, &item_of(&question), "later")),
+        "room::reply-question"
+    );
+    assert_eq!(reason(&reply(81, &told, "  ")), "room::reply-empty");
+    committed(&reply(82, &told, "merge it"));
+    assert!(matches!(
+        lanes.item_state(&told),
+        RoomReceiptState::Acked { .. }
+    ));
+    let returned = lanes
+        .pending(SENDER)
+        .into_iter()
+        .filter(|directive| directive.text == format!("RE #{key}: merge it"))
+        .count();
+    assert_eq!(returned, 1, "the reply returns once to the lane");
+    assert_eq!(reason(&reply(83, &told, "again")), "room::item-settled");
+    lanes.finish();
+}
+
 fn json_lane(lane: u8) -> Value {
     serde_json::to_value(test_uuid(lane)).expect("lane encodes")
 }

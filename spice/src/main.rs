@@ -532,6 +532,7 @@ impl NativeInvocation<'_> {
             | ["room", "ack"]
             | ["room", "nak"]
             | ["room", "answer"]
+            | ["room", "reply"]
             | ["room", "recover"]
             | ["room", "assess"]
             | ["room", "decline"]

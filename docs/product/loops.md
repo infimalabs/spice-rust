@@ -463,9 +463,10 @@ owns each rule summarized here.
   answers one ([grammar](invariants/identity.md#steering-an-msg-packet-owns-exactly-its-body-hunk)).
   The operator or any lane records an observation, text the room's fact owns,
   with `spice room post` in any task's room that is not deleted; writing one
-  makes its author no listener. The operator answers with `spice room answer`.
-  A tool call's intent may retire a key, but publishes only as the narrow
-  fallback for a message with no text block.
+  makes its author no listener. The operator answers with `spice room answer`
+  and replies to a lane's MSG or ANS item with `spice room reply`, operator
+  direction to that lane. A tool call's intent may retire a key, but publishes
+  only as the narrow fallback for a message with no text block.
 - **Delivery.** A directed route is a native steering directive bound to the
   logical lane: vacancy, resume, and renewal keep its key, body, and expiry for
   whichever occupant sits there next, while a replacement lane inherits
@@ -475,7 +476,8 @@ owns each rule summarized here.
   Room-only traffic reaches current listeners as one bounded catch-up aside at
   a safe boundary. Recording is not receipt.
 - **Receipt, answer, and authorization stay apart.** ACK/NAK settles a
-  delivery. A question result has one immutable deadline and ends answered,
+  delivery, and an operator ACK/NAK clause reaches no lane; only a reply does.
+  A question result has one immutable deadline and ends answered,
   declined, cancelled, or timed out; recovery of a lapsed delivery or item
   never reopens or extends it. Answered means available for assessment: a task
   that requires a result names it with `spice task require --evidence`, and

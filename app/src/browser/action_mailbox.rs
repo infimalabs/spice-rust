@@ -618,6 +618,9 @@ fn room_control_bytes(request: &crate::client_action::RoomControlRequest) -> usi
             wire::intent::RoomControl::Answer { result, text, .. } => {
                 result.as_str().len().saturating_add(text.len())
             }
+            wire::intent::RoomControl::Reply { item, text } => {
+                item.to_string().len().saturating_add(text.len())
+            }
             wire::intent::RoomControl::Recover { .. } => 0,
             wire::intent::RoomControl::Assess {
                 observation,

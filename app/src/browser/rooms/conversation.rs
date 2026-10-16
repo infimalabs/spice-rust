@@ -520,9 +520,9 @@ fn item_route(act: Act<'_>, key: &RoomReceiptRef, destination: &str, lead: &str)
     }
 }
 
-/// The operator's own receipt, with ACK/NAK while pending and recovery once
-/// lapsed. Its control slot keeps one height in every state, so a receipt
-/// settling never moves the cards after it.
+/// The operator's own receipt, with reply and ACK/NAK while pending and
+/// recovery once lapsed. Its control slot keeps one height in every state, so
+/// a receipt settling never moves the cards after it.
 fn item_status(act: Act<'_>, key: &RoomReceiptRef, item: &OperatorItem, destination: &str) -> Html {
     let (status, label) = match &item.state {
         RoomReceiptState::Pending { expires } => {
@@ -535,7 +535,14 @@ fn item_status(act: Act<'_>, key: &RoomReceiptRef, item: &OperatorItem, destinat
     };
     let control = match (&item.state, act.controls) {
         (RoomReceiptState::Pending { .. }, Some(controls)) => {
-            dispose_controls(act.runtime, controls, key)
+            // An ASK item's key is its result handle and takes an answer.
+            let asked = act
+                .runtime
+                .room_projection()
+                .conversation()
+                .result(&QuestionResultRef::new(key.authority().clone()))
+                .is_some();
+            dispose_controls(act.runtime, controls, key, !asked)
         }
         (RoomReceiptState::Expired { .. }, Some(controls)) => {
             recover_control(act.runtime, controls, key)
@@ -620,37 +627,61 @@ fn question_result(
     }
 }
 
+/// A reply is operator direction to the item's lane and settles it; ACK and
+/// NAK settle silently, their clause reaching no lane.
 fn dispose_controls(
     runtime: &AppRuntime,
     controls: CardControls<'_>,
     key: &RoomReceiptRef,
+    repliable: bool,
 ) -> Html {
-    let clause = NodeRef::default();
+    let text = NodeRef::default();
     let enabled = runtime.offers(CommandKind::RoomControl);
-    let dispose = |disposition| {
+    let control = |make: fn(&RoomReceiptRef, String) -> RoomControl| {
         let act = Owned::from(controls);
-        let clause = clause.clone();
+        let text = text.clone();
         let key = key.clone();
         move |event: &Event| {
             act.send(
                 event,
-                RoomControlRequest::Control(RoomControl::Dispose {
-                    disposition,
-                    keys: vec![key.clone()],
-                    clause: input_value(&clause),
-                }),
+                RoomControlRequest::Control(make(&key, input_value(&text))),
             );
         }
     };
-    let ack = dispose(RoomReceiptDisposition::Ack);
-    let nak = dispose(RoomReceiptDisposition::Nak);
+    let reply: fn(&RoomReceiptRef, String) -> RoomControl = |key, text| RoomControl::Reply {
+        item: key.clone(),
+        text,
+    };
+    let ack: fn(&RoomReceiptRef, String) -> RoomControl = |key, clause| RoomControl::Dispose {
+        disposition: RoomReceiptDisposition::Ack,
+        keys: vec![key.clone()],
+        clause,
+    };
+    let nak: fn(&RoomReceiptRef, String) -> RoomControl = |key, clause| RoomControl::Dispose {
+        disposition: RoomReceiptDisposition::Nak,
+        keys: vec![key.clone()],
+        clause,
+    };
+    let submit = control(if repliable { reply } else { ack });
+    let ack = control(ack);
+    let nak = control(nak);
+    let prompt = if repliable {
+        "Reply, or a settling clause"
+    } else {
+        "Clause"
+    };
     html! {
         <form class="room-flow-control" onsubmit={Callback::from(move |event: SubmitEvent| {
             event.prevent_default();
-            ack(&event);
+            submit(&event);
         })}>
-            <input ref={clause} aria-label="Receipt clause" placeholder="Clause" disabled={!enabled} />
-            <button type="submit" disabled={!enabled}>{"ACK"}</button>
+            <input ref={text} aria-label={prompt} placeholder={prompt} disabled={!enabled} />
+            if repliable {
+                <button type="submit" disabled={!enabled}>{"Reply"}</button>
+                <button type="button" disabled={!enabled} onclick={Callback::from(move |event: MouseEvent| ack(&event))}>{"ACK"}</button>
+            } else {
+                <button type="submit" disabled={!enabled}>{"ACK"}</button>
+            }
             <button type="button" disabled={!enabled} onclick={Callback::from(move |event: MouseEvent| nak(&event))}>{"NAK"}</button>
         </form>
     }
