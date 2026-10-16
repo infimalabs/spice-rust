@@ -116,7 +116,6 @@ fn output_write(at: Instant) -> JournalWrite {
     write.task_head(added, move |position| TaskHead {
         preparation: Some(preparation),
         authorization: None,
-        engagement: None,
         evidence: Vec::new(),
         intent: None,
         born,

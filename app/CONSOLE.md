@@ -275,8 +275,8 @@ A design light reads its [standing](#design-standing): concluded done,
 concluded collapsed, or deleted once terminal, even while a saved group still
 holds it; open passive outside every group. An open active Design then reads
 holding unauthorized outputs while any output it constructed is pending
-without a selection or the group's engagement, then claimed while a lane
-actively claims it, and open active otherwise. The group's name closes the
+without a selection, then claimed while a lane actively claims it, and open
+active otherwise. The group's name closes the
 status row; this browser's own move-left, move-right, and close controls live
 in the panel's group arrangement menu.
 

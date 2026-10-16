@@ -586,8 +586,6 @@ owns each rule summarized here.
   constructed that is still unselected
   [waits on the operator](invariants/identity.md#work-a-design-awaiting-selection-waits-on-the-operator-without-a-new-state):
   no lane is offered or woken for it, and status counts it under `selection`.
-  Retained pre-cutover group markers are historical evidence; writable open
-  refuses them under their owning release rather than executing them.
 
   A [gather task](invariants/identity.md#work-a-gather-task-collects-evidence-for-an-active-design)
   tries an idea for an open, active Design without the operator authorizing

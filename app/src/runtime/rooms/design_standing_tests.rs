@@ -39,7 +39,10 @@ fn output(authorized: bool) -> BoardTask {
         construction: output.statement.body.born.clone(),
     });
     if authorized {
-        output.statement.body.engagement = Some(wire::Seq::new(7).expect("fixture seq"));
+        output.statement.body.authorization = Some(wire::rooms::DecisionRef {
+            controller: stamp(1),
+            decision: wire::SequenceCode::new(7),
+        });
     }
     output
 }

@@ -132,7 +132,6 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
     seed.task_head(added, move |position| wire::TaskHead {
         preparation: None,
         authorization: None,
-        engagement: None,
         evidence: Vec::new(),
         intent: None,
         born: task,

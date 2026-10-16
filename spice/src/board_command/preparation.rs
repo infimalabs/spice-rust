@@ -616,7 +616,6 @@ fn output_is_authorizable(
         && !active_claim(heads)
         && heads.statement().body().authorization.is_none()
         && !board::gather_task(heads.statement().body(), heads.workflow().body())
-        && heads.statement().body().engagement.is_none()
         && heads
             .statement()
             .body()
@@ -752,7 +751,6 @@ pub(super) fn adopt_output(
         || active_claim(output_heads)
         || output_heads.statement().body().preparation.is_some()
         || output_heads.statement().body().authorization.is_some()
-        || output_heads.statement().body().engagement.is_some()
         || output_heads.statement().body().intent.is_some()
     {
         return refusal(

@@ -67,7 +67,6 @@ fn add(journal: &mut Journal, shape: Shape<'_>) -> TaskStamp {
     write.task_head(fact, move |revision| wire::TaskHead {
         preparation,
         authorization: None,
-        engagement: None,
         evidence: Vec::new(),
         intent: shape.intent,
         born,

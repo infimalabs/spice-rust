@@ -93,8 +93,8 @@ pub enum DesignStanding {
     Active,
     /// Active, and a lane claims it.
     Claimed,
-    /// Active, and it constructed a pending output that neither a selection
-    /// nor the group's engagement authorizes, so the operator owes a decision.
+    /// Active, and it constructed a pending output that no selection
+    /// authorizes, so the operator owes a decision.
     Unselected,
     /// The operator concluded it done.
     Done,
@@ -492,7 +492,6 @@ impl RoomProjection {
                     }) && workflow.status == "pending"
                         && workflow.completion.is_none()
                         && statement.authorization.is_none()
-                        && statement.engagement.is_none()
                 });
                 if unselected {
                     DesignStanding::Unselected

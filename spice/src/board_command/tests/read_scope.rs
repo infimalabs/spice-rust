@@ -125,7 +125,6 @@ fn push_task(
     write.task_head(added, move |position| TaskHead {
         preparation: None,
         authorization: None,
-        engagement: None,
         evidence: Vec::new(),
         intent,
         born: statement_task,

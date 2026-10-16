@@ -636,7 +636,6 @@ fn prepare_task(
     let statement = TaskHead {
         preparation: None,
         authorization: None,
-        engagement: None,
         evidence: Vec::new(),
         intent: add.intent,
         born: born.clone(),

@@ -1159,10 +1159,9 @@ pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool 
 /// execution authorization, which permanently releases that output even when
 /// the Design later concludes negatively. Otherwise it waits for its
 /// preparation to conclude positively; nothing else, including operator
-/// closure, releases it. Retained pre-cutover group markers are unsupported
-/// evidence and never participate in eligibility. A preparation a Plan
-/// constructs runs alongside it. An unknown preparation leaves the output
-/// gated. A gather task needs no authorization: it runs exactly while the
+/// closure, releases it. A preparation a Plan constructs runs alongside it.
+/// An unknown preparation leaves the output gated. A gather task needs no
+/// authorization: it runs exactly while the
 /// Design that constructed it is open and grouped.
 fn control_satisfied(statement: &wire::TaskHead, gather: bool, completed: &ResolvedTasks) -> bool {
     let Some(preparation) = &statement.preparation else {

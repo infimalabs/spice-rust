@@ -65,7 +65,6 @@ impl Lanes {
             preparation: None,
             intent,
             authorization: None,
-            engagement: None,
             evidence: Vec::new(),
             born,
             queue_origin: position,

@@ -252,7 +252,6 @@ fn board_task(
                 intent: None,
                 preparation: None,
                 authorization: None,
-                engagement: None,
                 evidence: Vec::new(),
                 handle: wire::TaskHandle::for_filing(project, &born, filing),
                 born: born.clone(),

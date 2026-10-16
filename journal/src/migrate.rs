@@ -185,7 +185,6 @@ pub(crate) fn admit(connection: &mut Connection) -> Result<Option<Migration>, Op
         let version = admit_readable_state(connection, stored_state(connection)?)?;
         if !PREDECESSOR_SCHEMAS.contains(&version) {
             admit_version(version)?;
-            residual::refuse_group_markers(connection)?;
             return Ok(None);
         }
         return cross_predecessor(connection);
@@ -333,7 +332,6 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     let version = admit_readable_state(&transaction, stored_state(&transaction)?)?;
     if !PREDECESSOR_SCHEMAS.contains(&version) {
         admit_version(version)?;
-        residual::refuse_group_markers(&transaction)?;
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
@@ -369,7 +367,6 @@ fn cross_shape_predecessor(
     transaction: &rusqlite::Transaction<'_>,
     version: u32,
 ) -> Result<(), OpenError> {
-    residual::refuse_group_markers(transaction)?;
     refuse_creation_omission(transaction)?;
     cross_oops_filing(transaction)?;
     let vendor_holds = residual::refuse(transaction)?;

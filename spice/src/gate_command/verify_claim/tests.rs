@@ -173,7 +173,6 @@ fn statement() -> TaskHead {
     TaskHead {
         preparation: None,
         authorization: None,
-        engagement: None,
         evidence: Vec::new(),
         intent: None,
         born,

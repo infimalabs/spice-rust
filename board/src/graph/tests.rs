@@ -28,7 +28,6 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
     let statement = TaskHead {
         preparation: None,
         authorization: None,
-        engagement: None,
         evidence: Vec::new(),
         intent: None,
         born: task,

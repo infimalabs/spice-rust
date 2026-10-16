@@ -67,22 +67,6 @@ const GROUP_PARTITION_RELEASE: &str = "45eb87f84";
 /// Retired per-group fact spellings.
 const GROUP_STORED_KIND: &str = "group::stored";
 const GROUP_REMOVED_KIND: &str = "group::removed";
-/// Last release whose runtime treated a working-group marker as execution
-/// authorization.
-pub(super) const GROUP_MARKER_RELEASE: &str = "4b805a018";
-
-/// Refuse retained group markers before any executable journal opens.
-pub(super) fn refuse_group_markers(connection: &Connection) -> Result<(), OpenError> {
-    refuse_first(
-        connection,
-        "task_heads",
-        "SELECT stamp FROM task_heads \
-         WHERE json_type(CAST(body AS TEXT), '$.engagement') IS NOT NULL ORDER BY stamp",
-        [],
-        GROUP_MARKER_RELEASE,
-        "the task statement retains a working-group authorization marker",
-    )
-}
 
 /// Refuse every retained shape without a current spelling before mutation, and
 /// derive every retained vendor-failure hold's refused input from its history.

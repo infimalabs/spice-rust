@@ -29,7 +29,6 @@ fn entries() -> Vec<board::Entry> {
             let statement = wire::TaskHead {
                 preparation: None,
                 authorization: None,
-                engagement: None,
                 evidence: Vec::new(),
                 intent: None,
                 born: born.clone(),

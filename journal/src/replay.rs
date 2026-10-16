@@ -843,14 +843,6 @@ fn verify_task_intents(
                     .to_owned(),
             ));
         }
-        if head.engagement.is_some() {
-            violations.push(Violation::new(
-                ViolationClass::Head,
-                format!("task_heads:{stamp}"),
-                "retained group marker belongs to release 4b805a018 and is not current authority"
-                    .to_owned(),
-            ));
-        }
         if let Some(preparation) = preparation
             && (preparation.parent == head.born
                 || [

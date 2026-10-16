@@ -142,7 +142,6 @@ fn fixture() -> Journal {
         write.task_head(fact, move |position| TaskHead {
             preparation: None,
             authorization: None,
-            engagement: None,
             evidence: Vec::new(),
             intent: None,
             born: statement_task,
