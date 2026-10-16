@@ -169,6 +169,12 @@ impl EmbeddedArchive {
         })))
     }
 
+    /// The immutable generation this embedded source serves.
+    #[must_use]
+    pub fn generation(&self) -> &wire::Digest {
+        &self.0.generation
+    }
+
     fn answer(&self, route: &str) -> CanvasAnswer {
         let path = if route == "/" {
             wire::manifest::APP_HTML
