@@ -703,3 +703,154 @@ fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
          and never the deferral"
     );
 }
+
+#[test]
+fn every_work_scope_writes_only_its_stable_route_identity() {
+    let public = WorkStemIdentity::new(WorkVisibility::Public, "alpha".to_owned());
+    let hidden = WorkStemIdentity::new(WorkVisibility::Hidden, "private".to_owned());
+    let team = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        .parse()
+        .expect("fixture team");
+    let group: wire::rooms::RoomAuthorityStamp = "dVxHkZhQY".parse().expect("fixture group");
+    for (scope, route) in [
+        (WorkScope::AllOpen, WorkRoute::AllOpen),
+        (
+            WorkScope::Stem(public.clone()),
+            WorkRoute::Stem(WorkRouteStem::new(false, "alpha".to_owned()).expect("public stem")),
+        ),
+        (
+            WorkScope::Stem(hidden.clone()),
+            WorkRoute::Stem(WorkRouteStem::new(true, "private".to_owned()).expect("hidden stem")),
+        ),
+        (
+            WorkScope::Planning { stem: None },
+            WorkRoute::Planning { stem: None },
+        ),
+        (
+            WorkScope::Planning { stem: Some(public) },
+            WorkRoute::Planning {
+                stem: Some(WorkRouteStem::new(false, "alpha".to_owned()).expect("planning stem")),
+            },
+        ),
+        (WorkScope::Team { team }, WorkRoute::Team(team)),
+        (
+            WorkScope::Group {
+                group: group.clone(),
+                designs: vec![stamp(1), stamp(2)],
+            },
+            WorkRoute::Group(group),
+        ),
+    ] {
+        assert_eq!(scope.route(), route);
+    }
+}
+
+#[test]
+fn durable_work_identities_resolve_only_after_their_mutable_authority_settles() {
+    let board = board(vec![task(1, "alpha.one"), task(2, ".private.two")]);
+    let pending = WorkProjection::from_board_and_lanes(&board, None);
+    let public = WorkRouteStem::new(false, "alpha".to_owned()).expect("public route stem");
+    let hidden = WorkRouteStem::new(true, "private".to_owned()).expect("hidden route stem");
+    let missing = WorkRouteStem::new(false, "missing".to_owned()).expect("missing route stem");
+
+    assert_eq!(
+        resolve_work_route(&WorkRoute::AllOpen, None, None),
+        WorkRouteResolution::Resolved(WorkScope::AllOpen)
+    );
+    assert_eq!(
+        resolve_work_route(&WorkRoute::Planning { stem: None }, None, None,),
+        WorkRouteResolution::Resolved(WorkScope::planning())
+    );
+    assert_eq!(
+        resolve_work_route(&WorkRoute::Stem(public.clone()), None, None),
+        WorkRouteResolution::Pending
+    );
+    assert!(matches!(
+        resolve_work_route(&WorkRoute::Stem(public), Some(&pending), None),
+        WorkRouteResolution::Resolved(WorkScope::Stem(_))
+    ));
+    assert!(matches!(
+        resolve_work_route(
+            &WorkRoute::Planning { stem: Some(hidden) },
+            Some(&pending),
+            None,
+        ),
+        WorkRouteResolution::Resolved(WorkScope::Planning { stem: Some(_) })
+    ));
+    assert_eq!(
+        resolve_work_route(&WorkRoute::Stem(missing), Some(&pending), None),
+        WorkRouteResolution::Missing
+    );
+
+    let team = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        .parse()
+        .expect("fixture team");
+    assert_eq!(
+        resolve_work_route(&WorkRoute::Team(team), Some(&pending), None),
+        WorkRouteResolution::Pending
+    );
+    let with_team = WorkProjection::from_board_with_team_memberships(
+        &board,
+        Some(BTreeSet::from([team])),
+        BTreeMap::new(),
+    );
+    assert_eq!(
+        resolve_work_route(&WorkRoute::Team(team), Some(&with_team), None),
+        WorkRouteResolution::Resolved(WorkScope::Team { team })
+    );
+
+    let group: wire::rooms::RoomAuthorityStamp = "dVxHkZhQY".parse().expect("fixture group");
+    assert_eq!(
+        resolve_work_route(&WorkRoute::Group(group.clone()), Some(&pending), None),
+        WorkRouteResolution::Pending
+    );
+    let partition = wire::rooms::WorkingGroupPartition {
+        revision: 1,
+        groups: vec![wire::rooms::WorkingGroup {
+            group: group.clone(),
+            anchors: vec![stamp(1), stamp(2)],
+            stance: wire::rooms::WorkingGroupStance::Explore,
+        }],
+        fast: Vec::new(),
+    };
+    assert_eq!(
+        resolve_work_route(
+            &WorkRoute::Group(group.clone()),
+            Some(&pending),
+            Some(&partition),
+        ),
+        WorkRouteResolution::Resolved(WorkScope::Group {
+            group: group.clone(),
+            designs: vec![stamp(1), stamp(2)],
+        })
+    );
+    let changed_partition = wire::rooms::WorkingGroupPartition {
+        revision: 2,
+        groups: vec![wire::rooms::WorkingGroup {
+            group: group.clone(),
+            anchors: vec![stamp(2)],
+            stance: wire::rooms::WorkingGroupStance::Converge,
+        }],
+        fast: Vec::new(),
+    };
+    assert_eq!(
+        resolve_work_route(
+            &WorkRoute::Group(group.clone()),
+            Some(&pending),
+            Some(&changed_partition),
+        ),
+        WorkRouteResolution::Resolved(WorkScope::Group {
+            group: group.clone(),
+            designs: vec![stamp(2)],
+        }),
+        "the same durable group route follows current partition membership"
+    );
+    assert_eq!(
+        resolve_work_route(
+            &WorkRoute::Group("dVxHkZhQZ".parse().expect("absent group")),
+            Some(&pending),
+            Some(&partition),
+        ),
+        WorkRouteResolution::Missing
+    );
+}

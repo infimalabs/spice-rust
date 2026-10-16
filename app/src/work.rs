@@ -35,6 +35,7 @@ use wire::intent::{BoardTask, ProjectVisibility};
 use wire::{Actor, TaskStamp};
 
 use crate::runtime::{BoardView, LaneMember, LaneView};
+use crate::view::{WorkRoute, WorkRouteStem};
 use crate::watchband;
 
 /// One mutually exclusive task lifecycle in the current board projection,
@@ -151,6 +152,16 @@ pub enum WorkScope {
         designs: Vec<wire::TaskStamp>,
     },
 }
+/// Resolution of one durable Work identity against hydrated mutable authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum WorkRouteResolution {
+    /// The board, team topology, or working-group partition has not settled.
+    Pending,
+    /// Hydrated authority proves that this identity is absent.
+    Missing,
+    /// The current authority resolves the identity to this selection scope.
+    Resolved(WorkScope),
+}
 
 impl WorkStemIdentity {
     #[must_use]
@@ -210,6 +221,101 @@ impl WorkScope {
         match self {
             Self::Team { team } => Some(*team),
             Self::AllOpen | Self::Stem(_) | Self::Planning { .. } | Self::Group { .. } => None,
+        }
+    }
+}
+
+impl WorkScope {
+    /// Stable durable identity for this scope. Current group membership is not
+    /// serialized into the route.
+    #[must_use]
+    pub(crate) fn route(&self) -> WorkRoute {
+        match self {
+            Self::AllOpen => WorkRoute::AllOpen,
+            Self::Stem(stem) => WorkRoute::Stem(stem.route_stem()),
+            Self::Planning { stem } => WorkRoute::Planning {
+                stem: stem.as_ref().map(WorkStemIdentity::route_stem),
+            },
+            Self::Team { team } => WorkRoute::Team(*team),
+            Self::Group { group, .. } => WorkRoute::Group(group.clone()),
+        }
+    }
+}
+
+impl WorkStemIdentity {
+    fn route_stem(&self) -> WorkRouteStem {
+        WorkRouteStem::new(self.hidden(), self.stem.clone())
+            .expect("an admitted board project has a canonical stem")
+    }
+}
+
+/// Resolve a durable Work identity through current board, topology, and group
+/// authority. All-open and all-planning exist even before either is populated.
+#[must_use]
+pub(crate) fn resolve_work_route(
+    route: &WorkRoute,
+    work: Option<&WorkProjection<'_>>,
+    groups: Option<&wire::rooms::WorkingGroupPartition>,
+) -> WorkRouteResolution {
+    let stem = |stem: &WorkRouteStem| {
+        WorkStemIdentity::new(
+            if stem.hidden() {
+                WorkVisibility::Hidden
+            } else {
+                WorkVisibility::Public
+            },
+            stem.stem().to_owned(),
+        )
+    };
+    match route {
+        WorkRoute::AllOpen => WorkRouteResolution::Resolved(WorkScope::AllOpen),
+        WorkRoute::Planning { stem: None } => WorkRouteResolution::Resolved(WorkScope::planning()),
+        WorkRoute::Stem(route_stem)
+        | WorkRoute::Planning {
+            stem: Some(route_stem),
+        } => {
+            let Some(work) = work else {
+                return WorkRouteResolution::Pending;
+            };
+            let identity = stem(route_stem);
+            let scope = if matches!(route, WorkRoute::Stem(_)) {
+                WorkScope::Stem(identity)
+            } else {
+                WorkScope::Planning {
+                    stem: Some(identity),
+                }
+            };
+            if work.contains_scope(&scope) == Some(true) {
+                WorkRouteResolution::Resolved(scope)
+            } else {
+                WorkRouteResolution::Missing
+            }
+        }
+        WorkRoute::Team(team) => {
+            let Some(work) = work else {
+                return WorkRouteResolution::Pending;
+            };
+            let scope = WorkScope::Team { team: *team };
+            match work.contains_scope(&scope) {
+                Some(true) => WorkRouteResolution::Resolved(scope),
+                Some(false) => WorkRouteResolution::Missing,
+                None => WorkRouteResolution::Pending,
+            }
+        }
+        WorkRoute::Group(group) => {
+            let Some(groups) = groups else {
+                return WorkRouteResolution::Pending;
+            };
+            groups
+                .groups
+                .iter()
+                .find(|candidate| candidate.group == *group)
+                .map_or(WorkRouteResolution::Missing, |candidate| {
+                    WorkRouteResolution::Resolved(WorkScope::Group {
+                        group: candidate.group.clone(),
+                        designs: candidate.anchors.clone(),
+                    })
+                })
         }
     }
 }
@@ -647,9 +753,10 @@ impl<'a> WorkProjection<'a> {
     pub fn contains_scope(&self, scope: &WorkScope) -> Option<bool> {
         match scope {
             WorkScope::AllOpen | WorkScope::Planning { stem: None } => Some(true),
-            WorkScope::Stem(_) | WorkScope::Planning { stem: Some(_) } => {
-                Some(self.tasks.iter().any(|task| self.in_scope(task, scope)))
-            }
+            WorkScope::Stem(identity)
+            | WorkScope::Planning {
+                stem: Some(identity),
+            } => Some(self.stem(identity).is_some()),
             WorkScope::Team { team } => self.teams.as_ref().map(|teams| teams.contains(team)),
             WorkScope::Group { .. } => Some(true),
         }

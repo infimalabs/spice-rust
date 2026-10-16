@@ -212,6 +212,20 @@ Surfaces that refine the law:
 
 Mutation replies are outside this contract: they stay complete and concise.
 
+## Browser Work deep links
+
+Work is a durable task-set location over the always-mounted Chat surface, not a
+separate page. `#/work` names all execution work; its canonical refinements name
+a public or hidden stem, all or stem-scoped Design planning, one team UUID, or
+one working-group room stamp. Stem spelling is the admitted project root as one
+literal path segment. Team and group URLs serialize only their stable identity;
+the hydrated topology or working-group partition supplies current membership.
+Missing typed identities and every malformed or query-bearing spelling return
+to `#/chat` with a visible refusal. Project, individual-task, relationship, and
+composed selections remain browser-local and release a Work URL before opening.
+The complete route grammar and overview behavior live in
+[`app/OVERVIEW.md`](../../app/OVERVIEW.md#task-overview).
+
 ## Kept jobs
 
 The occupant's `job` tool reads the same contract. Its default `list` is every

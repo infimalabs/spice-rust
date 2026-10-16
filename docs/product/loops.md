@@ -145,6 +145,13 @@ flowchart LR
   so an authored root is never invisible to a lane that may be allocated it.
   Hidden roots remain reserved for their typed system routes and stay out of
   other actors' default reads.
+- Work controls project these same current tasks into durable `#/work...` deep
+  links over Chat, never into a separate page. Stem routes retain their exact
+  public or hidden root; team and working-group routes retain only stable
+  identity and re-resolve current membership after topology or partition
+  changes. All-open and all-planning scopes survive emptiness. A hydrated
+  missing identity refuses to Chat, while project, single-task, relationship,
+  and composed overview selections stay browser-local.
 - `task oops` files one ordinary Plan directly beneath the repository-owned
   opportunistic OOPS Design. The command uses `--project` or derives the one
   public project held by the actor; zero or multiple eligible claims refuse

@@ -1,6 +1,6 @@
 use super::{
-    AppRoute, CreatorContextTarget, RouteEvidence, normalize_app_location, opening_auth_token,
-    team_stream_card_target, team_stream_card_team,
+    AppRoute, CreatorContextTarget, OverviewRouteIntent, RouteEvidence, WorkRoute, WorkRouteStem,
+    normalize_app_location, opening_auth_token, team_stream_card_target, team_stream_card_team,
 };
 
 const CARD: &str = "message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1";
@@ -17,6 +17,70 @@ fn canonical_durable_routes_round_trip_exactly() {
         assert_eq!(AppRoute::from_path(path), Some(route.clone()), "{path}");
         assert_eq!(route.path(), path);
     }
+}
+
+#[test]
+fn canonical_work_routes_round_trip_exactly() {
+    let public = || WorkRouteStem::new(false, "alpha_2".to_owned()).expect("public stem");
+    let hidden = || WorkRouteStem::new(true, "private".to_owned()).expect("hidden stem");
+    let team = "01234567-89ab-cdef-0123-456789abcdef"
+        .parse()
+        .expect("fixture team");
+    let group = "dVxHkZhQY".parse().expect("fixture group");
+    for (path, route) in [
+        ("/work", WorkRoute::AllOpen),
+        ("/work/stem/public/alpha_2", WorkRoute::Stem(public())),
+        ("/work/stem/hidden/private", WorkRoute::Stem(hidden())),
+        ("/work/planning", WorkRoute::Planning { stem: None }),
+        (
+            "/work/planning/public/alpha_2",
+            WorkRoute::Planning {
+                stem: Some(public()),
+            },
+        ),
+        (
+            "/work/planning/hidden/private",
+            WorkRoute::Planning {
+                stem: Some(hidden()),
+            },
+        ),
+        (
+            "/work/team/01234567-89ab-cdef-0123-456789abcdef",
+            WorkRoute::Team(team),
+        ),
+        ("/work/group/dVxHkZhQY", WorkRoute::Group(group)),
+    ] {
+        let route = AppRoute::work(route);
+        assert_eq!(AppRoute::from_path(path), Some(route.clone()), "{path}");
+        assert_eq!(route.path(), path);
+        let location = normalize_app_location("", &format!("#{path}"));
+        assert_eq!(location.route(), &route, "{path}");
+        assert!(!location.needs_replace(), "{path}");
+        assert_eq!(location.notice(), None, "{path}");
+    }
+}
+
+#[test]
+fn overview_intents_acquire_and_release_only_work_locations() {
+    let chat = AppRoute::chat();
+    let work = AppRoute::work(WorkRoute::AllOpen);
+    assert_eq!(
+        chat.overview_transition(OverviewRouteIntent::Work(WorkRoute::AllOpen)),
+        Some(work.clone())
+    );
+    assert_eq!(
+        work.overview_transition(OverviewRouteIntent::BrowserLocal),
+        Some(chat.clone())
+    );
+    assert_eq!(
+        work.overview_transition(OverviewRouteIntent::Close),
+        Some(chat.clone())
+    );
+    assert_eq!(
+        chat.overview_transition(OverviewRouteIntent::BrowserLocal),
+        None
+    );
+    assert_eq!(chat.overview_transition(OverviewRouteIntent::Close), None);
 }
 
 #[test]
@@ -66,6 +130,21 @@ fn malformed_locations_are_not_routes() {
         "/chat/card/message_agent",
         "/chat/message-agent",
         "/dash/card/message-agent",
+        "/work/",
+        "/work/stem",
+        "/work/stem/public",
+        "/work/stem/public/Alpha",
+        "/work/stem/public/a.b",
+        "/work/stem/public/a%2fb",
+        "/work/stem/other/alpha",
+        "/work/planning/public",
+        "/work/planning/public/alpha/extra",
+        "/work/team",
+        "/work/team/01234567-89AB-CDEF-0123-456789ABCDEF",
+        "/work/group",
+        "/work/group/123456789",
+        "/work/groups/dVxHkZhQY",
+        "/work/unknown",
     ] {
         assert_eq!(AppRoute::from_path(path), None, "{path}");
     }
@@ -98,11 +177,19 @@ fn app_locations_canonicalize_chat_spellings_without_a_notice() {
 fn unknown_app_locations_open_chat_and_name_the_refused_input() {
     for (search, hash) in [
         ("?page=work", ""),
+        ("?filter=ready", "#/work"),
         ("", "#/unknown"),
         ("", "#/work?scope=all"),
+        ("", "#/work/"),
+        ("", "#/work/stem"),
+        ("", "#/work/stem/public/Alpha"),
+        ("", "#/work/stem/public/a%2fb"),
+        ("", "#/work/planning/public/alpha/extra"),
         ("", "#/card/message-agent"),
         ("", "#/work/public/a%2f"),
         ("", "#/work/team/not-a-team"),
+        ("", "#/work/team/01234567-89AB-CDEF-0123-456789ABCDEF"),
+        ("", "#/work/group/123456789"),
         ("", "#/work/teams/01234567-89ab-cdef-0123-456789abcdef"),
         ("", "#/dash"),
         ("", "#dash"),
