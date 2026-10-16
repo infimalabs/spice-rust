@@ -251,8 +251,10 @@ same text `spice://room/inbox` prints; the transcript echo stands in while
 that read runs. An ASK item leads with the answer it owes: **Answer** sends the
 reply back to the requesting lane as an ANS and settles the receipt, and
 **Decline** refuses the question. Its receipt row is separate: ACK only marks
-the item seen and NAK declines it. An MSG item offers only that receipt row.
-**Recover** returns a lapsed receipt to pending. Closing a lane party's
+the item seen and NAK declines it. An MSG or ANS item offers **Reply**, ACK,
+and NAK: Reply sends waking operator direction to its author lane and settles
+the item, while ACK and NAK settle silently. **Recover** returns a lapsed
+receipt to pending. Closing a lane party's
 question is an explicit override. The catalog keeps an operator-targeted ASK in
 immutable admission order while either its receipt or its answer duty remains
 open, so ACK cannot hide the still-pending result. Receipt and result rows keep

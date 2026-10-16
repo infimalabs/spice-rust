@@ -465,8 +465,9 @@ owns each rule summarized here.
   with `spice room post` in any task's room that is not deleted; writing one
   makes its author no listener. The operator answers with `spice room answer`
   and replies to a lane's MSG or ANS item with `spice room reply`, operator
-  direction to that lane. A tool call's intent may retire a key, but publishes
-  only as the narrow fallback for a message with no text block.
+  direction to that lane. When the source packet speaks in exactly one room,
+  the reply records there too. A tool call's intent may retire a key, but
+  publishes only as the narrow fallback for a message with no text block.
 - **Delivery.** A directed route is a native steering directive bound to the
   logical lane: vacancy, resume, and renewal keep its key, body, and expiry for
   whichever occupant sits there next, while a replacement lane inherits

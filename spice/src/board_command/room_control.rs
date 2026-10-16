@@ -261,9 +261,8 @@ fn reply(
     key: &RoomReceiptRef,
     text: &str,
 ) -> Result<(Outcome<CommandAnswer>, CanonicalUuid), Outcome<CommandAnswer>> {
-    let ((record, head), lane, cited) = repliable(bus, key, text)?;
+    let (head, lane, cited, context) = repliable(bus, key, text)?;
     let at = now()?;
-    let context = record.context().cloned();
     let origin = match &context {
         Some(room) => task_origin(room)?,
         None => resident_origin(command)?,
@@ -344,13 +343,21 @@ fn reply(
 }
 
 /// The pending lane-opened item `text` may reply to now, with the resident
-/// lane the reply returns to and how the reply cites what it answers: the
-/// MSG's direction key or the ANS's result.
+/// lane the reply returns to, how the reply cites what it answers, and the
+/// source publication's one unambiguous room, when it names one.
 fn repliable(
     bus: &Bus,
     key: &RoomReceiptRef,
     text: &str,
-) -> Result<(Item, CanonicalUuid, String), Outcome<CommandAnswer>> {
+) -> Result<
+    (
+        journal::JournalHead<RoomReceiptHead>,
+        CanonicalUuid,
+        String,
+        Option<RoomAnchor>,
+    ),
+    Outcome<CommandAnswer>,
+> {
     require_text(text, "reply")?;
     let (record, head) = item(bus, key)?;
     let state = head.body().state();
@@ -373,6 +380,7 @@ fn repliable(
             &format!("operator item {key} was not opened by a lane"),
         ));
     };
+    let context = reply_room(&record, &opened);
     let cited = match opened.kind() {
         wire::rooms::RoomPublicationKind::Msg {} => opened
             .routes()
@@ -404,7 +412,35 @@ fn repliable(
             ),
         ));
     }
-    Ok(((record, head), lane, cited))
+    Ok((head, lane, cited, context))
+}
+
+/// The item context stored for an ANS return, or the one distinct room an MSG
+/// explicitly speaks in. A multi-room packet has no single room for one
+/// operator post to enter.
+fn reply_room(
+    record: &RoomReceiptRecord,
+    publication: &wire::rooms::RoomPublication,
+) -> Option<RoomAnchor> {
+    if let Some(room) = record.context() {
+        return Some(room.clone());
+    }
+    let mut room = None;
+    for route in publication.routes() {
+        let candidate = match &route.destination {
+            RoomDestination::Task { task } => Some(task),
+            _ => route.context.as_ref(),
+        };
+        let Some(candidate) = candidate else {
+            continue;
+        };
+        match &room {
+            Some(known) if known != candidate => return None,
+            Some(_) => {}
+            None => room = Some(candidate.clone()),
+        }
+    }
+    room
 }
 
 /// The pending operator-answered question `text` may answer now, with the
