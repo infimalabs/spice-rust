@@ -41,6 +41,19 @@ pub enum ItemConcern {
     Unnamed,
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+/// One operator-direction route's visible destination. The resolved principal
+/// outranks its concern key; retained routes lacking both name neither the
+/// invalid context-free selector nor a guessed principal.
+pub(crate) fn operator_destination_label(
+    recipient: Option<String>,
+    direction: Option<&str>,
+) -> String {
+    recipient.unwrap_or_else(|| {
+        direction.map_or_else(|| "retained recipient".to_owned(), |key| format!("#{key}"))
+    })
+}
+
 impl AppRuntime {
     /// The on-demand text of one lane-authored conversation publication.
     #[must_use]
@@ -166,5 +179,23 @@ impl AppRuntime {
     pub(super) fn forget_conversation_text_reads(&mut self) {
         self.conversation_texts
             .retain(|_, text| *text != ConversationText::Loading);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::operator_destination_label;
+
+    #[test]
+    fn operator_route_names_its_principal_then_its_concern() {
+        assert_eq!(
+            operator_destination_label(Some("CA".to_owned()), Some("dWDcRoute")),
+            "CA"
+        );
+        assert_eq!(
+            operator_destination_label(None, Some("dWDcRoute")),
+            "#dWDcRoute"
+        );
+        assert_eq!(operator_destination_label(None, None), "retained recipient");
     }
 }

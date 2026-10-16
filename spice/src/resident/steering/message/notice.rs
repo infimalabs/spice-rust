@@ -334,9 +334,10 @@ impl MessageRecordedNotice {
              it, and nothing woke anyone."
         };
         let held = if self.held_room {
-            " It pointed at your own held task. Ordinary output needs no packet header, and \
-             `MSG ADDRESS:` alone delivers to a peer; use `#TASK` when the operator should \
-             receive it as a task concern and the room should record it."
+            " It pointed at your own held task. Ordinary output needs no packet header. \
+             `MSG ADDRESS:` delivers to a peer, while `#TASK` only records that room. To \
+             raise a concern with the principal who assigned the work, use \
+             `MSG #DIRECTION: BODY`, replacing `DIRECTION` with that direction's exact key."
         } else {
             ""
         };
@@ -387,9 +388,9 @@ impl MessageRefusalNotice {
             "<system-notice>\nYour packet `{}` at line {}, column {} of its assistant text \
              block {outcome}: {}: {}. {missed}. Name exact addresses of other seated \
              occupants (`spice lane list` shows each lane's), or point at one concern the \
-             operator already sees: `#KEY` of an operator direction sent to this lane or \
-             `#TASK` of the task or room this is about. A task pointer also records the \
-             packet in that room. Give an ASK exactly one selector and an ANS exactly its \
+             assigning principal already sees: `#DIRECTION` with the exact key of an operator \
+             direction sent to this lane. `#TASK` only records the task or room and reaches \
+             nobody by itself. Give an ASK exactly one selector and an ANS exactly its \
              question's result handle; qualify an occupant or result with `#TASK` only for \
              an existing task's handle, close the list with a colon, and author a packet to \
              the routes that still need it in new visible text. This is a private refusal \

@@ -184,14 +184,17 @@ preparation authority.
 Operator posts and lane MSG, ASK, and ANS publications share one card family:
 sender → destinations, verb, and text. A lane's own bytes come from its
 transcript echo; absent that, the text its native delivery carried stands in.
-Each card separates being recorded in the room, each route's receipt
-(pending, queued for a vacant lane and unheard, vacant, unavailable, acked,
-declined, expired, or cancelled), and a question's substantive result
-(pending against its deadline and the requester's pending-result capacity,
-answered, declined, cancelled, or timed out). ACK settles only a receipt; an
-answer is its own ANS card whose return carries a separate receipt. None of
-these is styled as review evidence or output authorization, which stay on
-their exact proposal version and in immutable preparation authority.
+An operator-direction route names the principal that direction reaches; while
+that recipient read is unavailable it names the route's `#KEY` concern, never
+the retired context-free `operator` spelling. Each card separates being
+recorded in the room, each route's receipt (pending, queued for a vacant lane
+and unheard, vacant, unavailable, acked, declined, expired, or cancelled), and
+a question's substantive result (pending against its deadline and the
+requester's pending-result capacity, answered, declined, cancelled, or timed
+out). ACK settles only a receipt; an answer is its own ANS card whose return
+carries a separate receipt. None of these is styled as review evidence or
+output authorization, which stay on their exact proposal version and in
+immutable preparation authority.
 
 A Design's read view groups its [typed contributions](DESIGNS.md#design-contributions)
 by kind above the room history, which keeps them in journal order among the

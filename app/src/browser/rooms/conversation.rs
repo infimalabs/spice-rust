@@ -359,6 +359,7 @@ fn routes(act: Act<'_>, conversation: &Conversation) -> Vec<Route> {
                 return_delivery, ..
             }) => vec![delivery_route(
                 act,
+                conversation,
                 return_delivery.destination(),
                 return_delivery.delivery(),
             )],
@@ -375,10 +376,13 @@ fn routes(act: Act<'_>, conversation: &Conversation) -> Vec<Route> {
                 Some(directive) => directive_route(act.runtime, *directive, Some(*lane), ""),
                 None => unavailable_route(lane_label(act.runtime, *lane)),
             },
-            RoomDestination::Operator {} => match conversation.publication.operator_item() {
-                Some((item, _)) => item_route(act, &item, "Operator", ""),
-                None => unavailable_route("Operator".to_owned()),
-            },
+            RoomDestination::Operator {} => {
+                let destination = operator_destination(act.runtime, conversation);
+                match conversation.publication.operator_item() {
+                    Some((item, _)) => item_route(act, &item, &destination, ""),
+                    None => unavailable_route(destination),
+                }
+            }
             RoomDestination::Task { task } => {
                 let destination = format!("#{}", super::anchor_label(act.runtime, task));
                 Route {
@@ -394,8 +398,36 @@ fn routes(act: Act<'_>, conversation: &Conversation) -> Vec<Route> {
         .collect()
 }
 
+/// The principal an operator route reaches, or its concern while that
+/// principal's read is unavailable. Never present the retired context-free
+/// `operator` selector as though the author had named it.
+fn operator_destination(runtime: &AppRuntime, conversation: &Conversation) -> String {
+    let recipient = match runtime.conversation_text(conversation.publication.publication()) {
+        Some(ConversationText::Read {
+            recipient: Some(recipient),
+            ..
+        }) => Some(crate::work::owner_label(
+            recipient,
+            None,
+            runtime.principals(),
+        )),
+        _ => None,
+    };
+    let direction = conversation.publication.routes().iter().find_map(|route| {
+        matches!(route.destination, RoomDestination::Operator {})
+            .then_some(route.direction.as_deref())
+            .flatten()
+    });
+    crate::runtime::operator_destination_label(recipient, direction)
+}
+
 /// An answer's return, receipted like any delivery but named as the return.
-fn delivery_route(act: Act<'_>, destination: &RoomDestination, delivery: &RoomDelivery) -> Route {
+fn delivery_route(
+    act: Act<'_>,
+    conversation: &Conversation,
+    destination: &RoomDestination,
+    delivery: &RoomDelivery,
+) -> Route {
     const LEAD: &str = "Return to ";
     match delivery {
         RoomDelivery::Directive { directive } => {
@@ -405,7 +437,10 @@ fn delivery_route(act: Act<'_>, destination: &RoomDestination, delivery: &RoomDe
             };
             directive_route(act.runtime, *directive, lane, LEAD)
         }
-        RoomDelivery::Item { item } => item_route(act, item, "Operator", LEAD),
+        RoomDelivery::Item { item } => {
+            let destination = operator_destination(act.runtime, conversation);
+            item_route(act, item, &destination, LEAD)
+        }
     }
 }
 
