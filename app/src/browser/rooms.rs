@@ -491,15 +491,33 @@ fn submit_change(
         Rc::new(
             move |result: Result<wire::intent::WorkingGroupChange, String>| {
                 let message = match result {
-                    Ok(change) => match change.status {
-                        WorkingGroupChangeStatus::Moved => "Design moved.".to_owned(),
-                        WorkingGroupChangeStatus::Ended => {
-                            "Design moved; its group ended with its last design.".to_owned()
+                    Ok(change) => {
+                        let done = match change.status {
+                            WorkingGroupChangeStatus::Moved => "Design moved.".to_owned(),
+                            WorkingGroupChangeStatus::Ended => {
+                                "Design moved; its group ended with its last design.".to_owned()
+                            }
+                            WorkingGroupChangeStatus::Arranged => {
+                                "Working groups arranged.".to_owned()
+                            }
+                            WorkingGroupChangeStatus::Retuned => "Group fast mode set.".to_owned(),
+                            WorkingGroupChangeStatus::Stanced => "Group stance set.".to_owned(),
+                            WorkingGroupChangeStatus::Shelved => {
+                                "Owed shelving committed.".to_owned()
+                            }
+                        };
+                        if change.owed.is_empty() {
+                            done
+                        } else {
+                            let owed = change
+                                .owed
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            format!("{done} Shelving is still owed for {owed}.")
                         }
-                        WorkingGroupChangeStatus::Arranged => "Working groups arranged.".to_owned(),
-                        WorkingGroupChangeStatus::Retuned => "Group fast mode set.".to_owned(),
-                        WorkingGroupChangeStatus::Stanced => "Group stance set.".to_owned(),
-                    },
+                    }
                     Err(error) => error,
                 };
                 controls.report(message);

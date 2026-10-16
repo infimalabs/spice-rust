@@ -503,9 +503,10 @@ fn stage_withdrawal(
     Ok(Some(Withdrawn { stop }))
 }
 
-/// A Design's room as read before a partition change makes the Design passive.
-/// The change withdraws the room's coordination and asks the lane holding the
-/// Design to park, either in the move write or in a following task-origin write.
+/// A Design's room as read before or after a partition change makes the Design
+/// passive. The change withdraws the room's coordination and asks the lane
+/// holding the Design to park, either in the move write or in a following
+/// task-origin write.
 pub(super) struct Deactivation {
     snapshot: ValidatedSnapshot,
     anchor: Entry,
@@ -547,6 +548,12 @@ impl Deactivation {
             coordination,
             current,
         }))
+    }
+
+    /// Whether the room owes nothing: no live coordination to withdraw and no
+    /// holder without a standing stop for its current claim win.
+    pub(super) fn is_quiescent(&self) -> bool {
+        quiescent(&self.current, &self.heads)
     }
 
     /// The origin the partition change commits under: the partition's own,
@@ -604,17 +611,15 @@ impl Deactivation {
     }
 
     /// Commit this room's deactivation under its own task origin after the
-    /// shared partition has made it passive.
+    /// shared partition has made it passive. A guard refusal means the room
+    /// moved since it was read, so the caller reads it again.
     pub(super) fn commit(
         self,
         bus: &Bus,
         command: &wire::AdmittedCommand,
         config: &steer::Config,
         directive: (CanonicalUuid, CanonicalUuid),
-    ) -> Result<Option<CanonicalUuid>, Outcome<CommandAnswer>> {
-        if quiescent(&self.current, &self.heads) {
-            return Ok(None);
-        }
+    ) -> Result<Shelving, Outcome<CommandAnswer>> {
         let origin = self.origin()?;
         let at = current_instant()?;
         let mut write =
@@ -624,16 +629,30 @@ impl Deactivation {
             .commit(write)
             .map_err(|error| store_fault("room::deactivation-commit", &error.to_string()))?
         {
-            CommitOutcome::Committed(_) => Ok(lane),
-            CommitOutcome::Refused(refusal) => Err(store_fault(
-                "room::deactivation-refused",
-                &refusal.to_string(),
-            )),
+            CommitOutcome::Committed(commit) => Ok(Shelving::Committed {
+                range: SeqRange {
+                    first: seq(commit.first()),
+                    last: seq(commit.last()),
+                },
+                lane,
+            }),
+            CommitOutcome::Refused(_) => Ok(Shelving::Moved),
             CommitOutcome::Fault(fault) => {
                 Err(store_fault("room::deactivation-fault", &fault.to_string()))
             }
         }
     }
+}
+
+/// What one task-origin deactivation write did.
+pub(super) enum Shelving {
+    /// Its withdrawal committed over `range`, asking `lane` to park.
+    Committed {
+        range: SeqRange,
+        lane: Option<CanonicalUuid>,
+    },
+    /// The room moved since it was read; read it again.
+    Moved,
 }
 
 fn cancel_requests(

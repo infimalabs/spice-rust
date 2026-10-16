@@ -349,96 +349,101 @@ impl<'a> Surface<'a> {
         &self,
         command: &wire::AdmittedCommand,
     ) -> Option<CommandDispatch> {
-        let (outcome, notify) = match (command.kind(), command.body()) {
-            (CommandKind::RoomCoordinate, Intent::RoomCoordinate(request)) => (
-                crate::board_command::room_coordinate(
-                    self.bus,
-                    command,
-                    request,
-                    &self.config.steering,
-                    &self.config.projects,
-                    &self.config.allocation,
+        let (outcome, notify): (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) =
+            match (command.kind(), command.body()) {
+                (CommandKind::RoomCoordinate, Intent::RoomCoordinate(request)) => (
+                    crate::board_command::room_coordinate(
+                        self.bus,
+                        command,
+                        request,
+                        &self.config.steering,
+                        &self.config.projects,
+                        &self.config.allocation,
+                    ),
+                    crate::board_command::coordination_lane(self.bus, request.target)
+                        .into_iter()
+                        .collect(),
                 ),
-                crate::board_command::coordination_lane(self.bus, request.target),
-            ),
-            (CommandKind::RoomPutAside, Intent::RoomPutAside(request)) => {
-                let outcome = crate::board_command::room_put_aside(
-                    self.bus,
-                    command,
-                    request,
-                    &self.config.steering,
-                    &self.config.projects,
-                    &self.config.allocation,
-                );
-                let notify = match &outcome {
-                    Outcome::Reply(Reply {
-                        body: CommandAnswer::RoomCoordination(view),
-                        ..
-                    }) => view.stop.as_ref().and_then(|stop| {
-                        crate::board_command::coordination_lane(self.bus, stop.target)
-                    }),
-                    _ => None,
-                };
-                (outcome, notify)
-            }
-            (CommandKind::WorkingGroupMove, Intent::WorkingGroupMove(request)) => {
-                crate::board_command::move_working_group(
-                    self.bus,
-                    command,
-                    request,
-                    &self.config.steering,
-                    &self.config.projects,
-                    &self.config.allocation,
-                )
-            }
-            (CommandKind::WorkingGroupStance, Intent::WorkingGroupStance(request)) => {
-                crate::board_command::set_working_group_stance(
-                    self.bus,
-                    command,
-                    request,
-                    &self.config.steering,
-                    &self.config.projects,
-                    &self.config.allocation,
-                )
-            }
-            (CommandKind::RoomLeave, Intent::RoomLeave(leave)) => (
-                crate::board_command::room_leave(
-                    self.bus,
-                    command,
-                    leave,
-                    &self.config.projects,
-                    &self.config.allocation,
+                (CommandKind::RoomPutAside, Intent::RoomPutAside(request)) => {
+                    let outcome = crate::board_command::room_put_aside(
+                        self.bus,
+                        command,
+                        request,
+                        &self.config.steering,
+                        &self.config.projects,
+                        &self.config.allocation,
+                    );
+                    let notify = match &outcome {
+                        Outcome::Reply(Reply {
+                            body: CommandAnswer::RoomCoordination(view),
+                            ..
+                        }) => view.stop.as_ref().and_then(|stop| {
+                            crate::board_command::coordination_lane(self.bus, stop.target)
+                        }),
+                        _ => None,
+                    };
+                    (outcome, notify.into_iter().collect())
+                }
+                (CommandKind::WorkingGroupMove, Intent::WorkingGroupMove(request)) => {
+                    let (outcome, parked) = crate::board_command::move_working_group(
+                        self.bus,
+                        command,
+                        request,
+                        &self.config.steering,
+                        &self.config.projects,
+                        &self.config.allocation,
+                    );
+                    (outcome, parked.into_iter().collect())
+                }
+                (CommandKind::WorkingGroupStance, Intent::WorkingGroupStance(request)) => {
+                    crate::board_command::set_working_group_stance(
+                        self.bus,
+                        command,
+                        request,
+                        &self.config.steering,
+                        &self.config.projects,
+                        &self.config.allocation,
+                    )
+                }
+                (CommandKind::RoomLeave, Intent::RoomLeave(leave)) => (
+                    crate::board_command::room_leave(
+                        self.bus,
+                        command,
+                        leave,
+                        &self.config.projects,
+                        &self.config.allocation,
+                    ),
+                    Vec::new(),
                 ),
-                None,
-            ),
-            (CommandKind::RoomContribute, Intent::RoomContribute(contribute)) => (
-                crate::board_command::room_contribute(
-                    self.bus,
-                    command,
-                    contribute,
-                    Some(crate::room_command::SourceOwners {
-                        tape: &self.paths.tape,
-                        artifacts: &self.paths.artifacts(),
-                    }),
-                    &self.config.projects,
-                    &self.config.allocation,
+                (CommandKind::RoomContribute, Intent::RoomContribute(contribute)) => (
+                    crate::board_command::room_contribute(
+                        self.bus,
+                        command,
+                        contribute,
+                        Some(crate::room_command::SourceOwners {
+                            tape: &self.paths.tape,
+                            artifacts: &self.paths.artifacts(),
+                        }),
+                        &self.config.projects,
+                        &self.config.allocation,
+                    ),
+                    Vec::new(),
                 ),
-                None,
-            ),
-            (CommandKind::RoomControl, Intent::RoomControl(control)) => {
-                crate::board_command::room_control(
-                    self.bus,
-                    command,
-                    control,
-                    &self.config.steering,
-                )
-            }
-            (CommandKind::RoomClose, Intent::RoomClose(close)) => (
-                crate::board_command::room_close(self.bus, command, close),
-                None,
-            ),
-            _ => return None,
-        };
+                (CommandKind::RoomControl, Intent::RoomControl(control)) => {
+                    let (outcome, notify) = crate::board_command::room_control(
+                        self.bus,
+                        command,
+                        control,
+                        &self.config.steering,
+                    );
+                    (outcome, notify.into_iter().collect())
+                }
+                (CommandKind::RoomClose, Intent::RoomClose(close)) => (
+                    crate::board_command::room_close(self.bus, command, close),
+                    Vec::new(),
+                ),
+                _ => return None,
+            };
         let mut effects = CommandEffects::default();
         if matches!(
             &outcome,
@@ -446,9 +451,10 @@ impl<'a> Surface<'a> {
                 position: ReplyPosition::Committed(_),
                 ..
             })
-        ) && let Some(lane) = notify
-        {
-            effects.notify_inbox(lane);
+        ) {
+            for lane in notify {
+                effects.notify_inbox(lane);
+            }
         }
         Some(CommandDispatch::with_effects(outcome, effects))
     }

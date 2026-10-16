@@ -2,7 +2,9 @@
 //! Design: who can claim it, and what becoming passive asks of its holder.
 
 use super::super::preparation::add_controller;
+use super::super::reclaim::free_active;
 use super::*;
+use wire::intent::WorkingGroupChangeStatus;
 
 pub(super) fn design(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
     add_controller(bus, epoch, name, wire::TaskIntent::Design, None)
@@ -122,7 +124,7 @@ fn set_stance(
     bus: &Bus,
     epoch: CanonicalUuid,
     stance: wire::rooms::WorkingGroupStance,
-) -> (Outcome<CommandAnswer>, Option<CanonicalUuid>) {
+) -> (Outcome<CommandAnswer>, Vec<CanonicalUuid>) {
     let partition = bus
         .read(|read| read.group_partition())
         .expect("partition reads")
@@ -152,6 +154,54 @@ fn set_stance(
     )
 }
 
+/// Commit the fixture group's Passive stance alone, as a stance command that
+/// ended before shelving its rooms leaves it.
+fn stand_passive_unshelved(bus: &Bus) {
+    let from = bus
+        .read(|read| read.group_partition())
+        .expect("partition reads")
+        .expect("fixture group stands")
+        .into_body();
+    let mut partition = from.clone();
+    partition.revision += 1;
+    assert!(partition.set_stance(
+        &from.groups[0].group,
+        wire::rooms::WorkingGroupStance::Passive
+    ));
+    let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        wire::rooms::working_group_origin(),
+        at,
+        Producer::CommandDoor,
+    );
+    write
+        .fact(
+            wire::rooms::WorkingGroupsArranged { from, partition },
+            FactCause::Root,
+        )
+        .expect("stance fact builds");
+    assert!(matches!(
+        bus.commit(write).expect("stance write reaches the journal"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
+fn partition_revision(bus: &Bus) -> u64 {
+    bus.read(|read| read.group_partition())
+        .expect("partition reads")
+        .expect("fixture group stands")
+        .body()
+        .revision
+}
+
+fn group_change(outcome: Outcome<CommandAnswer>) -> wire::intent::WorkingGroupChange {
+    match assert_committed(outcome) {
+        CommandAnswer::WorkingGroupChange(change) => change,
+        other => panic!("expected a working-group change, got {other:?}"),
+    }
+}
+
 #[test]
 fn passive_stance_makes_every_held_design_passive_and_shelves_its_room() {
     let (root, bus, epoch, seats) = fixture("design-standing-passive", 3);
@@ -166,8 +216,10 @@ fn passive_stance_makes_every_held_design_passive_and_shelves_its_room() {
     claim_task(&bus, epoch, &seats[1], &second_holder, &second);
 
     let (changed, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Passive);
-    assert_committed(changed);
-    assert_eq!(notified, Some(seats[0].lane));
+    let change = group_change(changed);
+    assert_eq!(change.status, WorkingGroupChangeStatus::Stanced);
+    assert!(change.owed.is_empty());
+    assert_eq!(notified, [seats[0].lane, seats[1].lane]);
     for (task, holder) in [(&first, first_holder), (&second, second_holder)] {
         assert_eq!(active_holder(&bus, epoch, task), Some(holder));
         assert!(coordination_status(&bus, task).stop.is_some());
@@ -177,6 +229,73 @@ fn passive_stance_makes_every_held_design_passive_and_shelves_its_room() {
         );
     }
     assert_eq!(offered(&bus, epoch, &seats[2]), None);
+    clean(&root, bus);
+}
+
+#[test]
+fn a_repeated_passive_stance_shelves_what_its_change_left_owed() {
+    let (root, bus, epoch, seats) = fixture("design-standing-repair", 2);
+    prove_seat_addresses(&bus, epoch, &seats);
+    let first = design(&bus, epoch, "First left unshelved");
+    let second = design(&bus, epoch, "Second left unshelved");
+    group_design(&bus, epoch, &first);
+    group_design(&bus, epoch, &second);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &first);
+    claim_task(&bus, epoch, &seats[1], &Actor::Lane(seats[1].lane), &second);
+    stand_passive_unshelved(&bus);
+    let revision = partition_revision(&bus);
+    assert!(coordination_status(&bus, &first).stop.is_none());
+
+    let (repaired, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Passive);
+    let change = group_change(repaired);
+    assert_eq!(change.status, WorkingGroupChangeStatus::Shelved);
+    assert_eq!(change.revision, revision);
+    assert!(change.owed.is_empty());
+    assert_eq!(notified, [seats[0].lane, seats[1].lane]);
+    assert_eq!(
+        partition_revision(&bus),
+        revision,
+        "repair restates no partition"
+    );
+    for task in [&first, &second] {
+        assert!(coordination_status(&bus, task).stop.is_some());
+        assert_eq!(stop_directions(&bus, task).len(), 1);
+    }
+
+    let (again, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Passive);
+    assert_eq!(refused(&again), "group::stance-unchanged");
+    assert!(notified.is_empty());
+    for task in [&first, &second] {
+        assert_eq!(
+            stop_directions(&bus, task).len(),
+            1,
+            "nothing owed stops twice"
+        );
+    }
+    clean(&root, bus);
+}
+
+#[test]
+fn a_room_freed_before_its_shelving_settles_quiescent() {
+    let (root, bus, epoch, seats) = fixture("design-standing-freed", 2);
+    prove_seat_addresses(&bus, epoch, &seats);
+    let freed = design(&bus, epoch, "Freed before shelving");
+    let held = design(&bus, epoch, "Held through shelving");
+    group_design(&bus, epoch, &freed);
+    group_design(&bus, epoch, &held);
+    let freed_holder = Actor::Lane(seats[0].lane);
+    claim_task(&bus, epoch, &seats[0], &freed_holder, &freed);
+    claim_task(&bus, epoch, &seats[1], &Actor::Lane(seats[1].lane), &held);
+    stand_passive_unshelved(&bus);
+    free_active(&bus, epoch, &freed_holder, &seats[0], &freed);
+
+    let (repaired, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Passive);
+    let change = group_change(repaired);
+    assert_eq!(change.status, WorkingGroupChangeStatus::Shelved);
+    assert!(change.owed.is_empty(), "a freed room owes nothing");
+    assert_eq!(notified, [seats[1].lane]);
+    assert!(stop_directions(&bus, &freed).is_empty());
+    assert_eq!(stop_directions(&bus, &held).len(), 1);
     clean(&root, bus);
 }
 

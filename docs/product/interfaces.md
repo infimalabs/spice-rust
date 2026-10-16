@@ -116,9 +116,9 @@ task handles instead.
 | Designs per working group | 6, as lanes per team | `group::design-limit`: move one out or choose another group |
 | Group membership | Open Design tasks only | `group::design-only`: choose a Design whose current phase is `design`, or finish its admitted intake first |
 | Partition revision | the one read | `group::partition-moved`: read the groups and retry |
-| Group stance | Passive, Explore, or Converge on one standing group at the partition revision read | `group::missing`, `group::stance-unchanged`, or `group::partition-moved`: read the groups and retry only if authority changed |
+| Group stance | Passive, Explore, or Converge on one standing group at the partition revision read; Passive on a group already Passive while one of its held Designs still owes shelving | `group::missing`, `group::stance-unchanged`, or `group::partition-moved`: read the groups and retry only if authority changed; `group::shelving-owed`: owed shelving did not commit, so set the group Passive again |
 | Design possession | open Design in an Explore or Converge group | `claim::design-passive` on capture, steal, or recovery and `room::design-passive` on coordination: finish intake, group it if needed, then run `spice group stance GROUP explore` or `converge` |
-| Deactivating a held Design | a holder address proved by its seat or its claimed occupant's birth | `room::holder-address-unavailable`: the move or stance change records nothing; free or reseat the holder and retry |
+| Deactivating a held Design | a holder address proved by its seat or its claimed occupant's birth | `room::holder-address-unavailable`: a move records nothing, while a stance change commits and names that Design owed; free or reseat the holder, then retry the move or set the group Passive again |
 | Gather task creation | the bare `gather` flow without intent, created directly under an open Design in an Explore or Converge group | `task::gather-design`: make the group active, then create it while holding the Design or with `--preparation DESIGN` |
 | Candidate outputs | no gather task | `preparation::gather-output`: cite the gather task's note or artifact as a candidate reference instead |
 | Automated resumes per rule | 1 through 8 | `room::auto-resume-out-of-range` |

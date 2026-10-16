@@ -1413,7 +1413,7 @@ pub(super) fn instant_after(at: Instant, seconds: i64) -> Result<Instant, Outcom
         .map_err(|error| environment_fault("board::clock-invalid", &error.to_string()))
 }
 
-fn seq(value: u64) -> Seq {
+pub(super) fn seq(value: u64) -> Seq {
     Seq::new(value).expect("journal commits use non-zero positions")
 }
 

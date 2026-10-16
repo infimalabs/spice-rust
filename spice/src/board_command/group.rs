@@ -414,8 +414,17 @@ pub(super) fn set_working_group_fast(
     )
 }
 
-/// Set one standing group's shared activity stance. A transition to Passive
-/// commits each affected room's deactivation under that Design's task origin.
+/// Most reads one stance command makes of a room before reporting its
+/// shelving owed. Passive standing refuses new claims and coordination on
+/// the group's Designs, so a room that moved settles within a read or two.
+const SHELVING_ATTEMPTS: usize = 4;
+
+/// Set one standing group's shared activity stance. A change to Passive
+/// commits the partition first, then shelves each of the group's Designs from
+/// its room as read after that commit, under the Design's own task origin,
+/// since one write carries one origin. Setting Passive on a group already
+/// Passive commits any shelving still owed instead of refusing. Returns every
+/// lane asked to park.
 pub(crate) fn set_working_group_stance(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -423,19 +432,19 @@ pub(crate) fn set_working_group_stance(
     config: &steer::Config,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
-) -> (Outcome<CommandAnswer>, Option<wire::CanonicalUuid>) {
+) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
     let current = match bus.read(|read| current_partition(read)) {
         Ok(current) => current,
         Err(error) => {
             return (
                 store_fault("group::read-unavailable", &error.to_string()),
-                None,
+                Vec::new(),
             );
         }
     };
     let revision = match next_revision(command, current.revision) {
         Ok(revision) => revision,
-        Err(outcome) => return (outcome, None),
+        Err(outcome) => return (outcome, Vec::new()),
     };
     let Some(group) = current
         .groups
@@ -448,60 +457,46 @@ pub(crate) fn set_working_group_stance(
                 Some(request.group.to_string()),
                 "the working group no longer stands; read the working groups and retry",
             ),
-            None,
+            Vec::new(),
         );
     };
-    if group.stance == request.stance {
-        return (
-            refusal(
-                "group::stance-unchanged",
-                Some(request.stance.to_string()),
-                "the group's stance already stands there",
-            ),
-            None,
-        );
+    let unchanged = group.stance == request.stance;
+    if unchanged && request.stance.is_active() {
+        return (stance_unchanged(request.stance), Vec::new());
     }
-    let previous_stance = group.stance;
-    let anchors = group.anchors.clone();
-    let deactivations = if previous_stance.is_active() && !request.stance.is_active() {
-        let handles = match bus.read(move |read| {
-            anchors
-                .iter()
-                .map(|born| {
-                    read.task_head(born).map(|head| {
-                        head.map(|head| TaskHandle::for_project(&head.body().project, born))
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()
-        }) {
+    let deactivating = !request.stance.is_active() && (unchanged || group.stance.is_active());
+    let handles = if deactivating {
+        match design_handles(bus, group.anchors.clone()) {
             Ok(handles) => handles,
-            Err(error) => {
-                return (
-                    store_fault("group::read-unavailable", &error.to_string()),
-                    None,
-                );
-            }
-        };
-        let mut deactivations = Vec::new();
-        for handle in handles.into_iter().flatten() {
-            match Deactivation::read(bus, &handle, projects, allocation) {
-                Ok(Some(deactivation)) => deactivations.push(deactivation),
-                Ok(None) => {}
-                Err(outcome) => return (outcome, None),
-            }
+            Err(outcome) => return (outcome, Vec::new()),
         }
-        deactivations
     } else {
         Vec::new()
     };
+    if unchanged {
+        return repair_shelving(
+            bus,
+            command,
+            config,
+            projects,
+            allocation,
+            current.revision,
+            request.stance,
+            handles,
+        );
+    }
     let mut partition = current.clone();
     partition.revision = revision;
-    debug_assert!(partition.set_stance(&request.group, request.stance));
+    let restated = partition.set_stance(&request.group, request.stance);
+    debug_assert!(
+        restated,
+        "a found group with another stance takes the new one"
+    );
     let fact = WorkingGroupsArranged {
         from: current,
         partition,
     };
-    let outcome = change_partition(
+    let mut outcome = change_partition(
         bus,
         command,
         working_group_origin(),
@@ -516,24 +511,150 @@ pub(crate) fn set_working_group_stance(
         },
         request.clone(),
     );
-    if !matches!(
-        &outcome,
+    let Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(_),
+        body: CommandAnswer::WorkingGroupChange(change),
+    }) = &mut outcome
+    else {
+        return (outcome, Vec::new());
+    };
+    let shelved = shelve(bus, command, config, projects, allocation, handles);
+    change.owed = shelved.owed;
+    (outcome, shelved.lanes)
+}
+
+fn stance_unchanged(stance: WorkingGroupStance) -> Outcome<CommandAnswer> {
+    refusal(
+        "group::stance-unchanged",
+        Some(stance.to_string()),
+        "the group's stance already stands there",
+    )
+}
+
+/// The current handle of each of `anchors` the board still shows.
+fn design_handles(
+    bus: &Bus,
+    anchors: Vec<TaskStamp>,
+) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
+    bus.read(move |read| {
+        anchors
+            .iter()
+            .filter_map(|born| {
+                read.task_head(born)
+                    .map(|head| {
+                        head.map(|head| TaskHandle::for_project(&head.body().project, born))
+                    })
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })
+    .map_err(|error| store_fault("group::read-unavailable", &error.to_string()))
+}
+
+/// Commit shelving still owed to a group that already stands Passive, without
+/// restating its partition. Nothing owed keeps the unchanged-stance refusal.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "repair shelves under the stance command's steering, policy, and partition"
+)]
+fn repair_shelving(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    config: &steer::Config,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    revision: u64,
+    stance: WorkingGroupStance,
+    handles: Vec<TaskHandle>,
+) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
+    let shelved = shelve(bus, command, config, projects, allocation, handles);
+    let Some(range) = shelved.range else {
+        if shelved.owed.is_empty() {
+            return (stance_unchanged(stance), Vec::new());
+        }
+        let owed = shelved
+            .owed
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        return (
+            refusal(
+                "group::shelving-owed",
+                Some(owed),
+                "shelving these held Designs did not commit; set the group Passive again",
+            ),
+            Vec::new(),
+        );
+    };
+    (
         Outcome::Reply(Reply {
-            position: ReplyPosition::Committed(_),
-            ..
-        })
-    ) {
-        return (outcome, None);
-    }
-    let mut parked = None;
-    for deactivation in deactivations {
-        let directive = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
-        match deactivation.commit(bus, command, config, (directive, command.id())) {
-            Ok(lane) => parked = parked.or(lane),
-            Err(fault) => return (fault, parked),
+            position: ReplyPosition::Committed(range),
+            body: CommandAnswer::WorkingGroupChange(WorkingGroupChange {
+                revision,
+                status: WorkingGroupChangeStatus::Shelved,
+                owed: shelved.owed,
+            }),
+        }),
+        shelved.lanes,
+    )
+}
+
+/// What shelving a passive group's rooms committed and left owed.
+#[derive(Default)]
+struct Shelved {
+    /// Positions spanning every shelving write committed.
+    range: Option<SeqRange>,
+    /// Each lane asked to park.
+    lanes: Vec<wire::CanonicalUuid>,
+    /// Designs whose room neither committed its shelving nor settled.
+    owed: Vec<TaskHandle>,
+}
+
+/// Shelve each of `designs` from its room as read now. A room the board no
+/// longer shows, or that owes nothing, settles; a room that moved since its
+/// read is read again, up to [`SHELVING_ATTEMPTS`] times; a room that cannot
+/// be read or committed stays owed.
+fn shelve(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    config: &steer::Config,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+    designs: Vec<TaskHandle>,
+) -> Shelved {
+    let mut shelved = Shelved::default();
+    for design in designs {
+        let mut settled = false;
+        for _ in 0..SHELVING_ATTEMPTS {
+            let room = match Deactivation::read(bus, &design, projects, allocation) {
+                Ok(Some(room)) if !room.is_quiescent() => room,
+                Ok(_) => {
+                    settled = true;
+                    break;
+                }
+                Err(_) => break,
+            };
+            let directive = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
+            match room.commit(bus, command, config, (directive, command.id())) {
+                Ok(Shelving::Committed { range, lane }) => {
+                    shelved.range = Some(shelved.range.map_or(range, |covered| SeqRange {
+                        first: covered.first.min(range.first),
+                        last: covered.last.max(range.last),
+                    }));
+                    shelved.lanes.extend(lane);
+                    settled = true;
+                    break;
+                }
+                Ok(Shelving::Moved) => {}
+                Err(_) => break,
+            }
+        }
+        if !settled {
+            shelved.owed.push(design);
         }
     }
-    (outcome, parked)
+    shelved
 }
 
 /// Lanes a fast-flagged working group runs fast: each holder of an active
@@ -720,7 +841,11 @@ where
     if let Err(outcome) = stage(&mut write, at) {
         return outcome;
     }
-    let answer = WorkingGroupChange { revision, status };
+    let answer = WorkingGroupChange {
+        revision,
+        status,
+        owed: Vec::new(),
+    };
     if let Err(error) =
         write.command_result(request(command, body), command.epoch(), answer.clone())
     {
