@@ -24,6 +24,8 @@ fn selected_plan_with_task(name: &str) -> SelectedPlan {
         wire::TaskIntent::Design,
         None,
     );
+    group_design(&bus, epoch, &design);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
     let plan = add_plan_output(&bus, epoch, &design, "Selected plan");
     let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
     let (candidate, source) = retain_test_candidate(&bus, epoch, &seats, &design, &plan, &sibling);

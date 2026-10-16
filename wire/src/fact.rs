@@ -150,8 +150,8 @@ macro_rules! registered_body {
     (WorkingGroupsArranged) => {
         crate::rooms::WorkingGroupsArranged
     };
-    (CandidateRetained) => {
-        crate::rooms::CandidateRetained
+    (DesignProposed) => {
+        crate::rooms::DesignProposed
     };
     (CandidateCritiqued) => {
         crate::rooms::CandidateCritiqued
@@ -376,17 +376,17 @@ vocabulary! {
     /// The whole working-group partition was restated.
     WorkingGroupsArranged = "group::arranged" by CommandDoor;
 
-    /// One exact candidate was retained under its controlling task.
-    CandidateRetained = "proposal::retained" by CommandDoor;
-    /// One source-backed critique of an exact retained candidate was recorded.
+    /// One exact completed Design pass was proposed under its controlling task.
+    DesignProposed = "proposal::retained" by CommandDoor;
+    /// One source-backed critique of an exact Design pass proposal was recorded.
     CandidateCritiqued = "proposal::critiqued" by CommandDoor;
-    /// One source-backed coverage statement over an exact candidate was recorded.
+    /// One source-backed coverage statement over an exact proposal was recorded.
     CandidateCovered = "proposal::covered" by CommandDoor;
-    /// The operator decided one exact candidate; selection authorizes its subset.
+    /// The operator decided one exact proposal.
     PreparationDecided = "proposal::decided" by CommandDoor;
-    /// The author withdrew one exact undecided candidate from operator choice.
+    /// The author withdrew one exact undecided proposal from operator choice.
     CandidateWithdrawn = "proposal::withdrawn" by CommandDoor;
-    /// A selected decision made its exact selected outputs eligible.
+    /// A work decision made its exact accepted outputs eligible.
     ExecutionAuthorized = "proposal::authorized" by CommandDoor;
 
     /// The exact normalized plan digest landed at its witnessed board barrier.
@@ -911,7 +911,7 @@ impl AnyFact {
     pub fn preparation_controller(&self) -> Option<&crate::witness::TaskStamp> {
         use sealed::RegisteredBody as Decoded;
         match &self.decoded {
-            Decoded::CandidateRetained(body) => Some(&body.candidate.candidate.controller),
+            Decoded::DesignProposed(body) => Some(&body.candidate.candidate.controller),
             Decoded::CandidateCritiqued(body) => Some(&body.critique.critique.candidate.controller),
             Decoded::CandidateCovered(body) => Some(&body.coverage.coverage.candidate.controller),
             Decoded::PreparationDecided(body) => Some(&body.decision.decision.controller),

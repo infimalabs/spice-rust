@@ -13,13 +13,12 @@
 //! Transcript links name a nonempty span within an accounted generation
 //! boundary; a matching stream and source identity alone are not authority.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use wire::principal::ActingPrincipal;
 use wire::rooms::{
-    CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateRetained,
-    CandidateWithdrawal, CandidateWithdrawn, CoverageAuthority, DecisionOutcome,
-    ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef, RetainedCandidate,
+    CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateWithdrawn, CoverageAuthority,
+    DesignProposed, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
     RoomAnchor, RoomAuthorityStamp, RoomContributed, RoomDelivered, RoomHorizon, RoomLeft,
     RoomMessaged, RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk,
     WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
@@ -32,6 +31,7 @@ mod awareness;
 mod conversation;
 mod coordination;
 mod evidence;
+mod preparation;
 mod relevance;
 mod sql;
 
@@ -213,6 +213,10 @@ pub(crate) trait Authority {
     fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal>;
     /// Record one task statement mutation.
     fn set_task_statement(&mut self, task: &TaskStamp, statement: Seq);
+    /// Current active claim-head position, or none when the task is unclaimed.
+    fn active_claim(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal>;
+    /// Replace the replay-visible active claim head.
+    fn set_active_claim(&mut self, task: &TaskStamp, claim: Option<Seq>);
     /// Record the current accounted head of one logical transcript stream.
     fn account(&mut self, head: &TranscriptSourceHead);
     /// Current accounted head of the linked logical transcript stream.
@@ -427,6 +431,7 @@ pub(crate) struct History {
     projection: Projection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
     task_statements: BTreeMap<String, Seq>,
+    active_claims: BTreeMap<String, Seq>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
     /// Proposal head position to the actor that recorded it.
     authors: BTreeMap<u64, Actor>,
@@ -445,9 +450,9 @@ impl History {
         let mut history = Self::default();
         let mut refusals = Vec::new();
         for (seq, actor, at, fact) in facts {
-            // A retained candidate's author decides whether later coverage is
+            // A proposal's author decides whether later coverage is
             // independent of it.
-            if fact.read::<CandidateRetained>().is_some() {
+            if fact.read::<DesignProposed>().is_some() {
                 history.authors.insert(seq.get(), actor.clone());
             }
             if let Err(refusal) = evidence::fold(&mut history, seq, actor, fact) {
@@ -477,6 +482,21 @@ impl Authority for History {
     fn set_task_statement(&mut self, task: &TaskStamp, statement: Seq) {
         self.task_statements
             .insert(task.as_str().to_owned(), statement);
+    }
+
+    fn active_claim(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal> {
+        Ok(self.active_claims.get(task.as_str()).copied())
+    }
+
+    fn set_active_claim(&mut self, task: &TaskStamp, claim: Option<Seq>) {
+        match claim {
+            Some(claim) => {
+                self.active_claims.insert(task.to_string(), claim);
+            }
+            None => {
+                self.active_claims.remove(task.as_str());
+            }
+        }
     }
 
     fn account(&mut self, head: &TranscriptSourceHead) {
@@ -670,6 +690,22 @@ pub(crate) fn fold(
     for task in fact.revised_tasks() {
         authority.set_task_statement(task, seq);
     }
+    if let Some(task) = fact.task_subject() {
+        match fact.kind() {
+            wire::FactKind::ClaimWon
+            | wire::FactKind::ClaimCarried
+            | wire::FactKind::ClaimRebound
+            | wire::FactKind::ClaimRenewed => {
+                authority.set_active_claim(task, Some(seq));
+                return Ok(());
+            }
+            wire::FactKind::ClaimFreed | wire::FactKind::ClaimLapsed => {
+                authority.set_active_claim(task, None);
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
     if let Some(body) = fact.read::<wire::rooms::OutputControlled>() {
         return control(authority, &body.output, body.preparation);
     }
@@ -752,8 +788,8 @@ fn fold_preparation(
     actor: &Actor,
     fact: &AnyFact,
 ) -> Option<Result<(), Refusal>> {
-    if let Some(CandidateRetained { candidate }) = fact.read() {
-        return Some(retain(authority, seq, candidate));
+    if let Some(DesignProposed { candidate }) = fact.read() {
+        return Some(preparation::retain(authority, seq, candidate));
     }
     if let Some(CandidateCritiqued { critique }) = fact.read() {
         return Some(critique_candidate(authority, seq, &critique));
@@ -764,16 +800,16 @@ fn fold_preparation(
     if let Some(PreparationDecided { decision }) = fact.read() {
         return Some(
             require_operator(actor, "a preparation decision")
-                .and_then(|()| decide(authority, seq, decision)),
+                .and_then(|()| preparation::decide(authority, seq, decision)),
         );
     }
     if let Some(CandidateWithdrawn { withdrawal }) = fact.read() {
-        return Some(withdraw(authority, seq, actor, withdrawal));
+        return Some(preparation::withdraw(authority, seq, actor, withdrawal));
     }
     if let Some(ExecutionAuthorized { authorization }) = fact.read() {
         return Some(
             require_operator(actor, "execution authorization")
-                .and_then(|()| authorize(authority, seq, authorization)),
+                .and_then(|()| preparation::authorize(authority, seq, authorization)),
         );
     }
     None
@@ -1120,195 +1156,6 @@ fn publish(
         room,
         publication,
         seq: seq.get(),
-    })
-}
-
-fn retain(
-    authority: &mut impl Authority,
-    seq: Seq,
-    candidate: RetainedCandidate,
-) -> Result<(), Refusal> {
-    let controller = &candidate.candidate.controller;
-    require_task(authority, controller, "candidate controller")?;
-    for input in &candidate.governed_inputs {
-        require_task(authority, input, "governed input")?;
-    }
-    for output in &candidate.outputs {
-        match authority.task(output)? {
-            Some(Some(preparation)) if preparation.controller == *controller => {}
-            Some(_) => {
-                return unsound(format!(
-                    "candidate output {output} is not controlled by {controller}"
-                ));
-            }
-            None => return unsound(format!("candidate output {output} does not exist")),
-        }
-    }
-    for reference in &candidate.references {
-        require_source(authority, seq, &reference.source)?;
-    }
-    evidence::require_candidate_evidence(authority, &candidate)?;
-    let proposal = ProposalRef::Candidate {
-        candidate: candidate.candidate.clone(),
-    };
-    record(
-        authority,
-        seq,
-        &proposal,
-        controller.to_string(),
-        &candidate,
-    )
-}
-
-fn decide(
-    authority: &mut impl Authority,
-    seq: Seq,
-    decision: PreparationDecision,
-) -> Result<(), Refusal> {
-    let controller = &decision.decision.controller;
-    require_task(authority, controller, "decision controller")?;
-    let candidate: RetainedCandidate = wire::decode(&require_proposal(
-        authority,
-        &ProposalRef::Candidate {
-            candidate: decision.outcome.candidate().clone(),
-        },
-    )?)?;
-    if let DecisionOutcome::Resolved { outputs, .. } = &decision.outcome
-        && (outputs.len() != candidate.outputs.len()
-            || outputs
-                .iter()
-                .zip(&candidate.outputs)
-                .any(|(decision, candidate)| decision.output != *candidate))
-    {
-        return unsound("output resolution must name every candidate output in retained order");
-    }
-    // `Selected` and `Returned` are retained journal shapes and remain
-    // replayable even when an old release admitted more than one for a
-    // candidate. Current commands cannot emit either shape. Every current
-    // decision refuses against any previously recorded decision.
-    if matches!(
-        &decision.outcome,
-        DecisionOutcome::Resolved { .. } | DecisionOutcome::Collapse { .. }
-    ) && authority.candidate_decided(decision.outcome.candidate())?
-    {
-        return unsound(format!(
-            "candidate {} already has an operator decision",
-            decision.outcome.candidate().candidate
-        ));
-    }
-    let withdrawal = subject(&ProposalRef::Withdrawal {
-        candidate: decision.outcome.candidate().clone(),
-    })?;
-    if authority.proposal(&withdrawal)?.is_some() {
-        return unsound(format!(
-            "candidate {} was withdrawn by its author before this decision",
-            decision.outcome.candidate().candidate
-        ));
-    }
-    require_source(authority, seq, &decision.source)?;
-    let proposal = ProposalRef::Decision {
-        decision: decision.decision.clone(),
-    };
-    record(authority, seq, &proposal, controller.to_string(), &decision)
-}
-
-/// Only a candidate's authenticated author withdraws it, once, while no
-/// decision has disposed of it. The retained candidate stays untouched.
-fn withdraw(
-    authority: &mut impl Authority,
-    seq: Seq,
-    actor: &Actor,
-    withdrawal: CandidateWithdrawal,
-) -> Result<(), Refusal> {
-    let candidate = ProposalRef::Candidate {
-        candidate: withdrawal.candidate.clone(),
-    };
-    require_proposal(authority, &candidate)?;
-    if authority.proposal_author(&subject(&candidate)?)?.as_ref() != Some(actor) {
-        return unsound(format!(
-            "candidate {} is withdrawn by {actor}, not by its author",
-            withdrawal.candidate.candidate
-        ));
-    }
-    let controller = withdrawal.candidate.controller.to_string();
-    if authority.candidate_decided(&withdrawal.candidate)? {
-        return unsound(format!(
-            "candidate {} is already decided and cannot be withdrawn",
-            withdrawal.candidate.candidate
-        ));
-    }
-    let proposal = ProposalRef::Withdrawal {
-        candidate: withdrawal.candidate.clone(),
-    };
-    record(authority, seq, &proposal, controller, &withdrawal)
-}
-
-fn authorize(
-    authority: &mut impl Authority,
-    seq: Seq,
-    authorization: wire::rooms::ExecutionAuthorization,
-) -> Result<(), Refusal> {
-    if !authorization.coverage.is_empty() {
-        return unsound("current authorization cannot carry review coverage");
-    }
-    let decision_ref = ProposalRef::Decision {
-        decision: authorization.decision.clone(),
-    };
-    let decision: PreparationDecision = wire::decode(&require_proposal(authority, &decision_ref)?)?;
-    if decision.outcome.candidate() != &authorization.candidate {
-        return unsound("authorization requires the exact candidate recorded by its decision");
-    }
-    let selected = decision
-        .outcome
-        .accepted_outputs()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    if selected.is_empty() {
-        return unsound("authorization requires a decision that accepts an output");
-    }
-    let candidate: RetainedCandidate = wire::decode(&require_proposal(
-        authority,
-        &ProposalRef::Candidate {
-            candidate: authorization.candidate.clone(),
-        },
-    )?)?;
-    let set = |tasks: &[TaskStamp]| tasks.iter().cloned().collect::<BTreeSet<_>>();
-    if set(&authorization.governed_inputs) != set(&candidate.governed_inputs) {
-        return unsound("authorization governed inputs differ from the candidate's");
-    }
-    if set(&authorization.selected_outputs) != selected {
-        return unsound("authorization outputs differ from the decision's exact acceptance");
-    }
-    if let Some(output) = authorization
-        .selected_outputs
-        .iter()
-        .find(|output| !candidate.outputs.contains(output))
-    {
-        return unsound(format!(
-            "selected output {output} is not an output of the candidate"
-        ));
-    }
-    let decision_key = subject(&decision_ref)?;
-    if authority.decision_authorized(&decision_key)? {
-        return unsound("decision already authorized a selection");
-    }
-    let outputs = authorization
-        .selected_outputs
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    for output in &outputs {
-        if authority.output_authorized(output)? {
-            return unsound(format!("output {output} is already authorized"));
-        }
-    }
-    authority.change(Change::Authorization {
-        outputs,
-        row: AuthorizationRow {
-            decision: decision_key,
-            seq: seq.get(),
-            body: wire::encode(&authorization)?,
-        },
     })
 }
 

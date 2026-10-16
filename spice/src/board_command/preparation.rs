@@ -1,9 +1,9 @@
 use super::*;
 use wire::rooms::{
     CandidateCoverageRecord, CandidateCovered, CandidateCritiqueRecord, CandidateCritiqued,
-    CandidateRetain, CandidateRetained, CoverageAuthority, DecisionOutcome, ExecutionAuthorization,
-    ExecutionAuthorized, OutputAdopt, OutputControlled, PreparationDecide, PreparationDecided,
-    ProposalRef, RetainedCandidate,
+    CoverageAuthority, DecisionOutcome, DesignPassProposal, DesignPropose, DesignProposed,
+    ExecutionAuthorization, ExecutionAuthorized, OutputAdopt, OutputControlled, PreparationDecide,
+    PreparationDecided, ProposalRef,
 };
 
 mod references;
@@ -12,11 +12,14 @@ mod withdrawal;
 pub(super) fn dispatch_preparation(
     bus: &Bus,
     command: &wire::AdmittedCommand,
+    repository: Option<&Repository>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Option<Outcome<CommandAnswer>> {
     Some(match command.body() {
-        wire::intent::Intent::CandidateRetain(retain) => retain_candidate(bus, command, retain),
+        wire::intent::Intent::DesignPropose(proposal) => {
+            propose_design(bus, command, proposal, repository, projects, allocation)
+        }
         wire::intent::Intent::CandidateCritiqueRecord(critique) => {
             record_critique(bus, command, critique)
         }
@@ -74,8 +77,66 @@ pub(super) fn require_no_pending_controlled_outputs(
     ))
 }
 
-/// Refuse candidate selection authority over anything but a Design, and any
-/// gather task offered as an output: a candidate cites its evidence instead.
+/// Admit the exact claimed Design and every Plan output named by one pass.
+fn require_design_proposal(
+    snapshot: &bus::TaskSnapshot,
+    command: &wire::AdmittedCommand,
+    proposal: &DesignPassProposal,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let controller = &proposal.candidate.controller;
+    let heads = task_heads(snapshot, controller)?;
+    require_open_design(command, heads, controller)?;
+    if proposal.statement != heads.statement().position() {
+        return Err(refusal(
+            "preparation::proposal-statement-moved",
+            Some(proposal.statement.to_string()),
+            "read the current Design statement, revise the proposal, and retry",
+        ));
+    }
+    let Some(claim) = heads.claim() else {
+        return Err(refusal(
+            "preparation::proposal-unclaimed",
+            Some(controller.to_string()),
+            "claim the ready Design before proposing the completed pass",
+        ));
+    };
+    if claim.position() != proposal.claim
+        || claim.body().disposition != ClaimDisposition::Active
+        || claim.body().actor != *command.actor()
+    {
+        return Err(refusal(
+            "preparation::proposal-claim-moved",
+            Some(proposal.claim.to_string()),
+            "propose only from the exact active Design claim this capability owns",
+        ));
+    }
+    if claim.body().is_stale(heads.workflow().body()) {
+        return Err(refusal(
+            "preparation::proposal-claim-stale",
+            Some(controller.to_string()),
+            "run `spice task reclaim` to acknowledge the current Design generation, then retry",
+        ));
+    }
+    for output in &proposal.outputs {
+        let output_heads = task_heads(snapshot, output)?;
+        require_statement_workflow_witnesses(command, output_heads)?;
+        let statement = output_heads.statement().body();
+        let direct_plan = statement.intent == Some(wire::TaskIntent::Plan)
+            && !statement.acceptance.is_empty()
+            && statement.preparation.as_ref().is_some_and(|preparation| {
+                preparation.parent == *controller && preparation.construction == *output
+            });
+        if !direct_plan {
+            return Err(refusal(
+                "preparation::proposal-output-invalid",
+                Some(output.to_string()),
+                "name only acceptance-bearing Plan outputs directly controlled by this Design",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn require_design(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -85,18 +146,46 @@ fn require_design(
     let snapshot = bus
         .task_snapshot()
         .map_err(|error| store_fault("preparation::heads-unreadable", &error.to_string()))?;
-    require_open_design(command, task_heads(&snapshot, controller)?, controller)?;
+    let controller_heads = task_heads(&snapshot, controller)?;
+    require_open_design(command, controller_heads, controller)?;
     for output in outputs {
-        if let Some(heads) = snapshot.task_heads(output)
-            && board::gather_task(heads.statement().body(), heads.workflow().body())
+        let heads = task_heads(&snapshot, output)?;
+        require_transition_witnesses(command, heads)?;
+        if !heads
+            .statement()
+            .body()
+            .preparation
+            .as_ref()
+            .is_some_and(|preparation| {
+                preparation.parent == *controller && preparation.construction == *output
+            })
         {
             return Err(refusal(
-                "preparation::gather-output",
+                "preparation::output-uncontrolled",
                 Some(output.to_string()),
-                "a gather task lands nothing and is never an output; cite its notes or artifacts \
-                 as candidate references instead",
+                "name only outputs directly controlled by this Design",
             ));
         }
+    }
+    Ok(())
+}
+
+fn require_statement_workflow_witnesses(
+    command: &wire::AdmittedCommand,
+    heads: &journal::TaskHeads,
+) -> Result<(), Outcome<CommandAnswer>> {
+    for witness in [
+        Witness::Task {
+            task: heads.statement().body().born.clone(),
+            head: heads.statement().position(),
+        },
+        Witness::Workflow {
+            task: heads.statement().body().born.clone(),
+            head: heads.workflow().position(),
+            phase: heads.workflow().body().phase.clone(),
+        },
+    ] {
+        require_witness(command, &witness)?;
     }
     Ok(())
 }
@@ -111,13 +200,12 @@ fn design_controller(
     Err(refusal(
         "preparation::controller-not-design",
         Some(controller.to_string()),
-        "retain candidates and authorize selections only under a Design; a Plan's outputs follow \
-         its positive review",
+        "propose and decide Design passes only under a Design; a Plan's outputs follow its \
+         positive review",
     ))
 }
 
-/// Admit a decision's controller as a witnessed, open Design. Decisions leave
-/// the Design open, so a lane holding it keeps its claim.
+/// Admit a decision's controller as a witnessed, open Design.
 fn require_open_design(
     command: &wire::AdmittedCommand,
     heads: &journal::TaskHeads,
@@ -156,42 +244,155 @@ fn require_unblocked_selection(
     Ok(())
 }
 
-pub(super) fn retain_candidate(
+pub(super) fn propose_design(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    request_body: &CandidateRetain,
+    request_body: &DesignPropose,
+    repository: Option<&Repository>,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
+    let proposal = &request_body.candidate;
     let subject = ProposalRef::Candidate {
-        candidate: request_body.candidate.candidate.clone(),
+        candidate: proposal.candidate.clone(),
     };
     if let Err(outcome) = require_proposal_absence(command, &subject) {
         return outcome;
     }
-    if let Err(outcome) = require_design(
+    let observed = match bus.task_snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(error) => return store_fault("preparation::heads-unreadable", &error.to_string()),
+    };
+    if let Err(outcome) = require_design_proposal(&observed, command, proposal) {
+        return outcome;
+    }
+    if let Err(outcome) = references::require_scoped_references(bus, proposal) {
+        return outcome;
+    }
+    let roots = std::iter::once(proposal.candidate.controller.clone())
+        .chain(proposal.governed_inputs.iter().cloned())
+        .chain(proposal.outputs.iter().cloned())
+        .collect::<Vec<_>>();
+    let snapshot = match validated_working_snapshot_for_tasks(
         bus,
-        command,
-        &request_body.candidate.candidate.controller,
-        &request_body.candidate.outputs,
+        command.actor().clone(),
+        &roots,
+        projects,
+        allocation,
     ) {
-        return outcome;
-    }
-    if let Err(outcome) = references::require_scoped_references(bus, &request_body.candidate) {
-        return outcome;
-    }
-    record(
-        bus,
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let Some(entry) = snapshot
+        .entries
+        .iter()
+        .find(|entry| entry.born() == &proposal.candidate.controller)
+    else {
+        return refusal(
+            "preparation::controller-missing",
+            Some(proposal.candidate.controller.to_string()),
+            "read the current board and retry the proposal",
+        );
+    };
+    let claim = entry
+        .claim()
+        .expect("proposal admission proved the controller has an active claim");
+    let parked = match prepare_release(
+        &snapshot,
         command,
-        request_body,
-        &request_body.candidate.candidate.controller,
-        CandidateRetained {
-            candidate: request_body.candidate.clone(),
+        claim.claimed,
+        repository,
+        Some("design"),
+    ) {
+        Ok(parked) => parked,
+        Err(outcome) => return outcome,
+    };
+    commit_proposal(bus, command, request_body, entry, parked)
+}
+
+fn commit_proposal(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    request_body: &DesignPropose,
+    entry: &Entry,
+    parked: Option<spice::task_git::ParkedRelease>,
+) -> Outcome<CommandAnswer> {
+    let proposal = &request_body.candidate;
+    let at = match current_instant() {
+        Ok(at) => at,
+        Err(outcome) => return rollback_release(parked, outcome),
+    };
+    let origin = match task_origin(&proposal.candidate.controller) {
+        Ok(origin) => origin,
+        Err(outcome) => return rollback_release(parked, outcome),
+    };
+    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
+    guard(&mut write, command.expected().to_vec());
+    let proposed = match write.fact(
+        DesignProposed {
+            candidate: proposal.clone(),
         },
-        Vec::new(),
-        format!(
-            "retained candidate {}",
-            request_body.candidate.candidate.candidate
+        FactCause::Root,
+    ) {
+        Ok(fact) => fact,
+        Err(error) => {
+            return rollback_release(
+                parked,
+                store_fault("preparation::proposal-invalid", &error.to_string()),
+            );
+        }
+    };
+    let released = match write.fact(
+        body::ClaimFreed {
+            task: entry.born().clone(),
+            actor: command.actor().clone(),
+            parked: parked.as_ref().map(|prepared| prepared.parked().clone()),
+        },
+        FactCause::Pending(proposed),
+    ) {
+        Ok(fact) => fact,
+        Err(error) => {
+            return rollback_release(
+                parked,
+                store_fault("preparation::proposal-release-invalid", &error.to_string()),
+            );
+        }
+    };
+    let mut claim = entry
+        .claim()
+        .expect("proposal admission proved an active claim")
+        .clone();
+    claim.disposition = ClaimDisposition::Freed;
+    write.claim_head(entry.born().clone(), released, move |fact| ClaimHead {
+        fact,
+        ..claim
+    });
+    let recommendation = match proposal.recommendation {
+        wire::rooms::DesignPassRecommendation::Work => "work",
+        wire::rooms::DesignPassRecommendation::Conclude => "conclude",
+        wire::rooms::DesignPassRecommendation::Collapse => "collapse",
+    };
+    let answer = TextAnswer {
+        text: format!(
+            "proposed {recommendation} through Design pass {} and released its claim",
+            proposal.candidate.candidate
         ),
-    )
+    };
+    if let Err(error) = write.command_result(
+        request(command, request_body.clone()),
+        command.epoch(),
+        answer.clone(),
+    ) {
+        return rollback_release(
+            parked,
+            store_fault("preparation::proposal-receipt-invalid", &error.to_string()),
+        );
+    }
+    let body = CommandAnswer::Text(answer);
+    match parked {
+        Some(parked) => committed_with_task_git(bus, write, body, PreparedTaskGit::Release(parked)),
+        None => committed(bus, write, body),
+    }
 }
 
 pub(super) fn record_critique(
@@ -280,7 +481,7 @@ pub(super) fn record_coverage(
     let Some(author) = author else {
         return store_fault(
             "preparation::candidate-author-missing",
-            "the retained candidate head has no authenticated writer",
+            "the Design pass proposal head has no authenticated writer",
         );
     };
     let mut derived = vec![Witness::Proposal {
@@ -367,14 +568,15 @@ fn commit_coverage(
 
 /// What one decision commits beyond its own immutable record.
 enum Consequence<'a> {
-    /// A selection authorizes exactly its chosen outputs.
+    /// A work resolution authorizes exactly its accepted outputs.
     Authorize(Vec<TaskHead>, ExecutionAuthorization),
-    /// A return is the Design's next input and moves nothing.
-    Record,
-    /// A collapse concludes its Design through the operator conclusion path.
+    /// A return or all-rejected work resolution changes no task head.
+    Record(&'static str),
+    /// An accepted outputless recommendation concludes its Design.
     Conclude {
         design: TaskHandle,
-        reason: String,
+        conclusion: body::DesignConclusion,
+        action: &'static str,
         projects: &'a ProjectPolicy,
         allocation: &'a board::NextConfig,
     },
@@ -394,18 +596,8 @@ pub(super) fn decide_preparation(
     if let Err(outcome) = require_proposal_absence(command, &subject) {
         return outcome;
     }
-    if matches!(
-        &decision.outcome,
-        DecisionOutcome::Selected { .. } | DecisionOutcome::Returned { .. }
-    ) {
-        return refusal(
-            "preparation::decision-retired",
-            Some(decision.outcome.candidate().candidate.to_string()),
-            "submit one resolved decision with an accepted or rejected verdict for every output",
-        );
-    }
     let candidate_ref = decision.outcome.candidate();
-    let candidate = match retained_candidate(bus, command, candidate_ref) {
+    let candidate = match proposed_candidate(bus, command, candidate_ref) {
         Ok(candidate) => candidate,
         Err(outcome) => return outcome,
     };
@@ -421,10 +613,15 @@ pub(super) fn decide_preparation(
         return outcome;
     }
     let consequence = match &decision.outcome {
-        DecisionOutcome::Selected { .. } | DecisionOutcome::Returned { .. } => {
-            unreachable!("legacy decision shapes refuse before authority reads")
-        }
+        DecisionOutcome::Returned { .. } => Consequence::Record("returned the proposal"),
         DecisionOutcome::Resolved { outputs, .. } => {
+            if candidate.recommendation != wire::rooms::DesignPassRecommendation::Work {
+                return refusal(
+                    "preparation::decision-kind-mismatch",
+                    Some(candidate_ref.candidate.to_string()),
+                    "resolve outputs only for a work proposal",
+                );
+            }
             if outputs.len() != candidate.outputs.len()
                 || outputs
                     .iter()
@@ -434,7 +631,7 @@ pub(super) fn decide_preparation(
                 return refusal(
                     "preparation::decision-output-mismatch",
                     Some(candidate_ref.candidate.to_string()),
-                    "accept or reject every output of the exact candidate version in shown order",
+                    "accept or reject every output of the exact proposal in shown order",
                 );
             }
             let accepted = decision
@@ -443,7 +640,7 @@ pub(super) fn decide_preparation(
                 .cloned()
                 .collect::<Vec<_>>();
             if accepted.is_empty() {
-                Consequence::Record
+                Consequence::Record("resolved every output as rejected")
             } else {
                 match prepare_selection(
                     &snapshot, command, controller, decision, &candidate, &accepted,
@@ -453,26 +650,47 @@ pub(super) fn decide_preparation(
                 }
             }
         }
-        DecisionOutcome::Collapse { reason, .. } => Consequence::Conclude {
-            design: TaskHandle::for_project(
-                &controller.statement().body().project,
-                &candidate_ref.controller,
-            ),
-            reason: reason.clone(),
-            projects,
-            allocation,
-        },
+        DecisionOutcome::Accepted { .. } => {
+            let (conclusion, action) = match candidate.recommendation {
+                wire::rooms::DesignPassRecommendation::Work => {
+                    return refusal(
+                        "preparation::decision-kind-mismatch",
+                        Some(candidate_ref.candidate.to_string()),
+                        "resolve every output of a work proposal instead of accepting it whole",
+                    );
+                }
+                wire::rooms::DesignPassRecommendation::Conclude => {
+                    (body::DesignConclusion::Done {}, "concluded the Design")
+                }
+                wire::rooms::DesignPassRecommendation::Collapse => (
+                    body::DesignConclusion::Collapsed {
+                        reason: candidate.justification.clone(),
+                    },
+                    "collapsed the Design",
+                ),
+            };
+            Consequence::Conclude {
+                design: TaskHandle::for_project(
+                    &controller.statement().body().project,
+                    &candidate_ref.controller,
+                ),
+                conclusion,
+                action,
+                projects,
+                allocation,
+            }
+        }
     };
     commit_decision(bus, command, request_body, candidate, consequence)
 }
 
-/// The exact retained candidate a decision disposes of: present, witnessed
+/// The exact Design pass proposal a decision disposes of: present, witnessed
 /// at its head, and not withdrawn by its author.
-fn retained_candidate(
+fn proposed_candidate(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     candidate: &wire::rooms::CandidateRef,
-) -> Result<RetainedCandidate, Outcome<CommandAnswer>> {
+) -> Result<DesignPassProposal, Outcome<CommandAnswer>> {
     let subject = ProposalRef::Candidate {
         candidate: candidate.clone(),
     };
@@ -492,14 +710,14 @@ fn retained_candidate(
         refusal(
             "preparation::candidate-missing",
             Some(candidate.candidate.to_string()),
-            "retain the exact candidate version before deciding it",
+            "record the exact Design pass proposal before deciding it",
         )
     })?;
     if withdrawn {
         return Err(refusal(
             "preparation::candidate-withdrawn",
             Some(candidate.candidate.to_string()),
-            "its author withdrew this candidate; decide the corrected candidate instead",
+            "its author withdrew this proposal; decide the corrected proposal instead",
         ));
     }
     require_witness(
@@ -513,7 +731,7 @@ fn retained_candidate(
         journal::ProposalAuthority::Candidate(candidate) => Ok(candidate),
         _ => Err(store_fault(
             "preparation::candidate-invalid",
-            "candidate authority decoded as another proposal family",
+            "proposal authority decoded as another proposal family",
         )),
     }
 }
@@ -523,7 +741,7 @@ fn prepare_selection(
     command: &wire::AdmittedCommand,
     controller: &journal::TaskHeads,
     decision: &wire::rooms::PreparationDecision,
-    candidate: &RetainedCandidate,
+    candidate: &DesignPassProposal,
     selected_outputs: &[TaskStamp],
 ) -> Result<(Vec<TaskHead>, ExecutionAuthorization), Outcome<CommandAnswer>> {
     require_unblocked_selection(snapshot, controller)?;
@@ -548,7 +766,7 @@ fn prepare_selection(
 fn require_input_witnesses(
     snapshot: &bus::TaskSnapshot,
     command: &wire::AdmittedCommand,
-    candidate: &RetainedCandidate,
+    candidate: &DesignPassProposal,
 ) -> Result<(), Outcome<CommandAnswer>> {
     for input in &candidate.governed_inputs {
         let heads = task_heads(snapshot, input)?;
@@ -567,7 +785,7 @@ fn selected_output_heads(
     snapshot: &bus::TaskSnapshot,
     command: &wire::AdmittedCommand,
     candidate_ref: &wire::rooms::CandidateRef,
-    candidate: &RetainedCandidate,
+    candidate: &DesignPassProposal,
     selected_outputs: &[TaskStamp],
 ) -> Result<Vec<TaskHead>, Outcome<CommandAnswer>> {
     if let Some(output) = selected_outputs
@@ -577,7 +795,7 @@ fn selected_output_heads(
         return Err(refusal(
             "preparation::selection-foreign-output",
             Some(output.to_string()),
-            "select only outputs named by the exact retained candidate version",
+            "accept only outputs named by the exact Design pass proposal",
         ));
     }
     selected_outputs
@@ -634,7 +852,7 @@ fn commit_decision(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     request_body: &PreparationDecide,
-    candidate: RetainedCandidate,
+    candidate: DesignPassProposal,
     consequence: Consequence<'_>,
 ) -> Outcome<CommandAnswer> {
     let decision = &request_body.decision;
@@ -681,24 +899,25 @@ fn commit_decision(
             }
             format!("selected {selected} output(s)")
         }
-        Consequence::Record => "returned the candidate".to_owned(),
+        Consequence::Record(action) => action.to_owned(),
         Consequence::Conclude {
             design,
-            reason,
+            conclusion,
+            action,
             projects,
             allocation,
         } => {
-            let closed = match super::mutation::stage_collapse(
-                bus, command, design, reason, projects, allocation, &mut write, decided, at,
+            let closed = match super::mutation::stage_conclusion(
+                bus, command, design, conclusion, projects, allocation, &mut write, decided, at,
             ) {
                 Ok(closed) => closed,
                 Err(outcome) => return outcome,
             };
             if closed.is_empty() {
-                "collapsed the Design".to_owned()
+                action.to_owned()
             } else {
                 format!(
-                    "collapsed the Design and closed {}",
+                    "{action} and closed {}",
                     closed
                         .iter()
                         .map(ToString::to_string)

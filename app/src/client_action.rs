@@ -183,7 +183,7 @@ pub(crate) enum ClientAction {
         request: RoomCoordinationRequest,
         respond: RoomCoordinationResponse,
     },
-    /// Decide a Design's retained candidate or record review evidence over it.
+    /// Decide a Design pass proposal or record review evidence over it.
     Preparation {
         request: PreparationRequest,
         respond: PreparationResponse,

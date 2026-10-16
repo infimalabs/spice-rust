@@ -225,7 +225,9 @@ fn collapse_settles_unselected_tree_without_retracting_selected_output() {
         wire::TaskIntent::Design,
         None,
     );
-    let output = add_output(&bus, epoch, &design, "Selected collapsed output");
+    group_design(&bus, epoch, &design);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    let output = add_plan_output(&bus, epoch, &design, "Selected collapsed output");
     let spare = add_plan_output(&bus, epoch, &design, "Unselected collapsed Plan");
     let descendant = add_output(&bus, epoch, &spare, "Unselected Plan output");
     let (candidate, source) = retain_test_candidate(&bus, epoch, &seats, &design, &output, &spare);

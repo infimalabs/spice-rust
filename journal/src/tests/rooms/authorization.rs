@@ -19,17 +19,6 @@ fn authorization_matches_one_exact_selected_candidate() {
     )
     .expect("candidate retained");
     commit(&mut journal, preparation.coverage(1, 1)).expect("coverage");
-    commit(
-        &mut journal,
-        preparation.decision(
-            1,
-            DecisionOutcome::Returned {
-                candidate: preparation.candidate(1),
-                reason: "revise the candidate".to_owned(),
-            },
-        ),
-    )
-    .expect("returned decision");
     let input = vec![preparation.input.clone()];
     let output = vec![preparation.output.clone()];
     let result = authorize(
@@ -40,23 +29,17 @@ fn authorization_matches_one_exact_selected_candidate() {
 
     commit(
         &mut journal,
-        preparation.decision(
-            2,
-            DecisionOutcome::Selected {
-                candidate: preparation.candidate(1),
-                selected_outputs: output.clone(),
-            },
-        ),
+        preparation.decision(1, selected(preparation.candidate(1), output.clone())),
     )
     .expect("selected decision");
     for inexact in [
-        preparation.authorization(2, 1, input.clone(), vec![preparation.spare.clone()]),
-        preparation.authorization(2, 1, Vec::new(), output.clone()),
+        preparation.authorization(1, 1, input.clone(), vec![preparation.spare.clone()]),
+        preparation.authorization(1, 1, Vec::new(), output.clone()),
     ] {
         let result = authorize(&mut journal, inexact);
         refused(&journal, result);
     }
-    let mut covered = preparation.authorization(2, 1, input.clone(), output.clone());
+    let mut covered = preparation.authorization(1, 1, input.clone(), output.clone());
     covered.authorization.coverage.push(CoverageRef {
         candidate: preparation.candidate(1),
         coverage: SequenceCode::new(1),
@@ -65,25 +48,14 @@ fn authorization_matches_one_exact_selected_candidate() {
     refused(&journal, result);
     authorize(
         &mut journal,
-        preparation.authorization(2, 1, input.clone(), output.clone()),
+        preparation.authorization(1, 1, input.clone(), output.clone()),
     )
     .expect("exact selection authorized");
 
     // A sealed selection admits no second authorization of the same output.
-    commit(
-        &mut journal,
-        preparation.decision(
-            3,
-            DecisionOutcome::Selected {
-                candidate: preparation.candidate(1),
-                selected_outputs: output.clone(),
-            },
-        ),
-    )
-    .expect("second selection");
     let result = authorize(
         &mut journal,
-        preparation.authorization(3, 1, input.clone(), output.clone()),
+        preparation.authorization(1, 1, input.clone(), output.clone()),
     );
     refused(&journal, result);
     let result = authorize(&mut journal, preparation.authorization(2, 1, input, output));
@@ -97,16 +69,19 @@ fn a_collapse_request_authorizes_nothing() {
     let preparation = Preparation::new(&mut journal);
     commit(
         &mut journal,
-        preparation.retained(1, vec![preparation.output.clone()]),
+        preparation.proposal(
+            1,
+            wire::rooms::DesignPassRecommendation::Collapse,
+            Vec::new(),
+        ),
     )
     .expect("candidate retained");
     commit(
         &mut journal,
         preparation.decision(
             1,
-            DecisionOutcome::Collapse {
+            DecisionOutcome::Accepted {
                 candidate: preparation.candidate(1),
-                reason: "the premise no longer holds".to_owned(),
             },
         ),
     )
@@ -181,10 +156,7 @@ fn coverage_authority_is_its_writer_and_never_gates_selection() {
 
     let selected = preparation.decision(
         1,
-        DecisionOutcome::Selected {
-            candidate: preparation.candidate(1),
-            selected_outputs: vec![preparation.output.clone()],
-        },
+        selected(preparation.candidate(1), vec![preparation.output.clone()]),
     );
     let result = commit_as(&mut journal, Actor::Lane(reviewer), selected.clone());
     refused(&journal, result);
@@ -230,10 +202,7 @@ fn authorization_leaves_its_controller_open_and_no_edit_moves_it() {
         &mut journal,
         preparation.decision(
             1,
-            DecisionOutcome::Selected {
-                candidate: preparation.candidate(1),
-                selected_outputs: vec![preparation.output.clone()],
-            },
+            selected(preparation.candidate(1), vec![preparation.output.clone()]),
         ),
     )
     .expect("selected decision");
@@ -350,10 +319,7 @@ fn a_controller_concluded_without_authorization_never_authorizes() {
         &mut journal,
         preparation.decision(
             1,
-            DecisionOutcome::Selected {
-                candidate: preparation.candidate(1),
-                selected_outputs: vec![preparation.output.clone()],
-            },
+            selected(preparation.candidate(1), vec![preparation.output.clone()]),
         ),
     )
     .expect("selected decision");
@@ -419,7 +385,7 @@ fn task_review_fact_is_candidate_evidence_and_never_an_authorization_gate() {
         },
     )
     .expect("review evidence records");
-    let CandidateRetained { mut candidate } =
+    let DesignProposed { mut candidate } =
         preparation.retained(1, vec![preparation.output.clone()]);
     candidate.references = vec![CandidateReference {
         relation: "review".parse().expect("relation"),
@@ -427,15 +393,12 @@ fn task_review_fact_is_candidate_evidence_and_never_an_authorization_gate() {
             fact: SequenceCode::new(review.last().get()),
         },
     }];
-    commit(&mut journal, CandidateRetained { candidate }).expect("review citation is admitted");
+    commit(&mut journal, DesignProposed { candidate }).expect("review citation is admitted");
     commit(
         &mut journal,
         preparation.decision(
             1,
-            DecisionOutcome::Selected {
-                candidate: preparation.candidate(1),
-                selected_outputs: vec![preparation.output.clone()],
-            },
+            selected(preparation.candidate(1), vec![preparation.output.clone()]),
         ),
     )
     .expect("the operator selects without coverage");
@@ -452,6 +415,335 @@ fn task_review_fact_is_candidate_evidence_and_never_an_authorization_gate() {
     journal.verify().expect("review citation replays");
 }
 
+fn restore_candidate(
+    candidate: &mut serde_json::Value,
+    governed_inputs: &[TaskStamp],
+    outputs: &[TaskStamp],
+) {
+    let candidate = candidate
+        .as_object_mut()
+        .expect("proposal candidate is an object");
+    for field in ["statement", "claim", "recommendation", "justification"] {
+        candidate.remove(field);
+    }
+    candidate.insert(
+        "governed_inputs".to_owned(),
+        serde_json::to_value(governed_inputs).expect("governed inputs encode"),
+    );
+    candidate.insert(
+        "outputs".to_owned(),
+        serde_json::to_value(outputs).expect("outputs encode"),
+    );
+}
+fn retain_predecessor_proposal(
+    journal: &Journal,
+    applied: &crate::guard::Applied,
+    proposal: &DesignPassProposal,
+    legacy_governed_inputs: &[TaskStamp],
+    legacy_outputs: &[TaskStamp],
+    command_id: &str,
+) {
+    let seq = applied.first();
+    let seq_value = i64::try_from(seq.get()).expect("fixture sequence fits SQLite");
+    let bytes: Vec<u8> = journal
+        .connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = ?1",
+            [seq_value],
+            |row| row.get(0),
+        )
+        .expect("proposal fact reads");
+    let mut envelope: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("proposal envelope decodes");
+    restore_candidate(
+        &mut envelope["fact"]["candidate"],
+        legacy_governed_inputs,
+        legacy_outputs,
+    );
+    journal
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = ?2",
+            params![
+                serde_json::to_vec(&envelope).expect("predecessor envelope encodes"),
+                seq_value,
+            ],
+        )
+        .expect("restore predecessor proposal fact");
+
+    let subject = crate::rooms::subject(&ProposalRef::Candidate {
+        candidate: proposal.candidate.clone(),
+    })
+    .expect("proposal subject encodes");
+    let bytes: Vec<u8> = journal
+        .connection
+        .query_row(
+            "SELECT body FROM proposal_heads WHERE subject = ?1",
+            [&subject],
+            |row| row.get(0),
+        )
+        .expect("proposal head reads");
+    let mut head: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("proposal head decodes");
+    restore_candidate(&mut head, legacy_governed_inputs, legacy_outputs);
+    journal
+        .connection
+        .execute(
+            "UPDATE proposal_heads SET body = ?1 WHERE subject = ?2",
+            params![
+                serde_json::to_vec(&head).expect("predecessor head encodes"),
+                subject,
+            ],
+        )
+        .expect("restore predecessor proposal head");
+
+    let command = Command {
+        v: WireVersion::CURRENT,
+        id: uuid(command_id),
+        epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
+        kind: CommandKind::DesignPropose,
+        expected: vec![
+            Witness::Task {
+                task: proposal.candidate.controller.clone(),
+                head: proposal.statement,
+            },
+            Witness::Claim {
+                task: proposal.candidate.controller.clone(),
+                head: Some(proposal.claim),
+            },
+        ],
+        body: wire::rooms::DesignPropose {
+            candidate: proposal.clone(),
+        },
+    };
+    let mut request = serde_json::to_value(&command).expect("proposal command encodes");
+    restore_candidate(
+        &mut request["body"]["candidate"],
+        legacy_governed_inputs,
+        legacy_outputs,
+    );
+    let response = Response {
+        v: WireVersion::CURRENT,
+        id: command.id,
+        epoch: command.epoch,
+        outcome: Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: applied.first(),
+                last: applied.last(),
+            }),
+            body: json!({"text": "candidate retained"}),
+        }),
+    };
+    journal
+        .connection
+        .execute(
+            "INSERT INTO command_receipts(
+                 command_id, actor, command_kind, request, evaluated_witnesses, response,
+                 first_seq, last_seq, snapshot_seq, epoch
+             ) VALUES (?1, 'operator', ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8)",
+            params![
+                command.id.to_string(),
+                command.kind.as_str(),
+                wire::encode(&request).expect("predecessor request encodes"),
+                wire::encode(&command.expected).expect("witnesses encode"),
+                wire::encode(&response).expect("response encodes"),
+                i64::try_from(applied.first().get()).expect("fixture sequence fits SQLite"),
+                i64::try_from(applied.last().get()).expect("fixture sequence fits SQLite"),
+                command.epoch.to_string(),
+            ],
+        )
+        .expect("insert predecessor proposal receipt");
+}
+
+fn restore_design_pass_predecessor(journal: &Journal) {
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE journal_schema SET version = 72 WHERE singleton = 1;
+             PRAGMA user_version = 72;",
+        )
+        .expect("restore Design pass predecessor schema");
+}
+
+#[test]
+fn output_proposal_and_selected_decision_cross_from_the_design_pass_predecessor() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = Preparation::new(&mut journal);
+    let proposed = preparation.retained(1, vec![preparation.output.clone()]);
+    let proposal = proposed.candidate.clone();
+    let applied = commit(&mut journal, proposed).expect("proposal records");
+    commit(
+        &mut journal,
+        preparation.decision(
+            1,
+            DecisionOutcome::Resolved {
+                candidate: preparation.candidate(1),
+                outputs: vec![OutputDecision {
+                    output: preparation.output.clone(),
+                    verdict: OutputVerdict::Rejected,
+                    comment: Some("revise the boundary".to_owned()),
+                }],
+                comment: Some("another pass is needed".to_owned()),
+            },
+        ),
+    )
+    .expect("resolved decision records");
+    retain_predecessor_proposal(
+        &journal,
+        &applied,
+        &proposal,
+        &[preparation.input.clone()],
+        &[preparation.output.clone()],
+        "018f82d4-6f59-7d06-92e3-bce913116310",
+    );
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE fact_envelopes
+             SET envelope = CAST(json_remove(
+                 json_set(
+                     CAST(envelope AS TEXT),
+                     '$.fact.decision.outcome.kind', 'selected',
+                     '$.fact.decision.outcome.selected_outputs', json_array()
+                 ),
+                 '$.fact.decision.outcome.outputs',
+                 '$.fact.decision.outcome.comment'
+             ) AS BLOB)
+             WHERE kind = 'proposal::decided';
+             UPDATE proposal_heads
+             SET body = CAST(json_remove(
+                 json_set(
+                     CAST(body AS TEXT),
+                     '$.outcome.kind', 'selected',
+                     '$.outcome.selected_outputs', json_array()
+                 ),
+                 '$.outcome.outputs',
+                 '$.outcome.comment'
+             ) AS BLOB)
+             WHERE json_type(CAST(body AS TEXT), '$.outcome.kind') IS NOT NULL;",
+        )
+        .expect("restore predecessor selected decision");
+    restore_design_pass_predecessor(&journal);
+
+    crate::migrate::admit(&mut journal.connection)
+        .expect("Design pass predecessor crosses")
+        .expect("migration records");
+    let crossed = journal
+        .read(|read| {
+            read.proposal_head(&ProposalRef::Candidate {
+                candidate: preparation.candidate(1),
+            })
+        })
+        .expect("proposal reads")
+        .expect("proposal remains")
+        .into_body();
+    let crate::ProposalAuthority::Candidate(crossed) = crossed else {
+        panic!("proposal changed authority family");
+    };
+    assert_eq!(crossed.statement, preparation.statement);
+    assert_eq!(crossed.claim, preparation.claim);
+    assert_eq!(
+        crossed.recommendation,
+        wire::rooms::DesignPassRecommendation::Work
+    );
+    assert_eq!(
+        crossed.justification,
+        "retained work proposal predates explicit Design pass justification"
+    );
+    journal.verify().expect("crossed work proposal replays");
+}
+
+#[test]
+fn collapse_decision_crosses_to_an_outputless_accepted_proposal() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = Preparation::new(&mut journal);
+    let proposed = preparation.proposal(
+        1,
+        wire::rooms::DesignPassRecommendation::Collapse,
+        Vec::new(),
+    );
+    let proposal = proposed.candidate.clone();
+    let applied = commit(&mut journal, proposed).expect("collapse proposal records");
+    commit(
+        &mut journal,
+        preparation.decision(
+            1,
+            DecisionOutcome::Accepted {
+                candidate: preparation.candidate(1),
+            },
+        ),
+    )
+    .expect("collapse acceptance records");
+    retain_predecessor_proposal(
+        &journal,
+        &applied,
+        &proposal,
+        &[preparation.input.clone()],
+        &[preparation.output.clone()],
+        "018f82d4-6f59-7d06-92e3-bce913116311",
+    );
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE fact_envelopes
+             SET envelope = CAST(json_set(
+                 CAST(envelope AS TEXT),
+                 '$.fact.decision.outcome.kind', 'collapse',
+                 '$.fact.decision.outcome.reason', 'the premise no longer holds'
+             ) AS BLOB)
+             WHERE kind = 'proposal::decided';
+             UPDATE proposal_heads
+             SET body = CAST(json_set(
+                 CAST(body AS TEXT),
+                 '$.outcome.kind', 'collapse',
+                 '$.outcome.reason', 'the premise no longer holds'
+             ) AS BLOB)
+             WHERE json_type(CAST(body AS TEXT), '$.outcome.kind') IS NOT NULL;",
+        )
+        .expect("restore predecessor collapse decision");
+    restore_design_pass_predecessor(&journal);
+
+    crate::migrate::admit(&mut journal.connection)
+        .expect("collapse predecessor crosses")
+        .expect("migration records");
+    let proposal = journal
+        .read(|read| {
+            read.proposal_head(&ProposalRef::Candidate {
+                candidate: preparation.candidate(1),
+            })
+        })
+        .expect("proposal reads")
+        .expect("proposal remains")
+        .into_body();
+    let crate::ProposalAuthority::Candidate(proposal) = proposal else {
+        panic!("proposal changed authority family");
+    };
+    assert_eq!(
+        proposal.recommendation,
+        wire::rooms::DesignPassRecommendation::Collapse
+    );
+    assert!(proposal.governed_inputs.is_empty());
+    assert!(proposal.outputs.is_empty());
+    assert_eq!(proposal.justification, "the premise no longer holds");
+    let decision = journal
+        .read(|read| {
+            read.proposal_head(&ProposalRef::Decision {
+                decision: preparation.decision_ref(1),
+            })
+        })
+        .expect("decision reads")
+        .expect("decision remains")
+        .into_body();
+    assert!(matches!(
+        decision,
+        crate::ProposalAuthority::Decision(PreparationDecision {
+            outcome: DecisionOutcome::Accepted { .. },
+            ..
+        })
+    ));
+    journal.verify().expect("crossed collapse replays");
+}
+
 #[test]
 fn retained_two_step_selection_crosses_to_one_exact_decision() {
     let mut journal = Journal::in_memory().expect("journal");
@@ -462,7 +754,8 @@ fn retained_two_step_selection_crosses_to_one_exact_decision() {
             "UPDATE fact_envelopes
              SET envelope = CAST(json_remove(
                  json_set(CAST(envelope AS TEXT), '$.fact.decision.outcome.kind', 'accepted'),
-                 '$.fact.decision.outcome.selected_outputs'
+                 '$.fact.decision.outcome.outputs',
+                 '$.fact.decision.outcome.comment'
              ) AS BLOB)
              WHERE kind = 'proposal::decided';
              UPDATE fact_envelopes
@@ -483,7 +776,8 @@ fn retained_two_step_selection_crosses_to_one_exact_decision() {
              UPDATE proposal_heads
              SET body = CAST(json_remove(
                  json_set(CAST(body AS TEXT), '$.outcome.kind', 'accepted'),
-                 '$.outcome.selected_outputs'
+                 '$.outcome.outputs',
+                 '$.outcome.comment'
              ) AS BLOB)
              WHERE json_type(CAST(body AS TEXT), '$.outcome.kind') IS NOT NULL;
              UPDATE authorization_heads
@@ -522,10 +816,7 @@ fn retained_two_step_selection_crosses_to_one_exact_decision() {
     };
     assert_eq!(
         decision.outcome,
-        DecisionOutcome::Selected {
-            candidate: preparation.candidate(1),
-            selected_outputs: vec![preparation.output.clone()],
-        }
+        selected(preparation.candidate(1), vec![preparation.output.clone()],)
     );
     let authorization = journal
         .read(|read| read.authorization_head(&preparation.output))
@@ -610,16 +901,19 @@ fn candidate_less_retained_decision_refuses_with_its_owning_release() {
     let preparation = Preparation::new(&mut journal);
     commit(
         &mut journal,
-        preparation.retained(1, vec![preparation.output.clone()]),
+        preparation.proposal(
+            1,
+            wire::rooms::DesignPassRecommendation::Collapse,
+            Vec::new(),
+        ),
     )
     .expect("candidate retained");
     commit(
         &mut journal,
         preparation.decision(
             1,
-            DecisionOutcome::Collapse {
+            DecisionOutcome::Accepted {
                 candidate: preparation.candidate(1),
-                reason: "current reason".to_owned(),
             },
         ),
     )

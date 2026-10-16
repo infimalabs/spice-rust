@@ -78,9 +78,9 @@ pub enum CommandKind {
     WorkingGroupFast,
     /// Set one working group's shared activity stance at the observed revision.
     WorkingGroupStance,
-    /// Retain one exact preparation candidate.
-    CandidateRetain,
-    /// Record one source-backed critique of a retained candidate.
+    /// Record one exact completed pass proposed by the active Design holder.
+    DesignPropose,
+    /// Record one source-backed critique of a Design pass proposal.
     CandidateCritiqueRecord,
     /// Record one source-backed review coverage statement.
     CandidateCoverageRecord,

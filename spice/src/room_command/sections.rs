@@ -143,15 +143,6 @@ impl fmt::Display for Decisions {
                 row.decision, row.seq, row.at, row.actor
             )?;
             match &row.outcome {
-                DecisionOutcome::Selected {
-                    candidate,
-                    selected_outputs,
-                } => write!(
-                    formatter,
-                    "selected {} output(s) of candidate {}",
-                    selected_outputs.len(),
-                    candidate.candidate
-                )?,
                 DecisionOutcome::Returned { candidate, reason } => {
                     write!(formatter, "returned candidate {}", candidate.candidate)?;
                     write_reason(formatter, reason)?;
@@ -177,9 +168,8 @@ impl fmt::Display for Decisions {
                         write_reason(formatter, comment)?;
                     }
                 }
-                DecisionOutcome::Collapse { candidate, reason } => {
-                    write!(formatter, "collapsed on candidate {}", candidate.candidate)?;
-                    write_reason(formatter, reason)?;
+                DecisionOutcome::Accepted { candidate } => {
+                    write!(formatter, "accepted proposal {}", candidate.candidate)?;
                 }
             }
         }

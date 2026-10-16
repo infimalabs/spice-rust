@@ -34,14 +34,22 @@ fn retain_citing(
         bus,
         epoch,
         Actor::Lane(seat.lane),
-        CommandKind::CandidateRetain,
+        CommandKind::DesignPropose,
         expected,
-        &CandidateRetain {
-            candidate: RetainedCandidate {
+        &DesignPropose {
+            candidate: DesignPassProposal {
                 candidate,
+                statement: at(&current, controller).statement.position,
+                claim: at(&current, controller)
+                    .claim
+                    .as_ref()
+                    .expect("Design is claimed before proposing a pass")
+                    .position,
+                recommendation: wire::rooms::DesignPassRecommendation::Work,
                 governed_inputs: Vec::new(),
                 outputs: vec![output.born().expect("output stamp")],
                 evidence: Vec::new(),
+                justification: "the cited evidence supports this pass".to_owned(),
                 references: sources
                     .into_iter()
                     .map(|source| CandidateReference {
@@ -113,7 +121,9 @@ fn a_contribution_answer_is_the_source_retain_accepts_only_under_its_own_design(
     let (root, bus, epoch, seats) = fixture("preparation-contribution-source", 1);
     let lane = Actor::Lane(seats[0].lane);
     let design = add_controller(&bus, epoch, "Cited design", wire::TaskIntent::Design, None);
-    let output = add_output(&bus, epoch, &design, "Cited output");
+    group_design(&bus, epoch, &design);
+    claim_task(&bus, epoch, &seats[0], &lane, &design);
+    let output = add_plan_output(&bus, epoch, &design, "Cited output");
     let other = add_controller(&bus, epoch, "Other design", wire::TaskIntent::Design, None);
     let evidence = |room: &TaskHandle, sources| {
         contributed(contribute(
@@ -200,109 +210,5 @@ fn a_contribution_answer_is_the_source_retain_accepts_only_under_its_own_design(
             artifact,
         ],
     ));
-    clean(&root, bus);
-}
-
-#[test]
-fn only_the_author_withdraws_an_undecided_candidate_and_the_correction_stays_actionable() {
-    let (root, bus, epoch, seats) = fixture("preparation-withdrawal", 2);
-    let design = add_controller(
-        &bus,
-        epoch,
-        "Corrected design",
-        wire::TaskIntent::Design,
-        None,
-    );
-    let output = add_output(&bus, epoch, &design, "Corrected output");
-    let author = Actor::Lane(seats[0].lane);
-    let (mistaken, source) = retain_candidate_version(
-        &bus,
-        epoch,
-        &seats[0],
-        &design,
-        &[&output],
-        1_760_000_000_000_001,
-    );
-    let (corrected, _) = retain_candidate_version(
-        &bus,
-        epoch,
-        &seats[0],
-        &design,
-        &[&output],
-        1_760_000_000_000_002,
-    );
-    let reason = "cites another Design's facts; the next candidate corrects it";
-
-    for stranger in [Actor::Lane(seats[1].lane), Actor::Operator] {
-        let outcome = withdraw(&bus, epoch, stranger, &design, &mistaken, reason);
-        assert_eq!(refusal_of(&outcome).0, "preparation::withdrawal-not-author");
-    }
-    let committed = withdraw(&bus, epoch, author.clone(), &design, &mistaken, reason);
-    let Outcome::Reply(Reply {
-        position: ReplyPosition::Committed(withdrawn),
-        ..
-    }) = committed
-    else {
-        panic!("the author's withdrawal did not commit: {committed:?}");
-    };
-    let repeated = withdraw(&bus, epoch, author.clone(), &design, &mistaken, "again");
-    let Outcome::Reply(Reply {
-        position: ReplyPosition::Snapshot(position),
-        body: CommandAnswer::Text(text),
-    }) = repeated
-    else {
-        panic!("a repeated withdrawal answered {repeated:?}");
-    };
-    assert_eq!(position, withdrawn.last, "a repeat writes nothing");
-    assert!(text.text.contains(reason), "{}", text.text);
-
-    let rejected = |candidate: &CandidateRef| DecisionOutcome::Resolved {
-        candidate: candidate.clone(),
-        outputs: vec![OutputDecision {
-            output: output.born().expect("output stamp"),
-            verdict: OutputVerdict::Rejected,
-            comment: Some("another pass".to_owned()),
-        }],
-        comment: None,
-    };
-    let refused = decide(&bus, epoch, &design, 1, &source, rejected(&mistaken));
-    assert_eq!(refusal_of(&refused).0, "preparation::candidate-withdrawn");
-    assert_committed(decide(
-        &bus,
-        epoch,
-        &design,
-        1,
-        &source,
-        rejected(&corrected),
-    ));
-    let late = withdraw(&bus, epoch, author, &design, &corrected, reason);
-    assert_eq!(refusal_of(&late).0, "preparation::candidate-decided");
-
-    let page = preparation_page(&root, &[design.as_str()]);
-    let rows = page["page"]["rows"].as_array().expect("preparation rows");
-    let candidate_row = |candidate: &CandidateRef| {
-        rows.iter()
-            .find(|row| {
-                row["kind"] == "candidate"
-                    && row["candidate"]["candidate"]["candidate"]
-                        == candidate.candidate.to_string().as_str()
-            })
-            .expect("the candidate stays in history")
-    };
-    let withdrawal = rows
-        .iter()
-        .find(|row| row["kind"] == "withdrawal")
-        .expect("the withdrawal is history");
-    assert_eq!(
-        candidate_row(&mistaken)["withdrawn"],
-        withdrawal["position"]
-    );
-    assert!(candidate_row(&corrected).get("withdrawn").is_none());
-    assert_eq!(withdrawal["withdrawal"]["reason"], reason);
-    assert_eq!(
-        withdrawal["author"],
-        serde_json::to_value(Actor::Lane(seats[0].lane)).expect("actor encodes")
-    );
-    assert!(withdrawal["at"].is_string());
     clean(&root, bus);
 }

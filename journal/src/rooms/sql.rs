@@ -3,7 +3,10 @@
 use std::collections::BTreeMap;
 
 use rusqlite::{Connection, OptionalExtension, params};
-use wire::{AnyFact, CanonicalUuid, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead};
+use wire::{
+    AnyFact, CanonicalUuid, ClaimDisposition, ClaimHead, Seq, TaskPreparation, TaskStamp,
+    TranscriptSourceHead,
+};
 
 use super::{
     Authority, AuthorizationRow, Change, CoordinationRecord, Direction, Projection, ProposalRow,
@@ -17,6 +20,7 @@ pub(crate) struct Stored<'a> {
     connection: &'a Connection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
     task_statements: BTreeMap<String, Seq>,
+    active_claims: BTreeMap<String, Option<Seq>>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
     directions: BTreeMap<String, Direction>,
     operator_directions: BTreeMap<String, CanonicalUuid>,
@@ -28,6 +32,7 @@ impl<'a> Stored<'a> {
             connection,
             tasks: BTreeMap::new(),
             task_statements: BTreeMap::new(),
+            active_claims: BTreeMap::new(),
             transcripts: BTreeMap::new(),
             directions: BTreeMap::new(),
             operator_directions: BTreeMap::new(),
@@ -86,6 +91,36 @@ impl Authority for Stored<'_> {
     fn set_task_statement(&mut self, task: &TaskStamp, statement: Seq) {
         self.task_statements
             .insert(task.as_str().to_owned(), statement);
+    }
+
+    fn active_claim(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal> {
+        if let Some(claim) = self.active_claims.get(task.as_str()) {
+            return Ok(*claim);
+        }
+        let row = self
+            .connection
+            .query_row(
+                "SELECT head_seq, body FROM claim_heads WHERE stamp = ?1",
+                [task.as_str()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .optional()?;
+        row.map(|(seq, body)| {
+            let claim: ClaimHead = wire::decode(&body)?;
+            if claim.disposition != ClaimDisposition::Active {
+                return Ok(None);
+            }
+            let seq = u64::try_from(seq).ok().and_then(Seq::new).ok_or_else(|| {
+                Refusal::Unsound(format!("task {task} has an invalid claim head"))
+            })?;
+            Ok(Some(seq))
+        })
+        .transpose()
+        .map(Option::flatten)
+    }
+
+    fn set_active_claim(&mut self, task: &TaskStamp, claim: Option<Seq>) {
+        self.active_claims.insert(task.to_string(), claim);
     }
 
     fn account(&mut self, head: &TranscriptSourceHead) {

@@ -588,7 +588,7 @@ impl CommandKind {
             Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
             Self::RoomControl => Law::ROOM_CONTROL,
             Self::RoomClose => Law::ROOM_CLOSE,
-            Self::CandidateRetain
+            Self::DesignPropose
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::CandidateWithdraw => Law::PROPOSAL_RECORD,

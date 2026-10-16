@@ -1356,7 +1356,9 @@ pub(crate) fn dispatch_with_repository(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Option<Outcome<CommandAnswer>> {
-    if let Some(outcome) = super::dispatch_preparation(bus, command, projects, allocation) {
+    if let Some(outcome) =
+        super::dispatch_preparation(bus, command, repository, projects, allocation)
+    {
         return Some(outcome);
     }
     if let Some(outcome) = dispatch_working_group(bus, command) {

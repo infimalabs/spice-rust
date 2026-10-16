@@ -148,9 +148,9 @@ pub enum PhaseRefusal {
 pub fn deliverable(phase: &Phase) -> Option<&'static str> {
     match phase.as_str() {
         "design" => Some(
-            "board state is the deliverable: retain proposals and Plans the evidence \
-             justifies under this open Design, then checkpoint and run `spice task free`; \
-             only the operator concludes a Design, and lanes never mark it done",
+            "board state is the deliverable: record exactly one `preparation propose` \
+             recommendation justified by the evidence; that command releases the claim \
+             atomically; only the operator concludes a Design, and lanes never mark it done",
         ),
         "plan" => Some(
             "board state is the deliverable: make the execution contract explicit or \

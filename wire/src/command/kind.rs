@@ -35,7 +35,7 @@ impl CommandKind {
         Self::WorkingGroupDisband,
         Self::WorkingGroupFast,
         Self::WorkingGroupStance,
-        Self::CandidateRetain,
+        Self::DesignPropose,
         Self::CandidateCritiqueRecord,
         Self::CandidateCoverageRecord,
         Self::PreparationDecide,
@@ -142,7 +142,7 @@ impl CommandKind {
             | Self::WorkingGroupDisband
             | Self::WorkingGroupFast
             | Self::WorkingGroupStance
-            | Self::CandidateRetain
+            | Self::DesignPropose
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::PreparationDecide
@@ -244,7 +244,7 @@ impl CommandKind {
             | Self::WorkingGroupDisband
             | Self::WorkingGroupFast
             | Self::WorkingGroupStance => self.room_spelling(),
-            Self::CandidateRetain
+            Self::DesignPropose
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::PreparationDecide
@@ -292,7 +292,7 @@ impl CommandKind {
     }
     const fn preparation_spelling(self) -> &'static str {
         match self {
-            Self::CandidateRetain => "preparation::retain",
+            Self::DesignPropose => "preparation::retain",
             Self::CandidateCritiqueRecord => "preparation::critique",
             Self::CandidateCoverageRecord => "preparation::cover",
             Self::PreparationDecide => "preparation::decide",

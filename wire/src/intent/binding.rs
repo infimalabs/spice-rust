@@ -13,7 +13,7 @@ use crate::principal::{
     PrincipalEdit, PrincipalRead, PrincipalRoleRef, PrincipalStanding, PrincipalsAnswer,
 };
 use crate::rooms::{
-    CandidateCoverageRecord, CandidateCritiqueRecord, CandidateRetain, CandidateWithdraw,
+    CandidateCoverageRecord, CandidateCritiqueRecord, CandidateWithdraw, DesignPropose,
     OutputAdopt, PreparationDecide, RoomPost, RoomPostAnswer,
 };
 
@@ -91,8 +91,8 @@ pub enum BodyShape {
     WorkingGroupFast,
     /// [`WorkingGroupStanceSet`]
     WorkingGroupStance,
-    /// [`CandidateRetain`]
-    CandidateRetain,
+    /// [`DesignPropose`]
+    DesignPropose,
     /// [`CandidateCritiqueRecord`]
     CandidateCritiqueRecord,
     /// [`CandidateCoverageRecord`]
@@ -531,7 +531,7 @@ impl CommandKind {
             | Self::RoomContributionSources
             | Self::RoomControl
             | Self::RoomClose => self.room_binding(),
-            Self::CandidateRetain
+            Self::DesignPropose
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::PreparationDecide
@@ -618,7 +618,7 @@ impl CommandKind {
             Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
-            Self::CandidateRetain
+            Self::DesignPropose
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::PreparationDecide
@@ -654,7 +654,7 @@ impl CommandKind {
         use BodyShape as B;
 
         match self {
-            Self::CandidateRetain => Binding::of(B::CandidateRetain, A::Text),
+            Self::DesignPropose => Binding::of(B::DesignPropose, A::Text),
             Self::CandidateCritiqueRecord => Binding::of(B::CandidateCritiqueRecord, A::Text),
             Self::CandidateCoverageRecord => Binding::of(B::CandidateCoverageRecord, A::Text),
             Self::PreparationDecide => Binding::of(B::PreparationDecide, A::Text),
@@ -798,8 +798,8 @@ pub enum Intent {
     WorkingGroupFast(WorkingGroupFast),
     /// [`BodyShape::WorkingGroupStance`]
     WorkingGroupStance(WorkingGroupStanceSet),
-    /// [`BodyShape::CandidateRetain`]
-    CandidateRetain(CandidateRetain),
+    /// [`BodyShape::DesignPropose`]
+    DesignPropose(DesignPropose),
     /// [`BodyShape::CandidateCritiqueRecord`]
     CandidateCritiqueRecord(CandidateCritiqueRecord),
     /// [`BodyShape::CandidateCoverageRecord`]
@@ -955,7 +955,7 @@ impl Intent {
             | Self::RoomContributionSources(_)
             | Self::RoomControl(_)
             | Self::RoomClose(_) => self.room_shape(),
-            Self::CandidateRetain(_)
+            Self::DesignPropose(_)
             | Self::CandidateCritiqueRecord(_)
             | Self::CandidateCoverageRecord(_)
             | Self::PreparationDecide(_)
@@ -1031,7 +1031,7 @@ impl Intent {
             Self::BoardGraph(_) => BodyShape::BoardGraph,
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
-            Self::CandidateRetain(_)
+            Self::DesignPropose(_)
             | Self::CandidateCritiqueRecord(_)
             | Self::CandidateCoverageRecord(_)
             | Self::PreparationDecide(_)
@@ -1061,7 +1061,7 @@ impl Intent {
     }
     const fn preparation_shape(&self) -> BodyShape {
         match self {
-            Self::CandidateRetain(_) => BodyShape::CandidateRetain,
+            Self::DesignPropose(_) => BodyShape::DesignPropose,
             Self::CandidateCritiqueRecord(_) => BodyShape::CandidateCritiqueRecord,
             Self::CandidateCoverageRecord(_) => BodyShape::CandidateCoverageRecord,
             Self::PreparationDecide(_) => BodyShape::PreparationDecide,
@@ -1170,7 +1170,7 @@ impl BodyShape {
                 | Self::WorkingGroupDisband
                 | Self::WorkingGroupFast
                 | Self::WorkingGroupStance
-                | Self::CandidateRetain
+                | Self::DesignPropose
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
                 | Self::PreparationDecide
@@ -1227,7 +1227,7 @@ impl BodyShape {
                 | Self::WorkingGroupDisband
                 | Self::WorkingGroupFast
                 | Self::WorkingGroupStance
-                | Self::CandidateRetain
+                | Self::DesignPropose
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
                 | Self::PreparationDecide
@@ -1274,7 +1274,7 @@ impl BodyShape {
             | Self::WorkingGroupDisband
             | Self::WorkingGroupFast
             | Self::WorkingGroupStance => return self.decode_working_group_body(bytes),
-            Self::CandidateRetain
+            Self::DesignPropose
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::PreparationDecide
@@ -1298,7 +1298,7 @@ impl BodyShape {
 
     fn decode_preparation_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
-            Self::CandidateRetain => Intent::CandidateRetain(crate::decode(bytes)?),
+            Self::DesignPropose => Intent::DesignPropose(crate::decode(bytes)?),
             Self::CandidateCritiqueRecord => Intent::CandidateCritiqueRecord(crate::decode(bytes)?),
             Self::CandidateCoverageRecord => Intent::CandidateCoverageRecord(crate::decode(bytes)?),
             Self::PreparationDecide => Intent::PreparationDecide(crate::decode(bytes)?),

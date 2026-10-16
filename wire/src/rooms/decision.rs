@@ -1,8 +1,8 @@
-//! Candidate decision DTOs and their retained compatibility shapes.
+//! Design pass proposal decision DTOs.
 
 use serde::{Deserialize, Serialize};
 
-use super::{CandidateRef, DecisionRef, RoomSource, all_unique};
+use super::{CandidateRef, DecisionRef, RoomSource};
 use crate::TaskStamp;
 
 /// One output's verdict in a candidate decision.
@@ -28,68 +28,50 @@ pub struct OutputDecision {
     pub comment: Option<String>,
 }
 
-/// Exact operator disposition of one immutable retained candidate version.
+/// Exact operator disposition of one immutable Design pass proposal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DecisionOutcome {
-    /// Authorize exactly this nonempty subset of the candidate's outputs.
-    ///
-    /// Retained for decisions recorded before output-by-output review.
-    Selected {
-        /// Exact retained candidate version being selected.
-        candidate: CandidateRef,
-        /// Unique output subset this decision releases.
-        selected_outputs: Vec<TaskStamp>,
-    },
-    /// Return this candidate version for further preparation.
-    ///
-    /// Retained for decisions recorded before output-by-output review.
+    /// Return this proposal for another pass without authorizing or concluding.
     Returned {
-        /// Exact retained candidate version being returned.
+        /// Exact proposal being returned.
         candidate: CandidateRef,
-        /// Nonempty operator reason for returning it.
+        /// Nonempty operator feedback for the next pass.
         reason: String,
     },
-    /// Record one explicit verdict for every output.
+    /// Record one explicit verdict for every work output.
     Resolved {
-        /// Exact retained candidate version being resolved.
+        /// Exact work proposal being resolved.
         candidate: CandidateRef,
-        /// Unique, complete output verdicts in candidate order.
+        /// Unique, complete output verdicts in proposal order.
         outputs: Vec<OutputDecision>,
-        /// Optional comment applying to the complete candidate.
+        /// Optional comment applying to the complete proposal.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         comment: Option<String>,
     },
-    /// Collapse the Design through its conclusion authority, on this
-    /// candidate's premise.
-    Collapse {
-        /// Exact retained candidate version whose premise did not hold.
+    /// Accept an outputless conclude or collapse recommendation.
+    Accepted {
+        /// Exact outputless proposal being accepted.
         candidate: CandidateRef,
-        /// Nonempty operator reason for collapsing it.
-        reason: String,
     },
 }
 
 impl DecisionOutcome {
-    /// Exact retained candidate version this decision addresses.
+    /// Exact proposal this decision addresses.
     #[must_use]
     pub fn candidate(&self) -> &CandidateRef {
         match self {
-            Self::Selected { candidate, .. }
-            | Self::Returned { candidate, .. }
+            Self::Returned { candidate, .. }
             | Self::Resolved { candidate, .. }
-            | Self::Collapse { candidate, .. } => candidate,
+            | Self::Accepted { candidate } => candidate,
         }
     }
 
-    /// Outputs this decision authorizes, in recorded order.
+    /// Work outputs this decision authorizes, in recorded order.
     pub fn accepted_outputs(&self) -> impl Iterator<Item = &TaskStamp> {
         match self {
-            Self::Selected {
-                selected_outputs, ..
-            } => EitherOutputs::Selected(selected_outputs.iter()),
             Self::Resolved { outputs, .. } => EitherOutputs::Resolved(outputs.iter()),
-            Self::Returned { .. } | Self::Collapse { .. } => EitherOutputs::None,
+            Self::Returned { .. } | Self::Accepted { .. } => EitherOutputs::None,
         }
     }
 
@@ -109,13 +91,12 @@ impl DecisionOutcome {
                         output.verdict == OutputVerdict::Rejected || output.comment.is_some()
                     })
             }
-            Self::Selected { .. } | Self::Collapse { .. } => false,
+            Self::Accepted { .. } => false,
         }
     }
 }
 
 enum EitherOutputs<'a> {
-    Selected(std::slice::Iter<'a, TaskStamp>),
     Resolved(std::slice::Iter<'a, OutputDecision>),
     None,
 }
@@ -125,7 +106,6 @@ impl<'a> Iterator for EitherOutputs<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Selected(outputs) => outputs.next(),
             Self::Resolved(outputs) => outputs.find_map(|output| {
                 (output.verdict == OutputVerdict::Accepted).then_some(&output.output)
             }),
@@ -142,8 +122,8 @@ pub struct PreparationDecision {
     pub decision: DecisionRef,
     /// Exact authority owning the decision basis.
     pub source: RoomSource,
-    /// Selection, return, output resolution, or collapse over one exact
-    /// candidate version.
+    /// Return, output resolution, or outputless acceptance over one exact
+    /// proposal version.
     pub outcome: DecisionOutcome,
 }
 
@@ -163,11 +143,6 @@ impl TryFrom<PreparationDecisionWire> for PreparationDecision {
             return Err("decision and candidate must share one controlling task");
         }
         match &value.outcome {
-            DecisionOutcome::Selected {
-                selected_outputs, ..
-            } if selected_outputs.is_empty() || !all_unique(selected_outputs) => {
-                return Err("a selection must name a nonempty unique output set");
-            }
             DecisionOutcome::Resolved {
                 outputs, comment, ..
             } => {
@@ -188,12 +163,12 @@ impl TryFrom<PreparationDecisionWire> for PreparationDecision {
                     return Err("decision comments must be nonempty and trimmed when present");
                 }
             }
-            DecisionOutcome::Returned { reason, .. } | DecisionOutcome::Collapse { reason, .. }
-                if reason.trim().is_empty() =>
+            DecisionOutcome::Returned { reason, .. }
+                if reason.is_empty() || reason.trim() != reason =>
             {
-                return Err("a return or collapse decision requires a nonempty reason");
+                return Err("a return decision requires a nonempty trimmed reason");
             }
-            _ => {}
+            DecisionOutcome::Accepted { .. } | DecisionOutcome::Returned { .. } => {}
         }
         Ok(Self {
             decision: value.decision,

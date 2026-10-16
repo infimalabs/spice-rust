@@ -58,11 +58,12 @@ on the exact proposal version whose premise failed.
 
 ## Deciding a Design proposal
 
-The read view's **Proposal versions** section lists every candidate retained
+The read view's **Design pass proposals** section lists every proposal recorded
 under the Design, newest first, without replacing earlier versions. Each card
-names its immutable candidate identity and retaining journal fact, governed
-inputs, retained source references, cited question results, critiques, review
-coverage, and every earlier decision and execution authorization. Each output
+names its immutable proposal identity and journal fact, recommendation,
+justification, governed inputs, source references, cited question results,
+critiques, review coverage, and every earlier decision and execution
+authorization. Each work output
 shows its current title, handle, status, and acceptance. A referenced task or
 question result absent from the current projection is shown as unavailable;
 an exact source identity is shown as an unresolved link rather than being
@@ -81,7 +82,7 @@ version:
 
 **Preview decision** mutates nothing. **Submit decision** sends one
 `preparation decide` command witnessing the Design's statement, workflow, and
-claim heads, the exact retained candidate fact, governed input statements,
+proposal heads, the exact Design pass proposal fact, governed input statements,
 accepted output transitions, and absence of the new decision and output
 authorizations. Resolution atomically records every verdict and comment plus
 authorization for exactly the accepted outputs; there is no coverage-record
@@ -98,8 +99,8 @@ edits or previews another version. Editing that version again clears its
 notice. A successful reply reports only that the write landed: standing,
 accepted outputs, and conclusion continue to come from committed room and
 board authority. A decided version shows its immutable decision and offers no
-second submission. A stale candidate, moved head, live claim, concluded
-Design, foreign output, incomplete verdict set, or mismatched version refusal
+second submission. A stale proposal, moved head, live claim, concluded Design,
+foreign output, incomplete verdict set, or mismatched version refusal
 stays beside the unchanged draft and requires a fresh preview.
 Passive versus active working-group standing changes no operator decision
 authority. Native radio, text, and button controls preserve keyboard order in
@@ -107,8 +108,8 @@ normal and narrow layouts.
 
 ## Preparation authority
 
-A room for a controlling task also exposes its retained candidate, critique,
-review coverage, decision, and execution-authorization records in immutable
+A room for a controlling task also exposes its Design pass proposals, critiques,
+review coverage, decisions, and execution-authorization records in immutable
 journal order. Each record preserves exact outputs, governed inputs, source
 link, every output verdict and comment, the overall comment, and accepted
 outputs; review evidence and execution authorization remain distinct.

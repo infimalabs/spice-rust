@@ -692,14 +692,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "preparation::show"
     ),
     row!(
-        ["preparation", "retain"],
-        "preparation retain CANDIDATE_JSON",
+        ["preparation", "propose"],
+        "preparation propose PROPOSAL_JSON",
         OperatorOrLane,
         Command,
-        [CandidateRetained],
+        [DesignProposed],
         [Resident],
         Reply,
-        "preparation::retain"
+        "preparation::propose"
     ),
     row!(
         ["preparation", "critique"],

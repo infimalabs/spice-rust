@@ -7,7 +7,7 @@ use super::super::taste_review::{configured_repository, issue_repository, modify
 use super::design_standing::{active_holder, born, design, move_out, offered, refused, win_named};
 use super::*;
 use wire::rooms::{
-    CandidateRef, CandidateReference, CandidateRetain, RetainedCandidate, RoomSource,
+    CandidateRef, CandidateReference, DesignPassProposal, DesignPropose, RoomSource,
 };
 
 /// The witnesses and request adding a task under `parent` through explicit
@@ -243,7 +243,15 @@ fn retain(
     outputs: &[&TaskHandle],
     evidence: RoomSource,
 ) -> Outcome<CommandAnswer> {
-    let current = board(bus, epoch, Actor::Lane(seat.lane));
+    let mut current = board(bus, epoch, Actor::Lane(seat.lane));
+    if at(&current, controller)
+        .claim
+        .as_ref()
+        .is_none_or(|claim| claim.body.disposition != ClaimDisposition::Active)
+    {
+        claim_task(bus, epoch, seat, &Actor::Lane(seat.lane), controller);
+        current = board(bus, epoch, Actor::Lane(seat.lane));
+    }
     let candidate = CandidateRef {
         controller: born(controller),
         candidate: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_101)
@@ -265,14 +273,22 @@ fn retain(
         bus,
         epoch,
         Actor::Lane(seat.lane),
-        CommandKind::CandidateRetain,
+        CommandKind::DesignPropose,
         expected,
-        &CandidateRetain {
-            candidate: RetainedCandidate {
+        &DesignPropose {
+            candidate: DesignPassProposal {
                 candidate,
+                statement: at(&current, controller).statement.position,
+                claim: at(&current, controller)
+                    .claim
+                    .as_ref()
+                    .expect("Design is claimed before proposing a pass")
+                    .position,
+                recommendation: wire::rooms::DesignPassRecommendation::Work,
                 governed_inputs: Vec::new(),
                 outputs: outputs.iter().map(|output| born(output)).collect(),
                 evidence: Vec::new(),
+                justification: "the gathered evidence supports this pass".to_owned(),
                 references: vec![CandidateReference {
                     relation: "evidence".parse().expect("relation"),
                     source: evidence,
@@ -311,21 +327,25 @@ fn a_candidate_cites_gathered_evidence_but_never_selects_a_gather_task() {
     let (root, bus, epoch, seats) = fixture("gather-candidate", 1);
     let task = design(&bus, epoch, "Evidence design");
     group_design(&bus, epoch, &task);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &task);
     let trial = gather(&bus, epoch, &task, "Evidence gather");
-    let (output, added) = add_under(&bus, epoch, Some(&task), "Real output", None, None);
+    let (output, added) = add_under(
+        &bus,
+        epoch,
+        Some(&task),
+        "Real output",
+        Some("plan,review"),
+        Some(wire::TaskIntent::Plan),
+    );
     assert_committed(added);
     let finding = gathered(&bus, epoch, &trial, "the idea held under load");
 
-    assert_eq!(
-        refused(&retain(
-            &bus,
-            epoch,
-            &seats[0],
-            &task,
-            &[&trial],
-            finding.clone()
-        )),
-        "preparation::gather-output"
+    assert!(
+        matches!(
+            retain(&bus, epoch, &seats[0], &task, &[&trial], finding.clone()),
+            Outcome::Refusal(_)
+        ),
+        "a gather task cannot be proposed as executable work"
     );
     assert_committed(retain(&bus, epoch, &seats[0], &task, &[&output], finding));
     clean(&root, bus);
@@ -344,6 +364,7 @@ fn a_taste_hold_never_changes_what_a_gather_task_is() {
     );
 
     group_design(&bus, epoch, &task);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &task);
     let (trial, added) = add_gather_with_policy(&bus, &repository, epoch, &task, "Sloppy gather");
     assert_committed(added);
     let route = |bus: &Bus| {
@@ -363,17 +384,12 @@ fn a_taste_hold_never_changes_what_a_gather_task_is() {
             open_awaiting_selection(&bus, epoch).is_empty(),
             "a {standing} gather task holds no Design awaiting selection"
         );
-        assert_eq!(
-            refused(&retain(
-                &bus,
-                epoch,
-                &seats[0],
-                &task,
-                &[&trial],
-                finding.clone()
-            )),
-            "preparation::gather-output",
-            "a {standing} gather task is never a candidate output"
+        assert!(
+            matches!(
+                retain(&bus, epoch, &seats[0], &task, &[&trial], finding.clone()),
+                Outcome::Refusal(_)
+            ),
+            "a {standing} gather task is never a proposed work output"
         );
         assert!(
             runnable(&bus, epoch, &trial),

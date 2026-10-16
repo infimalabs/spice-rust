@@ -593,8 +593,8 @@ fn render_preparation(runtime: &AppRuntime, controller: &TaskStamp) -> Html {
     {
         records.push((
             positioned.position,
-            "Retained candidate",
-            serde_json::to_string(&positioned.value).expect("candidate authority encodes"),
+            "Design pass proposal",
+            serde_json::to_string(&positioned.value).expect("proposal authority encodes"),
         ));
     }
     for positioned in authority

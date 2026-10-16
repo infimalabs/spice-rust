@@ -587,6 +587,14 @@ fn a_fast_flagged_group_runs_exactly_the_live_claimants_of_its_designs() {
     let (root, bus, epoch, seats) = fixture("group-fast", 4);
     let design = |name| add_controller(&bus, epoch, name, wire::TaskIntent::Design, None);
     let controller = design("Fast controller");
+    group_design(&bus, epoch, &controller);
+    claim_task(
+        &bus,
+        epoch,
+        &seats[0],
+        &Actor::Lane(seats[0].lane),
+        &controller,
+    );
     let plan = add_plan_output(&bus, epoch, &controller, "Fast selected plan");
     let spare = add_plan_output(&bus, epoch, &controller, "Fast spare plan");
     let (candidate, source) =

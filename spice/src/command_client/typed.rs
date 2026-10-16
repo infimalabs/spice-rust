@@ -58,7 +58,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["room", "contribute"] => CommandKind::RoomContribute,
         ["room", "ack" | "nak" | "answer" | "recover" | "assess"] => CommandKind::RoomControl,
         ["room", "decline" | "cancel"] => CommandKind::RoomClose,
-        ["preparation", "retain"] => CommandKind::CandidateRetain,
+        ["preparation", "propose"] => CommandKind::DesignPropose,
         ["preparation", "critique"] => CommandKind::CandidateCritiqueRecord,
         ["preparation", "cover"] => CommandKind::CandidateCoverageRecord,
         ["preparation", "decide"] => CommandKind::PreparationDecide,

@@ -567,7 +567,7 @@ impl NativeInvocation<'_> {
             | ["principal", "profile"]
             | ["principal", "role", "grant" | "revoke"]
             | ["principal", "deauthorize"]
-            | ["preparation", "retain"]
+            | ["preparation", "propose"]
             | ["preparation", "critique"]
             | ["preparation", "cover"]
             | ["preparation", "decide"]

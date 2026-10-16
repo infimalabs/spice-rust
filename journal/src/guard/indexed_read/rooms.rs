@@ -2,11 +2,12 @@
 
 use rusqlite::{OptionalExtension, params};
 use wire::rooms::{
-    CandidateCoverage, CandidateCritique, CandidateWithdrawal, ExecutionAuthorization,
-    PreparationDecision, ProposalRef, QuestionResultHead, QuestionResultRecord, QuestionResultRef,
-    RetainedCandidate, RoomAuthorityStamp, RoomCoordinationStarted, RoomDelivered, RoomDestination,
-    RoomHorizon, RoomLeft, RoomMessaged, RoomPublication, RoomPublicationKind, RoomPublished,
-    RoomPutAside, RoomReceiptHead, RoomReceiptRecord, RoomReceiptRef, WorkingGroupPartition,
+    CandidateCoverage, CandidateCritique, CandidateWithdrawal, DesignPassProposal,
+    ExecutionAuthorization, PreparationDecision, ProposalRef, QuestionResultHead,
+    QuestionResultRecord, QuestionResultRef, RoomAuthorityStamp, RoomCoordinationStarted,
+    RoomDelivered, RoomDestination, RoomHorizon, RoomLeft, RoomMessaged, RoomPublication,
+    RoomPublicationKind, RoomPublished, RoomPutAside, RoomReceiptHead, RoomReceiptRecord,
+    RoomReceiptRef, WorkingGroupPartition,
 };
 
 use super::{
@@ -26,8 +27,8 @@ use support::{
 /// One write-once proposal head, decoded as its subject's family.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProposalAuthority {
-    /// One retained candidate.
-    Candidate(RetainedCandidate),
+    /// One Design pass proposal.
+    Candidate(DesignPassProposal),
     /// One critique of an exact candidate.
     Critique(CandidateCritique),
     /// One coverage statement over an exact candidate.
@@ -82,7 +83,7 @@ impl JournalRead<'_> {
         let head = match proposal {
             ProposalRef::Candidate { candidate } => self.proposal_family(
                 &subject,
-                |body: &RetainedCandidate| body.candidate == *candidate,
+                |body: &DesignPassProposal| body.candidate == *candidate,
                 ProposalAuthority::Candidate,
             )?,
             ProposalRef::Critique { critique } => self.proposal_family(

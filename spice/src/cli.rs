@@ -181,7 +181,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::WorkingGroupDisband
         | CommandKind::WorkingGroupFast
         | CommandKind::WorkingGroupStance
-        | CommandKind::CandidateRetain
+        | CommandKind::DesignPropose
         | CommandKind::CandidateCritiqueRecord
         | CommandKind::CandidateCoverageRecord
         | CommandKind::PreparationDecide
@@ -444,7 +444,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["principal", "role", "grant"]
             | ["principal", "role", "revoke"]
             | ["principal", "deauthorize"]
-            | ["preparation", "retain"]
+            | ["preparation", "propose"]
             | ["preparation", "show"]
             | ["preparation", "critique"]
             | ["preparation", "cover"]

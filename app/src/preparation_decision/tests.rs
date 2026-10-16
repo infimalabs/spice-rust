@@ -1,11 +1,11 @@
 use wire::intent::{BoardTask, TextAnswer};
 use wire::rooms::{
-    CandidateRef, CandidateReference, DecisionOutcome, OutputDecision, OutputVerdict,
-    RetainedCandidate, RoomSource,
+    CandidateRef, CandidateReference, DecisionOutcome, DesignPassProposal,
+    DesignPassRecommendation, OutputDecision, OutputVerdict, RoomSource,
 };
 use wire::{Seq, SequenceCode, Witness};
 
-use super::{DecisionChoice, DecisionComposer, DecisionDraft, DraftNotice, DraftPhase};
+use super::{DecisionChoice, DecisionComposer, DecisionDraft, DraftNotice, DraftPhase, Submission};
 use crate::work::tests::{stamp, task};
 
 fn design() -> BoardTask {
@@ -16,9 +16,12 @@ fn design() -> BoardTask {
     design
 }
 
-fn candidate() -> RetainedCandidate {
-    RetainedCandidate {
+fn candidate() -> DesignPassProposal {
+    DesignPassProposal {
         candidate: candidate_ref(),
+        statement: Seq::new(10).expect("fixture statement"),
+        claim: Seq::new(11).expect("fixture claim"),
+        recommendation: DesignPassRecommendation::Work,
         governed_inputs: vec![stamp(2)],
         outputs: vec![stamp(3), stamp(4)],
         references: vec![CandidateReference {
@@ -28,6 +31,7 @@ fn candidate() -> RetainedCandidate {
             },
         }],
         evidence: Vec::new(),
+        justification: "the evidence supports this pass".to_owned(),
     }
 }
 
@@ -54,7 +58,7 @@ fn board() -> Vec<BoardTask> {
     ]
 }
 
-fn preview(draft: &mut DecisionDraft, candidate: &RetainedCandidate, sequence: u64) {
+fn preview(draft: &mut DecisionDraft, candidate: &DesignPassProposal, sequence: u64) {
     draft.preview(
         &design(),
         Seq::new(50).expect("fixture position"),
@@ -68,7 +72,7 @@ fn preview(draft: &mut DecisionDraft, candidate: &RetainedCandidate, sequence: u
 fn mixed_verdicts_preview_every_comment_and_authorize_only_accepted_outputs() {
     let candidate = candidate();
     let mut draft = DecisionDraft::new(candidate_ref());
-    assert_eq!(draft.choice(), DecisionChoice::Selected);
+    assert_eq!(draft.choice(), DecisionChoice::Accept);
     draft.set_output_verdict(stamp(3), OutputVerdict::Accepted);
     draft.set_output_comment(stamp(3), "  acceptance explained  ".to_owned());
     draft.set_output_verdict(stamp(4), OutputVerdict::Rejected);
@@ -135,15 +139,57 @@ fn every_output_requires_a_verdict_and_all_rejected_authorizes_nothing() {
 }
 
 #[test]
-fn collapse_requires_a_reason_and_a_pending_decision_submits_once() {
+fn outputless_recommendations_accept_without_fabricating_output_authority() {
+    for recommendation in [
+        DesignPassRecommendation::Conclude,
+        DesignPassRecommendation::Collapse,
+    ] {
+        let mut candidate = candidate();
+        candidate.recommendation = recommendation;
+        candidate.governed_inputs.clear();
+        candidate.outputs.clear();
+        let mut draft = DecisionDraft::new(candidate_ref());
+        preview(&mut draft, &candidate, 1);
+        let DraftPhase::Previewing(submission) = draft.phase() else {
+            panic!("outputless acceptance previews");
+        };
+        assert_eq!(
+            submission.request.decision.outcome,
+            DecisionOutcome::Accepted {
+                candidate: candidate_ref(),
+            }
+        );
+        assert!(
+            !submission
+                .expected
+                .iter()
+                .any(|witness| matches!(witness, Witness::Authorization { .. }))
+        );
+    }
+}
+
+#[test]
+fn return_requires_material_feedback_and_a_pending_decision_submits_once() {
     let candidate = candidate();
     let mut draft = DecisionDraft::new(candidate_ref());
-    draft.set_choice(DecisionChoice::Collapse);
+    draft.set_choice(DecisionChoice::Return);
     preview(&mut draft, &candidate, 1);
-    assert_eq!(refusal(&draft), "preparation::collapse-reason-empty");
+    assert_eq!(refusal(&draft), "preparation::return-reason-empty");
 
     draft.set_reason("  premise failed  ".to_owned());
     preview(&mut draft, &candidate, 1);
+    assert!(matches!(
+        draft.phase(),
+        DraftPhase::Previewing(Submission {
+            request: wire::rooms::PreparationDecide {
+                decision: wire::rooms::PreparationDecision {
+                    outcome: DecisionOutcome::Returned { reason, .. },
+                    ..
+                },
+            },
+            ..
+        }) if reason == "premise failed"
+    ));
     let expected = draft.begin_submit().expect("preview submits");
     assert!(draft.begin_submit().is_none());
     draft.set_reason("ignored while pending".to_owned());
@@ -173,7 +219,7 @@ fn composer_retains_versions_and_one_exact_pending_owner() {
     let candidate = candidate();
     let mut composer = DecisionComposer::default();
     composer.apply(first.clone(), false, |draft| {
-        draft.set_choice(DecisionChoice::Collapse);
+        draft.set_choice(DecisionChoice::Return);
         draft.set_reason("revise the premise".to_owned());
         preview(draft, &candidate, 1);
         assert!(draft.begin_submit().is_some());
@@ -193,7 +239,7 @@ fn composer_retains_versions_and_one_exact_pending_owner() {
     );
 
     composer.apply(second.clone(), false, |draft| {
-        draft.set_choice(DecisionChoice::Collapse);
+        draft.set_choice(DecisionChoice::Return);
         draft.set_reason("second premise".to_owned());
     });
     assert_eq!(

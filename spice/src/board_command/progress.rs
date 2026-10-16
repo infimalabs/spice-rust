@@ -5,7 +5,7 @@ mod reclaim;
 mod release;
 pub(super) use doc::doc_apply;
 use reclaim::*;
-pub(super) use release::claim_free;
+pub(super) use release::{claim_free, prepare_release};
 
 pub(super) fn claim_reclaim(
     bus: &Bus,
