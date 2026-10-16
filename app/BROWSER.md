@@ -84,6 +84,9 @@ Opened group consoles, their order and layout, composer drafts, reader and
 scroll positions, speech, and focus remain browser preferences. Those
 preferences cannot grant task, room, group, team, or lane authority, and a
 group edit never mounts, reorders, or closes a browser view.
+Hiding a team is likewise browser-local: its membership, claims, drafts,
+lanes, and running work remain intact, and activating any member's lane link
+reveals the team before focusing that lane's Chat composer.
 
 The Spice sidebar's working-group catalog is the design-side twin of the team
 roster and is drawn by the same roster (see [Resident topology in the global
@@ -92,9 +95,10 @@ It reads one shared partition: every group in partition order, each holding its
 designs in order and one Passive, Explore, or Converge stance, guarded by one
 revision. A group exists only while designs belong to it: it is never created
 empty, never named, and never removed as an object. Its card is labelled from
-its lead design, member zero, as a team is from its host. A group's **Open**
-mounts its console, as a team's watchband shows it, and is the only foreground
-action. The console's group menu can move or close that browser-local console;
+its lead design, member zero, as a team is from its host. The whole card mounts
+the group's console by click, Enter, or Space; its nested Design controls keep
+their own actions. The console's group menu can move or close that
+browser-local console;
 its **Disband working group** action sends `group::disband` at the displayed
 partition revision, leaves every Design ungrouped, and causes every browser to
 close the vanished group's console after authoritative room state arrives.

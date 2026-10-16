@@ -281,6 +281,10 @@ active otherwise. The group's name closes the
 status row; this browser's own move-left, move-right, and close controls live
 in the panel's group arrangement menu.
 
+In the Spice sidebar, a working-group card is its Open control: click or focus
+the card and press Enter or Space to mount that group's console. Design Read
+controls and roster arrangement gestures retain their own actions.
+
 ## Team composer controls
 
 Beside the drafts, one control panel holds team TURBO, the team arrangement
@@ -288,6 +292,10 @@ menu, the speech and allocation sliders, and SEND, with fixed geometry. The
 arrangement menu opens swap and join beside the panel and stays disabled,
 naming why, when no other team exists. Team TURBO and the Spice view's global
 TURBO are separately admitted controls.
+
+The team menu can hide its team surface without changing membership, lane
+state, claims, drafts, or running work. Activating any of that team's agent
+lane links shows the team again before focusing the requested Chat composer.
 
 The speech slider reads Quiet / Speak / Narrate and the allocation slider Steer
 / Drive / Drain; Up/Right raise and Down/Left lower on every engine. A speech

@@ -27,7 +27,7 @@ pub(super) struct FleetRender<'a, 'w> {
 }
 
 /// Opened working groups follow the teams, in this browser's own order.
-pub(super) fn render_empty_fleet(fleet: &NodeRef, groups: Html) -> Html {
+pub(super) fn render_empty_fleet(fleet: &NodeRef, message: &'static str, groups: Html) -> Html {
     html! {
         <div ref={fleet.clone()} class="team-fleet" data-pane="agent-console" data-view="mosaic"
             tabindex="0" aria-label="Agent teams">
@@ -37,7 +37,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, groups: Html) -> Html {
 
                 </header>
                 <div class="team-pane">
-                    {empty("No teams are assigned.")}
+                    {empty(message)}
                 </div>
             </section>
             {groups}

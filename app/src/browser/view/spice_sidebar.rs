@@ -72,6 +72,7 @@ pub(super) fn render_arrangement(
             }
         }),
         head: &head,
+        open: None,
         member: &member,
     })
 }

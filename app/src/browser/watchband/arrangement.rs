@@ -114,6 +114,7 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
                     </button>
                 }
             })}
+            {hide_action(team, context.controls)}
             <button
                 type="button"
                 class="team-action team-arrangement-action"
@@ -128,6 +129,24 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
                 <span class="team-action-detail">{"leave every agent unassigned"}</span>
             </button>
         </div>
+    }
+}
+
+fn hide_action(team: CanonicalUuid, controls: &UseReducerHandle<TeamControls>) -> Html {
+    let controls = controls.clone();
+    html! {
+        <button
+            type="button"
+            class="team-action team-arrangement-action"
+            role="menuitem"
+            data-team-arrangement="hide"
+            onclick={Callback::from(move |_| {
+                controls.dispatch(TeamControlAction::HideTeam { team });
+            })}
+        >
+            <span class="team-action-label">{"Hide team"}</span>
+            <span class="team-action-detail">{"the team stays available from its agent lanes"}</span>
+        </button>
     }
 }
 

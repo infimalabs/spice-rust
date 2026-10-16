@@ -382,6 +382,31 @@ fn target_resolution(target: Option<&str>, surface: &SurfaceData) -> TargetResol
         }),
     }
 }
+/// A hidden team whose primary composer this route opens. Revealing from the
+/// route effect covers every lane link and direct lane URL without coupling
+/// each link renderer to browser-local team state.
+fn hidden_team_target(
+    target: Option<&str>,
+    surface: &SurfaceData,
+    controls: &super::TeamControls,
+) -> Option<CanonicalUuid> {
+    let lane = target?
+        .strip_prefix(super::watchband::PRIMARY_TEXTAREA_PREFIX)?
+        .parse()
+        .ok()?;
+    let surface = surface.read();
+    let team = surface
+        .as_ref()?
+        .lanes()?
+        .lanes
+        .iter()
+        .find(|team| {
+            team.teamed()
+                && (team.lane == lane || team.members.iter().any(|member| member.lane == lane))
+        })?
+        .lane;
+    controls.is_hidden(team).then_some(team)
+}
 
 /// Whether retained Chat state holds the card a route names, once the lane
 /// snapshot and a transcript generation are admitted. Chat renders only
@@ -471,17 +496,20 @@ pub(super) fn use_target(
     target: Option<String>,
     surface: &SurfaceData,
     sender: &super::SenderHandle,
+    team_controls: &UseReducerHandle<super::TeamControls>,
     status: UseStateHandle<Option<Status>>,
     visible: bool,
 ) {
     let restored = use_mut_ref(|| None::<f64>);
     let held = use_mut_ref(|| None::<Hold>);
     let resolution = target_resolution(target.as_deref(), surface);
+    let hidden_team = hidden_team_target(target.as_deref(), surface, team_controls);
     let departure = entry_departure();
     let sender = sender.clone();
+    let team_controls = team_controls.clone();
     use_effect_with(
-        (target, resolution, visible, departure),
-        move |(target, resolution, visible, _)| {
+        (target, resolution, visible, departure, hidden_team),
+        move |(target, resolution, visible, _, hidden_team)| {
             let mut selected = None;
             let window = web_sys::window();
             let document = window.as_ref().and_then(web_sys::Window::document);
@@ -499,6 +527,9 @@ pub(super) fn use_target(
                 held.borrow_mut().take();
             }
             if let Some(requested) = target.as_deref().filter(|_| *visible) {
+                if let Some(team) = hidden_team {
+                    team_controls.dispatch(super::TeamControlAction::ShowTeam { team: *team });
+                }
                 if resolution.ready {
                     if let Some(target) = resolution.routed.as_deref() {
                         let route = Route {

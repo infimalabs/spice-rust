@@ -151,16 +151,23 @@ pub(super) fn render_team(
             .collect(),
         principals: runtime.principals().cloned().unwrap_or_default(),
     });
-    let teams = lanes
+    let mut teams = lanes
         .lanes
         .iter()
         .filter(|team| team.teamed())
         .collect::<Vec<_>>();
     composer_slots.retain(|lane| teams.iter().any(|team| team.lane == *lane));
+    let has_teams = !teams.is_empty();
+    teams.retain(|team| !team_controls.is_hidden(team.lane));
     let groups =
         super::rooms::render_group_surfaces(&super::rooms::GroupRender::of(render, runtime, work));
     if teams.is_empty() {
-        return render_empty_fleet(team_fleet, groups);
+        let message = if has_teams {
+            "All teams are hidden. Open an agent lane to show its team."
+        } else {
+            "No teams are assigned."
+        };
+        return render_empty_fleet(team_fleet, message, groups);
     }
     let render = FleetRender {
         work,
@@ -364,7 +371,6 @@ fn render_compose(
                 team_controls,
                 &controls.set_automatic_speech,
                 sender,
-                arrange_refusal(can_arrange),
                 can_configure,
                 ready,
                 dormant,
@@ -696,11 +702,6 @@ struct PrimaryComposerDragging {
 struct AgentTeamControl {
     disabled: bool,
     activate: Callback<MouseEvent>,
-}
-
-/// Why the team menu cannot open its shared actions, if it cannot.
-fn arrange_refusal(can_arrange: bool) -> Option<&'static str> {
-    (!can_arrange).then_some("Team arrangement is unavailable")
 }
 
 /// The client action one team roster change asks for at `topology_revision`;
