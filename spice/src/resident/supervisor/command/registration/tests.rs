@@ -17,7 +17,8 @@ fn pending(keys: &[&str]) -> Vec<u8> {
     let mut rendered = String::from("<1kJK6Q0b>\n");
     for (index, key) in keys.iter().enumerate() {
         rendered.push_str(&format!(
-            "directive=d-{key} key={key} stage=published expires=never\ndirection {key}\n"
+            "directive=d-{key} key={key} stage=published expires=never\n\
+             direction {key}; inspect `spice session briefing --json`\n"
         ));
         if index == 0 {
             rendered.push_str(
@@ -172,52 +173,61 @@ fn a_resumed_seat_is_told_the_authority_current_at_delivery_once() {
 #[test]
 fn pending_steering_joins_fresh_and_resumed_first_prompts_once_in_order() {
     for resumed in [false, true] {
-        let inbox = Arc::new(Mutex::new(pending(&[EARLIER, LATER])));
-        let read = Arc::clone(&inbox);
-        let driver = Driver::with_startup_readers(
-            Vec::new(),
-            move || Some(read.lock().unwrap_or_else(PoisonError::into_inner).clone()),
-            || RESUME_NOTICE.to_owned(),
-        );
-        let first_turn = if resumed {
-            FirstTurn::Resumed(NEUTRAL.to_owned())
-        } else {
-            FirstTurn::Fresh(PROMPT.to_owned())
-        };
-        driver
-            .open(OPENING, Some(first_turn))
-            .expect("opening writes");
-        answer(&driver, &registration(false));
+        for serves in [false, true] {
+            let inbox = Arc::new(Mutex::new(pending(&[EARLIER, LATER])));
+            let read = Arc::clone(&inbox);
+            let driver = Driver::with_startup_readers(
+                Vec::new(),
+                move || Some(read.lock().unwrap_or_else(PoisonError::into_inner).clone()),
+                || RESUME_NOTICE.to_owned(),
+            );
+            let first_turn = if resumed {
+                FirstTurn::Resumed(NEUTRAL.to_owned())
+            } else {
+                FirstTurn::Fresh(PROMPT.to_owned())
+            };
+            driver
+                .open(OPENING, Some(first_turn))
+                .expect("opening writes");
+            answer(&driver, &registration(serves));
 
-        let written = frames(&driver);
-        assert_eq!(written.len(), 2, "one first prompt: {written:?}");
-        let message = written[1]["message"].as_str().expect("a prompt message");
-        let prefix = if resumed { NEUTRAL } else { PROMPT };
-        assert!(message.starts_with(prefix), "{message}");
-        if resumed {
-            assert!(message.contains(RESUME_NOTICE), "{message}");
+            let written = frames(&driver);
+            assert_eq!(written.len(), 2, "one first prompt: {written:?}");
+            let message = written[1]["message"].as_str().expect("a prompt message");
+            let prefix = if resumed { NEUTRAL } else { "# Spice briefing" };
+            assert!(message.starts_with(prefix), "{message}");
+            if resumed {
+                assert!(message.contains(RESUME_NOTICE), "{message}");
+            }
+            if serves {
+                assert!(message.contains("# spice:// reads"), "{message}");
+            }
+            let rendered = String::from_utf8(pending(&[EARLIER, LATER])).expect("rendered inbox");
+            assert!(
+                message.ends_with(&rendered),
+                "startup steering stays byte-for-byte live delivery: {message}"
+            );
+            let earlier = message.find(EARLIER).expect("earlier item is present");
+            let later = message.find(LATER).expect("later item is present");
+            assert!(earlier < later, "publication order stays intact: {message}");
+
+            driver.deliver_inbox();
+            assert_eq!(
+                frames(&driver).len(),
+                2,
+                "the release's inbox check sends no duplicate"
+            );
+
+            *inbox.lock().unwrap_or_else(PoisonError::into_inner) =
+                pending(&[EARLIER, LATER, NEWEST]);
+            driver.deliver_inbox();
+            let written = frames(&driver);
+            assert_eq!(written.len(), 3, "a later item uses live steering");
+            let live = written[2]["message"].as_str().expect("a steering message");
+            assert!(live.contains(NEWEST), "{live}");
+            assert!(!live.contains(EARLIER), "{live}");
+            assert!(!live.contains(LATER), "{live}");
         }
-        let rendered = String::from_utf8(pending(&[EARLIER, LATER])).expect("rendered inbox");
-        assert!(message.ends_with(&rendered), "{message}");
-        let earlier = message.find(EARLIER).expect("earlier item is present");
-        let later = message.find(LATER).expect("later item is present");
-        assert!(earlier < later, "publication order stays intact: {message}");
-
-        driver.deliver_inbox();
-        assert_eq!(
-            frames(&driver).len(),
-            2,
-            "the release's inbox check sends no duplicate"
-        );
-
-        *inbox.lock().unwrap_or_else(PoisonError::into_inner) = pending(&[EARLIER, LATER, NEWEST]);
-        driver.deliver_inbox();
-        let written = frames(&driver);
-        assert_eq!(written.len(), 3, "a later item uses live steering");
-        let live = written[2]["message"].as_str().expect("a steering message");
-        assert!(live.contains(NEWEST), "{live}");
-        assert!(!live.contains(EARLIER), "{live}");
-        assert!(!live.contains(LATER), "{live}");
     }
 }
 
