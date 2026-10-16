@@ -80,7 +80,7 @@ fn add(journal: &mut Journal, shape: Shape<'_>) -> TaskStamp {
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
         dependencies,
-        provenance: "task:designs".parse().expect("provenance"),
+        provenance: wire::TaskProvenance::Parentless,
         creation: wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::OperatorActor,
         ),

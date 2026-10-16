@@ -683,7 +683,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
         .expect("demo task origin is valid");
     let mut write = JournalWrite::new(
         Actor::Spice,
-        origin.clone(),
+        origin,
         instant(CANNED_TRANSCRIPT[0].0),
         Producer::CommandDoor,
     );
@@ -711,7 +711,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
             FactCause::Root,
         )
         .map_err(build_failure)?;
-    let statement_origin = origin;
+    let statement_origin = wire::TaskProvenance::Task(born.clone());
     let statement_task = born.clone();
     let workflow_task = born.clone();
     let workflow_phase = phase.clone();
@@ -887,12 +887,7 @@ fn seed_grooming_task(
     let origin: wire::Origin = format!("task:{born}")
         .parse()
         .expect("demo grooming task origin is valid");
-    let mut write = JournalWrite::new(
-        Actor::Spice,
-        origin.clone(),
-        instant(at),
-        Producer::CommandDoor,
-    );
+    let mut write = JournalWrite::new(Actor::Spice, origin, instant(at), Producer::CommandDoor);
     let added = write
         .fact(
             body::TaskAdded {
@@ -918,6 +913,7 @@ fn seed_grooming_task(
         )
         .map_err(build_failure)?;
     let statement_task = born.clone();
+    let statement_provenance = wire::TaskProvenance::Task(born.clone());
     let workflow_task = born;
     let statement_title = title.to_owned();
     let statement_project = project.to_owned();
@@ -937,7 +933,7 @@ fn seed_grooming_task(
         filing,
         tags: vec!["demo".to_owned()],
         dependencies: Vec::new(),
-        provenance: origin,
+        provenance: statement_provenance,
         creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision,
     });

@@ -172,15 +172,7 @@ fn commit_doc_plan(
     repository: Option<&Repository>,
     plan: &DocPlan,
 ) -> Outcome<CommandAnswer> {
-    let intrinsic = match format!("doc:{}", apply.preview).parse::<wire::Origin>() {
-        Ok(origin) => origin,
-        Err(error) => {
-            return protocol_fault(
-                "doc::origin-invalid",
-                &format!("preview digest did not form a document origin: {error}"),
-            );
-        }
-    };
+    let intrinsic = wire::TaskProvenance::Document(apply.preview.clone());
     let origin =
         match resolve_creation_origin(None, command.actor(), &plan.snapshot, Some(intrinsic)) {
             Ok(origin) => origin,
@@ -207,7 +199,7 @@ fn commit_doc_plan(
     };
     let mut write = JournalWrite::new(
         command.actor().clone(),
-        origin.clone(),
+        origin.origin.clone(),
         at,
         Producer::CommandDoor,
     );
@@ -351,7 +343,7 @@ fn write_doc_task(
     write: &mut JournalWrite,
     plan: &DocPlan,
     spec: DocTaskSpec,
-    origin: &wire::Origin,
+    origin: &CreationCause,
     creation: Option<&TaskCreationCapture>,
     previous: Option<PendingFact>,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
@@ -468,7 +460,7 @@ fn edit_doc_task(
 fn add_doc_task(
     write: &mut JournalWrite,
     spec: DocTaskSpec,
-    origin: &wire::Origin,
+    origin: &CreationCause,
     creation: Option<&TaskCreationCapture>,
     cause: FactCause,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
@@ -503,7 +495,7 @@ fn add_doc_task(
         )
         .map_err(|error| store_fault("doc::add-build", &error.to_string()))?;
     let statement_task = spec.born.clone();
-    let statement_origin = origin.clone();
+    let statement_origin = origin.provenance.clone();
     let statement_creation = creation.context();
     write.task_head(added, move |position| TaskHead {
         preparation: None,

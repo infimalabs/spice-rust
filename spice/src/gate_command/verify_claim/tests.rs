@@ -186,7 +186,7 @@ fn statement() -> TaskHead {
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
-        provenance: "task:fixture".parse().expect("fixture origin"),
+        provenance: wire::TaskProvenance::Parentless,
         creation: wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::SpiceActor,
         ),

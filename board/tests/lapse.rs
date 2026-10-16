@@ -357,12 +357,7 @@ fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
     ];
     let phase = current.parse::<Phase>().expect("phase");
     let origin = "task:BOARD-root".parse::<Origin>().expect("origin");
-    let mut write = JournalWrite::new(
-        Actor::Spice,
-        origin.clone(),
-        instant(0),
-        Producer::CommandDoor,
-    );
+    let mut write = JournalWrite::new(Actor::Spice, origin, instant(0), Producer::CommandDoor);
     let fact = write
         .fact(
             body::TaskAdded {
@@ -387,7 +382,7 @@ fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
             FactCause::Root,
         )
         .expect("task fact");
-    let statement_origin = origin;
+    let statement_origin = wire::TaskProvenance::Task(born());
     write.task_head(fact, move |position| TaskHead {
         preparation: None,
         authorization: None,

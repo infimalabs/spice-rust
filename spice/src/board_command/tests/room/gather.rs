@@ -35,7 +35,7 @@ fn add_request(
         description: None,
         acceptance: vec!["The gather task records what the idea showed".to_owned()],
         requirements: wire::EnvironmentRequirements::default(),
-        origin: Some("fixture:gather".parse().expect("fixture origin")),
+        origin: Some(fixture_origin()),
         flow: flow.map(str::to_owned),
         depends: Vec::new(),
         claim: false,

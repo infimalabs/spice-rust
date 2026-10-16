@@ -829,7 +829,7 @@ fn task_show_continuation(
 
 /// One line per distinct steering key naming every task fact it caused.
 fn acknowledgment_lines(
-    origin: &wire::Origin,
+    origin: &wire::TaskProvenance,
     acknowledgments: &[wire::intent::TaskAcknowledgment],
 ) -> Vec<String> {
     task_acknowledgment_keys(origin, acknowledgments)

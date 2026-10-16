@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display, Formatter};
 
-use wire::{Origin, TaskStamp};
+use wire::{TaskProvenance, TaskStamp};
 
 use super::{WorkAvailability, WorkProjection};
 
@@ -206,13 +206,13 @@ impl WorkRelationshipTaskNode {
 /// Immediate durable provenance attached to an included task.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkRelationshipOriginNode {
-    origin: Origin,
+    origin: TaskProvenance,
     depth: u8,
 }
 
 impl WorkRelationshipOriginNode {
     #[must_use]
-    pub const fn origin(&self) -> &Origin {
+    pub const fn origin(&self) -> &TaskProvenance {
         &self.origin
     }
 
@@ -437,8 +437,12 @@ fn include_origin(
     max_nodes: usize,
     graph: &mut GraphDraft,
 ) {
+    let provenance = &task.row().statement.body.provenance;
+    if *provenance == TaskProvenance::Parentless {
+        return;
+    }
     let task_key = NodeKey::Task(born.clone());
-    let origin_key = NodeKey::Origin(task.row().statement.body.provenance.clone());
+    let origin_key = NodeKey::Origin(provenance.clone());
     if graph.nodes.contains_key(&origin_key) || graph.nodes.len() < max_nodes {
         graph
             .nodes
@@ -540,7 +544,7 @@ fn admit_candidates(
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum NodeKey {
     Task(TaskStamp),
-    Origin(Origin),
+    Origin(TaskProvenance),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -870,7 +874,7 @@ mod tests {
             .expect("root provenance graph");
         assert!(matches!(
             &provenance.nodes()[1],
-            WorkRelationshipNode::Origin(origin) if origin.origin().as_str() == "ack:direction"
+            WorkRelationshipNode::Origin(origin) if origin.origin().to_string() == "ack:direction"
         ));
         assert_eq!(
             provenance.edges()[0].kind(),

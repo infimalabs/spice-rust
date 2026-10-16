@@ -655,7 +655,7 @@ mod tests {
             filing: wire::TaskFiling::Filed,
             tags: Vec::new(),
             dependencies: Vec::new(),
-            provenance: origin,
+            provenance: wire::TaskProvenance::Task(born()),
             creation: body::TaskCreationContext::unavailable(
                 body::TaskCreationUnavailable::SpiceActor,
             ),

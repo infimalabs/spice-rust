@@ -16,7 +16,9 @@
 /// directory; schema 65 gives each of that directory's entries its principal's
 /// code. Schema 66 makes the activity stance explicit in retained working-group
 /// facts and their partition head before strict fact readers admit them.
-pub const SCHEMA_VERSION: u32 = 66;
+/// Schema 67 closes task statement provenance and resolves every retained
+/// spelling into it.
+pub const SCHEMA_VERSION: u32 = 67;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
@@ -86,8 +88,8 @@ pub mod crossing {
         EnvironmentRequirements, Fact, FactKind, FindingHead, Instant, JournalCursor,
         LaneResidency, LaneSession, LeaseHead, OccupantAddress, Origin, Packed, Phase, Producer,
         ResidencyHead, ResidentState, SeatAddress, Seq, SteeringHead, TapeLocus, TaskFiling,
-        TaskHandle, TaskHead, TaskStamp, TranscriptSourceHead, TranscriptStreamKey, TrustHead,
-        TrustState, WireVersion, Witness, WitnessHead, WorkflowHead,
+        TaskHandle, TaskHead, TaskProvenance, TaskStamp, TranscriptSourceHead, TranscriptStreamKey,
+        TrustHead, TrustState, WireVersion, Witness, WitnessHead, WorkflowHead,
     };
 }
 

@@ -1021,7 +1021,7 @@ fn retained_task_head(task: journal::crossing::TaskStamp, index: usize, seq: Seq
         filing: TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
-        provenance: "task:BUS-a1".parse().expect("fleet origin"),
+        provenance: journal::crossing::TaskProvenance::Parentless,
         creation: body::TaskCreationContext::unavailable(
             body::TaskCreationUnavailable::OperatorActor,
         ),
@@ -1073,7 +1073,6 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
         .expect("registered command-door fact");
 
     let task_for_head = stamp();
-    let origin_for_head = origin.clone();
     write.task_head(fact, move |seq| TaskHead {
         preparation: None,
         authorization: None,
@@ -1090,7 +1089,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
         filing: TaskFiling::Filed,
         tags: vec!["journal".to_owned()],
         dependencies: Vec::new(),
-        provenance: origin_for_head,
+        provenance: journal::crossing::TaskProvenance::Task(stamp()),
         creation: body::TaskCreationContext::unavailable(
             body::TaskCreationUnavailable::OperatorActor,
         ),

@@ -508,7 +508,7 @@ fn oops_grooming_records_source_preserving_negative_triage_without_mutating_repo
             description: None,
             acceptance: vec!["Each selected source receives a typed disposition".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
-            origin: Some("fixture:oops-grooming".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             flow: Some("design".to_owned()),
             depends: Vec::new(),
             intent: Some(wire::TaskIntent::Design),
@@ -529,7 +529,7 @@ fn oops_grooming_records_source_preserving_negative_triage_without_mutating_repo
         &TaskOopsAdd {
             title: "Observed friction".to_owned(),
             description: "Evidence retained by the report".to_owned(),
-            origin: Some("fixture:oops-source".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             project: Some("board.test".to_owned()),
         },
     ));

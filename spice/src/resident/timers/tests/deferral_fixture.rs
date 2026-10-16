@@ -18,7 +18,7 @@ pub(super) fn seed_timer_task(
     let origin = format!("task:{stamp}")
         .parse::<Origin>()
         .expect("fixture task origin");
-    let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
+    let mut write = JournalWrite::new(Actor::Operator, origin, at, Producer::CommandDoor);
     let added = write
         .fact(
             body::TaskAdded {
@@ -56,6 +56,7 @@ pub(super) fn seed_timer_task(
         None => added,
     };
     let statement_stamp = stamp.clone();
+    let statement_provenance = wire::TaskProvenance::Task(stamp.clone());
     let statement_phase = phase.clone();
     let statement_project = project.to_owned();
     let statement_filing = filing;
@@ -75,7 +76,7 @@ pub(super) fn seed_timer_task(
         filing: statement_filing,
         tags: Vec::new(),
         dependencies,
-        provenance: origin,
+        provenance: statement_provenance,
         creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: position,
     });

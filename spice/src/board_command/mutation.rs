@@ -375,12 +375,9 @@ fn admit_prepared(
 fn operator_draft_origin(
     command: &wire::AdmittedCommand,
     filing: wire::TaskFiling,
-) -> Option<wire::Origin> {
-    (filing.is_draft() && command.holds(wire::principal::PrincipalRole::Operator)).then(|| {
-        "operator:draft"
-            .parse()
-            .expect("constant origin is well formed")
-    })
+) -> Option<wire::TaskProvenance> {
+    (filing.is_draft() && command.holds(wire::principal::PrincipalRole::Operator))
+        .then_some(wire::TaskProvenance::OperatorDraft)
 }
 
 fn oops_claim_project(
@@ -425,18 +422,13 @@ pub(super) fn task_add_roots(add: &TaskAdd) -> Vec<wire::TaskStamp> {
                 .expect("an admitted task handle carries a canonical task stamp")
         })
         .collect::<Vec<_>>();
-    if let Some(identity) = add
+    if let Some(parent) = add
         .origin
         .as_ref()
-        .and_then(|origin| origin.as_str().strip_prefix("task:"))
+        .and_then(|origin| wire::TaskProvenance::authored(origin.as_str()).ok())
+        .and_then(|provenance| provenance.parent().cloned())
     {
-        let born = identity.parse::<wire::TaskStamp>().ok().or_else(|| {
-            identity
-                .parse::<wire::TaskHandle>()
-                .ok()
-                .and_then(|handle| handle.born().ok())
-        });
-        roots.extend(born);
+        roots.push(parent);
     }
     roots.extend(add.preparation.as_ref().map(|parent| {
         parent
@@ -602,7 +594,7 @@ fn prepare_task(
     add: &TaskAdd,
     project: &Project,
     projects: &ProjectPolicy,
-    origin: wire::Origin,
+    cause: CreationCause,
     creation: TaskCreationCapture,
     flow: Vec<wire::Phase>,
     filing: wire::TaskFiling,
@@ -622,10 +614,10 @@ fn prepare_task(
         ));
     };
     let born = task.clone();
-    if origin == task_origin(&born)? {
+    if cause.provenance.parent() == Some(&born) {
         return Err(refusal(
             "task::origin-self",
-            Some(origin.to_string()),
+            Some(cause.provenance.to_string()),
             "name the steering directive or existing parent task that caused this task",
         ));
     }
@@ -660,7 +652,7 @@ fn prepare_task(
                     "name dependencies carrying canonical birth stamps",
                 )
             })?,
-        provenance: origin.clone(),
+        provenance: cause.provenance,
         creation: creation.context(),
         revision: Seq::new(1).expect("placeholder revision is non-zero"),
     };
@@ -687,7 +679,7 @@ fn prepare_task(
         project: project_text,
         flow,
         phase,
-        origin,
+        origin: cause.origin,
         creation,
         at,
         statement,

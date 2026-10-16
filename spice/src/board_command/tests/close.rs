@@ -105,7 +105,7 @@ fn an_operator_closure_completes_from_any_phase_and_releases_its_dependents() {
             description: None,
             acceptance: Vec::new(),
             requirements: wire::EnvironmentRequirements::default(),
-            origin: Some("fixture:close-dependency".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             flow: Some("todo".to_owned()),
             depends: vec![blocker.clone()],
             claim: false,

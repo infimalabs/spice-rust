@@ -1,8 +1,8 @@
 use super::{View, render, review_history};
 use crate::task::{Entry, ProjectPolicy};
 use wire::{
-    Actor, AnyFact, Body, CanonicalUuid, Envelope, Fact, Instant, Origin, Phase, Seq, TaskHead,
-    TaskStamp, WireVersion, WorkflowHead, body,
+    Actor, AnyFact, Body, CanonicalUuid, Envelope, Fact, Instant, Phase, Seq, TaskHead, TaskStamp,
+    WireVersion, WorkflowHead, body,
 };
 
 fn stamp(micros: i64) -> TaskStamp {
@@ -22,9 +22,7 @@ fn lane(value: &str) -> Actor {
 }
 
 fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
-    let origin = format!("task:{task}")
-        .parse::<Origin>()
-        .expect("fixture origin");
+    let origin = wire::TaskProvenance::Task(task.clone());
     let statement = TaskHead {
         preparation: None,
         authorization: None,

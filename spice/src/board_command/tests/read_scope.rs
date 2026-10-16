@@ -46,7 +46,7 @@ fn append_terminal(
                 .expect("fixture task stamp stays bounded");
             push_task(
                 &mut write,
-                &origin,
+                &wire::TaskProvenance::Parentless,
                 &creation,
                 TerminalTaskFixture {
                     micros,
@@ -77,17 +77,17 @@ pub(super) struct TerminalTaskFixture {
 
 pub(super) fn push_terminal_task(
     write: &mut JournalWrite,
-    origin: &wire::Origin,
+    provenance: &wire::TaskProvenance,
     creation: &body::TaskCreationContext,
     fixture: TerminalTaskFixture,
 ) -> TaskStamp {
-    push_task(write, origin, creation, fixture, "completed", None)
+    push_task(write, provenance, creation, fixture, "completed", None)
 }
 
 /// One task head whose workflow is `status`; only `pending` stays unsettled.
 fn push_task(
     write: &mut JournalWrite,
-    origin: &wire::Origin,
+    provenance: &wire::TaskProvenance,
     creation: &body::TaskCreationContext,
     fixture: TerminalTaskFixture,
     status: &str,
@@ -120,7 +120,7 @@ fn push_task(
         )
         .expect("terminal fixture fact builds");
     let statement_task = task.clone();
-    let statement_origin = origin.clone();
+    let statement_origin = provenance.clone();
     let statement_creation = creation.clone();
     write.task_head(added, move |position| TaskHead {
         preparation: None,
@@ -321,7 +321,7 @@ fn at_born(answer: &BoardAnswer, born: &TaskStamp) -> TaskHandle {
 #[test]
 fn open_reads_index_the_work_each_direction_caused_until_it_is_deleted() {
     let (root, bus, epoch, _seats) = fixture("open-origin-index", 0);
-    let ack: wire::Origin = "ack:dTVQdQfLw".parse().expect("ack fixture origin");
+    let ack: wire::TaskProvenance = "ack:dTVQdQfLw".parse().expect("ack fixture provenance");
     let unrelated: wire::Origin = "fixture:unrelated".parse().expect("fixture origin");
     let at = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
     let creation =
@@ -332,7 +332,7 @@ fn open_reads_index_the_work_each_direction_caused_until_it_is_deleted() {
         at,
         Producer::CommandDoor,
     );
-    let mut push = |micros: i64, origin: &wire::Origin, status: &str| {
+    let mut push = |micros: i64, provenance: &wire::TaskProvenance, status: &str| {
         let fixture = TerminalTaskFixture {
             micros,
             title: format!("Origin fixture {micros}"),
@@ -340,12 +340,16 @@ fn open_reads_index_the_work_each_direction_caused_until_it_is_deleted() {
             project: "board.test".to_owned(),
             completion: at,
         };
-        push_task(&mut write, origin, &creation, fixture, status, None)
+        push_task(&mut write, provenance, &creation, fixture, status, None)
     };
     let open = push(300_000_000_000, &ack, "pending");
     let completed = push(300_000_000_001, &ack, "completed");
     push(300_000_000_002, &ack, "deleted");
-    push(300_000_000_003, &unrelated, "completed");
+    push(
+        300_000_000_003,
+        &wire::TaskProvenance::Parentless,
+        "completed",
+    );
     assert!(matches!(
         bus.commit(write).expect("origin fixture reaches writer"),
         CommitOutcome::Committed(_)
@@ -445,7 +449,7 @@ fn append_filtered_history(bus: &Bus) -> FilteredHistoryFixture {
     );
     let alpha = push_terminal_task(
         &mut write,
-        &origin,
+        &wire::TaskProvenance::Parentless,
         &creation,
         TerminalTaskFixture {
             micros: 200_000_000_000,
@@ -457,7 +461,7 @@ fn append_filtered_history(bus: &Bus) -> FilteredHistoryFixture {
     );
     let project_match = push_terminal_task(
         &mut write,
-        &origin,
+        &wire::TaskProvenance::Parentless,
         &creation,
         TerminalTaskFixture {
             micros: 200_000_000_001,
@@ -469,7 +473,7 @@ fn append_filtered_history(bus: &Bus) -> FilteredHistoryFixture {
     );
     let description_match = push_terminal_task(
         &mut write,
-        &origin,
+        &wire::TaskProvenance::Parentless,
         &creation,
         TerminalTaskFixture {
             micros: 200_000_000_002,
@@ -481,7 +485,7 @@ fn append_filtered_history(bus: &Bus) -> FilteredHistoryFixture {
     );
     let title_match = push_terminal_task(
         &mut write,
-        &origin,
+        &wire::TaskProvenance::Parentless,
         &creation,
         TerminalTaskFixture {
             micros: 200_000_000_003,

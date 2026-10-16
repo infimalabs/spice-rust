@@ -368,7 +368,7 @@ fn cover_task_heads() {
                 filing: wire::TaskFiling::Filed,
                 tags: vec!["guard".to_owned()],
                 dependencies: Vec::new(),
-                provenance: "repo:genesis".parse().expect("origin"),
+                provenance: wire::TaskProvenance::Parentless,
                 creation: body::TaskCreationContext::unavailable(
                     body::TaskCreationUnavailable::OperatorActor,
                 ),

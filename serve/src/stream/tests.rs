@@ -401,7 +401,7 @@ fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
-        provenance: "task:rooms".parse().expect("provenance"),
+        provenance: wire::TaskProvenance::Parentless,
         creation,
         revision,
     });

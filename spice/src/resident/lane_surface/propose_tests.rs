@@ -424,10 +424,11 @@ pub(in crate::resident) fn seed_task_claim(
     let phase: wire::Phase = "todo".parse().expect("fixture phase");
     let origin: wire::Origin = format!("task:{task}").parse().expect("fixture origin");
     let actor = Actor::Lane(durable.lane);
-    let mut write = JournalWrite::new(actor.clone(), origin.clone(), start, Producer::CommandDoor);
+    let mut write = JournalWrite::new(actor.clone(), origin, start, Producer::CommandDoor);
     let (added, won) =
         append_seed_claim_facts(&mut write, &phase, &actor, task, durable, old_epoch, expiry);
     let statement_task = task.clone();
+    let statement_provenance = wire::TaskProvenance::Task(task.clone());
     let statement_phase = phase.clone();
     write.task_head(added, move |position| wire::TaskHead {
         preparation: None,
@@ -445,7 +446,7 @@ pub(in crate::resident) fn seed_task_claim(
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
-        provenance: origin,
+        provenance: statement_provenance,
         creation: wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::SpiceActor,
         ),

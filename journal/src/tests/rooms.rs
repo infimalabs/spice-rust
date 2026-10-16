@@ -197,7 +197,7 @@ fn task_with_intent(
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
-        provenance: "task:rooms".parse().expect("provenance"),
+        provenance: wire::TaskProvenance::Parentless,
         creation: wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::OperatorActor,
         ),

@@ -14,8 +14,8 @@ use board::{
 use journal::{FactCause, Journal, JournalWrite};
 use wire::JournalCursor as Cursor;
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Digest, Domain, Instant, LeaseHead, Origin,
-    Phase, Producer, Seq, TaskHandle, TaskHead, TaskStamp, WorkflowHead, body,
+    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Digest, Domain, Instant, LeaseHead, Phase,
+    Producer, Seq, TaskHandle, TaskHead, TaskStamp, WorkflowHead, body,
 };
 
 fn stamp(text: &str) -> TaskStamp {
@@ -112,7 +112,7 @@ fn statement(name: &str) -> TaskHead {
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
-        provenance: format!("task:{born}").parse::<Origin>().expect("origin"),
+        provenance: wire::TaskProvenance::Task(born.clone()),
         creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: seq(1),
     }
@@ -191,7 +191,10 @@ fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journa
     let task = statement.born.clone();
     let mut write = JournalWrite::new(
         Actor::Spice,
-        statement.provenance.clone(),
+        statement
+            .provenance
+            .origin()
+            .expect("a fixture statement names its origin"),
         instant("2026-08-01T06:00:00.000Z"),
         Producer::CommandDoor,
     );
@@ -309,7 +312,7 @@ fn board_graph_views_render_independent_relations_in_stable_order() {
     let reviewer = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e411"));
     let author = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e412"));
     let mut alpha_head = statement("BOARD-a1");
-    alpha_head.provenance = "task:BOARD-root".parse().expect("fixture origin");
+    alpha_head.provenance = wire::TaskProvenance::Parentless;
     alpha_head.dependencies.push(stamp("BOARD-b2"));
     let mut alpha_workflow = workflow("review");
     alpha_workflow.review = "assigned".to_owned();
@@ -348,7 +351,8 @@ fn board_graph_views_render_independent_relations_in_stable_order() {
     let origin = graph::render(View::Origin, &entries, &reviews)
         .text()
         .to_owned();
-    assert!(origin.contains(&format!("task:BOARD-root -> {}", alpha.handle())));
+    assert!(origin.contains(&format!("\n{}\n", alpha.handle())));
+    assert!(!origin.contains(&format!("-> {}", alpha.handle())));
     assert!(origin.contains(&format!(
         "{} -> {}",
         beta.statement().provenance,

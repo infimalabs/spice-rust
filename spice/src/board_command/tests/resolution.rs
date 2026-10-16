@@ -889,8 +889,8 @@ fn assert_review_followup_tracking(
     )
     .expect("reviewed task forms follow-up origin");
     assert_eq!(
-        at(&pending, created).statement.body.provenance,
-        causal,
+        at(&pending, created).statement.body.provenance.origin(),
+        Some(causal.clone()),
         "--then stored provenance diverged from its reviewed parent"
     );
     assert_eq!(
@@ -983,7 +983,7 @@ fn add_raw_task(
             description: None,
             acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
             requirements: wire::EnvironmentRequirements::default(),
-            origin: Some("fixture:board-command".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             flow: flow.map(str::to_owned),
             depends: Vec::new(),
             claim: false,

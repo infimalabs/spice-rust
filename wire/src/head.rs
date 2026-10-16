@@ -318,7 +318,7 @@ pub struct TaskHead {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<crate::rooms::QuestionResultRef>,
     /// Creation provenance, immutable across statement revisions.
-    pub provenance: Origin,
+    pub provenance: crate::TaskProvenance,
     /// Creation-time transcript authority, immutable across statement revisions.
     pub creation: crate::body::TaskCreationContext,
     /// Fact that established this statement revision.

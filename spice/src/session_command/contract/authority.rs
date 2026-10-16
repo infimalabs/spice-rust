@@ -82,7 +82,6 @@ fn workflow(name: &str) -> WorkflowHead {
 
 fn task_added(
     write: &mut JournalWrite,
-    origin: Origin,
     task: TaskStamp,
     title: &str,
     project: &str,
@@ -140,17 +139,16 @@ fn task_added(
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
         dependencies: Vec::new(),
-        provenance: origin,
+        provenance: wire::TaskProvenance::Parentless,
         creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: position,
     });
     write.workflow_head(task, fact, move |_| workflow);
 }
 
-fn seed_board_glance_tasks(write: &mut JournalWrite, origin: &Origin) {
+fn seed_board_glance_tasks(write: &mut JournalWrite) {
     task_added(
         write,
-        origin.clone(),
         stamp("SESSION-ready"),
         "Ordinary unclaimed work",
         SESSION_PROJECT,
@@ -162,7 +160,6 @@ fn seed_board_glance_tasks(write: &mut JournalWrite, origin: &Origin) {
     let design = stamp("SESSION-design");
     task_added(
         write,
-        origin.clone(),
         design.clone(),
         "Speculative Design",
         SESSION_PROJECT,
@@ -173,7 +170,6 @@ fn seed_board_glance_tasks(write: &mut JournalWrite, origin: &Origin) {
     );
     task_added(
         write,
-        origin.clone(),
         stamp("SESSION-output"),
         "Unauthorized candidate",
         SESSION_PROJECT,
@@ -189,7 +185,6 @@ fn seed_board_glance_tasks(write: &mut JournalWrite, origin: &Origin) {
     let released_design = stamp("SESSION-released-design");
     task_added(
         write,
-        origin.clone(),
         released_design.clone(),
         "Concluded Design",
         SESSION_PROJECT,
@@ -201,7 +196,6 @@ fn seed_board_glance_tasks(write: &mut JournalWrite, origin: &Origin) {
     let released_plan = stamp("SESSION-released-plan");
     task_added(
         write,
-        origin.clone(),
         released_plan.clone(),
         "Concluded selected Plan",
         SESSION_PROJECT,
@@ -212,7 +206,6 @@ fn seed_board_glance_tasks(write: &mut JournalWrite, origin: &Origin) {
     );
     task_added(
         write,
-        origin.clone(),
         stamp("SESSION-released-output"),
         "Released nested output",
         SESSION_PROJECT,
@@ -227,15 +220,9 @@ fn seed_board_glance_tasks(write: &mut JournalWrite, origin: &Origin) {
     );
 }
 
-fn seed_claimed_tasks(
-    write: &mut JournalWrite,
-    origin: &Origin,
-    held: &TaskStamp,
-    peer: &TaskStamp,
-) {
+fn seed_claimed_tasks(write: &mut JournalWrite, held: &TaskStamp, peer: &TaskStamp) {
     task_added(
         write,
-        origin.clone(),
         held.clone(),
         "Compose Rust briefings",
         SESSION_PROJECT,
@@ -246,7 +233,6 @@ fn seed_claimed_tasks(
     );
     task_added(
         write,
-        origin.clone(),
         peer.clone(),
         "Peer active claim",
         SESSION_PROJECT,
@@ -289,8 +275,8 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         subscriptions: Vec::new(),
         renewals: Vec::new(),
     });
-    seed_claimed_tasks(&mut write, &origin, &held, &peer);
-    seed_board_glance_tasks(&mut write, &origin);
+    seed_claimed_tasks(&mut write, &held, &peer);
+    seed_board_glance_tasks(&mut write);
     let steering = body::SteerSent {
         from: None,
         room: None,
