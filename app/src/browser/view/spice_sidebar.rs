@@ -84,20 +84,34 @@ pub(super) fn render_arrangement(
     })
 }
 
-/// The first row: resident state and product identity beside the theme
-/// selector.
+/// The first row: resident state and its current admitted journal cursor beside
+/// product identity, all opposite the theme selector.
 pub(super) fn render_global_settings(
     connection: &Connection,
+    cursor: Option<wire::Seq>,
     identity: Option<&AppIdentity>,
     update: Option<&AppUpdate>,
 ) -> Html {
+    // Starting and reconnecting retain the old runtime on screen, so freshness
+    // comes from the connection before any retained cursor is presented.
+    let cursor =
+        crate::browser_branding::JournalCursor::resolve(connection.branding_state(), cursor);
     let (status, status_details) = match connection {
         Connection::Starting => ("Starting Spice", "Starting Spice".to_owned()),
         Connection::Connecting => (
             "Opening current resident",
             "Opening current resident".to_owned(),
         ),
-        Connection::Online { .. } => ("Connected", "Connected".to_owned()),
+        Connection::Online { .. } => (
+            "Connected",
+            format!(
+                "Connected; {}",
+                cursor
+                    .as_ref()
+                    .expect("an online connection presents its journal cursor")
+                    .accessible
+            ),
+        ),
         Connection::Offline(reason) => ("Reconnecting", format!("Reconnecting / {reason}")),
     };
     html! {
@@ -105,6 +119,7 @@ pub(super) fn render_global_settings(
             class="app-sheet-section app-spice-settings"
             aria-label="Resident and global settings"
             data-connection={connection.indicator_state()}
+            data-journal-cursor={cursor.as_ref().and_then(|cursor| cursor.value.clone())}
         >
             <div class="app-resident-summary">
                 <span
@@ -114,6 +129,9 @@ pub(super) fn render_global_settings(
                     title={status_details}
                 >
                     {status}
+                    if let Some(cursor) = cursor {
+                        <span class="app-resident-cursor">{format!(" · {}", cursor.label)}</span>
+                    }
                 </span>
                 {render_product_version(identity, update)}
             </div>
