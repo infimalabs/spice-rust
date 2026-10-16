@@ -33,6 +33,7 @@ mod coordination;
 mod evidence;
 mod preparation;
 mod relevance;
+mod retained_note;
 mod sql;
 
 pub(crate) use awareness::require_deliveries as require_return_deliveries;
@@ -46,6 +47,7 @@ pub(crate) use coordination::{
 };
 pub(crate) use evidence::{SCHEMA_SQL as EVIDENCE_SCHEMA_SQL, fold as fold_evidence};
 pub(crate) use relevance::SCHEMA_SQL as RELEVANCE_SCHEMA_SQL;
+pub(crate) use retained_note::{AUDIT_PREFIX, presented};
 pub(crate) const MATURITY_SCHEMA_SQL: &str = r#"
 CREATE TABLE design_notices (
     design TEXT NOT NULL,
@@ -750,6 +752,9 @@ pub(crate) fn fold(
         }
         require_hunk(authority, &body.hunk)?;
         return publish(authority, seq, &body.room, &body.publication);
+    }
+    if let Some(result) = retained_note::fold(authority, seq, at, fact) {
+        return result;
     }
     if let Some(result) = fold_traffic(authority, seq, at, actor, fact) {
         return result;

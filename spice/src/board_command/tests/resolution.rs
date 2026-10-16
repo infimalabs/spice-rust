@@ -606,7 +606,7 @@ fn a_lane_reads_validation_and_review_evidence_through_task_show() {
             tasks: tasks.to_vec(),
             dependencies: true,
             claims: false,
-            notes: true,
+            history: true,
         },
     )
     else {

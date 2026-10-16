@@ -13,12 +13,11 @@ use serde_json::{Map, Value};
 use wire::{FactKind, StatementField, TasteFinding, TasteHold, TasteMatch, TastePlan};
 
 use super::{OpenError, residual};
+use crate::rooms::AUDIT_PREFIX;
 
 /// Last release that spelled a hold as its plan and kept its evidence in
 /// audit notes.
 const TASTE_AUDIT_RELEASE: &str = "fe3487acd";
-/// Note prefix every retired policy-read audit carried.
-const AUDIT_PREFIX: &str = "taste-review audit ";
 
 /// Select a JSON object whose taste is still the retired plan spelling.
 fn plan_only(column: &str, path: &str) -> String {

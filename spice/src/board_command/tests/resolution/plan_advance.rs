@@ -17,7 +17,7 @@ fn progress_read(
             tasks,
             dependencies: true,
             claims,
-            notes: false,
+            history: false,
         },
     ) {
         Outcome::Reply(Reply {

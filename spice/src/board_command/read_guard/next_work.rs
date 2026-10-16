@@ -111,7 +111,6 @@ pub(crate) fn read_next_work(
         design_cycles: Default::default(),
         origins: Default::default(),
         history: None,
-        notes: Default::default(),
         acknowledgments: Default::default(),
         closures: Default::default(),
         steps: Default::default(),

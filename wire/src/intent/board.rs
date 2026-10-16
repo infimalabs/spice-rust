@@ -107,8 +107,9 @@ pub enum BoardRead {
         dependencies: bool,
         /// Also select every active claim held by the authenticated principal.
         claims: bool,
-        /// Also return the durable notes on each named task in `tasks`.
-        notes: bool,
+        /// Also return each named task's acknowledgments, closure, and
+        /// workflow steps; its conversation is its room.
+        history: bool,
     },
     /// Trust rulings and residency authority, without task rows.
     Trust,
@@ -160,20 +161,6 @@ pub struct DocLedger {
 pub struct TaskDetail {
     /// Sole durable task identity.
     pub task: crate::TaskStamp,
-}
-
-/// One attributed durable note in journal order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskDetailNote {
-    /// Fact position; this is the note's durable identity and ordering key.
-    pub position: crate::Seq,
-    /// Commit time recorded by the journal.
-    pub at: crate::Instant,
-    /// Principal that appended the note.
-    pub author: Actor,
-    /// Authored note text.
-    pub text: String,
 }
 
 /// The operator's closure of a task, read back from its `task::closed` fact.
@@ -265,7 +252,7 @@ pub struct TaskAcknowledgment {
     pub key: String,
 }
 
-/// Current evidence and retained durable notes for one selected task.
+/// Current evidence for one selected task; its conversation is its room.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskDetailAnswer {
@@ -274,10 +261,6 @@ pub struct TaskDetailAnswer {
     /// Bounded browser-renderable artifacts in task citation order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<crate::Media>,
-    /// Notes retained from before notes became room observations, ordered by
-    /// ascending durable journal position; authored observations are the
-    /// task's room publications.
-    pub notes: Vec<TaskDetailNote>,
     /// The operator's closure, when the task was closed rather than done.
     #[serde(
         default,
@@ -1425,12 +1408,6 @@ pub struct BoardAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub history: Option<TaskHistoryPage>,
-    /// Notes retained from before notes became room observations on the named
-    /// tasks of a [`BoardRead::Tasks`] read that asked for them, each task's
-    /// notes in ascending journal position; authored observations are each
-    /// task's room publications.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub notes: std::collections::BTreeMap<crate::TaskStamp, Vec<TaskDetailNote>>,
     /// Every acknowledged steering directive joined to each named task through
     /// an `ack:` task/claim origin or the holder's operator `steer::acked` fact.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -1439,7 +1416,7 @@ pub struct BoardAnswer {
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub closures: std::collections::BTreeMap<crate::TaskStamp, TaskDetailClosure>,
     /// Workflow steps on the named tasks of a [`BoardRead::Tasks`] read that
-    /// asked for notes, each task's steps in ascending journal position.
+    /// asked for history, each task's steps in ascending journal position.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub steps: std::collections::BTreeMap<crate::TaskStamp, Vec<TaskDetailStep>>,
     /// Current executable-configuration trust heads in ascending digest order.

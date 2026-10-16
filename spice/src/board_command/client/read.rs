@@ -106,7 +106,7 @@ pub(super) fn client_show(
             ],
             dependencies: true,
             claims: false,
-            notes: options.context || options.history,
+            history: options.context || options.history,
         },
     ) {
         Outcome::Reply(Reply {
@@ -349,12 +349,11 @@ fn task_show_principals(
         .map_err(|error| unreadable(&error))
 }
 
-/// Durable history shown with one task: its notes, its closure, its workflow
-/// steps, every acknowledged steering key on its record, and the principal
-/// names its human authors read under.
+/// Durable history shown with one task: its closure, its workflow steps, every
+/// acknowledged steering key on its record, and the principal names its human
+/// authors read under. Its conversation is its room.
 #[derive(Clone, Copy, Default)]
 pub(in crate::board_command) struct TaskShowHistory<'a> {
-    pub(in crate::board_command) notes: &'a [wire::intent::TaskDetailNote],
     pub(in crate::board_command) acknowledgments: &'a [wire::intent::TaskAcknowledgment],
     pub(in crate::board_command) closure: Option<&'a wire::intent::TaskDetailClosure>,
     pub(in crate::board_command) steps: &'a [wire::intent::TaskDetailStep],
@@ -362,7 +361,7 @@ pub(in crate::board_command) struct TaskShowHistory<'a> {
 }
 
 impl<'a> TaskShowHistory<'a> {
-    /// `task`'s history as a notes-bearing `board` read carries it, with
+    /// `task`'s history as a history-bearing `board` read carries it, with
     /// `principals` naming its human authors when they were read.
     pub(in crate::board_command) fn of(
         board: &'a BoardAnswer,
@@ -371,7 +370,6 @@ impl<'a> TaskShowHistory<'a> {
     ) -> Self {
         let born = &task.statement.body.born;
         Self {
-            notes: board.notes.get(born).map_or(&[], Vec::as_slice),
             acknowledgments: board.acknowledgments.get(born).map_or(&[], Vec::as_slice),
             closure: board.closures.get(born),
             steps: board.steps.get(born).map_or(&[], Vec::as_slice),
@@ -624,7 +622,6 @@ enum TaskShowDetailSection {
     Context,
     Closure,
     Step,
-    Note,
     Room,
 }
 
@@ -672,13 +669,6 @@ fn bounded_detail_lines(
             section: TaskShowDetailSection::Step,
             text: render_task_step(board, step, history.principals, budget),
         }));
-        let mut notes = history.notes.iter().collect::<Vec<_>>();
-        notes.sort_by_key(|note| std::cmp::Reverse(note.position));
-        rows.extend(notes.into_iter().map(|note| TaskShowDetailRow {
-            cursor: note.position.to_string(),
-            section: TaskShowDetailSection::Note,
-            text: render_task_note(note, history.acknowledgments, history.principals, budget),
-        }));
     }
     if resumes_in_room(options) {
         rows.clear();
@@ -707,29 +697,17 @@ fn bounded_detail_lines(
         .finish(|resume| task_show_continuation(&task.statement.body.handle, options, resume));
     let mut lines = Vec::new();
     let mut steps_started = false;
-    let mut notes_started = false;
-    let mut notes_owed = options.history && history.notes.is_empty();
     let mut room_started = false;
     for row in page.rows {
         if matches!(row.section, TaskShowDetailSection::Step) && !steps_started {
             lines.push("workflow:".to_owned());
             steps_started = true;
         }
-        if matches!(row.section, TaskShowDetailSection::Note) && !notes_started {
-            lines.push("notes:".to_owned());
-            notes_started = true;
-        }
         if matches!(row.section, TaskShowDetailSection::Room) && !room_started {
-            if std::mem::take(&mut notes_owed) {
-                lines.extend(["notes:".to_owned(), "  -".to_owned()]);
-            }
             lines.push("room:".to_owned());
             room_started = true;
         }
         lines.push(row.text);
-    }
-    if notes_owed {
-        lines.extend(["notes:".to_owned(), "  -".to_owned()]);
     }
     if room_empty {
         lines.extend(["room:".to_owned(), "  -".to_owned()]);
@@ -781,26 +759,6 @@ fn named<'a>(principals: Option<&'a PrincipalDirectory>, actor: &'a wire::Actor)
         },
         |principals| principals.named(actor),
     )
-}
-
-fn render_task_note(
-    note: &wire::intent::TaskDetailNote,
-    acknowledgments: &[wire::intent::TaskAcknowledgment],
-    principals: Option<&PrincipalDirectory>,
-    budget: wire::output::Budget,
-) -> String {
-    let origin = acknowledgments
-        .iter()
-        .find(|row| row.position == note.position)
-        .map_or_else(String::new, |row| format!(" ack:{}", row.key));
-    let text = budget.clip(&note.text);
-    let author = named(principals, &note.author);
-    let mut rendered = format!("  {} {} {author}{origin}", note.position, note.at);
-    push_indented(&mut rendered, &text.text);
-    if let Some(withheld) = text.withheld_bytes {
-        rendered.push_str(&format!("\n    … [+{withheld} bytes]"));
-    }
-    rendered
 }
 
 fn closure_lines_bounded(

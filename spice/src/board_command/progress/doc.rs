@@ -371,12 +371,9 @@ fn append_doc_annotations(
     annotations: Vec<String>,
     mut cause: PendingFact,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
-    let mut retained = plan
-        .snapshot
-        .facts
+    let mut retained = room::room_publications(bus, born)?
         .iter()
         .filter_map(recorded_note)
-        .filter(|(noted, _)| noted == born)
         .map(|(_, note)| note)
         .collect::<std::collections::BTreeSet<_>>();
     retained.extend(

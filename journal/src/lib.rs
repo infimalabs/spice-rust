@@ -31,7 +31,9 @@
 /// Schema 74 lifts each taste hold's evidence out of its statement's audit
 /// notes into the typed hold. Schema 75 crosses retained OOPS filing rows into
 /// ordinary Plans controlled by one repository-owned opportunistic Design.
-pub const SCHEMA_VERSION: u32 = 75;
+/// Schema 76 indexes each retained task note that is not a taste-review audit
+/// into its task's room, which an older release's room reads cannot present.
+pub const SCHEMA_VERSION: u32 = 76;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

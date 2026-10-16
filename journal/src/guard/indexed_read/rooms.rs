@@ -397,7 +397,8 @@ impl JournalRead<'_> {
         };
         let seq = row.get::<_, i64>(0).map_err(GuardError::Store)?;
         read_metrics::observe_row();
-        let publication = decode_bounded_fact(row, seq, 1, 2, 3)?.0;
+        let publication = crate::rooms::presented(decode_bounded_fact(row, seq, 1, 2, 3)?.0)
+            .map_err(GuardError::Invalid)?;
         if publication.actor != *actor {
             return Err(GuardError::Invalid(format!(
                 "room publication actor index names {}, decoded {}",

@@ -14,7 +14,7 @@ fn shown_board(bus: &Bus, epoch: CanonicalUuid, room: &TaskHandle) -> BoardAnswe
             tasks: vec![room.born().expect("fixture identity")],
             dependencies: true,
             claims: false,
-            notes: true,
+            history: true,
         },
     ) {
         Outcome::Reply(Reply {

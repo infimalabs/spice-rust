@@ -68,7 +68,7 @@ fn anchor_cycles(
             tasks,
             dependencies: false,
             claims: false,
-            notes: false,
+            history: false,
         },
     )?;
     Ok(board
