@@ -329,6 +329,7 @@ fn content_fields(row: Option<&BoardTask>) -> Html {
             .collect::<Vec<_>>()
             .join(",")
     });
+    let questions = intent == Some(TaskIntent::Design);
     let textarea_rows = if row.is_some() { "3" } else { "2" };
     html! {
         <>
@@ -349,7 +350,15 @@ fn content_fields(row: Option<&BoardTask>) -> Html {
                 <label class="draft-field-flow"><span>{"Flow"}</span><input name="flow" type="text" value={flow} /></label>
             }
             <label class="draft-field-description"><span>{"Description"}</span><textarea name="description" rows={textarea_rows} value={description} /></label>
-            <label class="draft-field-acceptance"><span>{"Acceptance"}</span><textarea name="acceptance" rows={textarea_rows} placeholder="One criterion per line" value={acceptance} /></label>
+            <label class="draft-field-acceptance">
+                <span>{if questions { "Questions" } else { "Acceptance" }}</span>
+                <textarea
+                    name="acceptance"
+                    rows={textarea_rows}
+                    placeholder={if questions { "One open question per line" } else { "One criterion per line" }}
+                    value={acceptance}
+                />
+            </label>
         </>
     }
 }

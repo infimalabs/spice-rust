@@ -9,7 +9,8 @@ use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
 use journal::{GuardError, JournalRead};
 use spice::rooms::awareness::{
-    COMMON_TERM_WINDOW, CommonTerms, DesignTerms, completion_terms, pitch, task_terms,
+    COMMON_TERM_WINDOW, CommonTerms, DesignTerms, completion_terms, pitch, request_questions,
+    task_terms,
 };
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::DesignNoticed;
@@ -235,7 +236,11 @@ fn plan(
                 && !facts.published_in_room(&actor, entry.born())
         }) {
             let statement = design.statement();
-            let design_terms = DesignTerms::new(&statement.title, statement.description.as_deref());
+            let design_terms = DesignTerms::new(
+                &statement.title,
+                statement.description.as_deref(),
+                &statement.acceptance,
+            );
             if let Some(matched) = design_terms.matched(&terms, &common) {
                 eligible.push((design, matched));
             }
@@ -444,9 +449,13 @@ pub(crate) fn project_request(
         })
         .filter_map(|design| {
             let statement = design.statement();
-            DesignTerms::new(&statement.title, statement.description.as_deref())
-                .matched(&completed_terms, &common)
-                .map(|matched| (design, matched))
+            DesignTerms::new(
+                &statement.title,
+                statement.description.as_deref(),
+                &statement.acceptance,
+            )
+            .matched(&completed_terms, &common)
+            .map(|matched| (design, matched))
         })
         .collect();
     let Some((design, terms)) = best_design(candidates) else {
@@ -523,6 +532,7 @@ fn design_request(
         title: statement.title.clone(),
         statement: SequenceCode::new(statement.revision.get()),
         pitch: pitch(&statement.title, statement.description.as_deref()),
+        questions: request_questions(&statement.acceptance),
         terms,
     }
 }

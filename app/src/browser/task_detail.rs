@@ -225,12 +225,13 @@ pub(super) fn render_task_title(
 }
 
 /// A task's authored contract: quick detail shows the description alone, and
-/// deep detail adds every acceptance criterion.
+/// deep detail adds every acceptance criterion or open Design question.
 pub(super) fn render_contract(
     statement: &wire::intent::BoardStatement,
     resolves: impl Fn(&TaskStamp) -> bool + Copy,
     acceptance: bool,
 ) -> Html {
+    let design = statement.intent == Some(wire::TaskIntent::Design);
     html! {
         <>
             if let Some(description) = statement.description.as_deref() {
@@ -240,9 +241,15 @@ pub(super) fn render_contract(
             }
             if acceptance {
                 if statement.acceptance.is_empty() {
-                    <p class="muted">{"No acceptance criteria were recorded."}</p>
+                    <p class="muted">{
+                        if design {
+                            "No open questions were recorded."
+                        } else {
+                            "No acceptance criteria were recorded."
+                        }
+                    }</p>
                 } else {
-                    <h4>{"Acceptance"}</h4>
+                    <h4>{if design { "Questions" } else { "Acceptance" }}</h4>
                     <ul>{for statement.acceptance.iter().map(|criterion| html! {
                         <li>{render_task_text(criterion, "work-detail-criterion", resolves)}</li>
                     })}</ul>

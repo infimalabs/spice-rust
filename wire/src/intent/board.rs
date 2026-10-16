@@ -978,6 +978,8 @@ pub struct DesignRequest {
     pub statement: crate::SequenceCode,
     /// One-line Design context.
     pub pitch: String,
+    /// In-order prefix of whole open questions bounded for delivery.
+    pub questions: Vec<String>,
     /// Distinctive shared terms that selected this Design.
     pub terms: Vec<String>,
 }

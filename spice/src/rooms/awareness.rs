@@ -24,6 +24,8 @@ pub const MIN_TERM_CHARS: usize = 4;
 pub const MIN_SHARED_TERMS: usize = 3;
 /// Most characters of a Design's one-line pitch.
 pub const PITCH_CHARS: usize = 160;
+/// Most rendered bytes of whole open questions one Design request carries.
+pub const DESIGN_REQUEST_QUESTIONS_BYTES: usize = 2 * 1024;
 /// Most recently revised task statements, open or completed, whose
 /// vocabulary decides which terms are common.
 pub const COMMON_TERM_WINDOW: usize = 256;
@@ -53,12 +55,13 @@ pub struct DesignTerms {
 }
 
 impl DesignTerms {
-    /// Terms of a Design titled `title` described by `description`.
+    /// Terms of a Design's title, description, and open `questions`.
     #[must_use]
-    pub fn new(title: &str, description: Option<&str>) -> Self {
+    pub fn new(title: &str, description: Option<&str>, questions: &[String]) -> Self {
         let title = terms([title]);
         let mut all = title.clone();
         all.extend(terms(description));
+        all.extend(terms(questions.iter().map(String::as_str)));
         Self { title, all }
     }
 
@@ -186,29 +189,65 @@ fn terms_capped<'a>(texts: impl IntoIterator<Item = &'a str>, maximum: usize) ->
     terms
 }
 
-/// A Design's one-line pitch: the first sentence of its description's first
-/// nonblank line, at most [`PITCH_CHARS`] characters, or its title when it has
-/// no description.
+/// A Design's one-line pitch: the first sentence of its description that is
+/// more than a one-word label, at most [`PITCH_CHARS`] characters, or its title
+/// when the description has no such sentence.
 #[must_use]
 pub fn pitch(title: &str, description: Option<&str>) -> String {
-    let Some(line) = description
-        .into_iter()
-        .flat_map(str::lines)
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-    else {
+    let Some(description) = description.map(str::trim).filter(|text| !text.is_empty()) else {
         return title.to_owned();
     };
-    let sentence = line
-        .match_indices(['.', '?', '!'])
-        .find(|(index, _)| line[index + 1..].starts_with(' '))
-        .map_or(line, |(index, _)| &line[..=index]);
-    if sentence.chars().count() <= PITCH_CHARS {
-        return sentence.to_owned();
+    let mut start = 0;
+    let mut selected = None;
+    for (index, punctuation) in description.match_indices(['.', '?', '!']) {
+        let end = index + punctuation.len();
+        if end < description.len() && !description[end..].starts_with(char::is_whitespace) {
+            continue;
+        }
+        let sentence = description[start..end].trim();
+        if sentence.split_whitespace().nth(1).is_some() {
+            selected = Some(sentence);
+            break;
+        }
+        start = end;
     }
-    let mut cut = sentence.chars().take(PITCH_CHARS - 1).collect::<String>();
+    let sentence = selected
+        .or_else(|| {
+            let trailing = description[start..].trim();
+            trailing.split_whitespace().nth(1).map(|_| trailing)
+        })
+        .unwrap_or(title);
+    let mut one_line = String::with_capacity(sentence.len().min(PITCH_CHARS));
+    for word in sentence.split_whitespace() {
+        if !one_line.is_empty() {
+            one_line.push(' ');
+        }
+        one_line.push_str(word);
+    }
+    if one_line.chars().count() <= PITCH_CHARS {
+        return one_line;
+    }
+    let mut cut = one_line.chars().take(PITCH_CHARS - 1).collect::<String>();
     cut.push('…');
     cut
+}
+
+/// The longest in-order prefix of whole open questions that fits one request.
+#[must_use]
+pub fn request_questions(questions: &[String]) -> Vec<String> {
+    let mut used: usize = 0;
+    questions
+        .iter()
+        .take_while(|question| {
+            let rendered = question.len().saturating_add(3);
+            let fits = used.saturating_add(rendered) <= DESIGN_REQUEST_QUESTIONS_BYTES;
+            if fits {
+                used += rendered;
+            }
+            fits
+        })
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -238,6 +277,7 @@ mod tests {
         let design = DesignTerms::new(
             "Room catch-up pagination",
             Some("Lanes page retained publications through bounded cursors."),
+            &[],
         );
         let matched = design
             .matched(
@@ -267,6 +307,7 @@ mod tests {
         let design = DesignTerms::new(
             "Working groups",
             Some("Retained publications page through bounded cursors."),
+            &[],
         );
         assert_eq!(
             design.matched(
@@ -292,7 +333,7 @@ mod tests {
     #[test]
     fn board_common_terms_neither_count_nor_satisfy_the_title_requirement() {
         let common = board(8, "lane room work");
-        let generic = DesignTerms::new("Lane room work", None);
+        let generic = DesignTerms::new("Lane room work", None, &[]);
         let claimed = task("Lane room work", "");
         assert!(generic.matched(&claimed, &CommonTerms::default()).is_some());
         assert_eq!(
@@ -304,6 +345,7 @@ mod tests {
         let titled_by_common = DesignTerms::new(
             "Room lanes",
             Some("Retained publications page through bounded cursors."),
+            &[],
         );
         let paging = task(
             "Paging",
@@ -323,6 +365,7 @@ mod tests {
         let specific = DesignTerms::new(
             "Room catch-up pagination",
             Some("Lanes page retained publications through bounded cursors."),
+            &[],
         );
         assert_eq!(
             specific
@@ -336,6 +379,27 @@ mod tests {
                 .expect("specific shared terms still match"),
             ["catch", "cursor", "page", "publication", "retained"],
             "matched terms omit the common ones"
+        );
+    }
+
+    #[test]
+    fn open_questions_contribute_design_matching_terms() {
+        let design = DesignTerms::new(
+            "Snapshot proposal",
+            None,
+            &["Should retained cursors bound each publication page?".to_owned()],
+        );
+        assert_eq!(
+            design
+                .matched(
+                    &task(
+                        "Snapshot cursor",
+                        "Retained publications use a bounded page."
+                    ),
+                    &CommonTerms::default(),
+                )
+                .expect("title and question terms match"),
+            ["cursor", "page", "publication", "retained", "snapshot"]
         );
     }
 
@@ -416,15 +480,29 @@ mod tests {
     }
 
     #[test]
-    fn the_pitch_is_the_first_sentence_bounded_or_the_title() {
+    fn the_pitch_skips_a_label_and_is_bounded_or_the_title() {
         assert_eq!(pitch("Title", None), "Title");
         assert_eq!(
             pitch("Title", Some("\n  First idea. Second idea.\nMore")),
             "First idea."
         );
+        assert_eq!(
+            pitch(
+                "Title",
+                Some("Problem.\nThe room request needs a useful summary. More detail.")
+            ),
+            "The room request needs a useful summary."
+        );
         let long = "word ".repeat(80);
         let cut = pitch("Title", Some(&long));
         assert_eq!(cut.chars().count(), PITCH_CHARS);
         assert!(cut.ends_with('…'));
+    }
+
+    #[test]
+    fn request_questions_keep_only_the_whole_in_order_prefix_that_fits() {
+        let first = "a".repeat(DESIGN_REQUEST_QUESTIONS_BYTES - 3);
+        let questions = [first.clone(), "does not fit".to_owned(), "short".to_owned()];
+        assert_eq!(request_questions(&questions), [first]);
     }
 }

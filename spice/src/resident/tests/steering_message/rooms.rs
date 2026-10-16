@@ -23,6 +23,19 @@ impl Lanes {
         intent: Option<wire::TaskIntent>,
         holder: Option<CanonicalUuid>,
     ) -> wire::TaskHandle {
+        self.seed_task_with_acceptance(stamp, title, description, intent, holder, &[])
+    }
+
+    /// Seed one pending task with explicit statement acceptance.
+    pub(super) fn seed_task_with_acceptance(
+        &self,
+        stamp: &str,
+        title: &str,
+        description: Option<&str>,
+        intent: Option<wire::TaskIntent>,
+        holder: Option<CanonicalUuid>,
+        acceptance: &[&str],
+    ) -> wire::TaskHandle {
         let task: wire::TaskStamp = stamp.parse().expect("fixture stamp");
         let phase: wire::Phase = if intent == Some(wire::TaskIntent::Design) {
             "design"
@@ -34,6 +47,10 @@ impl Lanes {
         let creation = wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::SpiceActor,
         );
+        let acceptance = acceptance
+            .iter()
+            .map(|item| (*item).to_owned())
+            .collect::<Vec<_>>();
         let mut seed =
             write(Actor::Spice, self.epoch, Producer::CommandDoor).expect("task write starts");
         let added = seed
@@ -42,7 +59,7 @@ impl Lanes {
                     task: task.clone(),
                     title: title.to_owned(),
                     description: description.map(str::to_owned),
-                    acceptance: Vec::new(),
+                    acceptance: acceptance.clone(),
                     requirements: wire::EnvironmentRequirements::default(),
                     project: "serve.rooms".to_owned(),
                     filing: wire::TaskFiling::Filed,
@@ -73,7 +90,7 @@ impl Lanes {
             queue_origin: position,
             title,
             description,
-            acceptance: Vec::new(),
+            acceptance,
             requirements: wire::EnvironmentRequirements::default(),
             project: "serve.rooms".to_owned(),
             filing: wire::TaskFiling::Filed,

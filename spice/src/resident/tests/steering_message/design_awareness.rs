@@ -59,12 +59,23 @@ impl Lanes {
     }
 
     fn design(&self, stamp: &str, title: &str, description: &str) -> wire::TaskHandle {
-        self.seed_task(
+        self.design_with_questions(stamp, title, description, &[])
+    }
+
+    fn design_with_questions(
+        &self,
+        stamp: &str,
+        title: &str,
+        description: &str,
+        questions: &[&str],
+    ) -> wire::TaskHandle {
+        self.seed_task_with_acceptance(
             stamp,
             title,
             Some(description),
             Some(wire::TaskIntent::Design),
             None,
+            questions,
         )
     }
 
@@ -449,7 +460,15 @@ fn only_a_completion_owes_the_best_single_design_request() {
     align_completion_lane(&lanes);
     let config = surface(&lanes);
     let task = lanes.claimed("dVrD245Kc", FIRST);
-    let best = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    let best = lanes.design_with_questions(
+        "dVrD245Kd",
+        "Page room catch-up",
+        "Problem. Lanes page retained publications through bounded cursors.",
+        &[
+            "Should each lane retain its own cursor?",
+            "Which publications belong on the bounded page?",
+        ],
+    );
     let _lesser = lanes.design(
         "dVrD245Kg",
         "Page cursor proposal",
@@ -475,6 +494,17 @@ fn only_a_completion_owes_the_best_single_design_request() {
     assert_eq!(request.design, best);
     assert_eq!(request.task, task);
     assert!(!request.terms.is_empty());
+    assert_eq!(
+        request.pitch,
+        "Lanes page retained publications through bounded cursors."
+    );
+    assert_eq!(
+        request.questions,
+        [
+            "Should each lane retain its own cursor?",
+            "Which publications belong on the bounded page?"
+        ]
+    );
     assert!(lanes.request(&config, FIRST).is_some());
     assert_eq!(
         lanes.noticed().len(),
