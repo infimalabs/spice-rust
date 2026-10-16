@@ -695,13 +695,27 @@ fn summary_face(runtime: &AppRuntime, event: &crate::runtime::RoomEvent) -> card
 }
 
 /// One event's speaker or kind and the words it carried, as a ticker line
-/// names it; a lane packet whose words this browser lacks names only its
-/// speaker.
+/// names it; a contribution names its lane and kind, and a lane packet whose
+/// words this browser lacks names only its speaker.
 pub(in crate::browser) fn event_headline(
     runtime: &AppRuntime,
     publication: &RoomAuthorityStamp,
     event: &crate::runtime::RoomEvent,
 ) -> (String, String) {
+    if let RoomEventKind::Contributed {
+        lane,
+        contribution,
+        text,
+        ..
+    } = &event.kind
+    {
+        let speaker = format!(
+            "{} {}",
+            conversation::lane_label(runtime, *lane),
+            contributions::kind_label(*contribution).to_lowercase()
+        );
+        return (speaker, text.clone());
+    }
     match conversation::spoken(runtime, publication, event) {
         Some(spoken) => (spoken.author, spoken.text.unwrap_or_default()),
         None => {

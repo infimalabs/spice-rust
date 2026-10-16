@@ -1,7 +1,7 @@
 //! A working group's toolbar, the team toolbar's twin read from Designs: an
 //! open-task total and one tab per agent currently working in the group's
-//! Designs, one standing light per Design, and a ticker of the newest room
-//! event across them, where a team's ticker shows its newest words. Like a
+//! Designs, one standing light per Design, and a ticker of the newest words
+//! said across them, as a team's ticker shows its newest words. Like a
 //! team toolbar it shows no name; this browser's placement of the console
 //! lives in the panel's arrangement menu, where a team's arrangement stands.
 //! Everything renders from the board, the room projection, and lane topology
@@ -171,23 +171,19 @@ fn render_light(channel: &Channel, standing: DesignStanding) -> Html {
     }
 }
 
-/// The newest room publication or coordination event across the group's
-/// Designs, aged and coloured by the Design it landed in.
+/// The newest words said across the group's Designs, aged and coloured by the
+/// Design they landed in. A departure or coordination says nothing, so it
+/// never displaces the latest message.
 fn render_ticker(
     render: &GroupRender<'_, '_>,
     channels: &[Channel],
     standings: &[DesignStanding],
 ) -> Html {
-    let projection = render.runtime.room_projection();
     let newest = channels
         .iter()
         .zip(standings)
         .filter_map(|(channel, standing)| {
-            let (publication, event) = projection
-                .room(&channel.stamp)?
-                .events()
-                .iter()
-                .max_by_key(|(_, event)| event.position)?;
+            let (publication, event, _) = super::newest_words(render.runtime, &channel.stamp)?;
             Some((channel, *standing, publication, event))
         })
         .max_by_key(|(_, _, _, event)| event.position);
