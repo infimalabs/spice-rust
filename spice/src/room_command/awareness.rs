@@ -1,11 +1,10 @@
-//! `spice room awareness HANDLE`: which lanes were told about one Design.
+//! `spice room awareness HANDLE`: completion requests recorded for one Design.
 //!
 //! Each row is one admitted `room::noticed` record, oldest first: the lane and
-//! occupant told, the claimed task and claim it served, the exact Design
-//! statement evaluated, and the organic matched terms as every surface shows
-//! them, distinct and capped. Rows page whole in
-//! journal order; a page that withholds any continues at the first withheld
-//! one. Reading changes nothing.
+//! occupant requested, the completed task and claim it served, the exact Design
+//! statement evaluated, and the matched terms as every surface shows them,
+//! distinct and capped. Rows page whole in journal order; a page that
+//! withholds any continues at the first withheld one. Reading changes nothing.
 
 use std::fmt;
 
@@ -22,7 +21,7 @@ use crate::read_page::Page;
 /// What a continuation's `--after` names.
 const CURSOR: &str = "an awareness record of this Design";
 
-/// One page of the lanes told about one Design.
+/// One page of completion requests for one Design.
 #[derive(Debug, Serialize)]
 pub(crate) struct DesignAwareness {
     design: TaskHandle,
@@ -230,14 +229,14 @@ fn maturity_summary(maturity: &DesignMaturity) -> String {
         ),
     };
     format!(
-        "maturity {state}; contributions for={} against={} evidence={} questions={} from {} lanes; organic notices={} to {} lanes",
+        "maturity {state}; contributions for={} against={} evidence={} questions={} from {} lanes; requests={} to {} lanes",
         maturity.contributions.reason_for,
         maturity.contributions.reason_against,
         maturity.contributions.evidence,
         maturity.contributions.question,
         maturity.contributing_lanes.len(),
-        maturity.organic_notices,
-        maturity.organic_lanes.len(),
+        maturity.requests,
+        maturity.requested_lanes.len(),
     )
 }
 

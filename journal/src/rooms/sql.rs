@@ -401,7 +401,7 @@ fn apply(connection: &Connection, change: Change) -> Result<(), Refusal> {
                 params![notice.design.as_str(), sql(seq)],
             )?;
             update_maturity(connection, &notice.design, |maturity| {
-                maturity.observe_notice(&notice);
+                maturity.observe_request(&notice);
             })?;
         }
         Change::MaturityContribution(contribution) => {

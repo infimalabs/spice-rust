@@ -5,7 +5,8 @@ use super::*;
 /// Terminal task heads stay behind the snapshot index. Only dependency stamps
 /// named by the live graph consult their compact standing, so request work is
 /// proportional to live vertices and edges rather than retained history.
-pub(super) fn read_next_work(
+pub(crate) fn read_next_work(
+    bus: &Bus,
     observed: &bus::TaskSnapshot,
     principal: wire::Actor,
     projects: &ProjectPolicy,
@@ -34,27 +35,23 @@ pub(super) fn read_next_work(
     let (entries, satisfied, origin_threads, frontier_heads, _work) =
         project_frontier(observed, projects, residency.body())?;
 
-    let mut held = entries.iter().enumerate().filter(|(_, entry)| {
-        entry.claim().is_some_and(|claim| {
-            claim.actor == principal && claim.disposition == ClaimDisposition::Active
-        })
-    });
-    let first_held = held.next();
-    if held.next().is_some() {
-        return Err(protocol_fault(
-            "claim::active-ambiguous",
-            "one principal holds more than one active claim",
-        ));
-    }
+    let held = held_index(&entries, &principal)?;
 
     let subscription = allocation_subscription(residency.body(), &principal)?;
     let recent_cell = observed.recent_claim_cell(&principal);
     let environment = observed.environment();
     let now = current_instant()?;
-    let state = if let Some((index, _)) = first_held {
+    let design_request = if held.is_none() {
+        project_design_request(bus, observed, &entries, residency.body(), &principal)?
+    } else {
+        None
+    };
+    let state = if let Some(index) = held {
         NextWorkState::Active {
             task: next_task(frontier_heads[index]),
         }
+    } else if let Some(request) = design_request {
+        NextWorkState::DesignRequest { request }
     } else if let Some(selected) = board::select_with_satisfied_at(
         &entries,
         &principal,
@@ -123,6 +120,48 @@ pub(super) fn read_next_work(
         residency,
         addresses: Default::default(),
     })
+}
+fn held_index(
+    entries: &[Entry],
+    principal: &wire::Actor,
+) -> Result<Option<usize>, Outcome<CommandAnswer>> {
+    let mut held = entries.iter().enumerate().filter(|(_, entry)| {
+        entry.claim().is_some_and(|claim| {
+            claim.actor == *principal && claim.disposition == ClaimDisposition::Active
+        })
+    });
+    let first = held.next().map(|(index, _)| index);
+    if held.next().is_some() {
+        return Err(protocol_fault(
+            "claim::active-ambiguous",
+            "one principal holds more than one active claim",
+        ));
+    }
+    Ok(first)
+}
+
+fn project_design_request(
+    bus: &Bus,
+    observed: &bus::TaskSnapshot,
+    entries: &[Entry],
+    residency: &wire::ResidencyHead,
+    principal: &wire::Actor,
+) -> Result<Option<wire::intent::DesignRequest>, Outcome<CommandAnswer>> {
+    let wire::Actor::Lane(lane) = principal else {
+        return Ok(None);
+    };
+    residency
+        .lanes
+        .iter()
+        .find(|row| row.lane == *lane && row.disposition == "occupied")
+        .and_then(|row| row.occupant)
+        .map(|occupant| {
+            crate::resident::design_awareness::project_request(
+                bus, observed, entries, *lane, occupant,
+            )
+        })
+        .transpose()
+        .map(Option::flatten)
 }
 
 type FrontierProjection<'a> = (

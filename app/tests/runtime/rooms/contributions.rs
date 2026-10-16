@@ -404,7 +404,7 @@ fn maturity_projection_is_incremental_bounded_and_attention_only() {
 
     assert_eq!(maturity.state(), wire::rooms::DesignMaturityState::Steeped);
     assert_eq!(maturity.recent_heads.len(), 1);
-    assert_eq!(maturity.recent_heads[0].invited_contributors(), 3);
+    assert_eq!(maturity.recent_heads[0].requested_contributors(), 3);
     assert_eq!(
         projection.maturity_attention().cloned().collect::<Vec<_>>(),
         vec![room()]

@@ -950,6 +950,24 @@ pub struct NextWorkTask {
     pub lease: Option<Positioned<crate::LeaseHead>>,
 }
 
+/// One passive Design request owed at a lane's post-completion break.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignRequest {
+    /// Design whose room accepts the answer.
+    pub design: crate::TaskHandle,
+    /// Completed task whose terms selected the Design.
+    pub task: crate::TaskHandle,
+    /// Current Design title.
+    pub title: String,
+    /// Current Design statement revision.
+    pub statement: crate::SequenceCode,
+    /// One-line Design context.
+    pub pitch: String,
+    /// Distinctive shared terms that selected this Design.
+    pub terms: Vec<String>,
+}
+
 /// Exact pending execution-board classification when the allocator has no
 /// candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -979,6 +997,8 @@ pub enum NextWorkState {
     Active { task: NextWorkTask },
     /// The globally highest-ranked eligible task and its claim witnesses.
     Candidate { task: NextWorkTask },
+    /// A completed claim owes one room contribution or leave before allocation.
+    DesignRequest { request: DesignRequest },
     /// No task is eligible under this team policy and board standing.
     Dry {
         board: NextWorkCounts,

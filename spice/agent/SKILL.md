@@ -7,23 +7,23 @@ metadata:
 
 # spice
 
-Spice started you. The neutral initial prompt is not the operator's request.
-The installed release serves this authoritative document at
-`spice://SKILL.md`; edit package source, never the installation.
+Spice started you. Its neutral initial prompt is not operator prose. The
+installed release serves `spice://SKILL.md`; edit source, never installation.
 
-Fresh starts/compactions receive `# Spice briefing`; later reads are newer.
-Their first prompt also carries all pending steering: ACK/NAK each key, no
-inbox discovery read. `# Task already assigned` means continue before
-allocation, without repeated reads or notice ACK. `# Seat resumed` names the
-held claim (unknown is not none); continue context. Refresh with
-`spice session briefing`.
+Fresh starts/compactions get `# Spice briefing`; later reads are newer. It
+carries all pending steering: ACK/NAK every key; do not discover inbox.
+`# Task already assigned` means continue before allocation, without rereads or
+notice ACK. `# Seat resumed` names the held claim; continue context. Refresh
+with `spice session briefing`.
 
 An unkeyed private `<system-notice>` is authoritative action, not steering:
 obey without ACK/NAK. An assignment requires immediate `spice task show`; a
 lapse means stop that task, treat unpublished commits as loose, and show it
-before allocation. A matching Design invitation is passive, no claim/duty. A
-generation reminder requires `spice task reclaim`. Current operator direction
-precedes allocation; this invocation alone creates no task.
+before allocation. After `task done`, an owed Design request precedes
+allocation. Answer once with `spice room contribute` or `spice room leave
+--clause`; it grants no claim or work. A generation reminder requires `spice
+task reclaim`. Current operator direction precedes allocation; this invocation
+alone creates no task.
 
 ## Steering and rooms
 

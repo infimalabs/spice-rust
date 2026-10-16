@@ -508,32 +508,35 @@ owns each rule summarized here.
   chronology, and `--contributions` reads only them. A contribution is
   problem-space record, never a decision: it changes no task, claim, group,
   candidate, or authorization, and a concluded Design accepts none.
-- **Design awareness.** A lane whose claimed task matches a passive Design's
-  terms hears one private organic
-  [background invitation](invariants/identity.md#identity-a-passive-design-invitation-is-background-information-once-per-occupant).
-  Intake-phase Designs are excluded before term extraction. Each record names
-  the exact Design statement and up to twelve matched terms, and each occupant
-  hears a Design once for life. Contributing or leaving ends that lane's
-  invitations to the Design. Being invited is not listening, grants no claim,
-  and owes no acknowledgment; `spice room awareness HANDLE` shows statement,
-  recipient, claimed task, and matched terms.
-- **Design maturity.** One bounded projection per Design folds admitted organic
-  awareness and typed contributions in journal order. It reports contribution
-  counts by kind, distinct contributing lanes, organic reach, and same-statement
-  invited/contributing lane intersections. Fresh means no contribution;
-  steeped requires reason-for, reason-against, evidence, and three distinct
-  contributing lanes; every other contributed Design is steeping and names
-  every missing dimension. Questions and invitation reach are evidence but do
-  not satisfy maturity. `spice room awareness HANDLE`, the browser room, and
-  operator-attention input read that projection. The state is advisory: it
-  never changes standing, possession, grouping, selection, or authorization.
+- **Design awareness.** At a natural break after `task done`, a lane whose
+  completed work matches an open passive Design owes one private
+  [request](invariants/identity.md#identity-a-completed-lane-owes-one-passive-design-request)
+  before its next allocation. The deterministic match uses the completed
+  task's statement and bounded validation prefix. Each record names the exact
+  Design statement, completed task and claim, and up to twelve matched terms;
+  an occupant is never requested for a Design twice. One contribution or
+  `spice room leave --clause` in that room answers the request. A standing
+  change away from open passive releases it. The request grants no claim,
+  starts no work, and adds no workflow state; `spice room awareness HANDLE`
+  shows its statement, recipient, completed task, and matched terms.
+- **Design maturity.** One bounded projection per Design folds admitted
+  requests and typed contributions in journal order. It reports contribution
+  counts by kind, distinct contributing lanes, requested reach, and
+  same-statement requested/contributing lane intersections. Fresh means no
+  contribution; steeped requires reason-for, reason-against, evidence, and
+  three distinct contributing lanes; every other contributed Design is
+  steeping and names every missing dimension. Questions and requested reach
+  are evidence but do not satisfy maturity. `spice room awareness HANDLE`,
+  the browser room, and operator-attention input read that projection. The
+  state is advisory: it never changes standing, possession, grouping,
+  selection, or authorization.
 
 - **Preparation.** `task plan` declares a Plan with a `plan,review` flow.
   `task design` defaults to a Design with one open `design` phase and also
   admits `plan,design` or `review,design` when a lane must first sharpen or
   judge the statement under a normal claim. Completing that intake phase
   releases its claim and enters the passive open Design; before then the row
-  is ordinary claimed work, not a Design room or invitation target. Active
+  is ordinary claimed work, not a Design room or request target. Active
   Plan and Design claims refuse implementation commits. A Design plans Plans;
   a Plan plans executable tasks. When a Design finds follow-up warranted, it
   creates the acceptance-bearing output Plans under itself and runs

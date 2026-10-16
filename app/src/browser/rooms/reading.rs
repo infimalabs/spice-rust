@@ -137,14 +137,14 @@ fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Htm
                     <dd>{maturity.contributions.question}</dd>
                 </div>
                 <div>
-                    <dt>{"Organic reach"}</dt>
+                    <dt>{"Requested reach"}</dt>
                     <dd>
                         {format!(
-                            "{} notices · {} lanes",
-                            maturity.organic_notices,
+                            "{} requests · {} lanes",
+                            maturity.requests,
                             bounded_count(
-                                maturity.organic_lanes.len(),
-                                maturity.organic_lanes_truncated,
+                                maturity.requested_lanes.len(),
+                                maturity.requested_lanes_truncated,
                             ),
                         )}
                     </dd>
@@ -157,11 +157,11 @@ fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Htm
                             <code>{head.statement.to_string()}</code>
                             <span>
                                 {format!(
-                                    "{} of {} invited lanes contributed{}",
-                                    head.invited_contributors(),
+                                    "{} of {} requested lanes contributed{}",
+                                    head.requested_contributors(),
                                     bounded_count(
-                                        head.invited_lanes.len(),
-                                        head.invited_lanes_truncated,
+                                        head.requested_lanes.len(),
+                                        head.requested_lanes_truncated,
                                     ),
                                     if head.yield_truncated() { " (bounded)" } else { "" },
                                 )}
@@ -173,9 +173,9 @@ fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Htm
             if maturity.older_heads.statement_heads > 0 {
                 <p class="room-maturity-folded">
                     {format!(
-                        "{} older statement heads folded · {} invited/contributor lane-head matches",
+                        "{} older statement heads folded · {} requested/contributor lane-head matches",
                         maturity.older_heads.statement_heads,
-                        maturity.older_heads.invited_contributor_lane_heads,
+                        maturity.older_heads.requested_contributor_lane_heads,
                     )}
                 </p>
             }
