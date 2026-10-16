@@ -1,6 +1,7 @@
 use super::*;
 use wire::rooms::{
     DesignMaturity, DesignNoticed, RoomAuthorityStamp, RoomContributed, RoomContributionKind,
+    RoomLeft,
 };
 
 fn current_statement(journal: &Journal, task: &TaskStamp) -> Seq {
@@ -118,6 +119,26 @@ fn contributed(
     body
 }
 
+fn left(journal: &mut Journal, design: &TaskStamp, lane: CanonicalUuid, micros: i64) -> RoomLeft {
+    let body = RoomLeft {
+        room: design.clone(),
+        publication: RoomAuthorityStamp::for_micros(micros).expect("publication"),
+        lane,
+        clause: "nothing to add".to_owned(),
+    };
+    let mut write = JournalWrite::new(
+        Actor::Lane(lane),
+        "fixture:maturity".parse().expect("origin"),
+        instant(),
+        Producer::CommandDoor,
+    );
+    write
+        .fact(body.clone(), FactCause::Root)
+        .expect("leave builds");
+    journal.apply(write).expect("leave commits");
+    body
+}
+
 fn lane(last: u8) -> CanonicalUuid {
     format!("00000000-0000-4000-8000-{last:012}")
         .parse()
@@ -134,6 +155,7 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
         noticed(&mut journal, &design, &claimed, lane(1)),
         noticed(&mut journal, &design, &claimed, lane(2)),
         noticed(&mut journal, &design, &claimed, lane(3)),
+        noticed(&mut journal, &design, &claimed, lane(5)),
     ];
     let contributions = [
         contributed(
@@ -169,6 +191,7 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
             1_003,
         ),
     ];
+    let declined = left(&mut journal, &design, lane(5), 1_004);
     let mut expected = DesignMaturity::default();
     for notice in &notices {
         expected.observe_request(notice);
@@ -176,6 +199,7 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
     for contribution in &contributions {
         expected.observe_contribution(contribution);
     }
+    expected.observe_leave(&declined);
 
     let (actual, page) = journal
         .read(|read| {
@@ -189,5 +213,7 @@ fn indexed_and_live_maturity_are_the_same_bounded_measure() {
     assert_eq!(page.rows.len(), notices.len());
     assert_eq!(actual.unrecorded_head.contributions, 1);
     assert_eq!(actual.recent_heads[0].requested_contributors(), 3);
+    assert_eq!(actual.recent_heads[0].requested_decliners(), 1);
+    assert_eq!(actual.recent_heads[0].requested_unanswered(), 0);
     assert_eq!(actual.state(), wire::rooms::DesignMaturityState::Steeped);
 }

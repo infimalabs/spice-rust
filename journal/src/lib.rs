@@ -23,7 +23,9 @@
 /// Schema 69 lifts document slugs and taste-proposal evidence out of statement
 /// tags into typed statement fields, which an older release would drop. Schema
 /// 70 removes the unused generic statement-tag field and its retired metadata.
-pub const SCHEMA_VERSION: u32 = 70;
+/// Schema 71 rebuilds Design maturity so it counts asked lanes that declined
+/// by leaving the room, which an older release's projection cannot decode.
+pub const SCHEMA_VERSION: u32 = 71;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

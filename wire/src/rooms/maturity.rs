@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{DesignNoticed, RoomContributed, RoomContributionKind};
+use super::{DesignNoticed, RoomContributed, RoomContributionKind, RoomLeft};
 use crate::{CanonicalUuid, Seq};
 
 /// Statement heads retained individually in one maturity projection.
@@ -66,6 +66,10 @@ pub struct DesignMaturityHead {
     pub contributing_lanes: Vec<CanonicalUuid>,
     /// More distinct contributing lanes existed than the retained bound.
     pub contributing_lanes_truncated: bool,
+    /// Lanes asked at this head that then left the room, in sorted order.
+    pub declining_lanes: Vec<CanonicalUuid>,
+    /// More distinct declining lanes existed than the retained bound.
+    pub declining_lanes_truncated: bool,
 }
 
 impl DesignMaturityHead {
@@ -78,6 +82,8 @@ impl DesignMaturityHead {
             contributions: 0,
             contributing_lanes: Vec::new(),
             contributing_lanes_truncated: false,
+            declining_lanes: Vec::new(),
+            declining_lanes_truncated: false,
         }
     }
 
@@ -87,10 +93,27 @@ impl DesignMaturityHead {
         intersection_count(&self.requested_lanes, &self.contributing_lanes)
     }
 
-    /// Whether the displayed intersection may omit lanes beyond a bound.
+    /// Asked lanes that left the room without contributing at this head.
+    #[must_use]
+    pub fn requested_decliners(&self) -> usize {
+        self.declining_lanes.len()
+            - intersection_count(&self.declining_lanes, &self.contributing_lanes)
+    }
+
+    /// Asked lanes that have neither contributed nor declined at this head.
+    #[must_use]
+    pub fn requested_unanswered(&self) -> usize {
+        self.requested_lanes
+            .len()
+            .saturating_sub(self.requested_contributors() + self.requested_decliners())
+    }
+
+    /// Whether the displayed counts may omit lanes beyond a bound.
     #[must_use]
     pub const fn yield_truncated(&self) -> bool {
-        self.requested_lanes_truncated || self.contributing_lanes_truncated
+        self.requested_lanes_truncated
+            || self.contributing_lanes_truncated
+            || self.declining_lanes_truncated
     }
 }
 
@@ -110,6 +133,8 @@ pub struct DesignMaturityOlder {
     pub contributing_lane_heads: u64,
     /// Sum of each head's requested/contributing lane intersection.
     pub requested_contributor_lane_heads: u64,
+    /// Sum of each head's asked lanes that declined without contributing.
+    pub requested_decliner_lane_heads: u64,
     /// At least one folded head exceeded a retained lane bound.
     pub truncated: bool,
 }
@@ -239,6 +264,26 @@ impl DesignMaturity {
         });
     }
 
+    /// Fold one room leave. Only a lane asked at a retained statement head
+    /// declines, at the newest head that asked it; any other leave is not an
+    /// answer to a request and leaves maturity unchanged. A decline never
+    /// changes [`Self::state`].
+    pub fn observe_leave(&mut self, leave: &RoomLeft) {
+        let Some(head) = self
+            .recent_heads
+            .iter_mut()
+            .rev()
+            .find(|head| head.requested_lanes.binary_search(&leave.lane).is_ok())
+        else {
+            return;
+        };
+        insert_bounded(
+            &mut head.declining_lanes,
+            &mut head.declining_lanes_truncated,
+            leave.lane,
+        );
+    }
+
     /// Current advisory maturity state. Requested reach and questions never
     /// satisfy a dimension.
     #[must_use]
@@ -299,6 +344,9 @@ impl DesignMaturity {
         older.requested_contributor_lane_heads = older
             .requested_contributor_lane_heads
             .saturating_add(head.requested_contributors() as u64);
+        older.requested_decliner_lane_heads = older
+            .requested_decliner_lane_heads
+            .saturating_add(head.requested_decliners() as u64);
         older.truncated |= head.yield_truncated();
     }
 }
@@ -376,6 +424,69 @@ mod tests {
             text: "Substantive contribution.".to_owned(),
             sources: Vec::new(),
         }
+    }
+
+    fn leave(lane: u8) -> RoomLeft {
+        RoomLeft {
+            room: task(1),
+            publication: RoomAuthorityStamp::for_micros(5_000 + i64::from(lane))
+                .expect("publication"),
+            lane: self::lane(lane),
+            clause: "nothing to add".to_owned(),
+        }
+    }
+
+    /// `(statement, asked, contributed, declined, unanswered)` at each
+    /// retained head.
+    fn answers(maturity: &DesignMaturity) -> Vec<(u64, usize, usize, usize, usize)> {
+        maturity
+            .recent_heads
+            .iter()
+            .map(|head| {
+                (
+                    head.statement.get(),
+                    head.requested_lanes.len(),
+                    head.requested_contributors(),
+                    head.requested_decliners(),
+                    head.requested_unanswered(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn declines_count_per_asking_head_and_never_move_state() {
+        let mut maturity = DesignMaturity::default();
+        for lane in 1..=3 {
+            maturity.observe_request(&notice(10, lane));
+        }
+        maturity.observe_contribution(&contribution(Some(10), 1, RoomContributionKind::Evidence));
+        let state = maturity.state();
+        maturity.observe_leave(&leave(2));
+        assert_eq!(answers(&maturity), [(10, 3, 1, 1, 1)]);
+
+        maturity.observe_request(&notice(20, 4));
+        maturity.observe_request(&notice(20, 5));
+        maturity.observe_leave(&leave(4));
+        maturity.observe_leave(&leave(3));
+        maturity.observe_leave(&leave(9));
+        assert_eq!(
+            answers(&maturity),
+            [(10, 3, 1, 2, 0), (20, 2, 0, 1, 1)],
+            "each asked lane declines at the head that asked it; an unasked leave is no decline"
+        );
+        assert_eq!(
+            maturity.state(),
+            state,
+            "declines never move maturity state"
+        );
+
+        maturity.observe_contribution(&contribution(Some(20), 4, RoomContributionKind::Question));
+        assert_eq!(
+            answers(&maturity)[1],
+            (20, 2, 1, 0, 1),
+            "a later contribution answers instead of the decline"
+        );
     }
 
     #[test]

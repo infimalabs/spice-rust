@@ -326,6 +326,7 @@ pub(crate) enum Change {
         notice: wire::rooms::DesignNoticed,
     },
     MaturityContribution(wire::rooms::RoomContributed),
+    MaturityLeave(RoomLeft),
 }
 
 impl Projection {
@@ -391,6 +392,11 @@ impl Projection {
                 self.update_maturity(&contribution.room, |maturity| {
                     maturity.observe_contribution(&contribution);
                 })?;
+            }
+            Change::MaturityLeave(leave) => {
+                if self.maturity.contains_key(leave.room.as_str()) {
+                    self.update_maturity(&leave.room, |maturity| maturity.observe_leave(&leave))?;
+                }
             }
         }
         Ok(())
@@ -822,7 +828,10 @@ fn fold_traffic(
                 body.room, body.lane
             )));
         }
-        return Some(publish(authority, seq, &body.room, &body.publication));
+        return Some(
+            publish(authority, seq, &body.room, &body.publication)
+                .and_then(|()| authority.change(Change::MaturityLeave(body))),
+        );
     }
     if let Some(body) = fact.read::<RoomContributed>() {
         return Some(contribute(authority, seq, actor, &body));

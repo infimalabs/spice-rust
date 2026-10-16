@@ -409,6 +409,25 @@ fn apply(connection: &Connection, change: Change) -> Result<(), Refusal> {
                 maturity.observe_contribution(&contribution);
             })?;
         }
+        Change::MaturityLeave(leave) => observe_leave(connection, &leave)?,
+    }
+    Ok(())
+}
+
+/// Fold a leave only into a Design whose maturity a request or contribution
+/// already began; any other room has no maturity to answer.
+fn observe_leave(connection: &Connection, leave: &wire::rooms::RoomLeft) -> Result<(), Refusal> {
+    let existing = connection
+        .query_row(
+            "SELECT 1 FROM design_maturity WHERE design = ?1",
+            [leave.room.as_str()],
+            |_| Ok(()),
+        )
+        .optional()?;
+    if existing.is_some() {
+        update_maturity(connection, &leave.room, |maturity| {
+            maturity.observe_leave(leave);
+        })?;
     }
     Ok(())
 }
