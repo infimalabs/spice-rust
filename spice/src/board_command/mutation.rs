@@ -704,7 +704,7 @@ fn task_flow_for_dependencies(
     add: &TaskAdd,
     snapshot: &ValidatedSnapshot,
 ) -> Result<(Vec<wire::Phase>, Vec<Witness>), Outcome<CommandAnswer>> {
-    let requested = planning::default_flow(add.intent, add.flow.as_deref());
+    let requested = planning::default_flow(add.intent, add.flow.as_deref(), &add.acceptance);
     let adopts_implementation =
         captures_implementation(command) || recovers_implementation(command);
     let requested = if adopts_implementation && requested.is_none() {

@@ -7,6 +7,24 @@ fn add_planning(
     intent: wire::TaskIntent,
     flow: Option<&str>,
 ) -> TaskHandle {
+    add_planning_with(
+        bus,
+        epoch,
+        name,
+        intent,
+        flow,
+        &["The declared planning deliverable is supported"],
+    )
+}
+
+fn add_planning_with(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    name: &str,
+    intent: wire::TaskIntent,
+    flow: Option<&str>,
+    acceptance: &[&str],
+) -> TaskHandle {
     let born = stamp(name);
     let task = TaskHandle::for_project("board.test", &born);
     assert_committed(issue(
@@ -20,7 +38,7 @@ fn add_planning(
             title: name.to_owned(),
             project: Some("board.test".to_owned()),
             description: None,
-            acceptance: vec!["The declared planning deliverable is supported".to_owned()],
+            acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
             requirements: wire::EnvironmentRequirements::default(),
             origin: Some(fixture_origin()),
             flow: flow.map(str::to_owned),
@@ -66,15 +84,30 @@ fn complete(
 #[test]
 fn declared_planning_defaults_give_each_purpose_its_flow() {
     let (root, bus, epoch, _) = fixture("planning-defaults", 1);
-    for (name, intent, flow) in [
+    let question = &["Which boundary owns the contract?"][..];
+    for (name, intent, questions, flow) in [
         (
             "Plan contracts",
             wire::TaskIntent::Plan,
+            question,
             &["plan", "review"][..],
         ),
-        ("Design assembly", wire::TaskIntent::Design, &["design"][..]),
+        (
+            "Design assembly",
+            wire::TaskIntent::Design,
+            question,
+            &["design"][..],
+        ),
+        // A Design without an open question is framed before it opens, as
+        // ordinary work without acceptance is.
+        (
+            "Design unframed",
+            wire::TaskIntent::Design,
+            &[][..],
+            &["plan", "design"][..],
+        ),
     ] {
-        let task = add_planning(&bus, epoch, name, intent, None);
+        let task = add_planning_with(&bus, epoch, name, intent, None, questions);
         let view = board(&bus, epoch, Actor::Operator);
         let task = at(&view, &task);
         assert_eq!(task.statement.body.intent, Some(intent));

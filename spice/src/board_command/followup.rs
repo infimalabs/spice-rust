@@ -430,7 +430,7 @@ fn prepare_followup_policy(
         context.reviewed_task.workflow.body.flow.clone()
     } else {
         task_flow(
-            planning::default_flow(intent, add.flow.as_deref()),
+            planning::default_flow(intent, add.flow.as_deref(), &add.acceptance),
             &add.acceptance,
         )?
     };

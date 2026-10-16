@@ -545,13 +545,16 @@ owns each rule summarized here.
   changes standing, possession, grouping, selection, or authorization.
 
 - **Preparation.** `task plan` declares a Plan with a `plan,review` flow.
-  `task design` defaults to a Design with one open `design` phase and also
-  admits `plan,design` or `review,design` when a lane must first sharpen or
-  judge the statement under a normal claim. Completing that intake phase
-  releases its claim and enters the passive open Design; before then the row
-  is ordinary claimed work, not a Design room or request target. Active
-  Plan and Design claims refuse implementation commits. A Design plans Plans;
-  a Plan plans executable tasks.
+  `task design` defaults to a Design with one open `design` phase when it
+  names an open question, and to `plan,design` when it names none: its
+  questions are its acceptance, so an unframed Design is sharpened first just
+  as ordinary work without acceptance gets a plan bookend, and a taste hold
+  prepends plan to either. It also admits `plan,design` or `review,design`
+  when a lane must first sharpen or judge the statement under a normal claim.
+  Completing that intake phase releases its claim and enters the passive open
+  Design; before then the row is ordinary claimed work, not a Design room or
+  request target. Active Plan and Design claims refuse implementation commits.
+  A Design plans Plans; a Plan plans executable tasks.
 
   Each claimed Design pass ends with exactly one `preparation propose
   PROPOSAL_JSON` or with the existing proposal-less free/lapse abandonment.
