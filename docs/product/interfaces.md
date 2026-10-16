@@ -71,8 +71,9 @@ malformed body refuses with `preparation::argument-invalid`, giving the parse
 detail and a complete body that command accepts. `preparation adopt` takes two
 task handles instead, and `preparation nudge` one open Design's handle.
 
-- **Values.** A task is its bare nine-character birth stamp, without the
-  project prefix (`dVzdhh8Nx` for `REPOSIT-dVzdhh8Nx`). A candidate is
+- **Values.** A task is its bare birth stamp, without the project prefix
+  (`dVzdhh8Nx` for `REPOSIT-dVzdhh8Nx`): nine characters, or eight for a
+  retained millisecond identity, which is never reminted. A candidate is
   `{"controller": STAMP, "candidate": STAMP}`: the controlling Design's stamp
   and a new nine-character native stamp naming the candidate under that
   controller. Critique, coverage, and decision identities are native base-52
@@ -114,9 +115,12 @@ task handles instead, and `preparation nudge` one open Design's handle.
   durably without authorizing or concluding. Historical selected, returned,
   and collapse records remain readable after migration.
   The repository-owned opportunistic OOPS Design is the one exception to a
-  separately recorded `propose`: its read-only candidate identity is the newest
-  included line-item Plan's birth stamp. `decide` must repeat every displayed
-  line in birth order as accepted or rejected, cite the newest line's statement
+  separately recorded `propose`: its read-only candidate identity is the
+  native stamp naming the newest included line-item Plan's birth moment. Its
+  lines are the pending Plans born at or before that moment, ordered by birth
+  moment with stamp spelling breaking a same-moment tie across widths.
+  `decide` must repeat every displayed line in that order, each by its own
+  birth stamp, as accepted or rejected, cite the newest line's statement
   fact as `source`, and carry the exact Design and line statement/workflow
   witnesses. It records the immutable proposal and complete decision together;
   Return is not admitted, no Design claim is completed, and a newer report
