@@ -469,7 +469,7 @@ impl Preparation {
             candidate: DesignPassProposal {
                 candidate: self.candidate(micros),
                 statement: self.statement,
-                claim: self.claim,
+                claim: Some(self.claim),
                 recommendation,
                 governed_inputs: (recommendation == wire::rooms::DesignPassRecommendation::Work)
                     .then(|| self.input.clone())

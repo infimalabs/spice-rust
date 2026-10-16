@@ -20,7 +20,7 @@ fn candidate() -> DesignPassProposal {
     DesignPassProposal {
         candidate: candidate_ref(),
         statement: Seq::new(10).expect("fixture statement"),
-        claim: Seq::new(11).expect("fixture claim"),
+        claim: Some(Seq::new(11).expect("fixture claim")),
         recommendation: DesignPassRecommendation::Work,
         governed_inputs: vec![stamp(2)],
         outputs: vec![stamp(3), stamp(4)],

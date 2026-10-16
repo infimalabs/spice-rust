@@ -94,11 +94,13 @@ pub(super) fn cross_two_step(transaction: &Transaction<'_>) -> Result<(), OpenEr
     cross_authorization_heads(transaction)
 }
 
-/// Add the exact statement and claim horizon to each output-only predecessor.
+/// Add the exact statement and available claim horizon to each output-only
+/// predecessor.
 ///
 /// The receipt's evaluated witnesses are the immutable authority the old
-/// command actually used. An old candidate without both witnesses cannot be
-/// represented as a completed claimed pass and refuses the whole crossing.
+/// command actually used. Some predecessor receipts predate claim witnesses;
+/// others name a non-active claim head. Either crosses as explicit historical
+/// absence rather than inventing authority the receipt never carried.
 pub(super) fn cross_design_passes(transaction: &Transaction<'_>) -> Result<(), OpenError> {
     let collapses = previous_collapses(transaction)?;
     for (seq, bytes) in fact_rows(transaction, FactKind::DesignProposed)? {
@@ -124,7 +126,7 @@ pub(super) fn cross_design_passes(transaction: &Transaction<'_>) -> Result<(), O
                 )
             })?;
         let (command_id, request, witnesses) = proposal_receipt(transaction, seq)?;
-        let (statement, claim) = proposal_horizon(&identity.controller, &witnesses)
+        let (statement, claim) = proposal_horizon(transaction, &identity.controller, &witnesses)
             .map_err(|detail| proposal_refusal(seq, &detail))?;
         let collapse = collapses
             .get(&candidate_key(&identity).map_err(|detail| proposal_refusal(seq, &detail))?);
@@ -247,9 +249,10 @@ fn proposal_receipt(
 }
 
 fn proposal_horizon(
+    transaction: &Transaction<'_>,
     controller: &wire::TaskStamp,
     witnesses: &[wire::Witness],
-) -> Result<(wire::Seq, wire::Seq), String> {
+) -> Result<(wire::Seq, Option<wire::Seq>), String> {
     let statement = witnesses.iter().find_map(|witness| match witness {
         wire::Witness::Task { task, head } if task == controller => Some(*head),
         _ => None,
@@ -261,11 +264,46 @@ fn proposal_horizon(
         } if task == controller => Some(*head),
         _ => None,
     });
-    statement.zip(claim).ok_or_else(|| {
-        format!(
-            "retained proposal controller {controller} lacks exact statement and active-claim witnesses"
+    let statement = statement.ok_or_else(|| {
+        format!("retained proposal controller {controller} lacks an exact statement witness")
+    })?;
+    let claim = claim
+        .map(|claim| historical_active_claim(transaction, controller, claim))
+        .transpose()?
+        .flatten();
+    Ok((statement, claim))
+}
+
+fn historical_active_claim(
+    transaction: &Transaction<'_>,
+    controller: &wire::TaskStamp,
+    claim: wire::Seq,
+) -> Result<Option<wire::Seq>, String> {
+    let seq = i64::try_from(claim.get())
+        .map_err(|_| format!("retained proposal claim {claim} does not fit SQLite"))?;
+    let bytes = transaction
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = ?1",
+            [seq],
+            |row| row.get::<_, Vec<u8>>(0),
         )
-    })
+        .optional()
+        .map_err(|error| format!("retained proposal claim {claim} cannot be read: {error}"))?
+        .ok_or_else(|| format!("retained proposal claim {claim} does not exist"))?;
+    let envelope: Envelope<AnyFact> = wire::decode(&bytes)
+        .map_err(|error| format!("retained proposal claim {claim} does not decode: {error}"))?;
+    if envelope.fact.task_subject() != Some(controller) {
+        return Err(format!(
+            "retained proposal claim {claim} does not address controller {controller}"
+        ));
+    }
+    match envelope.fact.kind() {
+        FactKind::ClaimWon | FactKind::ClaimCarried | FactKind::ClaimRebound => Ok(Some(claim)),
+        FactKind::ClaimFreed | FactKind::ClaimLapsed => Ok(None),
+        kind => Err(format!(
+            "retained proposal claim {claim} names unsupported fact {kind}"
+        )),
+    }
 }
 
 fn cross_proposal_head(

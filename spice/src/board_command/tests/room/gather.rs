@@ -279,11 +279,13 @@ fn retain(
             candidate: DesignPassProposal {
                 candidate,
                 statement: at(&current, controller).statement.position,
-                claim: at(&current, controller)
-                    .claim
-                    .as_ref()
-                    .expect("Design is claimed before proposing a pass")
-                    .position,
+                claim: Some(
+                    at(&current, controller)
+                        .claim
+                        .as_ref()
+                        .expect("Design is claimed before proposing a pass")
+                        .position,
+                ),
                 recommendation: wire::rooms::DesignPassRecommendation::Work,
                 governed_inputs: Vec::new(),
                 outputs: outputs.iter().map(|output| born(output)).collect(),

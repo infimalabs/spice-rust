@@ -247,7 +247,7 @@ fn retained(
                     candidate: authority(candidate),
                 },
                 statement: seq(10),
-                claim: seq(11),
+                claim: Some(seq(11)),
                 recommendation,
                 governed_inputs: output.is_some().then(room).into_iter().collect(),
                 outputs: output.into_iter().map(fixture_stamp).collect(),

@@ -564,6 +564,10 @@ owns each rule summarized here.
   undecided proposal can be retracted by its author with `preparation withdraw
   WITHDRAWAL_JSON`; the version stays in history but leaves the operator's
   choices.
+  When a predecessor proposal's immutable receipt does not prove an active
+  claim, migration preserves that missing horizon as historical absence instead
+  of fabricating a claim. New proposal commands still require the exact active
+  claim and cannot create that historical shape.
 
   A Design
   [stays open until the operator concludes it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
