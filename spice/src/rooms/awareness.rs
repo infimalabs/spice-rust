@@ -10,8 +10,8 @@
 //! from its title and description; a task's from its title, description, and
 //! acceptance. The task matches the Design when they share at least
 //! [`MIN_SHARED_TERMS`] distinct terms that are not [common](CommonTerms)
-//! across the board's open statements, and at least one of them is a term of
-//! the Design's title.
+//! across the project's most recently revised statements, and at least one of
+//! them is a term of the Design's title.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,10 +23,13 @@ pub const MIN_TERM_CHARS: usize = 4;
 pub const MIN_SHARED_TERMS: usize = 3;
 /// Most characters of a Design's one-line pitch.
 pub const PITCH_CHARS: usize = 160;
-/// Fewest open statements a board needs before any term can be common.
+/// Most recently revised task statements, open or completed, whose
+/// vocabulary decides which terms are common.
+pub const COMMON_TERM_WINDOW: usize = 256;
+/// Fewest statements the window needs before any term can be common.
 pub const COMMON_TERM_MIN_STATEMENTS: usize = 8;
 /// A term in more than this fraction, numerator over denominator, of the
-/// board's open statements is common.
+/// window's statements is common.
 pub const COMMON_TERM_SHARE: (usize, usize) = (1, 4);
 /// Most bytes of completion validation admitted to one matching profile.
 pub const COMPLETION_VALIDATION_BYTES: usize = 4 * 1024;
@@ -81,16 +84,16 @@ impl DesignTerms {
     }
 }
 
-/// Terms so widespread across the board's open statements that sharing them
-/// says nothing about what a task and a Design have in common.
+/// Terms so widespread across the project's recent work that sharing them says
+/// nothing about what a task and a Design have in common.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CommonTerms(BTreeSet<String>);
 
 impl CommonTerms {
     /// The terms found in more than [`COMMON_TERM_SHARE`] of `statements`,
-    /// each one open statement's terms. A board with fewer than
-    /// [`COMMON_TERM_MIN_STATEMENTS`] open statements has none. Memory is
-    /// bounded by the statements' distinct terms.
+    /// each one statement's terms. Fewer than [`COMMON_TERM_MIN_STATEMENTS`]
+    /// statements yield none. Memory is bounded by the statements' distinct
+    /// terms.
     #[must_use]
     pub fn of(statements: impl IntoIterator<Item = BTreeSet<String>>) -> Self {
         let mut counts = BTreeMap::<String, usize>::new();
