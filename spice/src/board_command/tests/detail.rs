@@ -391,7 +391,6 @@ fn task_show_prints_the_authored_statement_whole() {
         1,
         "{context}"
     );
-    assert!(context.contains("tags -"), "{context}");
     clean(&root, bus);
 }
 

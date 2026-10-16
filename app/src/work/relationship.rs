@@ -680,7 +680,6 @@ mod tests {
                     requirements: EnvironmentRequirements::EMPTY,
                     project: "canvas.work".to_owned(),
                     filing: wire::TaskFiling::Filed,
-                    tags: Vec::new(),
                     priority: None,
                     taste: None,
                     document_slug: None,

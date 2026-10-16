@@ -261,7 +261,6 @@ fn board_task(
                 requirements,
                 project: project.to_owned(),
                 filing,
-                tags: Vec::new(),
                 priority: None,
                 taste: None,
                 document_slug: None,

@@ -37,6 +37,28 @@ fn rows(journal: &Journal) -> Vec<Vec<u8>> {
         .unwrap()
 }
 
+fn assert_no_statement_tags(journal: &Journal) {
+    let heads: i64 = journal
+        .connection
+        .query_row(
+            "SELECT count(*) FROM task_heads
+             WHERE json_type(CAST(body AS TEXT), '$.tags') IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let facts: i64 = journal
+        .connection
+        .query_row(
+            "SELECT count(*) FROM fact_envelopes WHERE kind = 'task::added'
+             AND json_type(CAST(envelope AS TEXT), '$.fact.tags') IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!((heads, facts), (0, 0));
+}
+
 #[test]
 fn writable_crossing_lifts_standing_tags_into_typed_fields_once() {
     let mut journal = predecessor(
@@ -63,7 +85,7 @@ fn writable_crossing_lifts_standing_tags_into_typed_fields_once() {
         )
         .unwrap();
     let head: TaskHead = wire::decode(&body).unwrap();
-    assert_eq!(head.tags, ["alpha", "omega"]);
+    assert_no_statement_tags(&journal);
     assert_eq!(head.priority, Some(wire::TaskPriority::High));
     assert_eq!(head.taste, Some(wire::TasteHold::Prepended));
 
@@ -77,7 +99,6 @@ fn writable_crossing_lifts_standing_tags_into_typed_fields_once() {
         .unwrap();
     let envelope: Envelope<AnyFact> = wire::decode(&bytes).unwrap();
     let added = envelope.fact.read::<wire::body::TaskAdded>().unwrap();
-    assert_eq!(added.tags, ["alpha", "omega"]);
     assert_eq!(added.priority, None);
     assert_eq!(added.taste, Some(wire::TasteHold::Authored));
 

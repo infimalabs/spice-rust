@@ -25,8 +25,6 @@ const FIELD_NAMES: &[(&str, &str)] = &[
     ("flow", "flow"),
     ("due", "due"),
     ("deadline", "due"),
-    ("tags", "tags"),
-    ("labels", "tags"),
 ];
 
 /// Identity supplied by the caller rather than authored inside Markdown.
@@ -533,15 +531,6 @@ impl Parser {
                     self.nodes[owner].due = Some(value.to_owned());
                 }
             }
-            "tags" => {
-                let tags = value
-                    .split([',', ' '])
-                    .map(str::trim)
-                    .filter(|tag| !tag.is_empty());
-                self.nodes[owner].tags.extend(tags.map(str::to_owned));
-                self.nodes[owner].tags.sort();
-                self.nodes[owner].tags.dedup();
-            }
             _ => unreachable!("field table and parser agree"),
         }
         self.last_owner = Some(owner);
@@ -973,7 +962,6 @@ fn canonical_label(field: &str) -> &'static str {
         "priority" => "Priority",
         "flow" => "Flow",
         "due" => "Due",
-        "tags" => "Tags",
         _ => unreachable!("closed field vocabulary"),
     }
 }

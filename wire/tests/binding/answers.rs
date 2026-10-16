@@ -56,7 +56,6 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
           "description": "One task spelled through every field the shape carries.",
           "acceptance": ["the row decodes", "the row re-encodes unchanged"],
           "project": "wire.binding",
-          "tags": ["binding"],
           "priority": "high",
           "taste": "prepended",
           "dependencies": ["1kKRRsDQ"],

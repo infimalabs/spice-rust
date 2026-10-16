@@ -31,16 +31,16 @@ the tasks it would touch, and applies only that exact digest.
   `task.document`.
 
 Applying an edited document replaces rather than patches: title, description,
-acceptance, tags, priority, and the explicit dependency graph are replaced, and
-an absent value clears the old one. Flow is set only at creation. Annotations
+acceptance, priority, and the explicit dependency graph are replaced, and an
+absent value clears the old one. Flow is set only at creation. Annotations
 are the exception: they append as task notes, skipping exact duplicates, and
 omission never erases a note. `due` is normalized but has no board effect. The
 dialect's `Flow:` field has its own closed vocabulary — `design`, `plan`,
 `todo`, `verify`, `review` — distinct from the board's open phase words.
 
 `spice doc ledger HANDLE` renders one task's current title, description,
-acceptance, flow, tags, priority, and notes interleaved with its workflow
-steps. A bounded page names its next byte offset and the complete ledger's
+acceptance, flow, priority, and notes interleaved with its workflow steps. A
+bounded page names its next byte offset and the complete ledger's
 digest; a continuation refuses rather than joining bytes from a changed
 ledger. `--output` remains the complete export. The ledger is a readable
 recovery view, not the inverse of apply: it exports no family or dependency

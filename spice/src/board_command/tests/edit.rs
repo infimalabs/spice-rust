@@ -999,7 +999,6 @@ fn a_priority_or_project_correction_records_its_revision_and_editor() {
     let corrected = statement_head(&bus, &task);
     assert!(corrected.position > filed.position);
     assert_eq!(corrected.body.priority, Some(wire::TaskPriority::Critical));
-    assert!(corrected.body.tags.is_empty());
     assert_eq!(corrected.body.project, "rim.elsewhere");
     assert_eq!(
         corrected.body.title, filed.body.title,

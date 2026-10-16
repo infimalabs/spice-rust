@@ -925,7 +925,6 @@ fn a_task_fact_without_creation_context_refuses() {
         "task":"1kKRRsDP",
         "title":"Task",
         "project":"task.fixture",
-        "tags":[],
         "depends":[],
         "flow":["todo"],
         "phase":"todo",

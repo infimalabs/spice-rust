@@ -53,7 +53,7 @@ fn refuses_project(project: &str) -> bool {
 
 #[test]
 fn canonical_output_is_current_and_carries_caller_identity() {
-    let source = "# Cut release\n\n- Build backend\n  Acceptance: binary is reproducible\n  Priority: high\n- Build frontend\n  After: build-backend\n  Flow: todo, verify, review\n  Tags: web, release\n";
+    let source = "# Cut release\n\n- Build backend\n  Acceptance: binary is reproducible\n  Priority: high\n- Build frontend\n  After: build-backend\n  Flow: todo, verify, review\n";
     let project = project_of_depth(PROJECT_MIN_DEPTH);
     let context = ClassificationContext {
         project: Some(project.clone()),
@@ -76,7 +76,8 @@ fn canonical_output_is_current_and_carries_caller_identity() {
 
 #[test]
 fn convertible_spelling_reaches_a_byte_stable_fixed_point() {
-    let source = "Release plan\n============\n\n* [x] Package bits\n  **Acceptance:** archive opens\n  Labels: release package\n";
+    let source =
+        "Release plan\n============\n\n* [x] Package bits\n  **Acceptance:** archive opens\n";
     let first = classify(source);
     let warnings = first.warnings();
     assert!(
@@ -96,7 +97,7 @@ fn convertible_spelling_reaches_a_byte_stable_fixed_point() {
     assert_eq!(once, twice);
     assert_eq!(
         once,
-        "# Release plan\n\n- Package bits\n  Acceptance: archive opens\n  Tags: package, release\n"
+        "# Release plan\n\n- Package bits\n  Acceptance: archive opens\n"
     );
 }
 

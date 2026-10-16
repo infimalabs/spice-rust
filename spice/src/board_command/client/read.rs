@@ -585,19 +585,6 @@ fn task_show_context_lines(
     ));
     lines.extend(git_context_lines(task));
     lines.extend(parked_commit_lines(task));
-    let tags = &statement.tags;
-    if tags.is_empty() {
-        lines.push("tags -".to_owned());
-    } else {
-        let rendered = format!(
-            "tags {}",
-            tags.iter()
-                .map(|tag| format!("+{tag}"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
-        lines.push(budget.clip(&rendered).to_string());
-    }
     lines
 }
 

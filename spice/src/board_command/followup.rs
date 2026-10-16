@@ -14,9 +14,8 @@ const FOLLOWUP_FIELDS: &str = "title, project, description, acceptance, flow or 
 
 /// The `--then` fields that accrue rather than refusing a second value.
 ///
-/// The predecessor keeps `after` and `tags` here too, which this record has no
-/// place to put: a correction's ordering is owned by the reviewed task, and
-/// the correction itself carries no tags.
+/// The predecessor also keeps `after` here, which this record has no place to
+/// put: a correction's ordering is owned by the reviewed task.
 const FOLLOWUP_REPEATS: &[&str] = &["acceptance", "flow"];
 
 /// Whether a finding records a clean review rather than a requested change.
@@ -519,7 +518,6 @@ fn create_followup(
         requirements: followup.add.requirements.clone(),
         project: project.as_str().to_owned(),
         filing: wire::TaskFiling::Filed,
-        tags: Vec::new(),
         priority: None,
         taste,
         document_slug: None,
@@ -561,7 +559,6 @@ fn create_followup(
                 requirements: statement.requirements.clone(),
                 project: statement.project.clone(),
                 filing: statement.filing,
-                tags: Vec::new(),
                 priority: None,
                 taste: statement.taste,
                 document_slug: None,

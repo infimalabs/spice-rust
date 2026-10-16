@@ -11,7 +11,6 @@ const HEAD: &str = r#"{
   "queue_origin": 9,
   "title": "Plan the rooms",
   "project": "wire",
-  "tags": [],
   "dependencies": [],
   "provenance": "parentless",
   "creation": { "kind": "unavailable", "reason": "operator-actor" },
