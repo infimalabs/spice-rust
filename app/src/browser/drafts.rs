@@ -4,15 +4,17 @@
 //! turns it into ordinary filed work.
 
 use std::cell::Cell;
+use std::rc::Rc;
 
 use wasm_bindgen::{JsCast, JsValue};
-use wire::intent::{BoardTask, TaskAdd, TaskAnswer, TaskEdit, TaskFile};
-use wire::{CommandKind, TaskIntent, TaskIntentEdit, TaskStamp, Witness};
+use wire::intent::{BoardTask, TaskAdd, TaskAnswer, TaskFile};
+use wire::{CommandKind, TaskIntent, TaskStamp, Witness};
 use yew::prelude::*;
 
 use super::sender::{SenderHandle, admit_action};
 use crate::AppRuntime;
 use crate::client_action::{ClientAction, DraftRequest};
+use crate::draft_form::{DraftField, DraftFields, DraftForm, criteria};
 
 thread_local! {
     static LAST_DRAFT_MICROS: Cell<i64> = const { Cell::new(0) };
@@ -195,35 +197,79 @@ pub(super) fn render_editor(
     if !open_draft(row) {
         return Html::default();
     }
-    let edits = runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskEdit));
-    let files = runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskFile));
-    let statement = &row.statement.body;
+    html! {
+        <DraftEditor
+            key={row.statement.body.born.to_string()}
+            row={row.clone()}
+            edits={runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskEdit))}
+            files={runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskFile))}
+            controls={controls.clone()}
+            sender={sender.clone()}
+        />
+    }
+}
+
+#[derive(Properties)]
+struct EditorProps {
+    row: BoardTask,
+    edits: bool,
+    files: bool,
+    controls: Controls,
+    sender: SenderHandle,
+}
+
+impl PartialEq for EditorProps {
+    fn eq(&self, other: &Self) -> bool {
+        self.row == other.row
+            && self.edits == other.edits
+            && self.files == other.files
+            && self.controls.notice == other.controls.notice
+            && Rc::ptr_eq(&self.sender.queue, &other.sender.queue)
+    }
+}
+
+/// One open Draft's editor. Its fields are its own: each render only rebases
+/// them onto a newer admitted revision, so live refreshes never take what the
+/// operator typed, and its key reopens it for another Draft.
+#[function_component]
+fn DraftEditor(props: &EditorProps) -> Html {
+    let form = use_mut_ref(|| DraftForm::open(&props.row));
+    let redraw = use_force_update();
+    form.borrow_mut().refresh(&props.row);
+    let edit = {
+        let form = form.clone();
+        Callback::from(move |(field, value): (DraftField, String)| {
+            form.borrow_mut().edit(field, value);
+            redraw.force_update();
+        })
+    };
     let submit = {
-        let controls = controls.clone();
-        let sender = sender.clone();
-        let row = row.clone();
+        let form = form.clone();
+        let controls = props.controls.clone();
+        let sender = props.sender.clone();
+        let row = props.row.clone();
         Callback::from(move |event: SubmitEvent| {
             event.prevent_default();
             let filing = event.submitter().is_some_and(|button| {
                 button.get_attribute("value").as_deref() == Some(FILE_SUBMITTER)
             });
-            let Some(form) = submitted_form(&event) else {
-                return;
-            };
             let notice = controls.notice.clone();
             let request = if filing {
                 Ok(filing_request(&row))
             } else {
-                revision(&form, &row)
+                form.borrow().revision()
             };
             match request {
                 Ok(request) => {
+                    let sent = form.borrow().fields().clone();
+                    let form = form.clone();
                     let landed = Callback::from(move |answer: TaskAnswer| {
-                        notice.set(Some(if filing {
-                            format!("Filed {}.", answer.task)
+                        if filing {
+                            notice.set(Some(format!("Filed {}.", answer.task)));
                         } else {
-                            format!("Saved Draft {}.", answer.task)
-                        }));
+                            form.borrow_mut().saved(sent.clone());
+                            notice.set(Some(format!("Saved Draft {}.", answer.task)));
+                        }
                     });
                     controls.send(&sender, request, landed);
                 }
@@ -231,20 +277,17 @@ pub(super) fn render_editor(
             }
         })
     };
+    let fields = form.borrow();
     html! {
-        <section class="app-sheet-section" data-draft-editor={statement.handle.to_string()}>
+        <section class="app-sheet-section" data-draft-editor={props.row.statement.body.handle.to_string()}>
             <h3>{"Draft"}</h3>
             <p class="muted">{"Unfiled and private to the operator and its origin thread. Save revises it; File admits it as ordinary work under current policy, or refuses and keeps the Draft unchanged."}</p>
-            {controls.notice()}
-            <form
-                key={format!("{}-{}", statement.born, row.statement.position)}
-                class="draft-form"
-                onsubmit={submit}
-            >
-                {content_fields(Some(row))}
+            {props.controls.notice()}
+            <form class="draft-form" onsubmit={submit}>
+                {content_fields(Some((fields.fields(), &edit)))}
                 <div class="draft-actions">
-                    <button type="submit" disabled={!edits}>{"Save Draft"}</button>
-                    <button type="submit" value={FILE_SUBMITTER} disabled={!files}>{"File"}</button>
+                    <button type="submit" disabled={!props.edits}>{"Save Draft"}</button>
+                    <button type="submit" value={FILE_SUBMITTER} disabled={!props.files}>{"File"}</button>
                 </div>
             </form>
         </section>
@@ -312,32 +355,25 @@ fn open_oops(task: &BoardTask) -> bool {
     task.statement.body.filing.is_oops() && task.workflow.body.status.is_pending()
 }
 
-/// The editable content of a new Draft, or of `row` when it exists.
-fn content_fields(row: Option<&BoardTask>) -> Html {
-    let statement = row.map(|row| &row.statement.body);
-    let title = row.map(|row| row.presentation_title.clone());
-    let project = statement.map(|statement| statement.project.clone());
-    let description = statement.and_then(|statement| statement.description.clone());
-    let acceptance = statement.map(|statement| statement.acceptance.join("\n"));
-    let intent = statement.and_then(|statement| statement.intent);
-    let flow = row.map(|row| {
-        row.workflow
-            .body
-            .flow
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(",")
-    });
+/// The editable content of a new Draft, or of an open Draft's editor, whose
+/// controls show its fields and report each edit.
+fn content_fields(editing: Option<(&DraftFields, &Callback<(DraftField, String)>)>) -> Html {
+    let value = |field: DraftField| editing.map(|(fields, _)| fields.get(field).to_owned());
+    let typed = |field: DraftField| {
+        editing.map(|(_, edit)| edit.reform(move |event: InputEvent| (field, event_value(&event))))
+    };
+    let chosen = editing
+        .map(|(_, edit)| edit.reform(|event: Event| (DraftField::Intent, event_value(&event))));
+    let intent = editing.and_then(|(fields, _)| fields.intent().ok().flatten());
     let questions = intent == Some(TaskIntent::Design);
-    let textarea_rows = if row.is_some() { "3" } else { "2" };
+    let textarea_rows = if editing.is_some() { "3" } else { "2" };
     html! {
         <>
-            <label class="draft-field-title"><span>{"Title"}</span><input name="title" type="text" required=true value={title} /></label>
-            <label class="draft-field-project"><span>{"Project"}</span><input name="project" type="text" required=true placeholder="spice.task" value={project} /></label>
+            <label class="draft-field-title"><span>{"Title"}</span><input name="title" type="text" required=true value={value(DraftField::Title)} oninput={typed(DraftField::Title)} /></label>
+            <label class="draft-field-project"><span>{"Project"}</span><input name="project" type="text" required=true placeholder="spice.task" value={value(DraftField::Project)} oninput={typed(DraftField::Project)} /></label>
             <label class="draft-field-kind">
                 <span>{"Kind"}</span>
-                <select name="intent">
+                <select name="intent" onchange={chosen}>
                     <option value="" selected={intent.is_none()}>{"Task"}</option>
                     {for TaskIntent::ALL.into_iter().map(|choice| html! {
                         <option value={choice.as_str()} selected={intent == Some(choice)}>
@@ -346,21 +382,31 @@ fn content_fields(row: Option<&BoardTask>) -> Html {
                     })}
                 </select>
             </label>
-            if row.is_some() {
-                <label class="draft-field-flow"><span>{"Flow"}</span><input name="flow" type="text" value={flow} /></label>
+            if editing.is_some() {
+                <label class="draft-field-flow"><span>{"Flow"}</span><input name="flow" type="text" value={value(DraftField::Flow)} oninput={typed(DraftField::Flow)} /></label>
             }
-            <label class="draft-field-description"><span>{"Description"}</span><textarea name="description" rows={textarea_rows} value={description} /></label>
+            <label class="draft-field-description"><span>{"Description"}</span><textarea name="description" rows={textarea_rows} value={value(DraftField::Description)} oninput={typed(DraftField::Description)} /></label>
             <label class="draft-field-acceptance">
                 <span>{if questions { "Questions" } else { "Acceptance" }}</span>
                 <textarea
                     name="acceptance"
                     rows={textarea_rows}
                     placeholder={if questions { "One open question per line" } else { "One criterion per line" }}
-                    value={acceptance}
+                    value={value(DraftField::Acceptance)}
+                    oninput={typed(DraftField::Acceptance)}
                 />
             </label>
         </>
     }
+}
+
+/// The value of the control an event fired on.
+fn event_value(event: &Event) -> String {
+    event
+        .target()
+        .and_then(|target| js_sys::Reflect::get(&target, &JsValue::from_str("value")).ok())
+        .and_then(|value| value.as_string())
+        .unwrap_or_default()
 }
 
 fn submitted_form(event: &SubmitEvent) -> Option<web_sys::HtmlFormElement> {
@@ -377,14 +423,6 @@ fn field(form: &web_sys::HtmlFormElement, name: &str) -> String {
         .and_then(|element| js_sys::Reflect::get(&element, &JsValue::from_str("value")).ok())
         .and_then(|value| value.as_string())
         .unwrap_or_default()
-}
-
-fn criteria(text: &str) -> Vec<String> {
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect()
 }
 
 fn chosen_intent(form: &web_sys::HtmlFormElement) -> Result<Option<TaskIntent>, String> {
@@ -419,63 +457,6 @@ fn creation(form: &web_sys::HtmlFormElement, taken: &[TaskStamp]) -> Result<Draf
             draft: true,
         },
         expected: vec![Witness::Absence { task: born }],
-    })
-}
-
-/// The fields of `form` that differ from `row`'s current content.
-fn revision(form: &web_sys::HtmlFormElement, row: &BoardTask) -> Result<DraftRequest, String> {
-    let statement = &row.statement.body;
-    let moved = |name: &str, current: &str| {
-        let value = field(form, name);
-        (value.trim() != current.trim()).then(|| value.trim().to_owned())
-    };
-    let acceptance = criteria(&field(form, "acceptance"));
-    let intent = chosen_intent(form)?;
-    let flow = row
-        .workflow
-        .body
-        .flow
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
-    let request = TaskEdit {
-        task: statement.handle.clone(),
-        title: moved("title", &row.presentation_title),
-        description: moved(
-            "description",
-            statement.description.as_deref().unwrap_or_default(),
-        ),
-        acceptance: if acceptance == statement.acceptance {
-            Vec::new()
-        } else {
-            acceptance
-        },
-        requirements: None,
-        intent: (intent != statement.intent).then_some(match intent {
-            Some(intent) => TaskIntentEdit::Set { intent },
-            None => TaskIntentEdit::Clear {},
-        }),
-        evidence: None,
-        priority: None,
-        project: moved("project", &statement.project),
-        flow: moved("flow", &flow),
-    };
-    if request.title.is_none()
-        && request.description.is_none()
-        && request.acceptance.is_empty()
-        && request.intent.is_none()
-        && request.project.is_none()
-        && request.flow.is_none()
-    {
-        return Err("Nothing changed in this Draft.".to_owned());
-    }
-    Ok(DraftRequest::Edit {
-        request,
-        expected: vec![Witness::Task {
-            task: statement.born.clone(),
-            head: row.statement.position,
-        }],
     })
 }
 

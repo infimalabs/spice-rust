@@ -49,6 +49,8 @@ mod composer_reading_order;
 #[cfg(any(target_arch = "wasm32", test))]
 mod composer_submissions;
 #[cfg(any(target_arch = "wasm32", test))]
+mod draft_form;
+#[cfg(any(target_arch = "wasm32", test))]
 mod image_annotation;
 #[cfg(any(target_arch = "wasm32", test))]
 mod image_navigation;
