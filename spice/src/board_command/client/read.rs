@@ -411,6 +411,13 @@ pub(in crate::board_command) fn task_show_with_origin(
     .expect("unpaged task detail has no unknown cursor")
 }
 
+fn task_items_label(statement: &wire::intent::BoardStatement) -> &'static str {
+    match statement.intent {
+        Some(wire::TaskIntent::Design) => "questions",
+        _ => "acceptance",
+    }
+}
+
 pub(in crate::board_command) fn task_show_bounded(
     board: &BoardAnswer,
     task: &BoardTask,
@@ -493,7 +500,7 @@ pub(in crate::board_command) fn task_show_bounded(
         })),
         None => lines.push("  -".to_owned()),
     }
-    lines.push("acceptance:".to_owned());
+    lines.push(format!("{}:", task_items_label(statement)));
     if !substantive_acceptance(&statement.acceptance) {
         lines.push("  -".to_owned());
     } else {

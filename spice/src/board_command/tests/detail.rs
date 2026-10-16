@@ -273,6 +273,7 @@ fn task_show_separates_current_context_and_bounded_history() {
     ] {
         assert!(current.contains(required), "{current}");
     }
+    assert!(!current.contains("questions:"), "{current}");
     for historical in [
         "origin ",
         "creation_context ",
@@ -335,6 +336,43 @@ fn task_show_separates_current_context_and_bounded_history() {
     assert!(context.contains("spice doc ledger"), "{context}");
 
     assert!(!context.contains(&oversized), "{context}");
+    clean(&root, bus);
+}
+
+#[test]
+fn task_show_labels_design_items_as_questions() {
+    let (root, bus, epoch, _) = fixture("task-show-design-questions", 0);
+    let task = add_born(
+        &bus,
+        epoch,
+        stamp("task-show-design-questions"),
+        "Question one Design",
+    );
+    let answer = board(&bus, epoch, Actor::Operator);
+    let mut design = at(&answer, &task).clone();
+    design.statement.body.intent = Some(wire::TaskIntent::Design);
+    design.statement.body.acceptance = vec!["Which boundary remains open?".to_owned()];
+    let text = task_show_bounded(
+        &answer,
+        &design,
+        &[],
+        TaskShowHistory::default(),
+        None,
+        &TaskShowOptions {
+            context: false,
+            history: false,
+            limit: None,
+            max_bytes: None,
+            max_text: None,
+            after: None,
+        },
+    )
+    .expect("Design detail has no cursor");
+    assert!(
+        text.contains("questions:\n  - Which boundary remains open?"),
+        "{text}"
+    );
+    assert!(!text.contains("acceptance:"), "{text}");
     clean(&root, bus);
 }
 

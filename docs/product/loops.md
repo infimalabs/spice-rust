@@ -508,17 +508,24 @@ owns each rule summarized here.
   chronology, and `--contributions` reads only them. A contribution is
   problem-space record, never a decision: it changes no task, claim, group,
   candidate, or authorization, and a concluded Design accepts none.
+- **Design statements.** A Design description opens with a plain sentence that
+  states the problem, not a one-word heading. Each unresolved question is its
+  own item in the statement list; Design surfaces label that typed list
+  Questions while ordinary tasks continue to present it as Acceptance.
 - **Design awareness.** At a natural break after `task done`, a lane whose
   completed work matches an open passive Design owes one private
   [request](invariants/identity.md#identity-a-completed-lane-owes-one-passive-design-request)
   before its next allocation. The deterministic match uses the completed
-  task's statement and bounded validation prefix. Each record names the exact
-  Design statement, completed task and claim, and up to twelve matched terms;
-  an occupant is never requested for a Design twice. One contribution or
-  `spice room leave --clause` in that room answers the request. A standing
-  change away from open passive releases it. The request grants no claim,
-  starts no work, and adds no workflow state; `spice room awareness HANDLE`
-  shows its statement, recipient, completed task, and matched terms.
+  task's statement and bounded validation prefix against each Design's title,
+  description, and open questions. Each record names the exact Design
+  statement, completed task and claim, and up to twelve matched terms; an
+  occupant is never requested for a Design twice. The request quotes the first
+  substantive description sentence and an in-order, bounded prefix of whole
+  open questions. One contribution or `spice room leave --clause` in that room
+  answers the request. A standing change away from open passive releases it.
+  The request grants no claim, starts no work, and adds no workflow state;
+  `spice room awareness HANDLE` shows its statement, recipient, completed task,
+  and matched terms.
 - **Design maturity.** One bounded projection per Design folds admitted
   requests and typed contributions in journal order. It reports contribution
   counts by kind, distinct contributing lanes, requested reach, and

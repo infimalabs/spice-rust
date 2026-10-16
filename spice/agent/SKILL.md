@@ -73,11 +73,11 @@ name continuations.
   --origin ack:KEY`. `--claim` is only for an unclaimed lane that must own it
   now; otherwise add neither claims nor switches. Bare add is work nested under
   the sole claim. Synthesized hints/reminders/amendments authorize no task.
-- Statements/findings give lasting need, reason, and invariants, not incidents.
-  Acceptance names claimant-driven, checkable properties, never awaited
-  activity/content-decided tolerance. Keep unknowns open; report or modify
-  changed needs. Code/docs/tests state current contract; history goes in task
-  and commit records.
+- Statements/findings state durable need, reason, and invariants, not incidents.
+  Acceptance is claimant-driven and checkable, never awaited activity. A Design
+  opens with a plain problem sentence and itemizes each open question. Update
+  changed needs. Code/docs/tests state contract; task/commit records keep
+  history.
 - Permanent tests are fast, deterministic, in-process current contracts: no
   process, incident, source-text, plumbing, wording, incidental-default, or
   retired-behavior tests. Delete inadmissible tests unless a valuable contract
