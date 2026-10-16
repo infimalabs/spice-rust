@@ -273,7 +273,7 @@ tabs do. It maps each team element to a design-side analog:
 | One tab per task a member actively claims, including Design work | One tab per lane actively claiming work associated with the group's designs, never a task handle |
 | A task handle carries the accent of the lane working it | A lane tab carries that lane's canonical accent and opens its Chat composer when the lane holds a Chat seat |
 | Presence pips: one per member, by state | Design lights: one per design in its accent, distinguishing open passive, open active, claimed, holding unauthorized outputs, concluded done, concluded collapsed, and deleted, with an accessible label naming the standing; a design whose board row is unavailable invents no standing |
-| Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest room publication or coordination event across the group's designs, with the same age, prefix, accessible label, and live region; its accent and status are the design it landed in |
+| Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest words said across the group's designs, with the same age, prefix, accessible label, and live region; a contribution names its lane and kind, while departures and coordination events do not displace it |
 
 A design light reads its [standing](#design-standing): concluded done,
 concluded collapsed, or deleted once terminal, even while a saved group still
