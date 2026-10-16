@@ -1,8 +1,9 @@
-//! Every execution task whose current wall needs operator intervention.
+//! Every task whose current standing needs operator intervention.
 //!
-//! Environment holds and dependency walls belong here. Normal Plan/Design
-//! sequencing and Design selection remain reachable through their ordinary
-//! Work surfaces without entering the danger queue.
+//! Environment holds, dependency walls, and Designs awaiting the operator's
+//! decision belong here. Normal Plan/Design sequencing, intentional deferral,
+//! and claimed work remain reachable through their ordinary Work surfaces
+//! without entering the danger queue.
 
 use super::{DependencyWall, WorkAvailability, WorkProjection, wall::DependencyWalls};
 
@@ -68,6 +69,11 @@ impl<'a> OperatorQueue<'a> {
                 waits[index]
                     .get_or_insert_with(|| OperatorWait::new(index))
                     .environment = true;
+            }
+            if task.availability() == WorkAvailability::Selection {
+                waits[index]
+                    .get_or_insert_with(|| OperatorWait::new(index))
+                    .wall = Some(DependencyWall::Selection(&task.row().statement.body.born));
             }
         }
         let mut walls = DependencyWalls::new(work);

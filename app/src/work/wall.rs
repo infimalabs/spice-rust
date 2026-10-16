@@ -4,8 +4,7 @@
 //! organically, so it is an ordinary wait. A chain is a wall only when every
 //! path forward needs the operator: a deferral, typed OOPS work, a cycle,
 //! a prerequisite that can never complete, an environment requirement only
-//! the operator can satisfy, a passive Design, or a Design awaiting the
-//! operator's selection.
+//! the operator can satisfy, or a passive Design.
 
 use wire::TaskStamp;
 
@@ -29,6 +28,8 @@ pub enum DependencyWall<'a> {
     Environment(&'a TaskStamp),
     /// The task is a Design outside every working group.
     Passive(&'a TaskStamp),
+    /// The task is a Design awaiting the operator's decision on its candidate.
+    Selection(&'a TaskStamp),
 }
 
 /// Memoized wall search over one projection.

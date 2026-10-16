@@ -677,7 +677,8 @@ distinctive quality.
   one badge counting open tasks; a global tab's title and accessible name carry
   the ready, active, blocked, and waiting-or-set-aside breakdown. A global tab
   whose partition contains immediate human-actionable blocked or
-  environment-held work also carries an out-of-flow alert dot on its count
+  environment-held work, or an unclaimed, undeferred Design awaiting the
+  operator's decision, also carries an out-of-flow alert dot on its count
   badge's top inline-end corner, and its title and accessible name lead with
   that actionable count. A stem badge is content-sized, so a digit-width change
   may resize its tab; the total tabs reserve one minimum badge footprint.

@@ -335,14 +335,15 @@ impl WorkCounts {
             + self.parked
     }
 
-    /// Open work carrying the blocked danger mark now: a dependency or
-    /// controller wall with no advancing path, or an environment hold such as
-    /// a trust grant. Selection and deferral remain explicit ordinary states;
-    /// neutral workflow waiting, passive Designs, and parked work also need no
-    /// immediate intervention.
+    /// Open work only the operator can move now, which carries the danger
+    /// mark: a dependency or controller wall with no advancing path, an
+    /// environment hold such as a trust grant, or a Design awaiting the
+    /// operator's decision on its candidate. Deferral is an intentional
+    /// set-aside; neutral workflow waiting, passive Designs, and parked work
+    /// need no intervention.
     #[must_use]
     pub const fn needs_operator(self) -> usize {
-        self.blocked + self.held
+        self.blocked + self.held + self.selection
     }
     #[must_use]
     pub const fn open(self) -> usize {

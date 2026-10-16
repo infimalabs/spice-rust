@@ -323,6 +323,12 @@ fn render_wall(wall: DependencyWall<'_>) -> Html {
             "It stands outside every working group; no lane can acquire it until you move it into one.",
             "Operator required",
         ),
+        DependencyWall::Selection(_) => (
+            "selection",
+            "Awaiting your decision",
+            "Its candidate waits on your verdict for each output; no lane can make that decision for you.",
+            "Operator required",
+        ),
     };
     html! {
         <section class="work-blocker-card" data-blocker-kind={kind}>

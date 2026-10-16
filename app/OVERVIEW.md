@@ -94,20 +94,23 @@ footprint that scrolls beyond it.
 
 Every task overview reserves one fixed-height status rail under its header. It
 counts every task on the board that needs an operator act now, whatever
-overview scope is selected: a task whose unsatisfied environmental requirement
-(trust grant, journal schema, appliance version) needs the operator, unless
-that task is already set aside (closed, Draft, parked, deferred, or a passive
-Design); and each human-actionable Blocked gate or the task where its
-dependency chain stops. A deferred task or Design awaiting selection keeps its
-own explicit standing without entering this danger queue merely for waiting;
-it enters only when a Blocked dependency chain reaches it. Each queue item
-appears once, in board order, however many reasons or held tasks reach it. A
-dependency on work an agent can claim or is working is ordinary **Waiting** and
-never counts. A waiting board pairs the danger-styled `!` with **Needs
-attention**; otherwise a quiet `✓` pairs with **Ready to proceed**, even while
-tasks wait on peers. Both states share one geometry, and detail reads do not
-own the rail's data; an item leaves on the board update that records the
-operator's act.
+overview scope is selected: an unclaimed, undeferred Design awaiting the
+operator's decision on its candidate, read as **Awaiting your decision**; a
+task whose unsatisfied environmental requirement (trust grant, journal schema,
+appliance version) needs the operator, unless that task is already set aside
+(closed, Draft, parked, deferred, or a passive Design); and each
+human-actionable Blocked gate or the task where its dependency chain stops. A
+deferred task keeps its own explicit standing without entering this danger
+queue merely for waiting; it enters only when a Blocked dependency chain
+reaches it. Every task that marks a tab is listed here or holds behind a listed
+wall, so the rail reads **Needs attention** whenever any tab is marked. Each
+queue item appears once, in board order, however many reasons or held tasks
+reach it. A dependency on work an agent can claim or is working is ordinary
+**Waiting** and never counts. A waiting board pairs the danger-styled `!` with
+**Needs attention**; otherwise a quiet `✓` pairs with **Ready to proceed**,
+even while tasks wait on peers. Both states share one geometry, and detail
+reads do not own the rail's data; an item leaves on the board update that
+records the operator's act.
 
 **Next** opens the next waiting task's own overview in board order, stepping
 from the task the overview currently shows and wrapping after the last; it is
