@@ -10,9 +10,10 @@ use wire::{AgentActivityKind, AgentMessage, CanonicalUuid, MessageDestination, M
 /// A direction row carries one context per directive its transcript record
 /// delivered. Each context becomes its own card, joined with every other
 /// delivery of the same send to one of `members`: the send's fanout names it,
-/// else its directive does. The card sits at the send's earliest recorded
-/// delivery and names every member that recorded it, in member order, so a
-/// resend, a nudge, or an older page never adds a second card.
+/// else its directive does. The canonical card retains the send's earliest
+/// recorded delivery as its source locus, but displays at the directive's
+/// operator-authored instant. It names every member that recorded the send, in
+/// member order, so a resend, a nudge, or an older page never adds a second card.
 #[must_use]
 pub(crate) fn direction_cards<'m>(
     messages: impl IntoIterator<Item = &'m AgentMessage>,
@@ -51,6 +52,9 @@ pub(crate) fn direction_cards<'m>(
         .map(|(mut card, mut receivers)| {
             receivers
                 .sort_by_key(|receiver| members.iter().position(|lane| *lane == receiver.lane));
+            let authored = card.directive_contexts[0].authored;
+            card.authored = authored;
+            card.observed = None;
             if let Some(delivery) = card
                 .directive_contexts
                 .first_mut()
@@ -224,6 +228,37 @@ mod tests {
             &card.text,
             &card.directive_contexts
         ));
+    }
+
+    #[test]
+    fn a_response_after_its_request_stays_newer_than_the_delayed_direction_card() {
+        let lane = uuid(0xa1);
+        let mut delivery = row(
+            lane,
+            uuid(0xb1),
+            90,
+            &[("dW4Wl4fRP", "> Ship it", Some(uuid(0xf1)))],
+        );
+        delivery.observed = Some(
+            "2030-04-12T18:44:08.100Z"
+                .parse()
+                .expect("fixture observation instant"),
+        );
+        let mut response = row(lane, uuid(0xb1), 50, &[]);
+        response.activity = AgentActivityKind::Prose;
+
+        let card = direction_cards([&delivery], &[lane])
+            .pop()
+            .expect("direction card");
+
+        assert_eq!(
+            card.display_millis(),
+            delivery.directive_contexts[0]
+                .authored
+                .get()
+                .as_millisecond()
+        );
+        assert!(card.chronology_key() < response.chronology_key());
     }
 
     #[test]

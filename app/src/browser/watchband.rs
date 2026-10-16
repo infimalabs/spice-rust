@@ -444,8 +444,8 @@ fn broadcast_targets(
 
 /// Every stable assistant-authored record the team can render, and one card
 /// per operator send its members received, newest first.
-/// Observation time is the primary display order. The admitted lane and source
-/// locus break equal-time ties without parsing a rendered DOM identity. The
+/// Each card's display instant is the primary order: observation time for
+/// transcript rows and operator authorship for derived direction cards. The
 /// persistent plane uses this complete order to distinguish edge additions
 /// from structural middle insertions during staged hydration.
 fn activity_cards(
