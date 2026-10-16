@@ -248,9 +248,14 @@
   border-radius: var(--app-radius-frame);
   background: var(--control-surface-soft);
 }
+.app-roster-group[data-roster-opener]:hover,
 .app-roster-group[data-drop-enabled="true"]:hover {
   border-color: color-mix(in srgb, var(--accent) 28%, var(--control-line-soft));
   background: color-mix(in srgb, var(--control-surface-soft) 94%, var(--accent) 6%);
+}
+.app-roster-group[data-roster-opener]:focus-visible {
+  outline: var(--app-focus-ring-width) solid var(--focus);
+  outline-offset: 2px;
 }
 .app-roster-group > header {
   display: flex;

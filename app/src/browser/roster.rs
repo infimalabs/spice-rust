@@ -54,6 +54,13 @@ pub(super) struct Wording {
     /// Why a full group's card accepts no member.
     pub(super) full: &'static str,
 }
+/// Optional whole-card action for one formed group.
+#[derive(Clone)]
+pub(super) struct GroupOpener {
+    pub(super) label: String,
+    pub(super) activate: Callback<()>,
+}
+pub(super) type GroupOpen<'a, G, M> = dyn Fn(&G, &[M]) -> GroupOpener + 'a;
 
 /// One roster render.
 pub(super) struct RosterView<'a, G, M> {
@@ -68,6 +75,8 @@ pub(super) struct RosterView<'a, G, M> {
     pub(super) submit: Rc<dyn Fn(Change<G, M>)>,
     /// A group card's header content, named for its member zero.
     pub(super) head: &'a dyn Fn(&G, &[M]) -> Html,
+    /// A formed card's optional accessible whole-card action.
+    pub(super) open: Option<&'a GroupOpen<'a, G, M>>,
     /// A member tile's content, grouped or not; it marks its handle with
     /// `data-roster-handle`.
     pub(super) member: &'a dyn Fn(&M, bool) -> Html,
@@ -238,6 +247,7 @@ where
 {
     let accepts = view.enabled && view.roster.accepts(group);
     let lift = gesture.lift_value(&Lift::Group(group.clone()));
+    let opener = view.open.map(|open| open(group, members));
     html! {
         <article
             class="app-roster-group"
@@ -247,6 +257,10 @@ where
             data-drop-enabled={accepts.to_string()}
             data-roster-lift={lift.clone()}
             draggable={view.enabled.to_string()}
+            role={opener.as_ref().map(|_| "button")}
+            tabindex={opener.as_ref().map(|_| "0")}
+            aria-label={opener.as_ref().map(|opener| opener.label.clone())}
+            data-roster-opener={opener.as_ref().map(|_| "")}
             title={(view.enabled && !accepts).then_some(view.wording.full)}
             ondragstart={begin_drag(gesture, lift.clone())}
             onpointerdown={touch_start(gesture, lift.clone())}
@@ -254,7 +268,8 @@ where
             onpointerup={touch_finish(gesture, lift.clone())}
             onpointercancel={touch_cancel(lift.clone())}
             onlostpointercapture={touch_cancel(lift)}
-            onclick={swallow_drag_click()}
+            onclick={group_click(opener.clone())}
+            onkeydown={group_key(opener)}
         >
             <header data-roster-handle="">{(view.head)(group, members)}</header>
             <div class="app-roster-members">
@@ -520,6 +535,46 @@ fn touch_cancel(lift: String) -> Callback<PointerEvent> {
         if TOUCH_DRAG.with_borrow_mut(|session| session.cancel(&lift, event.pointer_id())) {
             touch_lift::clear();
         }
+    })
+}
+fn group_click(opener: Option<GroupOpener>) -> Callback<MouseEvent> {
+    Callback::from(move |event: MouseEvent| {
+        if SWALLOW_CLICK.replace(false) {
+            event.prevent_default();
+            event.stop_propagation();
+            return;
+        }
+        let nested_action = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|target| {
+                target
+                    .closest("a, button, input, select, textarea, [data-roster-member]")
+                    .ok()
+                    .flatten()
+                    .is_some()
+            });
+        if !nested_action && let Some(opener) = &opener {
+            opener.activate.emit(());
+        }
+    })
+}
+
+fn group_key(opener: Option<GroupOpener>) -> Callback<KeyboardEvent> {
+    Callback::from(move |event: KeyboardEvent| {
+        let owns_event = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|target| target.has_attribute("data-roster-opener"));
+        if !owns_event || !matches!(event.key().as_str(), "Enter" | " ") {
+            return;
+        }
+        let Some(opener) = &opener else {
+            return;
+        };
+        event.prevent_default();
+        event.stop_propagation();
+        opener.activate.emit(());
     })
 }
 

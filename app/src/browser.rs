@@ -707,6 +707,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
         state.card_target.clone(),
         &state.surface,
         &state.sender,
+        &state.team_controls,
         state.card_target_status.clone(),
         true,
     );

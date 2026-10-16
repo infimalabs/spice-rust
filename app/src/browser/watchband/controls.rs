@@ -9,6 +9,7 @@ pub(in crate::browser) use group::GroupPanel;
 pub(super) use group::Plane;
 
 const TEAM_SPEECH_STORAGE: &str = "spice:team-speech:v1";
+const HIDDEN_TEAMS_STORAGE: &str = "spice:hidden-teams:v1";
 
 /// One policy shared by every agent member in the visual lane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +76,7 @@ pub(in crate::browser) enum ArrangementOpener {
 pub(super) struct TeamControl {
     pub(super) arrangement: Option<ArrangementOpener>,
     pub(super) speech: SpeechMode,
+    pub(super) hidden: bool,
     pub(super) life: TeamLife,
     preview_life: Option<TeamLife>,
     pub(super) pending_life: Option<TeamLife>,
@@ -89,6 +91,7 @@ impl Default for TeamControl {
         Self {
             arrangement: None,
             speech: SpeechMode::Quiet,
+            hidden: false,
             life: TeamLife::Steer,
             preview_life: None,
             pending_life: None,
@@ -120,6 +123,12 @@ pub(crate) enum TeamControlAction {
     ToggleArrangement {
         team: CanonicalUuid,
         opener: ArrangementOpener,
+    },
+    HideTeam {
+        team: CanonicalUuid,
+    },
+    ShowTeam {
+        team: CanonicalUuid,
     },
     CloseArrangement,
     SetSpeech {
@@ -173,6 +182,8 @@ impl Reducible for TeamControls {
             TeamControlAction::ToggleArrangement { team, opener } => {
                 next.toggle_arrangement(team, opener);
             }
+            TeamControlAction::HideTeam { team } => next.set_hidden(team, true),
+            TeamControlAction::ShowTeam { team } => next.set_hidden(team, false),
             TeamControlAction::CloseArrangement => next.close_arrangements(),
             TeamControlAction::SetSpeech {
                 team,
@@ -221,19 +232,55 @@ impl TeamControls {
             return controls;
         };
         controls.groups = group::restore(&storage);
-        let Some(document) = storage.get_item(TEAM_SPEECH_STORAGE).ok().flatten() else {
-            return controls;
-        };
-        let Ok(rows) = serde_json::from_str::<Vec<(String, u8)>>(&document) else {
-            return controls;
-        };
-        for (team, value) in rows {
-            let (Ok(team), Some(speech)) = (team.parse(), SpeechMode::from_storage(value)) else {
-                continue;
-            };
-            controls.teams.entry(team).or_default().speech = speech;
+        if let Some(document) = storage.get_item(TEAM_SPEECH_STORAGE).ok().flatten()
+            && let Ok(rows) = serde_json::from_str::<Vec<(String, u8)>>(&document)
+        {
+            for (team, value) in rows {
+                let (Ok(team), Some(speech)) = (team.parse(), SpeechMode::from_storage(value))
+                else {
+                    continue;
+                };
+                controls.teams.entry(team).or_default().speech = speech;
+            }
+        }
+        if let Some(document) = storage.get_item(HIDDEN_TEAMS_STORAGE).ok().flatten()
+            && let Ok(teams) = serde_json::from_str::<Vec<String>>(&document)
+        {
+            for team in teams.into_iter().filter_map(|team| team.parse().ok()) {
+                controls.teams.entry(team).or_default().hidden = true;
+            }
         }
         controls
+    }
+
+    pub(in crate::browser) fn is_hidden(&self, team: CanonicalUuid) -> bool {
+        self.teams.get(&team).is_some_and(|control| control.hidden)
+    }
+
+    fn set_hidden(&mut self, team: CanonicalUuid, hidden: bool) {
+        let control = self.teams.entry(team).or_default();
+        control.hidden = hidden;
+        control.arrangement = None;
+        self.store_hidden();
+    }
+
+    fn store_hidden(&self) {
+        let Some(storage) =
+            web_sys::window().and_then(|window| window.local_storage().ok().flatten())
+        else {
+            return;
+        };
+        let teams = self
+            .teams
+            .iter()
+            .filter(|(_, control)| control.hidden)
+            .map(|(team, _)| team.to_string())
+            .collect::<Vec<_>>();
+        if teams.is_empty() {
+            let _ = storage.remove_item(HIDDEN_TEAMS_STORAGE);
+        } else if let Ok(document) = serde_json::to_string(&teams) {
+            let _ = storage.set_item(HIDDEN_TEAMS_STORAGE, &document);
+        }
     }
 
     pub(super) fn current(
@@ -523,7 +570,6 @@ pub(super) fn render_team_controls(
     team_controls: &UseReducerHandle<TeamControls>,
     set_automatic_speech: &Callback<(String, bool)>,
     sender: &SenderHandle,
-    arrange_refusal: Option<&'static str>,
     can_configure: bool,
     ready: bool,
     dormant: bool,
@@ -557,11 +603,10 @@ pub(super) fn render_team_controls(
             <button
                 class="team-menu"
                 type="button"
-                disabled={arrange_refusal.is_some()}
                 aria-label="Team menu"
                 aria-haspopup="menu"
                 aria-expanded={control.arrangement.is_some().to_string()}
-                title={arrange_refusal.unwrap_or("Team menu")}
+                title="Team menu"
                 onclick={Callback::from(move |event: MouseEvent| {
                     event.stop_propagation();
                     // Safari does not focus a clicked button; closing from here keeps focus here.

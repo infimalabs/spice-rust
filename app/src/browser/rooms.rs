@@ -17,7 +17,7 @@ use yew::prelude::*;
 mod card;
 mod conversation;
 
-use super::roster::{self, RosterView, Wording};
+use super::roster::{self, GroupOpener, RosterView, Wording};
 use super::sender::{SenderHandle, admit_action};
 use crate::AppRuntime;
 use crate::client_action::{ClientAction, GroupChange};
@@ -359,23 +359,24 @@ fn render_roster(
         .board()
         .map_or(&[][..], |board| board.tasks.as_slice());
     let head = |group: &RoomAuthorityStamp, designs: &[TaskStamp]| {
-        let open_group = {
-            let group = group.clone();
-            let controls = controls.clone();
-            Callback::from(move |_| controls.open(group.clone(), None))
-        };
         let size = match designs.len() {
             1 => "1 design".to_owned(),
             count => format!("{count} designs"),
         };
         html! {
-            <>
-                <div>
-                    <strong>{lead_label(runtime, group, designs.first())}</strong>
-                    <span>{size}</span>
-                </div>
-                <button type="button" onclick={open_group}>{"Open"}</button>
-            </>
+            <div>
+                <strong>{lead_label(runtime, group, designs.first())}</strong>
+                <span>{size}</span>
+            </div>
+        }
+    };
+    let open = |group: &RoomAuthorityStamp, designs: &[TaskStamp]| {
+        let name = lead_label(runtime, group, designs.first());
+        let group = group.clone();
+        let controls = controls.clone();
+        GroupOpener {
+            label: format!("Open working group {name}"),
+            activate: Callback::from(move |()| controls.open(group.clone(), None)),
         }
     };
     let member = |design: &TaskStamp, _grouped: bool| render_design(runtime, design, read);
@@ -393,6 +394,7 @@ fn render_roster(
         empty: "No ungrouped designs",
         submit,
         head: &head,
+        open: Some(&open),
         member: &member,
     })
 }
