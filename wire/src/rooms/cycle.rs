@@ -53,7 +53,7 @@ pub enum DesignCycle {
     GatheringInput,
     /// Counted input arrived; a lane may claim the Design and propose.
     ReadyForProposal,
-    /// The operator has not decided the latest proposal or an output it named.
+    /// A proposal the operator has not decided or its author withdrawn.
     AwaitingDecision,
     /// Accepted work is still running and no later input arrived.
     WaitingOnSelectedWork,
@@ -150,7 +150,7 @@ pub struct DesignCycleFacts {
     /// Latest settlement of work this Design released.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settled: Option<Seq>,
-    /// The latest proposal still awaits the operator's decision.
+    /// A proposal still awaits the operator's decision.
     #[serde(default)]
     pub undecided: bool,
 }
@@ -162,11 +162,11 @@ impl DesignCycleFacts {
         *self == Self::default()
     }
 
-    /// The cycle state, given whether an output this Design constructed still
-    /// lacks a decision and whether work it released is still running.
+    /// The cycle state, given whether work this Design released is still
+    /// running, released or deferred.
     #[must_use]
-    pub fn cycle(self, unselected: bool, working: bool) -> DesignCycle {
-        if self.undecided || unselected {
+    pub fn cycle(self, working: bool) -> DesignCycle {
+        if self.undecided {
             DesignCycle::AwaitingDecision
         } else if self.counted(working) {
             DesignCycle::ReadyForProposal
@@ -201,8 +201,8 @@ struct DesignCycleFold {
     /// Up to three distinct contributing lanes; maturity needs no more.
     lanes: Vec<CanonicalUuid>,
     counts: DesignContributionCounts,
-    /// The latest proposal's identity.
-    proposal: Option<CandidateRef>,
+    /// Proposals still awaiting the operator's decision.
+    open: Vec<CandidateRef>,
     /// A proposal arrived since the latest claim release.
     proposed: bool,
     facts: DesignCycleFacts,
@@ -231,15 +231,15 @@ impl DesignCycleFold {
 
     fn proposed(&mut self, seq: Seq, candidate: &CandidateRef) {
         self.boundary(seq);
-        self.proposal = Some(candidate.clone());
+        if !self.open.contains(candidate) {
+            self.open.push(candidate.clone());
+        }
         self.proposed = true;
         self.facts.undecided = true;
     }
 
     fn decided(&mut self, seq: Seq, outcome: &DecisionOutcome) {
-        if self.proposal.as_ref() == Some(outcome.candidate()) {
-            self.facts.undecided = false;
-        }
+        self.settle(outcome.candidate());
         let feedback = match outcome {
             DecisionOutcome::Returned { .. } => true,
             DecisionOutcome::Resolved { outputs, .. } => outputs
@@ -252,10 +252,11 @@ impl DesignCycleFold {
         }
     }
 
-    fn withdrawn(&mut self, candidate: &CandidateRef) {
-        if self.proposal.as_ref() == Some(candidate) {
-            self.facts.undecided = false;
-        }
+    /// A decision or withdrawal settles `candidate`; any other proposal still
+    /// open keeps the operator's decision owed.
+    fn settle(&mut self, candidate: &CandidateRef) {
+        self.open.retain(|open| open != candidate);
+        self.facts.undecided = !self.open.is_empty();
     }
 
     fn released(&mut self, seq: Seq) {
@@ -407,7 +408,7 @@ impl DesignCycles {
                 .decided(seq, outcome);
         } else if let Some(withdrawn) = fact.as_body::<CandidateWithdrawn>() {
             let candidate = &withdrawn.withdrawal.candidate;
-            self.design(&candidate.controller).withdrawn(candidate);
+            self.design(&candidate.controller).settle(candidate);
         } else if let Some(authorized) = fact.as_body::<ExecutionAuthorized>() {
             let controller = &authorized.authorization.decision.controller;
             for output in &authorized.authorization.selected_outputs {

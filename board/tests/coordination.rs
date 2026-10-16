@@ -1367,7 +1367,10 @@ fn design_selection_wins_its_gate_and_its_output_waits_neutrally() {
         .with_grouped(true)
         .with_design(wire::rooms::DesignFacts {
             active: true,
-            cycle: wire::rooms::DesignCycleFacts::default(),
+            cycle: wire::rooms::DesignCycleFacts {
+                undecided: true,
+                ..wire::rooms::DesignCycleFacts::default()
+            },
         });
     let output = named_output("WAIT-design-output", "WAIT-design", "WAIT-design");
     let entries = [design, output];

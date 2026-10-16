@@ -161,7 +161,7 @@ fn design_cycle_input_refreshes_the_live_projection_like_a_restart() {
             .expect("open Design commits"),
     );
     let design = task(DESIGN_MOMENT);
-    let cycle = |entry: Entry| entry.design().cycle.cycle(false, false);
+    let cycle = |entry: Entry| entry.design().cycle.cycle(false);
     assert_eq!(
         cycle(projected(&bus, &projects, &mut incremental, &design)),
         wire::rooms::DesignCycle::GatheringInput

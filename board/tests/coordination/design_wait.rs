@@ -78,30 +78,43 @@ fn a_first_pass_waits_for_steeped_maturity_or_a_nudge() {
     }
 }
 
-#[test]
-fn an_open_design_waits_while_its_released_work_is_in_progress() {
-    let settled_since = DesignCycleFacts {
+/// Cycle evidence after selected work settled at seq 20, past the pass.
+fn settled_since() -> DesignCycleFacts {
+    DesignCycleFacts {
         settled: Some(seq(20)),
         ..passed()
-    };
-    let input_since = DesignCycleFacts {
-        input: Some(seq(20)),
-        ..passed()
-    };
-    let design = |cycle| design_with("WAIT-design", true, cycle);
-    let settled = |status| WorkflowHead {
+    }
+}
+
+fn waiting_design(cycle: DesignCycleFacts) -> Entry {
+    design_with("WAIT-design", true, cycle)
+}
+
+/// An output `name` the waiting Design selected, at `workflow`.
+fn selected(name: &str, workflow: WorkflowHead) -> Entry {
+    released_output(name, "WAIT-design", "WAIT-design", workflow)
+}
+
+fn settled(status: wire::WorkflowStatus) -> WorkflowHead {
+    WorkflowHead {
         status,
         ..workflow("review")
-    };
+    }
+}
+
+fn completed() -> WorkflowHead {
+    settled(wire::WorkflowStatus::reviewed(instant(
+        "2026-08-01T06:00:00.000Z",
+    )))
+}
+
+#[test]
+fn an_open_design_waits_while_its_released_work_is_in_progress() {
+    let settled_since = settled_since();
+    let design = waiting_design;
     let deferred = WorkflowHead {
         deferral: Some(instant("2026-09-01T00:00:00.000Z")),
         ..workflow("todo")
-    };
-    let selected = |name, workflow| released_output(name, "WAIT-design", "WAIT-design", workflow);
-    let completed = || {
-        settled(wire::WorkflowStatus::reviewed(instant(
-            "2026-08-01T06:00:00.000Z",
-        )))
     };
 
     for (reason, entries) in [
@@ -135,7 +148,18 @@ fn an_open_design_waits_while_its_released_work_is_in_progress() {
         ),
         (
             "its only output is deferred, which never settles the pass",
-            vec![design(passed()), selected("WAIT-selected", deferred)],
+            vec![
+                design(passed()),
+                selected("WAIT-selected", deferred.clone()),
+            ],
+        ),
+        (
+            "one selected output settled while another is deferred",
+            vec![
+                design(settled_since),
+                selected("WAIT-selected", completed()),
+                selected("WAIT-deferred", deferred),
+            ],
         ),
     ] {
         assert!(
@@ -148,6 +172,16 @@ fn an_open_design_waits_while_its_released_work_is_in_progress() {
             "{reason}"
         );
     }
+}
+
+#[test]
+fn an_open_design_is_assignable_once_its_released_work_settles_or_input_arrives() {
+    let settled_since = settled_since();
+    let design = waiting_design;
+    let input_since = DesignCycleFacts {
+        input: Some(seq(20)),
+        ..passed()
+    };
 
     for (reason, entries) in [
         (
@@ -194,39 +228,59 @@ fn an_open_design_waits_while_its_released_work_is_in_progress() {
 }
 
 #[test]
-fn selection_precedes_counted_input_and_running_work() {
+fn only_an_undecided_proposal_holds_the_design_for_selection() {
     let input_since = DesignCycleFacts {
         input: Some(seq(20)),
         ..passed()
     };
-    let undecided = [
-        design_with("WAIT-design", true, input_since),
+    let proposed = [
+        design_with(
+            "WAIT-design",
+            true,
+            DesignCycleFacts {
+                undecided: true,
+                ..input_since
+            },
+        ),
         released_output(
             "WAIT-selected",
             "WAIT-design",
             "WAIT-design",
             workflow("todo"),
         ),
-        named_output("WAIT-unselected", "WAIT-design", "WAIT-design"),
     ];
-    assert!(!first_eligible(&undecided));
-    assert_eq!(
-        wait_of(&undecided, "WAIT-design"),
-        Some(board::WorkWait::Selection),
-        "an unselected output names the operator's action before any input"
-    );
-    let proposed = [design_with(
-        "WAIT-design",
-        true,
-        DesignCycleFacts {
-            undecided: true,
-            ..input_since
-        },
-    )];
+    assert!(!first_eligible(&proposed));
     assert_eq!(
         wait_of(&proposed, "WAIT-design"),
         Some(board::WorkWait::Selection),
-        "an undecided proposal names the operator's action before any input"
+        "an undecided proposal names the operator's action before input or running work"
+    );
+
+    // A pass that constructed an output, then freed or lapsed without proposing.
+    let abandoned = DesignCycleFacts {
+        horizon: Some(seq(10)),
+        end: Some(DesignPassEnd::Abandoned),
+        ..DesignCycleFacts::default()
+    };
+    let constructed = |cycle| {
+        [
+            design_with("WAIT-design", true, cycle),
+            named_output("WAIT-unproposed", "WAIT-design", "WAIT-design"),
+        ]
+    };
+    let gathering = constructed(abandoned);
+    assert!(!first_eligible(&gathering));
+    assert_eq!(
+        cycle_of(&gathering),
+        Some(wire::rooms::DesignCycle::GatheringInput),
+        "an output no proposal names awaits no decision"
+    );
+    assert!(
+        first_eligible(&constructed(DesignCycleFacts {
+            input: Some(seq(20)),
+            ..abandoned
+        })),
+        "counted input readies the next pass"
     );
 }
 
@@ -278,17 +332,6 @@ fn decided_rejections_end_selection_wait_without_releasing_outputs() {
         wait_of(&clean, "DECIDE-design"),
         Some(board::WorkWait::Workflow),
         "a clean acceptance waits on the work it released"
-    );
-
-    let still_undecided = vec![
-        design(feedback),
-        rejected("DECIDE-rejected"),
-        named_output("DECIDE-undecided", "DECIDE-design", "DECIDE-design"),
-    ];
-    assert_eq!(
-        wait_of(&still_undecided, "DECIDE-design"),
-        Some(board::WorkWait::Selection),
-        "an output awaiting its first decision still holds the Design"
     );
 }
 

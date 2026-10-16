@@ -177,10 +177,6 @@ fn a_gather_task_runs_only_while_its_design_is_open_and_grouped() {
     claim_task(&bus, epoch, &seats[0], &designer, &task);
     let trial = gather(&bus, epoch, &task, "Standing gather");
     assert_eq!(offered(&bus, epoch, &seats[1]), Some(born(&trial)));
-    assert!(
-        open_awaiting_selection(&bus, epoch).is_empty(),
-        "a gather task is no unselected output holding its Design"
-    );
 
     // Out of every group: unoffered and uncapturable, yet a holder keeps it.
     assert_committed(move_out(&bus, epoch, &task).0);
@@ -382,10 +378,6 @@ fn a_taste_hold_never_changes_what_a_gather_task_is() {
     let finding = gathered(&bus, epoch, &trial, "the held idea still showed something");
 
     for standing in ["held", "cleared"] {
-        assert!(
-            open_awaiting_selection(&bus, epoch).is_empty(),
-            "a {standing} gather task holds no Design awaiting selection"
-        );
         assert!(
             matches!(
                 retain(&bus, epoch, &seats[0], &task, &[&trial], finding.clone()),
