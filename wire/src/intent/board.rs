@@ -283,6 +283,9 @@ pub struct TaskDetailAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub closure: Option<TaskDetailClosure>,
+    /// The request a steering origin names, when its key resolves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_request: Option<OriginRequest>,
 }
 
 /// Most roots one relationship read admits.
@@ -378,8 +381,13 @@ pub enum TaskRelationNode {
         phase: crate::Phase,
         status: crate::WorkflowStatusKind,
     },
-    /// One non-task cause; a parentless task has no origin node.
-    Origin { origin: crate::TaskProvenance },
+    /// One non-task cause; a parentless task has no origin node. A steering
+    /// origin carries the request it names when that key resolves.
+    Origin {
+        origin: crate::TaskProvenance,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request: Option<OriginRequest>,
+    },
     /// One completed review. `phase` and `author` name the most recent
     /// completed phase before it and that phase's author; both are absent when
     /// no phase completed first, as in a flow that begins with review.
@@ -416,7 +424,7 @@ impl TaskRelationNode {
     pub fn identity(&self) -> TaskRelationNodeRef {
         match self {
             Self::Task { task, .. } => TaskRelationNodeRef::Task { task: task.clone() },
-            Self::Origin { origin } => TaskRelationNodeRef::Origin {
+            Self::Origin { origin, .. } => TaskRelationNodeRef::Origin {
                 origin: origin.clone(),
             },
             Self::Review { task, position, .. } => TaskRelationNodeRef::Review {
@@ -430,6 +438,35 @@ impl TaskRelationNode {
             Self::Claim { task, position, .. } => TaskRelationNodeRef::Claim {
                 task: task.clone(),
                 position: *position,
+            },
+        }
+    }
+}
+
+/// Characters of a steering request an origin node carries.
+pub const ORIGIN_REQUEST_PREVIEW_LIMIT: usize = 600;
+
+/// The published request behind a steering origin: the whole text when it
+/// fits [`ORIGIN_REQUEST_PREVIEW_LIMIT`], otherwise that many leading
+/// characters marked truncated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OriginRequest {
+    pub text: String,
+    pub truncated: bool,
+}
+
+impl OriginRequest {
+    #[must_use]
+    pub fn preview(text: &str) -> Self {
+        match text.char_indices().nth(ORIGIN_REQUEST_PREVIEW_LIMIT) {
+            Some((end, _)) => Self {
+                text: text[..end].to_owned(),
+                truncated: true,
+            },
+            None => Self {
+                text: text.to_owned(),
+                truncated: false,
             },
         }
     }

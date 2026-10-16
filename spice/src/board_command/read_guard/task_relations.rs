@@ -2,10 +2,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::*;
 use wire::intent::{
-    TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_EDGE_LIMIT, TASK_RELATION_FRONTIER_LIMIT,
-    TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT, TaskLifecycleKind, TaskRelationEdge,
-    TaskRelationFrontier, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef,
-    TaskRelationTruncation, TaskRelations, TaskRelationsAnswer,
+    OriginRequest, TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_EDGE_LIMIT,
+    TASK_RELATION_FRONTIER_LIMIT, TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT,
+    TaskLifecycleKind, TaskRelationEdge, TaskRelationFrontier, TaskRelationKind, TaskRelationNode,
+    TaskRelationNodeRef, TaskRelationTruncation, TaskRelations, TaskRelationsAnswer,
 };
 
 #[derive(Clone)]
@@ -158,6 +158,9 @@ pub(in crate::board_command) fn read_task_relations(
             edges.insert(candidate.edge);
         }
     }
+    if let Err(outcome) = attach_origin_requests(bus, &mut nodes) {
+        return outcome;
+    }
     let answer = TaskRelationsAnswer {
         snapshot: snapshot.cursor,
         roots,
@@ -170,6 +173,56 @@ pub(in crate::board_command) fn read_task_relations(
         CommandAnswer::TaskRelations(Box::new(answer)),
     )
 }
+
+/// Attach to each steering origin node the request its key names, from one
+/// journal read; a key no directive carries keeps none.
+fn attach_origin_requests(
+    bus: &Bus,
+    nodes: &mut BTreeMap<TaskRelationNodeRef, TaskRelationNode>,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let keys = nodes
+        .keys()
+        .filter_map(|node| match node {
+            TaskRelationNodeRef::Origin {
+                origin: wire::TaskProvenance::Steering(key),
+            } => Some(key.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if keys.is_empty() {
+        return Ok(());
+    }
+    let requests = steering_requests(bus, keys)?;
+    for (key, resolved) in requests {
+        let origin = TaskRelationNodeRef::Origin {
+            origin: wire::TaskProvenance::Steering(key),
+        };
+        if let Some(TaskRelationNode::Origin { request, .. }) = nodes.get_mut(&origin) {
+            *request = resolved;
+        }
+    }
+    Ok(())
+}
+
+/// The request each steering key names, from one journal read; a key no
+/// directive carries resolves to none.
+pub(super) fn steering_requests(
+    bus: &Bus,
+    keys: Vec<String>,
+) -> Result<Vec<(String, Option<OriginRequest>)>, Outcome<CommandAnswer>> {
+    bus.read(move |read| {
+        keys.into_iter()
+            .map(|key| {
+                let request = read
+                    .steering_key(&key)?
+                    .map(|head| OriginRequest::preview(&head.body().text));
+                Ok((key, request))
+            })
+            .collect::<Result<Vec<_>, journal::GuardError>>()
+    })
+    .map_err(|error| store_fault("task::steering-request-unreadable", &error.to_string()))
+}
+
 fn relationship_tasks(
     observed: &bus::TaskSnapshot,
     roots: &[TaskStamp],
@@ -330,6 +383,7 @@ fn candidates(
             _ if *origin == wire::TaskProvenance::Parentless => None,
             _ => Some(TaskRelationNode::Origin {
                 origin: origin.clone(),
+                request: None,
             }),
         };
         if let Some(target) = target {

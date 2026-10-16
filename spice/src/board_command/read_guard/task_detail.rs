@@ -52,6 +52,15 @@ pub(in crate::board_command) fn read_task_detail(
     let mut record = task_record(observed.facts(), &selected, &roles);
     let notes = record.notes.remove(&detail.task).unwrap_or_default();
     let closure = record.closures.remove(&detail.task);
+    let origin_request = match &task.statement.body.provenance {
+        wire::TaskProvenance::Steering(key) => {
+            match super::task_relations::steering_requests(bus, vec![key.clone()]) {
+                Ok(mut requests) => requests.pop().and_then(|(_, request)| request),
+                Err(outcome) => return outcome,
+            }
+        }
+        _ => None,
+    };
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::TaskDetail(Box::new(wire::intent::TaskDetailAnswer {
@@ -59,6 +68,7 @@ pub(in crate::board_command) fn read_task_detail(
             media,
             notes,
             closure,
+            origin_request,
         })),
     )
 }

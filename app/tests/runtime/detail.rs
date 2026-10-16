@@ -23,6 +23,7 @@ fn detail_answer(label: &str, text: &str) -> TaskDetailAnswer {
             text: text.to_owned(),
         }],
         closure: None,
+        origin_request: None,
     }
 }
 

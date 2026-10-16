@@ -323,16 +323,9 @@ fn present_remote_node(
                 selected: selection.tasks().contains(task),
             }
         }
-        TaskRelationNode::Origin { origin } => Node {
-            id,
-            kind: "ACK / origin",
-            label: format!("Origin · {}", compact(&origin.to_string())),
-            detail: origin.to_string(),
-            diagram: format!("Origin\n{origin}"),
-            task: None,
-            status: None,
-            selected: false,
-        },
+        TaskRelationNode::Origin { origin, request } => {
+            present_origin_node(id, origin, request.as_ref())
+        }
         TaskRelationNode::Review {
             position,
             phase,
@@ -401,6 +394,48 @@ fn present_remote_node(
                 selected: false,
             }
         }
+    }
+}
+
+/// A steering origin reads as its request, its exact key kept beside it; any
+/// other origin, or a key that resolved to no request, reads as the key.
+fn present_origin_node(
+    id: String,
+    origin: &wire::TaskProvenance,
+    request: Option<&wire::intent::OriginRequest>,
+) -> Node {
+    let (label, detail, diagram) = match request {
+        Some(request) => {
+            let summary = compact_title(&request.text);
+            let mut text = request
+                .text
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if request.truncated {
+                text.push('…');
+            }
+            (
+                format!("Request · {summary}"),
+                format!("{origin} · {text}"),
+                format!("{origin}\n{summary}"),
+            )
+        }
+        None => (
+            format!("Origin · {}", compact(&origin.to_string())),
+            origin.to_string(),
+            format!("Origin\n{origin}"),
+        ),
+    };
+    Node {
+        id,
+        kind: "ACK / origin",
+        label,
+        detail,
+        diagram,
+        task: None,
+        status: None,
+        selected: false,
     }
 }
 

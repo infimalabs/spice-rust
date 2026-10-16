@@ -581,6 +581,64 @@ fn unresolved_steering_origin_is_explicit() {
     );
 }
 
+#[test]
+fn relations_and_detail_carry_the_request_a_steering_origin_names() {
+    let (root, bus, epoch, _seats) = fixture("task-origin-request", 0);
+    seed_steering_directive(&bus, "1kLGp2NJ", uuid(16_201));
+    seed_steering_directive(&bus, "1kLGp2NK", uuid(16_203));
+    let born = stamp("ORIGIN-request");
+    add_task_noted_under_a_second_ask(&bus, epoch, &born);
+    let request = Some(wire::intent::OriginRequest {
+        text: "Preserve this directive\nverbatim across hydration.".to_owned(),
+        truncated: false,
+    });
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::TaskRelations(relations),
+        ..
+    }) = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskRelations,
+        Vec::new(),
+        &wire::intent::TaskRelations {
+            roots: vec![born.clone()],
+            relations: vec![wire::intent::TaskRelationKind::Origin],
+            depth: 1,
+            node_limit: 4,
+        },
+    )
+    else {
+        panic!("task relations answer a projection");
+    };
+    assert!(
+        relations
+            .nodes
+            .contains(&wire::intent::TaskRelationNode::Origin {
+                origin: "ack:1kLGp2NJ".parse().expect("steering origin"),
+                request: request.clone(),
+            }),
+        "the lineage origin node names its request: {:?}",
+        relations.nodes,
+    );
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::TaskDetail(detail),
+        ..
+    }) = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDetail,
+        Vec::new(),
+        &wire::intent::TaskDetail { task: born },
+    )
+    else {
+        panic!("task detail answers one task");
+    };
+    assert_eq!(detail.origin_request, request);
+    clean(&root, bus);
+}
+
 /// Win `task` for `seat` under the named capture rule.
 fn capture(
     bus: &Bus,
