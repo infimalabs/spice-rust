@@ -8,6 +8,28 @@ use super::{Driver, FirstTurn};
 const PROMPT: &str = "# Spice briefing\n- … 3 more: `spice session sweep /t/x.jsonl --limit 4`\n- held: `spice task show HANDLE`";
 const OPENING: &[u8] = b"{\"id\":\"spice-state\",\"type\":\"get_state\"}\n";
 
+const EARLIER: &str = "1kJK6M0V";
+const LATER: &str = "1kJK6N3R";
+const NEWEST: &str = "1kJK6P4T";
+const RESUME_NOTICE: &str = "# Seat resumed\n- held claim: none\n- pending steering keys: 2";
+
+fn pending(keys: &[&str]) -> Vec<u8> {
+    let mut rendered = String::from("<1kJK6Q0b>\n");
+    for (index, key) in keys.iter().enumerate() {
+        rendered.push_str(&format!(
+            "directive=d-{key} key={key} stage=published expires=never\ndirection {key}\n"
+        ));
+        if index == 0 {
+            rendered.push_str(
+                "media-reference={\"digest\":\"abc\",\"name\":\"image.png\"}\n\
+                 media-projection={\"standing\":\"live\",\"path\":\"/projected/image.png\"}\n",
+            );
+        }
+    }
+    rendered.push_str("</1kJK6Q0b>\n");
+    rendered.into_bytes()
+}
+
 fn driver() -> Arc<Driver<Vec<u8>>> {
     Driver::with_readers(
         Vec::new(),
@@ -145,6 +167,70 @@ fn a_resumed_seat_is_told_the_authority_current_at_delivery_once() {
         assert!(!message.contains(planned), "{message}");
         assert_eq!(authority.reads(), 1, "the delivery reads authority once");
     }
+}
+
+#[test]
+fn pending_steering_joins_fresh_and_resumed_first_prompts_once_in_order() {
+    for resumed in [false, true] {
+        let inbox = Arc::new(Mutex::new(pending(&[EARLIER, LATER])));
+        let read = Arc::clone(&inbox);
+        let driver = Driver::with_startup_readers(
+            Vec::new(),
+            move || Some(read.lock().unwrap_or_else(PoisonError::into_inner).clone()),
+            || RESUME_NOTICE.to_owned(),
+        );
+        let first_turn = if resumed {
+            FirstTurn::Resumed(NEUTRAL.to_owned())
+        } else {
+            FirstTurn::Fresh(PROMPT.to_owned())
+        };
+        driver
+            .open(OPENING, Some(first_turn))
+            .expect("opening writes");
+        answer(&driver, &registration(false));
+
+        let written = frames(&driver);
+        assert_eq!(written.len(), 2, "one first prompt: {written:?}");
+        let message = written[1]["message"].as_str().expect("a prompt message");
+        let prefix = if resumed { NEUTRAL } else { PROMPT };
+        assert!(message.starts_with(prefix), "{message}");
+        if resumed {
+            assert!(message.contains(RESUME_NOTICE), "{message}");
+        }
+        let rendered = String::from_utf8(pending(&[EARLIER, LATER])).expect("rendered inbox");
+        assert!(message.ends_with(&rendered), "{message}");
+        let earlier = message.find(EARLIER).expect("earlier item is present");
+        let later = message.find(LATER).expect("later item is present");
+        assert!(earlier < later, "publication order stays intact: {message}");
+
+        driver.deliver_inbox();
+        assert_eq!(
+            frames(&driver).len(),
+            2,
+            "the release's inbox check sends no duplicate"
+        );
+
+        *inbox.lock().unwrap_or_else(PoisonError::into_inner) = pending(&[EARLIER, LATER, NEWEST]);
+        driver.deliver_inbox();
+        let written = frames(&driver);
+        assert_eq!(written.len(), 3, "a later item uses live steering");
+        let live = written[2]["message"].as_str().expect("a steering message");
+        assert!(live.contains(NEWEST), "{live}");
+        assert!(!live.contains(EARLIER), "{live}");
+        assert!(!live.contains(LATER), "{live}");
+    }
+}
+
+#[test]
+fn an_empty_startup_inbox_adds_nothing_to_the_first_prompt() {
+    let driver = Driver::with_startup_readers(Vec::new(), || Some(Vec::new()), String::new);
+    driver
+        .open(OPENING, Some(FirstTurn::Fresh(PROMPT.to_owned())))
+        .expect("opening writes");
+    answer(&driver, &registration(false));
+    assert_eq!(frames(&driver)[1]["message"], PROMPT);
+    driver.deliver_inbox();
+    assert_eq!(frames(&driver).len(), 2, "an empty inbox stays silent");
 }
 
 #[test]

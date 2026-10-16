@@ -2,12 +2,12 @@
 //! the resident has seated this occupant, whichever is later. Only a seat that
 //! serves the scheme is told about it and handed URLs to read, and only a
 //! seated occupant's commands pass job admission, so a turn written before
-//! the start commits would open with refusals. A resumed seat's notice is
-//! read from current authority only at that release. Background notices, kept
-//! jobs' events and endings, and steering wait behind that turn: omp runs
-//! whatever reaches an idle session first as a turn of its own, so anything
-//! written ahead of the first prompt would leave the prompt's authority stale
-//! by its delivery.
+//! the start commits would open with refusals. Fresh and resumed seats read
+//! their pending steering only when releasing that first prompt and append it
+//! after the briefing or resume notice. Background notices, kept jobs' events
+//! and endings, and later steering wait behind that turn: omp runs whatever
+//! reaches an idle session first as a turn of its own, so anything written
+//! ahead of the first prompt would leave the prompt's authority stale.
 
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,11 +22,12 @@ mod tests;
 
 /// The first turn a launch composed, and whether its seat resumes a session.
 pub(in crate::resident) enum FirstTurn {
-    /// A fresh session's turn, already carrying its startup briefing.
+    /// A fresh session's turn, already carrying its startup briefing. Pending
+    /// steering current at delivery follows that briefing.
     Fresh(String),
-    /// A resumed session's neutral turn. The resume notice naming the held
-    /// claim and pending steering joins it only as it is delivered, so no
-    /// launch, however early or abandoned, freezes that authority.
+    /// A resumed session's neutral turn. The resume notice and pending
+    /// steering join it only as it is delivered, so no launch, however early
+    /// or abandoned, freezes that authority.
     Resumed(String),
 }
 
@@ -113,11 +114,11 @@ impl<W: Write + Send + 'static> Driver<W> {
 
     /// Start the held first turn once omp has answered the registration and
     /// the journal seats this occupant; returns whether this call started it.
-    /// Only one call takes the turn, so a resumed seat's authority is read
-    /// once, at this delivery. Background notices held meanwhile follow the
-    /// prompt, then held jobs' events and endings, then the inbox as it stands
-    /// now, so omp starts the prompt's turn before any of theirs and the
-    /// direction it counts arrives after it.
+    /// Only one call takes the turn, so the resumed-seat notice and every
+    /// first prompt's pending inbox are read once, at this delivery. Background
+    /// notices held meanwhile follow the prompt, then held jobs' events and
+    /// endings, then an inbox check delivers anything that arrived after the
+    /// startup read.
     pub(super) fn release_first_turn(&self) -> bool {
         if self.registration.serves.get().is_none() {
             return false;
@@ -136,7 +137,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         let Some(turn) = turn else {
             return false;
         };
-        let prompt = match turn {
+        let mut prompt = match turn {
             FirstTurn::Fresh(prompt) => prompt,
             FirstTurn::Resumed(mut prompt) => {
                 prompt.push_str("\n\n");
@@ -144,6 +145,10 @@ impl<W: Write + Send + 'static> Driver<W> {
                 prompt
             }
         };
+        if let Some(inbox) = self.startup_inbox() {
+            prompt.push_str("\n\n");
+            prompt.push_str(&inbox);
+        }
         let prompt = vendor::omp::first_prompt_request(&self.for_seat(prompt));
         let queued = self
             .background

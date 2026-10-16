@@ -34,6 +34,44 @@ impl steer::Standing for PendingKeys {
 }
 
 impl<W: Write + Send + 'static> Driver<W> {
+    /// Read the inbox current when the first prompt is released and append
+    /// every still-unanswered item to that prompt. Recording the same delivery
+    /// state as an ordinary interjection prevents the release's trailing inbox
+    /// check from sending those items again.
+    pub(super) fn startup_inbox(&self) -> Option<String> {
+        let rendered = (self.read_inbox)()?;
+        let mut delivered = self
+            .delivered
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if delivered.as_deref() == Some(rendered.as_slice()) {
+            return None;
+        }
+        let message =
+            std::str::from_utf8(&rendered).expect("the in-memory inbox renderer produces UTF-8");
+        let owed = {
+            let mut answered = self.answered.lock().unwrap_or_else(PoisonError::into_inner);
+            answered.settle(message);
+            steer::inbox::retain(message, |key| !answered.holds(key))
+        };
+        *delivered = Some(rendered);
+        if owed.is_empty() {
+            return None;
+        }
+        let keys = steer::inbox::keys(&owed)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        self.told
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(keys.iter().cloned());
+        self.recognized
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(keys);
+        Some(owed)
+    }
+
     /// Send new direction once; replace reminders in the SDK aside bridge.
     /// Compaction replays pending direction in full without interrupting the
     /// response that follows it.
