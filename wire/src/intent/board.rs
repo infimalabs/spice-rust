@@ -871,6 +871,14 @@ pub struct BoardTask {
     /// outside every group is passive and no claim path grants it.
     #[serde(default, skip_serializing_if = "is_false")]
     pub grouped: bool,
+    /// Latest preparation decision that ruled on this output, whether its
+    /// verdict released or rejected the output.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub preparation_decision: Option<crate::rooms::DecisionRef>,
     /// The reason recorded when the operator concluded this Design collapsed.
     #[serde(
         default,
@@ -1021,6 +1029,7 @@ impl BoardTask {
             lease,
             explicit_release: false,
             grouped: false,
+            preparation_decision: None,
             collapse_reason: None,
             stranded: None,
             controlled: Vec::new(),
@@ -1040,6 +1049,16 @@ impl BoardTask {
     #[must_use]
     pub const fn with_grouped(mut self, grouped: bool) -> Self {
         self.grouped = grouped;
+        self
+    }
+
+    /// Attach the latest preparation decision that ruled on this output.
+    #[must_use]
+    pub fn with_preparation_decision(
+        mut self,
+        decision: Option<crate::rooms::DecisionRef>,
+    ) -> Self {
+        self.preparation_decision = decision;
         self
     }
 

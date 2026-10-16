@@ -197,7 +197,8 @@ pub(in crate::board_command) fn project_frontier<'a>(
                 }
             }
         }
-        satisfied.observe(statement, heads.workflow().body());
+        let preparation_decision = observed.facts().preparation_decision(&statement.born);
+        satisfied.observe(statement, heads.workflow().body(), preparation_decision);
         let explicit_release = heads.claim().is_some_and(|claim| {
             observed
                 .facts()
@@ -227,7 +228,8 @@ pub(in crate::board_command) fn project_frontier<'a>(
         .with_creator_team(statement.creation.creator_team())
         .with_explicit_release(explicit_release)
         .with_phase_handoff(phase_handoff)
-        .with_grouped(observed.facts().grouped(&statement.born));
+        .with_grouped(observed.facts().grouped(&statement.born))
+        .with_preparation_decision(preparation_decision.cloned());
         origin_threads.push(task_origin_thread(
             observed,
             &statement.born,

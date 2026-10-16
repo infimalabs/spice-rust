@@ -52,8 +52,13 @@ impl ResolvedTasks {
 
     /// Record one live task; an output still lacking its selection marks the
     /// preparation that constructed it.
-    pub fn observe(&mut self, statement: &wire::TaskHead, workflow: &wire::WorkflowHead) {
-        if let Some(parent) = unselected_output_of(statement, workflow) {
+    pub fn observe(
+        &mut self,
+        statement: &wire::TaskHead,
+        workflow: &wire::WorkflowHead,
+        preparation_decision: Option<&wire::rooms::DecisionRef>,
+    ) {
+        if let Some(parent) = unselected_output_of(statement, workflow, preparation_decision) {
             self.unselected.insert(parent.clone());
         }
     }
@@ -220,13 +225,29 @@ pub fn gather_task(statement: &wire::TaskHead, workflow: &wire::WorkflowHead) ->
 }
 
 /// The preparation whose selection one live output still lacks: an output its
-/// preparation constructed directly that is pending without an execution
-/// authorization. A gather task is evidence, never an output.
+/// preparation constructed directly that is pending without either an
+/// execution authorization or a recorded decision. A rejected output is
+/// decided but remains unauthorized. A gather task is evidence, never an
+/// output.
 ///
 /// A Design cannot be concluded done while it owns such an output; only the
-/// operator's selection, or closing or deleting the output, discharges it.
+/// operator's decision, or closing or deleting the output, discharges it.
 #[must_use]
 pub fn unselected_output_of<'a>(
+    statement: &'a wire::TaskHead,
+    workflow: &wire::WorkflowHead,
+    preparation_decision: Option<&wire::rooms::DecisionRef>,
+) -> Option<&'a TaskStamp> {
+    preparation_decision
+        .is_none()
+        .then(|| unaccepted_output_of(statement, workflow))
+        .flatten()
+}
+
+/// The preparation whose live output remains unreleased. Unlike selection
+/// waiting, a rejection does not discharge this completion gate.
+#[must_use]
+pub fn unaccepted_output_of<'a>(
     statement: &'a wire::TaskHead,
     workflow: &wire::WorkflowHead,
 ) -> Option<&'a TaskStamp> {
@@ -1316,7 +1337,11 @@ pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
         if candidate.grouped() {
             resolved.group(candidate.born().clone());
         }
-        resolved.observe(candidate.statement(), candidate.workflow());
+        resolved.observe(
+            candidate.statement(),
+            candidate.workflow(),
+            candidate.preparation_decision(),
+        );
     }
     resolved.released = crate::control::released_tasks(entries);
     resolved.hold_released_work(entries);

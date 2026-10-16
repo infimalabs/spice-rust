@@ -268,9 +268,6 @@ fn feedback_remains_owed_when_the_claim_moves_before_consumption() {
         .pop()
         .expect("first holder is owed input");
     fixture.free(0);
-    for output in &fixture.outputs {
-        settle_output(&fixture.bus, fixture.epoch, output, true);
-    }
     fixture.claim(1);
     assert!(record_return(&fixture.bus, &stale).is_err());
     assert_eq!(
