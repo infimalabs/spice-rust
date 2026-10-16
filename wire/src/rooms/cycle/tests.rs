@@ -218,7 +218,7 @@ impl Journal {
     }
 
     fn cycle(&self, working: bool) -> DesignCycle {
-        self.cycles.facts(&design()).cycle(false, working)
+        self.cycles.facts(&design()).cycle(working)
     }
 
     /// One completed pass: proposal, release, and a decision.
@@ -380,12 +380,15 @@ fn an_undecided_proposal_holds_selection_until_decided_or_withdrawn() {
         Some(DesignPassEnd::Proposed)
     );
 
-    journal.lane(&any(CandidateWithdrawn {
-        withdrawal: CandidateWithdrawal {
-            candidate: candidate(10),
-            reason: "superseded".to_owned(),
-        },
-    }));
+    let withdrawn = |micros| {
+        any(CandidateWithdrawn {
+            withdrawal: CandidateWithdrawal {
+                candidate: candidate(micros),
+                reason: "superseded".to_owned(),
+            },
+        })
+    };
+    journal.lane(&withdrawn(10));
     assert_eq!(journal.cycle(false), DesignCycle::ReadyForProposal);
 
     let mut stale = Journal::new();
@@ -400,9 +403,15 @@ fn an_undecided_proposal_holds_selection_until_decided_or_withdrawn() {
         DesignCycle::AwaitingDecision,
         "a decision of an older proposal leaves the latest one undecided"
     );
+
+    let mut shadowed = Journal::new();
+    shadowed.lane(&proposed(10, vec![task(OUTPUT)]));
+    shadowed.lane(&proposed(11, vec![task(OUTPUT)]));
+    shadowed.lane(&withdrawn(11));
     assert_eq!(
-        stale.cycles.facts(&design()).cycle(true, false),
-        DesignCycle::AwaitingDecision
+        shadowed.cycle(false),
+        DesignCycle::AwaitingDecision,
+        "withdrawing a later proposal leaves an earlier undecided one owed"
     );
 }
 

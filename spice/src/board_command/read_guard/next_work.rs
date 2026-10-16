@@ -234,7 +234,6 @@ pub(in crate::board_command) fn project_frontier<'a>(
             }
         }
         let preparation_decision = observed.facts().preparation_decision(&statement.born);
-        satisfied.observe(statement, heads.workflow().body(), preparation_decision);
         let explicit_release = heads.claim().is_some_and(|claim| {
             observed
                 .facts()

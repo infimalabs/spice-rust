@@ -36,7 +36,7 @@ pub use next::{
     gather_route, gather_task, is_independent_handoff, is_released_by, offer_order, offer_order_at,
     passive_design, resolved_tasks, select, select_at, select_with_index_at, select_with_satisfied,
     select_with_satisfied_at, selectable_entry, selectable_entry_at, stealable_entry,
-    unaccepted_output_of, unselected_output_of, work_waits,
+    unaccepted_output_of, work_waits,
 };
 pub use overlap::{ClaimOverlap, claim_overlaps};
 pub use phase::{HANDOFF_SECONDS, PhaseRefusal, Transition, TransitionKind};

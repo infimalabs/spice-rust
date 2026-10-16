@@ -14,16 +14,14 @@ use crate::urgency::{Urgency, declared_priority};
 /// Plan's positive completion. An output whose immediate preparation is a
 /// Design instead requires that Design's exact selection, which never
 /// concludes it, so each known preparation parent records whether it is a
-/// Design and whether the working-group partition holds it. Each Design that
-/// still has a live output awaiting that selection is recorded too, so it
-/// waits on the operator rather than a lane, as is each controller whose
-/// released work is still in progress, so its Design waits on that work.
+/// Design and whether the working-group partition holds it. Each controller
+/// whose released work is still in progress is recorded too, so its Design
+/// waits on that work.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResolvedTasks {
     settled: BTreeMap<TaskStamp, bool>,
     designs: BTreeMap<TaskStamp, bool>,
     active_designs: BTreeSet<TaskStamp>,
-    unselected: BTreeSet<TaskStamp>,
     released: BTreeSet<TaskStamp>,
     working: BTreeSet<TaskStamp>,
 }
@@ -51,23 +49,11 @@ impl ResolvedTasks {
         self.active_designs.insert(task);
     }
 
-    /// Record one live task; an output still lacking its selection marks the
-    /// preparation that constructed it.
-    pub fn observe(
-        &mut self,
-        statement: &wire::TaskHead,
-        workflow: &wire::WorkflowHead,
-        preparation_decision: Option<&wire::rooms::DecisionRef>,
-    ) {
-        if let Some(parent) = unselected_output_of(statement, workflow, preparation_decision) {
-            self.unselected.insert(parent.clone());
-        }
-    }
-
     /// Record each controller whose released work is still in progress among
-    /// `entries`: a filed, pending, undeferred task, never a gather task,
-    /// whose control allocation already treats as satisfied. Call it once
-    /// every readiness fact those entries read has been recorded.
+    /// `entries`: a filed, pending task, deferred or not, never a gather
+    /// task, whose control allocation already treats as satisfied. Deferral
+    /// never settles released work. Call it once every readiness fact those
+    /// entries read has been recorded.
     pub fn hold_released_work<'a>(&mut self, entries: impl IntoIterator<Item = &'a Entry>) {
         let working = entries
             .into_iter()
@@ -75,7 +61,6 @@ impl ResolvedTasks {
                 let workflow = entry.workflow();
                 entry.is_filed()
                     && workflow.status.is_pending()
-                    && workflow.deferral.is_none()
                     && !gather_task(entry.statement(), workflow)
                     && control_satisfied(entry.statement(), false, self)
             })
@@ -193,27 +178,6 @@ pub fn gather_task(statement: &wire::TaskHead, workflow: &wire::WorkflowHead) ->
     gather_route(statement.intent, route)
 }
 
-/// The preparation whose selection one live output still lacks: an output its
-/// preparation constructed directly that is pending without an execution
-/// authorization and without a verdict on the latest unwithdrawn candidate
-/// version naming it. A rejected output is decided but remains unauthorized;
-/// re-proposing it in a later open candidate makes it undecided again. A
-/// gather task is evidence, never an output.
-///
-/// Only the operator's decision on that version, its withdrawal back to an
-/// earlier verdict, or closing or deleting the output discharges it.
-#[must_use]
-pub fn unselected_output_of<'a>(
-    statement: &'a wire::TaskHead,
-    workflow: &wire::WorkflowHead,
-    preparation_decision: Option<&wire::rooms::DecisionRef>,
-) -> Option<&'a TaskStamp> {
-    preparation_decision
-        .is_none()
-        .then(|| unaccepted_output_of(statement, workflow))
-        .flatten()
-}
-
 /// The preparation whose live output remains unreleased. Unlike selection
 /// waiting, a rejection does not discharge this completion gate.
 #[must_use]
@@ -233,17 +197,17 @@ pub fn unaccepted_output_of<'a>(
 /// Design.
 ///
 /// Full-board and live-frontier allocation both derive it from the same
-/// indexed [`wire::rooms::DesignFacts`] and resolved outputs: an output it
-/// constructed still lacking selection holds it for the operator, and live
-/// work it released holds it unless later input arrives.
+/// indexed [`wire::rooms::DesignFacts`] and resolved work: an undecided
+/// proposal holds it for the operator, and live work it released holds it
+/// unless later input arrives.
 #[must_use]
 pub fn design_cycle(entry: &Entry, resolved: &ResolvedTasks) -> Option<DesignCycle> {
     let statement = entry.statement();
     wire::intent::is_open_design(statement.intent, entry.workflow()).then(|| {
-        entry.design().cycle.cycle(
-            resolved.unselected.contains(&statement.born),
-            resolved.working.contains(&statement.born),
-        )
+        entry
+            .design()
+            .cycle
+            .cycle(resolved.working.contains(&statement.born))
     })
 }
 
@@ -1278,8 +1242,8 @@ pub fn stealable_entry(
 }
 
 /// Each settled task with whether its conclusion is positive, whether each
-/// entry is a Design, which preparations still own an unselected output, and
-/// which controllers' released work is still in progress.
+/// entry is a Design, and which controllers' released work is still in
+/// progress.
 ///
 /// Closing or deleting a task resolves ordinary prerequisites. Neither approves
 /// execution controlled by that task. All readiness surfaces use these facts.
@@ -1297,11 +1261,6 @@ pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
         if candidate.design_is_active() {
             resolved.group(candidate.born().clone());
         }
-        resolved.observe(
-            candidate.statement(),
-            candidate.workflow(),
-            candidate.preparation_decision(),
-        );
     }
     resolved.released = crate::control::released_tasks(entries);
     resolved.hold_released_work(entries);
