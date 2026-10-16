@@ -665,6 +665,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "group::arrange"
     ),
+    operator!(
+        ["group", "stance"],
+        "group stance GROUP STANCE",
+        Command,
+        [WorkingGroupsArranged],
+        Reply,
+        "group::stance"
+    ),
     row!(
         ["preparation", "show"],
         "preparation show HANDLE [--limit N] [--max-bytes N] [--after POSITION]",

@@ -70,6 +70,7 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
         lease: None,
         explicit_release: false,
         grouped: false,
+        design_active: false,
         preparation_decision: None,
         collapse_reason: None,
         controlled: Vec::new(),
@@ -257,7 +258,7 @@ fn lifecycle_precedence_follows_task_status_standings() {
 }
 
 #[test]
-fn design_passivity_yields_only_to_possession_grouping_and_selection() {
+fn design_passivity_yields_only_to_possession_active_stance_and_selection() {
     let design = |value| design(value, "alpha.design");
     let mut held = design(1);
     held.claim = Some(claim(&held, ClaimDisposition::Active));
@@ -269,17 +270,19 @@ fn design_passivity_yields_only_to_possession_grouping_and_selection() {
             .parse()
             .expect("fixture deferral"),
     );
-    let mut grouped = design(4);
-    grouped.grouped = true;
-    let mut grouped_lapsed = design(5);
-    grouped_lapsed.grouped = true;
-    grouped_lapsed.claim = Some(claim(&grouped_lapsed, ClaimDisposition::Lapsed));
+    let mut active = design(4);
+    active.grouped = true;
+    active.design_active = true;
+    let mut active_lapsed = design(5);
+    active_lapsed.grouped = true;
+    active_lapsed.design_active = true;
+    active_lapsed.claim = Some(claim(&active_lapsed, ClaimDisposition::Lapsed));
     let mut board = board(vec![
         held,
         lapsed,
         deferred,
-        grouped,
-        grouped_lapsed,
+        active,
+        active_lapsed,
         design(6),
         design(7),
     ]);
@@ -302,7 +305,7 @@ fn design_passivity_yields_only_to_possession_grouping_and_selection() {
             WorkAvailability::Passive,
             WorkAvailability::Selection,
         ],
-        "an ungrouped Design waits on the operator's grouping unless it awaits an output selection; a grouped one moves"
+        "a passive Design waits on the operator unless possessed or awaiting selection; an active one moves"
     );
     let counts = projection.counts();
     assert_eq!([counts.passive(), counts.waiting()], [3, 4]);
@@ -606,6 +609,7 @@ fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
     let passive = design(10, "beta.design");
     let mut decided = design(11, "gamma.design");
     decided.grouped = true;
+    decided.design_active = true;
     let mut board = board(vec![
         in_flight,
         stale,

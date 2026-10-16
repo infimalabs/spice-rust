@@ -122,6 +122,8 @@ pub(crate) enum GroupChange {
     Arrange(wire::rooms::WorkingGroupArrange),
     /// Turn one group's fast-mode flag on or off.
     Fast(wire::rooms::WorkingGroupFast),
+    /// Set one group's shared activity stance.
+    Stance(wire::rooms::WorkingGroupStanceSet),
 }
 
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
@@ -143,6 +145,7 @@ impl GroupChange {
                 })
                 .sum(),
             Self::Fast(request) => request.group.as_str().len(),
+            Self::Stance(request) => request.group.as_str().len(),
         }
     }
 }

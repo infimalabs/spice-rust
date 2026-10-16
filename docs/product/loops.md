@@ -595,32 +595,32 @@ owns each rule summarized here.
   created directly under that Design: `spice task add TITLE --flow gather`
   while holding the Design, or with `--preparation DESIGN`. It runs under
   ordinary routing with no execution authorization while its Design stays
-  open in a working group. Like a planning claim it holds no commit
-  authority, so it lands nothing; its deliverable is task notes and retained
-  artifacts that a retained candidate cites by exact source. A gather task is
-  never a candidate output, so turning a finding into work still takes a
-  candidate output the operator selects.
+  open and its group stays in Explore or Converge. Like a planning claim it
+  holds no commit authority, so it lands nothing; its deliverable is task notes
+  and retained artifacts that a retained candidate cites by exact source. A
+  gather task is never a candidate output, so turning a finding into work
+  still takes a candidate output the operator selects.
 - **Organization and foreground.** The
   [working-group partition](invariants/identity.md#identity-working-groups-are-one-guarded-partition-of-designs)
-  is shared repository organization read by `spice group list` and changed only
-  by `spice group move` and `spice group arrange`. Open consoles, their order,
-  drafts, and focus are this browser's foreground and are never shared.
-- **Design standing.** An open Design inside a working group is
+  is shared repository organization and stance authority read by `spice group
+  list` and changed by `spice group move`, `spice group arrange`, and `spice
+  group stance`. Open consoles, their order, drafts, speech, and focus are this
+  browser's foreground and are never shared.
+- **Design standing.** An open Design in an Explore or Converge group is
   [active](invariants/identity.md#work-working-group-standing-makes-a-design-active-or-passive):
-  the allocator offers it and capture, steal, and room coordination may reach
-  it. Outside every group it is passive, and every one of those paths refuses
-  (`claim::design-passive`, `room::design-passive`). The operator journey is
-  `spice group move DESIGN --to GROUP` or `--new` to activate it and a bare
-  `spice group move DESIGN` to take it out of every group. Moving out an
-  unheld Design makes it passive at once. Moving out a Design a lane holds
-  also withdraws its room's unanswered
+  the allocator offers it and capture, steal, gather creation, and room
+  coordination may reach it. A Design in Passive or outside every group is
+  passive, and those possession paths refuse (`claim::design-passive`,
+  `room::design-passive`). A fresh group starts in Passive. The operator groups a
+  Design with `spice group move DESIGN --to GROUP` or `--new`, then chooses its
+  group's activity with `spice group stance GROUP passive|explore|converge`.
+  Moving to Passive, into an existing Passive group, or out of every group makes the
+  Design passive. If a lane holds it, the change withdraws unanswered
   coordination and sends that holder one stop direction, queued for the lane's
-  next seat when it is vacant. The lane journey is the same as for a put
-  aside: the holder checkpoints and runs ordinary `spice task free DESIGN`,
-  which parks unpublished commits and dirty work under the task; its claim
-  stays authoritative until then, and the parked Design is offered to no lane
-  while it stays passive. Moving it back into a group makes it eligible again
-  with its room, candidates, outputs, history, and authorization unchanged.
+  next seat when vacant. The holder checkpoints and runs ordinary `spice task
+  free DESIGN`, which parks unpublished commits and dirty work; its claim stays
+  authoritative until then. Explore or Converge makes it eligible again with
+  its room, candidates, outputs, history, and authorization unchanged.
 - **OOPS grooming.** `spice room post DESIGN --report REPORT... --disposition
   duplicate|no-work|deferred-for-later|covered|proposed-work --cause TEXT
   [--exceptions TEXT] [--uncertainty TEXT]` records, in an open Design's room,

@@ -4,7 +4,7 @@ mod group;
 mod preparation;
 mod principal;
 mod requirements;
-use group::{client_group_arrange, client_group_list, client_group_move};
+use group::{client_group_arrange, client_group_list, client_group_move, client_group_stance};
 use requirements::{client_require, environment_requirements};
 mod room;
 use room::dispatch_room_client;
@@ -62,6 +62,7 @@ fn dispatch_client(
         ["group", "list"] => client_group_list(repository, contract, matches),
         ["group", "move"] => client_group_move(repository, contract, matches),
         ["group", "arrange"] => client_group_arrange(repository, contract, matches),
+        ["group", "stance"] => client_group_stance(repository, contract, matches),
         ["preparation", verb] => preparation::dispatch_client(repository, contract, matches, verb),
         ["task", "list"] => client_list(repository, contract, matches),
         ["task", "status"] => client_status(repository, contract),
@@ -979,6 +980,7 @@ pub(super) fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<C
                     .with_creator_team(heads.creator_team)
                     .with_explicit_release(heads.explicit_release)
                     .with_grouped(heads.grouped)
+                    .with_design_active(heads.design_active)
                     .with_preparation_decision(heads.preparation_decision.clone())
             })
         })
@@ -1309,6 +1311,12 @@ pub(crate) fn dispatch(
     if let wire::intent::Intent::WorkingGroupMove(moving) = command.body() {
         let config = steer::Config::default();
         return Some(move_working_group(bus, command, moving, &config, &projects, &allocation).0);
+    }
+    if let wire::intent::Intent::WorkingGroupStance(stance) = command.body() {
+        let config = steer::Config::default();
+        return Some(
+            set_working_group_stance(bus, command, stance, &config, &projects, &allocation).0,
+        );
     }
     dispatch_with_repository(bus, command, None, &projects, &allocation)
 }

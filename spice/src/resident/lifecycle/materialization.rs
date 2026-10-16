@@ -287,7 +287,8 @@ impl Projection {
             let entry = entry(&heads, projects)?
                 .with_creator_team(creator_team)
                 .with_phase_handoff(phase_handoff)
-                .with_grouped(snapshot.facts().grouped(task));
+                .with_grouped(snapshot.facts().grouped(task))
+                .with_design_active(snapshot.facts().design_is_active(task));
             entries.insert(task.clone(), EntryUpdate { heads, entry });
         }
         Ok(entries)

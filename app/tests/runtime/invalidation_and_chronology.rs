@@ -151,7 +151,7 @@ fn task_head_rows() -> Vec<StaleRow> {
                 "to": "dVsYdDj7f",
                 "partition": {
                     "revision": 1,
-                    "groups": [{"group": "dVsYdDj7f", "anchors": ["1kKRRsDP"]}],
+                    "groups": [{"group": "dVsYdDj7f", "anchors": ["1kKRRsDP"], "stance": "explore"}],
                 },
             }),
             [true, false, false],
@@ -161,11 +161,11 @@ fn task_head_rows() -> Vec<StaleRow> {
                 "kind": "group::arranged",
                 "from": {
                     "revision": 1,
-                    "groups": [{"group": "dVsYdDj7f", "anchors": ["1kKRRsDP"]}],
+                    "groups": [{"group": "dVsYdDj7f", "anchors": ["1kKRRsDP"], "stance": "explore"}],
                 },
                 "partition": {
                     "revision": 2,
-                    "groups": [{"group": "dVsYdDj7f", "anchors": ["1kKRRsDP"]}],
+                    "groups": [{"group": "dVsYdDj7f", "anchors": ["1kKRRsDP"], "stance": "explore"}],
                 },
             }),
             [false, false, false],

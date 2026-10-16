@@ -215,6 +215,7 @@ impl TaskProjection<'_> {
             .copied()
             .flatten();
         let grouped = self.facts.grouped(&statement.body.born);
+        let design_active = self.facts.design_is_active(&statement.body.born);
         let statement_born = statement.body.born.clone();
         let preparation_decision = self.facts.preparation_decision(&statement_born).cloned();
         let entry = Entry::new(
@@ -234,6 +235,7 @@ impl TaskProjection<'_> {
         .with_explicit_release(explicit_release)
         .with_phase_handoff(phase_handoff)
         .with_grouped(grouped)
+        .with_design_active(design_active)
         .with_preparation_decision(preparation_decision.clone());
         let visibility = entry.project().visibility().clone();
         let origin_thread = self
@@ -257,6 +259,7 @@ impl TaskProjection<'_> {
         )
         .with_explicit_release(explicit_release)
         .with_grouped(grouped)
+        .with_design_active(design_active)
         .with_preparation_decision(preparation_decision)
         .with_collapse_reason(
             self.facts

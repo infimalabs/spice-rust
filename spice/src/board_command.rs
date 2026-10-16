@@ -150,7 +150,7 @@ mod progress;
 use progress::*;
 mod group;
 use group::*;
-pub(crate) use group::{group_fast_lanes, move_working_group};
+pub(crate) use group::{group_fast_lanes, move_working_group, set_working_group_stance};
 mod read_guard;
 use read_guard::*;
 mod report;

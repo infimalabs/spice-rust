@@ -7,7 +7,9 @@ use crate::rooms::{
     RoomReceiptDisposition, RoomReceiptRef, RoomRelevanceVerdict, RoomSource,
     RoomSourceUnavailable, RoomSourceView,
 };
-pub use crate::rooms::{WorkingGroupArrange, WorkingGroupFast, WorkingGroupMove};
+pub use crate::rooms::{
+    WorkingGroupArrange, WorkingGroupFast, WorkingGroupMove, WorkingGroupStanceSet,
+};
 use crate::{OccupantAddress, SequenceCode, TaskHandle, TaskStamp};
 
 /// Start or resume one bounded preparation contribution in an anchor room.
@@ -449,6 +451,8 @@ pub enum WorkingGroupAnchor {
 pub struct WorkingGroupView {
     /// Stable repository-shared identity.
     pub group: RoomAuthorityStamp,
+    /// Shared activity stance governing the group's open Designs.
+    pub stance: crate::rooms::WorkingGroupStance,
     /// Room anchors in arranged order, resolved through current task authority.
     pub anchors: Vec<WorkingGroupAnchor>,
 }
@@ -486,4 +490,6 @@ pub enum WorkingGroupChangeStatus {
     Arranged,
     /// One group's fast-mode flag was set.
     Retuned,
+    /// One group's shared activity stance was set.
+    Stanced,
 }

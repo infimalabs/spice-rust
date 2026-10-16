@@ -498,6 +498,7 @@ fn moved(journal: &Journal, design: &TaskStamp, to: Option<i64>) -> WorkingGroup
             None => groups.push(WorkingGroup {
                 group: target.clone(),
                 anchors: vec![design.clone()],
+                stance: wire::rooms::WorkingGroupStance::Passive,
             }),
         }
     }
@@ -524,6 +525,7 @@ fn arranged(journal: &Journal, groups: Vec<(i64, Vec<TaskStamp>)>) -> WorkingGro
                 .map(|(group, anchors)| WorkingGroup {
                     group: authority(group),
                     anchors,
+                    stance: wire::rooms::WorkingGroupStance::Explore,
                 })
                 .collect(),
             fast: Vec::new(),

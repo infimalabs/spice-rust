@@ -567,4 +567,5 @@ fn projected_settled_entry(
     )
     .expect("settling an admitted task preserves a valid historical entry")
     .with_grouped(entry.grouped())
+    .with_design_active(entry.design_is_active())
 }

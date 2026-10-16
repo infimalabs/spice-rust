@@ -314,9 +314,13 @@ fn apply_command_response(
                 publish: false,
             }
         }
-        PendingKind::WorkingGroup { respond } => {
-            apply_callback_reply(session, bytes, "Working-group change failed", &respond)?
-        }
+        PendingKind::WorkingGroup { respond } => CommandApplication {
+            // Group changes can alter board-projected Design standing. Re-read
+            // both successful and refused changes so the shared partition and
+            // its derived catalog standing return to one authority.
+            refresh: true,
+            ..apply_callback_reply(session, bytes, "Working-group change failed", &respond)?
+        },
         PendingKind::RoomPost { respond } => {
             apply_callback_reply(session, bytes, "Room post failed", &respond)?
         }

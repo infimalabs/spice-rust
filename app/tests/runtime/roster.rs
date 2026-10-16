@@ -43,6 +43,7 @@ fn partition(groups: &[(&str, &[&str])]) -> WorkingGroupPartition {
             .map(|(group_id, designs)| WorkingGroup {
                 group: group(group_id),
                 anchors: designs.iter().map(|label| fixture_stamp(label)).collect(),
+                stance: wire::rooms::WorkingGroupStance::Explore,
             })
             .collect(),
         fast: Vec::new(),

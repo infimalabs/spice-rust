@@ -87,9 +87,9 @@ impl RoomAnchorSettlement {
 pub enum DesignStanding {
     /// No board snapshot, or the board no longer carries the anchor.
     Unavailable,
-    /// Open outside every working group; no lane can acquire it.
+    /// Open without a group or in a Passive group; no lane can acquire it.
     Passive,
-    /// Open inside a working group with no lane on it.
+    /// Open in an Explore or Converge group with no lane on it.
     Active,
     /// Active, and a lane claims it.
     Claimed,

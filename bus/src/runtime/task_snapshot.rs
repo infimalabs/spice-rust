@@ -213,6 +213,8 @@ struct Indexes {
     duplicate_task_origins: HashSet<journal::crossing::TaskStamp>,
     invalid_creator_teams: HashSet<journal::crossing::TaskStamp>,
     grouped_designs: Arc<HashSet<journal::crossing::TaskStamp>>,
+    /// Open-Design activity implied by each grouped Design's shared stance.
+    active_designs: Arc<HashSet<journal::crossing::TaskStamp>>,
     /// The reason each Design's collapse recorded, shared until a commit
     /// records another conclusion.
     collapse_reasons: Arc<HashMap<journal::crossing::TaskStamp, String>>,
@@ -222,6 +224,14 @@ struct Indexes {
 
 impl Indexes {
     fn replace_partition(&mut self, partition: journal::crossing::rooms::WorkingGroupPartition) {
+        self.active_designs = Arc::new(
+            partition
+                .groups
+                .iter()
+                .filter(|group| group.stance.is_active())
+                .flat_map(|group| group.anchors.iter().cloned())
+                .collect(),
+        );
         self.grouped_designs = Arc::new(
             partition
                 .groups
@@ -651,6 +661,12 @@ impl TaskFacts {
     #[must_use]
     pub fn grouped(&self, task: &journal::crossing::TaskStamp) -> bool {
         self.indexes.grouped_designs.contains(task)
+    }
+
+    /// Whether `task` is active under its current working-group stance.
+    #[must_use]
+    pub fn design_is_active(&self, task: &journal::crossing::TaskStamp) -> bool {
+        self.indexes.active_designs.contains(task)
     }
 
     /// The reason the operator's collapse of Design `task` recorded.

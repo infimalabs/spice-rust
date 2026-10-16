@@ -4,11 +4,11 @@ use wire::grouping::{Destination, Group, GroupingError, Partition, Placement, Re
 use wire::intent::{
     DesignStanding, WorkingGroupAnchor, WorkingGroupArrange, WorkingGroupChange,
     WorkingGroupChangeStatus, WorkingGroupFast, WorkingGroupMove, WorkingGroupPage,
-    WorkingGroupRead, WorkingGroupView,
+    WorkingGroupRead, WorkingGroupStanceSet, WorkingGroupView,
 };
 use wire::rooms::{
     RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupMoved,
-    WorkingGroupPartition, WorkingGroupsArranged, working_group_origin,
+    WorkingGroupPartition, WorkingGroupStance, WorkingGroupsArranged, working_group_origin,
 };
 
 type Designs<'a> = Partition<&'a RoomAuthorityStamp, &'a TaskStamp>;
@@ -87,7 +87,12 @@ fn working_group_view(
             let workflow = read.workflow_head(born)?;
             Ok(match (task, workflow) {
                 (Some(task), Some(workflow)) if workflow.body().status != "deleted" => {
-                    match DesignStanding::of(task.body().intent, workflow.body(), true, None) {
+                    match DesignStanding::of(
+                        task.body().intent,
+                        workflow.body(),
+                        group.stance.is_active(),
+                        None,
+                    ) {
                         Some(design) => WorkingGroupAnchor::Available {
                             born: born.clone(),
                             handle: TaskHandle::for_project(&task.body().project, born),
@@ -102,6 +107,7 @@ fn working_group_view(
         .collect::<Result<_, GuardError>>()?;
     Ok(WorkingGroupView {
         group: group.group,
+        stance: group.stance,
         anchors,
     })
 }
@@ -138,9 +144,9 @@ impl<'a> wire::grouping::Kind for DesignKind<'a> {
 /// Move one design into a group, founding the group when no group holds that
 /// identity, or out of every group; a group its last design leaves ends.
 ///
-/// A Design that leaves every group stands passive. The same write withdraws
-/// its room's unanswered coordination and asks the lane holding it to
-/// checkpoint and free; the returned lane is the one asked to park.
+/// A move that changes an active Design to passive withdraws its room's
+/// unanswered coordination and asks the lane holding it to checkpoint and
+/// free; the returned lane is the one asked to park.
 pub(crate) fn move_working_group(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -186,11 +192,12 @@ pub(crate) fn move_working_group(
         return (missing, None);
     };
     let task = head.body();
+    let was_active = current.design_is_active(&request.design);
     let (fact, status) = match moved_fact(&current, task, workflow.body(), request, revision) {
         Ok(moved) => moved,
         Err(outcome) => return (outcome, None),
     };
-    let deactivation = if fact.to.is_none() {
+    let deactivation = if was_active && !fact.partition.design_is_active(&request.design) {
         let handle = TaskHandle::for_project(&task.project, &task.born);
         match Deactivation::read(bus, &handle, projects, allocation) {
             Ok(deactivation) => deactivation,
@@ -231,7 +238,7 @@ pub(crate) fn move_working_group(
                 .fact(fact, FactCause::Root)
                 .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))?;
             if let Some(deactivation) = deactivation {
-                parked = deactivation.stage(bus, command, config, write, at)?;
+                parked = deactivation.stage(bus, command, config, write, at, None)?;
             }
             Ok(())
         },
@@ -407,6 +414,128 @@ pub(super) fn set_working_group_fast(
     )
 }
 
+/// Set one standing group's shared activity stance. A transition to Passive
+/// commits each affected room's deactivation under that Design's task origin.
+pub(crate) fn set_working_group_stance(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    request: &WorkingGroupStanceSet,
+    config: &steer::Config,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> (Outcome<CommandAnswer>, Option<wire::CanonicalUuid>) {
+    let current = match bus.read(|read| current_partition(read)) {
+        Ok(current) => current,
+        Err(error) => {
+            return (
+                store_fault("group::read-unavailable", &error.to_string()),
+                None,
+            );
+        }
+    };
+    let revision = match next_revision(command, current.revision) {
+        Ok(revision) => revision,
+        Err(outcome) => return (outcome, None),
+    };
+    let Some(group) = current
+        .groups
+        .iter()
+        .find(|group| group.group == request.group)
+    else {
+        return (
+            refusal(
+                "group::missing",
+                Some(request.group.to_string()),
+                "the working group no longer stands; read the working groups and retry",
+            ),
+            None,
+        );
+    };
+    if group.stance == request.stance {
+        return (
+            refusal(
+                "group::stance-unchanged",
+                Some(request.stance.to_string()),
+                "the group's stance already stands there",
+            ),
+            None,
+        );
+    }
+    let previous_stance = group.stance;
+    let anchors = group.anchors.clone();
+    let deactivations = if previous_stance.is_active() && !request.stance.is_active() {
+        let handles = match bus.read(move |read| {
+            anchors
+                .iter()
+                .map(|born| {
+                    read.task_head(born).map(|head| {
+                        head.map(|head| TaskHandle::for_project(&head.body().project, born))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        }) {
+            Ok(handles) => handles,
+            Err(error) => {
+                return (
+                    store_fault("group::read-unavailable", &error.to_string()),
+                    None,
+                );
+            }
+        };
+        let mut deactivations = Vec::new();
+        for handle in handles.into_iter().flatten() {
+            match Deactivation::read(bus, &handle, projects, allocation) {
+                Ok(Some(deactivation)) => deactivations.push(deactivation),
+                Ok(None) => {}
+                Err(outcome) => return (outcome, None),
+            }
+        }
+        deactivations
+    } else {
+        Vec::new()
+    };
+    let mut partition = current.clone();
+    partition.revision = revision;
+    debug_assert!(partition.set_stance(&request.group, request.stance));
+    let fact = WorkingGroupsArranged {
+        from: current,
+        partition,
+    };
+    let outcome = change_partition(
+        bus,
+        command,
+        working_group_origin(),
+        revision,
+        WorkingGroupChangeStatus::Stanced,
+        Vec::new(),
+        |write, _| {
+            write
+                .fact(fact, FactCause::Root)
+                .map(drop)
+                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))
+        },
+        request.clone(),
+    );
+    if !matches!(
+        &outcome,
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(_),
+            ..
+        })
+    ) {
+        return (outcome, None);
+    }
+    let mut parked = None;
+    for deactivation in deactivations {
+        let directive = wire::CanonicalUuid::new(uuid::Uuid::new_v4());
+        match deactivation.commit(bus, command, config, (directive, command.id())) {
+            Ok(lane) => parked = parked.or(lane),
+            Err(fault) => return (fault, parked),
+        }
+    }
+    (outcome, parked)
+}
+
 /// Lanes a fast-flagged working group runs fast: each holder of an active
 /// claim on one of its Design tasks.
 pub(crate) fn group_fast_lanes(
@@ -474,8 +603,9 @@ fn designs(current: &WorkingGroupPartition) -> Result<Designs<'_>, Outcome<Comma
     .map_err(|error| store_fault("group::partition-invalid", &format!("{error:?}")))
 }
 
-/// The partition `designs` states at `revision`, carrying each standing
-/// group's fast-mode flag from `current`.
+/// The partition `designs` states at `revision`, carrying each retained
+/// group's stance and fast-mode flag from `current`. A newly founded group
+/// starts in Passive.
 fn stated(
     designs: &Designs<'_>,
     revision: u64,
@@ -489,6 +619,11 @@ fn stated(
             .map(|group| WorkingGroup {
                 group: group.group.clone(),
                 anchors: group.members.into_iter().cloned().collect(),
+                stance: current
+                    .groups
+                    .iter()
+                    .find(|standing| standing.group == *group.group)
+                    .map_or(WorkingGroupStance::Passive, |standing| standing.stance),
             })
             .collect(),
         fast: Vec::new(),

@@ -280,6 +280,47 @@ impl Lanes {
             matches!(outcome, Outcome::Reply(_)),
             "group move commits: {outcome:?}"
         );
+        if grouped {
+            self.stance(
+                id.saturating_add(1),
+                config,
+                wire::rooms::WorkingGroupStance::Explore,
+            );
+        }
+    }
+
+    fn stance(&self, id: u8, config: &SurfaceConfig, stance: wire::rooms::WorkingGroupStance) {
+        let partition = self
+            .bus
+            .read(|read| read.group_partition())
+            .expect("partition reads")
+            .expect("fixture group stands")
+            .into_body();
+        let request = wire::rooms::WorkingGroupStanceSet {
+            group: partition.groups[0].group.clone(),
+            stance,
+        };
+        let command = self.command(
+            id,
+            Actor::Operator,
+            CommandKind::WorkingGroupStance,
+            vec![Witness::Group {
+                revision: partition.revision,
+            }],
+            &request,
+        );
+        let (outcome, _) = crate::board_command::set_working_group_stance(
+            &self.bus,
+            &command,
+            &request,
+            &config.steering,
+            &config.projects,
+            &config.allocation,
+        );
+        assert!(
+            matches!(outcome, Outcome::Reply(_)),
+            "group stance commits: {outcome:?}"
+        );
     }
 
     fn contribute(&self, id: u8, config: &SurfaceConfig, lane: u8, design: &wire::TaskHandle) {
@@ -654,6 +695,23 @@ fn a_claimant_occupant_is_invited_once_to_each_matching_passive_design() {
 }
 
 #[test]
+fn a_design_in_a_passive_group_receives_organic_invitations() {
+    let lanes = Lanes::new("design-awareness-passive");
+    let config = surface(&lanes);
+    let design = lanes.design("dVrD245Kd", "Room catch-up pagination", PITCH);
+    lanes.group(50, &config, &design, true);
+    lanes.stance(52, &config, wire::rooms::WorkingGroupStance::Passive);
+    let _task = lanes.claimed("dVrD245Kc", FIRST);
+    let occupant = test_uuid(FIRST + 1);
+    let mut seated = seats(&[(FIRST, occupant)]);
+
+    lanes.reconcile(&config, &seated);
+    assert_eq!(lanes.told(FIRST, occupant), [stamp(&design)]);
+    seated.release_all();
+    lanes.finish();
+}
+
+#[test]
 fn a_new_completion_invites_its_unchanged_occupant_without_restart_backfill() {
     let lanes = Lanes::new("design-awareness-completion");
     lanes.vacate(FIRST);
@@ -912,9 +970,9 @@ fn a_lane_that_contributed_or_left_is_never_invited_again() {
     original.release_all();
 
     lanes.free(&first);
-    for (id, design) in [(32, &contributed), (34, &left)] {
+    for (id, design) in [(32, &contributed), (36, &left)] {
         lanes.group(id, &config, design, true);
-        lanes.group(id + 1, &config, design, false);
+        lanes.group(id + 2, &config, design, false);
     }
     lanes.vacate(FIRST);
     let renewed = test_uuid(40);

@@ -365,6 +365,7 @@ pub(crate) fn room_put_aside(
         &mut write,
         at,
         Withdrawal::PutAside,
+        None,
     ) {
         Ok(Some(withdrawn)) => withdrawn,
         Ok(None) => {
@@ -418,7 +419,11 @@ impl Withdrawal {
                 "Put aside task room {anchor}. Checkpoint the anchor's current work and run `spice task free {anchor}` at the next safe boundary. Do not release child-plan claims or unrelated steering/ASK duties."
             ),
             Self::Deactivation => format!(
-                "Design {anchor} left every working group and is passive. Checkpoint its current work and run `spice task free {anchor}` at the next safe boundary; free parks unpublished commits and dirty work under the task, and your claim stays authoritative until then. Do not release child-plan claims or unrelated steering/ASK duties."
+                "Design {anchor} became passive under its working-group stance. Checkpoint its \
+                 current work and run `spice task free {anchor}` at the next safe boundary; free \
+                 parks unpublished commits and dirty work under the task, and your claim stays \
+                 authoritative until then. Do not release child-plan claims or unrelated \
+                 steering/ASK duties."
             ),
         }
     }
@@ -464,6 +469,7 @@ fn stage_withdrawal(
     write: &mut JournalWrite,
     at: Instant,
     why: Withdrawal,
+    directive: Option<(CanonicalUuid, CanonicalUuid)>,
 ) -> Result<Option<Withdrawn>, Outcome<CommandAnswer>> {
     let current = standing.current;
     if quiescent(current, standing.heads) {
@@ -475,7 +481,9 @@ fn stage_withdrawal(
     let stop = if current.stop.is_some() {
         None
     } else {
-        stage_stop_request(bus, standing, command, config, origin, write, at, why)?
+        stage_stop_request(
+            bus, standing, command, config, origin, write, at, why, directive,
+        )?
     };
     if canceled.is_empty() && stop.is_none() {
         return Ok(None);
@@ -495,9 +503,9 @@ fn stage_withdrawal(
     Ok(Some(Withdrawn { stop }))
 }
 
-/// A Design's room as read before a partition change takes the Design out of
-/// every working group. The change withdraws the room's coordination and asks
-/// the lane holding the Design to park, in the change's own write.
+/// A Design's room as read before a partition change makes the Design passive.
+/// The change withdraws the room's coordination and asks the lane holding the
+/// Design to park, either in the move write or in a following task-origin write.
 pub(super) struct Deactivation {
     snapshot: ValidatedSnapshot,
     anchor: Entry,
@@ -527,6 +535,11 @@ impl Deactivation {
         let heads = task_heads(&snapshot.answer, design)?.clone();
         let coordination = Coordination::read(bus, anchor.born())?;
         let current = project(bus, anchor.handle(), &heads, &coordination, false)?;
+        if current.stop.is_none()
+            && let Some((lane, claim)) = active_lane_claim(&heads)
+        {
+            holder_address(&snapshot, lane, claim.body.occupant)?;
+        }
         Ok(Some(Self {
             snapshot,
             anchor,
@@ -557,6 +570,7 @@ impl Deactivation {
         config: &steer::Config,
         write: &mut JournalWrite,
         at: Instant,
+        directive: Option<(CanonicalUuid, CanonicalUuid)>,
     ) -> Result<Option<CanonicalUuid>, Outcome<CommandAnswer>> {
         let room = self.anchor.born().clone();
         self.coordination.guard(&room, write);
@@ -582,10 +596,43 @@ impl Deactivation {
             write,
             at,
             Withdrawal::Deactivation,
+            directive,
         )?;
         Ok(withdrawn
             .and_then(|withdrawn| withdrawn.stop)
             .and(active_lane_claim(&self.heads).map(|(lane, _)| lane)))
+    }
+
+    /// Commit this room's deactivation under its own task origin after the
+    /// shared partition has made it passive.
+    pub(super) fn commit(
+        self,
+        bus: &Bus,
+        command: &wire::AdmittedCommand,
+        config: &steer::Config,
+        directive: (CanonicalUuid, CanonicalUuid),
+    ) -> Result<Option<CanonicalUuid>, Outcome<CommandAnswer>> {
+        if quiescent(&self.current, &self.heads) {
+            return Ok(None);
+        }
+        let origin = self.origin()?;
+        let at = current_instant()?;
+        let mut write =
+            JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
+        let lane = self.stage(bus, command, config, &mut write, at, Some(directive))?;
+        match bus
+            .commit(write)
+            .map_err(|error| store_fault("room::deactivation-commit", &error.to_string()))?
+        {
+            CommitOutcome::Committed(_) => Ok(lane),
+            CommitOutcome::Refused(refusal) => Err(store_fault(
+                "room::deactivation-refused",
+                &refusal.to_string(),
+            )),
+            CommitOutcome::Fault(fault) => {
+                Err(store_fault("room::deactivation-fault", &fault.to_string()))
+            }
+        }
     }
 }
 
@@ -619,6 +666,7 @@ fn stage_stop_request(
     write: &mut JournalWrite,
     at: Instant,
     why: Withdrawal,
+    directive: Option<(CanonicalUuid, CanonicalUuid)>,
 ) -> Result<Option<RoomStopRequest>, Outcome<CommandAnswer>> {
     let Some((lane, claim)) = active_lane_claim(standing.heads) else {
         return Ok(None);
@@ -634,14 +682,17 @@ fn stage_stop_request(
     }
     .to_string();
     let message = why.message(standing.anchor.handle());
+    let (directive, fanout) = directive.map_or((command.id(), None), |(directive, fanout)| {
+        (directive, Some(fanout))
+    });
     let (key, _) = crate::resident::append_operator_directive(
         bus,
         origin,
         config,
         write,
         crate::resident::OperatorDirective {
-            directive: command.id(),
-            fanout: None,
+            directive,
+            fanout,
             lane,
             text: &message,
             control: Some(&control),

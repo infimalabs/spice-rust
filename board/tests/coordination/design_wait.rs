@@ -2,8 +2,11 @@ use super::*;
 
 #[test]
 fn an_open_design_waits_while_its_released_work_is_in_progress() {
-    let design =
-        || planning("WAIT-design", wire::TaskIntent::Design, Standing::Open).with_grouped(true);
+    let design = || {
+        planning("WAIT-design", wire::TaskIntent::Design, Standing::Open)
+            .with_grouped(true)
+            .with_design_active(true)
+    };
     let settled = |status: &str, review: &str| WorkflowHead {
         status: status.to_owned(),
         review: review.to_owned(),
@@ -65,7 +68,9 @@ fn an_open_design_waits_while_its_released_work_is_in_progress() {
             "only another Design's released work is in progress",
             vec![
                 design(),
-                planning("WAIT-other", wire::TaskIntent::Design, Standing::Open).with_grouped(true),
+                planning("WAIT-other", wire::TaskIntent::Design, Standing::Open)
+                    .with_grouped(true)
+                    .with_design_active(true),
                 released_output("WAIT-foreign", "WAIT-other", "WAIT-other", workflow("todo")),
             ],
         ),
@@ -91,8 +96,11 @@ fn an_open_design_waits_while_its_released_work_is_in_progress() {
 
 #[test]
 fn decided_rejections_end_selection_wait_without_releasing_outputs() {
-    let design =
-        || planning("DECIDE-design", wire::TaskIntent::Design, Standing::Open).with_grouped(true);
+    let design = || {
+        planning("DECIDE-design", wire::TaskIntent::Design, Standing::Open)
+            .with_grouped(true)
+            .with_design_active(true)
+    };
     let rejected = |name| rejected_output(name, "DECIDE-design");
     let wait = |entries: &[Entry]| {
         board::work_waits(entries, &environment())

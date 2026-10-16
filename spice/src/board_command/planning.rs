@@ -58,8 +58,8 @@ pub(super) fn constructing_design<'a>(
     })
 }
 
-/// Refuse a gather route outside an open Design the working-group partition
-/// holds: it exists only to gather evidence for an active Design. Creation
+/// Refuse a gather route outside an open Design active under its working-group
+/// stance: it exists only to gather evidence for an active Design. Creation
 /// judges the authored route, before any taste hold waits it in plan.
 pub(super) fn admit_gather_design(
     intent: Option<wire::TaskIntent>,
@@ -70,7 +70,7 @@ pub(super) fn admit_gather_design(
         return Ok(());
     }
     if design.is_some_and(|design| {
-        design.grouped
+        design.design_active
             && wire::intent::is_open_design(design.statement.body.intent, &design.workflow.body)
     }) {
         return Ok(());
@@ -78,8 +78,8 @@ pub(super) fn admit_gather_design(
     Err(refusal(
         "task::gather-design",
         design.map(|design| design.statement.body.handle.to_string()),
-        "create a gather task directly under an open Design in a working group, while holding \
-         it or by naming it with --preparation",
+        "create a gather task directly under an open Design whose group stance is Explore or \
+         Converge, while holding it or by naming it with --preparation",
     ))
 }
 

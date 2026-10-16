@@ -459,6 +459,7 @@ pub struct Entry {
     creator_team: Option<wire::CanonicalUuid>,
     explicit_release: bool,
     grouped: bool,
+    design_active: bool,
     preparation_decision: Option<wire::rooms::DecisionRef>,
     phase_handoff: Option<PhaseHandoff>,
     project: Project,
@@ -522,6 +523,7 @@ impl Entry {
             creator_team: None,
             explicit_release: false,
             grouped: false,
+            design_active: false,
             preparation_decision: None,
             phase_handoff: None,
             project,
@@ -634,6 +636,19 @@ impl Entry {
     #[must_use]
     pub const fn grouped(&self) -> bool {
         self.grouped
+    }
+
+    /// Attach whether this Design is active under its working-group stance.
+    #[must_use]
+    pub const fn with_design_active(mut self, active: bool) -> Self {
+        self.design_active = active;
+        self
+    }
+
+    /// Whether this Design is active under its working-group stance.
+    #[must_use]
+    pub const fn design_is_active(&self) -> bool {
+        self.design_active
     }
 
     /// Attach the decision classifying this output for selection waiting.

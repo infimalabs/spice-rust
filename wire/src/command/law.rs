@@ -576,9 +576,10 @@ impl CommandKind {
             | Self::BoardHandout
             | Self::RoomCoordinationRead
             | Self::RoomConversationText => Law::OPERATOR_READ,
-            Self::WorkingGroupMove | Self::WorkingGroupArrange | Self::WorkingGroupFast => {
-                Law::GROUP
-            }
+            Self::WorkingGroupMove
+            | Self::WorkingGroupArrange
+            | Self::WorkingGroupFast
+            | Self::WorkingGroupStance => Law::GROUP,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::RoomPost => Law::ROOM_POST,
             Self::RoomContribute => Law::ROOM_CONTRIBUTE,
@@ -745,7 +746,10 @@ impl CommandKind {
         };
         if matches!(
             self,
-            Self::WorkingGroupMove | Self::WorkingGroupArrange | Self::WorkingGroupFast
+            Self::WorkingGroupMove
+                | Self::WorkingGroupArrange
+                | Self::WorkingGroupFast
+                | Self::WorkingGroupStance
         ) && let Some(stray) = expected.iter().find_map(|witness| match witness {
             Witness::Existence { task } if Some(task) != moved => Some(task),
             _ => None,

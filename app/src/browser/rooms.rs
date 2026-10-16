@@ -478,7 +478,11 @@ fn submit_change(
         Change::Arrange(groups) => GroupChange::Arrange(WorkingGroupArrange {
             groups: groups
                 .into_iter()
-                .map(|(group, anchors)| WorkingGroup { group, anchors })
+                .map(|(group, anchors)| WorkingGroup {
+                    group,
+                    anchors,
+                    stance: wire::rooms::WorkingGroupStance::Passive,
+                })
                 .collect(),
         }),
     };
@@ -494,6 +498,7 @@ fn submit_change(
                         }
                         WorkingGroupChangeStatus::Arranged => "Working groups arranged.".to_owned(),
                         WorkingGroupChangeStatus::Retuned => "Group fast mode set.".to_owned(),
+                        WorkingGroupChangeStatus::Stanced => "Group stance set.".to_owned(),
                     },
                     Err(error) => error,
                 };

@@ -969,10 +969,12 @@ mod tests {
             wire::rooms::WorkingGroup {
                 group: younger.clone(),
                 anchors: Vec::new(),
+                stance: wire::rooms::WorkingGroupStance::Explore,
             },
             wire::rooms::WorkingGroup {
                 group: older.clone(),
                 anchors: Vec::new(),
+                stance: wire::rooms::WorkingGroupStance::Explore,
             },
         ];
 

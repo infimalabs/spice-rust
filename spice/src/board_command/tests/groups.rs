@@ -5,7 +5,7 @@ use wire::intent::{
 };
 use wire::rooms::{
     RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupArrange,
-    WorkingGroupFast, WorkingGroupMove,
+    WorkingGroupFast, WorkingGroupMove, WorkingGroupStance, WorkingGroupStanceSet,
 };
 
 use super::preparation::{
@@ -111,6 +111,7 @@ fn arrange(
                 .map(|(group, anchors)| WorkingGroup {
                     group: (*group).clone(),
                     anchors: anchors.iter().map(|anchor| (*anchor).clone()).collect(),
+                    stance: wire::rooms::WorkingGroupStance::Explore,
                 })
                 .collect(),
         },
@@ -400,6 +401,105 @@ fn working_groups_admit_at_most_six_designs_and_nothing_but_designs() {
     clean(&root, bus);
 }
 
+fn set_stance_at(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    revision: u64,
+    group: &RoomAuthorityStamp,
+    stance: WorkingGroupStance,
+) -> Outcome<CommandAnswer> {
+    issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::WorkingGroupStance,
+        vec![Witness::Group { revision }],
+        &WorkingGroupStanceSet {
+            group: group.clone(),
+            stance,
+        },
+    )
+}
+
+fn set_stance(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    group: &RoomAuthorityStamp,
+    stance: WorkingGroupStance,
+) -> Outcome<CommandAnswer> {
+    set_stance_at(
+        bus,
+        epoch,
+        read_partition(bus, epoch).revision,
+        group,
+        stance,
+    )
+}
+
+#[test]
+fn a_group_stance_controls_design_activity_under_the_partition_guard() {
+    let (root, bus, epoch, _) = fixture("group-stance", 1);
+    let design = add_controller(
+        &bus,
+        epoch,
+        "Stanced design",
+        wire::TaskIntent::Design,
+        None,
+    );
+    let born = design.born().expect("design identity");
+    let group = group_stamp(450);
+    assert_committed(move_design(&bus, epoch, &born, Some(&group)));
+
+    let page = read_partition(&bus, epoch);
+    assert_eq!(page.groups[0].stance, WorkingGroupStance::Passive);
+    let visible = board(&bus, epoch, Actor::Operator);
+    let held = at(&visible, &design);
+    assert!(held.grouped);
+    assert!(!held.design_active);
+
+    let founded_revision = page.revision;
+    assert_eq!(
+        change_status(set_stance(&bus, epoch, &group, WorkingGroupStance::Explore)),
+        WorkingGroupChangeStatus::Stanced
+    );
+    assert!(at(&board(&bus, epoch, Actor::Operator), &design).design_active);
+    assert_committed(set_fast(&bus, epoch, &group, true));
+    assert_committed(set_stance(
+        &bus,
+        epoch,
+        &group,
+        WorkingGroupStance::Converge,
+    ));
+    let partition = bus
+        .read(|read| read.group_partition())
+        .expect("partition reads")
+        .expect("partition stands")
+        .into_body();
+    assert_eq!(partition.groups[0].stance, WorkingGroupStance::Converge);
+    assert!(partition.is_fast(&group));
+    assert!(at(&board(&bus, epoch, Actor::Operator), &design).design_active);
+
+    assert!(refused_as(
+        set_stance(&bus, epoch, &group, WorkingGroupStance::Converge),
+        "group::stance-unchanged"
+    ));
+    assert!(refused_as(
+        set_stance(&bus, epoch, &group_stamp(451), WorkingGroupStance::Passive),
+        "group::missing"
+    ));
+    assert!(refused_as(
+        set_stance_at(
+            &bus,
+            epoch,
+            founded_revision,
+            &group,
+            WorkingGroupStance::Passive
+        ),
+        "group::partition-moved"
+    ));
+    clean(&root, bus);
+}
+
 fn set_fast(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -437,6 +537,8 @@ fn a_fast_flagged_group_runs_exactly_the_live_claimants_of_its_designs() {
         let born = task.born().expect("design identity");
         assert_committed(move_design(&bus, epoch, &born, Some(group)));
     }
+    assert_committed(set_stance(&bus, epoch, &fast, WorkingGroupStance::Explore));
+    assert_committed(set_stance(&bus, epoch, &slow, WorkingGroupStance::Explore));
     assert!(refused_as(
         set_fast(&bus, epoch, &group_stamp(700), true),
         "group::missing"

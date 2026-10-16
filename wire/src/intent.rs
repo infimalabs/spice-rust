@@ -72,7 +72,7 @@ pub use rooms::{
     RoomCoordinationView, RoomItemMove, RoomLeave, RoomLeaveAnswer, RoomListeningDuty,
     RoomPutAside, RoomResultMove, RoomResumeBudget, WorkingGroupAnchor, WorkingGroupArrange,
     WorkingGroupChange, WorkingGroupChangeStatus, WorkingGroupFast, WorkingGroupMove,
-    WorkingGroupPage, WorkingGroupRead, WorkingGroupView,
+    WorkingGroupPage, WorkingGroupRead, WorkingGroupStanceSet, WorkingGroupView,
 };
 
 mod task;

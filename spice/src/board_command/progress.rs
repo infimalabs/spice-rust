@@ -481,7 +481,8 @@ fn projected_done_next_action(
         projects,
     )
     .expect("an admitted transition preserves a valid task entry")
-    .with_grouped(entry.grouped());
+    .with_grouped(entry.grouped())
+    .with_design_active(entry.design_is_active());
     next_action(snapshot, &post)
 }
 
@@ -819,7 +820,8 @@ fn commit_review(
         projects,
     )
     .expect("an admitted review preserves a valid task entry")
-    .with_grouped(entry.grouped());
+    .with_grouped(entry.grouped())
+    .with_design_active(entry.design_is_active());
     let next = next_action(&snapshot, &post);
     if let Err(outcome) = record_followups(
         &mut write,

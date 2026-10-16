@@ -867,10 +867,12 @@ pub struct BoardTask {
     /// Whether the current freed claim came from an explicit release command.
     #[serde(default, skip_serializing_if = "is_false")]
     pub explicit_release: bool,
-    /// Whether the current working-group partition holds this task. A Design
-    /// outside every group is passive and no claim path grants it.
+    /// Whether the current working-group partition holds this task.
     #[serde(default, skip_serializing_if = "is_false")]
     pub grouped: bool,
+    /// Whether this Design is active under its group's shared stance.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub design_active: bool,
     /// Decision on the latest unwithdrawn candidate version naming this
     /// output, whether its verdict released or rejected the output; absent
     /// while that version is open or no decision ruled on it.
@@ -1030,6 +1032,7 @@ impl BoardTask {
             lease,
             explicit_release: false,
             grouped: false,
+            design_active: false,
             preparation_decision: None,
             collapse_reason: None,
             stranded: None,
@@ -1050,6 +1053,13 @@ impl BoardTask {
     #[must_use]
     pub const fn with_grouped(mut self, grouped: bool) -> Self {
         self.grouped = grouped;
+        self
+    }
+
+    /// Attach whether this Design is active under its group's shared stance.
+    #[must_use]
+    pub const fn with_design_active(mut self, active: bool) -> Self {
+        self.design_active = active;
         self
     }
 
@@ -1126,7 +1136,7 @@ impl BoardTask {
         DesignStanding::of(
             self.statement.body.intent,
             &self.workflow.body,
-            self.grouped,
+            self.design_active,
             self.collapse_reason.as_deref(),
         )
     }
@@ -1174,7 +1184,7 @@ impl DesignStanding {
     pub fn of(
         intent: Option<crate::TaskIntent>,
         workflow: &crate::WorkflowHead,
-        grouped: bool,
+        active: bool,
         collapse_reason: Option<&str>,
     ) -> Option<Self> {
         if intent != Some(crate::TaskIntent::Design) {
@@ -1187,7 +1197,7 @@ impl DesignStanding {
                 reason: collapse_reason.map(str::to_owned),
             },
             _ if !is_open_design(intent, workflow) => return None,
-            _ if grouped => Self::Active,
+            _ if active => Self::Active,
             _ => Self::Passive,
         })
     }

@@ -37,7 +37,7 @@ use super::{
     TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord,
     TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog,
     VendorCatalogAnswer, WorkingGroupArrange, WorkingGroupChange, WorkingGroupFast,
-    WorkingGroupMove, WorkingGroupPage, WorkingGroupRead,
+    WorkingGroupMove, WorkingGroupPage, WorkingGroupRead, WorkingGroupStanceSet,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -87,6 +87,8 @@ pub enum BodyShape {
     WorkingGroupArrange,
     /// [`WorkingGroupFast`]
     WorkingGroupFast,
+    /// [`WorkingGroupStanceSet`]
+    WorkingGroupStance,
     /// [`CandidateRetain`]
     CandidateRetain,
     /// [`CandidateCritiqueRecord`]
@@ -507,7 +509,8 @@ impl CommandKind {
             Self::WorkingGroupRead
             | Self::WorkingGroupMove
             | Self::WorkingGroupArrange
-            | Self::WorkingGroupFast => self.working_group_binding(),
+            | Self::WorkingGroupFast
+            | Self::WorkingGroupStance => self.working_group_binding(),
             Self::PrincipalDirectoryRead
             | Self::PrincipalRead
             | Self::PrincipalAdmit
@@ -680,6 +683,7 @@ impl CommandKind {
             Self::WorkingGroupMove => Binding::of(B::WorkingGroupMove, A::WorkingGroupChange),
             Self::WorkingGroupArrange => Binding::of(B::WorkingGroupArrange, A::WorkingGroupChange),
             Self::WorkingGroupFast => Binding::of(B::WorkingGroupFast, A::WorkingGroupChange),
+            Self::WorkingGroupStance => Binding::of(B::WorkingGroupStance, A::WorkingGroupChange),
             _ => panic!("working-group command binding partition is closed"),
         }
     }
@@ -786,6 +790,8 @@ pub enum Intent {
     WorkingGroupArrange(WorkingGroupArrange),
     /// [`BodyShape::WorkingGroupFast`]
     WorkingGroupFast(WorkingGroupFast),
+    /// [`BodyShape::WorkingGroupStance`]
+    WorkingGroupStance(WorkingGroupStanceSet),
     /// [`BodyShape::CandidateRetain`]
     CandidateRetain(CandidateRetain),
     /// [`BodyShape::CandidateCritiqueRecord`]
@@ -924,7 +930,8 @@ impl Intent {
             Self::WorkingGroupRead(_)
             | Self::WorkingGroupMove(_)
             | Self::WorkingGroupArrange(_)
-            | Self::WorkingGroupFast(_) => self.working_group_shape(),
+            | Self::WorkingGroupFast(_)
+            | Self::WorkingGroupStance(_) => self.working_group_shape(),
             Self::PrincipalDirectoryRead(_)
             | Self::PrincipalRead(_)
             | Self::PrincipalAdmit(_)
@@ -1072,6 +1079,7 @@ impl Intent {
             Self::WorkingGroupMove(_) => BodyShape::WorkingGroupMove,
             Self::WorkingGroupArrange(_) => BodyShape::WorkingGroupArrange,
             Self::WorkingGroupFast(_) => BodyShape::WorkingGroupFast,
+            Self::WorkingGroupStance(_) => BodyShape::WorkingGroupStance,
             _ => panic!("working-group intent shape partition is closed"),
         }
     }
@@ -1152,6 +1160,7 @@ impl BodyShape {
                 | Self::WorkingGroupMove
                 | Self::WorkingGroupArrange
                 | Self::WorkingGroupFast
+                | Self::WorkingGroupStance
                 | Self::CandidateRetain
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
@@ -1207,6 +1216,7 @@ impl BodyShape {
                 | Self::WorkingGroupMove
                 | Self::WorkingGroupArrange
                 | Self::WorkingGroupFast
+                | Self::WorkingGroupStance
                 | Self::CandidateRetain
                 | Self::CandidateCritiqueRecord
                 | Self::CandidateCoverageRecord
@@ -1252,6 +1262,7 @@ impl BodyShape {
             Self::WorkingGroupMove => Intent::WorkingGroupMove(crate::decode(bytes)?),
             Self::WorkingGroupArrange => Intent::WorkingGroupArrange(crate::decode(bytes)?),
             Self::WorkingGroupFast => Intent::WorkingGroupFast(crate::decode(bytes)?),
+            Self::WorkingGroupStance => Intent::WorkingGroupStance(crate::decode(bytes)?),
             Self::CandidateRetain
             | Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord

@@ -922,6 +922,7 @@ fn move_write(
         .map(|group| wire::rooms::WorkingGroup {
             group: group.clone(),
             anchors: vec![design.clone()],
+            stance: wire::rooms::WorkingGroupStance::Explore,
         })
         .collect();
     write

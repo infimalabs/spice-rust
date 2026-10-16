@@ -1,5 +1,5 @@
-//! Working-group standing as the sole active/passive authority for an open
-//! Design: who can claim it, and what leaving every group asks of its holder.
+//! Working-group stance as the sole active/passive authority for an open
+//! Design: who can claim it, and what becoming passive asks of its holder.
 
 use super::super::preparation::add_controller;
 use super::*;
@@ -116,6 +116,68 @@ pub(super) fn move_out(
         &room_projects(),
         &board::NextConfig::default(),
     )
+}
+
+fn set_stance(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    stance: wire::rooms::WorkingGroupStance,
+) -> (Outcome<CommandAnswer>, Option<CanonicalUuid>) {
+    let partition = bus
+        .read(|read| read.group_partition())
+        .expect("partition reads")
+        .expect("fixture group stands")
+        .into_body();
+    let group = partition.groups[0].group.clone();
+    let request = wire::rooms::WorkingGroupStanceSet { group, stance };
+    let command = fixture_command(
+        epoch,
+        Actor::Operator,
+        CommandKind::WorkingGroupStance,
+        vec![Witness::Group {
+            revision: partition.revision,
+        }],
+        &request,
+    );
+    let wire::intent::Intent::WorkingGroupStance(request) = command.body() else {
+        panic!("fixture command carries a working-group stance");
+    };
+    crate::board_command::set_working_group_stance(
+        bus,
+        &command,
+        request,
+        &steer::Config::default(),
+        &room_projects(),
+        &board::NextConfig::default(),
+    )
+}
+
+#[test]
+fn passive_stance_makes_every_held_design_passive_and_shelves_its_room() {
+    let (root, bus, epoch, seats) = fixture("design-standing-passive", 3);
+    prove_seat_addresses(&bus, epoch, &seats);
+    let first = design(&bus, epoch, "First held by stance");
+    let second = design(&bus, epoch, "Second held by stance");
+    group_design(&bus, epoch, &first);
+    group_design(&bus, epoch, &second);
+    let first_holder = Actor::Lane(seats[0].lane);
+    let second_holder = Actor::Lane(seats[1].lane);
+    claim_task(&bus, epoch, &seats[0], &first_holder, &first);
+    claim_task(&bus, epoch, &seats[1], &second_holder, &second);
+
+    let (changed, notified) = set_stance(&bus, epoch, wire::rooms::WorkingGroupStance::Passive);
+    assert_committed(changed);
+    assert_eq!(notified, Some(seats[0].lane));
+    for (task, holder) in [(&first, first_holder), (&second, second_holder)] {
+        assert_eq!(active_holder(&bus, epoch, task), Some(holder));
+        assert!(coordination_status(&bus, task).stop.is_some());
+        assert_eq!(
+            refused(&win_named(&bus, epoch, &seats[2], task, "steal")),
+            "claim::design-passive"
+        );
+    }
+    assert_eq!(offered(&bus, epoch, &seats[2]), None);
+    clean(&root, bus);
 }
 
 #[test]

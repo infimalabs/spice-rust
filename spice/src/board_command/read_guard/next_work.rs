@@ -182,9 +182,9 @@ pub(in crate::board_command) fn project_frontier<'a>(
                 );
             }
         }
-        // Control reads the parent's intent and grouped standing, and whether
-        // the controller still stands, so all must be known even when off the
-        // frontier.
+        // Control reads the parent's intent and active Design standing, and
+        // whether the controller still stands, so all must be known even when
+        // off the frontier.
         for known in statement
             .preparation
             .iter()
@@ -192,7 +192,7 @@ pub(in crate::board_command) fn project_frontier<'a>(
         {
             if let Some(task) = observed.task_heads(known) {
                 satisfied.know(known.clone(), task.statement().body().intent);
-                if observed.facts().grouped(known) {
+                if observed.facts().design_is_active(known) {
                     satisfied.group(known.clone());
                 }
             }
@@ -229,6 +229,7 @@ pub(in crate::board_command) fn project_frontier<'a>(
         .with_explicit_release(explicit_release)
         .with_phase_handoff(phase_handoff)
         .with_grouped(observed.facts().grouped(&statement.born))
+        .with_design_active(observed.facts().design_is_active(&statement.born))
         .with_preparation_decision(preparation_decision.cloned());
         origin_threads.push(task_origin_thread(
             observed,

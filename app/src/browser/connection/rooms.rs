@@ -56,6 +56,18 @@ pub(super) async fn send_group_change(
             )
             .await
         }
+        crate::client_action::GroupChange::Stance(request) => {
+            send_typed(
+                principal,
+                writer,
+                actions,
+                pending,
+                CommandKind::WorkingGroupStance,
+                vec![partition],
+                request.clone(),
+            )
+            .await
+        }
     }
 }
 

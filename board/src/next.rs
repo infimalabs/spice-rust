@@ -1102,13 +1102,14 @@ fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool 
         && !passive_design(entry)
 }
 
-/// Whether an open Design stands outside every working group.
+/// Whether an open Design is inactive under its working-group stance.
 ///
 /// A Design-intent row in plan or review intake remains ordinary allocatable
 /// work until its current head reaches `design`.
 #[must_use]
 pub fn passive_design(entry: &Entry) -> bool {
-    wire::intent::is_open_design(entry.statement().intent, entry.workflow()) && !entry.grouped()
+    wire::intent::is_open_design(entry.statement().intent, entry.workflow())
+        && !entry.design_is_active()
 }
 
 /// Whether a review assignment died with the claim that carried it.
@@ -1325,7 +1326,7 @@ pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
             );
         }
         resolved.know(candidate.born().clone(), candidate.statement().intent);
-        if candidate.grouped() {
+        if candidate.design_is_active() {
             resolved.group(candidate.born().clone());
         }
         resolved.observe(
