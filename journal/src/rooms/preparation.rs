@@ -24,7 +24,12 @@ pub(super) fn retain(
             candidate.candidate.candidate
         ));
     }
-    if authority.active_claim(controller)? != Some(candidate.claim) {
+    // Historical proposals crossed from the predecessor protocol carry no
+    // claim when their immutable receipts did not prove one. Current command
+    // admission rejects that shape before it reaches the journal.
+    if let Some(claim) = candidate.claim
+        && authority.active_claim(controller)? != Some(claim)
+    {
         return unsound(format!(
             "Design pass {} does not name controller {controller}'s active claim",
             candidate.candidate.candidate

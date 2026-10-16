@@ -369,11 +369,13 @@ fn propose_candidate_version(
     let retained = DesignPassProposal {
         candidate: candidate.clone(),
         statement: controller_state.statement.position,
-        claim: controller_state
-            .claim
-            .as_ref()
-            .expect("Design is claimed before proposing a pass")
-            .position,
+        claim: Some(
+            controller_state
+                .claim
+                .as_ref()
+                .expect("Design is claimed before proposing a pass")
+                .position,
+        ),
         recommendation,
         governed_inputs: Vec::new(),
         outputs: outputs
@@ -408,6 +410,70 @@ fn propose_candidate_version(
         },
     ));
     (candidate, journal_source(&current, controller))
+}
+
+#[test]
+fn current_proposal_requires_an_exact_active_claim() {
+    let (root, bus, epoch, seats) = fixture("preparation-proposal-claim-required", 1);
+    let controller = add_controller(
+        &bus,
+        epoch,
+        "Claimed Design",
+        wire::TaskIntent::Design,
+        None,
+    );
+    group_design(&bus, epoch, &controller);
+    claim_task(
+        &bus,
+        epoch,
+        &seats[0],
+        &Actor::Lane(seats[0].lane),
+        &controller,
+    );
+    let output = add_plan_output(&bus, epoch, &controller, "Proposed output");
+    let current = board(&bus, epoch, Actor::Lane(seats[0].lane));
+    let candidate = CandidateRef {
+        controller: controller.born().expect("controller stamp"),
+        candidate: RoomAuthorityStamp::for_micros(1_760_000_000_000_099)
+            .expect("candidate identity"),
+    };
+    let mut expected = vec![Witness::Proposal {
+        proposal: ProposalRef::Candidate {
+            candidate: candidate.clone(),
+        },
+        head: None,
+    }];
+    expected.extend(transition_witnesses(at(&current, &controller)));
+    expected.extend(transition_witnesses(at(&current, &output)));
+    let result = issue(
+        &bus,
+        epoch,
+        Actor::Lane(seats[0].lane),
+        CommandKind::DesignPropose,
+        expected,
+        &DesignPropose {
+            candidate: DesignPassProposal {
+                candidate,
+                statement: at(&current, &controller).statement.position,
+                claim: None,
+                recommendation: wire::rooms::DesignPassRecommendation::Work,
+                governed_inputs: Vec::new(),
+                outputs: vec![output.born().expect("output stamp")],
+                evidence: Vec::new(),
+                justification: "the cited contract supports this Design pass".to_owned(),
+                references: vec![CandidateReference {
+                    relation: "contract".parse().expect("relation"),
+                    source: journal_source(&current, &controller),
+                }],
+            },
+        },
+    );
+    assert!(matches!(
+        result,
+        Outcome::Refusal(refusal)
+            if refusal.reason() == "preparation::proposal-claim-missing"
+    ));
+    clean(&root, bus);
 }
 
 fn record_test_critique(
@@ -732,7 +798,7 @@ fn adoption_refuses_claimed_work_and_proposal_writes_refuse_stale_subjects() {
             candidate: DesignPassProposal {
                 candidate,
                 statement: at(&current, &controller).statement.position,
-                claim: Seq::new(1).expect("fixture claim position"),
+                claim: Some(Seq::new(1).expect("fixture claim position")),
                 recommendation: wire::rooms::DesignPassRecommendation::Work,
                 governed_inputs: Vec::new(),
                 outputs: vec![output.born().expect("output stamp")],
@@ -1094,10 +1160,10 @@ fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
             candidate: DesignPassProposal {
                 candidate,
                 statement: at(&current, &plan).statement.position,
-                claim: at(&current, &plan).claim.as_ref().map_or_else(
+                claim: Some(at(&current, &plan).claim.as_ref().map_or_else(
                     || Seq::new(1).expect("fixture claim position"),
                     |claim| claim.position,
-                ),
+                )),
                 recommendation: wire::rooms::DesignPassRecommendation::Work,
                 governed_inputs: Vec::new(),
                 outputs: vec![task_stamp],

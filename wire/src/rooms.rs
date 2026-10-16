@@ -577,7 +577,12 @@ pub enum DesignPassRecommendation {
     Collapse,
 }
 
-/// Exact proposal that completes one claimed Design pass.
+/// Exact proposal that completes one Design pass.
+///
+/// Current proposals always name the active claim they release. Proposals
+/// crossed from the predecessor protocol may omit it when their immutable
+/// receipt does not prove an active claim; that absence is historical fact,
+/// not a fabricated claim horizon.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "DesignPassProposalWire", into = "DesignPassProposalWire")]
 pub struct DesignPassProposal {
@@ -585,8 +590,9 @@ pub struct DesignPassProposal {
     pub candidate: CandidateRef,
     /// Exact Design statement revision this pass answered.
     pub statement: Seq,
-    /// Exact active claim head this pass releases.
-    pub claim: Seq,
+    /// Exact active claim head this pass releases, absent only for history
+    /// crossed from the predecessor protocol.
+    pub claim: Option<Seq>,
     /// Work or outputless recommendation this pass asks the operator to decide.
     pub recommendation: DesignPassRecommendation,
     /// Governed input tasks whose current composition a work proposal assumes.
@@ -607,7 +613,8 @@ pub struct DesignPassProposal {
 struct DesignPassProposalWire {
     candidate: CandidateRef,
     statement: Seq,
-    claim: Seq,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claim: Option<Seq>,
     recommendation: DesignPassRecommendation,
     governed_inputs: Vec<TaskStamp>,
     outputs: Vec<TaskStamp>,

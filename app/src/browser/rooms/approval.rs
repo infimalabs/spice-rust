@@ -216,6 +216,10 @@ fn render_candidate(
     let interactive =
         context.interactive() && withdrawal.is_none() && matches!(&standing, Standing::Undecided);
     let edit = editor(context.controls, &candidate.candidate);
+    let claim = candidate.claim.map_or_else(
+        || html! { <span>{" · historical claim not witnessed"}</span> },
+        |claim| html! { <span>{" · claim "}<code>{claim.to_string()}</code></span> },
+    );
     html! {
         <article
             class="room-card room-approval-card"
@@ -233,7 +237,7 @@ fn render_candidate(
                 <strong>{recommendation_label(candidate.recommendation)}</strong>
                 {" · "}{candidate.justification.clone()}
                 {" · statement "}<code>{candidate.statement.to_string()}</code>
-                {" · claim "}<code>{candidate.claim.to_string()}</code>
+                {claim}
             </p>
             {render_inputs(context, candidate)}
             {render_references(candidate)}

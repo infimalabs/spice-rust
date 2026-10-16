@@ -93,6 +93,13 @@ fn require_design_proposal(
             "read the current Design statement, revise the proposal, and retry",
         ));
     }
+    let Some(proposal_claim) = proposal.claim else {
+        return Err(refusal(
+            "preparation::proposal-claim-missing",
+            Some(controller.to_string()),
+            "new Design pass proposals must name the exact active claim they release",
+        ));
+    };
     let Some(claim) = heads.claim() else {
         return Err(refusal(
             "preparation::proposal-unclaimed",
@@ -100,13 +107,13 @@ fn require_design_proposal(
             "claim the ready Design before proposing the completed pass",
         ));
     };
-    if claim.position() != proposal.claim
+    if claim.position() != proposal_claim
         || claim.body().disposition != ClaimDisposition::Active
         || claim.body().actor != *command.actor()
     {
         return Err(refusal(
             "preparation::proposal-claim-moved",
-            Some(proposal.claim.to_string()),
+            Some(proposal_claim.to_string()),
             "propose only from the exact active Design claim this capability owns",
         ));
     }

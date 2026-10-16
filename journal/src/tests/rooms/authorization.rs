@@ -442,6 +442,7 @@ fn retain_predecessor_proposal(
     legacy_governed_inputs: &[TaskStamp],
     legacy_outputs: &[TaskStamp],
     command_id: &str,
+    witness_claim: bool,
 ) {
     let seq = applied.first();
     let seq_value = i64::try_from(seq.get()).expect("fixture sequence fits SQLite");
@@ -497,21 +498,22 @@ fn retain_predecessor_proposal(
         )
         .expect("restore predecessor proposal head");
 
+    let mut expected = vec![Witness::Task {
+        task: proposal.candidate.controller.clone(),
+        head: proposal.statement,
+    }];
+    if witness_claim {
+        expected.push(Witness::Claim {
+            task: proposal.candidate.controller.clone(),
+            head: proposal.claim,
+        });
+    }
     let command = Command {
         v: WireVersion::CURRENT,
         id: uuid(command_id),
         epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
         kind: CommandKind::DesignPropose,
-        expected: vec![
-            Witness::Task {
-                task: proposal.candidate.controller.clone(),
-                head: proposal.statement,
-            },
-            Witness::Claim {
-                task: proposal.candidate.controller.clone(),
-                head: Some(proposal.claim),
-            },
-        ],
+        expected,
         body: wire::rooms::DesignPropose {
             candidate: proposal.clone(),
         },
@@ -565,8 +567,20 @@ fn restore_design_pass_predecessor(journal: &Journal) {
         .expect("restore Design pass predecessor schema");
 }
 
+fn retained_design_proposal(journal: &Journal, candidate: CandidateRef) -> DesignPassProposal {
+    let authority = journal
+        .read(|read| read.proposal_head(&ProposalRef::Candidate { candidate }))
+        .expect("proposal reads")
+        .expect("proposal remains")
+        .into_body();
+    let crate::ProposalAuthority::Candidate(proposal) = authority else {
+        panic!("proposal changed authority family");
+    };
+    proposal
+}
+
 #[test]
-fn output_proposal_and_selected_decision_cross_from_the_design_pass_predecessor() {
+fn retained_proposals_with_and_without_claim_witnesses_cross_together() {
     let mut journal = Journal::in_memory().expect("journal");
     let preparation = Preparation::new(&mut journal);
     let proposed = preparation.retained(1, vec![preparation.output.clone()]);
@@ -595,6 +609,19 @@ fn output_proposal_and_selected_decision_cross_from_the_design_pass_predecessor(
         &[preparation.input.clone()],
         &[preparation.output.clone()],
         "018f82d4-6f59-7d06-92e3-bce913116310",
+        true,
+    );
+    let historical = preparation.retained(2, vec![preparation.output.clone()]);
+    let historical_proposal = historical.candidate.clone();
+    let historical_applied = commit(&mut journal, historical).expect("later proposal records");
+    retain_predecessor_proposal(
+        &journal,
+        &historical_applied,
+        &historical_proposal,
+        &[preparation.input.clone()],
+        &[preparation.output.clone()],
+        "018f82d4-6f59-7d06-92e3-bce913116312",
+        false,
     );
     journal
         .connection
@@ -628,20 +655,9 @@ fn output_proposal_and_selected_decision_cross_from_the_design_pass_predecessor(
     crate::migrate::admit(&mut journal.connection)
         .expect("Design pass predecessor crosses")
         .expect("migration records");
-    let crossed = journal
-        .read(|read| {
-            read.proposal_head(&ProposalRef::Candidate {
-                candidate: preparation.candidate(1),
-            })
-        })
-        .expect("proposal reads")
-        .expect("proposal remains")
-        .into_body();
-    let crate::ProposalAuthority::Candidate(crossed) = crossed else {
-        panic!("proposal changed authority family");
-    };
+    let crossed = retained_design_proposal(&journal, preparation.candidate(1));
     assert_eq!(crossed.statement, preparation.statement);
-    assert_eq!(crossed.claim, preparation.claim);
+    assert_eq!(crossed.claim, Some(preparation.claim));
     assert_eq!(
         crossed.recommendation,
         wire::rooms::DesignPassRecommendation::Work
@@ -650,7 +666,26 @@ fn output_proposal_and_selected_decision_cross_from_the_design_pass_predecessor(
         crossed.justification,
         "retained work proposal predates explicit Design pass justification"
     );
+    let decision = journal
+        .read(|read| {
+            read.proposal_head(&ProposalRef::Decision {
+                decision: preparation.decision_ref(1),
+            })
+        })
+        .expect("historical decision reads")
+        .expect("historical decision remains")
+        .into_body();
+    assert!(matches!(
+        decision,
+        crate::ProposalAuthority::Decision(PreparationDecision {
+            outcome: DecisionOutcome::Resolved { .. },
+            ..
+        })
+    ));
     journal.verify().expect("crossed work proposal replays");
+    let historical = retained_design_proposal(&journal, preparation.candidate(2));
+    assert_eq!(historical.statement, preparation.statement);
+    assert_eq!(historical.claim, None);
 }
 
 #[test]
@@ -681,6 +716,7 @@ fn collapse_decision_crosses_to_an_outputless_accepted_proposal() {
         &[preparation.input.clone()],
         &[preparation.output.clone()],
         "018f82d4-6f59-7d06-92e3-bce913116311",
+        true,
     );
     journal
         .connection
