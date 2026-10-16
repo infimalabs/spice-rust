@@ -3089,6 +3089,7 @@ dependencies = [
  "base64",
  "bus",
  "constant_time_eq",
+ "flate2",
  "futures-util",
  "journal",
  "serde",

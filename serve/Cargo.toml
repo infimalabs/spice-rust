@@ -25,6 +25,7 @@ tungstenite = "0.29.0"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "original-uri", "tokio", "ws"] }
 base64 = "0.22.1"
 constant_time_eq = "0.4.2"
+flate2.workspace = true
 futures-util = { version = "0.3.33", default-features = false, features = ["sink", "std"] }
 sha2 = "0.10.9"
 sill = { path = "../sill" }

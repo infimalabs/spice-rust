@@ -311,15 +311,35 @@ fn publication_retains_only_the_newest_generations() {
         .expect("last generation resolves")
         .current_generation()
         .expect("last generation is current");
-    let retained = fs::read_dir(stage.join(spice::serve::APP_STAGE_GENERATIONS))
+    let store = stage.join(spice::serve::APP_STAGE_GENERATIONS);
+    let retained = fs::read_dir(&store)
         .expect("generation store lists")
-        .map(|entry| entry.expect("generation entry").file_name())
+        .map(|entry| entry.expect("generation entry").path())
+        .filter(|path| path.is_dir())
         .collect::<Vec<_>>();
     assert_eq!(retained.len(), RETAINED_GENERATIONS + 1);
+    assert_eq!(
+        fs::read_dir(&store)
+            .expect("generation store lists")
+            .count(),
+        2 * retained.len(),
+        "every retained generation keeps exactly its archive beside it"
+    );
+    for generation in &retained {
+        let identity = generation
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("generation names are UTF-8")
+            .parse::<Digest>()
+            .expect("generation names are digests");
+        let archive = fs::read(archive_path(&store, &identity)).expect("archive is staged");
+        CanvasArchive::admit_generation(&archive, &identity)
+            .expect("archive admits as its generation");
+    }
     assert!(
         retained
             .iter()
-            .any(|name| name == current.identity().as_str())
+            .any(|path| path.ends_with(current.identity().as_str()))
     );
     fs::remove_dir_all(root).expect("remove fixture");
 }

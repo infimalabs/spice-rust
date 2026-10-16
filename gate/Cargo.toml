@@ -48,7 +48,7 @@ inotify = { version = "0.11.4", default-features = false }
 libc = "0.2.189"
 
 [dev-dependencies]
-flate2 = "1.1.8"
+flate2.workspace = true
 gix = { version = "0.86.0", default-features = false, features = ["tree-editor"] }
 
 [lints]

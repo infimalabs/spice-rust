@@ -98,6 +98,23 @@ Owners: [`wire/src/manifest/renderer.rs`](../../wire/src/manifest/renderer.rs),
 [`app/renderer/renderer-000.txt`](../../app/renderer/renderer-000.txt). Which
 activity becomes a Mosaic card lives in [Mosaic card lineage](mosaic-rust.md).
 
+Each staged generation G also has one canvas archive, `generations/G.zip`,
+beside its unzipped directory, which stays the development hot-swap source. G
+is the identity the shell names in every qualified route, not the archive
+digest. Members are sorted by logical path. Each member is one deterministic
+gzip stream (fixed header, one pinned deflate implementation and level) stored
+in ZIP with method STORE and the fixed 1980-01-01 time. The archive has no data
+descriptors, extra fields, comments, encryption, or ZIP64. Its bytes are
+therefore a pure function of the generation files, and a member's stored bytes
+are served as-is under `Content-Encoding: gzip`. Admission parses the
+end-of-central-directory record and the central directory once. It refuses,
+naming the member, any byte outside the records, header disagreement, path
+outside the shell inventory, framing violation, or exceeded bound. It derives G
+from the shell, the only member it inflates. Integrity rests on the archive
+digest, not on ZIP CRC fields. Owners:
+[`serve/src/canvas/archive.rs`](../../serve/src/canvas/archive.rs) writes and
+admits the archive, and [`xtask/src/app.rs`](../../xtask/src/app.rs) stages it.
+
 A resident restart keeps the app's last good surface on screen until the new
 session's scope is fully hydrated. A page whose generation the resident no
 longer serves reloads once into the served generation; unsent composer and
