@@ -134,7 +134,7 @@ task handles instead, and `preparation nudge` one open Design's handle.
 | Live coordination per room | one request | `room::coordination-live`: retire or put aside the unanswered request |
 | Activity-only attention | one day | aging drops the reason, never history or duties |
 | Route fanout per publication | 32 | the packet refuses whole |
-| Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an operator answer refuses `room::answer-too-large` |
+| Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an observation refuses `room::post-too-large`; an operator answer refuses `room::answer-too-large` |
 | Pending question results per requester | 128 | further ASKs refuse; MSG, controls, and other requesters still admit |
 | Relevance sources per observation | 8 | an observation never cites more |
 | Reports per OOPS grooming record | 100 parked reports, in an open Design room | `room::oops-batch-too-large`; `room::oops-batch-not-open`: groom under a Design room |

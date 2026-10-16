@@ -4,7 +4,10 @@ use spice::rooms::{
     Declared, LaneAvailability, RoomDuty, RoomDutyKind, RoomDutyStanding, RoomProjectionBudget,
     RoomProjectionError, RoomProjectionSources, RoomWork, derive_room_attention,
 };
-use wire::rooms::{OOPS_GROOMING_REPORT_LIMIT, ROOM_ACTIVITY_SECONDS, RoomAuthorityStamp};
+use wire::rooms::{
+    OOPS_GROOMING_REPORT_LIMIT, ROOM_ACTIVITY_SECONDS, ROOM_PUBLICATION_BYTES_LIMIT,
+    RoomAuthorityStamp,
+};
 
 const ROOM_PUBLICATION_PAGES: usize =
     spice::rooms::MAX_ROOM_ATTENTION_SIGNALS.div_ceil(journal::MAX_RETAINED_FACT_PAGE_ROWS);
@@ -135,6 +138,11 @@ fn room_post_content(post: &RoomPost) -> Result<RoomPublicationContent, Outcome<
             "room::post-empty",
             Some(post.room.to_string()),
             "supply complete authored text or one typed OOPS disposition",
+        )),
+        (text, None) if text.len() > ROOM_PUBLICATION_BYTES_LIMIT => Err(refusal(
+            "room::post-too-large",
+            Some(text.len().to_string()),
+            &format!("shorten the observation to at most {ROOM_PUBLICATION_BYTES_LIMIT} bytes"),
         )),
         (text, None) => Ok(RoomPublicationContent::Authored {
             text: text.to_owned(),

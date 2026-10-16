@@ -6,9 +6,9 @@ use wire::intent::{
     RoomLeaveAnswer, RoomListeningDuty, RoomPutAside,
 };
 use wire::rooms::{
-    CoordinationControl, OopsDisposition, OopsGrooming, RoomAuthorityStamp,
-    RoomCoordinationStarted, RoomListenerAvailability, RoomListenerDelivery, RoomMessaged,
-    RoomPost, RoomPostOutcome, RoomPublicationContent, RoomPublished, TranscriptHunk,
+    CoordinationControl, OopsDisposition, OopsGrooming, ROOM_PUBLICATION_BYTES_LIMIT,
+    RoomAuthorityStamp, RoomCoordinationStarted, RoomListenerAvailability, RoomListenerDelivery,
+    RoomMessaged, RoomPost, RoomPostOutcome, RoomPublicationContent, RoomPublished, TranscriptHunk,
 };
 
 mod automation;
@@ -508,6 +508,42 @@ fn room_post_records_once_and_retains_its_exact_retry_answer() {
         RoomPublicationContent::Authored {
             text: "Complete composer text.".to_owned()
         }
+    );
+}
+
+#[test]
+fn authored_observations_enforce_the_room_publication_byte_bound() {
+    let (_root, bus, epoch, _seats) = fixture("room-post-byte-bound", 0);
+    let room = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "room-post-byte-bound",
+        "Room",
+        None,
+    );
+    let boundary = "x".repeat(ROOM_PUBLICATION_BYTES_LIMIT);
+    assert_committed(
+        dispatch(&bus, &post_command(&bus, epoch, &room, &boundary))
+            .expect("boundary observation dispatches"),
+    );
+
+    let oversized = format!("{boundary}x");
+    let outcome = dispatch(&bus, &post_command(&bus, epoch, &room, &oversized))
+        .expect("oversized observation dispatches");
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(refusal) if refusal.reason() == "room::post-too-large"
+    ));
+
+    let page = publication_page(&bus, &room);
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(
+        page.rows[0]
+            .fact
+            .read::<RoomPublished>()
+            .map(|publication| publication.content),
+        Some(RoomPublicationContent::Authored { text: boundary })
     );
 }
 
