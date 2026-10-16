@@ -226,8 +226,9 @@ impl Projection {
     }
 
     /// Every task a fact addresses, including each output an execution
-    /// authorization selects and each Design a working-group move carries in
-    /// or out, so its entry and READY origin are refreshed.
+    /// authorization selects, each Design a working-group move carries in
+    /// or out, and each Design whose pass cycle the fact or a changed task's
+    /// settlement moves, so its entry and READY origin are refreshed.
     fn changed_tasks(
         &self,
         snapshot: &bus::TaskSnapshot,
@@ -240,13 +241,14 @@ impl Projection {
                 .map(|heads| heads.statement().body().born.clone())
                 .collect();
         }
-        delta
+        let mut changed = delta
             .iter()
             .flat_map(|fact| {
                 fact.fact
                     .task_subject()
                     .into_iter()
                     .chain(fact.fact.mutated_tasks())
+                    .chain(wire::rooms::DesignCycles::subjects(&fact.fact))
                     .cloned()
                     .chain(
                         fact.fact
@@ -254,7 +256,24 @@ impl Projection {
                             .map(|moved| moved.design),
                     )
             })
-            .collect()
+            .collect::<BTreeSet<_>>();
+        let controllers = changed
+            .iter()
+            .filter_map(|task| {
+                let index = snapshot
+                    .tasks()
+                    .binary_search_by(|heads| heads.statement().body().born.cmp(task))
+                    .ok()?;
+                snapshot.tasks()[index]
+                    .statement()
+                    .body()
+                    .preparation
+                    .as_ref()
+                    .map(|preparation| preparation.controller.clone())
+            })
+            .collect::<Vec<_>>();
+        changed.extend(controllers);
+        changed
     }
 
     fn entry_updates(
@@ -288,7 +307,7 @@ impl Projection {
                 .with_creator_team(creator_team)
                 .with_phase_handoff(phase_handoff)
                 .with_grouped(snapshot.facts().grouped(task))
-                .with_design_active(snapshot.facts().design_is_active(task));
+                .with_design(snapshot.facts().design(task));
             entries.insert(task.clone(), EntryUpdate { heads, entry });
         }
         Ok(entries)

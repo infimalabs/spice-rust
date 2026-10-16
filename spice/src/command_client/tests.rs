@@ -884,6 +884,7 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
             CommandKind::CandidateWithdraw,
         ),
         (&["preparation", "adopt"][..], CommandKind::OutputAdopt),
+        (&["preparation", "nudge"][..], CommandKind::DesignNudge),
         (&["lane", "list"][..], CommandKind::BoardRead),
         (&["task", "list"][..], CommandKind::BoardRead),
         (&["task", "next"][..], CommandKind::ClaimWin),

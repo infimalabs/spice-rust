@@ -324,9 +324,20 @@ pub(super) fn fixture_group() -> wire::rooms::RoomAuthorityStamp {
     wire::rooms::RoomAuthorityStamp::for_micros(1_750_000_000_000_000).expect("fixture group stamp")
 }
 
+/// Make `design` active and ready: stand it in the fixture group, then nudge
+/// it when it is already an open Design.
+pub(super) fn group_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
+    stand_design(bus, epoch, design);
+    let current = board(bus, epoch, Actor::Operator);
+    let heads = at(&current, design);
+    if wire::intent::is_open_design(heads.statement.body.intent, &heads.workflow.body) {
+        assert_committed(nudge_design(bus, epoch, Actor::Operator, &current, design));
+    }
+}
+
 /// Make `design` active by standing it in the fixture group and setting that
 /// group's stance to Explore when the move founded it in Passive.
-pub(super) fn group_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
+pub(super) fn stand_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
     let born = design.born().expect("fixture design stamp");
     let group = fixture_group();
     assert_committed(move_design_now(bus, epoch, &born, Some(&group)));
@@ -355,6 +366,27 @@ pub(super) fn group_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle)
             },
         ));
     }
+}
+
+/// `actor`'s nudge of `design` at the heads `current` shows.
+pub(super) fn nudge_design(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    current: &BoardAnswer,
+    design: &TaskHandle,
+) -> Outcome<CommandAnswer> {
+    let heads = at(current, design);
+    issue(
+        bus,
+        epoch,
+        actor,
+        CommandKind::DesignNudge,
+        vec![statement_witness(heads), workflow_witness(heads)],
+        &wire::rooms::DesignNudge {
+            design: design.clone(),
+        },
+    )
 }
 
 /// The rows an Open read reports as blocked execution trouble, after proving

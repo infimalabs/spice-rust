@@ -895,6 +895,13 @@ pub struct BoardTask {
     /// Whether this Design is active under its group's shared stance.
     #[serde(default, skip_serializing_if = "is_false")]
     pub design_active: bool,
+    /// This Design's pass-cycle evidence, so a client allocates from the
+    /// same projection the resident does; empty for any other task.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::rooms::DesignCycleFacts::is_empty"
+    )]
+    pub design_cycle: crate::rooms::DesignCycleFacts,
     /// Decision on the latest unwithdrawn candidate version naming this
     /// output, whether its verdict released or rejected the output; absent
     /// while that version is open or no decision ruled on it.
@@ -1077,6 +1084,7 @@ impl BoardTask {
             explicit_release: false,
             grouped: false,
             design_active: false,
+            design_cycle: crate::rooms::DesignCycleFacts::default(),
             preparation_decision: None,
             collapse_reason: None,
             stranded: None,
@@ -1104,6 +1112,13 @@ impl BoardTask {
     #[must_use]
     pub const fn with_design_active(mut self, active: bool) -> Self {
         self.design_active = active;
+        self
+    }
+
+    /// Attach this Design's pass-cycle evidence.
+    #[must_use]
+    pub const fn with_design_cycle(mut self, cycle: crate::rooms::DesignCycleFacts) -> Self {
+        self.design_cycle = cycle;
         self
     }
 

@@ -573,6 +573,7 @@ impl NativeInvocation<'_> {
             | ["preparation", "decide"]
             | ["preparation", "withdraw"]
             | ["preparation", "adopt"]
+            | ["preparation", "nudge"]
             | ["doc"]
             | ["doc", "ledger"] => {
                 deliver_command_answer(&board_command::run(leaf, contract), form);

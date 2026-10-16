@@ -569,6 +569,15 @@ owns each rule summarized here.
   of fabricating a claim. New proposal commands still require the exact active
   claim and cannot create that historical shape.
 
+  A Design is offered for a pass only when it is
+  [ready](invariants/identity.md#work-a-design-schedules-each-pass-from-input-after-its-last-pass):
+  its first pass needs steeped maturity or the operator's `preparation nudge
+  HANDLE`, and every later pass needs counted input recorded after the last
+  proposal or abandonment. Contributions, operator room posts, nudges, returned
+  or rejecting decisions, and the final settlement of released work count;
+  asks, notices, leaves, and group movement do not. Until then the Design
+  gathers input, awaits the operator's decision, or waits on its released work.
+
   A Design
   [stays open until the operator concludes it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
   ordinary lane `task done` refuses it. The operator accepts a conclude or

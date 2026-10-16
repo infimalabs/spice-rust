@@ -6,6 +6,7 @@ use wire::rooms::{
     PreparationDecided, ProposalRef,
 };
 
+mod nudge;
 mod references;
 mod withdrawal;
 
@@ -33,6 +34,7 @@ pub(super) fn dispatch_preparation(
         wire::intent::Intent::CandidateWithdraw(withdraw) => {
             withdrawal::withdraw_candidate(bus, command, withdraw)
         }
+        wire::intent::Intent::DesignNudge(nudge) => nudge::nudge_design(bus, command, nudge),
         _ => return None,
     })
 }

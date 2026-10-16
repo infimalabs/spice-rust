@@ -609,6 +609,10 @@ fn a_fast_flagged_group_runs_exactly_the_live_claimants_of_its_designs() {
     }
     assert_committed(set_stance(&bus, epoch, &fast, WorkingGroupStance::Explore));
     assert_committed(set_stance(&bus, epoch, &slow, WorkingGroupStance::Explore));
+    let current = board(&bus, epoch, Actor::Operator);
+    for task in [&flagged, &unflagged] {
+        assert_committed(nudge_design(&bus, epoch, Actor::Operator, &current, task));
+    }
     assert!(refused_as(
         set_fast(&bus, epoch, &group_stamp(700), true),
         "group::missing"

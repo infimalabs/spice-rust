@@ -91,6 +91,7 @@ pub(super) fn dispatch_client(
         "decide" => client_preparation_decide(repository, contract, matches),
         "withdraw" => client_candidate_withdraw(repository, contract, matches),
         "adopt" => client_output_adopt(repository, contract, matches),
+        "nudge" => client_design_nudge(repository, contract, matches),
         _ => unreachable!("preparation CLI partition is closed"),
     }
 }
@@ -390,6 +391,29 @@ pub(super) fn client_output_adopt(
                 output,
                 preparation,
             },
+        ))
+    })
+}
+
+pub(super) fn client_design_nudge(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let design = match required(matches, "DESIGN").parse::<TaskHandle>() {
+        Ok(design) => design,
+        Err(error) => return invalid_handle("DESIGN", &error.to_string()),
+    };
+    let stamp = match design.born() {
+        Ok(stamp) => stamp,
+        Err(error) => return invalid_handle("DESIGN", &error.to_string()),
+    };
+    submit_with_tasks(repository, contract, vec![stamp.clone()], false, |board| {
+        let task = task(board, &stamp)?;
+        Ok((
+            CommandKind::DesignNudge,
+            vec![statement_witness(task), workflow_witness(task)],
+            wire::rooms::DesignNudge { design },
         ))
     })
 }

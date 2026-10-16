@@ -104,12 +104,8 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
     authorize_test_output(&bus, epoch, &controller, &output, &spare, candidate);
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        [
-            controller.born().expect("Design stamp"),
-            spare.born().expect("spare output stamp"),
-        ]
-        .into(),
-        "the Design waits on its selected Plan while the rejected sibling stays gated"
+        [spare.born().expect("spare output stamp")].into(),
+        "the rejected sibling stays gated while its rejection readies the Design"
     );
     let first = preparation_page(&root, &[controller.as_str(), "--limit", "2"]);
     assert_eq!(first["controller"], controller.as_str());
@@ -1220,17 +1216,16 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        stamps(&[&design, &sibling]),
-        "the Design waits on its selected Plan while its sibling stays gated"
+        stamps(&[&sibling]),
+        "the rejected sibling stays gated while its rejection readies the Design"
     );
 
-    let planner = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &planner, &selected);
+    capture_for(&bus, epoch, &seats[0], &selected);
     let task = add_output(&bus, epoch, &selected, "Selected plan task");
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        stamps(&[&design, &sibling, &task]),
-        "the Design waits while the selected Plan holds its task for review"
+        stamps(&[&sibling, &task]),
+        "the selected Plan holds its task for review"
     );
     assert_committed(review_clean(&bus, epoch, &seats[0], &selected));
     assert_eq!(
@@ -1242,11 +1237,11 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     );
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        stamps(&[&design, &sibling]),
-        "the Design waits on the task released by the selected Plan's clean review"
+        stamps(&[&sibling]),
+        "the selected Plan's clean review releases its task"
     );
     let worker = Actor::Lane(seats[1].lane);
-    claim_task(&bus, epoch, &seats[1], &worker, &task);
+    capture_for(&bus, epoch, &seats[1], &task);
     let visible = board(&bus, epoch, Actor::Operator);
     let heads = at(&visible, &design);
     let CommandAnswer::Task(answer) = assert_committed(issue(
@@ -1294,13 +1289,12 @@ fn next_work_offers_a_plan_released_task_whose_open_design_is_off_the_frontier()
         retain_test_candidate(&bus, epoch, &seats, &design, &selected, &sibling);
     let _coverage = record_test_coverage(&bus, epoch, &seats, &design, &candidate, &source);
     authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
-    let planner = Actor::Lane(seats[0].lane);
-    claim_task(&bus, epoch, &seats[0], &planner, &selected);
+    capture_for(&bus, epoch, &seats[0], &selected);
     let task = add_output(&bus, epoch, &selected, "Selected plan task");
     assert_committed(review_clean(&bus, epoch, &seats[0], &selected));
     // With the sibling gone, no frontier row names the Design as its parent;
-    // only the task's controller link reaches it. The grouped Design waits on
-    // that released task, so no claim is needed to keep it from being offered.
+    // only the task's controller link reaches it. The rejection readied the
+    // Design, so its lane holds it while the released task is offered.
     let visible = board(&bus, epoch, Actor::Operator);
     let heads = at(&visible, &sibling);
     assert_committed(issue(
@@ -1319,6 +1313,7 @@ fn next_work_offers_a_plan_released_task_whose_open_design_is_off_the_frontier()
             force_claimed: false,
         },
     ));
+    capture_for(&bus, epoch, &seats[0], &design);
 
     let worker = Actor::Lane(seats[1].lane);
     let Some(NextWorkState::Candidate { task: offered }) =

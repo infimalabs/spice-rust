@@ -1,6 +1,45 @@
 use super::withdrawal::withdraw;
 use super::*;
 
+fn offered(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) -> Option<TaskStamp> {
+    match next_board(bus, epoch, Actor::Lane(seat.lane)).next {
+        Some(NextWorkState::Candidate { task }) => Some(task.statement.body.born),
+        _ => None,
+    }
+}
+
+#[test]
+fn an_operator_nudge_readies_only_an_open_design_gathering_its_first_pass() {
+    let (root, bus, epoch, seats) = fixture("preparation-design-nudge", 2);
+    let design = add_controller(&bus, epoch, "Nudged design", wire::TaskIntent::Design, None);
+    let plan = add_controller(&bus, epoch, "Not a Design", wire::TaskIntent::Plan, None);
+    capture_for(&bus, epoch, &seats[1], &plan);
+    stand_design(&bus, epoch, &design);
+    assert_eq!(
+        offered(&bus, epoch, &seats[0]),
+        None,
+        "an active Design short of Steeped maturity gathers input"
+    );
+
+    let current = board(&bus, epoch, Actor::Operator);
+    assert!(matches!(
+        nudge_design(&bus, epoch, Actor::Operator, &current, &plan),
+        Outcome::Refusal(refusal) if refusal.reason() == "preparation::nudge-not-open-design"
+    ));
+    assert_committed(nudge_design(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &current,
+        &design,
+    ));
+    assert_eq!(
+        offered(&bus, epoch, &seats[0]),
+        Some(design.born().expect("Design stamp"))
+    );
+    clean(&root, bus);
+}
+
 #[test]
 fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
     let (root, bus, epoch, seats) = fixture("preparation-rejected-selection", 2);
@@ -53,8 +92,8 @@ fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
     assert!(open_awaiting_selection(&bus, epoch).is_empty());
 
     assert!(
-        open_workflow_waiting(&bus, epoch).contains(&design.born().expect("Design stamp")),
-        "the Design follows its released-work wait after selection is decided"
+        !open_workflow_waiting(&bus, epoch).contains(&design.born().expect("Design stamp")),
+        "a recorded rejection is counted input: the Design is ready for its next pass"
     );
     assert_controlled_output_refusal(
         conclude(&bus, epoch, Actor::Operator, &design, done_conclusion()),
@@ -124,6 +163,15 @@ fn a_later_open_candidate_shadows_an_older_verdict_until_decided_or_withdrawn() 
         "withdrawal restores the verdict beneath it"
     );
 
+    // Withdrawal is not counted input; the operator readies the corrected pass.
+    let current = board(&bus, epoch, Actor::Operator);
+    assert_committed(nudge_design(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &current,
+        &design,
+    ));
     let (corrected, _) = retain_candidate_version(
         &bus,
         epoch,

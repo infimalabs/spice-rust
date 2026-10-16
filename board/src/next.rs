@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use wire::rooms::DesignCycle;
 use wire::{Actor, ClaimCell, ClaimDisposition, Instant, TaskIntent, TaskStamp, TeamSubscription};
 
 use crate::task::Entry;
@@ -82,31 +83,6 @@ impl ResolvedTasks {
             .map(|preparation| preparation.controller.clone())
             .collect::<Vec<_>>();
         self.working.extend(working);
-    }
-
-    /// Whether this task state is an open Design waiting for one of the
-    /// observed outputs to receive the operator's selection.
-    #[must_use]
-    pub fn awaits_selection(
-        &self,
-        statement: &wire::TaskHead,
-        workflow: &wire::WorkflowHead,
-    ) -> bool {
-        wire::intent::is_open_design(statement.intent, workflow)
-            && self.unselected.contains(&statement.born)
-    }
-
-    /// Whether this task state is an open Design whose released work is still
-    /// in progress: a filed, pending, undeferred task under its control.
-    #[must_use]
-    pub fn awaits_authorized_work(
-        &self,
-        statement: &wire::TaskHead,
-        workflow: &wire::WorkflowHead,
-    ) -> bool {
-        statement.intent == Some(TaskIntent::Design)
-            && workflow.status.is_pending()
-            && self.working.contains(&statement.born)
     }
 
     fn settled(&self, task: &TaskStamp) -> bool {
@@ -253,23 +229,31 @@ pub fn unaccepted_output_of<'a>(
     .then_some(&preparation.parent)
 }
 
-/// Whether an open Design waits on the operator's selection: an output it
-/// constructed still lacks selection. No lane can discharge that, so the
-/// Design is ineligible until the operator selects or settles its outputs.
-/// A Plan never waits here: its outputs follow its own positive review.
+/// One open Design's pass-cycle state, or `None` when `entry` is not an open
+/// Design.
+///
+/// Full-board and live-frontier allocation both derive it from the same
+/// indexed [`wire::rooms::DesignFacts`] and resolved outputs: an output it
+/// constructed still lacking selection holds it for the operator, and live
+/// work it released holds it unless later input arrives.
 #[must_use]
-pub fn awaits_selection(entry: &Entry, satisfied: &ResolvedTasks) -> bool {
-    satisfied.awaits_selection(entry.statement(), entry.workflow())
+pub fn design_cycle(entry: &Entry, resolved: &ResolvedTasks) -> Option<DesignCycle> {
+    let statement = entry.statement();
+    wire::intent::is_open_design(statement.intent, entry.workflow()).then(|| {
+        entry.design().cycle.cycle(
+            resolved.unselected.contains(&statement.born),
+            resolved.working.contains(&statement.born),
+        )
+    })
 }
 
-/// Whether an open Design waits on work it already released: until that
-/// settles a lane has nothing new to judge, so the Design follows normal
-/// workflow rather than being handed out. Settling the last such task makes it
-/// assignable again for follow-up.
+/// Whether an open Design's pass cycle holds it from every lane: it gathers
+/// input, awaits the operator's decision, or waits on work it released.
 #[must_use]
-pub fn awaits_authorized_work(entry: &Entry, satisfied: &ResolvedTasks) -> bool {
-    satisfied.awaits_authorized_work(entry.statement(), entry.workflow())
+pub fn design_held(entry: &Entry, resolved: &ResolvedTasks) -> bool {
+    design_cycle(entry, resolved).is_some_and(|cycle| cycle != DesignCycle::ReadyForProposal)
 }
+
 /// Why one open task's allocation gate is closed.
 ///
 /// Possession, deferral, environmental holds, passive Designs, hidden filing,
@@ -383,13 +367,16 @@ fn progress(
         states[task] = Progress::Distinct;
         return Progress::Distinct;
     }
-    if awaits_selection(entry, resolved) {
-        states[task] = Progress::Selection;
-        return Progress::Selection;
-    }
-    if awaits_authorized_work(entry, resolved) {
-        states[task] = Progress::Neutral;
-        return Progress::Neutral;
+    match design_cycle(entry, resolved) {
+        Some(DesignCycle::AwaitingDecision) => {
+            states[task] = Progress::Selection;
+            return Progress::Selection;
+        }
+        Some(DesignCycle::GatheringInput | DesignCycle::WaitingOnSelectedWork) => {
+            states[task] = Progress::Neutral;
+            return Progress::Neutral;
+        }
+        Some(DesignCycle::ReadyForProposal) | None => {}
     }
     if dependencies_satisfied(entry, resolved) {
         states[task] = Progress::Moving;
@@ -1083,8 +1070,7 @@ fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool 
             .reviewer()
             .is_none_or(|assignment| assignment == actor || assignment_lapsed(entry, assignment))
         && dependencies_satisfied(entry, completed)
-        && !awaits_selection(entry, completed)
-        && !awaits_authorized_work(entry, completed)
+        && !design_held(entry, completed)
         && !passive_design(entry)
 }
 
@@ -1118,8 +1104,7 @@ fn operational_without_assignment(entry: &Entry, completed: &ResolvedTasks) -> b
     workflow.status.is_pending()
         && workflow.deferral.is_none()
         && dependencies_satisfied(entry, completed)
-        && !awaits_selection(entry, completed)
-        && !awaits_authorized_work(entry, completed)
+        && !design_held(entry, completed)
         && !passive_design(entry)
 }
 

@@ -162,6 +162,9 @@ macro_rules! registered_body {
     (PreparationDecided) => {
         crate::rooms::PreparationDecided
     };
+    (DesignNudged) => {
+        crate::rooms::DesignNudged
+    };
     (CandidateWithdrawn) => {
         crate::rooms::CandidateWithdrawn
     };
@@ -388,6 +391,8 @@ vocabulary! {
     CandidateWithdrawn = "proposal::withdrawn" by CommandDoor;
     /// A work decision made its exact accepted outputs eligible.
     ExecutionAuthorized = "proposal::authorized" by CommandDoor;
+    /// The operator asked one open Design to take its next pass.
+    DesignNudged = "proposal::nudged" by CommandDoor;
 
     /// The exact normalized plan digest landed at its witnessed board barrier.
     DocApplied = "doc::applied" by CommandDoor;
@@ -811,6 +816,11 @@ impl AnyFact {
     #[must_use]
     pub fn read<F: Body>(&self) -> Option<F> {
         F::registered(&self.decoded).cloned()
+    }
+
+    /// Borrow this fact's body when it is the registered kind `F`.
+    pub(crate) fn as_body<F: Body>(&self) -> Option<&F> {
+        F::registered(&self.decoded)
     }
 
     /// Every task whose content or workflow this fact changes.

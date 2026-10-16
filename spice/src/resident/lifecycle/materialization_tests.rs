@@ -153,15 +153,39 @@ fn group_moves_refresh_a_designs_standing_incrementally() {
     bus.shutdown().expect("standing fixture bus stops");
 }
 
-/// Advance `incremental`, prove it equals a restart rebuild, and read whether
-/// it projects `design` inside a working group.
-fn standing(
+#[test]
+fn design_cycle_input_refreshes_the_live_projection_like_a_restart() {
+    let (bus, projects, mut incremental) = caught_up_fixture(0);
+    committed(
+        bus.commit(design_write(instant(5)))
+            .expect("open Design commits"),
+    );
+    let design = task(DESIGN_MOMENT);
+    let cycle = |entry: Entry| entry.design().cycle.cycle(false, false);
+    assert_eq!(
+        cycle(projected(&bus, &projects, &mut incremental, &design)),
+        wire::rooms::DesignCycle::GatheringInput
+    );
+    committed(
+        bus.commit(nudge_write(&design, instant(6)))
+            .expect("nudge commits"),
+    );
+    assert_eq!(
+        cycle(projected(&bus, &projects, &mut incremental, &design)),
+        wire::rooms::DesignCycle::ReadyForProposal
+    );
+    bus.shutdown().expect("cycle fixture bus stops");
+}
+
+/// Advance `incremental`, prove it equals a restart rebuild, and return the
+/// entry it projects for `design`.
+fn projected(
     bus: &Bus,
     projects: &ProjectPolicy,
     incremental: &mut Projection,
     design: &TaskStamp,
-) -> bool {
-    let snapshot = bus.task_snapshot().expect("standing snapshot reads");
+) -> Entry {
+    let snapshot = bus.task_snapshot().expect("projection snapshot reads");
     incremental
         .advance(&snapshot, projects)
         .expect("incremental projection advances");
@@ -172,14 +196,42 @@ fn standing(
     assert_eq!(
         (incremental.entries(), incremental.ready_at()),
         (restarted.entries(), restarted.ready_at()),
-        "incremental standing equals restart state"
+        "incremental projection equals restart state"
     );
     incremental
         .entries()
         .iter()
         .find(|entry| entry.born() == design)
         .expect("the Design is projected")
-        .grouped()
+        .clone()
+}
+
+/// Whether the live projection, proven equal to a restart, stands `design`
+/// inside a working group.
+fn standing(
+    bus: &Bus,
+    projects: &ProjectPolicy,
+    incremental: &mut Projection,
+    design: &TaskStamp,
+) -> bool {
+    projected(bus, projects, incremental, design).grouped()
+}
+
+/// The operator's nudge that readies `design`'s first pass.
+fn nudge_write(design: &TaskStamp, at: Instant) -> JournalWrite {
+    let origin = format!("resident:{}", epoch())
+        .parse::<Origin>()
+        .expect("fixture resident origin");
+    let mut write = JournalWrite::new(Actor::Operator, origin, at, Producer::CommandDoor);
+    write
+        .fact(
+            wire::rooms::DesignNudged {
+                design: design.clone(),
+            },
+            FactCause::Root,
+        )
+        .expect("nudge fact builds");
+    write
 }
 
 #[test]

@@ -812,6 +812,9 @@ fn fold_preparation(
                 .and_then(|()| preparation::authorize(authority, seq, authorization)),
         );
     }
+    if fact.kind() == wire::FactKind::DesignNudged {
+        return Some(require_operator(actor, "a Design nudge"));
+    }
     None
 }
 

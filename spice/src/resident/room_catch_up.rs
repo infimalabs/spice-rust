@@ -256,7 +256,7 @@ impl Planning {
                     let born = &heads.statement().body().born;
                     entry
                         .with_grouped(snapshot.facts().grouped(born))
-                        .with_design_active(snapshot.facts().design_is_active(born))
+                        .with_design(snapshot.facts().design(born))
                 })
                 .map_err(|error| store_fault("room::catch-up-task-invalid", &error.to_string()))
             })

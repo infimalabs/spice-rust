@@ -265,7 +265,7 @@ pub(in crate::board_command) fn project_frontier<'a>(
         .with_explicit_release(explicit_release)
         .with_phase_handoff(phase_handoff)
         .with_grouped(observed.facts().grouped(&statement.born))
-        .with_design_active(observed.facts().design_is_active(&statement.born))
+        .with_design(observed.facts().design(&statement.born))
         .with_preparation_decision(preparation_decision.cloned());
         origin_threads.push(task_origin_thread(
             observed,

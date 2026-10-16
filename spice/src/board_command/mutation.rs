@@ -927,7 +927,7 @@ pub(super) fn task_depends_with(
     ) {
         Ok(post) => post
             .with_grouped(entry.grouped())
-            .with_design_active(entry.design_is_active()),
+            .with_design(entry.design()),
         Err(error) => {
             return refusal(
                 "task::dependency-refused",

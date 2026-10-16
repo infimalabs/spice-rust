@@ -747,6 +747,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "preparation::adopt"
     ),
+    operator!(
+        ["preparation", "nudge"],
+        "preparation nudge DESIGN",
+        Command,
+        [DesignNudged],
+        Reply,
+        "preparation::nudge"
+    ),
     row!(
         ["task", "list"],
         "task list [--all] [--project PROJECT] [--limit N] [--max-bytes N] \

@@ -106,8 +106,7 @@ fn held_claim(
         .statement()
         .requirements
         .has_unsatisfied_trust_grant(environment)
-        || board::awaits_selection(entry, satisfied)
-        || board::awaits_authorized_work(entry, satisfied);
+        || board::design_held(entry, satisfied);
     let live = entry
         .lease()
         .ok_or_else(|| {
