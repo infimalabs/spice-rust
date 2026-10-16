@@ -219,8 +219,9 @@ author, age, reason, and withdrawal fact and offers no decision control, so the
 remaining open version is the one to decide; the view never picks among open
 versions by recency.
 
-The operator's inbox sits in the Spice sidebar directly beneath their avatar,
-name, and email and above Jobs, not in the shared Working groups catalog. Its
+The operator's inbox sits in the Spice sidebar's Principals section, inside
+their own principal row beneath its avatar, name, and email, above Jobs, and
+not in the shared Working groups catalog. Its
 heading and open count stay above a viewport-bounded vertical scroller; ordinary
 and unbroken card text wrap within the sidebar instead of widening or clipping
 the global menu. The heading reads `<initials>'s inbox` (for example, "CA's

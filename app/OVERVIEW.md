@@ -220,8 +220,9 @@ No roster gesture mounts, reorders, closes, or focuses a view.
 
 ## Who the app names
 
-The app names humans from principal profiles, never Git. The operator panel and
-inbox heading show the connected principal's name, initials, and Gravatar.
+The app names humans from principal profiles, never Git. The connected
+principal's own Principals row and inbox heading show their name, initials, and
+Gravatar.
 Activity, task steps, room lines, and quote bylines use the author's profile;
 a quote shows initials with the full name as its accessible label. Historical
 `operator` facts name the earliest-born principal.
@@ -234,23 +235,29 @@ the historical actor reads as Operator.
 
 ## Principals in the global menu
 
-Immediately after the operator panel and its inbox, the Spice view shows
-**Principals**, every principal the repository has admitted, oldest first. Each
-reads with its avatar and initials, name with `(you)` on the connected one,
-email, roles, capability standing (issued, local for the earliest-born, whose
-capability each resident generation mints, or revoked), and admission age with
-the exact instant on hover. Its controls send the commands `spice principal`
-sends: **Edit profile** opens a form whose changed fields replace the recorded
-ones, **Grant operator** or **Revoke operator** changes the one role, and
-**Revoke capability** asks once more before retiring an issued capability.
-**Admit a human** takes a required name, an optional email, and the operator
-role; the reply's capability shows once above the list as the opening link
-`ORIGIN/#CAPABILITY` with **Copy link** and **Done**, held only in that panel
-and dropped with its connection. The listing re-reads on every `principal::`
-fact, so another session's change shows at once. The listing is
-operator-only, so a principal without the operator role sees only that the
-section takes it. One change is in flight at a time; its progress and any
-refusal, such as the last operator's revocation, read under the heading.
+After the global settings, the Spice view shows **Principals**. The connected
+principal appears there once, as their own row marked `(you)`, and that row
+seats their personal inbox with its heading, open count, items, and controls.
+The row and inbox stand whether or not this connection may list principals,
+and while the listing loads or is refused; until the principal directory
+arrives the row reads as loading. An operator-role principal also sees every
+principal the repository has admitted, oldest first. Each reads with its avatar
+and initials, name, email, roles, capability standing (issued, local for the
+earliest-born, whose capability each resident generation mints, or revoked),
+and admission age with the exact instant on hover. Its controls send the
+commands `spice principal` sends: **Edit profile** opens a form whose changed
+fields replace the recorded ones, **Grant operator** or **Revoke operator**
+changes the one role, and **Revoke capability** asks once more before retiring
+an issued capability. **Admit a human** takes a required name, an optional
+email, and the operator role; the reply's capability shows once above the list
+as the opening link `ORIGIN/#CAPABILITY` with **Copy link** and **Done**, held
+only in that panel and dropped with its connection. The listing re-reads on
+every `principal::` fact, so another session's change shows at once. The
+listing is operator-only: a principal without the operator role sees only their
+own row and its inbox, and a listing the resident refuses reads beneath that
+row as taking the operator role. One change is in flight at a time; its
+progress and any refusal, such as the last operator's revocation, read under
+the heading.
 
 ## Jobs in the global menu
 
