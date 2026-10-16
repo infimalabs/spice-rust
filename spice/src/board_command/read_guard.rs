@@ -105,7 +105,10 @@ fn validated_snapshot_from_with_occupant(
         .map_err(Outcome::Fault)?
         .product
         .clone();
-    let (entries, tasks) = project_task_rows(observed, projects, &residency.body, selected)?;
+    let (entries, mut tasks) = project_task_rows(observed, projects, &residency.body, selected)?;
+    for task in &mut tasks {
+        withhold_taste_findings(&principal, &mut task.statement.body.taste);
+    }
     // The allocation history is a global projection: a scoped preflight
     // neither consumes nor synthesizes a partial one.
     let recent_cell = selected
@@ -972,7 +975,6 @@ pub(super) fn read_ledger(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let lane_reader = matches!(principal, Actor::Lane(_));
     let roles = match principal_roles(bus) {
         Ok(roles) => roles,
         Err(outcome) => return outcome,
@@ -1012,13 +1014,7 @@ pub(super) fn read_ledger(
             let noted = envelope.fact.read::<body::TaskNoted>()?;
             (noted.task == statement.born).then_some((envelope.seq, noted.note))
         })
-        .map(|(position, note)| {
-            let read = lane_reader
-                .then(|| lane_audit(&note))
-                .flatten()
-                .unwrap_or(note);
-            (position, note_annotation(&read))
-        })
+        .map(|(position, note)| (position, note_annotation(&note)))
         .collect::<Vec<_>>();
     annotations.extend(ledger_step_annotations(
         &snapshot.facts,

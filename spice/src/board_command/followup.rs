@@ -380,12 +380,7 @@ struct FollowupContext<'a> {
     projects: &'a ProjectPolicy,
 }
 
-type FollowupPolicy = (
-    Vec<wire::Phase>,
-    wire::Phase,
-    Option<wire::TasteHold>,
-    Option<TasteReview>,
-);
+type FollowupPolicy = (Vec<wire::Phase>, wire::Phase, Option<wire::TasteHold>);
 
 fn prepare_followup_policy(
     context: &FollowupContext<'_>,
@@ -454,13 +449,12 @@ fn prepare_followup_policy(
         add.description.as_deref(),
         &add.acceptance,
     )?;
-    let taste_review_required = taste_review.as_ref().is_some_and(TasteReview::required);
     let mut taste = None;
-    if taste_review_required {
-        hold_for_taste(&mut flow, &mut taste);
+    if let Some(review) = taste_review.filter(TasteReview::required) {
+        hold_for_taste(&mut flow, &mut taste, &review);
     }
     let phase = flow[0].clone();
-    Ok((flow, phase, taste, taste_review))
+    Ok((flow, phase, taste))
 }
 
 /// Whether the command witnesses `task`'s intended absent birth stamp.
@@ -501,7 +495,7 @@ fn create_followup(
             "a review follow-up has no creation-time transcript capture",
         )
     })?;
-    let (flow, phase, taste, taste_review) = prepare_followup_policy(context, &followup.add)?;
+    let (flow, phase, taste) = prepare_followup_policy(context, &followup.add)?;
     let statement = TaskHead {
         preparation: planning::correction_preparation(context.reviewed_task),
         authorization: None,
@@ -560,7 +554,7 @@ fn create_followup(
                 project: statement.project.clone(),
                 filing: statement.filing,
                 priority: None,
-                taste: statement.taste,
+                taste: statement.taste.clone(),
                 document_slug: None,
                 taste_proposal: None,
                 depends: statement.dependencies.clone(),
@@ -572,9 +566,6 @@ fn create_followup(
             FactCause::Pending(context.reviewed),
         )
         .map_err(|error| store_fault("review::followup-build", &error.to_string()))?;
-    if let Some(review) = taste_review.as_ref().filter(|review| review.required()) {
-        append_taste_review_audit(write, &followup.task, review, FactCause::Pending(added))?;
-    }
     write.task_head(added, move |position| TaskHead {
         queue_origin: position,
         revision: position,

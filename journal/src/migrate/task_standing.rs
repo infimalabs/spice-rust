@@ -1,7 +1,7 @@
 //! Decode retired task priority and taste-review tags for the statement-tag
 //! schema crossing.
 
-use wire::{TaskPriority, TasteHold};
+use wire::{TaskPriority, TastePlan};
 
 /// Retired tag prefix that declared a priority.
 const PRIORITY_PREFIX: &str = "priority:";
@@ -10,10 +10,11 @@ const TASTE_HELD: &str = "taste-review:required";
 /// Retired tag marking a held statement whose plan phase the hold prepended.
 const TASTE_PREPENDED: &str = "taste-review:plan-prepended";
 
-/// Remove every retired standing tag from `tags` and return what it declared.
+/// Remove every retired standing tag from `tags` and return what it declared:
+/// the priority, and the plan of any taste hold.
 pub(super) fn lift(
     tags: &mut Vec<String>,
-) -> Result<(Option<TaskPriority>, Option<TasteHold>), String> {
+) -> Result<(Option<TaskPriority>, Option<TastePlan>), String> {
     let mut priority = None;
     let mut held = false;
     let mut prepended = false;
@@ -45,8 +46,8 @@ pub(super) fn lift(
     }
     let taste = match (held, prepended) {
         (false, false) => None,
-        (true, false) => Some(TasteHold::Authored),
-        (true, true) => Some(TasteHold::Prepended),
+        (true, false) => Some(TastePlan::Authored),
+        (true, true) => Some(TastePlan::Prepended),
         (false, true) => return Err("a prepended plan marker without its taste hold".to_owned()),
     };
     Ok((priority, taste))

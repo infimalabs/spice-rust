@@ -170,7 +170,10 @@ pub fn gather_route(intent: Option<TaskIntent>, flow: &[wire::Phase]) -> bool {
 /// changes what a task is, only which phase it waits in.
 #[must_use]
 pub fn gather_task(statement: &wire::TaskHead, workflow: &wire::WorkflowHead) -> bool {
-    let held = statement.taste == Some(wire::TasteHold::Prepended);
+    let held = statement
+        .taste
+        .as_ref()
+        .is_some_and(|hold| hold.plan == wire::TastePlan::Prepended);
     let route = match workflow.flow.as_slice() {
         [first, authored @ ..] if held && first.as_str() == "plan" => authored,
         authored => authored,

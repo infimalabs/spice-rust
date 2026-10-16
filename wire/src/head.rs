@@ -302,14 +302,96 @@ impl std::fmt::Display for TaskPriority {
 ///
 /// Authors never write it; task creation, filing, and statement edits set it
 /// from the repository taste policy, and an edit that passes clears it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TasteHold {
+    /// Where the plan phase holding the task came from.
+    pub plan: TastePlan,
+    /// Every place the latest policy read found a taste in the statement.
+    pub matches: Vec<TasteMatch>,
+    /// Statement revisions read since the hold began that still matched.
+    pub rechecks: u32,
+}
+
+impl TasteHold {
+    /// Withhold what each match found, keeping where it sits and which taste
+    /// it names.
+    ///
+    /// An author told the matched word swaps the word instead of rewriting the
+    /// statement, so a lane reads the field, line, and taste of each match and
+    /// the operator who owns the policy reads the rest.
+    pub fn withhold_findings(&mut self) {
+        for found in &mut self.matches {
+            found.finding = None;
+        }
+    }
+}
+
+/// Where the plan phase of a taste hold came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum TasteHold {
-    /// Held in a plan phase the authored flow already carried.
+pub enum TastePlan {
+    /// The authored flow already opened in plan.
     Authored,
-    /// Held in a plan phase the hold prepended to the authored flow; clearing
-    /// the hold withdraws that phase.
+    /// The hold prepended plan to the authored flow; clearing the hold
+    /// withdraws that phase.
     Prepended,
+}
+
+/// One place a held statement matched a taste.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TasteMatch {
+    /// Statement field the match sits in.
+    pub field: StatementField,
+    /// One-based line of the match within that field's text, or within one
+    /// acceptance criterion's text.
+    pub line: usize,
+    /// Taste that matched.
+    pub taste: String,
+    /// What matched and why; absent only from a lane's read.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub finding: Option<TasteFinding>,
+}
+
+/// The matched text of one taste match and the taste's own message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TasteFinding {
+    /// Trigger text the taste selected.
+    pub trigger: String,
+    /// One-based byte column at which the trigger begins.
+    pub column: usize,
+    /// The taste's message to the author.
+    pub message: String,
+}
+
+/// Authored statement field a taste reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StatementField {
+    /// The statement title.
+    Title,
+    /// The longer authored context.
+    Description,
+    /// One acceptance criterion.
+    Acceptance,
+}
+
+impl StatementField {
+    /// Stored spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Title => "title",
+            Self::Description => "description",
+            Self::Acceptance => "acceptance",
+        }
+    }
 }
 
 /// Recurrence evidence a resident-filed taste proposal carries about the

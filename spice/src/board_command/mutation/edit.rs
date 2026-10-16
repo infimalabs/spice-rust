@@ -71,8 +71,8 @@ fn prepare_correction(
     }
     let (mut statement, flow) = corrected_statement(entry, edit, projects)?;
     // A Draft asserts nothing yet; taste policy binds when it is filed.
-    let (taste_review, was_required, released) = if entry.is_draft() {
-        (None, false, None)
+    let released = if entry.is_draft() {
+        None
     } else {
         review_taste(repository, snapshot, command, edit, entry, &mut statement)?
     };
@@ -133,13 +133,16 @@ fn prepare_correction(
         next: next_action(snapshot, &post),
         at,
         requirement_change,
-        taste_review: taste_review.filter(|review| was_required || review.required()),
         released,
         workflow,
     };
     Ok((statement, publication))
 }
 
+/// Read a corrected statement against the taste policy and move its hold.
+///
+/// A match keeps the statement held, counting one more recheck of a standing
+/// hold; a clear read releases the hold and any plan phase it inserted.
 fn review_taste(
     repository: Option<&Repository>,
     snapshot: &ValidatedSnapshot,
@@ -147,7 +150,7 @@ fn review_taste(
     edit: &TaskEdit,
     entry: &Entry,
     statement: &mut TaskHead,
-) -> Result<(Option<TasteReview>, bool, Option<ReleasedPlan>), Outcome<CommandAnswer>> {
+) -> Result<Option<ReleasedPlan>, Outcome<CommandAnswer>> {
     let review = task_taste_review(
         repository,
         snapshot,
@@ -158,16 +161,16 @@ fn review_taste(
     )?;
     let was_required = statement.taste.is_some();
     let mut released = None;
-    match review.as_ref().map(TasteReview::required) {
-        Some(false) => {
+    match review {
+        Some(review) if !review.required() => {
             if let Some(workflow) = clear_taste_review(&mut statement.taste, entry.workflow()) {
                 released = Some(ReleasedPlan::observe(snapshot, entry.born(), workflow)?);
             }
         }
-        Some(true) if was_required || entry.workflow().phase.as_str() == "plan" => {
-            statement.taste.get_or_insert(wire::TasteHold::Authored);
+        Some(review) if was_required || entry.workflow().phase.as_str() == "plan" => {
+            keep_taste_hold(&mut statement.taste, &review);
         }
-        Some(true) => {
+        Some(_) => {
             return Err(refusal(
                 "task::taste-review-required",
                 Some(edit.task.to_string()),
@@ -182,7 +185,7 @@ fn review_taste(
         }
         None => {}
     }
-    Ok((review, was_required, released))
+    Ok(released)
 }
 
 /// Build the statement a correction publishes, or the refusal it earns.
@@ -332,7 +335,6 @@ struct CorrectionPublication {
     next: Option<Box<str>>,
     at: Instant,
     requirement_change: requirements::Change,
-    taste_review: Option<TasteReview>,
     /// The authored workflow a cleared hold returns the task to.
     released: Option<ReleasedPlan>,
     /// The replacement workflow a Draft's route edit publishes, with the
@@ -351,7 +353,6 @@ fn publish_correction(
         next,
         at,
         requirement_change,
-        taste_review,
         released,
         workflow,
     } = publication;
@@ -382,16 +383,6 @@ fn publish_correction(
         Ok(fact) => fact,
         Err(error) => return store_fault("task::edit-build", &error.to_string()),
     };
-    if let Some(review) = taste_review.as_ref()
-        && let Err(outcome) = append_taste_review_audit(
-            &mut write,
-            &statement.born,
-            review,
-            FactCause::Pending(edited),
-        )
-    {
-        return outcome;
-    }
     if let Some(released) = released
         && let Err(outcome) = released.write(&mut write, &statement.born, edited)
     {

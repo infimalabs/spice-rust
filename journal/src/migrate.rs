@@ -17,6 +17,7 @@ mod settings_receipts;
 mod task_markers;
 mod task_standing;
 mod task_tags;
+mod taste_holds;
 mod team_formations;
 mod workflows;
 mod working_groups;
@@ -62,14 +63,16 @@ const PREPARED: &str = "prepared";
 /// carrying its principal's code, makes retained working-group activity
 /// stance explicit, lifts task priority, taste-review standing, document slugs,
 /// and taste-proposal evidence from retired statement tags into typed fields,
-/// then discards every remaining tag before the schema identity advances.
+/// then discards every remaining tag before the schema identity advances. Each
+/// taste hold takes the matches and recheck count its retired audit notes
+/// recorded, and the notes stay as history no reader parses.
 /// Before any of that decodes a typed statement head, it resolves every
 /// retained task provenance spelling into the closed provenance type. Current
 /// readers therefore need no release-specific execution arm. Retained terminal
 /// review fields cross before any migration decodes a typed workflow head.
-const PREDECESSOR_SCHEMAS: [u32; 40] = [
+const PREDECESSOR_SCHEMAS: [u32; 41] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72,
+    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -118,6 +121,9 @@ pub(crate) const GROUP_PARTITION_SCHEMA: u32 = 53;
 const WHOLE_CANDIDATE_DECISION_SCHEMA: u32 = 56;
 /// First schema whose baseline carries bounded Design maturity and notices.
 pub(crate) const DESIGN_MATURITY_SCHEMA: u32 = 63;
+/// First schema whose Design pass proposals and output decisions carry their
+/// current explicit shape.
+const DESIGN_PASS_SCHEMA: u32 = 73;
 /// Each room projection beside the first schema whose baseline carries it, in
 /// creation order.
 const ROOM_SCHEMA_STEPS: [(u32, &str); 10] = [
@@ -348,11 +354,13 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     workflows::cross(&transaction)?;
     provenance::cross(&transaction)?;
     task_tags::cross_heads(&transaction)?;
+    let taste_audits = taste_holds::Audits::read(&transaction)?;
+    taste_holds::cross_heads(&transaction, &taste_audits)?;
     if version <= WHOLE_CANDIDATE_DECISION_SCHEMA {
         cross_shape_predecessor(&transaction, version)?;
     } else {
         create_room_schemas(&transaction, version)?;
-        if version >= ROOM_AUTHORITY_SCHEMA {
+        if version < DESIGN_PASS_SCHEMA {
             decisions::cross_design_passes(&transaction)?;
             decisions::cross_output_decisions(&transaction)?;
         }
@@ -362,7 +370,8 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     }
     create_principal_heads(&transaction, version)?;
     working_groups::cross(&transaction)?;
-    task_tags::cross_facts(&transaction)?;
+    task_tags::cross_facts(&transaction, &taste_audits)?;
+    taste_holds::cross_facts(&transaction, &taste_audits)?;
     settings_receipts::cross(&transaction)?;
     awareness::cross(&transaction)?;
     maturity::cross(&transaction)?;
@@ -1437,8 +1446,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 73, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 74, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 73;
+PRAGMA user_version = 74;
 "#;

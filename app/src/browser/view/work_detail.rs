@@ -302,7 +302,7 @@ fn render_available(
                     {fact("Review", workflow.review_str().to_owned())}
                     {assignment_fact(workflow.status.reviewer(), render)}
                     {statement.priority.map_or_else(Html::default, |priority| fact("Priority", priority.to_string()))}
-                    {statement.taste.map_or_else(Html::default, |_| fact("Taste review", "Required".to_owned()))}
+                    {statement.taste.as_ref().map_or_else(Html::default, |hold| fact("Taste review", taste_review_text(hold)))}
                     {deadline_fact("Deferral", workflow.deferral.as_ref(), "None")}
                     {instant_fact("Completion", completion.as_ref(), "Open")}
                 </dl>
@@ -391,6 +391,27 @@ fn render_activity(
 
 fn fact(label: &'static str, value: String) -> Html {
     html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
+}
+
+/// Where each taste held the statement, with the matched text the operator
+/// reads beside it.
+fn taste_review_text(hold: &wire::TasteHold) -> String {
+    hold.matches
+        .iter()
+        .map(|found| {
+            let place = format!(
+                "{} line {}: {}",
+                found.field.as_str(),
+                found.line,
+                found.taste
+            );
+            match &found.finding {
+                Some(finding) => format!("{place} ({:?})", finding.trigger),
+                None => place,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 fn project_fact(render: &WorkDetailRender<'_, '_>, project: &str) -> Html {

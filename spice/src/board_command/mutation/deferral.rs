@@ -236,19 +236,12 @@ fn filing_preparation(
     }))
 }
 
-/// What filing a Draft adds beyond its standing change: the taste review its
-/// prose earned and the prerequisite workflows the transaction relies on.
-#[derive(Default)]
-struct DraftFiling {
-    taste_review: Option<TasteReview>,
-    dependency_witnesses: Vec<Witness>,
-}
-
-/// Validate a Draft as the complete ordinary task it becomes when filed.
+/// Validate a Draft as the complete ordinary task it becomes when filed, and
+/// return the prerequisite workflows the filing transaction relies on.
 ///
-/// The statement and workflow are the filed rows on success. Every refusal
-/// names the Draft field or filing option that must be repaired, and nothing
-/// is written.
+/// The statement and workflow are the filed rows on success, held for taste
+/// review when the policy matches its prose. Every refusal names the Draft
+/// field or filing option that must be repaired, and nothing is written.
 fn draft_filing(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
@@ -256,7 +249,7 @@ fn draft_filing(
     file: &TaskFile,
     statement: &mut TaskHead,
     workflow: &mut WorkflowHead,
-) -> Result<DraftFiling, Outcome<CommandAnswer>> {
+) -> Result<Vec<Witness>, Outcome<CommandAnswer>> {
     if let Some(named) = &file.preparation {
         if file.claim {
             return Err(refusal(
@@ -309,15 +302,11 @@ fn draft_filing(
         statement.description.as_deref(),
         &statement.acceptance,
     )?;
-    let taste_review = review.filter(TasteReview::required);
-    if taste_review.is_some() {
-        hold_for_taste(&mut workflow.flow, &mut statement.taste);
+    if let Some(review) = review.filter(TasteReview::required) {
+        hold_for_taste(&mut workflow.flow, &mut statement.taste, &review);
         workflow.phase = workflow.flow[0].clone();
     }
-    Ok(DraftFiling {
-        taste_review,
-        dependency_witnesses,
-    })
+    Ok(dependency_witnesses)
 }
 
 fn append_filing(
@@ -327,7 +316,6 @@ fn append_filing(
     post: &Entry,
     workflow: WorkflowHead,
     statement: TaskHead,
-    taste_review: Option<&TasteReview>,
     atomic_claim: Option<AtomicClaim>,
 ) -> Result<Option<spice::task_git::ClaimPreparation>, Outcome<CommandAnswer>> {
     let filed = write
@@ -339,9 +327,6 @@ fn append_filing(
             FactCause::Root,
         )
         .map_err(|error| store_fault("task::filing-build", &error.to_string()))?;
-    if let Some(review) = taste_review {
-        append_taste_review_audit(write, entry.born(), review, FactCause::Pending(filed))?;
-    }
     // A Draft's preparation binds as the ordinary output association `task
     // add --preparation` writes; only OOPS grooming records batch control.
     let statement_fact = match statement.preparation.clone() {
@@ -412,7 +397,7 @@ fn file_unfiled(
     statement.filing = wire::TaskFiling::Filed;
     let mut workflow = entry.workflow().clone();
     workflow.deferral = None;
-    let draft = if entry.is_draft() {
+    let dependency_witnesses = if entry.is_draft() {
         match draft_filing(
             snapshot,
             command,
@@ -421,7 +406,7 @@ fn file_unfiled(
             &mut statement,
             &mut workflow,
         ) {
-            Ok(draft) => draft,
+            Ok(witnesses) => witnesses,
             Err(outcome) => return outcome,
         }
     } else {
@@ -429,7 +414,7 @@ fn file_unfiled(
             Ok(preparation) => statement.preparation = preparation,
             Err(outcome) => return outcome,
         }
-        DraftFiling::default()
+        Vec::new()
     };
     let post = match Entry::new(
         statement.clone(),
@@ -463,7 +448,7 @@ fn file_unfiled(
         Ok(write) => write,
         Err(outcome) => return outcome,
     };
-    guard(&mut write, draft.dependency_witnesses);
+    guard(&mut write, dependency_witnesses);
     let prepared_claim_git = match append_filing(
         &mut write,
         command,
@@ -471,7 +456,6 @@ fn file_unfiled(
         &post,
         workflow,
         statement,
-        draft.taste_review.as_ref(),
         atomic_claim,
     ) {
         Ok(prepared) => prepared,

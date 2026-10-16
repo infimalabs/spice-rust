@@ -109,25 +109,6 @@ pub(super) fn modify_with_repository(
     )
 }
 
-fn ledger_text(bus: &Bus, epoch: CanonicalUuid, actor: Actor, task: &TaskHandle) -> String {
-    let outcome = issue(
-        bus,
-        epoch,
-        actor,
-        CommandKind::DocLedger,
-        Vec::new(),
-        &DocLedger { task: task.clone() },
-    );
-    let Outcome::Reply(Reply {
-        body: CommandAnswer::Text(TextAnswer { text }),
-        ..
-    }) = outcome
-    else {
-        panic!("ledger read did not reply with text: {outcome:?}");
-    };
-    text
-}
-
 #[test]
 fn configured_match_routes_accepted_task_through_durable_taste_review() {
     let (root, bus, epoch, _seats) = fixture("taste-review-create", 0);
@@ -177,26 +158,43 @@ fn configured_match_routes_accepted_task_through_durable_taste_review() {
             .collect::<Vec<_>>(),
         ["plan", "todo", "review"],
     );
-    assert_eq!(held.statement.body.taste, Some(wire::TasteHold::Prepended));
+    let hold = held
+        .statement
+        .body
+        .taste
+        .as_ref()
+        .expect("a matched statement is held");
+    assert_eq!(hold.plan, wire::TastePlan::Prepended);
+    assert_eq!(hold.rechecks, 0);
+    let [found] = hold.matches.as_slice() else {
+        panic!("one title match holds the statement: {hold:?}");
+    };
+    assert_eq!(
+        (found.field, found.line, found.taste.as_str()),
+        (wire::StatementField::Title, 1, "taskwording"),
+    );
+    assert_eq!(
+        found
+            .finding
+            .as_ref()
+            .map(|finding| finding.trigger.as_str()),
+        Some("delay"),
+        "the operator reads what matched",
+    );
 
     let shown = task_show(&visible, held, &[]);
     assert!(shown.contains("taste_review required"));
     assert!(shown.contains(&format!("next: spice task modify {review_task}")));
     assert!(!shown.contains("next: spice task done"));
-    assert!(!shown.contains("delay"));
-    assert!(!shown.contains("Rewrite the task wording"));
 
-    let audit = bus
+    let noted = bus
         .fact_snapshot()
         .expect("taste-review facts read")
         .facts()
         .iter()
-        .filter_map(|fact| fact.fact.read::<body::TaskNoted>())
-        .find(|note| note.task == held.statement.body.born)
-        .expect("taste-review audit note exists");
-    assert!(audit.note.contains("taste=\"taskwording\""));
-    assert!(audit.note.contains("trigger=\"delay\""));
-    assert!(audit.note.contains("policy="));
+        .filter(|fact| fact.fact.read::<body::TaskNoted>().is_some())
+        .count();
+    assert_eq!(noted, 0, "neither the clear nor the held read wrote a note");
 
     clean(&root, bus);
 }
@@ -292,7 +290,24 @@ fn modification_rechecks_the_complete_current_policy_before_clearing() {
         "Current lifecycle change",
     ));
     let still_held = board(&bus, epoch, Actor::Operator);
-    assert!(at(&still_held, &task).statement.body.taste.is_some());
+    let hold = at(&still_held, &task)
+        .statement
+        .body
+        .taste
+        .clone()
+        .expect("the current policy still matches");
+    assert_eq!(hold.rechecks, 1);
+    assert_eq!(
+        hold.matches
+            .iter()
+            .map(|found| found
+                .finding
+                .as_ref()
+                .map(|finding| finding.trigger.as_str()))
+            .collect::<Vec<_>>(),
+        [Some("current")],
+        "the hold records what the current policy matched",
+    );
 
     configured_repository(&root, &["unrelated"]);
     assert_committed(modify_with_repository(
@@ -305,21 +320,6 @@ fn modification_rechecks_the_complete_current_policy_before_clearing() {
     ));
     let cleared = board(&bus, epoch, Actor::Operator);
     assert_eq!(at(&cleared, &task).statement.body.taste, None);
-    let audits = bus
-        .fact_snapshot()
-        .expect("taste-review recheck facts read")
-        .facts()
-        .iter()
-        .filter_map(|fact| fact.fact.read::<body::TaskNoted>())
-        .filter(|note| note.task == task.born().expect("fixture task stamp"))
-        .map(|note| note.note.clone())
-        .collect::<Vec<_>>();
-    assert!(audits.iter().any(|note| note.contains("outcome=required")));
-    assert!(
-        audits
-            .last()
-            .is_some_and(|note| { note.contains("outcome=clear") && note.contains("matches=[]") })
-    );
 
     clean(&root, bus);
 }
@@ -387,12 +387,22 @@ fn clearing_a_hold_withdraws_only_the_plan_phase_the_hold_inserted() {
         ("plan".to_owned(), vec!["plan".into(), "todo".into()]),
     );
     assert_eq!(
-        at(&held, &inserted).statement.body.taste,
-        Some(wire::TasteHold::Prepended),
+        at(&held, &inserted)
+            .statement
+            .body
+            .taste
+            .as_ref()
+            .map(|hold| hold.plan),
+        Some(wire::TastePlan::Prepended),
     );
     assert_eq!(
-        at(&held, &authored).statement.body.taste,
-        Some(wire::TasteHold::Authored),
+        at(&held, &authored)
+            .statement
+            .body
+            .taste
+            .as_ref()
+            .map(|hold| hold.plan),
+        Some(wire::TastePlan::Authored),
     );
 
     for (task, title) in [
@@ -750,6 +760,16 @@ fn plan_completion_refuses_while_taste_review_marker_remains() {
         &task,
         "Delay the lifecycle change once more",
     ));
+    assert_eq!(
+        at(&board(&bus, epoch, Actor::Operator), &task)
+            .statement
+            .body
+            .taste
+            .as_ref()
+            .map(|hold| hold.rechecks),
+        Some(1),
+        "a still-matching revision counts as one recheck",
+    );
     let outcome = plan_done(&bus, &repository, epoch, &seats[0], &task);
     let Outcome::Refusal(refusal) = outcome else {
         panic!("reworded taste review plan completion did not refuse: {outcome:?}");
@@ -786,33 +806,34 @@ fn a_hold_speaks_on_status_while_its_match_stays_withheld_from_the_lane() {
         "status did not name the held task: {status}",
     );
 
-    let read = ledger_text(&bus, epoch, lane, &task);
-    assert!(read.contains(AUDIT_PREFIX));
-    assert!(read.contains("field=\"title\""));
-    assert!(read.contains("trigger=withheld"));
-    assert!(read.contains("message=withheld"));
-    assert!(read.contains("column=withheld"));
-    assert!(!read.contains("\"delay\""));
-    assert!(!read.contains("Rewrite the task wording"));
+    let withheld = |answer: &BoardAnswer| {
+        let hold = match &answer.next {
+            Some(NextWorkState::Active { task }) => task.statement.body.taste.clone(),
+            _ => at(answer, &task).statement.body.taste.clone(),
+        }
+        .expect("the read carries the hold");
+        hold.matches
+            .iter()
+            .map(|found| (found.field, found.line, found.finding.is_none()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        withheld(&held),
+        [(wire::StatementField::Title, 1, true)],
+        "the lane's board read names the place but withholds the finding",
+    );
+    let shown = task_show(&held, at(&held, &task), &[]);
+    assert!(!shown.contains("delay"), "{shown}");
+    assert!(!shown.contains("Rewrite the task wording"), "{shown}");
 
-    let owned = ledger_text(&bus, epoch, Actor::Operator, &task);
-    assert!(owned.contains("trigger=\"delay\""));
-    assert!(owned.contains("Rewrite the task wording"));
-    assert!(!owned.contains("column=withheld"));
+    let next = next_board(&bus, epoch, lane);
+    assert_eq!(
+        withheld(&next),
+        [(wire::StatementField::Title, 1, true)],
+        "the lane's task next read withholds the finding",
+    );
+    let owned = board(&bus, epoch, Actor::Operator);
+    assert_eq!(withheld(&owned), [(wire::StatementField::Title, 1, false)]);
 
     clean(&root, bus);
-}
-
-#[test]
-fn an_unmeasurable_audit_value_withholds_the_rest_of_the_note() {
-    let malformed = format!(
-        "{AUDIT_PREFIX}policy=abc outcome=required matches=[field=\"title\" trigger=\"open"
-    );
-    let read = lane_audit(&malformed).expect("an audit projects for a lane");
-    assert!(read.ends_with("trigger=withheld"), "{read}");
-    assert!(!read.contains("open"), "{read}");
-    assert!(
-        lane_audit("an authored note").is_none(),
-        "a note that is not an audit was rewritten",
-    );
 }

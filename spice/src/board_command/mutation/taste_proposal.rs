@@ -123,7 +123,6 @@ pub(in crate::board_command) fn taste_proposal_add(
         &snapshot,
         prepared,
         post,
-        None,
         dependency_witnesses,
         move |write| guard_proposal_observation(write, observation),
         None,

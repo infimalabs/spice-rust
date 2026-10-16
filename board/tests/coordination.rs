@@ -209,7 +209,7 @@ fn journal_with_heads(mut statement: TaskHead, workflow: WorkflowHead) -> Journa
                 project: statement.project.clone(),
                 filing: statement.filing,
                 priority: statement.priority,
-                taste: statement.taste,
+                taste: statement.taste.clone(),
                 document_slug: statement.document_slug.clone(),
                 taste_proposal: statement.taste_proposal.clone(),
                 depends: statement.dependencies.clone(),
