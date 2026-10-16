@@ -636,14 +636,15 @@ impl Entry {
         self.grouped
     }
 
-    /// Attach the latest preparation decision that ruled on this output.
+    /// Attach the decision classifying this output for selection waiting.
     #[must_use]
     pub fn with_preparation_decision(mut self, decision: Option<wire::rooms::DecisionRef>) -> Self {
         self.preparation_decision = decision;
         self
     }
 
-    /// Latest preparation decision that ruled on this output.
+    /// Decision on the latest unwithdrawn candidate version naming this
+    /// output; `None` while that version is open or none ruled on it.
     #[must_use]
     pub const fn preparation_decision(&self) -> Option<&wire::rooms::DecisionRef> {
         self.preparation_decision.as_ref()

@@ -225,13 +225,14 @@ pub fn gather_task(statement: &wire::TaskHead, workflow: &wire::WorkflowHead) ->
 }
 
 /// The preparation whose selection one live output still lacks: an output its
-/// preparation constructed directly that is pending without either an
-/// execution authorization or a recorded decision. A rejected output is
-/// decided but remains unauthorized. A gather task is evidence, never an
-/// output.
+/// preparation constructed directly that is pending without an execution
+/// authorization and without a verdict on the latest unwithdrawn candidate
+/// version naming it. A rejected output is decided but remains unauthorized;
+/// re-proposing it in a later open candidate makes it undecided again. A
+/// gather task is evidence, never an output.
 ///
-/// A Design cannot be concluded done while it owns such an output; only the
-/// operator's decision, or closing or deleting the output, discharges it.
+/// Only the operator's decision on that version, its withdrawal back to an
+/// earlier verdict, or closing or deleting the output discharges it.
 #[must_use]
 pub fn unselected_output_of<'a>(
     statement: &'a wire::TaskHead,

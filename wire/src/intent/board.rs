@@ -871,8 +871,9 @@ pub struct BoardTask {
     /// outside every group is passive and no claim path grants it.
     #[serde(default, skip_serializing_if = "is_false")]
     pub grouped: bool,
-    /// Latest preparation decision that ruled on this output, whether its
-    /// verdict released or rejected the output.
+    /// Decision on the latest unwithdrawn candidate version naming this
+    /// output, whether its verdict released or rejected the output; absent
+    /// while that version is open or no decision ruled on it.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -1052,7 +1053,7 @@ impl BoardTask {
         self
     }
 
-    /// Attach the latest preparation decision that ruled on this output.
+    /// Attach the decision classifying this output for selection waiting.
     #[must_use]
     pub fn with_preparation_decision(
         mut self,

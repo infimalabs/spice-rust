@@ -4,8 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 mod persistent_index;
+mod selection;
 
-use persistent_index::PersistentIndex;
+use selection::CandidateSelection;
 
 use super::*;
 /// Deterministic work performed by one live-allocation projection.
@@ -182,11 +183,6 @@ impl TerminalIndex {
     }
 }
 
-type RetainedCandidateIndex =
-    PersistentIndex<journal::crossing::rooms::CandidateRef, Box<[journal::crossing::TaskStamp]>>;
-type PreparationDecisionIndex =
-    PersistentIndex<journal::crossing::TaskStamp, journal::crossing::rooms::DecisionRef>;
-
 /// Answers derived from the whole history, advanced once per commit so no
 /// later read walks the history for them.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -220,10 +216,8 @@ struct Indexes {
     /// The reason each Design's collapse recorded, shared until a commit
     /// records another conclusion.
     collapse_reasons: Arc<HashMap<journal::crossing::TaskStamp, String>>,
-    /// Retained candidate outputs indexed without copying prior candidates.
-    retained_candidates: RetainedCandidateIndex,
-    /// Latest preparation decision that ruled on each output.
-    preparation_decisions: PreparationDecisionIndex,
+    /// Candidate-version precedence classifying outputs for selection waiting.
+    candidate_selection: CandidateSelection,
 }
 
 impl Indexes {
@@ -288,26 +282,21 @@ impl Indexes {
                 .fact
                 .read::<journal::crossing::rooms::CandidateRetained>()
             {
-                next.retained_candidates = next.retained_candidates.pushed(HashMap::from([(
-                    retained.candidate.candidate,
-                    retained.candidate.outputs.into_boxed_slice(),
-                )]));
+                next.candidate_selection.retain(retained.candidate);
             } else if let Some(decided) = row
                 .fact
                 .read::<journal::crossing::rooms::PreparationDecided>()
             {
-                let decision = decided.decision.decision;
-                if let Some(outputs) = next
-                    .retained_candidates
-                    .get(decided.decision.outcome.candidate())
-                {
-                    let decisions = outputs
-                        .iter()
-                        .cloned()
-                        .map(|output| (output, decision.clone()))
-                        .collect();
-                    next.preparation_decisions = next.preparation_decisions.pushed(decisions);
-                }
+                next.candidate_selection.decide(
+                    decided.decision.outcome.candidate(),
+                    decided.decision.decision,
+                );
+            } else if let Some(withdrawn) = row
+                .fact
+                .read::<journal::crossing::rooms::CandidateWithdrawn>()
+            {
+                next.candidate_selection
+                    .withdraw(&withdrawn.withdrawal.candidate);
             } else if let Some(pended) = row.fact.read::<journal::crossing::body::TrustPended>() {
                 next.trust_surfaces.insert(pended.surface, pended.digest);
             } else if let Some(moved) = row
@@ -527,13 +516,16 @@ impl TaskFacts {
         self.indexes.terminals.get(task, operation)
     }
 
-    /// Latest preparation decision that ruled on one still-live output.
+    /// The decision on the latest unwithdrawn candidate version naming one
+    /// output, or `None` while that version is open or none ruled on it. An
+    /// older verdict stays in room history but no longer classifies an output
+    /// a later open candidate re-proposes.
     #[must_use]
     pub fn preparation_decision(
         &self,
         output: &journal::crossing::TaskStamp,
     ) -> Option<&journal::crossing::rooms::DecisionRef> {
-        self.indexes.preparation_decisions.get(output)
+        self.indexes.candidate_selection.decision(output)
     }
 
     /// Immutable terminal-index levels probed by the same lookup.
