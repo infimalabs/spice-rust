@@ -61,6 +61,8 @@ pub(crate) fn room_control(
             text,
         )
         .map(|(answer, lane)| (answer, Some(lane))),
+        RoomControl::Reply { item, text } => reply(bus, command, control, config, item, text)
+            .map(|(answer, lane)| (answer, Some(lane))),
         RoomControl::Recover { item } => {
             recover(bus, command, control, config, item).map(|answer| (answer, None))
         }
@@ -246,6 +248,165 @@ fn answer(
     Ok((commit(bus, command, control, write, answer), lane))
 }
 
+/// Reply to one pending operator item a lane's MSG or ANS opened.
+///
+/// The reply is operator direction to the authoring lane, recorded as an
+/// operator MSG routed to that lane in the item's room, and the same write
+/// settles the item acked. An ASK item is answered, never replied to.
+fn reply(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    control: &RoomControl,
+    config: &steer::Config,
+    key: &RoomReceiptRef,
+    text: &str,
+) -> Result<(Outcome<CommandAnswer>, CanonicalUuid), Outcome<CommandAnswer>> {
+    let ((record, head), lane, cited) = repliable(bus, key, text)?;
+    let at = now()?;
+    let context = record.context().cloned();
+    let origin = match &context {
+        Some(room) => task_origin(room)?,
+        None => resident_origin(command)?,
+    };
+    let mut write = JournalWrite::new(
+        command.actor().clone(),
+        origin.clone(),
+        at,
+        Producer::CommandDoor,
+    );
+    guard_item(&mut write, key, head.position());
+    guard_residence(&mut write, lane);
+    let returned = format!("RE {cited}: {text}");
+    let (returned_key, _) = crate::resident::append_operator_directive(
+        bus,
+        origin,
+        config,
+        &mut write,
+        crate::resident::OperatorDirective {
+            directive: command.id(),
+            fanout: None,
+            lane,
+            text: &returned,
+            control: None,
+            room: context.clone(),
+        },
+        at,
+        FactCause::Root,
+    )?;
+    let minted = returned_key
+        .parse::<steer::Key>()
+        .ok()
+        .and_then(|key| key.minted_micros())
+        .ok_or_else(|| store_fault("room::return-key-invalid", &returned_key))?;
+    let micros = jiff::Timestamp::now()
+        .as_microsecond()
+        .max(minted.saturating_add(1));
+    let publication = mint_stamp(bus, context.as_ref(), micros)?;
+    write
+        .fact(
+            RoomPosted {
+                publication: publication.clone(),
+                text: text.to_owned(),
+                operation: wire::rooms::RoomPublicationKind::Msg {},
+                routes: vec![wire::rooms::RoomRoute {
+                    destination: RoomDestination::Lane { lane },
+                    context,
+                    direction: None,
+                }],
+                directed: vec![command.id()],
+                expires: expiry(at, config)?,
+            },
+            FactCause::Root,
+        )
+        .map_err(|error| store_fault("room::reply-build", &error.to_string()))?;
+    write
+        .fact(
+            RoomDisposed {
+                disposition: RoomReceiptDisposition::Ack,
+                keys: vec![key.clone()],
+                clause: format!("replied {publication}"),
+            },
+            FactCause::Root,
+        )
+        .map_err(|error| store_fault("room::control-build", &error.to_string()))?;
+    crate::resident::steering_envelope_admits(&write)?;
+    let answer = RoomControlAnswer {
+        items: vec![RoomItemMove {
+            item: key.clone(),
+            state: "acked".to_owned(),
+        }],
+        results: Vec::new(),
+        answer: Some(publication),
+        returned: Some(returned_key),
+        assessed: None,
+    };
+    Ok((commit(bus, command, control, write, answer), lane))
+}
+
+/// The pending lane-opened item `text` may reply to now, with the resident
+/// lane the reply returns to and how the reply cites what it answers: the
+/// MSG's direction key or the ANS's result.
+fn repliable(
+    bus: &Bus,
+    key: &RoomReceiptRef,
+    text: &str,
+) -> Result<(Item, CanonicalUuid, String), Outcome<CommandAnswer>> {
+    require_text(text, "reply")?;
+    let (record, head) = item(bus, key)?;
+    let state = head.body().state();
+    if !matches!(state, RoomReceiptState::Pending { .. }) {
+        return Err(item_refusal(key, state));
+    }
+    let probe = record.publication().clone();
+    let (_, opened) = bus
+        .read(move |read| read.room_conversation(&probe))
+        .map_err(|error| store_fault("room::publication-unreadable", &error.to_string()))?
+        .ok_or_else(|| {
+            store_fault(
+                "room::item-publication-missing",
+                &format!("operator item {key} names no admitted conversation"),
+            )
+        })?;
+    let RoomDestination::Lane { lane } = *opened.author() else {
+        return Err(store_fault(
+            "room::item-author-invalid",
+            &format!("operator item {key} was not opened by a lane"),
+        ));
+    };
+    let cited = match opened.kind() {
+        wire::rooms::RoomPublicationKind::Msg {} => opened
+            .routes()
+            .iter()
+            .find(|route| route.destination == RoomDestination::Operator {})
+            .and_then(|route| route.direction.as_ref())
+            .map(|direction| format!("#{direction}"))
+            .ok_or_else(|| {
+                store_fault(
+                    "room::item-direction-missing",
+                    &format!("operator item {key} names no operator direction"),
+                )
+            })?,
+        wire::rooms::RoomPublicationKind::Ans { result, .. } => result.to_string(),
+        wire::rooms::RoomPublicationKind::Ask { result, .. } => {
+            return Err(refusal(
+                "room::reply-question",
+                Some(result.to_string()),
+                &format!("a question takes an answer: `spice room answer {result} TEXT`"),
+            ));
+        }
+    };
+    if !lane_resides(bus, lane)? {
+        return Err(refusal(
+            "room::requester-gone",
+            Some(lane.to_string()),
+            &format!(
+                "the lane left residency; settle the item with `spice room ack {key} --clause TEXT`"
+            ),
+        ));
+    }
+    Ok(((record, head), lane, cited))
+}
+
 /// The pending operator-answered question `text` may answer now, with the
 /// admission instant and the resident lane its answer returns to.
 fn answerable(
@@ -254,20 +415,7 @@ fn answerable(
     asserted: Option<&TaskHandle>,
     text: &str,
 ) -> Result<(Question, Instant, CanonicalUuid), Outcome<CommandAnswer>> {
-    if text.trim().is_empty() {
-        return Err(refusal(
-            "room::answer-empty",
-            None,
-            "pass the answer text as the command's TEXT operand",
-        ));
-    }
-    if text.len() > ROOM_PUBLICATION_BYTES_LIMIT {
-        return Err(refusal(
-            "room::answer-too-large",
-            Some(text.len().to_string()),
-            &format!("shorten the answer to at most {ROOM_PUBLICATION_BYTES_LIMIT} bytes"),
-        ));
-    }
+    require_text(text, "answer")?;
     let (record, head) = question(bus, result)?;
     if record.respondent() != &(RoomDestination::Operator {}) {
         return Err(refusal(
@@ -567,6 +715,25 @@ fn require_clause(clause: &str) -> Result<(), Outcome<CommandAnswer>> {
                 "shorten --clause to at most {ROOM_CONTROL_RETURN_RESERVE_BYTES} bytes, the \
                  capacity reserved for this control"
             ),
+        ));
+    }
+    Ok(())
+}
+
+/// Operator text must say something and fit one room publication.
+fn require_text(text: &str, noun: &str) -> Result<(), Outcome<CommandAnswer>> {
+    if text.trim().is_empty() {
+        return Err(refusal(
+            &format!("room::{noun}-empty"),
+            None,
+            &format!("pass the {noun} text as the command's TEXT operand"),
+        ));
+    }
+    if text.len() > ROOM_PUBLICATION_BYTES_LIMIT {
+        return Err(refusal(
+            &format!("room::{noun}-too-large"),
+            Some(text.len().to_string()),
+            &format!("shorten the {noun} to at most {ROOM_PUBLICATION_BYTES_LIMIT} bytes"),
         ));
     }
     Ok(())

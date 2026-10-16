@@ -301,6 +301,10 @@ pub enum RoomControl {
         context: Option<TaskHandle>,
         text: String,
     },
+    /// Reply to one pending operator item a lane's MSG or ANS opened: the
+    /// text is operator direction to that lane in the item's room, and the
+    /// item settles acked.
+    Reply { item: RoomReceiptRef, text: String },
     /// Return one lapsed operator item to pending under the same key.
     Recover { item: RoomReceiptRef },
     /// Assess one shadow relevance observation for quality measurement.
@@ -335,10 +339,10 @@ pub struct RoomControlAnswer {
     /// Each question result moved, in the corresponding input-item order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub results: Vec<RoomResultMove>,
-    /// The answer publication an operator answer recorded.
+    /// The publication an operator answer or reply recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<RoomAuthorityStamp>,
-    /// Key of the answer's return directive to a lane requester.
+    /// Key of the directive an answer or reply returned to its lane.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub returned: Option<String>,
     /// The shadow observation an assessment settled, with its verdict.

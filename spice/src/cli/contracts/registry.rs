@@ -586,6 +586,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "room::control"
     ),
     operator!(
+        ["room", "reply"],
+        "room reply ITEM TEXT",
+        Command,
+        [SteerSent, RoomPosted, RoomDisposed],
+        Reply,
+        "room::control"
+    ),
+    operator!(
         ["room", "recover"],
         "room recover ITEM",
         Command,

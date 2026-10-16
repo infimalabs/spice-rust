@@ -13,9 +13,10 @@ pub(super) fn dispatch_room_client(
         ["room", "put-aside"] => client_room_put_aside(repository, contract, matches),
         ["room", "leave"] => client_room_leave(repository, contract, matches),
         ["room", "contribute"] => client_room_contribute(repository, contract, matches),
-        ["room", "ack" | "nak" | "answer" | "recover" | "assess"] => {
-            client_room_control(repository, contract, matches)
-        }
+        [
+            "room",
+            "ack" | "nak" | "answer" | "reply" | "recover" | "assess",
+        ] => client_room_control(repository, contract, matches),
         ["room", "decline" | "cancel"] => client_room_close(repository, contract, matches),
         _ => return None,
     };
@@ -360,7 +361,7 @@ fn render_leave(answer: &wire::intent::RoomLeaveAnswer) -> String {
     lines.join("\n")
 }
 
-/// Submit one operator ACK, NAK, answer, or recovery.
+/// Submit one operator ACK, NAK, answer, reply, or recovery.
 fn client_room_control(
     repository: &Repository,
     contract: &Contract,
@@ -404,6 +405,12 @@ fn room_control(
             return Ok(RoomControl::Answer {
                 result: result_ref(&required(matches, "RESULT"))?,
                 context,
+                text: required(matches, "TEXT"),
+            });
+        }
+        ["room", "reply"] => {
+            return Ok(RoomControl::Reply {
+                item: item_ref(&required(matches, "ITEM"))?,
                 text: required(matches, "TEXT"),
             });
         }
