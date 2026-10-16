@@ -882,6 +882,9 @@
 .markdown-body .message-hunk-content .message-quote-task-tail {
   margin-inline-start: .5em;
 }
+.markdown-body .message-hunk-content .message-quote-task-tail .message-task-chip {
+  min-height: auto;
+}
 .markdown-body .message-quote-task-tail:empty,
 .markdown-body .message-quote-task-line:has(> .message-quote-task-tail:empty) {
   display: none;
