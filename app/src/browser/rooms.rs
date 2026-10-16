@@ -8,9 +8,7 @@ use std::rc::Rc;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::HtmlElement;
 use wire::intent::WorkingGroupChangeStatus;
-use wire::rooms::{
-    RoomAuthorityStamp, RoomPostOutcome, WorkingGroup, WorkingGroupArrange, WorkingGroupMove,
-};
+use wire::rooms::{RoomAuthorityStamp, WorkingGroup, WorkingGroupArrange, WorkingGroupMove};
 use wire::{CommandKind, TaskStamp};
 use yew::prelude::*;
 
@@ -882,17 +880,6 @@ fn unfocused_document() -> bool {
                 .active_element()
                 .is_none_or(|element| element.tag_name().eq_ignore_ascii_case("body"))
         })
-}
-
-/// What a landed room post still needs to say: nothing when current
-/// listeners heard it, since the cleared composer already confirms it.
-fn room_post_notice(outcome: &RoomPostOutcome) -> Option<&'static str> {
-    match outcome {
-        RoomPostOutcome::RecordedWithListeners { .. } => None,
-        RoomPostOutcome::RecordedNoCurrentListener { .. } => {
-            Some("Recorded in room; no current listener. Start or direct a lane explicitly.")
-        }
-    }
 }
 
 fn anchor_label(runtime: &AppRuntime, room: &TaskStamp) -> String {

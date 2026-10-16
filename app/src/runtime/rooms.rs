@@ -206,12 +206,24 @@ impl RoomEventKind {
     pub const fn divides_plane(&self) -> bool {
         matches!(self, Self::Left { .. })
     }
+
+    /// Whether this event carries a lane-authored room act.
+    #[must_use]
+    pub(crate) const fn lane_attributed(&self) -> bool {
+        matches!(
+            self,
+            Self::Messaged { .. } | Self::Left { .. } | Self::Contributed { .. }
+        )
+    }
 }
 
 /// One task-keyed room projection.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RoomState {
     events: BTreeMap<RoomAuthorityStamp, RoomEvent>,
+    /// Latest lane-authored event, used to prove earlier posts were heard
+    /// without rescanning the room for every rendered card.
+    latest_lane_event: Option<Seq>,
     /// Each asked lane's newest recorded Design request: its position and
     /// the completed task that prompted it.
     asked: BTreeMap<CanonicalUuid, (Seq, TaskStamp)>,
@@ -1028,7 +1040,11 @@ impl RoomProjection {
     }
 
     fn insert_event(&mut self, room: TaskStamp, id: RoomAuthorityStamp, event: RoomEvent) -> bool {
-        replace_plain(&mut self.rooms.entry(room).or_default().events, id, event)
+        let state = self.rooms.entry(room).or_default();
+        if event.kind.lane_attributed() {
+            state.latest_lane_event = state.latest_lane_event.max(Some(event.position));
+        }
+        replace_plain(&mut state.events, id, event)
     }
 
     /// Move a coordination request to `disposition`; `Live` is a recovery.

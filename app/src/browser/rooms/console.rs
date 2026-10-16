@@ -20,9 +20,9 @@ use wire::rooms::{RoomAuthorityStamp, RoomPublicationContent};
 use wire::{QuoteTarget, TaskStamp};
 use yew::prelude::*;
 
-use super::{ComposerFocus, Controls, anchor_label, card, render_preparation, room_post_notice};
+use super::{ComposerFocus, Controls, anchor_label, card, render_preparation};
 use crate::AppRuntime;
-use crate::browser::clock::Age;
+use crate::browser::clock::{Age, now_millis};
 use crate::browser::sender::{SenderHandle, admit_action};
 use crate::browser::watchband::{
     ActivityCard, ComposerAction, ComposerDrafts, ComposerTextarea, HistorySender, MosaicPlane,
@@ -267,15 +267,25 @@ fn plane_cards(
     channels: &[Channel],
 ) -> Vec<ActivityCard> {
     let projection = render.runtime.room_projection();
+    let now_micros = now_millis() * 1_000;
     let mut cards = channels
         .iter()
         .flat_map(|channel| {
+            let has_current_listener =
+                projection.has_current_listener(&channel.stamp, render.runtime.board(), now_micros);
             projection
                 .room(&channel.stamp)
                 .into_iter()
                 .flat_map(|room| room.events())
                 .map(move |(publication, event)| {
-                    room_card(render, group, channel, publication, event)
+                    room_card(
+                        render,
+                        group,
+                        channel,
+                        has_current_listener,
+                        publication,
+                        event,
+                    )
                 })
         })
         .collect::<Vec<_>>();
@@ -287,6 +297,7 @@ fn room_card(
     render: &GroupRender<'_, '_>,
     group: &RoomAuthorityStamp,
     channel: &Channel,
+    has_current_listener: bool,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
 ) -> ActivityCard {
@@ -305,10 +316,13 @@ fn room_card(
             render,
             group,
             channel,
+            has_current_listener,
             publication,
             event,
-            &source_id,
-            display_millis,
+            PublicationLink {
+                source_id: &source_id,
+                display_millis,
+            },
         ),
     };
     ActivityCard::Room {
@@ -322,16 +336,22 @@ fn room_card(
     }
 }
 
+/// Link identity and display time shared by a publication card and its quote.
+struct PublicationLink<'a> {
+    source_id: &'a str,
+    display_millis: i64,
+}
+
 /// One publication's message-card face, with its quote action when it
 /// carries authored words.
 fn render_publication(
     render: &GroupRender<'_, '_>,
     group: &RoomAuthorityStamp,
     channel: &Channel,
+    has_current_listener: bool,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
-    source_id: &str,
-    display_millis: i64,
+    link: PublicationLink<'_>,
 ) -> Html {
     // Only authored words quote; the plane has no text for a lane's packet
     // until its transcript is read, and other events carry no words at all.
@@ -348,8 +368,9 @@ fn render_publication(
             let lane = design_key(group, &channel.stamp);
             let identity = target.to_string();
             let dispatcher = render.drafts.dispatcher();
-            let source_id = source_id.to_owned();
+            let source_id = link.source_id.to_owned();
             let order = event.position.get();
+            let display_millis = link.display_millis;
             let preview = watchband::quote_label(watchband::first_nonquoted_prose(text).as_deref())
                 .to_owned();
             Some(Callback::from(move |_: MouseEvent| {
@@ -392,13 +413,21 @@ fn render_publication(
         }
     });
     let anchor = card::Anchor {
-        id: source_id,
+        id: link.source_id,
         label: format!("Link to publication in {}", channel.label),
         island,
     };
     html! {
         <div class="mosaic-message-content">
-            {card::render_face(render.runtime, Some(controls), publication, event, Some(anchor))}
+            {card::render_face(
+                render.runtime,
+                Some(controls),
+                &channel.stamp,
+                has_current_listener,
+                publication,
+                event,
+                Some(anchor),
+            )}
         </div>
     }
 }
@@ -883,7 +912,7 @@ fn design_post(
             move |result: Result<wire::rooms::RoomPostAnswer, String>| {
                 controls.posting.borrow_mut().remove(&flight);
                 match result {
-                    Ok(answer) => {
+                    Ok(_) => {
                         if composer_holds(&key, &snapshot) {
                             clear_composer(&key, &drafts);
                             controls
@@ -895,9 +924,6 @@ fn design_post(
                                 design: flight.1.clone(),
                                 text: snapshot.body.trim().to_owned(),
                             });
-                        }
-                        if let Some(notice) = room_post_notice(&answer.outcome) {
-                            report(notice);
                         }
                     }
                     Err(issue) => report(&issue),

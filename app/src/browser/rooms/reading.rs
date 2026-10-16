@@ -10,6 +10,7 @@ use yew::prelude::*;
 
 use super::{Controls, RoomProjectionStatus, card};
 use crate::AppRuntime;
+use crate::browser::clock::now_millis;
 use crate::browser::sender::SenderHandle;
 
 /// The read view of one Design's room. `detail` is the Design's row from its
@@ -35,6 +36,8 @@ pub(in crate::browser) fn render_design_room(
             html! { <p class="room-unavailable">{"Room authority unavailable until reconnect."}</p> }
         }
         RoomProjectionStatus::Available => {
+            let has_current_listener =
+                projection.has_current_listener(design, runtime.board(), now_millis() * 1_000);
             let events = projection.room(design).map(|room| room.in_journal_order());
             html! {
                 <>
@@ -51,7 +54,14 @@ pub(in crate::browser) fn render_design_room(
                         </header>
                         if let Some(events) = events.filter(|events| !events.is_empty()) {
                             {for events.into_iter().rev().map(|(publication, event)| {
-                                card::render_card(runtime, None, publication, event)
+                                card::render_card(
+                                    runtime,
+                                    None,
+                                    design,
+                                    has_current_listener,
+                                    publication,
+                                    event,
+                                )
                             })}
                         } else {
                             <p class="room-empty">{"No room publications."}</p>

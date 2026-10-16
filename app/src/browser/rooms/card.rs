@@ -32,6 +32,8 @@ pub(super) enum Badge {
         kind: &'static str,
         label: &'static str,
     },
+    /// An operator post no current or later lane authority proves was heard.
+    Unheard,
 }
 
 #[derive(Clone, Copy)]
@@ -63,12 +65,14 @@ pub(super) struct Anchor<'a> {
 pub(super) fn render_card(
     runtime: &AppRuntime,
     controls: Option<conversation::CardControls<'_>>,
+    room: &wire::TaskStamp,
+    has_current_listener: bool,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
 ) -> Html {
     html! {
         <article class="room-card" key={publication.to_string()} tabindex="0">
-            {render_face(runtime, controls, publication, event, None)}
+            {render_face(runtime, controls, room, has_current_listener, publication, event, None)}
         </article>
     }
 }
@@ -77,11 +81,16 @@ pub(super) fn render_card(
 pub(super) fn render_face(
     runtime: &AppRuntime,
     controls: Option<conversation::CardControls<'_>>,
+    room: &wire::TaskStamp,
+    has_current_listener: bool,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
     anchor: Option<Anchor<'_>>,
 ) -> Html {
-    let face = conversation::face(runtime, controls, publication, event)
+    let unheard = runtime
+        .room_projection()
+        .unheard_post(room, publication, has_current_listener);
+    let face = conversation::face(runtime, controls, publication, event, unheard)
         .or_else(|| contributions::face(runtime, publication, event))
         .unwrap_or_else(|| super::summary_face(runtime, event));
     render(runtime, publication, face, anchor)
@@ -173,5 +182,18 @@ fn render_badge(badge: Badge) -> Html {
                 {label}
             </span>
         },
+        Badge::Unheard => {
+            const EXPLANATION: &str = "Unheard: no lane listens to this room yet; starting or directing a lane will have this post read.";
+            html! {
+                <span
+                    class="message-room-pill"
+                    data-message-classification="unheard"
+                    title={EXPLANATION}
+                    aria-label={EXPLANATION}
+                >
+                    {"Unheard"}
+                </span>
+            }
+        }
     }
 }
