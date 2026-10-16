@@ -49,6 +49,11 @@ exact remaining public task count; the badge is exact through 99, then `99+`,
 and zero is explicit. Reconnect keeps the last count marked stale until current
 data returns. Speech never retitles the tab.
 
+The global Spice summary keeps the current connection state and admitted
+journal stream cursor on one line. The cursor appears only while the resident
+connection is current; startup and reconnect states never present a retained
+runtime's cursor as live.
+
 ## Room authority and browser preferences
 
 Every stream subscription, first connect and same-scope reconnect alike,

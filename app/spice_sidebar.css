@@ -62,6 +62,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.app-resident-cursor {
+  color: var(--muted);
+  font-weight: 600;
+}
 /* The fixed-width weekly percentage stands centered above the Spice button,
    outside the anchor's box, so the button never moves as quota state loads or
    becomes unavailable. */

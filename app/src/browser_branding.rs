@@ -22,6 +22,36 @@ pub(crate) enum ConnectionState {
     Offline,
 }
 
+/// The journal cursor shown beside the connection label while that connection
+/// proves the retained app runtime is current.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct JournalCursor {
+    pub(crate) label: String,
+    pub(crate) value: Option<String>,
+    pub(crate) accessible: String,
+}
+
+impl JournalCursor {
+    #[must_use]
+    pub(crate) fn resolve(connection: ConnectionState, cursor: Option<wire::Seq>) -> Option<Self> {
+        if connection != ConnectionState::Online {
+            return None;
+        }
+        let value = cursor.map(|cursor| cursor.to_string());
+        Some(Self {
+            label: value.as_ref().map_or_else(
+                || "cursor —".to_owned(),
+                |cursor| format!("cursor {cursor}"),
+            ),
+            accessible: value.as_ref().map_or_else(
+                || "journal cursor not yet admitted".to_owned(),
+                |cursor| format!("journal cursor {cursor}"),
+            ),
+            value,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CountState {
     Loading,
@@ -219,6 +249,34 @@ mod tests {
             CountState::resolve(ConnectionState::Offline, None),
             CountState::Disconnected
         );
+    }
+
+    #[test]
+    fn journal_cursor_is_current_only_on_an_online_connection() {
+        let cursor = wire::Seq::new(42).expect("positive cursor");
+        assert_eq!(
+            JournalCursor::resolve(ConnectionState::Online, Some(cursor)),
+            Some(JournalCursor {
+                label: "cursor 42".to_owned(),
+                value: Some("42".to_owned()),
+                accessible: "journal cursor 42".to_owned(),
+            })
+        );
+        assert_eq!(
+            JournalCursor::resolve(ConnectionState::Online, None),
+            Some(JournalCursor {
+                label: "cursor —".to_owned(),
+                value: None,
+                accessible: "journal cursor not yet admitted".to_owned(),
+            })
+        );
+        for connection in [
+            ConnectionState::Starting,
+            ConnectionState::Connecting,
+            ConnectionState::Offline,
+        ] {
+            assert_eq!(JournalCursor::resolve(connection, Some(cursor)), None);
+        }
     }
 
     #[test]
