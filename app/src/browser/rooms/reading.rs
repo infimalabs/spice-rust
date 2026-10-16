@@ -5,7 +5,7 @@
 
 use wire::TaskStamp;
 use wire::intent::BoardTask;
-use wire::rooms::{DesignMaturity, DesignMaturityState};
+use wire::rooms::{DesignMaturity, DesignMaturityHead, DesignMaturityState};
 use yew::prelude::*;
 
 use super::{Controls, RoomProjectionStatus, card};
@@ -152,30 +152,16 @@ fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Htm
             </dl>
             if !maturity.recent_heads.is_empty() {
                 <div class="room-maturity-heads" aria-label="Maturity by statement">
-                    {for maturity.recent_heads.iter().rev().map(|head| html! {
-                        <p>
-                            <code>{head.statement.to_string()}</code>
-                            <span>
-                                {format!(
-                                    "{} of {} requested lanes contributed{}",
-                                    head.requested_contributors(),
-                                    bounded_count(
-                                        head.requested_lanes.len(),
-                                        head.requested_lanes_truncated,
-                                    ),
-                                    if head.yield_truncated() { " (bounded)" } else { "" },
-                                )}
-                            </span>
-                        </p>
-                    })}
+                    {for maturity.recent_heads.iter().rev().map(render_head)}
                 </div>
             }
             if maturity.older_heads.statement_heads > 0 {
                 <p class="room-maturity-folded">
                     {format!(
-                        "{} older statement heads folded · {} requested/contributor lane-head matches",
+                        "{} older statement heads folded · {} asked lanes contributed · {} declined",
                         maturity.older_heads.statement_heads,
                         maturity.older_heads.requested_contributor_lane_heads,
+                        maturity.older_heads.requested_decliner_lane_heads,
                     )}
                 </p>
             }
@@ -189,6 +175,25 @@ fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Htm
             }
             <small>{"Advisory only; this neither blocks nor authorizes a Design decision."}</small>
         </section>
+    }
+}
+
+/// One statement head's answers from the lanes it asked.
+fn render_head(head: &DesignMaturityHead) -> Html {
+    html! {
+        <p>
+            <code>{head.statement.to_string()}</code>
+            <span>
+                {format!(
+                    "{} asked · {} contributed · {} declined · {} unanswered{}",
+                    bounded_count(head.requested_lanes.len(), head.requested_lanes_truncated),
+                    head.requested_contributors(),
+                    head.requested_decliners(),
+                    head.requested_unanswered(),
+                    if head.yield_truncated() { " (bounded)" } else { "" },
+                )}
+            </span>
+        </p>
     }
 }
 
