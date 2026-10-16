@@ -529,7 +529,7 @@ fn owners_read_as_agent_names_and_unknown_lanes_stay_distinguishable() {
     assert_eq!(projection.tasks[2].working_claimant(), None);
 }
 #[test]
-fn human_owners_share_the_principal_directory_name_and_code() {
+fn human_owners_read_as_their_short_name_alone() {
     let named_principal = "018f82d4-6f59-7d06-92e3-bce913116391"
         .parse::<CanonicalUuid>()
         .expect("fixture named principal");
@@ -556,17 +556,16 @@ fn human_owners_share_the_principal_directory_name_and_code() {
         roles: BTreeSet::new(),
         capability: None,
     };
-    let named_code = wire::principal::PrincipalCode::of(&named);
     let unnamed_code = wire::principal::PrincipalCode::of(&unnamed);
     let principals = wire::principal::PrincipalDirectory::display(&[named, unnamed]);
 
     assert_eq!(
         owner_label(&Actor::Human(named_principal), None, Some(&principals)),
-        format!("Ada Example <{named_code}>"),
+        "AE",
     );
     assert_eq!(
         owner_label(&Actor::Operator, None, Some(&principals)),
-        format!("Ada Example <{named_code}>"),
+        "AE",
         "the historical operator shares the bootstrap principal's presentation",
     );
     assert_eq!(

@@ -53,8 +53,8 @@ use conversation::ConversationView;
 /// What a continuation's `--after` names.
 const CURSOR: &str = "a publication of this room";
 
-/// An actor a room read shows, beside the code and name of the principal it
-/// resolves to. It serializes as the actor alone, so JSON keeps the identity
+/// An actor a room read shows, beside the code and short name of the principal
+/// it resolves to. It serializes as the actor alone, so JSON keeps the identity
 /// contract; text reads it as [`NamedActor`].
 #[derive(Debug, Serialize)]
 #[serde(transparent)]
@@ -69,7 +69,7 @@ impl Named {
         let principal = principals
             .named(&actor)
             .principal
-            .map(|(code, name)| (code, name.map(str::to_owned)));
+            .map(|(code, short)| (code, short.map(str::to_owned)));
         Self { actor, principal }
     }
 }
@@ -81,7 +81,7 @@ impl fmt::Display for Named {
             principal: self
                 .principal
                 .as_ref()
-                .map(|(code, name)| (*code, name.as_deref())),
+                .map(|(code, short)| (*code, short.as_deref())),
         }
         .fmt(formatter)
     }

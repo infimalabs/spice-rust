@@ -1030,10 +1030,11 @@ fn board_order(
 /// its message cards sign themselves. A lane absent from the current topology
 /// keeps a short identity prefix, since no name for it is known. A born human
 /// and the historical operator share [`wire::principal::NamedActor`]'s
-/// principal-directory presentation: `Name <code>`, or the code alone when
-/// unnamed. An unresolved human keeps its full actor spelling; an unresolved
-/// operator keeps its role label. The full actor spelling remains the caller's
-/// hover text for every owner.
+/// principal-directory presentation: its short name (the recorded profile's
+/// initials) alone, as an agent reads, or the code alone when the profile
+/// yields none. An unresolved human keeps its full actor spelling; an
+/// unresolved operator keeps its role label. The full actor spelling remains
+/// the caller's hover text for every owner.
 #[must_use]
 pub fn owner_label(
     actor: &Actor,
