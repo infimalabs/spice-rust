@@ -457,12 +457,14 @@ is neither a filing filter nor a roster. The
 [register](invariants/identity.md#identity-a-room-reads-back-from-its-owning-sources)
 owns each rule summarized here.
 
-- **Publishing.** A lane publishes only in authored assistant prose:
+- **Publishing.** A lane's conversation publishes in authored assistant prose:
   `MSG #TASK` records in a room, `MSG ADDRESS#TASK` also directs a lane,
   `ASK AUDIENCE[#TASK]` opens a question result, and `ANS RESULT[#TASK]`
   answers one ([grammar](invariants/identity.md#steering-an-msg-packet-owns-exactly-its-body-hunk)).
-  The operator publishes with `spice room post` and `spice room answer`. A
-  tool call's intent may retire a key, but publishes only as the narrow
+  The operator or any lane records an observation, text the room's fact owns,
+  with `spice room post` in any task's room that is not deleted; writing one
+  makes its author no listener. The operator answers with `spice room answer`.
+  A tool call's intent may retire a key, but publishes only as the narrow
   fallback for a message with no text block.
 - **Delivery.** A directed route is a native steering directive bound to the
   logical lane: vacancy, resume, and renewal keep its key, body, and expiry for

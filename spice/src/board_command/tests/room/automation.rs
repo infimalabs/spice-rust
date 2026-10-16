@@ -137,21 +137,21 @@ fn a_rule_resumes_once_per_unanswered_input_until_its_budget_is_spent() {
         Some(2),
     );
     let authorizing = latest(&bus, &room);
-    publish_listener(&bus, &room, other, 1_760_000_000_000_001);
+    publish_observation(&bus, &room, other, 1_760_000_000_000_001);
     assert!(resume(&bus).is_empty(), "a pending request is not resumed");
     dispose(&bus, &key, 40, None);
     assert!(
         resume(&bus).is_empty(),
         "input before the acknowledgment is not new input"
     );
-    publish_listener(&bus, &room, target, 1_760_000_000_000_002);
+    publish_observation(&bus, &room, target, 1_760_000_000_000_002);
     assert!(
         resume(&bus).is_empty(),
         "the target's own publication is not input"
     );
 
-    publish_listener(&bus, &room, other, 1_760_000_000_000_003);
-    publish_listener(&bus, &room, other, 1_760_000_000_000_004);
+    publish_observation(&bus, &room, other, 1_760_000_000_000_003);
+    publish_observation(&bus, &room, other, 1_760_000_000_000_004);
     assert_eq!(resume(&bus), vec![target]);
     let first = latest(&bus, &room);
     assert_eq!(first.rule, authorizing.rule);
@@ -176,7 +176,7 @@ fn a_rule_resumes_once_per_unanswered_input_until_its_budget_is_spent() {
         resume(&bus).is_empty(),
         "repeated agreement without input resumes nothing"
     );
-    publish_listener(&bus, &room, other, 1_760_000_000_000_005);
+    publish_observation(&bus, &room, other, 1_760_000_000_000_005);
     assert_eq!(resume(&bus), vec![target]);
     let second = latest(&bus, &room);
     let automated = second
@@ -189,7 +189,7 @@ fn a_rule_resumes_once_per_unanswered_input_until_its_budget_is_spent() {
     );
 
     dispose(&bus, &second.key, 42, None);
-    publish_listener(&bus, &room, other, 1_760_000_000_000_006);
+    publish_observation(&bus, &room, other, 1_760_000_000_000_006);
     assert!(resume(&bus).is_empty(), "a spent budget resumes nothing");
     assert_eq!(latest(&bus, &room), second);
     clean(&root, bus);
@@ -202,7 +202,7 @@ fn a_decline_put_aside_claim_vacancy_or_unruled_resume_stops_the_rule() {
     let mut micros = 1_760_000_000_000_100;
     let mut input = |bus: &Bus| {
         micros += 1;
-        publish_listener(bus, &room, other, micros);
+        publish_observation(bus, &room, other, micros);
     };
 
     let key = start_ruled(

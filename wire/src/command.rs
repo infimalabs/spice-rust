@@ -45,7 +45,8 @@ pub enum CommandKind {
     BoardHandout,
     /// Emit one canonical authored-document ledger.
     DocLedger,
-    /// Publish one operator-authored message to an anchor task's room.
+    /// Publish one authored observation, or the operator's OOPS grooming, to
+    /// an anchor task's room.
     RoomPost,
     /// Read one anchor's current native coordination projection.
     RoomCoordinationRead,

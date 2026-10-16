@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use wire::rooms::{RoomAuthorityStamp, RoomContributed, RoomLeft, RoomMessaged, RoomPublished};
+use wire::rooms::{RoomAuthorityStamp, RoomContributed, RoomLeft, RoomMessaged};
 use wire::{Actor, CanonicalUuid, Instant, TaskStamp};
 
 pub mod awareness;
@@ -438,9 +438,10 @@ impl LaneFold {
 /// Derive one room's complete bounded attention view.
 ///
 /// `activity_since` is supplied by the caller, keeping wall-clock policy out of
-/// replay. Only admitted lane-authored room publications can create
-/// participation or activity; replaying them is idempotent. Current duties and
-/// work survive vacancy and activity expiry.
+/// replay. Only admitted lane-authored MSG packets, contributions, and leaves
+/// can create participation or activity; an authored observation never does.
+/// Replaying them is idempotent. Current duties and work survive vacancy and
+/// activity expiry.
 pub fn derive_room_attention(
     room: &TaskStamp,
     activity_since: Instant,
@@ -545,16 +546,12 @@ fn fold_publications(
     for envelope in publications {
         let left = envelope.fact.read::<RoomLeft>();
         let contributed = envelope.fact.read::<RoomContributed>();
+        // An authored observation makes no one a participant, so only MSG
+        // packets, contributions, and leaves fold here.
         let Some((anchor, publication)) = envelope
             .fact
-            .read::<RoomPublished>()
+            .read::<RoomMessaged>()
             .map(|body| (body.room, body.publication))
-            .or_else(|| {
-                envelope
-                    .fact
-                    .read::<RoomMessaged>()
-                    .map(|body| (body.room, body.publication))
-            })
             .or_else(|| {
                 left.as_ref()
                     .map(|body| (body.room.clone(), body.publication.clone()))
@@ -784,7 +781,7 @@ fn lane_topology(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wire::rooms::RoomPublicationContent;
+    use wire::rooms::RoomContributionKind;
     use wire::{
         ClaimCell, ClaimDisposition, ClaimHead, Fact, LaneResidency, LeaseHead, Phase,
         ResidentState, Seq, TaskHead, TaskPreparation, WireVersion, WorkflowHead,
@@ -814,12 +811,14 @@ mod tests {
         seq: u64,
     ) -> wire::Envelope<wire::AnyFact> {
         let fact = Fact {
-            body: RoomPublished {
+            body: RoomContributed {
                 room: room.clone(),
                 publication: identity.parse().expect("publication identity"),
-                content: RoomPublicationContent::Authored {
-                    text: "substantive contribution".to_owned(),
-                },
+                lane,
+                contribution: RoomContributionKind::ReasonFor,
+                statement: None,
+                text: "substantive contribution".to_owned(),
+                sources: Vec::new(),
             },
         };
         wire::Envelope {

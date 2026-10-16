@@ -467,12 +467,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "board::handout"
     ),
-    operator!(
+    row!(
         ["room", "post"],
         "room post HANDLE [TEXT] [--report HANDLE...] [--disposition DISPOSITION] \
          [--cause TEXT] [--exceptions TEXT] [--uncertainty TEXT]",
+        OperatorOrLane,
         Command,
         [RoomPublished],
+        [Resident],
         Reply,
         "room::post"
     ),
