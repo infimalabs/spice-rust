@@ -8,7 +8,8 @@ use crate::rooms::{
     RoomSourceUnavailable, RoomSourceView,
 };
 pub use crate::rooms::{
-    WorkingGroupArrange, WorkingGroupFast, WorkingGroupMove, WorkingGroupStanceSet,
+    WorkingGroupArrange, WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove,
+    WorkingGroupStanceSet,
 };
 use crate::{OccupantAddress, SequenceCode, TaskHandle, TaskStamp};
 
@@ -476,10 +477,10 @@ pub struct WorkingGroupChange {
     pub revision: u64,
     /// Current transition outcome.
     pub status: WorkingGroupChangeStatus,
-    /// Designs this change made or found passive whose holder is still owed
-    /// its shelving stop; setting the group Passive again retries them. Only
-    /// the live reply reports it: a retained receipt records the partition
-    /// change alone.
+    /// Designs whose holder is still owed its shelving stop. A standing
+    /// Passive group retries them when set Passive again; after disbanding,
+    /// each now-ungrouped Design can be put aside directly. Only the live reply
+    /// reports this: a retained receipt records the partition change alone.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub owed: Vec<TaskHandle>,
 }
@@ -495,6 +496,8 @@ pub enum WorkingGroupChangeStatus {
     Ended,
     /// The whole partition was restated.
     Arranged,
+    /// One group ended and every Design it held became ungrouped.
+    Disbanded,
     /// One group's fast-mode flag was set.
     Retuned,
     /// One group's shared activity stance was set.

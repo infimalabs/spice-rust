@@ -561,7 +561,7 @@ pub(super) fn render_team_controls(
                 aria-label="Team menu"
                 aria-haspopup="menu"
                 aria-expanded={control.arrangement.is_some().to_string()}
-                title={arrange_refusal.unwrap_or("Arrange this team")}
+                title={arrange_refusal.unwrap_or("Team menu")}
                 onclick={Callback::from(move |event: MouseEvent| {
                     event.stop_propagation();
                     // Safari does not focus a clicked button; closing from here keeps focus here.

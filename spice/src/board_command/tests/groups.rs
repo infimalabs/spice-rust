@@ -5,7 +5,8 @@ use wire::intent::{
 };
 use wire::rooms::{
     RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupArrange,
-    WorkingGroupFast, WorkingGroupMove, WorkingGroupStance, WorkingGroupStanceSet,
+    WorkingGroupDisband, WorkingGroupFast, WorkingGroupMove, WorkingGroupStance,
+    WorkingGroupStanceSet,
 };
 
 use super::preparation::{
@@ -116,6 +117,28 @@ fn arrange(
                 .collect(),
         },
     )
+}
+
+fn disband_at(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    revision: u64,
+    group: &RoomAuthorityStamp,
+) -> Outcome<CommandAnswer> {
+    issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::WorkingGroupDisband,
+        vec![Witness::Group { revision }],
+        &WorkingGroupDisband {
+            group: group.clone(),
+        },
+    )
+}
+
+fn disband(bus: &Bus, epoch: CanonicalUuid, group: &RoomAuthorityStamp) -> Outcome<CommandAnswer> {
+    disband_at(bus, epoch, read_partition(bus, epoch).revision, group)
 }
 
 fn change_status(outcome: Outcome<CommandAnswer>) -> WorkingGroupChangeStatus {
@@ -398,6 +421,45 @@ fn working_groups_admit_at_most_six_designs_and_nothing_but_designs() {
         "group::design-only",
     ));
     assert_eq!(read_partition(&bus, epoch), full);
+    clean(&root, bus);
+}
+
+#[test]
+fn disbanding_a_group_leaves_every_design_ungrouped_under_the_partition_guard() {
+    let (root, bus, epoch, _) = fixture("group-disband", 0);
+    let first = add_design_room(&bus, epoch, stamp("disband-first"), "First room");
+    let second = add_design_room(&bus, epoch, stamp("disband-second"), "Second room");
+    let first_born = first.born().expect("first room identity");
+    let second_born = second.born().expect("second room identity");
+    let group = group_stamp(449);
+    assert_committed(move_design(&bus, epoch, &first_born, Some(&group)));
+    assert_committed(move_design(&bus, epoch, &second_born, Some(&group)));
+    assert_committed(set_stance(&bus, epoch, &group, WorkingGroupStance::Explore));
+    assert_committed(set_fast(&bus, epoch, &group, true));
+    let observed = read_partition(&bus, epoch).revision;
+    let before_room_heads = room_heads(&bus, &[first_born.clone(), second_born.clone()]);
+
+    assert_eq!(
+        change_status(disband(&bus, epoch, &group)),
+        WorkingGroupChangeStatus::Disbanded
+    );
+    assert!(standing(&bus, epoch).is_empty());
+    let visible = board(&bus, epoch, Actor::Operator);
+    for design in [&first, &second] {
+        let row = at(&visible, design);
+        assert!(!row.grouped);
+        assert!(!row.design_active);
+    }
+    assert_eq!(
+        room_heads(&bus, &[first_born, second_born]),
+        before_room_heads,
+        "disbanding unheld Designs changes no room authority"
+    );
+    assert!(refused_as(disband(&bus, epoch, &group), "group::missing"));
+    assert!(refused_as(
+        disband_at(&bus, epoch, observed, &group),
+        "group::partition-moved"
+    ));
     clean(&root, bus);
 }
 

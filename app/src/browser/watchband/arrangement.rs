@@ -38,6 +38,35 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
             .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
+    let disbanded = watchband::disband(context.topology, team).map(|rows| topology(&rows));
+    let disband = {
+        let sender = context.sender.clone();
+        let controls = context.controls.clone();
+        let topology_revision = context.topology_revision;
+        let refusals = sender.refusals.clone();
+        let disbanded = disbanded.clone();
+        Callback::from(move |_| {
+            let Some(teams) = disbanded.clone() else {
+                return;
+            };
+            let refusals = refusals.clone();
+            if admit_action(
+                &sender,
+                ClientAction::ArrangeTeams {
+                    topology_revision,
+                    teams,
+                    respond: Some(Rc::new(move |result| {
+                        refusals.settled(match result {
+                            Ok(()) => "Team disbanded.".to_owned(),
+                            Err(error) => error,
+                        });
+                    })),
+                },
+            ) {
+                controls.dispatch(TeamControlAction::CloseArrangement);
+            }
+        })
+    };
     html! {
         <div
             class="team-action-menu team-arrangement-menu app-overlay-panel app-overlay-panel--popover"
@@ -64,6 +93,7 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
                                 ClientAction::ArrangeTeams {
                                     topology_revision,
                                     teams,
+                                    respond: None,
                                 },
                             ) {
                                 return;
@@ -84,6 +114,19 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
                     </button>
                 }
             })}
+            <button
+                type="button"
+                class="team-action team-arrangement-action"
+                role="menuitem"
+                disabled={!context.can_arrange || disbanded.is_none()}
+                data-team-arrangement="disband"
+                onclick={disband}
+            >
+                <span class="team-action-label">{
+                    format!("Disband team {}", watchband::team_label_in(context.lanes, team))
+                }</span>
+                <span class="team-action-detail">{"leave every agent unassigned"}</span>
+            </button>
         </div>
     }
 }

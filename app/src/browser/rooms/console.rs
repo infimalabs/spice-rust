@@ -185,7 +185,7 @@ fn render_surface(render: &GroupRender<'_, '_>, view: &GroupView, index: usize) 
             onclick={panel::dismissal(render.controls, &view.group)}
         >
             {toolbar::render(render, view, &channels)}
-            {panel::render_arrangement(render.controls, view, index, &name)}
+            {panel::render_arrangement(render, view, index, &name)}
             <div class="team-pane">
                 <div class="team-compose">
                     // The composer renders into its slot in the plane's scroll content.

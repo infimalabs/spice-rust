@@ -32,6 +32,7 @@ impl CommandKind {
         Self::WorkingGroupRead,
         Self::WorkingGroupMove,
         Self::WorkingGroupArrange,
+        Self::WorkingGroupDisband,
         Self::WorkingGroupFast,
         Self::WorkingGroupStance,
         Self::CandidateRetain,
@@ -138,6 +139,7 @@ impl CommandKind {
             | Self::WorkingGroupRead
             | Self::WorkingGroupMove
             | Self::WorkingGroupArrange
+            | Self::WorkingGroupDisband
             | Self::WorkingGroupFast
             | Self::WorkingGroupStance
             | Self::CandidateRetain
@@ -239,6 +241,7 @@ impl CommandKind {
             | Self::WorkingGroupRead
             | Self::WorkingGroupMove
             | Self::WorkingGroupArrange
+            | Self::WorkingGroupDisband
             | Self::WorkingGroupFast
             | Self::WorkingGroupStance => self.room_spelling(),
             Self::CandidateRetain
@@ -281,6 +284,7 @@ impl CommandKind {
             Self::WorkingGroupRead => "group::read",
             Self::WorkingGroupMove => "group::move",
             Self::WorkingGroupArrange => "group::arrange",
+            Self::WorkingGroupDisband => "group::disband",
             Self::WorkingGroupFast => "group::fast",
             Self::WorkingGroupStance => "group::stance",
             _ => panic!("room command spelling partition is closed"),

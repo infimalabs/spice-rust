@@ -202,6 +202,7 @@ async fn send_topology_as(
         ClientAction::ArrangeTeams {
             topology_revision,
             teams,
+            ..
         } => {
             send_untracked_as(
                 principal,
@@ -327,7 +328,9 @@ pub(super) fn topology_pending_kind(action: &ClientAction) -> PendingKind {
             life: *life,
             fast_mode: *fast_mode,
         },
-        ClientAction::ArrangeTeams { .. } => PendingKind::TeamArrange,
+        ClientAction::ArrangeTeams { respond, .. } => PendingKind::TeamArrange {
+            respond: respond.clone(),
+        },
         _ => unreachable!("only topology mutations have scheduler response state"),
     }
 }

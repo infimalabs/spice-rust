@@ -6,6 +6,7 @@ pub(crate) type JobResponse = std::rc::Rc<dyn Fn(Result<wire::intent::LaneJobAns
 pub(crate) type JobsResponse = std::rc::Rc<dyn Fn(Result<wire::intent::LaneJobsAnswer, String>)>;
 pub(crate) type GroupResponse =
     std::rc::Rc<dyn Fn(Result<wire::intent::WorkingGroupChange, String>)>;
+pub(crate) type ArrangementResponse = std::rc::Rc<dyn Fn(Result<(), String>)>;
 pub(crate) type RoomPostResponse = std::rc::Rc<dyn Fn(Result<wire::rooms::RoomPostAnswer, String>)>;
 pub(crate) type RoomControlResponse =
     std::rc::Rc<dyn Fn(Result<wire::intent::RoomControlAnswer, String>)>;
@@ -120,6 +121,8 @@ pub(crate) enum GroupChange {
     Move(wire::rooms::WorkingGroupMove),
     /// Restate every group and its designs in order.
     Arrange(wire::rooms::WorkingGroupArrange),
+    /// End one group and leave all of its Designs ungrouped.
+    Disband(wire::rooms::WorkingGroupDisband),
     /// Turn one group's fast-mode flag on or off.
     Fast(wire::rooms::WorkingGroupFast),
     /// Set one group's shared activity stance.
@@ -144,6 +147,7 @@ impl GroupChange {
                             .sum::<usize>()
                 })
                 .sum(),
+            Self::Disband(request) => request.group.as_str().len(),
             Self::Fast(request) => request.group.as_str().len(),
             Self::Stance(request) => request.group.as_str().len(),
         }
@@ -262,6 +266,8 @@ pub(crate) enum ClientAction {
     ArrangeTeams {
         topology_revision: u64,
         teams: Vec<TeamArrangement>,
+        /// Optional result reporter for an explicit menu lifecycle action.
+        respond: Option<ArrangementResponse>,
     },
     Note {
         id: CanonicalUuid,

@@ -121,7 +121,7 @@ pub(super) fn render(
                 aria-label="Group menu"
                 aria-haspopup="menu"
                 aria-expanded={open.to_string()}
-                title="Arrange this group's console"
+                title="Group menu"
                 onclick={Callback::from(move |event: MouseEvent| {
                     event.stop_propagation();
                     // Safari does not focus a clicked button; closing from here keeps focus here.
@@ -158,14 +158,16 @@ pub(super) fn render(
     }
 }
 
-/// The group's arrangement menu: this browser's placement of its console.
-/// Membership stays with each design's own menu and the working-group roster.
+/// The group's menu: this browser's console placement and the shared action
+/// that ends the group. Membership changes otherwise stay with each design's
+/// menu and the working-group roster.
 pub(super) fn render_arrangement(
-    controls: &Controls,
+    render: &GroupRender<'_, '_>,
     view: &GroupView,
     index: usize,
     name: &str,
 ) -> Html {
+    let controls = render.controls;
     if controls.arranging.as_ref() != Some(&view.group) {
         return Html::default();
     }
@@ -203,6 +205,25 @@ pub(super) fn render_arrangement(
         let group = view.group.clone();
         Callback::from(move |()| controls.close_group(group.clone()))
     };
+    let disband = {
+        let sender = render.sender.clone();
+        let controls = controls.clone();
+        let group = view.group.clone();
+        let revision = render.runtime.room_projection().partition().revision;
+        Callback::from(move |()| {
+            super::super::submit_group_change(
+                &sender,
+                &controls,
+                crate::client_action::GroupChange::Disband(wire::rooms::WorkingGroupDisband {
+                    group: group.clone(),
+                }),
+                revision,
+            );
+        })
+    };
+    let can_disband = render
+        .runtime
+        .offers(wire::CommandKind::WorkingGroupDisband);
     html! {
         <div
             class="team-action-menu team-arrangement-menu app-overlay-panel app-overlay-panel--popover"
@@ -212,6 +233,7 @@ pub(super) fn render_arrangement(
             {action("left", "Move group left", "this browser's console order", index > 0, move_group(-1))}
             {action("right", "Move group right", "this browser's console order", index + 1 < count, move_group(1))}
             {action("close", "Close group console", "the group stays in Working groups", true, close)}
+            {action("disband", "Disband working group", "leave every Design ungrouped", can_disband, disband)}
         </div>
     }
 }

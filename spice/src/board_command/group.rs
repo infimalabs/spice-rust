@@ -7,8 +7,9 @@ use wire::intent::{
     WorkingGroupRead, WorkingGroupStanceSet, WorkingGroupView,
 };
 use wire::rooms::{
-    RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupMoved,
-    WorkingGroupPartition, WorkingGroupStance, WorkingGroupsArranged, working_group_origin,
+    RoomAuthorityStamp, WORKING_GROUP_DESIGN_LIMIT, WorkingGroup, WorkingGroupDisband,
+    WorkingGroupMoved, WorkingGroupPartition, WorkingGroupStance, WorkingGroupsArranged,
+    working_group_origin,
 };
 
 type Designs<'a> = Partition<&'a RoomAuthorityStamp, &'a TaskStamp>;
@@ -414,10 +415,89 @@ pub(super) fn set_working_group_fast(
     )
 }
 
-/// Most reads one stance command makes of a room before reporting its
+/// Most reads one group command makes of a room before reporting its
 /// shelving owed. Passive standing refuses new claims and coordination on
 /// the group's Designs, so a room that moved settles within a read or two.
 const SHELVING_ATTEMPTS: usize = 4;
+
+/// End one standing group and leave all of its Designs ungrouped. The
+/// partition commits first, then every Design is shelved from its room under
+/// that Design's task origin. Returns every lane asked to park.
+pub(crate) fn disband_working_group(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    request: &WorkingGroupDisband,
+    config: &steer::Config,
+    projects: &ProjectPolicy,
+    allocation: &board::NextConfig,
+) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
+    let current = match bus.read(|read| current_partition(read)) {
+        Ok(current) => current,
+        Err(error) => {
+            return (
+                store_fault("group::read-unavailable", &error.to_string()),
+                Vec::new(),
+            );
+        }
+    };
+    let revision = match next_revision(command, current.revision) {
+        Ok(revision) => revision,
+        Err(outcome) => return (outcome, Vec::new()),
+    };
+    let Some(group) = current
+        .groups
+        .iter()
+        .find(|group| group.group == request.group)
+    else {
+        return (
+            refusal(
+                "group::missing",
+                Some(request.group.to_string()),
+                "the working group no longer stands; read the working groups and retry",
+            ),
+            Vec::new(),
+        );
+    };
+    let handles = match design_handles(bus, group.anchors.clone()) {
+        Ok(handles) => handles,
+        Err(outcome) => return (outcome, Vec::new()),
+    };
+    let mut partition = current.clone();
+    partition.revision = revision;
+    partition
+        .groups
+        .retain(|group| group.group != request.group);
+    partition.fast.retain(|group| group != &request.group);
+    let fact = WorkingGroupsArranged {
+        from: current,
+        partition,
+    };
+    let mut outcome = change_partition(
+        bus,
+        command,
+        working_group_origin(),
+        revision,
+        WorkingGroupChangeStatus::Disbanded,
+        Vec::new(),
+        |write, _| {
+            write
+                .fact(fact, FactCause::Root)
+                .map(drop)
+                .map_err(|error| store_fault("group::fact-invalid", &error.to_string()))
+        },
+        request.clone(),
+    );
+    let Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(_),
+        body: CommandAnswer::WorkingGroupChange(change),
+    }) = &mut outcome
+    else {
+        return (outcome, Vec::new());
+    };
+    let shelved = shelve(bus, command, config, projects, allocation, handles);
+    change.owed = shelved.owed;
+    (outcome, shelved.lanes)
+}
 
 /// Set one standing group's shared activity stance. A change to Passive
 /// commits the partition first, then shelves each of the group's Designs from

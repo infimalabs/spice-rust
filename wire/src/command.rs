@@ -72,6 +72,8 @@ pub enum CommandKind {
     WorkingGroupMove,
     /// Restate the whole working-group partition at the observed revision.
     WorkingGroupArrange,
+    /// End one working group at the observed partition revision.
+    WorkingGroupDisband,
     /// Set one working group's fast-mode flag at the observed revision.
     WorkingGroupFast,
     /// Set one working group's shared activity stance at the observed revision.

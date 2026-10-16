@@ -395,6 +395,9 @@ impl<'a> Surface<'a> {
                     );
                     (outcome, parked.into_iter().collect())
                 }
+                (CommandKind::WorkingGroupDisband, Intent::WorkingGroupDisband(request)) => {
+                    self.dispatch_working_group_disband(command, request)
+                }
                 (CommandKind::WorkingGroupStance, Intent::WorkingGroupStance(request)) => {
                     crate::board_command::set_working_group_stance(
                         self.bus,
@@ -457,6 +460,21 @@ impl<'a> Surface<'a> {
             }
         }
         Some(CommandDispatch::with_effects(outcome, effects))
+    }
+
+    fn dispatch_working_group_disband(
+        &self,
+        command: &wire::AdmittedCommand,
+        request: &wire::rooms::WorkingGroupDisband,
+    ) -> (Outcome<CommandAnswer>, Vec<wire::CanonicalUuid>) {
+        crate::board_command::disband_working_group(
+            self.bus,
+            command,
+            request,
+            &self.config.steering,
+            &self.config.projects,
+            &self.config.allocation,
+        )
     }
 
     fn dispatch_steering(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {

@@ -288,6 +288,14 @@ pub struct WorkingGroupArrange {
     pub groups: Vec<WorkingGroup>,
 }
 
+/// End one standing working group and leave each Design ungrouped.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkingGroupDisband {
+    /// The group being ended.
+    pub group: RoomAuthorityStamp,
+}
+
 /// Turn one standing working group's fast-mode flag on or off.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
