@@ -236,6 +236,7 @@ fn publish_turn_boundary(
             authored_synthetic,
             observed,
             activity: AgentActivityKind::Turn,
+            compaction_method: None,
             final_answer: false,
             acknowledgement: None,
             text: "New turn".to_owned(),
@@ -366,6 +367,10 @@ fn project_agent_event(
         authored_synthetic,
         observed,
         activity,
+        compaction_method: match decoded {
+            listen::Event::Compaction(compaction) => compaction.method.clone(),
+            _ => None,
+        },
         final_answer: false,
         acknowledgement,
         text,

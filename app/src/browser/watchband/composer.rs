@@ -8,9 +8,11 @@ use super::*;
 mod drag;
 mod media;
 mod message_badges;
+mod message_boundary;
 mod message_controls;
 pub(super) use drag::primary_composer_dragging;
 pub(in crate::browser) use drag::{PrimaryComposerDragState, use_primary_composer_drag_state};
+use message_boundary::render as render_agent_boundary;
 
 pub(super) fn keyboard_submit(
     lane: CanonicalUuid,
@@ -966,35 +968,6 @@ fn render_agent_markdown<'m>(
         )
     };
     (shown.markdown, rendered)
-}
-
-fn render_agent_boundary(message: &wire::AgentMessage, attribution: &str) -> Html {
-    let event = match message.activity {
-        wire::AgentActivityKind::Session => "started fresh session",
-        _ => "compacted context",
-    };
-    let link_label = format!("Link to {event} from {attribution}");
-    let attribution = attribution.to_owned();
-    let display_millis = crate::runtime::agent_message_display_millis(message);
-    let href = crate::view::card_href(&agent_message_source_id(message));
-    html! {
-        <>
-            <span class="mosaic-compaction-rule" aria-hidden="true"></span>
-            <span class="mosaic-compaction-label">
-                <Age
-                    authored={display_millis}
-                    class="mosaic-compaction-age"
-                    {href}
-                    label={link_label}
-                />
-                <span class="mosaic-compaction-context">
-                    <span class="mosaic-compaction-agent" title={attribution.clone()}>{attribution}</span>
-                    <span class="message-key">{event}</span>
-                </span>
-            </span>
-            <span class="mosaic-compaction-rule" aria-hidden="true"></span>
-        </>
-    }
 }
 
 fn agent_message_correspondent(

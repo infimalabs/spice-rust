@@ -38,6 +38,7 @@ struct MessageCardFingerprint<'a> {
     authored_synthetic: bool,
     observed: Option<&'a wire::Instant>,
     text: &'a str,
+    compaction_method: Option<&'a str>,
     final_answer: bool,
     prose_origin: Option<&'a wire::MessageProseOrigin>,
     provider_error: Option<&'a wire::AgentProviderError>,
@@ -70,6 +71,7 @@ fn fingerprint(message: &AgentMessage) -> Option<MessageCardFingerprint<'_>> {
         authored_synthetic: message.authored_synthetic,
         observed: message.observed.as_ref(),
         text: &message.text,
+        compaction_method: message.compaction_method.as_deref(),
         final_answer: message.final_answer,
         prose_origin: message.prose_origin.as_ref(),
         provider_error: message.provider_error.as_ref(),
@@ -267,16 +269,25 @@ impl MessageCards {
 
 /// Drop each captured announcement whose preserved record is also retained.
 ///
-/// The resident already collapses a pair it merges itself, but the two records
-/// reach the browser through different frames: the captured announcement
-/// arrives live while the preserved record arrives with an older page or a
-/// reconnect. The same rule applied here leaves one boundary either way.
+/// The preserved session entry owns chronology but older OMP entries omit the
+/// completion's method. Transfer that durable display fact before dropping the
+/// captured completion, so live, paged, and reconnected views agree.
 fn reconcile_boundaries(entries: &mut Vec<Rc<AgentMessage>>) -> bool {
     let superseded = wire::superseded_boundaries(entries);
     if superseded.is_empty() {
         return false;
     }
     for position in superseded.into_iter().rev() {
+        if let Some(method) = entries[position].compaction_method.clone()
+            && let Some(preserved) = entries
+                .iter()
+                .position(|message| entries[position].boundary_superseded_by(message))
+            && entries[preserved].compaction_method.is_none()
+        {
+            let mut enriched = entries[preserved].as_ref().clone();
+            enriched.compaction_method = Some(method);
+            entries[preserved] = Rc::new(enriched);
+        }
         entries.remove(position);
     }
     true
@@ -349,6 +360,7 @@ mod tests {
             authored_synthetic: false,
             observed: None,
             activity,
+            compaction_method: None,
             final_answer: false,
             acknowledgement: None,
             text: offset.to_string(),
@@ -422,6 +434,7 @@ mod tests {
     #[test]
     fn a_preserved_compaction_replaces_the_announcement_it_duplicates() {
         let mut announced = message(1, AgentActivityKind::Compaction);
+        announced.compaction_method = Some("snapcompact".to_owned());
         announced.authored_synthetic = true;
         announced.boundary = Some(wire::MessageBoundary {
             id: "cmp_03f3".to_owned(),
@@ -430,6 +443,7 @@ mod tests {
         let mut preserved = announced.clone();
         preserved.locus.member = 0x8000_0000_0000_0001;
         preserved.authored_synthetic = false;
+        preserved.compaction_method = None;
         preserved.boundary = Some(wire::MessageBoundary {
             id: "cmp_03f3".to_owned(),
             preserved: true,
@@ -468,12 +482,21 @@ mod tests {
             "the announcement gives way to the preserved record, and an \
              unrelated compaction repeating its text stays",
         );
+        assert_eq!(
+            live.entries()[1].compaction_method.as_deref(),
+            Some("snapcompact"),
+            "the authoritative boundary retains completion metadata",
+        );
 
         let mut paged = MessageCards::default();
         paged.snapshot(10, &[preserved.clone(), unpaired.clone()]);
         assert!(
-            !paged.merge(std::iter::once(&announced)),
-            "an announcement the preserved record already covers changes nothing",
+            paged.merge(std::iter::once(&announced)),
+            "a late completion enriches the preserved boundary",
+        );
+        assert_eq!(
+            paged.entries()[1].compaction_method.as_deref(),
+            Some("snapcompact"),
         );
     }
 

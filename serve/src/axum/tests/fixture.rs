@@ -13,6 +13,7 @@ pub(super) fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentM
         authored_synthetic: false,
         observed: None,
         activity: wire::AgentActivityKind::Prose,
+        compaction_method: None,
         final_answer: false,
         acknowledgement: None,
         text: text.to_owned(),

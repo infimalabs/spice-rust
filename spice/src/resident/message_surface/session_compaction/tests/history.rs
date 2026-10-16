@@ -73,6 +73,7 @@ fn page_boundary_marker() -> wire::AgentMessage {
         authored_synthetic: false,
         observed: None,
         activity: wire::AgentActivityKind::Prose,
+        compaction_method: None,
         final_answer: false,
         acknowledgement: None,
         text: "page boundary".to_owned(),

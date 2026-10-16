@@ -713,6 +713,7 @@ mod tests {
             authored_synthetic: false,
             observed: None,
             activity: wire::AgentActivityKind::Prose,
+            compaction_method: None,
             final_answer: false,
             acknowledgement: None,
             text: "quoted prose".to_owned(),

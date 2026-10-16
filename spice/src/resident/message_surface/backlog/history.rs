@@ -124,8 +124,17 @@ impl HistorySources {
 
 /// Drop each captured announcement whose preserved record this page also
 /// carries, so one compaction is one boundary however the window read it.
+/// Preserve a method that only the captured completion reported.
 fn reconcile_boundaries(visible: &mut Vec<wire::AgentMessage>) {
     for position in wire::superseded_boundaries(visible).into_iter().rev() {
+        if let Some(method) = visible[position].compaction_method.clone()
+            && let Some(preserved) = visible
+                .iter()
+                .position(|message| visible[position].boundary_superseded_by(message))
+            && visible[preserved].compaction_method.is_none()
+        {
+            visible[preserved].compaction_method = Some(method);
+        }
         visible.remove(position);
     }
 }

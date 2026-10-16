@@ -648,6 +648,7 @@ mod message_retention_tests {
             authored_synthetic: false,
             observed: None,
             activity: AgentActivityKind::Prose,
+            compaction_method: None,
             final_answer: false,
             acknowledgement: None,
             text: offset.to_string(),

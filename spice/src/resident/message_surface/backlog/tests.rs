@@ -438,6 +438,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         authored_synthetic: false,
         observed: None,
         activity: wire::AgentActivityKind::Prose,
+        compaction_method: None,
         final_answer: false,
         acknowledgement: None,
         text: "future".to_owned(),
@@ -847,6 +848,7 @@ fn card_at(member: u64, second: usize) -> wire::AgentMessage {
         authored_synthetic: false,
         observed: None,
         activity: wire::AgentActivityKind::Prose,
+        compaction_method: None,
         final_answer: false,
         acknowledgement: None,
         text: format!("card {second}"),
@@ -1096,11 +1098,17 @@ fn a_compaction_both_sources_recorded_is_one_preserved_boundary() {
         !paired.authored_synthetic,
         "the preserved record carries the vendor timestamp the announcement lacks",
     );
+    assert_eq!(
+        paired.compaction_method.as_deref(),
+        Some("snapcompact"),
+        "the captured completion's method survives on the preserved record",
+    );
     let unpaired = boundary_card(&boundaries, "kept:e9:910000");
     assert!(
         unpaired.boundary.as_ref().is_some_and(|it| !it.preserved),
         "a compaction only the stream recorded keeps its announcement",
     );
+    assert_eq!(unpaired.compaction_method.as_deref(), Some("remote"));
     assert_eq!(
         unpaired.text, paired.text,
         "the two boundaries are distinguished by identity, not by summary text",
@@ -1123,11 +1131,11 @@ fn paired_boundary_fixture() -> (PathBuf, DurableHistory, CanonicalUuid, wire::A
     const TAPE: &str = concat!(
         r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"before"}],"timestamp":1789525452596}}"#,
         "\n",
-        r#"{"type":"auto_compaction_end","action":"context-full","result":{"summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000},"aborted":false}"#,
+        r#"{"type":"auto_compaction_end","action":"snapcompact","result":{"summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000},"aborted":false}"#,
         "\n",
         r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"between"}],"timestamp":1789525453596}}"#,
         "\n",
-        r#"{"type":"auto_compaction_end","action":"context-full","result":{"summary":"so far","firstKeptEntryId":"e9","tokensBefore":910000},"aborted":false}"#,
+        r#"{"type":"auto_compaction_end","action":"remote","result":{"summary":"so far","firstKeptEntryId":"e9","tokensBefore":910000},"aborted":false}"#,
         "\n",
         r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"after"}],"timestamp":1789525454596}}"#,
         "\n",
@@ -1199,6 +1207,7 @@ fn paired_boundary_fixture() -> (PathBuf, DurableHistory, CanonicalUuid, wire::A
         authored_synthetic: false,
         observed: None,
         activity: wire::AgentActivityKind::Prose,
+        compaction_method: None,
         final_answer: false,
         acknowledgement: None,
         text: "future".to_owned(),

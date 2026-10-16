@@ -391,6 +391,8 @@ pub struct Usage {
 pub struct Compaction {
     /// Vendor-provided summary when this record carries one.
     pub summary: Option<String>,
+    /// Successful method named by the completion record, when present.
+    pub method: Option<String>,
     /// Vendor identity of the compaction, when the record names one.
     ///
     /// The captured stream announcement and the preserved session entry are
