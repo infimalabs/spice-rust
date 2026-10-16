@@ -215,6 +215,9 @@
   pointer-events: none;
   transition: inset-inline-start var(--app-motion-settle) var(--app-ease-standard);
 }
+@media (prefers-reduced-motion: reduce) {
+  .app-theme-selector::before { transition: none; }
+}
 .app-theme-selector > .app-choice-chip {
   position: relative;
   z-index: 1;

@@ -31,7 +31,8 @@ theme group. Their selected face slides behind the buttons and uses the same
 transmitted, lit glass recipe as an active team or working-group slider thumb.
 The buttons remain the semantic and keyboard controls; the moving face is
 presentation only. Its gradient, edge, and light catches remain legible when
-backdrop filtering is unavailable.
+backdrop filtering is unavailable. Reduced-motion presentation moves the face
+without travel.
 
 The [glass control studies](design/glass-controls.html) are an interactive
 reference gallery for the [team composer
