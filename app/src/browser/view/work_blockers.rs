@@ -287,6 +287,12 @@ fn requirement_blocked(
 fn render_wall(wall: DependencyWall<'_>) -> Html {
     let (kind, title, reason, state) = match wall {
         DependencyWall::Environment(_) => return Html::default(),
+        DependencyWall::Gate(_) => (
+            "blocked",
+            "Blocked",
+            "Its prerequisite or controller cannot advance. Change the task or restore its missing authority.",
+            "Operator required",
+        ),
         DependencyWall::Deferred(_) => (
             "deferred",
             "Deferred",

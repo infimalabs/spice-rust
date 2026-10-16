@@ -675,12 +675,12 @@ distinctive quality.
   single-line slot, so an update never changes a box.
 - **Task counts show one open total.** Every global and team roll-up tab shows
   one badge counting open tasks; a global tab's title and accessible name carry
-  the ready, active, and blocked-or-deferred breakdown. A global tab whose
-  partition counts blocked work, held by an unsatisfied dependency, also carries
-  an out-of-flow alert dot on its count badge's top inline-end corner, and its
-  title and accessible name lead with the blocked count. A stem badge is
-  content-sized, so a digit-width change may resize its tab; the total tabs
-  reserve one minimum badge footprint.
+  the ready, active, blocked, and waiting-or-set-aside breakdown. A global tab
+  whose partition contains immediate human-actionable blocked or
+  environment-held work also carries an out-of-flow alert dot on its count
+  badge's top inline-end corner, and its title and accessible name lead with
+  that actionable count. A stem badge is content-sized, so a digit-width change
+  may resize its tab; the total tabs reserve one minimum badge footprint.
 - **Presentation changes do not touch card identity or style.** Recolouring and
   attribution toggles force no re-measure. A member-count change that alters the
   settled host width earns one full geometry replay.

@@ -413,13 +413,12 @@ fn a_withdrawn_prerequisite_releases_the_task_that_waited_on_it() {
 
 /// What a withdrawal releases, the operator's own status report agrees it released.
 ///
-/// The allocator and the status report each decide which prerequisites are
-/// satisfied, and a withdrawn one has to count for both. When only the
-/// allocator learns it, the same task is reported ready and blocked at once
-/// on one screen, and the row `task next` will hand over is the row the
-/// operator was just told is waiting on something.
+/// The allocator and status report each decide which prerequisites are
+/// satisfied. Before withdrawal the dependent waits neutrally behind advancing
+/// prerequisite work; afterward that same row is ready. Neither surface may
+/// retain an obsolete wait after the prerequisite settles.
 #[test]
-fn a_released_dependent_is_not_still_reported_blocked() {
+fn a_released_dependent_moves_from_waiting_to_ready_in_status() {
     let (root, bus, epoch, seats) = fixture("delete-status", 1);
     let lane = Actor::Lane(seats[0].lane);
     let blocker = add(
@@ -457,8 +456,8 @@ fn a_released_dependent_is_not_still_reported_blocked() {
 
     let before = task_status(&board(&bus, epoch, lane.clone())).expect("status reads");
     assert!(
-        before.lines().any(|line| line == "blocked 1"),
-        "the dependent is blocked while its prerequisite stands: {before}"
+        before.lines().any(|line| line == "waiting 1"),
+        "the dependent waits while its prerequisite stands: {before}"
     );
 
     assert_committed(withdraw(
@@ -470,8 +469,8 @@ fn a_released_dependent_is_not_still_reported_blocked() {
 
     let after = task_status(&board(&bus, epoch, lane)).expect("status reads");
     assert!(
-        after.lines().any(|line| line == "blocked 0"),
-        "a withdrawn prerequisite blocks nothing, so nothing is reported blocked: {after}"
+        after.lines().any(|line| line == "waiting 0"),
+        "a withdrawn prerequisite leaves no dependency wait: {after}"
     );
     assert!(
         after.lines().any(|line| line == "ready 1"),

@@ -9,7 +9,7 @@ fn seed_parked_board(seats: &[Seat], bus: &Bus, epoch: CanonicalUuid) {
     claim_task(bus, epoch, &seats[2], &Actor::Lane(seats[2].lane), &stale);
     lapse_claim(bus, epoch, &seats[2], &stale);
     let prerequisite = todo_task(bus, epoch, "DRAIN-first001", "Open prerequisite");
-    let blocked = todo_task(bus, epoch, "DRAIN-block001", "Blocked on the prerequisite");
+    let blocked = todo_task(bus, epoch, "DRAIN-block001", "Waiting on the prerequisite");
     let before = board(bus, epoch, Actor::Operator);
     assert_committed(issue(
         bus,
@@ -71,8 +71,8 @@ fn next_read_classifies_peer_only_parked_work_without_board_rows() {
         NextWorkCounts {
             active: 1,
             stale: 1,
-            blocked: 1,
-            workflow_waiting: 0,
+            blocked: 0,
+            workflow_waiting: 1,
             selection: 0,
             deferred: 1,
             oops: 1,
@@ -138,7 +138,7 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
         },
     ));
     let prerequisite = todo_task(&bus, epoch, "DRAIN-first002", "Executable prerequisite");
-    let blocked = todo_task(&bus, epoch, "DRAIN-block002", "Ordinary blocked work");
+    let blocked = todo_task(&bus, epoch, "DRAIN-block002", "Ordinary waiting work");
     let current = board(&bus, epoch, Actor::Operator);
     assert_committed(issue(
         &bus,
@@ -163,8 +163,8 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
         NextWorkCounts {
             active: 0,
             stale: 0,
-            blocked: 1,
-            workflow_waiting: 1,
+            blocked: 0,
+            workflow_waiting: 2,
             selection: 0,
             deferred: 0,
             oops: 0,
@@ -178,8 +178,8 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
         "ready 1",
         "review 0",
         "selection 0",
-        "blocked 1",
-        "waiting 1",
+        "blocked 0",
+        "waiting 2",
         "deferred 0",
     ] {
         assert!(

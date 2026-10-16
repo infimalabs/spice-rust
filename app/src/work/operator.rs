@@ -75,10 +75,12 @@ impl<'a> OperatorQueue<'a> {
             if task.availability() != WorkAvailability::Blocked {
                 continue;
             }
+            let mut explained = false;
             for dependency in task.dependencies() {
                 let Some((at, wall)) = walls.wall(index, dependency) else {
                     continue;
                 };
+                explained = true;
                 let wait = waits[at].get_or_insert_with(|| OperatorWait::new(at));
                 match wall {
                     DependencyWall::Environment(_) => wait.environment = true,
@@ -87,6 +89,11 @@ impl<'a> OperatorQueue<'a> {
                 if wait.holds.last() != Some(&index) {
                     wait.holds.push(index);
                 }
+            }
+            if !explained && waits[index].is_none() {
+                let mut wait = OperatorWait::new(index);
+                wait.wall = Some(DependencyWall::Gate(&task.row().statement.body.born));
+                waits[index] = Some(wait);
             }
         }
         Self {
