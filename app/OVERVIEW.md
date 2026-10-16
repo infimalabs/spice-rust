@@ -41,7 +41,12 @@ unframed, with a margin at every zoom that keeps outer nodes, edges, and
 badges off the region's edge. Each node's state badge straddles its top border
 so it never covers the label, and same-rank nodes keep room between them for
 those badges. A completed task wears a muted **Done** badge, quieter than
-**Blocked**; a withdrawn one wears **Deleted**.
+**Blocked**; a withdrawn one wears **Deleted**. Unconnected parts of the graph
+never stack into one column: whole connected components fill rows left to
+right, each row spanning no more ranks than the node count's square root,
+rounded up, or the deepest component's ranks when more, so unconnected roots
+form a near-square grid. Row placement draws nothing and is never a
+relationship.
 
 Open work falls into the board's exclusive standings, in their precedence: a
 live claim reads **In flight**, a lapsed one **Stale**, and explicit set-asides
