@@ -35,6 +35,8 @@ struct PlannedRequest {
     task: TaskStamp,
     task_statement: Seq,
     claim: Seq,
+    /// Exact `TaskDone` that owes the request.
+    completed: Seq,
     design: TaskStamp,
     statement: Seq,
     terms: Vec<String>,
@@ -252,6 +254,7 @@ fn planned_request(
         task: completed.task.clone(),
         task_statement: completed.statement.revision,
         claim: completed.claim,
+        completed: completed.at,
         design: design.born().clone(),
         statement: design.statement().revision,
         terms,
@@ -410,6 +413,7 @@ pub(crate) fn project_request(
         task: completed.task.clone(),
         task_statement: task_statement.revision,
         claim,
+        completed: completed.at,
         design: design.born().clone(),
         statement: design.statement().revision,
         terms: terms.clone(),
@@ -489,9 +493,10 @@ fn command_answer_outcome(outcome: Outcome<()>) -> Outcome<wire::intent::Command
 }
 
 /// Refuse a request whose completion, occupant, statement, standing,
-/// publication, or competing request moved.
+/// publication, newer lane work, or competing request moved.
 fn still_owed(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
     current_recipient(read, request)?;
+    idle_since_completion(read, request)?;
     passive_design(read, request)?;
     unseen_request(read, request)
 }
@@ -525,6 +530,41 @@ fn current_recipient(read: &JournalRead<'_>, request: &PlannedRequest) -> Result
         return Err(stale("the task statement moved"));
     }
     Ok(())
+}
+
+/// Refuse once the lane won any claim after the owing completion: its natural
+/// break ended whether that newer work is still active or already completed.
+/// Only claim wins are read, so other lanes' and unrelated traffic stay
+/// admissible.
+fn idle_since_completion(
+    read: &JournalRead<'_>,
+    request: &PlannedRequest,
+) -> Result<(), GuardError> {
+    let mut after = Some(request.completed);
+    loop {
+        let page = read.selected_fact_page(
+            &[wire::FactKind::ClaimWon],
+            after,
+            None,
+            journal::FactReadBudget::RETAINED,
+        )?;
+        for envelope in &page.rows {
+            let Some(won) = envelope.fact.read::<wire::body::ClaimWon>() else {
+                return Err(GuardError::Invalid(
+                    "a selected claim win did not decode".to_owned(),
+                ));
+            };
+            if won.lane == request.lane {
+                return Err(GuardError::refused(format!(
+                    "{STALE}: the lane claimed newer work"
+                )));
+            }
+        }
+        let Some(continuation) = page.continuation else {
+            return Ok(());
+        };
+        after = Some(continuation);
+    }
 }
 
 fn passive_design(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {

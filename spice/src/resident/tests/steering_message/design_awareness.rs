@@ -749,28 +749,95 @@ fn a_design_edit_keeps_the_request_owed() {
     lanes.finish();
 }
 
+/// One relevant authority moving after `task next` planned its request.
+type Race = fn(&Lanes, &SurfaceConfig, &wire::TaskHandle);
+
 #[test]
-fn request_admission_ignores_unrelated_writes_and_refuses_relevant_races() {
+fn request_admission_refuses_each_relevant_race() {
+    let races: [(&str, Race, &str); 7] = [
+        (
+            "occupant",
+            |lanes, _, _| {
+                lanes.vacate(FIRST);
+                lanes.renew(FIRST, test_uuid(90));
+            },
+            "the occupant moved",
+        ),
+        (
+            "active-claim",
+            |lanes, _, _| {
+                lanes.claimed("dVrD245Kp", FIRST);
+            },
+            "the lane claimed newer work",
+        ),
+        (
+            "completed-claim",
+            |lanes, _, _| {
+                let later = lanes.claimed("dVrD245Kp", FIRST);
+                lanes.complete(&later, "Unrelated work.");
+            },
+            "the lane claimed newer work",
+        ),
+        (
+            "statement",
+            |lanes, _, design| lanes.retitle(design, "Page room catch-up by cursor"),
+            "the Design statement moved",
+        ),
+        (
+            "workflow",
+            |lanes, _, design| lanes.close_room(design),
+            "the Design is no longer open",
+        ),
+        (
+            "stance",
+            |lanes, config, design| {
+                lanes.group(70, config, design, wire::rooms::WorkingGroupStance::Explore);
+            },
+            "the Design is no longer passive",
+        ),
+        (
+            "publication",
+            |lanes, config, design| lanes.contribute(50, config, FIRST, design),
+            "the lane published in the room",
+        ),
+    ];
+    for (tag, race, cause) in races {
+        let lanes = Lanes::new(&format!("design-request-race-{tag}"));
+        align_completion_lane(&lanes);
+        let config = surface(&lanes);
+        let task = lanes.claimed("dVrD245Kc", FIRST);
+        let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+        lanes.complete(&task, MATCHING);
+
+        let stale = lanes.bus.task_snapshot().expect("task snapshot reads");
+        race(&lanes, &config, &design);
+        let Err(Outcome::Refusal(refusal)) = lanes.next_from(&config, &stale, FIRST) else {
+            panic!("{tag}: a race after selection must refuse the stale admission");
+        };
+        assert_eq!(refusal.reason(), "board::witness-moved", "{tag}");
+        assert_eq!(
+            refusal
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::witness),
+            Some(format!("room::awareness-stale: {cause}").as_str()),
+            "{tag}"
+        );
+        assert!(
+            lanes.noticed().is_empty(),
+            "{tag}: a stale plan records nothing"
+        );
+        lanes.finish();
+    }
+}
+
+#[test]
+fn request_admission_ignores_unrelated_writes_and_records_once() {
     let lanes = Lanes::new("design-request-admission");
     align_completion_lane(&lanes);
     let config = surface(&lanes);
     let task = lanes.claimed("dVrD245Kc", FIRST);
     let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
     lanes.complete(&task, MATCHING);
-
-    let stale = lanes.bus.task_snapshot().expect("task snapshot reads");
-    lanes.retitle(&design, "Page room catch-up by cursor");
-    let Err(Outcome::Refusal(refusal)) = lanes.next_from(&config, &stale, FIRST) else {
-        panic!("a Design edit after selection must refuse the stale admission");
-    };
-    assert_eq!(refusal.reason(), "board::witness-moved");
-    assert_eq!(
-        refusal
-            .diagnostic()
-            .and_then(wire::RefusalDiagnostic::witness),
-        Some("room::awareness-stale: the Design statement moved")
-    );
-    assert!(lanes.noticed().is_empty(), "a stale plan records nothing");
 
     let planned = lanes.bus.task_snapshot().expect("task snapshot reads");
     let _unrelated = lanes.claimed("dVrD245Kp", SECOND);
