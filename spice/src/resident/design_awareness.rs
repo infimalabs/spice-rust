@@ -416,7 +416,7 @@ pub(crate) fn project_request(
         horizon: observed.cursor(),
     };
     match record(bus, &request) {
-        Ok(true) => Ok(Some(design_request(
+        Ok(None) => Ok(Some(design_request(
             design,
             &task_statement,
             wire::rooms::shown_notice_terms(&terms)
@@ -424,10 +424,10 @@ pub(crate) fn project_request(
                 .map(str::to_owned)
                 .collect(),
         ))),
-        Ok(false) => Err(Outcome::Refusal(wire::Refusal::bare(
+        Ok(Some(stale)) => Err(Outcome::Refusal(wire::Refusal::bare(
             wire::RefusalDiagnostic::new(
                 "board::witness-moved",
-                Some("current Design request authority".to_owned()),
+                Some(stale),
                 None,
                 Some("board::witness-moved: Design request projection changed".to_owned()),
             ),
@@ -558,36 +558,44 @@ fn passive_design(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<()
     Ok(())
 }
 
+/// Refuse when another request for this occupant's Design or completion was
+/// recorded after the planning horizon. Only Design notices are read: every
+/// other authority that can change the chosen request is checked at its
+/// current head, so unrelated journal traffic never makes the plan stale.
 fn unseen_request(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
-    let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
-    let Some(current) = read.cursor()? else {
-        return Err(stale("the journal horizon disappeared"));
-    };
-    let mut start = journal::FactPageStart::After(request.horizon);
+    let mut after = request.horizon;
     loop {
-        let page = read.fact_page(start, current, journal::FactReadBudget::RETAINED)?;
+        let page = read.selected_fact_page(
+            &[wire::FactKind::DesignNoticed],
+            after,
+            None,
+            journal::FactReadBudget::RETAINED,
+        )?;
         for envelope in &page.rows {
             let Some(body) = envelope.fact.read::<DesignNoticed>() else {
-                return Err(stale("authority changed after the request was planned"));
+                return Err(GuardError::Invalid(
+                    "a selected Design notice did not decode".to_owned(),
+                ));
             };
             if body.occupant == request.occupant
                 && (body.design == request.design
                     || (body.task == request.task && body.claim.get() == request.claim.get()))
             {
-                return Err(stale("the occupant already has this request"));
+                return Err(GuardError::refused(format!(
+                    "{STALE}: the occupant already has this request"
+                )));
             }
         }
-        let Some(overflow) = page.overflow else {
-            break;
+        let Some(continuation) = page.continuation else {
+            return Ok(());
         };
-        start = journal::FactPageStart::At(overflow.continuation);
+        after = Some(continuation);
     }
-    Ok(())
 }
 
-/// Commit the durable record before `task next` returns it: `false` when a
-/// commit after its observation made the choice stale.
-fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<bool> {
+/// Commit the durable record before `task next` returns it: the guard's stale
+/// cause when a relevant authority moved after its observation.
+fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> {
     let at = Instant::new(jiff::Timestamp::now())
         .map_err(|error| environment_fault("room::awareness-clock-invalid", &error.to_string()))?;
     let origin = format!("lane:{}", request.lane)
@@ -616,8 +624,10 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<bool> {
         .commit(write)
         .map_err(|error| store_fault("room::awareness-commit", &error.to_string()))?
     {
-        CommitOutcome::Committed(_) => Ok(true),
-        CommitOutcome::Refused(refusal) if refusal.reason().starts_with(STALE) => Ok(false),
+        CommitOutcome::Committed(_) => Ok(None),
+        CommitOutcome::Refused(refusal) if refusal.reason().starts_with(STALE) => {
+            Ok(Some(refusal.reason().to_owned()))
+        }
         CommitOutcome::Refused(refusal) => {
             Err(store_fault("room::awareness-refused", &refusal.to_string()))
         }
