@@ -77,7 +77,9 @@ pub(in crate::board_command) fn read_task_detail(
 /// position.
 #[derive(Default)]
 pub(super) struct TaskRecord {
-    /// Every durable note.
+    /// Every note retained from before notes became room observations. A
+    /// task's authored observations are its room's publications, which the
+    /// room section reads, so they never repeat here.
     pub(super) notes:
         std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskDetailNote>>,
     /// Every task or claim fact whose origin is an acknowledged steering key,
@@ -132,7 +134,9 @@ pub(super) fn task_record(
                 });
         }
         let note = recorded_note(envelope).filter(|(task, _)| tasks.contains(task));
-        if let Some((task, text)) = &note {
+        if let Some((task, text)) = &note
+            && envelope.fact.kind() == wire::FactKind::TaskNoted
+        {
             record
                 .notes
                 .entry(task.clone())

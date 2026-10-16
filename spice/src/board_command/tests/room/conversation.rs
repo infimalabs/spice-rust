@@ -2,6 +2,29 @@
 
 use super::*;
 
+/// The board `task show --history` reads for `room`: its row with notes.
+fn shown_board(bus: &Bus, epoch: CanonicalUuid, room: &TaskHandle) -> BoardAnswer {
+    match issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Tasks {
+            tasks: vec![room.born().expect("fixture identity")],
+            dependencies: true,
+            claims: false,
+            notes: true,
+        },
+    ) {
+        Outcome::Reply(Reply {
+            body: CommandAnswer::Board(answer),
+            ..
+        }) => *answer,
+        other => panic!("task show board read did not reply: {other:?}"),
+    }
+}
+
 /// `room`'s history page of two rows, resuming at `after` when it names one.
 fn page(
     bus: &Bus,
@@ -47,11 +70,12 @@ fn page(
         &anchor,
         budget,
     );
+    let task = at(answer, room);
     task_show_bounded(
         answer,
-        at(answer, room),
+        task,
         &[],
-        TaskShowHistory::default(),
+        TaskShowHistory::of(answer, task, None),
         None,
         Some(shown),
         &TaskShowOptions {
@@ -97,7 +121,7 @@ fn task_show_pages_its_room_newest_first_from_a_room_cursor() {
         let command = post_command(&bus, epoch, &room, &format!("observation-{index}"));
         assert_committed(dispatch(&bus, &command).expect("room post dispatches"));
     }
-    let answer = board(&bus, epoch, Actor::Operator);
+    let answer = shown_board(&bus, epoch, &room);
 
     let first = page(&bus, &root, &answer, &room, None);
     assert_eq!(observations(&first), ['5', '4'], "{first}");
@@ -110,5 +134,14 @@ fn task_show_pages_its_room_newest_first_from_a_room_cursor() {
     let last = page(&bus, &root, &answer, &room, Some(continuation(&second)));
     assert_eq!(observations(&last), ['1'], "{last}");
     assert!(!last.contains("continue:"), "{last}");
+
+    let shown = [first, second, last].concat();
+    for index in 1..=5 {
+        assert_eq!(
+            shown.matches(&format!("observation-{index}")).count(),
+            1,
+            "each authored observation shows once, under its room: {shown}",
+        );
+    }
     clean(&root, bus);
 }

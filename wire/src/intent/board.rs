@@ -265,7 +265,7 @@ pub struct TaskAcknowledgment {
     pub key: String,
 }
 
-/// Current evidence and complete durable notes for one selected task.
+/// Current evidence and retained durable notes for one selected task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskDetailAnswer {
@@ -274,7 +274,9 @@ pub struct TaskDetailAnswer {
     /// Bounded browser-renderable artifacts in task citation order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<crate::Media>,
-    /// Notes ordered by ascending durable journal position.
+    /// Notes retained from before notes became room observations, ordered by
+    /// ascending durable journal position; authored observations are the
+    /// task's room publications.
     pub notes: Vec<TaskDetailNote>,
     /// The operator's closure, when the task was closed rather than done.
     #[serde(
@@ -1425,8 +1427,10 @@ pub struct BoardAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub history: Option<TaskHistoryPage>,
-    /// Durable notes on the named tasks of a [`BoardRead::Tasks`] read that
-    /// asked for them, each task's notes in ascending journal position.
+    /// Notes retained from before notes became room observations on the named
+    /// tasks of a [`BoardRead::Tasks`] read that asked for them, each task's
+    /// notes in ascending journal position; authored observations are each
+    /// task's room publications.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub notes: std::collections::BTreeMap<crate::TaskStamp, Vec<TaskDetailNote>>,
     /// Every acknowledged steering directive joined to each named task through
