@@ -18,6 +18,7 @@ mod settings_receipts;
 mod task_markers;
 mod task_standing;
 mod vendor_holds;
+mod workflows;
 mod working_groups;
 
 #[test]

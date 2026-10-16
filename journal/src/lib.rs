@@ -25,7 +25,9 @@
 /// 70 removes the unused generic statement-tag field and its retired metadata.
 /// Schema 71 rebuilds Design maturity so it counts asked lanes that declined
 /// by leaving the room, which an older release's projection cannot decode.
-pub const SCHEMA_VERSION: u32 = 71;
+/// Schema 72 crosses retained terminal review fields into the typed workflow
+/// state without changing their positive or negative standing.
+pub const SCHEMA_VERSION: u32 = 72;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

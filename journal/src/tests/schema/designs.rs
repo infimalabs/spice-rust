@@ -262,7 +262,7 @@ fn open_designs_cross_once_onto_their_open_phase_and_release_their_outputs_edges
 }
 
 #[test]
-fn an_undecodable_open_design_refuses_with_its_owning_release() {
+fn an_undecodable_open_design_refuses_before_design_shape_migration() {
     let mut journal = Journal::in_memory().expect("journal");
     let retained = retained(&mut journal);
     journal
@@ -283,7 +283,7 @@ fn an_undecodable_open_design_refuses_with_its_owning_release() {
             OpenError::Migration(MigrationError::RetainedRow { table, row, release, .. })
                 if *table == "workflow_heads"
                     && *row == retained.open.as_str()
-                    && *release == "8b9ad6994"
+                    && *release == "schema-72"
         ),
         "{error}"
     );
