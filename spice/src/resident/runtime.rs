@@ -1,5 +1,7 @@
 use super::*;
 
+#[cfg(test)]
+mod canvas_selection_tests;
 mod identity;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -327,15 +329,23 @@ pub(super) struct AppAccess {
 }
 
 enum AppSelection {
-    Installed(PathBuf),
+    Installed,
     Staged,
 }
 
 impl AppSelection {
     fn resolve(self, repository: &Repository) -> CommandResult<serve::canvas::CanvasAssets> {
+        self.resolve_with(repository.worktree_root(), spice::version::canvas())
+    }
+
+    fn resolve_with(
+        self,
+        worktree: &Path,
+        linked: Option<&Result<serve::canvas::EmbeddedArchive, serve::canvas::CanvasArchiveError>>,
+    ) -> CommandResult<serve::canvas::CanvasAssets> {
         match self {
-            Self::Installed(executable) => {
-                match spice::version::canvas() {
+            Self::Installed => {
+                let archive = match linked {
                     None => {
                         return Err(environment_fault(
                             "serve::canvas-archive-absent",
@@ -348,13 +358,11 @@ impl AppSelection {
                             &error.to_string(),
                         ));
                     }
-                    Some(Ok(_)) => {}
-                }
-                spice::install::installed_app_source(repository, &executable)
-                    .map(serve::canvas::CanvasAssets::DevelopmentDirectory)
-                    .map_err(installed_app_refusal)
+                    Some(Ok(archive)) => archive.clone(),
+                };
+                Ok(serve::canvas::CanvasAssets::EmbeddedArchive(archive))
             }
-            Self::Staged => serve::AppSource::resolve(repository.worktree_root())
+            Self::Staged => serve::AppSource::resolve(worktree)
                 .map(serve::canvas::CanvasAssets::DevelopmentDirectory)
                 .map_err(|error| {
                     environment_fault("serve::app-source-invalid", &error.to_string())
@@ -396,16 +404,10 @@ pub(crate) fn up(
         Ok(current) => current,
         Err(error) => return environment_fault("resident::cwd-unavailable", &error.to_string()),
     };
-    let executable = match std::env::current_exe() {
-        Ok(executable) => executable,
-        Err(error) => {
-            return environment_fault("resident::executable-unavailable", &error.to_string());
-        }
-    };
     let app = if test_app_stage {
         AppSelection::Staged
     } else {
-        AppSelection::Installed(executable)
+        AppSelection::Installed
     };
     up_from_with(
         &current,
@@ -648,22 +650,6 @@ fn up_from_with(
         return store_fault("bus::shutdown-failed", &error.to_string());
     }
     answer
-}
-
-fn installed_app_refusal(error: spice::install::InstallError) -> Outcome<()> {
-    let observed = error.to_string();
-    Outcome::Refusal(Refusal::bare(
-        wire::RefusalDiagnostic::new(
-            "serve::installed-app-refused".to_owned(),
-            Some("installed-app-generation".to_owned()),
-            Some(
-                "one complete current receipt-owned app generation matching this Spice binary"
-                    .to_owned(),
-            ),
-            Some(observed.clone()),
-        )
-        .with_detail(observed),
-    ))
 }
 
 fn journal_open_failure(error: journal::OpenError) -> Outcome<()> {
