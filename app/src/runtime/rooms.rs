@@ -217,6 +217,9 @@ impl RoomEventKind {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RoomState {
     events: BTreeMap<RoomAuthorityStamp, RoomEvent>,
+    /// Each asked lane's newest recorded Design request: its position and
+    /// the completed task that prompted it.
+    asked: BTreeMap<CanonicalUuid, (Seq, TaskStamp)>,
 }
 
 impl RoomState {
@@ -237,8 +240,8 @@ impl RoomState {
 
 /// Why a logical lane currently appears in a room. Each reason names the
 /// admitted source it traces to; only `Activity` and `Invitation` age out of
-/// the activity window, a leave in force ends both, and native duties end
-/// only through their own dispositions.
+/// the activity window, a leave in force ends both and every earlier `Asked`,
+/// and native duties end only through their own dispositions.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ParticipantReason {
     /// The lane authored a transcript-backed publication; history that never
@@ -249,6 +252,9 @@ pub enum ParticipantReason {
     /// A room MSG or ASK addressed the lane inside the activity window; it
     /// requests involvement and is not a contribution.
     Invitation(String),
+    /// A recorded Design request asked the lane after it completed this task;
+    /// it requests involvement, never ages, and only a leave ends it.
+    Asked(TaskStamp),
     /// The lane currently holds the anchor or explicitly related work.
     Work(TaskStamp),
     /// A live room coordination request addresses the lane.
@@ -732,6 +738,11 @@ impl RoomProjection {
             ),
             FactKind::DesignNoticed => {
                 Some(fact.read::<authority::DesignNoticed>().is_some_and(|body| {
+                    self.rooms
+                        .entry(body.design.clone())
+                        .or_default()
+                        .asked
+                        .insert(body.lane, (fact.seq(), body.task.clone()));
                     self.maturity
                         .entry(body.design.clone())
                         .or_default()

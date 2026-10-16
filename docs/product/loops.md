@@ -488,14 +488,15 @@ owns each rule summarized here.
   standing.
 - **Attention.** Participation is derived from contribution, recent activity,
   invitation by a lane-addressed packet, native work, a live request, an owed
-  receipt or result, and a stop request. Aging removes only activity and
-  invitation. Each room catch-up names the lane's reasons and the leave
-  command. `spice room leave HANDLE --clause TEXT` is an attributed lane act
-  recorded once in room history and standing. It ends listening from
-  contribution, activity, and earlier invitation until the lane contributes
-  again or a later packet addresses it. It never frees a claim, settles a
-  delivery, or answers a question, and its reply names each native duty that
-  still holds the lane. Relevance is
+  receipt or result, and a stop request. A recorded Design request also keeps
+  the asked lane listening without making it a participant. Aging removes only
+  activity and invitation. Each room catch-up names the lane's reasons and the
+  leave command. `spice room leave HANDLE --clause TEXT` is an attributed lane
+  act recorded once in room history and standing. It ends listening from
+  contribution, activity, earlier invitation, and earlier Design requests
+  until the lane contributes again or a later packet addresses it. It never
+  frees a claim, settles a delivery, or answers a question, and its reply names
+  each native duty that still holds the lane. Relevance is
   [shadow evidence](invariants/identity.md#identity-room-relevance-is-shadow-evidence-before-automation)
   the operator assesses with `spice room assess`.
 - **Contribution.** A lane records its reasoning on an open Design with

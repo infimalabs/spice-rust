@@ -119,6 +119,9 @@ pub enum RoomDutyKind {
     /// An explicit request for involvement told at `at`; it is not a
     /// contribution, and a later leave ends it.
     Invitation { key: String, at: Instant },
+    /// A recorded Design request asked the lane about this room at `at`,
+    /// after it completed `task`; only a later leave ends it.
+    Asked { task: TaskStamp, at: Instant },
     /// A directed delivery awaiting disposition.
     Delivery { key: String },
     /// A correlated substantive result awaiting the named lane.
@@ -262,6 +265,9 @@ pub enum AttentionReason {
     },
     /// An explicit invitation remains owed; it does not make a participant.
     Invitation { key: String },
+    /// A recorded Design request asked the lane after it completed `task`; it
+    /// does not make a participant, and only a leave ends it.
+    Asked { task: TaskStamp },
     /// A directed delivery remains owed.
     Delivery { key: String },
     /// A correlated substantive result remains owed.
@@ -278,7 +284,10 @@ impl AttentionReason {
     /// Whether this reason is a native duty a leave cannot end.
     #[must_use]
     pub const fn is_native(&self) -> bool {
-        !matches!(self, Self::Activity { .. } | Self::Invitation { .. })
+        !matches!(
+            self,
+            Self::Activity { .. } | Self::Invitation { .. } | Self::Asked { .. }
+        )
     }
 }
 
@@ -634,17 +643,16 @@ fn fold_attention(
         let folded = lane_fold(lanes, duty.lane, maximum)?;
         let reason = match &duty.kind {
             RoomDutyKind::Invitation { key, at } => {
-                if folded.leave().is_some_and(|(left, _)| at <= left) {
+                if !restores(folded, *at) {
                     continue;
                 }
-                folded.derived_listening.push((
-                    RoomAttentionPoint {
-                        at: *at,
-                        publication: None,
-                    },
-                    DerivedListeningEvent::Restore,
-                ));
                 AttentionReason::Invitation { key: key.clone() }
+            }
+            RoomDutyKind::Asked { task, at } => {
+                if !restores(folded, *at) {
+                    continue;
+                }
+                AttentionReason::Asked { task: task.clone() }
             }
             RoomDutyKind::Delivery { key } => AttentionReason::Delivery { key: key.clone() },
             RoomDutyKind::Result { key } => AttentionReason::Result { key: key.clone() },
@@ -667,6 +675,23 @@ fn fold_attention(
             });
     }
     Ok(())
+}
+
+/// Whether a non-native request told at `at` restores the lane's listening:
+/// it must postdate the lane's latest leave, and then it reopens catch-up
+/// from `at`.
+fn restores(folded: &mut LaneFold, at: Instant) -> bool {
+    if folded.leave().is_some_and(|(left, _)| at <= *left) {
+        return false;
+    }
+    folded.derived_listening.push((
+        RoomAttentionPoint {
+            at,
+            publication: None,
+        },
+        DerivedListeningEvent::Restore,
+    ));
+    true
 }
 
 fn finish_lanes(

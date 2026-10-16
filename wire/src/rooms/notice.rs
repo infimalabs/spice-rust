@@ -1,7 +1,8 @@
 //! Resident records of completion-bound requests for open passive Designs.
 //!
-//! Each record durably chooses one request. It is not a room publication and
-//! adds no room attention, participation, steering, claim, assignment, or wake.
+//! Each record durably chooses one request. It is not a room publication; it
+//! keeps the asked lane listening to the Design's room until that lane leaves,
+//! and adds no participation, steering, claim, assignment, or wake.
 
 use serde::{Deserialize, Serialize};
 
@@ -37,9 +38,9 @@ pub fn shown_notice_terms(terms: &[String]) -> Vec<&str> {
 /// One completed claim requested one lane occupant's input on a passive Design.
 ///
 /// The exact statement and matched terms record the deterministic relevance
-/// choice. The record is request state only: it is no room publication and
-/// grants no room attention, participation, steering, claim, assignment, or
-/// wake.
+/// choice. The record is request state only: it is no room publication, keeps
+/// the asked lane listening to the Design's room until it leaves, and grants
+/// no participation, steering, claim, assignment, or wake.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignNoticed {
