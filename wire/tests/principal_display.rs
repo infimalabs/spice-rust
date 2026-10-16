@@ -1,5 +1,5 @@
-//! Naming an acting or authoring human by their principal's code and recorded
-//! profile.
+//! Naming an acting or authoring human by the short name its principal's
+//! recorded profile yields, or by its principal's code when it yields none.
 
 use std::collections::BTreeSet;
 
@@ -41,17 +41,14 @@ fn each_actor_is_named_by_the_principal_it_acts_or_authored_as() {
     // Heads arrive in any order; birth position alone decides which principal
     // the historical operator actor authored as.
     let roles = PrincipalRoles::new([
-        head(92, 18_731, Some("Second")),
-        head(91, 18_730, Some("Owner")),
+        head(92, 18_731, Some("Second Person")),
+        head(91, 18_730, Some("C Anthony Risinger")),
     ]);
     let directory = PrincipalDirectory::names(&roles);
 
-    assert_eq!(named(&directory, &Actor::Operator), "Owner <6wB>");
-    assert_eq!(named(&directory, &Actor::Human(uuid(91))), "Owner <6wB>");
-    assert_eq!(
-        named(&directory, &Actor::Human(uuid(92))),
-        format!("Second <{}>", code(18_731))
-    );
+    assert_eq!(named(&directory, &Actor::Operator), "CA");
+    assert_eq!(named(&directory, &Actor::Human(uuid(91))), "CA");
+    assert_eq!(named(&directory, &Actor::Human(uuid(92))), "SP");
     for nobody in [Actor::Human(uuid(93)), Actor::Lane(uuid(91)), Actor::Spice] {
         assert_eq!(directory.identity(&nobody), None, "{nobody} named a human");
         assert_eq!(named(&directory, &nobody), nobody.to_string());
@@ -69,24 +66,23 @@ fn each_actor_is_named_by_the_principal_it_acts_or_authored_as() {
     }
 
     let admitted = PrincipalRoles::new([
-        head(92, 18_731, Some("Second")),
-        head(91, 18_730, Some("Owner")),
-        head(94, 20_000, Some("Later")),
+        head(92, 18_731, Some("Second Person")),
+        head(91, 18_730, Some("C Anthony Risinger")),
+        head(94, 20_000, Some("later")),
     ]);
     let directory = PrincipalDirectory::names(&admitted);
-    assert_eq!(named(&directory, &Actor::Operator), "Owner <6wB>");
-    assert_eq!(
-        named(&directory, &Actor::Human(uuid(94))),
-        format!("Later <{}>", code(20_000))
-    );
+    assert_eq!(named(&directory, &Actor::Operator), "CA");
+    assert_eq!(named(&directory, &Actor::Human(uuid(94))), "L");
 }
 
 #[test]
-fn a_human_whose_profile_records_no_name_reads_as_its_code() {
-    let directory = PrincipalDirectory::names(&PrincipalRoles::new([head(91, 18_730, None)]));
-    assert!(directory.identity(&Actor::Operator).is_some());
-    assert_eq!(named(&directory, &Actor::Operator), "6wB");
-    assert_eq!(named(&directory, &Actor::Human(uuid(91))), "6wB");
+fn a_human_whose_profile_yields_no_short_name_reads_as_its_code() {
+    for name in [None, Some("  ")] {
+        let directory = PrincipalDirectory::names(&PrincipalRoles::new([head(91, 18_730, name)]));
+        assert!(directory.identity(&Actor::Operator).is_some());
+        assert_eq!(named(&directory, &Actor::Operator), "6wB");
+        assert_eq!(named(&directory, &Actor::Human(uuid(91))), "6wB");
+    }
 }
 
 #[test]

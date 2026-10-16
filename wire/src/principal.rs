@@ -222,8 +222,8 @@ impl PrincipalDirectory {
         )
     }
 
-    /// Each head of `roles` named by its recorded profile alone, for a reader
-    /// that shows no badge or avatar.
+    /// Each head of `roles` named by its recorded profile's name and initials
+    /// alone, for a reader that shows no avatar.
     #[must_use]
     pub fn names(roles: &PrincipalRoles) -> Self {
         Self(
@@ -235,6 +235,7 @@ impl PrincipalDirectory {
                     code: PrincipalCode::of(head),
                     identity: HumanIdentity {
                         name: head.profile.name.clone(),
+                        initials: head.profile.initials(),
                         ..HumanIdentity::default()
                     },
                 })
@@ -258,35 +259,37 @@ impl PrincipalDirectory {
         self.principal(actor).map(|display| &display.identity)
     }
 
-    /// `actor` as a reader sees it: by its principal's code and recorded
-    /// name when it resolves, by [`Self::principal`], to a born principal.
+    /// `actor` as a reader sees it: by its principal's code and short name
+    /// when it resolves, by [`Self::principal`], to a born principal.
     #[must_use]
     pub fn named<'a>(&'a self, actor: &'a Actor) -> NamedActor<'a> {
         NamedActor {
             actor,
             principal: self
                 .principal(actor)
-                .map(|display| (display.code, display.identity.name.as_deref())),
+                .map(|display| (display.code, display.identity.initials.as_deref())),
         }
     }
 }
 
-/// One actor as a reader sees it. A human resolving to a born principal reads
-/// as that principal's code, beside its recorded name as `Name <code>` when
-/// the profile carries one; every other actor, including a human whose
-/// principal is unknown, reads as its identity alone.
+/// One actor as a reader sees it, attributed the way an agent is: by its short
+/// name alone. A human resolving to a born principal reads as the initials its
+/// recorded profile yields, never its full name or code; a principal whose
+/// profile yields no initials reads as its code, the only identifier it has.
+/// Every other actor, including a human whose principal is unknown, reads as
+/// its identity alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NamedActor<'a> {
     /// The actor itself.
     pub actor: &'a Actor,
-    /// The code and recorded name of the born principal it resolves to.
+    /// The code and short name of the born principal it resolves to.
     pub principal: Option<(PrincipalCode, Option<&'a str>)>,
 }
 
 impl fmt::Display for NamedActor<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.principal {
-            Some((code, Some(name))) => write!(formatter, "{name} <{code}>"),
+            Some((_, Some(short))) => formatter.write_str(short),
             Some((code, None)) => write!(formatter, "{code}"),
             None => write!(formatter, "{}", self.actor),
         }
@@ -314,10 +317,12 @@ pub struct PrincipalProfile {
 }
 
 impl PrincipalProfile {
-    /// Complete browser presentation derived only from this recorded profile.
+    /// The short name a recorded name yields: the first letters of its first
+    /// two words, uppercased. Absent when no name, or only whitespace, was
+    /// recorded.
     #[must_use]
-    pub fn identity(&self) -> HumanIdentity {
-        let initials = self.name.as_deref().and_then(|name| {
+    pub fn initials(&self) -> Option<String> {
+        self.name.as_deref().and_then(|name| {
             let badge = name
                 .split_whitespace()
                 .take(2)
@@ -325,7 +330,13 @@ impl PrincipalProfile {
                 .flat_map(char::to_uppercase)
                 .collect::<String>();
             (!badge.is_empty()).then_some(badge)
-        });
+        })
+    }
+
+    /// Complete browser presentation derived only from this recorded profile.
+    #[must_use]
+    pub fn identity(&self) -> HumanIdentity {
+        let initials = self.initials();
         let gravatar = self.email.as_ref().map(|email| {
             format!(
                 "{:x}",
