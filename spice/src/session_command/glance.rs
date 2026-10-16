@@ -27,9 +27,9 @@ const COMMIT_ROWS: usize = 8;
 
 /// Pending public execution work no actor holds, counted by phase.
 ///
-/// Hidden projects (a leading `.`, such as parked oops rows), Design roots,
-/// and unauthorized outputs controlled by a Design stay on their dedicated
-/// operator-facing surfaces rather than being presented as a lane's next work.
+/// Hidden projects, Design roots, and unauthorized outputs controlled by a
+/// Design stay on their dedicated operator-facing surfaces rather than being
+/// presented as a lane's next work.
 pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardError> {
     let mut unclaimed = BTreeMap::<String, usize>::new();
     let mut resolved = board::ResolvedTasks::new();

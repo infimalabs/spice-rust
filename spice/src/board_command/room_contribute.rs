@@ -179,7 +179,11 @@ fn contribution_witnesses(
 
 /// Why `anchor` is not an open Design at its current workflow head.
 fn not_open_design(anchor: &Entry) -> Option<Outcome<CommandAnswer>> {
-    if anchor.statement().intent != Some(wire::TaskIntent::Design) {
+    if !anchor
+        .statement()
+        .intent
+        .is_some_and(wire::TaskIntent::is_design)
+    {
         return Some(refusal(
             "room::contribution-not-design",
             Some(anchor.handle().to_string()),

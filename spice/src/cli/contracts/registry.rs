@@ -469,8 +469,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["room", "post"],
-        "room post HANDLE [TEXT] [--report HANDLE...] [--disposition DISPOSITION] \
-         [--cause TEXT] [--exceptions TEXT] [--uncertainty TEXT]",
+        "room post HANDLE TEXT",
         OperatorOrLane,
         Command,
         [RoomPublished],

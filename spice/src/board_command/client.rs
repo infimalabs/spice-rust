@@ -719,7 +719,7 @@ fn client_file(
             return Err(refusal(
                 "task::filing-claim-controlled",
                 Some(task.to_string()),
-                "file controlled OOPS work without --claim; selected authorization must precede native capture",
+                "file controlled prospective work without --claim; selected authorization must precede native capture",
             ));
         }
         let mut expected = vec![

@@ -4,8 +4,8 @@
 //! organically, so it is an ordinary wait. A lapsed claim is transparent:
 //! the task's own stale standing remains, while its underlying gate decides the
 //! dependency path. A chain is a wall only when every path forward needs the
-//! operator: a deferral, typed OOPS work, a cycle, a prerequisite that can
-//! never complete, an environment requirement only the operator can satisfy,
+//! operator: a deferral, an internal parked row, a cycle, a prerequisite that
+//! can never complete, an environment requirement only the operator can satisfy,
 //! or a passive Design.
 
 use wire::TaskStamp;
@@ -20,7 +20,7 @@ pub enum DependencyWall<'a> {
     Gate(&'a TaskStamp),
     /// The task carries a deferral.
     Deferred(&'a TaskStamp),
-    /// The task remains OOPS or Draft work until it is filed.
+    /// The task remains a Draft until it is filed.
     Parked(&'a TaskStamp),
     /// The task depends on itself through the chain.
     Cycle(&'a TaskStamp),

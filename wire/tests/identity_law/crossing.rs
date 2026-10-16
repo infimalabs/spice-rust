@@ -389,7 +389,7 @@ fn cover_task_heads() {
                     EnvironmentRequirement::journal_schema(15).expect("positive schema"),
                 ),
                 project: "gate".to_owned(),
-                filing: wire::TaskFiling::Oops,
+                filing: wire::TaskFiling::Draft,
                 priority: None,
                 taste: None,
                 document_slug: None,

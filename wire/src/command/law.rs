@@ -107,9 +107,8 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
-    /// Exact current room-anchor statement. Any connection may publish an
-    /// authored observation; the resident admits OOPS grooming only from the
-    /// operator.
+    /// Exact current room-anchor statement. Any connected principal may publish
+    /// an authored observation.
     pub const ROOM_POST: Self = Self {
         required: &[WitnessKind::Task],
         optional: &[],
@@ -175,6 +174,14 @@ impl Law {
             WitnessKind::Eligibility,
             WitnessKind::Residency,
         ],
+        authority: Authority::Connected,
+    };
+    /// Opportunistic OOPS intake names an absent report and either an absent
+    /// generation or the exact current generation, under the board projection
+    /// barrier that prevents duplicate first generations.
+    pub const OOPS_ADD: Self = Self {
+        required: &[WitnessKind::Absence, WitnessKind::Barrier],
+        optional: &[WitnessKind::Task, WitnessKind::Workflow],
         authority: Authority::Connected,
     };
     /// Direct task creation may also guard the statement, workflow, and claim
@@ -618,7 +625,8 @@ impl CommandKind {
     const fn task_law(self) -> Law {
         match self {
             Self::TaskAdd => Law::TASK_ADD,
-            Self::TaskOopsAdd | Self::TasteProposalAdd => Law::ADD,
+            Self::TaskOopsAdd => Law::OOPS_ADD,
+            Self::TasteProposalAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
             Self::TaskDelete => Law::DELETE,
             Self::TaskClose | Self::TaskConclude => Law::CLOSE,

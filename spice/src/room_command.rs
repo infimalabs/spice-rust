@@ -150,9 +150,6 @@ enum Content {
     Linked {
         source: RoomSource,
     },
-    OopsGroomed {
-        grooming: wire::rooms::OopsGrooming,
-    },
     /// The authoring lane left the room for this reason.
     Left {
         clause: String,
@@ -713,9 +710,6 @@ fn project_body(body: Body, tape: &Path) -> (Content, Option<CanonicalUuid>) {
         Body::Published(RoomPublicationContent::Linked { link }) => {
             (Content::Linked { source: link }, None)
         }
-        Body::Published(RoomPublicationContent::OopsGroomed { grooming }) => {
-            (Content::OopsGroomed { grooming }, None)
-        }
         Body::Messaged { hunk, author } => (transcript(tape, hunk), Some(author)),
         Body::Linked(source) => (Content::Linked { source }, None),
         Body::Left { clause } => (Content::Left { clause }, None),
@@ -866,13 +860,10 @@ pub(crate) fn conversation_text(
         Some(Content::Text { text }) => Text::Text { text },
         Some(Content::Linked { source }) => Text::Linked { source },
         Some(Content::Unavailable { unavailable, .. }) => Text::Unavailable { unavailable },
-        // A conversation body is authored or linked, never a grooming, leave,
-        // or contribution.
-        Some(Content::OopsGroomed { .. } | Content::Left { .. } | Content::Contribution { .. }) => {
-            Text::Unavailable {
-                unavailable: RoomSourceUnavailable::Unreadable {},
-            }
-        }
+        // A conversation body is authored or linked, never a leave or contribution.
+        Some(Content::Left { .. } | Content::Contribution { .. }) => Text::Unavailable {
+            unavailable: RoomSourceUnavailable::Unreadable {},
+        },
     };
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(cursor),
@@ -1039,23 +1030,6 @@ fn write_content(formatter: &mut fmt::Formatter<'_>, content: &Content) -> fmt::
                         Unavailable(unavailable)
                     )?,
                 }
-            }
-            Ok(())
-        }
-        Content::OopsGroomed { grooming } => {
-            write!(
-                formatter,
-                "\n  oops {} cause={:?}",
-                grooming.disposition, grooming.cause
-            )?;
-            for report in &grooming.reports {
-                write!(formatter, "\n  report {report}")?;
-            }
-            if !grooming.exceptions.is_empty() {
-                write!(formatter, "\n  exceptions {:?}", grooming.exceptions)?;
-            }
-            if !grooming.uncertainty.is_empty() {
-                write!(formatter, "\n  uncertainty {:?}", grooming.uncertainty)?;
             }
             Ok(())
         }

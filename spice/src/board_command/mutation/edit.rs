@@ -40,6 +40,17 @@ pub(in crate::board_command) fn task_edit(
             "correct a statement only while the task is pending",
         );
     }
+    if entry
+        .statement()
+        .intent
+        .is_some_and(wire::TaskIntent::is_opportunistic_design)
+    {
+        return refusal(
+            "task::oops-design-internal",
+            Some(entry.handle().to_string()),
+            "the repository-owned OOPS Design statement cannot be edited",
+        );
+    }
     let (statement, publication) =
         match prepare_correction(&snapshot, entry, command, edit, repository, projects) {
             Ok(prepared) => prepared,
@@ -255,7 +266,7 @@ fn corrected_statement(
         statement.priority = Some(declared_priority(priority)?);
     }
     if let Some(requested) = &edit.project {
-        statement.project = corrected_project(entry, projects, requested)?;
+        statement.project = corrected_project(projects, requested)?;
     }
     if let Some(change) = &edit.evidence {
         statement.evidence = change.apply(&statement.evidence).map_err(|error| {
@@ -300,20 +311,9 @@ fn declared_priority(priority: &str) -> Result<wire::TaskPriority, Outcome<Comma
 }
 
 fn corrected_project(
-    entry: &Entry,
     projects: &ProjectPolicy,
     requested: &str,
 ) -> Result<String, Outcome<CommandAnswer>> {
-    if entry.is_oops() {
-        return Err(refusal(
-            "task::filing-required",
-            Some(filing_state(entry)),
-            &format!(
-                "file the OOPS row with spice task file {} --into {requested}",
-                entry.handle(),
-            ),
-        ));
-    }
     // The destination goes through the same public creation door as `task add`.
     let project = projects.admit_manual_creation(requested).map_err(|error| {
         let reason = if matches!(error, ProjectError::SystemReserved(_)) {

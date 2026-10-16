@@ -4,15 +4,16 @@
 //! A version its author withdrew stays in history, apart from the open
 //! versions, and offers no decision.
 
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use wasm_bindgen::JsCast;
 use web_sys::HtmlInputElement;
 use wire::intent::{BoardTask, TextAnswer};
 use wire::rooms::{
-    CandidateCoverage, CandidateCritique, CandidateRef, CoverageAuthority, DecisionOutcome,
-    DesignPassProposal, DesignPassRecommendation, ExecutionAuthorization, OutputVerdict,
-    PreparationDecision, RoomSource,
+    CandidateCoverage, CandidateCritique, CandidateRef, CandidateReference, CoverageAuthority,
+    DecisionOutcome, DesignPassProposal, DesignPassRecommendation, ExecutionAuthorization,
+    OutputVerdict, PreparationDecision, RoomAuthorityStamp, RoomSource,
 };
 use wire::{CommandKind, SequenceCode, TaskStamp};
 use yew::prelude::*;
@@ -123,10 +124,12 @@ pub(super) fn render_approval(
     let Some(board) = runtime.board() else {
         return Html::default();
     };
+    let synthetic = opportunistic_candidate(&board.tasks, preparation, design);
     let mut candidates = preparation
         .candidates
         .values()
         .filter(|positioned| positioned.value.candidate.controller == *design)
+        .chain(synthetic.iter())
         .collect::<Vec<_>>();
     candidates.sort_by_key(|candidate| candidate.position);
     if candidates.is_empty() {
@@ -136,6 +139,9 @@ pub(super) fn render_approval(
         preparation
             .withdrawals
             .contains_key(&candidate.value.candidate)
+    });
+    let opportunistic = board.row(design).is_some_and(|task| {
+        task.statement.body.intent == Some(wire::TaskIntent::OpportunisticDesign)
     });
     let context = Context {
         runtime,
@@ -154,9 +160,15 @@ pub(super) fn render_approval(
                 <strong>{"Proposal versions"}</strong>
                 <span>{open.len()}</span>
             </header>
-            <p class="room-notice">
-                {"Every proposal is immutable. Accept its exact recommendation or return it with material feedback; each decision is previewed before it records authority."}
-            </p>
+            if opportunistic {
+                <p class="room-notice">
+                    {"Every candidate is immutable. Accept or reject every displayed line; the complete decision is previewed before it records authority."}
+                </p>
+            } else {
+                <p class="room-notice">
+                    {"Every proposal is immutable. Accept its exact recommendation or return it with material feedback; each decision is previewed before it records authority."}
+                </p>
+            }
             {for open.into_iter().rev().map(|candidate| render_candidate(&context, candidate))}
             if !withdrawn.is_empty() {
                 <section class="room-approval-withdrawn" aria-label="Withdrawn versions" data-room-withdrawn="">
@@ -172,6 +184,89 @@ pub(super) fn render_approval(
             }
         </section>
     }
+}
+
+fn opportunistic_candidate(
+    tasks: &[BoardTask],
+    preparation: &PreparationProjection,
+    design: &TaskStamp,
+) -> Option<RoomPositioned<DesignPassProposal>> {
+    let controller = tasks.iter().find(|task| {
+        task.statement.body.born == *design
+            && task.statement.body.intent == Some(wire::TaskIntent::OpportunisticDesign)
+            && task
+                .design_standing()
+                .is_some_and(|standing| standing.is_open())
+    })?;
+    let governed = preparation
+        .decisions
+        .values()
+        .filter(|decision| decision.value.decision.controller == *design)
+        .flat_map(|decision| match &decision.value.outcome {
+            DecisionOutcome::Resolved { outputs, .. } => {
+                outputs.iter().map(|output| output.output.clone()).collect()
+            }
+            DecisionOutcome::Returned { .. } | DecisionOutcome::Accepted { .. } => Vec::new(),
+        })
+        .collect::<BTreeSet<_>>();
+    let mut lines = tasks
+        .iter()
+        .filter(|task| {
+            task.workflow.body.status.is_pending()
+                && task.statement.body.intent == Some(wire::TaskIntent::Plan)
+                && task.statement.body.authorization.is_none()
+                && task
+                    .statement
+                    .body
+                    .preparation
+                    .as_ref()
+                    .is_some_and(|association| {
+                        association.parent == *design
+                            && association.controller == *design
+                            && association.construction == task.statement.body.born
+                    })
+                && !governed.contains(&task.statement.body.born)
+        })
+        .collect::<Vec<_>>();
+    lines.sort_by(|left, right| left.statement.body.born.cmp(&right.statement.body.born));
+    let newest = lines.last()?;
+    let candidate = RoomAuthorityStamp::for_micros(newest.statement.body.born.micros())
+        .expect("a task birth instant is a room authority instant");
+    let position = lines
+        .iter()
+        .map(|line| line.statement.position)
+        .max()
+        .expect("a candidate has at least one line");
+    Some(RoomPositioned {
+        position,
+        value: DesignPassProposal {
+            candidate: CandidateRef {
+                controller: design.clone(),
+                candidate,
+            },
+            statement: controller.statement.position,
+            claim: None,
+            recommendation: DesignPassRecommendation::Work,
+            governed_inputs: Vec::new(),
+            outputs: lines
+                .iter()
+                .map(|line| line.statement.body.born.clone())
+                .collect(),
+            justification:
+                "Resolve each pending unexpected-behavior line item through an explicit verdict."
+                    .to_owned(),
+            references: lines
+                .iter()
+                .map(|line| CandidateReference {
+                    relation: "input".parse().expect("input is a wire name"),
+                    source: RoomSource::Journal {
+                        fact: SequenceCode::new(line.statement.position.get()),
+                    },
+                })
+                .collect(),
+            evidence: Vec::new(),
+        },
+    })
 }
 
 fn render_candidate(
@@ -518,6 +613,9 @@ fn render_output(
                 <code>{statement.handle.to_string()}</code>
                 <span>{standing}</span>
             </div>
+            if let Some(description) = statement.description.as_deref() {
+                <p class="room-approval-output-statement">{description}</p>
+            }
             {controls}
             if !statement.acceptance.is_empty() {
                 <ul class="room-approval-acceptance" aria-label="Acceptance">
@@ -589,6 +687,10 @@ fn render_controls(
     edit: &impl Fn(DraftChange) -> DraftCommand,
 ) -> Html {
     let candidate = &positioned.value;
+    let opportunistic = candidate.claim.is_none()
+        && context.controller.is_some_and(|controller| {
+            controller.statement.body.intent == Some(wire::TaskIntent::OpportunisticDesign)
+        });
     let choose = |choice| edit(Rc::new(move |draft| draft.set_choice(choice)));
     let accept = choose(DecisionChoice::Accept);
     let return_with_feedback = choose(DecisionChoice::Return);
@@ -650,17 +752,19 @@ fn render_controls(
                         checked={draft.choice() == DecisionChoice::Accept}
                         onchange={Callback::from(move |_: Event| accept())}
                     />
-                    {"Accept proposal"}
+                    {if opportunistic {"Resolve line items"} else {"Accept proposal"}}
                 </label>
-                <label>
-                    <input
-                        type="radio"
-                        name={format!("proposal-decision-{}", candidate.candidate.candidate)}
-                        checked={draft.choice() == DecisionChoice::Return}
-                        onchange={Callback::from(move |_: Event| return_with_feedback())}
-                    />
-                    {"Return with feedback"}
-                </label>
+                if !opportunistic {
+                    <label>
+                        <input
+                            type="radio"
+                            name={format!("proposal-decision-{}", candidate.candidate.candidate)}
+                            checked={draft.choice() == DecisionChoice::Return}
+                            onchange={Callback::from(move |_: Event| return_with_feedback())}
+                        />
+                        {"Return with feedback"}
+                    </label>
+                }
             </fieldset>
             if show_reason {
                 <label class="room-decision-reason">

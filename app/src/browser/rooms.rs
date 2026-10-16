@@ -735,10 +735,6 @@ fn event_summary(
             content: wire::rooms::RoomPublicationContent::Linked { link },
             ..
         } => ("Source", format!("Linked source: {link:?}")),
-        RoomEventKind::Published {
-            content: wire::rooms::RoomPublicationContent::OopsGroomed { grooming },
-            ..
-        } => ("OOPS", grooming_summary(runtime, grooming)),
         // Rendered by the conversation card family whenever its authority
         // is loaded.
         RoomEventKind::Published {
@@ -782,57 +778,6 @@ fn event_summary(
             format!("{}: {text}", conversation::lane_label(runtime, *lane)),
         ),
     }
-}
-
-fn grooming_summary(runtime: &AppRuntime, grooming: &wire::rooms::OopsGrooming) -> String {
-    let reports = grooming
-        .reports
-        .iter()
-        .map(|report| {
-            let Some(task) = runtime.board().and_then(|board| {
-                board
-                    .tasks
-                    .iter()
-                    .find(|task| task.statement.body.born == *report)
-            }) else {
-                return format!("{report} · unavailable");
-            };
-            let standing = if task.statement.body.filing.is_oops() {
-                "parked input"
-            } else if task.statement.body.authorization.is_some() {
-                "selected authorization"
-            } else if let Some(preparation) = &task.statement.body.preparation {
-                let design = runtime.board().is_some_and(|board| {
-                    board.tasks.iter().any(|parent| {
-                        parent.statement.body.born == preparation.parent
-                            && parent.statement.body.intent == Some(wire::TaskIntent::Design)
-                    })
-                });
-                if design {
-                    "controlled · authorization pending"
-                } else {
-                    "constructed · awaits its Plan"
-                }
-            } else {
-                "public · uncontrolled"
-            };
-            format!("{} · {standing}", task.statement.body.handle)
-        })
-        .collect::<Vec<_>>()
-        .join("; ");
-    let mut body = format!(
-        "{} · {} · {}",
-        grooming.disposition, grooming.cause, reports
-    );
-    if !grooming.exceptions.is_empty() {
-        body.push_str(" · exceptions: ");
-        body.push_str(&grooming.exceptions);
-    }
-    if !grooming.uncertainty.is_empty() {
-        body.push_str(" · uncertainty: ");
-        body.push_str(&grooming.uncertainty);
-    }
-    body
 }
 
 #[derive(Properties, PartialEq)]

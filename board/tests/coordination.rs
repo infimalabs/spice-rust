@@ -6,7 +6,6 @@ use std::fmt;
 
 use board::apply::{ApplyError, AuthorityTransaction};
 use board::claim::ClaimRefusal;
-use board::oops::{Friction, Report, Routed};
 use board::phase::PhaseRefusal;
 use board::{
     Active, Entry, Preview, Snapshot, Transition, Urgency, View, apply, digest_of, graph, handout,
@@ -612,16 +611,16 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
         Entry::new(head, workflow("todo"), None, None, &projects).expect("fixture entry")
     };
     let public = admitted("BOARD-public", "board.visibility", false);
-    let hidden_oops = {
-        let mut head = statement("BOARD-oops");
+    let draft = {
+        let mut head = statement("BOARD-draft");
         head.project = "board.correctness".to_owned();
-        head.filing = wire::TaskFiling::Oops;
+        head.filing = wire::TaskFiling::Draft;
         head.priority = Some(wire::TaskPriority::Critical);
-        Entry::new(head, workflow("todo"), None, None, &projects).expect("OOPS fixture entry")
+        Entry::new(head, workflow("todo"), None, None, &projects).expect("Draft fixture entry")
     };
     let hidden_maxim = admitted("BOARD-maxim", ".maxim_proposal.theme_2", true);
     let hidden_sandbox = admitted("BOARD-sandbox", ".sandbox.audit", true);
-    let entries = vec![hidden_sandbox, hidden_oops, public, hidden_maxim];
+    let entries = vec![hidden_sandbox, draft, public, hidden_maxim];
     let public_handle = entries[2].handle().clone();
     let satisfied = board::resolved_tasks(&entries);
 
@@ -647,8 +646,8 @@ fn allocator_and_inventory_share_the_stored_visibility_for_every_actor_route() {
     let inventory = board::Inventory::new(&entries);
     assert_eq!(inventory.public().len(), 1);
     assert_eq!(inventory.public()[0].handle(), &public_handle);
-    assert_eq!(inventory.oops().len(), 1);
-    assert_eq!(inventory.oops()[0].handle(), entries[1].handle());
+    assert_eq!(inventory.drafts().len(), 1);
+    assert_eq!(inventory.drafts()[0].handle(), entries[1].handle());
     assert_eq!(
         inventory
             .hidden()
@@ -859,26 +858,6 @@ fn trust_grant_transition_changes_every_allocator_admission_without_rewriting_th
         entry.statement().requirements,
         entries[0].statement().requirements,
         "grant movement never rewrites task authority"
-    );
-}
-
-#[test]
-fn policy_snapshot_retains_oops_rows_as_explicit_evidence() {
-    let projects = board::ProjectPolicy::new(Vec::new(), 2, 3).expect("fixture policy");
-    let mut oops = statement("BOARD-hidden");
-    oops.project = "board.correctness".to_owned();
-    oops.filing = wire::TaskFiling::Oops;
-    let journal = journal_with_heads(oops, workflow("todo"));
-    let snapshot = snapshot_for(&journal, &projects, &stamp("BOARD-hidden"))
-        .expect("OOPS evidence remains in the snapshot");
-
-    assert_eq!(snapshot.entries().len(), 1);
-    let entry = &snapshot.entries()[0];
-    assert_eq!(entry.project().as_str(), "board.correctness");
-    assert!(entry.statement().filing.is_oops());
-    assert_eq!(
-        entry.project().visibility(),
-        &wire::intent::ProjectVisibility::Public
     );
 }
 

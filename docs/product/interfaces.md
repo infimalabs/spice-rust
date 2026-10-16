@@ -113,6 +113,14 @@ task handles instead, and `preparation nudge` one open Design's handle.
   "candidate": …, "reason": TEXT}`; the nonblank material feedback records
   durably without authorizing or concluding. Historical selected, returned,
   and collapse records remain readable after migration.
+  The repository-owned opportunistic OOPS Design is the one exception to a
+  separately recorded `propose`: its read-only candidate identity is the newest
+  included line-item Plan's birth stamp. `decide` must repeat every displayed
+  line in birth order as accepted or rejected, cite the newest line's statement
+  fact as `source`, and carry the exact Design and line statement/workflow
+  witnesses. It records the immutable proposal and complete decision together;
+  Return is not admitted, no Design claim is completed, and a newer report
+  remains outside the submitted cutoff for the next candidate.
 - **`withdraw WITHDRAWAL_JSON`.** `candidate` (`{"controller": STAMP,
   "candidate": STAMP}`) names the author's own undecided candidate and
   `reason` is nonblank, such as which version corrects it.
@@ -138,7 +146,6 @@ task handles instead, and `preparation nudge` one open Design's handle.
 | Publication content | 64 KiB; 80 KiB with 1 KiB reserved per route for its ACK/NAK return | the packet refuses whole; an observation refuses `room::post-too-large`; an operator answer refuses `room::answer-too-large` |
 | Pending question results per requester | 128 | further ASKs refuse; MSG, controls, and other requesters still admit |
 | Relevance sources per observation | 8 | an observation never cites more |
-| Reports per OOPS grooming record | 100 parked reports, in an open Design room | `room::oops-batch-too-large`; `room::oops-batch-not-open`: groom under a Design room |
 | Design contribution text | 4096 bytes, nonempty and stored without leading or trailing whitespace | `room::contribution-empty` or `room::contribution-too-long`; the command normalizes outer whitespace, while a noncanonical journal fact is refused |
 | Sources per Design contribution | 8 distinct exact authorities | `room::contribution-sources-exceeded` or `room::contribution-source-duplicate`; two transcript links to the same locus and text range remain one authority when only their accounted boundary differs |
 | Contribution room and proof | an open Design, by a lane, with one source witness per cited authority | `room::contribution-not-design`, `room::contribution-design-concluded`, `room::contribution-lane-only`, or `room::contribution-source-witness`; the journal refuses a contribution without its matching successful command receipt |

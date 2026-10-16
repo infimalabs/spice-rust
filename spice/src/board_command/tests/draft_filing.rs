@@ -1,7 +1,5 @@
 use super::*;
 
-use wire::rooms::{OopsDisposition, OopsGrooming, RoomPost};
-
 fn draft_add(name: &str, intent: Option<wire::TaskIntent>, acceptance: &[&str]) -> TaskAdd {
     TaskAdd {
         preparation: None,
@@ -506,7 +504,7 @@ fn a_draft_satisfies_no_dependency_but_keeps_its_own() {
 }
 
 #[test]
-fn a_draft_refuses_closure_deferral_and_grooming() {
+fn a_draft_refuses_closure_and_deferral() {
     let (root, bus, epoch, _seats) = fixture("draft-authority-rails", 1);
     let draft = add_draft(
         &bus,
@@ -516,22 +514,6 @@ fn a_draft_refuses_closure_deferral_and_grooming() {
         Some(wire::TaskIntent::Design),
         &["The work is verified"],
     );
-    let design_born = stamp("DRAFT-groom001");
-    let design = TaskHandle::for_project("board.test", &design_born);
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskAdd,
-        vec![Witness::Absence { task: design_born }],
-        &TaskAdd {
-            title: "Grooming batch".to_owned(),
-            acceptance: vec!["Each report receives a disposition".to_owned()],
-            intent: Some(wire::TaskIntent::Design),
-            draft: false,
-            ..draft_add("DRAFT-groom001", None, &[])
-        },
-    ));
     let facts = fact_count(&bus);
     let operator = board(&bus, epoch, Actor::Operator);
     let heads = at(&operator, &draft);
@@ -580,28 +562,6 @@ fn a_draft_refuses_closure_deferral_and_grooming() {
         },
     );
     assert_eq!(refusal_reason(&defer), "task::draft-unfiled");
-    let groom = issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::RoomPost,
-        vec![
-            statement_witness(at(&operator, &design)),
-            statement_witness(heads),
-        ],
-        &RoomPost {
-            room: design,
-            text: String::new(),
-            grooming: Some(OopsGrooming {
-                reports: vec![draft.born().expect("draft handle carries a birth stamp")],
-                disposition: OopsDisposition::NoWork,
-                cause: "A Draft is not an OOPS report.".to_owned(),
-                exceptions: String::new(),
-                uncertainty: String::new(),
-            }),
-        },
-    );
-    assert_eq!(refusal_reason(&groom), "room::oops-report-not-parked");
     assert_eq!(
         fact_count(&bus),
         facts,

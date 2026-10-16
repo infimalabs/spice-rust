@@ -45,8 +45,7 @@ pub enum CommandKind {
     BoardHandout,
     /// Emit one canonical authored-document ledger.
     DocLedger,
-    /// Publish one authored observation, or the operator's OOPS grooming, to
-    /// an anchor task's room.
+    /// Publish one authored observation to an anchor task's room.
     RoomPost,
     /// Read one anchor's current native coordination projection.
     RoomCoordinationRead,
@@ -101,7 +100,7 @@ pub enum CommandKind {
     VendorCatalog,
     /// Add one task as direct intent.
     TaskAdd,
-    /// Add one task in typed OOPS filing state.
+    /// Add one line-item Plan to the repository OOPS Design.
     TaskOopsAdd,
     /// File one mined taste candidate through the fixed hidden proposal route.
     TasteProposalAdd,
@@ -119,7 +118,7 @@ pub enum CommandKind {
     TaskDefer,
     /// Clear the current deferral.
     TaskWake,
-    /// Move one parked OOPS row into ordinary filed work.
+    /// Move one unfiled Draft into ordinary filed work.
     TaskFile,
     /// Add or remove dependency edges between existing tasks.
     TaskDepends,

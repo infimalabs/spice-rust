@@ -28,109 +28,15 @@ pub(super) fn client_room_post(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    mutate_task_from_board(repository, contract, matches, |board, room, heads| {
+    mutate_task_from_board(repository, contract, matches, |_board, room, heads| {
         let text = matches
             .get_one::<String>("TEXT")
             .cloned()
             .unwrap_or_default();
-        let disposition = matches.get_one::<String>("disposition");
-        let reports = matches
-            .get_many::<String>("report")
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-        let grooming_requested = disposition.is_some()
-            || !reports.is_empty()
-            || matches.get_one::<String>("cause").is_some()
-            || matches.get_one::<String>("exceptions").is_some()
-            || matches.get_one::<String>("uncertainty").is_some();
-        let mut expected = vec![statement_witness(heads)];
-        let grooming = if grooming_requested {
-            if !text.is_empty() {
-                return Err(refusal(
-                    "room::post-shape",
-                    Some(room.to_string()),
-                    "supply either authored TEXT or an OOPS disposition, never both",
-                ));
-            }
-            let disposition = disposition
-                .ok_or_else(|| {
-                    refusal(
-                        "room::oops-disposition-missing",
-                        Some(room.to_string()),
-                        "name --disposition for the selected OOPS reports",
-                    )
-                })?
-                .parse()
-                .map_err(|error: wire::rooms::OopsDispositionError| {
-                    refusal(
-                        "room::oops-disposition-invalid",
-                        Some(room.to_string()),
-                        &error.to_string(),
-                    )
-                })?;
-            if reports.is_empty() {
-                return Err(refusal(
-                    "room::oops-reports-missing",
-                    Some(room.to_string()),
-                    "name at least one parked report with --report",
-                ));
-            }
-            let mut stamps = Vec::with_capacity(reports.len());
-            for named in reports {
-                let handle = named.parse::<TaskHandle>().map_err(|error| {
-                    refusal(
-                        "room::oops-report-invalid",
-                        Some(named.clone()),
-                        &error.to_string(),
-                    )
-                })?;
-                let report = named_task_heads(board, &handle)?;
-                if stamps.contains(&report.statement.body.born) {
-                    return Err(refusal(
-                        "room::oops-report-duplicate",
-                        Some(report.statement.body.handle.to_string()),
-                        "name each source report once",
-                    ));
-                }
-                stamps.push(report.statement.body.born.clone());
-                expected.push(statement_witness(report));
-            }
-            let cause = matches
-                .get_one::<String>("cause")
-                .map(|cause| cause.trim())
-                .filter(|cause| !cause.is_empty())
-                .ok_or_else(|| {
-                    refusal(
-                        "room::oops-cause-missing",
-                        Some(room.to_string()),
-                        "state the evidenced common cause or negative basis with --cause",
-                    )
-                })?
-                .to_owned();
-            Some(OopsGrooming {
-                reports: stamps,
-                disposition,
-                cause,
-                exceptions: matches
-                    .get_one::<String>("exceptions")
-                    .map_or_else(String::new, |value| value.trim().to_owned()),
-                uncertainty: matches
-                    .get_one::<String>("uncertainty")
-                    .map_or_else(String::new, |value| value.trim().to_owned()),
-            })
-        } else {
-            None
-        };
         Ok((
             CommandKind::RoomPost,
-            expected,
-            serde_json::to_value(RoomPost {
-                room,
-                text,
-                grooming,
-            })
-            .expect("typed room post encodes"),
+            vec![statement_witness(heads)],
+            serde_json::to_value(RoomPost { room, text }).expect("typed room post encodes"),
         ))
     })
 }

@@ -35,9 +35,11 @@ pub struct ClaimCell {
 /// A task's phase says which step of its flow is current; its intent says
 /// what the task as a whole exists to deliver. A Plan constructs and reviews
 /// executable contracts; a Design decides which assembly is justified, or
-/// concludes that none is. Neither grants permission to implement or
-/// authorizes the outputs it plans. A task without declared intent carries no
-/// value: intent is never inferred from a flow or a phase name.
+/// concludes that none is. The repository-owned opportunistic Design has the
+/// same Design semantics but is not an author-declarable intent. Neither grants
+/// permission to implement or authorizes the outputs it plans. A task without
+/// declared intent carries no value: intent is never inferred from a flow or a
+/// phase name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskIntent {
@@ -45,11 +47,26 @@ pub enum TaskIntent {
     Plan,
     /// Justify an assembly, or a negative disposition.
     Design,
+    /// Repository-owned opportunistic OOPS Design generation.
+    #[serde(rename = "oops-design")]
+    OpportunisticDesign,
 }
 
 impl TaskIntent {
-    /// Every declared intent, in presentation order.
+    /// Every author-declarable intent, in presentation order.
     pub const ALL: [Self; 2] = [Self::Plan, Self::Design];
+
+    /// Whether this intent follows the Design lifecycle.
+    #[must_use]
+    pub const fn is_design(self) -> bool {
+        matches!(self, Self::Design | Self::OpportunisticDesign)
+    }
+
+    /// Whether this is the repository-owned opportunistic Design intent.
+    #[must_use]
+    pub const fn is_opportunistic_design(self) -> bool {
+        matches!(self, Self::OpportunisticDesign)
+    }
 
     /// Stable text spelling shared by the wire and the command line.
     #[must_use]
@@ -57,9 +74,22 @@ impl TaskIntent {
         match self {
             Self::Plan => "plan",
             Self::Design => "design",
+            Self::OpportunisticDesign => "oops-design",
         }
     }
 }
+/// Public owner of the repository's opportunistic OOPS Design.
+pub const OOPS_DESIGN_PROJECT: &str = "oops.design";
+/// Fixed title of every opportunistic OOPS Design generation.
+pub const OOPS_DESIGN_TITLE: &str = "OOPS";
+/// Stable context of every opportunistic OOPS Design generation.
+pub const OOPS_DESIGN_DESCRIPTION: &str =
+    "Repository-owned opportunistic Design for unexpected-behavior line items.";
+/// Contract carried by every OOPS line-item Plan.
+pub const OOPS_LINE_ACCEPTANCE: [&str; 2] = [
+    "Explicitly disposition the reported friction as duplicate, no-work, deferred, covered, or change-warranted.",
+    "When change is warranted, construct acceptance-bearing child work that addresses it.",
+];
 
 impl std::fmt::Display for TaskIntent {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -197,16 +227,14 @@ pub struct TaskPreparation {
     pub construction: TaskStamp,
 }
 
-/// Whether a task is filed allocator work, parked unexpected-behavior
-/// evidence, or prospective work its author has not filed yet.
+/// Whether a task is filed allocator work or prospective work its author has
+/// not filed yet.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskFiling {
     /// Ordinary work admitted to its workflow and allocator.
     #[default]
     Filed,
-    /// Evidence awaiting explicit triage and filing.
-    Oops,
     /// Editable prospective work that asserts nothing until it is filed.
     Draft,
 }
@@ -216,12 +244,6 @@ impl TaskFiling {
     #[must_use]
     pub const fn is_filed(&self) -> bool {
         matches!(self, Self::Filed)
-    }
-
-    /// Whether this task is parked as OOPS evidence.
-    #[must_use]
-    pub const fn is_oops(&self) -> bool {
-        matches!(self, Self::Oops)
     }
 
     /// Whether this task is an unfiled draft.
@@ -235,7 +257,6 @@ impl TaskFiling {
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Filed => "filed",
-            Self::Oops => "oops",
             Self::Draft => "draft",
         }
     }

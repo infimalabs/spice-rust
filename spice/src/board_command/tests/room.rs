@@ -6,9 +6,9 @@ use wire::intent::{
     RoomLeaveAnswer, RoomListeningDuty, RoomPutAside,
 };
 use wire::rooms::{
-    CoordinationControl, OopsDisposition, OopsGrooming, ROOM_PUBLICATION_BYTES_LIMIT,
-    RoomAuthorityStamp, RoomCoordinationStarted, RoomListenerAvailability, RoomListenerDelivery,
-    RoomMessaged, RoomPost, RoomPostOutcome, RoomPublicationContent, RoomPublished, TranscriptHunk,
+    CoordinationControl, ROOM_PUBLICATION_BYTES_LIMIT, RoomAuthorityStamp, RoomCoordinationStarted,
+    RoomListenerAvailability, RoomListenerDelivery, RoomMessaged, RoomPost, RoomPostOutcome,
+    RoomPublicationContent, RoomPublished, TranscriptHunk,
 };
 
 mod automation;
@@ -313,7 +313,7 @@ fn post_command(
     room: &TaskHandle,
     text: &str,
 ) -> wire::AdmittedCommand {
-    observe_command(bus, epoch, Actor::Operator, room, text, None)
+    observe_command(bus, epoch, Actor::Operator, room, text)
 }
 
 fn observe_command(
@@ -322,7 +322,6 @@ fn observe_command(
     actor: Actor,
     room: &TaskHandle,
     text: &str,
-    grooming: Option<OopsGrooming>,
 ) -> wire::AdmittedCommand {
     let current = board(bus, epoch, actor.clone());
     let heads = at(&current, room);
@@ -334,7 +333,6 @@ fn observe_command(
         &RoomPost {
             room: room.clone(),
             text: text.to_owned(),
-            grooming,
         },
     )
 }
@@ -555,119 +553,6 @@ fn authored_observations_enforce_the_room_publication_byte_bound() {
 }
 
 #[test]
-fn oops_grooming_records_source_preserving_negative_triage_without_mutating_reports() {
-    let (_root, bus, epoch, _seats) = fixture("room-oops-grooming", 0);
-    let batch_stamp = stamp("room-oops-batch");
-    let batch = TaskHandle::for_project("board.test", &batch_stamp);
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskAdd,
-        vec![Witness::Absence { task: batch_stamp }],
-        &TaskAdd {
-            preparation: None,
-            title: "Bounded OOPS batch".to_owned(),
-            project: Some("board.test".to_owned()),
-            description: None,
-            acceptance: vec!["Each selected source receives a typed disposition".to_owned()],
-            requirements: wire::EnvironmentRequirements::default(),
-            origin: Some(fixture_origin()),
-            flow: Some("design".to_owned()),
-            depends: Vec::new(),
-            intent: Some(wire::TaskIntent::Design),
-            claim: false,
-            draft: false,
-        },
-    ));
-    let report_stamp = stamp("room-oops-report");
-    let report = TaskHandle::for_filing("board.test", &report_stamp, wire::TaskFiling::Oops);
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskOopsAdd,
-        vec![Witness::Absence {
-            task: report_stamp.clone(),
-        }],
-        &TaskOopsAdd {
-            title: "Observed friction".to_owned(),
-            description: "Evidence retained by the report".to_owned(),
-            origin: Some(fixture_origin()),
-            project: Some("board.test".to_owned()),
-        },
-    ));
-    let before = board(&bus, epoch, Actor::Operator);
-    let batch_heads = at(&before, &batch);
-    let report_heads = at(&before, &report);
-    let statement = report_heads.statement.clone();
-    let workflow = report_heads.workflow.clone();
-    let oversized = issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::RoomPost,
-        vec![
-            statement_witness(batch_heads),
-            statement_witness(report_heads),
-        ],
-        &RoomPost {
-            room: batch.clone(),
-            text: String::new(),
-            grooming: Some(OopsGrooming {
-                reports: vec![report_stamp.clone(); wire::rooms::OOPS_GROOMING_REPORT_LIMIT + 1],
-                disposition: OopsDisposition::NoWork,
-                cause: "One unbounded cluster.".to_owned(),
-                exceptions: String::new(),
-                uncertainty: String::new(),
-            }),
-        },
-    );
-    assert!(matches!(
-        oversized,
-        Outcome::Refusal(refusal) if refusal.reason() == "room::oops-batch-too-large"
-    ));
-    let grooming = OopsGrooming {
-        reports: vec![report_stamp],
-        disposition: OopsDisposition::NoWork,
-        cause: "The report names expected bounded behavior.".to_owned(),
-        exceptions: "A changed invariant requires a new batch.".to_owned(),
-        uncertainty: "No production counterexample is retained.".to_owned(),
-    };
-    assert_committed(issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::RoomPost,
-        vec![
-            statement_witness(batch_heads),
-            statement_witness(report_heads),
-        ],
-        &RoomPost {
-            room: batch.clone(),
-            text: String::new(),
-            grooming: Some(grooming.clone()),
-        },
-    ));
-
-    let page = publication_page(&bus, &batch);
-    let recorded = page.rows[0]
-        .fact
-        .read::<RoomPublished>()
-        .expect("grooming publication has a typed body");
-    assert_eq!(
-        recorded.content,
-        RoomPublicationContent::OopsGroomed { grooming }
-    );
-    let after = board(&bus, epoch, Actor::Operator);
-    let retained = at(&after, &report);
-    assert_eq!(retained.statement, statement);
-    assert_eq!(retained.workflow, workflow);
-    assert_eq!(retained.visibility, wire::intent::ProjectVisibility::Public);
-    assert!(retained.statement.body.filing.is_oops());
-}
-
-#[test]
 fn room_post_reports_occupied_vacant_and_unknown_listeners_without_waking() {
     let (_root, bus, epoch, seats) = fixture("room-post-listeners", 2);
     let room = add(
@@ -811,7 +696,6 @@ fn room_post_refuses_unknown_anchor_without_recording() {
         &RoomPost {
             room: unknown.clone(),
             text: "Do not record.".to_owned(),
-            grooming: None,
         },
     );
     let outcome = dispatch(&bus, &command).expect("room command dispatches");
@@ -900,7 +784,7 @@ fn observations_reach_every_room_except_a_deleted_anchor() {
             assert_committed(
                 dispatch(
                     &bus,
-                    &observe_command(&bus, epoch, author, room, "After settlement.", None),
+                    &observe_command(&bus, epoch, author, room, "After settlement."),
                 )
                 .expect("room command dispatches"),
             );
@@ -911,7 +795,7 @@ fn observations_reach_every_room_except_a_deleted_anchor() {
     for author in [Actor::Operator, lane] {
         let outcome = dispatch(
             &bus,
-            &observe_command(&bus, epoch, author, &deleted, "After deletion.", None),
+            &observe_command(&bus, epoch, author, &deleted, "After deletion."),
         )
         .expect("room command dispatches");
         let Outcome::Refusal(refusal) = outcome else {
@@ -939,8 +823,7 @@ fn observations_reach_every_room_except_a_deleted_anchor() {
 }
 
 /// A lane's observation reaches the task's holder as a current listener, but
-/// its author gains no listening from writing it, and only the operator
-/// records OOPS grooming.
+/// its author gains no listening from writing it.
 #[test]
 fn a_lane_observation_reaches_the_holder_without_making_its_author_listen() {
     let (_root, bus, epoch, seats) = fixture("room-observation-listeners", 2);
@@ -971,7 +854,7 @@ fn a_lane_observation_reaches_the_holder_without_making_its_author_listen() {
         let answer = assert_committed(
             dispatch(
                 &bus,
-                &observe_command(&bus, epoch, author.clone(), &room, text, None),
+                &observe_command(&bus, epoch, author.clone(), &room, text),
             )
             .expect("room command dispatches"),
         );
@@ -991,22 +874,6 @@ fn a_lane_observation_reaches_the_holder_without_making_its_author_listen() {
         );
     }
 
-    let grooming = OopsGrooming {
-        reports: Vec::new(),
-        disposition: OopsDisposition::NoWork,
-        cause: "A lane's triage.".to_owned(),
-        exceptions: String::new(),
-        uncertainty: String::new(),
-    };
-    let outcome = dispatch(
-        &bus,
-        &observe_command(&bus, epoch, author, &room, "", Some(grooming)),
-    )
-    .expect("room command dispatches");
-    assert!(matches!(
-        outcome,
-        Outcome::Refusal(refusal) if refusal.reason() == "room::oops-grooming-operator"
-    ));
     assert_eq!(publication_page(&bus, &room).rows.len(), 2);
 }
 

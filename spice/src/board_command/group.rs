@@ -264,7 +264,7 @@ fn moved_fact(
     request: &WorkingGroupMove,
     revision: u64,
 ) -> Result<(WorkingGroupMoved, WorkingGroupChangeStatus), Outcome<CommandAnswer>> {
-    let admitted = task.intent == Some(wire::TaskIntent::Design)
+    let admitted = task.intent.is_some_and(wire::TaskIntent::is_design)
         && (request.to.is_none() || wire::intent::is_open_design(task.intent, workflow));
     let kind = DesignKind {
         admitted: admitted.then_some(&request.design),

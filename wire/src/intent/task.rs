@@ -79,19 +79,24 @@ pub struct TaskAdd {
     pub draft: bool,
 }
 
-/// Add one task in typed OOPS filing state.
+/// Add one acceptance-bearing line-item Plan under the current opportunistic
+/// OOPS Design generation.
 ///
-/// The route owns the flow and dependency policy. A caller names only the
-/// public owner project, or lets one active public claim supply it, so this
-/// DTO cannot become generic task creation.
+/// The route owns the flow, preparation, and construction contract. A caller
+/// names only the public owner project, or lets one active public claim supply
+/// it, so this DTO cannot become generic task creation. `design` names either
+/// the exact current generation or the intended absent generation atomically
+/// opened with this report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskOopsAdd {
-    /// One-line account of the unexpected behavior.
+    /// Current or intended opportunistic OOPS Design generation.
+    pub design: TaskStamp,
+    /// One-line exact account of the unexpected behavior.
     pub title: String,
-    /// Durable detail attached as the first note.
+    /// Exact report text retained as its Plan description.
     pub description: String,
-    /// Explicit causal authority when no active claim owns the filing.
+    /// Explicit causal authority when no active claim owns the report.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -307,11 +312,11 @@ pub struct TaskWake {
     pub claim: bool,
 }
 
-/// File one parked OOPS row or unfiled Draft as ordinary work.
+/// File one unfiled Draft as ordinary work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskFile {
-    /// OOPS or Draft task being filed.
+    /// Draft task being filed.
     pub task: TaskHandle,
     /// Public project receiving the filed task; omission keeps its owner.
     #[serde(

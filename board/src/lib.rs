@@ -16,7 +16,6 @@ pub mod inventory;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod lapse;
 pub mod next;
-pub mod oops;
 pub mod overlap;
 pub mod phase;
 pub mod task;

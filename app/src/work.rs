@@ -66,8 +66,7 @@ pub enum WorkAvailability {
     Held,
     /// Open and unclaimed, with an explicit wakeable deferral.
     Deferred,
-    /// Open and unclaimed OOPS work the allocator never offers until the
-    /// operator files it.
+    /// Open and unclaimed internal row outside public allocation scope.
     Parked,
     /// Editable prospective work that is not filed yet. It is not work: no
     /// strip, count, or allocator ever includes it.
@@ -1136,7 +1135,7 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
     }
     match task.claim.as_ref().map(|claim| claim.body.disposition) {
         Some(ClaimDisposition::Active) => return WorkAvailability::InFlight,
-        _ if task.statement.body.filing.is_oops()
+        _ if task.statement.body.filing.is_draft()
             || matches!(task.visibility, ProjectVisibility::Hidden { .. }) =>
         {
             return WorkAvailability::Parked;

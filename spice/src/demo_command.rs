@@ -32,7 +32,6 @@ const DEMO_LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116411";
 const DEMO_OOPS_BATCH_STAMP: &str = "1kKRRsDQ";
 const DEMO_OOPS_REPORT_STAMP: &str = "1kKRRsDR";
 const DEMO_OOPS_GROUP_MICROS: i64 = 1_783_748_760_000_000;
-const DEMO_OOPS_BATCH_TITLE: &str = "Groom retained OOPS reports";
 const DEMO_OOPS_REPORT_TITLE: &str = "Observed command friction";
 const DEMO_CAPABILITY: &str = "018f82d4-6f59-7d06-92e3-bce913116412";
 const DEMO_EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116413";
@@ -810,24 +809,30 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
     let report: wire::TaskStamp = DEMO_OOPS_REPORT_STAMP
         .parse()
         .expect("demo OOPS report stamp is valid");
-    seed_grooming_task(
+    seed_oops_task(
         journal,
         batch.clone(),
-        DEMO_OOPS_BATCH_TITLE,
-        DEMO_PROJECT,
-        wire::TaskFiling::Filed,
-        Some(wire::TaskIntent::Design),
+        wire::OOPS_DESIGN_TITLE,
+        wire::OOPS_DESIGN_PROJECT,
+        Vec::new(),
+        None,
+        Some(wire::TaskIntent::OpportunisticDesign),
         &["design", "review"],
         "2026-07-11T05:04:00.000000Z",
     )?;
-    seed_grooming_task(
+    seed_oops_task(
         journal,
-        report,
+        report.clone(),
         DEMO_OOPS_REPORT_TITLE,
         DEMO_PROJECT,
-        wire::TaskFiling::Oops,
-        None,
-        &["plan"],
+        wire::OOPS_LINE_ACCEPTANCE.map(str::to_owned).to_vec(),
+        Some(wire::TaskPreparation {
+            parent: batch.clone(),
+            controller: batch.clone(),
+            construction: report,
+        }),
+        Some(wire::TaskIntent::Plan),
+        &["plan", "review"],
         "2026-07-11T05:05:00.000000Z",
     )?;
     let group = wire::rooms::RoomAuthorityStamp::for_micros(DEMO_OOPS_GROUP_MICROS)
@@ -868,37 +873,38 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
     )
 }
 
-fn seed_grooming_task(
+fn seed_oops_task(
     journal: &mut journal::Journal,
     born: wire::TaskStamp,
     title: &str,
     project: &str,
-    filing: wire::TaskFiling,
+    acceptance: Vec<String>,
+    preparation: Option<wire::TaskPreparation>,
     intent: Option<wire::TaskIntent>,
     flow: &[&str],
     at: &str,
 ) -> DemoResult<()> {
     let phases = flow
         .iter()
-        .map(|phase| phase.parse().expect("demo grooming phase is valid"))
+        .map(|phase| phase.parse().expect("demo OOPS phase is valid"))
         .collect::<Vec<wire::Phase>>();
     let phase = phases[0].clone();
     let origin: wire::Origin = format!("task:{born}")
         .parse()
-        .expect("demo grooming task origin is valid");
+        .expect("demo OOPS task origin is valid");
     let mut write = JournalWrite::new(Actor::Spice, origin, instant(at), Producer::CommandDoor);
     let added = write
         .fact(
             body::TaskAdded {
-                preparation: None,
+                preparation: preparation.clone(),
                 intent,
                 task: born.clone(),
                 title: title.to_owned(),
                 description: None,
-                acceptance: Vec::new(),
+                acceptance: acceptance.clone(),
                 requirements: wire::EnvironmentRequirements::default(),
                 project: project.to_owned(),
-                filing,
+                filing: wire::TaskFiling::Filed,
                 priority: None,
                 taste: None,
                 document_slug: None,
@@ -920,7 +926,7 @@ fn seed_grooming_task(
     let statement_title = title.to_owned();
     let statement_project = project.to_owned();
     write.task_head(added, move |revision| TaskHead {
-        preparation: None,
+        preparation,
         authorization: None,
         evidence: Vec::new(),
         intent,
@@ -928,10 +934,10 @@ fn seed_grooming_task(
         queue_origin: revision,
         title: statement_title,
         description: None,
-        acceptance: Vec::new(),
+        acceptance,
         requirements: wire::EnvironmentRequirements::default(),
         project: statement_project,
-        filing,
+        filing: wire::TaskFiling::Filed,
         priority: None,
         taste: None,
         document_slug: None,

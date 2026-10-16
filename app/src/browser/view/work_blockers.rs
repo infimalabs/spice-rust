@@ -302,7 +302,7 @@ fn render_wall(wall: DependencyWall<'_>) -> Html {
         DependencyWall::Parked(_) => (
             "parked",
             "Parked",
-            "It is unfiled OOPS or Draft work, or filed off the queue; no agent is offered it until it is filed.",
+            "It is an unfiled Draft or filed off the queue; no agent is offered it until it is filed.",
             "Parked",
         ),
         DependencyWall::Cycle(_) => (

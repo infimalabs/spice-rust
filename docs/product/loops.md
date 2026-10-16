@@ -145,20 +145,19 @@ flowchart LR
   so an authored root is never invisible to a lane that may be allocated it.
   Hidden roots remain reserved for their typed system routes and stay out of
   other actors' default reads.
-- `task oops` creates a typed OOPS row under a public project. The command uses
-  `--project` or derives the one public project held by the actor; zero or
-  multiple eligible claims refuse without mutation. OOPS is filing state, not
-  project visibility: the allocator never offers it, default detail reads show
-  only the origin thread's rows, and complete operator reads retain every row.
-  `task file` changes it to ordinary Filed work and can atomically rehome it,
-  attach a preparation controller, or claim an uncontrolled row. `task wake`
-  remains only for ordinary deferred work.
+- `task oops` files one ordinary Plan directly beneath the repository-owned
+  opportunistic OOPS Design. The command uses `--project` or derives the one
+  public project held by the actor; zero or multiple eligible claims refuse
+  without mutation. The first report after the prior OOPS Design settles
+  atomically opens a fresh generation, and concurrent first reports cannot
+  open two. Each line retains its exact report, origin, and public project,
+  stays gated by the Design, and carries the contract to record an explicit
+  disposition and construct child work when change is warranted.
 - `task add --draft` (and `task plan --draft`, `task design --draft`) records a
   typed Draft: prospective work under an admitted public project, distinct from
-  both OOPS and Filed. A Draft asserts no unexpected behavior and never joins
-  OOPS grooming. Default reads show it only to the operator and its origin
-  thread, and complete operator reads retain it. Its author revises title,
-  description, acceptance, intent, flow (`task modify --flow`), dependencies,
+  Filed work. Default reads show it only to the operator and its origin thread,
+  and complete operator reads retain it. Its author revises title, description,
+  acceptance, intent, flow (`task modify --flow`), dependencies,
   and project; an edit that would leave a Design any route but its one `design`
   phase refuses. It never allocates, claims, captures, completes, defers,
   satisfies another task's dependency, or enters team strips and execution
@@ -698,13 +697,14 @@ owns each rule summarized here.
   shelving is still owed; setting the group Passive again shelves it. Explore
   or Converge makes it eligible again with its room, candidates, outputs,
   history, and authorization unchanged.
-- **OOPS grooming.** `spice room post DESIGN --report REPORT... --disposition
-  duplicate|no-work|deferred-for-later|covered|proposed-work --cause TEXT
-  [--exceptions TEXT] [--uncertainty TEXT]` records, in an open Design's room,
-  a disposition over typed OOPS reports. A disposition is evidence, never
-  authority: it changes no report workflow, and `deferred-for-later` carries no
-  wake time. Only `spice task file REPORT --preparation DESIGN` files a report
-  as a controlled output that is not yet authorized.
+- **Opportunistic OOPS Design.** Its read-only candidate is the birth-ordered
+  set of current pending line-item Plans not named by an earlier decision.
+  Preview presents Accept or Reject for every line. Submission snapshots that
+  exact candidate and its complete verdict atomically; accepted Plans receive
+  ordinary execution authorization, rejected Plans remain historical, and a
+  concurrently added report remains for the next candidate. Room observations
+  and typed contributions remain Design feedback. The operator may collapse
+  the Design; the next report then opens a new generation.
 
 Every read — `spice room history|inbox|result|relevance|status`,
 `spice preparation show`, `spice group list`, and their `spice://` resources —

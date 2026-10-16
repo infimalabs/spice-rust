@@ -113,7 +113,7 @@ pub enum BodyShape {
     VendorCatalog,
     /// [`TaskAdd`]
     TaskAdd,
-    /// [`TaskOopsAdd`], the strict body for typed OOPS filing.
+    /// [`TaskOopsAdd`], the strict body for OOPS Design line-item intake.
     TaskOopsAdd,
     /// [`TasteProposalAdd`], the strict body for the hidden taste-proposal route.
     TasteProposalAdd,

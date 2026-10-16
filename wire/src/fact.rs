@@ -306,7 +306,7 @@ vocabulary! {
     TaskDeferred = "task::deferred" by CommandDoor;
     /// A task's deferral cleared.
     TaskWoken = "task::woken" by CommandDoor;
-    /// A parked OOPS row entered ordinary filed work.
+    /// An unfiled Draft entered ordinary filed work.
     TaskFiled = "task::filed" by CommandDoor;
     /// An unsettled task statement changed.
     TaskEdited = "task::edited" by CommandDoor;

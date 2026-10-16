@@ -475,8 +475,8 @@ fn apply_task_mutation_response(
         PendingKind::Preparation { respond } => {
             apply_callback_reply(session, bytes, "Preparation failed", &respond)?
         }
-        // A landed Draft or OOPS filing change re-reads the board so its list
-        // and detail move.
+        // A landed Draft filing change re-reads the board so its list and
+        // detail move.
         PendingKind::Draft { respond } => CommandApplication {
             refresh: true,
             ..apply_callback_reply(session, bytes, "Task change failed", &respond)?

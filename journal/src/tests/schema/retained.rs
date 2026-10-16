@@ -193,7 +193,7 @@ fn writable_open_drops_task_edit_notices_and_spells_implicit_fast_flags_once() {
     assert_eq!(residual_rows(&reopened), canonical);
 }
 #[test]
-fn writable_open_moves_hidden_oops_projects_into_explicit_filing_state() {
+fn writable_open_moves_retained_oops_rows_under_one_opportunistic_design() {
     for (name, retained, public) in [
         ("nested", ".oops.board.cli", "board.cli"),
         ("bare", ".oops", "task.oops"),
@@ -226,29 +226,71 @@ fn writable_open_moves_hidden_oops_projects_into_explicit_filing_state() {
         drop(journal);
 
         let crossed = Journal::open(&path).expect("retained OOPS authority crosses");
-        let head = crossed
+        let report = crossed
             .connection
             .query_row(
                 "SELECT json_extract(CAST(body AS TEXT), '$.project'),
-                        json_extract(CAST(body AS TEXT), '$.filing')
-                 FROM task_heads",
+                        json_extract(CAST(body AS TEXT), '$.intent'),
+                        json_extract(CAST(body AS TEXT), '$.preparation.parent')
+                 FROM task_heads
+                 WHERE json_extract(CAST(body AS TEXT), '$.intent') = 'plan'",
                 [],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
-            .expect("crossed OOPS head reads");
+            .expect("crossed OOPS Plan head reads");
+        let design = crossed
+            .connection
+            .query_row(
+                "SELECT stamp,
+                        json_extract(CAST(body AS TEXT), '$.project'),
+                        json_extract(CAST(body AS TEXT), '$.intent')
+                 FROM task_heads
+                 WHERE json_extract(CAST(body AS TEXT), '$.intent') = 'oops-design'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .expect("crossed OOPS Design head reads");
+        assert_eq!(
+            report,
+            (public.to_owned(), "plan".to_owned(), design.0.clone())
+        );
+        assert_eq!(
+            (design.1, design.2),
+            ("oops.design".to_owned(), "oops-design".to_owned())
+        );
         let fact = crossed
             .connection
             .query_row(
                 "SELECT json_extract(CAST(envelope AS TEXT), '$.fact.project'),
-                        json_extract(CAST(envelope AS TEXT), '$.fact.filing')
-                 FROM fact_envelopes WHERE kind = 'task::added'",
+                        json_extract(CAST(envelope AS TEXT), '$.fact.intent'),
+                        json_extract(CAST(envelope AS TEXT), '$.fact.preparation.parent')
+                 FROM fact_envelopes
+                 WHERE kind = 'task::added'
+                   AND json_extract(CAST(envelope AS TEXT), '$.fact.intent') = 'plan'",
                 [],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
-            .expect("crossed OOPS fact reads");
-        assert_eq!(head, (public.to_owned(), "oops".to_owned()));
-        assert_eq!(fact, head);
-        crossed.verify().expect("crossed OOPS authority verifies");
+            .expect("crossed OOPS Plan fact reads");
+        assert_eq!(fact, report);
+        crossed.verify().expect("crossed authority verifies");
     }
 }
 

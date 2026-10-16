@@ -145,8 +145,6 @@ pub(crate) struct PostureCounts {
     pub(crate) deferred: usize,
     pub(crate) awaiting_decision: usize,
     pub(crate) pending: usize,
-    /// Typed OOPS rows across the visible board.
-    pub(crate) oops: usize,
     /// Unfiled Drafts on the reader's route.
     pub(crate) drafts: usize,
 }
@@ -520,7 +518,6 @@ fn posture(
     let mut counts = PostureCounts {
         visible: entries.len(),
         open: rows.len(),
-        oops: ParkedCounts::oops(entries),
         drafts: actor_drafts(board, entries),
         ..PostureCounts::default()
     };
@@ -556,7 +553,7 @@ fn posture(
     let mut text = format!(
         "board for {} at cursor {}: {} visible, {} open on this route\n\
          active {} ready {} review {} awaiting-decision {} blocked {} waiting {} deferred {} stale {} \
-         pending {} oops {} drafts {}\n\
+         pending {} drafts {}\n\
          claim ",
         board.principal,
         board.cursor,
@@ -571,7 +568,6 @@ fn posture(
         counts.deferred,
         counts.stale,
         counts.pending,
-        counts.oops,
         counts.drafts,
     );
     match &claim {

@@ -113,7 +113,6 @@ fn peer_entry(
 ) -> Entry {
     let mut head = statement(name);
     head.project = row_project.to_owned();
-    head.filing = wire::TaskFiling::Oops;
     let claim = ClaimHead {
         actor,
         fact: seq(2),

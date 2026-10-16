@@ -40,7 +40,7 @@ impl ResolvedTasks {
     /// Record whether the known task `task` is a Design.
     pub fn know(&mut self, task: TaskStamp, intent: Option<TaskIntent>) {
         self.designs
-            .insert(task, intent == Some(TaskIntent::Design));
+            .insert(task, intent.is_some_and(TaskIntent::is_design));
     }
 
     /// Record that the working-group partition holds `task`. Only a known
@@ -347,8 +347,7 @@ fn progress(
         states[task] = Progress::Moving;
         return Progress::Moving;
     }
-    if entry.is_oops()
-        || !entry.is_filed()
+    if !entry.is_filed()
         || entry.project().visibility().is_hidden()
         || workflow.deferral.is_some()
         || passive_design(entry)
@@ -423,7 +422,7 @@ fn normal_control_wait(
             let task = &entries[*index];
             match task.statement().intent {
                 Some(TaskIntent::Plan) => task.workflow().status.is_pending(),
-                Some(TaskIntent::Design) => {
+                Some(TaskIntent::Design | TaskIntent::OpportunisticDesign) => {
                     wire::intent::is_open_design(task.statement().intent, task.workflow())
                 }
                 None => false,
@@ -1176,11 +1175,10 @@ pub fn eligible_entry(
     workable(entry, actor, satisfied) && environment_satisfied(entry, environment) && unheld(entry)
 }
 
-/// Whether one exact task may be captured, including typed OOPS triage.
+/// Whether one exact task may be captured.
 ///
-/// Hidden rows remain unavailable to allocator selection. An explicitly named
-/// OOPS row may be captured while it remains parked, but filing is required
-/// before dependencies or completion move.
+/// Unlike allocator selection, exact capture may address an internal row; its
+/// own lifecycle and workflow guards still decide whether work can advance.
 #[must_use]
 pub fn capturable_entry(
     satisfied: &ResolvedTasks,
@@ -1188,9 +1186,7 @@ pub fn capturable_entry(
     actor: &Actor,
     environment: &wire::Environment,
 ) -> bool {
-    let public = workable(entry, actor, satisfied);
-    let oops = entry.is_oops() && operational(entry, actor, satisfied);
-    (public || oops) && environment_satisfied(entry, environment) && unheld(entry)
+    workable(entry, actor, satisfied) && environment_satisfied(entry, environment) && unheld(entry)
 }
 
 /// Whether one named entry is eligible through the team's current task scope.

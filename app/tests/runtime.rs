@@ -349,11 +349,11 @@ fn board_response_with_requirements(
         },
         tasks: vec![
             board_task(
-                "OOPS-oops1",
+                "DRAFT-draft1",
                 REQUEST,
                 hidden_title,
                 "app.correctness",
-                wire::TaskFiling::Oops,
+                wire::TaskFiling::Draft,
                 None,
                 wire::EnvironmentRequirements::default(),
             ),
@@ -1245,7 +1245,7 @@ fn team_ticker_prose_leads_with_the_first_authored_line_after_borrowed_quotes() 
 }
 
 #[test]
-fn browser_state_retains_oops_rows_with_their_authored_prose_and_public_project() {
+fn browser_state_retains_drafts_with_their_authored_prose_and_public_project() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = AppRuntime::new(&accepted);
@@ -1260,22 +1260,22 @@ fn browser_state_retains_oops_rows_with_their_authored_prose_and_public_project(
 
     let board = runtime.board().expect("board response is retained");
     assert_eq!(board.schema, 1);
-    let oops = &board.tasks[0];
-    assert_eq!(oops.presentation_title(), title);
+    let draft = &board.tasks[0];
+    assert_eq!(draft.presentation_title(), title);
     assert_eq!(
-        oops.statement.body.handle,
+        draft.statement.body.handle,
         wire::TaskHandle::for_filing(
             "app.correctness",
-            &fixture_stamp("OOPS-oops1"),
-            wire::TaskFiling::Oops,
+            &fixture_stamp("DRAFT-draft1"),
+            wire::TaskFiling::Draft,
         )
     );
-    assert_eq!(oops.statement.body.project, "app.correctness");
-    assert_eq!(oops.statement.body.filing, wire::TaskFiling::Oops);
-    assert!(!oops.visibility.is_hidden());
-    assert!(oops.workflow.body.status.is_pending());
-    let oops_json = serde_json::to_value(oops).expect("browser row serializes");
-    assert_eq!(oops_json["presentation_title"], title);
+    assert_eq!(draft.statement.body.project, "app.correctness");
+    assert_eq!(draft.statement.body.filing, wire::TaskFiling::Draft);
+    assert!(!draft.visibility.is_hidden());
+    assert!(draft.workflow.body.status.is_pending());
+    let draft_json = serde_json::to_value(draft).expect("browser row serializes");
+    assert_eq!(draft_json["presentation_title"], title);
     assert_eq!(
         board.tasks[1].presentation_title(),
         "Visible allocator work"

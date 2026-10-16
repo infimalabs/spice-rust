@@ -1047,8 +1047,6 @@ pub struct NextWorkCounts {
     pub designs: crate::rooms::DesignCycleCounts,
     /// Explicitly deferred work.
     pub deferred: usize,
-    /// Parked OOPS rows.
-    pub oops: usize,
 }
 
 /// One closed allocator decision captured at the board snapshot barrier.
@@ -1257,7 +1255,7 @@ impl BoardTask {
 /// not an open Design.
 #[must_use]
 pub fn is_open_design(intent: Option<crate::TaskIntent>, workflow: &crate::WorkflowHead) -> bool {
-    intent == Some(crate::TaskIntent::Design)
+    intent.is_some_and(crate::TaskIntent::is_design)
         && workflow.status.is_pending()
         && workflow.phase.as_str() == "design"
 }
@@ -1295,7 +1293,7 @@ impl DesignStanding {
         active: bool,
         collapse_reason: Option<&str>,
     ) -> Option<Self> {
-        if intent != Some(crate::TaskIntent::Design) {
+        if !intent.is_some_and(crate::TaskIntent::is_design) {
             return None;
         }
         Some(match workflow.status {

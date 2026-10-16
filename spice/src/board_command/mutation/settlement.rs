@@ -308,10 +308,10 @@ fn settle(
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     if settlement.negative()
-        && matches!(
-            entry.statement().intent,
-            Some(wire::TaskIntent::Plan | wire::TaskIntent::Design)
-        )
+        && entry
+            .statement()
+            .intent
+            .is_some_and(|intent| intent == wire::TaskIntent::Plan || intent.is_design())
     {
         guard_task_projection(&mut write, snapshot.task_barrier.clone());
     }
@@ -483,7 +483,10 @@ fn admitted_entry<'a>(
             ),
         ));
     }
-    let design = entry.statement().intent == Some(wire::TaskIntent::Design);
+    let design = entry
+        .statement()
+        .intent
+        .is_some_and(wire::TaskIntent::is_design);
     match settlement {
         Settlement::Close(_) if design => {
             return Err(refusal(

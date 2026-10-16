@@ -49,13 +49,6 @@ pub(in crate::board_command) fn task_wake(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    if task_entry(&snapshot.entries, &wake.task).is_some_and(Entry::is_oops) {
-        return refusal(
-            "task::file-required",
-            Some(wake.task.to_string()),
-            "use `spice task file HANDLE` to move OOPS evidence into filed work",
-        );
-    }
     change_deferral(
         bus,
         command,
@@ -69,7 +62,7 @@ pub(in crate::board_command) fn task_wake(
     )
 }
 
-/// File one parked OOPS row or unfiled Draft into ordinary work.
+/// File one unfiled Draft into ordinary work.
 pub(in crate::board_command) fn task_file(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -106,134 +99,21 @@ fn validate_filing_entry(
             "read the board again and retry with the current target statement witness",
         ));
     }
-    if entry.is_filed() {
+    if !entry.is_draft() {
         return Err(refusal(
             "task::filing-refused",
             Some(format!("{} project={}", entry.handle(), entry.project())),
-            "use task file only for a row whose filing standing is OOPS or Draft",
+            "use task file only for an unfiled Draft",
         ));
     }
     if !entry.workflow().status.is_pending() {
         return Err(refusal(
             "task::settled",
             Some(entry.handle().to_string()),
-            "file only pending OOPS or Draft work",
+            "file only a pending Draft",
         ));
     }
     Ok(())
-}
-
-fn filing_preparation(
-    snapshot: &ValidatedSnapshot,
-    command: &wire::AdmittedCommand,
-    output: &Entry,
-    file: &TaskFile,
-) -> Result<Option<wire::TaskPreparation>, Outcome<CommandAnswer>> {
-    let Some(named) = &file.preparation else {
-        return Ok(None);
-    };
-    if file.claim {
-        return Err(refusal(
-            "task::filing-claim-controlled",
-            Some(output.handle().to_string()),
-            "file controlled OOPS work without --claim; selected authorization must precede native capture",
-        ));
-    }
-    if output.statement().preparation.is_some()
-        || output.statement().authorization.is_some()
-        || output.statement().intent.is_some()
-    {
-        return Err(refusal(
-            "task::filing-output-ineligible",
-            Some(output.handle().to_string()),
-            "control only an ordinary OOPS report that has no preparation or authorization authority",
-        ));
-    }
-    let controller_stamp = named.born().map_err(|error| {
-        refusal(
-            "preparation::controller-invalid",
-            Some(named.to_string()),
-            &error.to_string(),
-        )
-    })?;
-    if controller_stamp == *output.born() {
-        return Err(refusal(
-            "preparation::controller-cycle",
-            Some(named.to_string()),
-            "the filed report cannot control itself",
-        ));
-    }
-    let Some(controller) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.born() == &controller_stamp)
-    else {
-        return Err(refusal(
-            "preparation::task-missing",
-            Some(named.to_string()),
-            "read the current board and name an existing preparation task",
-        ));
-    };
-    let controller_heads = snapshot
-        .answer
-        .tasks
-        .iter()
-        .find(|heads| heads.statement.body.born == controller_stamp)
-        .expect("validated snapshot entries and answer share task authority");
-    for witness in [
-        Witness::Task {
-            task: controller_stamp.clone(),
-            head: controller_heads.statement.position,
-        },
-        Witness::Workflow {
-            task: controller_stamp.clone(),
-            head: controller_heads.workflow.position,
-            phase: controller_heads.workflow.body.phase.clone(),
-        },
-        Witness::Claim {
-            task: controller_stamp.clone(),
-            head: controller_heads.claim.as_ref().map(|claim| claim.position),
-        },
-    ] {
-        if !command.expected().contains(&witness) {
-            return Err(refusal(
-                "preparation::witness-missing",
-                Some(format!("{witness:?}")),
-                "read the current controller authority and retry the exact filing",
-            ));
-        }
-    }
-    let controller_open = match controller.statement().intent {
-        Some(wire::TaskIntent::Design) => {
-            wire::intent::is_open_design(controller.statement().intent, controller.workflow())
-        }
-        _ => {
-            controller.workflow().status.is_pending()
-                && super::super::planning::requires_construction(
-                    controller.statement().intent,
-                    &controller.workflow().flow,
-                )
-        }
-    };
-    if !controller_open
-        || controller
-            .claim()
-            .is_some_and(|claim| claim.disposition == ClaimDisposition::Active)
-    {
-        return Err(refusal(
-            "preparation::controller-ineligible",
-            Some(controller.handle().to_string()),
-            "choose a pending, unclaimed Plan or Design as the grooming batch controller",
-        ));
-    }
-    Ok(Some(wire::TaskPreparation {
-        parent: controller_stamp.clone(),
-        controller: controller.statement().preparation.as_ref().map_or_else(
-            || controller_stamp.clone(),
-            |value| value.controller.clone(),
-        ),
-        construction: output.born().clone(),
-    }))
 }
 
 /// Validate a Draft as the complete ordinary task it becomes when filed, and
@@ -289,7 +169,7 @@ fn draft_filing(
             return Err(refusal(
                 "task::dependency-unfiled",
                 Some(heads.statement.body.handle.to_string()),
-                "file every OOPS or Draft prerequisite first with spice task file HANDLE",
+                "file every Draft prerequisite first with spice task file HANDLE",
             ));
         }
         dependency_witnesses.push(workflow_witness(heads));
@@ -328,19 +208,8 @@ fn append_filing(
         )
         .map_err(|error| store_fault("task::filing-build", &error.to_string()))?;
     // A Draft's preparation binds as the ordinary output association `task
-    // add --preparation` writes; only OOPS grooming records batch control.
-    let statement_fact = match statement.preparation.clone() {
-        Some(preparation) if entry.is_oops() => write
-            .fact(
-                OutputControlled {
-                    output: entry.born().clone(),
-                    preparation,
-                },
-                FactCause::Pending(filed),
-            )
-            .map_err(|error| store_fault("task::filing-control-build", &error.to_string()))?,
-        _ => filed,
-    };
+    // add --preparation` writes.
+    let statement_fact = filed;
     write.workflow_head(entry.born().clone(), filed, move |_| workflow);
     write.task_head(statement_fact, move |position| TaskHead {
         revision: position,
@@ -397,24 +266,16 @@ fn file_unfiled(
     statement.filing = wire::TaskFiling::Filed;
     let mut workflow = entry.workflow().clone();
     workflow.deferral = None;
-    let dependency_witnesses = if entry.is_draft() {
-        match draft_filing(
-            snapshot,
-            command,
-            repository,
-            file,
-            &mut statement,
-            &mut workflow,
-        ) {
-            Ok(witnesses) => witnesses,
-            Err(outcome) => return outcome,
-        }
-    } else {
-        match filing_preparation(snapshot, command, entry, file) {
-            Ok(preparation) => statement.preparation = preparation,
-            Err(outcome) => return outcome,
-        }
-        Vec::new()
+    let dependency_witnesses = match draft_filing(
+        snapshot,
+        command,
+        repository,
+        file,
+        &mut statement,
+        &mut workflow,
+    ) {
+        Ok(witnesses) => witnesses,
+        Err(outcome) => return outcome,
     };
     let post = match Entry::new(
         statement.clone(),

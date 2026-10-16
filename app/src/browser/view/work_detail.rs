@@ -297,7 +297,7 @@ fn render_available(
                 </dl>
                 {render_possession(row, render)}
             </section>
-            {render_room(render, answer, projected.map_or(row, |task| task.row()))}
+            {render_room(render, answer)}
             <section class="app-sheet-section">
                 <h3>{"Relationships"}</h3>
                 {render_relationships(render.work, projected, statement, render.selection, focus_task)}
@@ -315,19 +315,14 @@ fn render_available(
                 {render_claim_context(row)}
                 {render_git_context(row)}
             </section>
+
         </div>
     }
 }
 
 /// The task's room beneath the composer that publishes into it, so a
-/// submitted observation lands directly above the conversation it joins. An
-/// open OOPS report's File sits in that composer's action row, so reading,
-/// observing, and filing it happen in one place.
-fn render_room(
-    render: &WorkDetailRender<'_, '_>,
-    answer: &wire::intent::TaskDetailAnswer,
-    row: &wire::intent::BoardTask,
-) -> Html {
+/// submitted observation lands directly above the conversation it joins.
+fn render_room(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDetailAnswer) -> Html {
     let statement = &answer.task.statement.body;
     let composer = html! {
         <>
@@ -344,14 +339,8 @@ fn render_room(
                 task_detail::closure(render.can_close, &answer.task).as_ref(),
                 &render.notes.shown(&statement.born),
                 &render.submit_note,
-                super::super::drafts::render_oops_file_action(
-                    render.runtime,
-                    render.draft_controls,
-                    render.sender,
-                    row,
-                ),
+                Html::default(),
             )}
-            {super::super::drafts::render_oops_file_notice(render.draft_controls, row)}
         </>
     };
     match render.runtime {

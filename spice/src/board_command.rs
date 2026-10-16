@@ -17,9 +17,8 @@ use wire::intent::{
     TasteProposalAdd, TextAnswer,
 };
 use wire::rooms::{
-    OopsGrooming, OutputControlled, RoomListenerAvailability, RoomListenerDelivery, RoomPost,
-    RoomPostAnswer, RoomPostListener, RoomPostNext, RoomPostOutcome, RoomPublicationContent,
-    RoomPublished,
+    RoomListenerAvailability, RoomListenerDelivery, RoomPost, RoomPostAnswer, RoomPostListener,
+    RoomPostNext, RoomPostOutcome, RoomPublicationContent, RoomPublished,
 };
 use wire::{
     Actor, ClaimDisposition, ClaimHead, Command, CommandKind, Digest, Domain, Fault, FaultClass,
