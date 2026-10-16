@@ -957,20 +957,28 @@ fn seed_turns(
     task: &wire::TaskHandle,
     mut previous: wire::Seq,
 ) -> DemoResult<()> {
+    let room = task.born().expect("demo task carries a canonical stamp");
     for (timestamp, text) in CANNED_TRANSCRIPT {
+        let at = instant(timestamp);
         let mut write = JournalWrite::new(
             Actor::Spice,
             format!("task:{DEMO_STAMP}")
                 .parse()
                 .expect("demo task origin is valid"),
-            instant(timestamp),
+            at,
             Producer::CommandDoor,
         );
         write
             .fact(
-                body::TaskNoted {
-                    task: task.born().expect("demo task carries a canonical stamp"),
-                    note: text.to_owned(),
+                wire::rooms::RoomPublished {
+                    room: room.clone(),
+                    publication: wire::rooms::RoomAuthorityStamp::for_micros(
+                        at.get().as_microsecond(),
+                    )
+                    .expect("each canned turn instant names a publication"),
+                    content: wire::rooms::RoomPublicationContent::Authored {
+                        text: text.to_owned(),
+                    },
                 },
                 FactCause::Existing(previous),
             )
@@ -1118,7 +1126,7 @@ fn validate_seeded_journal(state: &spice::repository::StatePaths) -> DemoResult<
     let notes = snapshot
         .facts()
         .iter()
-        .filter(|envelope| envelope.fact.kind() == wire::FactKind::TaskNoted)
+        .filter(|envelope| envelope.fact.kind() == wire::FactKind::RoomPublished)
         .count();
     if !task || !lanes || !starts || !claimed || notes < CANNED_TRANSCRIPT.len() {
         return Err(refusal(

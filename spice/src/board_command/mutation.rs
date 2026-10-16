@@ -500,7 +500,6 @@ where
         claim.guard(&mut write, snapshot, command);
     }
     extra_guard(&mut write);
-    let filing = prepared.statement.filing;
     let added = match write.fact(
         body::TaskAdded {
             preparation: prepared.statement.preparation.clone(),
@@ -534,9 +533,6 @@ where
         ..statement
     });
     write.workflow_head(prepared.born.clone(), added, move |_| prepared.workflow);
-    if let Err(outcome) = add_oops_note(&mut write, filing, add, &prepared.born, added) {
-        return outcome;
-    }
     if let Some(claim) = added_claim
         && let Err(outcome) = claim.append(&mut write, command, &post)
     {
@@ -772,28 +768,6 @@ pub(super) fn omit_review_phase(flow: &mut Vec<wire::Phase>, all_review: bool) {
     }
 }
 
-fn add_oops_note(
-    write: &mut JournalWrite,
-    filing: wire::TaskFiling,
-    add: &TaskAdd,
-    task: &wire::TaskStamp,
-    added: PendingFact,
-) -> Result<(), Outcome<CommandAnswer>> {
-    if filing.is_oops()
-        && let Some(note) = &add.description
-        && let Err(error) = write.fact(
-            body::TaskNoted {
-                task: task.clone(),
-                note: note.clone(),
-            },
-            FactCause::Pending(added),
-        )
-    {
-        return Err(store_fault("task::oops-note-build", &error.to_string()));
-    }
-    Ok(())
-}
-
 pub(super) fn task_note(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -801,6 +775,10 @@ pub(super) fn task_note(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
+    let content = match room::authored_observation(&note.note, &note.task) {
+        Ok(content) => content,
+        Err(outcome) => return outcome,
+    };
     let snapshot = match validated_working_snapshot(
         bus,
         command.actor().clone(),
@@ -818,9 +796,16 @@ pub(super) fn task_note(
             "read board and name one current task handle",
         );
     };
+    if let Err(outcome) = room::publishable_room(entry) {
+        return outcome;
+    }
     let next = next_action(&snapshot, entry);
     let at = match current_instant() {
         Ok(at) => at,
+        Err(outcome) => return outcome,
+    };
+    let publication = match room::mint_publication(bus, entry.born(), at.get().as_microsecond()) {
+        Ok(publication) => publication,
         Err(outcome) => return outcome,
     };
     let origin = match task_origin(entry.born()) {
@@ -830,9 +815,10 @@ pub(super) fn task_note(
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
     if let Err(error) = write.fact(
-        body::TaskNoted {
-            task: entry.born().clone(),
-            note: note.note.clone(),
+        wire::rooms::RoomPublished {
+            room: entry.born().clone(),
+            publication,
+            content,
         },
         FactCause::Root,
     ) {

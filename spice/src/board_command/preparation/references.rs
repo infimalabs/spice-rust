@@ -5,11 +5,14 @@
 //! Design (its gather work), and the Design's own room. A journal-backed
 //! reference must resolve to a fact inside that closure: a contribution or
 //! other room record of the controlling room, or a task or preparation fact
-//! of one closure task. Transcript and artifact links keep their own owners.
+//! or authored observation of one closure task. Transcript and artifact links
+//! keep their own owners.
 
 use std::collections::BTreeSet;
 
-use wire::rooms::{DesignPassProposal, RoomContributed, RoomSource};
+use wire::rooms::{
+    DesignPassProposal, RoomContributed, RoomPublicationContent, RoomPublished, RoomSource,
+};
 
 use super::*;
 
@@ -100,27 +103,37 @@ fn resolve(
                 return Ok(Resolved::Missing);
             };
             let fact = &envelope.fact;
-            Ok(if let Some(room) = fact.room_record() {
-                Resolved::Room(room.clone())
-            } else if let Some(task) = fact
-                .preparation_controller()
-                .or_else(|| fact.task_subject())
+            // An authored observation is its task's note, scoped like the
+            // task's own facts rather than as a record of a foreign room.
+            let observed = fact
+                .read::<RoomPublished>()
+                .filter(|published| {
+                    matches!(published.content, RoomPublicationContent::Authored { .. })
+                })
+                .map(|published| published.room);
+            if observed.is_none()
+                && let Some(room) = fact.room_record()
             {
-                let prepared = read.task_heads_for(task)?.is_some_and(|heads| {
-                    heads
-                        .statement()
-                        .body()
-                        .preparation
-                        .as_ref()
-                        .is_some_and(|preparation| {
-                            preparation.parent == *controller
-                                || preparation.controller == *controller
-                        })
-                });
-                Resolved::Task(task.clone(), prepared)
-            } else {
-                Resolved::Unscoped
-            })
+                return Ok(Resolved::Room(room.clone()));
+            }
+            let Some(task) = observed.or_else(|| {
+                fact.preparation_controller()
+                    .or_else(|| fact.task_subject())
+                    .cloned()
+            }) else {
+                return Ok(Resolved::Unscoped);
+            };
+            let prepared = read.task_heads_for(&task)?.is_some_and(|heads| {
+                heads
+                    .statement()
+                    .body()
+                    .preparation
+                    .as_ref()
+                    .is_some_and(|preparation| {
+                        preparation.parent == *controller || preparation.controller == *controller
+                    })
+            });
+            Ok(Resolved::Task(task, prepared))
         }
         RoomSource::Contribution { room, publication } => {
             let Some(seq) = read.room_publication_seq(room, publication)? else {

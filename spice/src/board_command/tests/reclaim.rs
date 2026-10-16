@@ -636,7 +636,7 @@ fn completion_and_review_wait_for_a_reclaim_after_an_operator_change() {
     );
 
     claim_next(&bus, epoch, &author, &seats[0], &task);
-    observe(&bus, epoch, &task, "the operator narrowed the scope");
+    rewrite_description(&bus, epoch, &task, "the operator narrowed the scope");
     let completion = |bus: &Bus| {
         let held = board(bus, epoch, author.clone());
         issue(
@@ -664,7 +664,7 @@ fn completion_and_review_wait_for_a_reclaim_after_an_operator_change() {
     assert_committed(completion(&bus));
 
     claim_next(&bus, epoch, &reviewer, &seats[1], &task);
-    observe(&bus, epoch, &task, "the operator added a review concern");
+    rewrite_description(&bus, epoch, &task, "the operator added a review concern");
     let verdict = |bus: &Bus| {
         let assigned = board(bus, epoch, reviewer.clone());
         issue(
@@ -695,21 +695,16 @@ fn completion_and_review_wait_for_a_reclaim_after_an_operator_change() {
     clean(&root, bus);
 }
 
-fn observe(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle, note: &str) {
-    let born = at(&board(bus, epoch, Actor::Operator), task)
-        .statement
-        .body
-        .born
-        .clone();
-    assert_committed(issue(
+/// The operator rewrites the held task's description: a statement change its
+/// holder must acknowledge.
+fn rewrite_description(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle, description: &str) {
+    assert_committed(super::edit::correct(
         bus,
         epoch,
         Actor::Operator,
-        CommandKind::TaskNote,
-        vec![Witness::Existence { task: born }],
-        &TaskNote {
-            task: task.clone(),
-            note: note.to_owned(),
+        &TaskEdit {
+            description: Some(description.to_owned()),
+            ..super::edit::only(task)
         },
     ));
 }

@@ -367,12 +367,11 @@ fn current_board_edits_are_guarded_deterministic_and_render_form_invariant() {
         actor_seat(&initial).expect("sole operator seat"),
         (seats[0].lane, seats[0].occupant,)
     );
-    let (alpha, beta, oops) = seed_edit_tasks(&bus, epoch);
+    let (alpha, beta, _) = seed_edit_tasks(&bus, epoch);
     exercise_deferral_staleness(&bus, epoch, &alpha);
     add_dependency(&bus, epoch, &alpha, &beta);
     let graph = assert_graph_handout_and_ledger(&bus, epoch, &alpha);
     assert_render_form_parity(&graph);
-    assert_oops_note_exists(&bus, &oops);
     clean(&root, bus);
 }
 

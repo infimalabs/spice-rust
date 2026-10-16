@@ -459,8 +459,8 @@ fn resident_catch_up_pages_two_listeners_from_their_horizons_without_waking_them
     lanes.finish();
 }
 
-/// Commit-driven catch-up ignores authority-neutral task records and scopes a
-/// publication transaction to the room indexed by that transaction.
+/// Commit-driven catch-up scopes a publication transaction to the room indexed
+/// by that transaction.
 #[test]
 fn resident_catch_up_reconciles_only_commit_changed_authority() {
     let lanes = Lanes::new("room-catch-up-commit-scope");
@@ -489,32 +489,6 @@ fn resident_catch_up_reconciles_only_commit_changed_authority() {
     .expect("startup catch-up establishes the horizon");
 
     let task = room.born().expect("fixture room has a birth");
-    let mut note =
-        write(Actor::Operator, lanes.epoch, Producer::CommandDoor).expect("note write starts");
-    note.fact(
-        wire::body::TaskNoted {
-            task: task.clone(),
-            note: "authority-neutral note".to_owned(),
-        },
-        FactCause::Root,
-    )
-    .expect("note fact is valid");
-    let noted = commit(&lanes.bus, note).expect("note commits");
-    assert_eq!(
-        room_catch_up::changes(&lanes.bus, noted).expect("note changes classify"),
-        room_catch_up::Changes::default(),
-        "a task note schedules no room projection"
-    );
-    room_catch_up::reconcile_commit(
-        &lanes.bus,
-        &lanes.paths,
-        &startup.config,
-        &seats,
-        &room_catch_up::changes(&lanes.bus, noted).expect("note changes classify"),
-        &mut diagnostics,
-    )
-    .expect("irrelevant commit is ignored");
-
     let published = append_room_publication(&lanes, &room);
     let mut expected_rooms = BTreeSet::new();
     expected_rooms.insert(task);
