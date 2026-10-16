@@ -47,7 +47,7 @@ pub(super) struct SurfaceConfig {
 }
 
 struct SurfaceLaunch<'a> {
-    app: serve::AppSource,
+    app: serve::canvas::CanvasAssets,
     version: wire::Version,
     binding: AppBinding,
     resident_lock: &'a ResidentLock,
@@ -332,17 +332,18 @@ enum AppSelection {
 }
 
 impl AppSelection {
-    fn resolve(self, repository: &Repository) -> CommandResult<serve::AppSource> {
+    fn resolve(self, repository: &Repository) -> CommandResult<serve::canvas::CanvasAssets> {
         match self {
             Self::Installed(executable) => {
                 spice::install::installed_app_source(repository, &executable)
+                    .map(serve::canvas::CanvasAssets::DevelopmentDirectory)
                     .map_err(installed_app_refusal)
             }
-            Self::Staged => {
-                serve::AppSource::resolve(repository.worktree_root()).map_err(|error| {
+            Self::Staged => serve::AppSource::resolve(repository.worktree_root())
+                .map(serve::canvas::CanvasAssets::DevelopmentDirectory)
+                .map_err(|error| {
                     environment_fault("serve::app-source-invalid", &error.to_string())
-                })
-            }
+                }),
         }
     }
 }

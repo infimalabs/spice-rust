@@ -115,15 +115,44 @@ digest, not on ZIP CRC fields. Owners:
 [`serve/src/canvas/archive.rs`](../../serve/src/canvas/archive.rs) writes and
 admits the archive, and [`xtask/src/app.rs`](../../xtask/src/app.rs) stages it.
 
+The resident serves app routes through one boundary, `CanvasAssets`, with
+exactly two sources. Only a staged `spice up` serves `DevelopmentDirectory`:
+the staged generation directories, hot-swapped as generations publish, behind
+a two-entry generation cache. Every installed resident serves
+`EmbeddedArchive`: the archive linked into its executable, admitted once at
+startup into an index from logical path to the stored gzip slice, the
+inventory MIME type, and a strong ETag naming generation and path. It reads no
+app file from disk. Only HTML members, the shell and renderer documents, are
+inflated, once, to derive their content security policies. Every embedded body
+is the stored slice, sent with `Content-Encoding: gzip`, its exact
+`Content-Length`, and `Vary: Accept-Encoding`. A request whose
+`Accept-Encoding` refuses gzip gets 406. An installed resident holds one
+generation for its lifetime and embeds no predecessor. A route qualified with a
+generation the source does not hold answers 410 Gone, with
+`x-spice-app-generation` naming the served generation. Owners:
+[`serve/src/canvas/assets.rs`](../../serve/src/canvas/assets.rs) and
+[`serve/src/axum.rs`](../../serve/src/axum.rs).
+
 A resident restart keeps the app's last good surface on screen until the new
 session's scope is fully hydrated. A page whose generation the resident no
-longer serves reloads once into the served generation; unsent composer and
-observation drafts travel to the reloaded page through tab-scoped storage, with
-attachment annotations flattened into their image. Only a submission whose
-result is still unknown keeps the stale page in place behind the reload control.
-Owners: [`app/src/runtime/publication.rs`](../../app/src/runtime/publication.rs),
-[`app/src/browser/connection.rs`](../../app/src/browser/connection.rs), and
-[`app/src/browser/draft_handoff.rs`](../../app/src/browser/draft_handoff.rs).
+longer serves reloads once into the served generation. That happens when its
+session against the new resident fails, or when a qualified fetch answers 410:
+
+- the shell's module or wasm before the app starts, caught by the shell's
+  inline loader guard;
+- a renderer document or member, probed when the renderer frame opens and
+  after any renderer failure.
+
+A page with the same app protocol otherwise keeps running with an update
+offer. Unsent composer and observation drafts travel to the reloaded page
+through tab-scoped storage, with attachment annotations flattened into their
+image. Only a submission whose result is still unknown keeps the stale page in
+place behind the reload control. Owners:
+[`app/index.html`](../../app/index.html),
+[`app/src/runtime/publication.rs`](../../app/src/runtime/publication.rs),
+[`app/src/browser/connection.rs`](../../app/src/browser/connection.rs),
+[`app/src/browser/mermaid/service.rs`](../../app/src/browser/mermaid/service.rs),
+and [`app/src/browser/draft_handoff.rs`](../../app/src/browser/draft_handoff.rs).
 
 ## Version identity
 

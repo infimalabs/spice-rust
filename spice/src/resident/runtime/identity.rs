@@ -3,7 +3,7 @@
 use super::*;
 
 pub(super) fn app_version_from_journal(
-    app: &serve::AppSource,
+    app: &serve::canvas::CanvasAssets,
     journal: &journal::Journal,
 ) -> CommandResult<wire::Version> {
     let schema = journal
@@ -12,9 +12,12 @@ pub(super) fn app_version_from_journal(
     app_version(app, schema)
 }
 
-pub(crate) fn app_version(app: &serve::AppSource, journal: u32) -> CommandResult<wire::Version> {
+pub(crate) fn app_version(
+    app: &serve::canvas::CanvasAssets,
+    journal: u32,
+) -> CommandResult<wire::Version> {
     let running = spice::version::running().map_err(Outcome::Fault)?;
-    let generation = app.current_generation().map_err(|error| {
+    let generation = app.generation().map_err(|error| {
         environment_fault("serve::app-generation-unavailable", &error.to_string())
     })?;
     Ok(wire::Version {
@@ -23,6 +26,6 @@ pub(crate) fn app_version(app: &serve::AppSource, journal: u32) -> CommandResult
         wire: wire::WireVersion::CURRENT,
         journal,
         app_protocol: wire::AppProtocolVersion::CURRENT,
-        app: generation.identity().clone(),
+        app: generation,
     })
 }

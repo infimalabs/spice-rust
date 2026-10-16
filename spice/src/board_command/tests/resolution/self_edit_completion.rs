@@ -170,7 +170,7 @@ fn spawn_completion_server(
     bus: Bus,
     epoch: CanonicalUuid,
     capabilities: serve::axum::Capabilities,
-    app: serve::AppSource,
+    app: serve::canvas::CanvasAssets,
     version: wire::Version,
     task: TaskHandle,
     edit_actor: Actor,
@@ -236,7 +236,7 @@ fn spawn_completion_server(
     (endpoint, stop_sender, worker)
 }
 
-fn fixture_app(root: &Path) -> (serve::AppSource, wire::Version) {
+fn fixture_app(root: &Path) -> (serve::canvas::CanvasAssets, wire::Version) {
     const GENERATION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let stage = root.join(serve::APP_STAGE);
     let generation = stage.join(serve::APP_STAGE_GENERATIONS).join(GENERATION);
@@ -253,18 +253,16 @@ fn fixture_app(root: &Path) -> (serve::AppSource, wire::Version) {
         format!("{GENERATION}\n"),
     )
     .expect("fixture app current pointer writes");
-    let app = serve::AppSource::resolve(root).expect("fixture app resolves");
+    let app = serve::canvas::CanvasAssets::DevelopmentDirectory(
+        serve::AppSource::resolve(root).expect("fixture app resolves"),
+    );
     let version = wire::Version {
         product: "1.2.3".parse().expect("fixture product version"),
         binary: wire::Digest::compute(wire::Domain::DistArtifact, b"fixture native"),
         wire: wire::WireVersion::CURRENT,
         journal: journal::SCHEMA_VERSION,
         app_protocol: wire::AppProtocolVersion::CURRENT,
-        app: app
-            .current_generation()
-            .expect("fixture app generation reads")
-            .identity()
-            .clone(),
+        app: app.generation().expect("fixture app generation reads"),
     };
     (app, version)
 }

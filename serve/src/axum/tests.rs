@@ -970,8 +970,10 @@ fn response_body(response: &[u8]) -> &[u8] {
 }
 
 fn response_header<'a>(response: &'a [u8], expected: &str) -> Option<&'a str> {
-    let response = std::str::from_utf8(response).ok()?;
-    let head = response.split_once("\r\n\r\n")?.0;
+    let end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")?;
+    let head = std::str::from_utf8(&response[..end]).ok()?;
     head.lines().skip(1).find_map(|line| {
         let (name, value) = line.split_once(':')?;
         name.eq_ignore_ascii_case(expected).then(|| value.trim())
@@ -1083,7 +1085,9 @@ fn app_worktree_directory_is_removed_during_assertion_unwind() {
 #[tokio::test(flavor = "current_thread")]
 async fn live_server_keeps_serving_an_admitted_generation_from_memory() {
     let fixture = app_worktree();
-    let app = crate::AppSource::resolve(fixture.root()).expect("a complete stage resolves");
+    let app = CanvasAssets::DevelopmentDirectory(
+        crate::AppSource::resolve(fixture.root()).expect("a complete stage resolves"),
+    );
     let (server, _control) = Server::bind_with_capacity(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         Generation::new(epoch(), Capabilities::default(), app_version(&app), app),

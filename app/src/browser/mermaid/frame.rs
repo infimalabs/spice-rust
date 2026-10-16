@@ -16,6 +16,11 @@ const ERROR_UNITS: u32 = 500;
 const IMAGE_PREFIX: &str = "data:image/svg+xml;base64,";
 const PROTOCOL: f64 = 3.0;
 
+/// The renderer document of one app generation.
+pub(super) fn document_route(generation: &str) -> String {
+    format!("/_spice/app/{generation}/renderer-000.html")
+}
+
 pub(super) struct Frame {
     parent: web_sys::Window,
     element: web_sys::HtmlIFrameElement,
@@ -49,7 +54,7 @@ impl Frame {
         ] {
             element.style().set_property(name, value)?;
         }
-        element.set_src(&format!("/_spice/app/{generation}/renderer-000.html"));
+        element.set_src(&document_route(generation));
         let weak = Rc::downgrade(shared);
         let listener = Closure::new(move |event: web_sys::MessageEvent| {
             if let Some(shared) = weak.upgrade() {

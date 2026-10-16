@@ -12,6 +12,39 @@ const BROWSER_AUTH_TOKEN_STORAGE: &str = "spice:app-auth-token:v1";
 /// The served app generation this tab last reloaded toward, so a document that
 /// still cannot load it never reloads again.
 const APP_RELOAD_GENERATION_STORAGE: &str = "spice:app-reload-generation:v1";
+/// The status a generation-qualified app route answers once its generation is
+/// no longer served.
+const GONE: u16 = 410;
+
+thread_local! {
+    /// The mounted surface's unload guard, so a retired-generation answer to
+    /// any app fetch leaves through the same handoff as the socket path.
+    static UNLOAD: RefCell<Option<UnloadGuard>> = const { RefCell::new(None) };
+}
+
+/// Probe one generation-qualified app route after it failed to load. A `410
+/// Gone` names the generation the resident serves in place of the loaded
+/// document's; the tab reloads into it once, drafts handed off.
+pub(in crate::browser) async fn reload_if_retired(route: String) {
+    let probe = Request::get(&route).method(gloo_net::http::Method::HEAD);
+    let Ok(response) = probe.send().await else {
+        return;
+    };
+    let served = response
+        .headers()
+        .get(wire::hello::APP_GENERATION_HEADER)
+        .and_then(|value| value.parse::<wire::Digest>().ok());
+    let Some(served) = served.filter(|_| response.status() == GONE) else {
+        return;
+    };
+    if loaded_app_generation().is_ok_and(|loaded| loaded != served) {
+        UNLOAD.with_borrow(|unload| {
+            if let Some(unload) = unload {
+                reload_into_served_app(&served, unload);
+            }
+        });
+    }
+}
 
 /// Capture the bearer token carried by a remote app opening before the
 /// fragment becomes ordinary route state.
@@ -50,6 +83,7 @@ pub(super) async fn run_surface(
     mut action_wakes: mpsc::Receiver<()>,
 ) {
     let mut data = SurfaceData::default();
+    UNLOAD.set(Some(handles.unload.clone()));
     let mut backoff = crate::reconnect::Backoff::new();
     while active.get() {
         if matches!(&*handles.connection, Connection::Starting) {
@@ -78,6 +112,7 @@ pub(super) async fn run_surface(
         handles.connection.set(Connection::Offline(ended.reason));
         TimeoutFuture::new(delay).await;
     }
+    UNLOAD.set(None);
 }
 
 /// Why one connection ended, and whether it ever became an admitted session.

@@ -9,9 +9,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use ::axum::Router;
-use ::axum::body::{Body, Bytes};
+use ::axum::body::Body;
 use ::axum::extract::{OriginalUri, RawQuery, State};
-use ::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, ETAG, HOST, IF_NONE_MATCH, ORIGIN};
+use ::axum::http::header::{
+    ACCEPT_ENCODING, CACHE_CONTROL, CONTENT_ENCODING, CONTENT_TYPE, ETAG, HOST, IF_NONE_MATCH,
+    ORIGIN, VARY,
+};
 use ::axum::http::{HeaderMap, HeaderValue, StatusCode};
 use ::axum::response::{IntoResponse, Response};
 use ::axum::routing::get;
@@ -21,6 +24,7 @@ use tokio::sync::{Mutex, Notify, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::Discovery;
+use crate::canvas::{CanvasAnswer, CanvasAssets};
 
 mod capabilities;
 mod control;
@@ -72,7 +76,7 @@ struct SurfaceState {
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
     version: wire::Version,
-    app: crate::AppSource,
+    app: CanvasAssets,
     history: history::HistoryLimits,
     admission: Mutex<Admission>,
     admission_changed: watch::Sender<Admission>,
@@ -425,7 +429,7 @@ pub struct Generation {
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
     version: wire::Version,
-    app: crate::AppSource,
+    app: CanvasAssets,
 }
 
 impl Generation {
@@ -435,7 +439,7 @@ impl Generation {
         epoch: wire::CanonicalUuid,
         capabilities: Capabilities,
         version: wire::Version,
-        app: crate::AppSource,
+        app: CanvasAssets,
     ) -> Self {
         Self {
             epoch,
@@ -519,9 +523,9 @@ impl Server {
             ));
         }
         let app_generation = app
-            .current_generation()
+            .generation()
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        if version.app != *app_generation.identity() {
+        if version.app != app_generation {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "app identity disagrees with the current served generation",
@@ -634,9 +638,10 @@ async fn app(
     if socket::admit_asset_headers(&state, &headers, renderer.is_some()).is_err() {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let asset = match state.app.served(uri.path()) {
-        Ok(Some(asset)) => asset,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+    let asset = match state.app.answer(uri.path()) {
+        Ok(CanvasAnswer::Asset(asset)) => asset,
+        Ok(CanvasAnswer::NotFound) => return StatusCode::NOT_FOUND.into_response(),
+        Ok(CanvasAnswer::Gone(served)) => return gone(&served),
         // A new or evicted generation must cross complete admission before it
         // can answer. Any failure here is an answer nobody should cache.
         Err(error) => {
@@ -647,41 +652,43 @@ async fn app(
                 .into_response();
         }
     };
-    let content_type = asset.content_type();
-    let digest = asset.digest();
-    let app_policy = if content_type == "text/html; charset=utf-8" {
-        let policy = if renderer.is_some() {
-            renderer_content_security_policy(asset.bytes())
-        } else {
-            app_content_security_policy(asset.bytes())
-        };
-        match policy {
-            Ok(policy) => Some(policy),
-            Err(message) => {
-                return (StatusCode::SERVICE_UNAVAILABLE, message).into_response();
+    if asset.gzip && !admits_gzip(&headers) {
+        let mut response = StatusCode::NOT_ACCEPTABLE.into_response();
+        response
+            .headers_mut()
+            .insert(VARY, HeaderValue::from_static("accept-encoding"));
+        return response;
+    }
+    let policy = asset
+        .document
+        .as_deref()
+        .map(|html| {
+            if renderer.is_some() {
+                renderer_content_security_policy(html)
+            } else {
+                app_content_security_policy(html)
             }
-        }
-    } else {
-        None
+        })
+        .transpose();
+    let app_policy = match policy {
+        Ok(policy) => policy,
+        Err(message) => return (StatusCode::SERVICE_UNAVAILABLE, message).into_response(),
     };
-    let etag = format!("\"{digest}\"");
-    let mut response = if if_none_match(&headers, &etag) {
+    let mut response = if if_none_match(&headers, &asset.etag) {
         let mut response = Response::new(Body::empty());
         *response.status_mut() = StatusCode::NOT_MODIFIED;
         response
     } else {
-        Response::new(Body::from(Bytes::from_owner(asset.into_shared_bytes())))
+        Response::new(Body::from(asset.body))
     };
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static(content_type));
-    response.headers_mut().insert(
-        ETAG,
-        HeaderValue::from_str(&etag).expect("a canonical digest is an admitted ETag"),
-    );
-    response
-        .headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    let response_headers = response.headers_mut();
+    response_headers.insert(CONTENT_TYPE, HeaderValue::from_static(asset.content_type));
+    response_headers.insert(ETAG, asset.etag);
+    response_headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    if asset.gzip {
+        response_headers.insert(CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        response_headers.insert(VARY, HeaderValue::from_static("accept-encoding"));
+    }
     install_browser_headers(&mut response);
     if let Some(policy) = app_policy {
         response
@@ -697,7 +704,52 @@ async fn app(
     response
 }
 
-fn if_none_match(headers: &HeaderMap, etag: &str) -> bool {
+/// A generation-qualified route this resident no longer serves. The page
+/// reloads once into the generation the header names.
+fn gone(served: &wire::Digest) -> Response {
+    let mut response = StatusCode::GONE.into_response();
+    response.headers_mut().insert(
+        wire::hello::APP_GENERATION_HEADER,
+        HeaderValue::from_str(served.as_str())
+            .expect("the canonical app generation is a valid header value"),
+    );
+    response
+        .headers_mut()
+        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    install_browser_headers(&mut response);
+    response
+}
+
+/// Whether `Accept-Encoding` admits gzip. A request without the header
+/// accepts any coding; an explicit `gzip` entry decides before `*`.
+fn admits_gzip(headers: &HeaderMap) -> bool {
+    if !headers.contains_key(ACCEPT_ENCODING) {
+        return true;
+    }
+    let entries = headers
+        .get_all(ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(|entry| {
+            let mut parts = entry.split(';').map(str::trim);
+            let coding = parts.next()?.to_ascii_lowercase();
+            let accepted = parts
+                .filter_map(|parameter| parameter.strip_prefix("q="))
+                .all(|quality| quality.parse::<f32>().is_ok_and(|quality| quality > 0.0));
+            Some((coding, accepted))
+        })
+        .collect::<Vec<_>>();
+    let decides = |coding: &str| {
+        entries
+            .iter()
+            .find(|(entry, _)| entry == coding)
+            .map(|(_, accepted)| *accepted)
+    };
+    decides("gzip").or_else(|| decides("*")).unwrap_or(false)
+}
+
+fn if_none_match(headers: &HeaderMap, etag: &HeaderValue) -> bool {
     headers
         .get_all(IF_NONE_MATCH)
         .iter()
@@ -705,7 +757,8 @@ fn if_none_match(headers: &HeaderMap, etag: &str) -> bool {
         .flat_map(|value| value.split(','))
         .map(str::trim)
         .any(|candidate| {
-            candidate == "*" || candidate.strip_prefix("W/").unwrap_or(candidate) == etag
+            candidate == "*"
+                || candidate.strip_prefix("W/").unwrap_or(candidate).as_bytes() == etag.as_bytes()
         })
 }
 

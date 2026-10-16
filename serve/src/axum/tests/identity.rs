@@ -2,18 +2,14 @@
 
 use super::*;
 
-pub(super) fn app_version(source: &crate::AppSource) -> wire::Version {
+pub(super) fn app_version(source: &CanvasAssets) -> wire::Version {
     wire::Version {
         product: wire::manifest::ProductVersion::parse("1.2.3").expect("fixture product version"),
         binary: wire::Digest::compute(wire::Domain::DistArtifact, b"fixture native"),
         wire: wire::WireVersion::CURRENT,
         journal: journal::SCHEMA_VERSION,
         app_protocol: wire::AppProtocolVersion::CURRENT,
-        app: source
-            .current_generation()
-            .expect("fixture generation reads")
-            .identity()
-            .clone(),
+        app: source.generation().expect("fixture generation reads"),
     }
 }
 
@@ -33,7 +29,7 @@ pub(super) async fn bind_test_server(
 
 /// One complete lane-built app whose directory lives exactly as long as its test.
 pub(super) struct TestApp {
-    source: crate::AppSource,
+    source: CanvasAssets,
     root: tempfile::TempDir,
 }
 
@@ -44,11 +40,13 @@ impl TestApp {
             .tempdir()
             .expect("fixture temp directory");
         seed_app_generation(root.path(), "test app");
-        let source = crate::AppSource::resolve(root.path()).expect("fixture app resolves");
+        let source = CanvasAssets::DevelopmentDirectory(
+            crate::AppSource::resolve(root.path()).expect("fixture app resolves"),
+        );
         Self { source, root }
     }
 
-    pub(super) fn source(&self) -> crate::AppSource {
+    pub(super) fn source(&self) -> CanvasAssets {
         self.source.clone()
     }
 

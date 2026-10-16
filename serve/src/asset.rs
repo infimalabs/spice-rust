@@ -382,16 +382,19 @@ impl AppSource {
             .cloned())
     }
 
-    /// Identity of the HTML shell this lane build serves.
-    ///
-    /// # Errors
-    ///
-    /// Returns a generation or inventory error if the current shell cannot be
-    /// admitted.
-    pub fn digest(&self) -> Result<wire::Digest, AppSourceError> {
-        self.served("/")?
-            .map(|asset| asset.digest().clone())
-            .ok_or_else(|| AppSourceError::Inventory("the root route is absent".to_owned()))
+    /// Whether this store can still answer routes qualified with `identity`:
+    /// it is cached in memory or its immutable directory remains staged.
+    pub(crate) fn holds(&self, identity: &wire::Digest) -> bool {
+        self.generations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .generations
+            .contains_key(identity)
+            || self
+                .stage
+                .join(APP_STAGE_GENERATIONS)
+                .join(identity.as_str())
+                .is_dir()
     }
 }
 
@@ -502,7 +505,7 @@ impl AppGeneration {
     }
 }
 
-fn generation_route(route: &str) -> Option<(wire::Digest, &str)> {
+pub(crate) fn generation_route(route: &str) -> Option<(wire::Digest, &str)> {
     let rest = route
         .strip_prefix(APP_GENERATION_ROUTE)?
         .strip_prefix('/')?;
@@ -977,10 +980,6 @@ mod tests {
         assert_eq!(
             served.digest(),
             &wire::Digest::compute(wire::Domain::DistArtifact, b"rebuilt")
-        );
-        assert_eq!(
-            source.digest().expect("rebuilt shell digests"),
-            served.digest().clone()
         );
         assert_eq!(served.bytes(), b"rebuilt");
         assert_eq!(
