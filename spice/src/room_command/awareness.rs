@@ -204,6 +204,34 @@ impl fmt::Display for DesignAwareness {
             self.design
         )?;
         write!(formatter, "\n{}", maturity_summary(&self.maturity))?;
+        for head in self.maturity.recent_heads.iter().rev() {
+            write!(
+                formatter,
+                "\nstatement {}: {} asked; {} contributed, {} declined, {} unanswered{}",
+                head.statement,
+                head.requested_lanes.len(),
+                head.requested_contributors(),
+                head.requested_decliners(),
+                head.requested_unanswered(),
+                if head.yield_truncated() {
+                    " (bounded)"
+                } else {
+                    ""
+                },
+            )?;
+        }
+        if self
+            .maturity
+            .recent_heads
+            .iter()
+            .any(|head| head.requested_decliners() > 0)
+        {
+            write!(
+                formatter,
+                "\ndecline clauses: spice room history {}",
+                self.design
+            )?;
+        }
         write!(formatter, "\n{}", self.effect)?;
         for row in &self.page.rows {
             write!(formatter, "\n{row}")?;

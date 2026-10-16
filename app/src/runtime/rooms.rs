@@ -702,6 +702,9 @@ impl RoomProjection {
                     .is_some_and(|body| self.apply_put_aside(fact.seq(), body)),
             ),
             FactKind::RoomLeft => Some(fact.read::<authority::RoomLeft>().is_some_and(|body| {
+                if let Some(maturity) = self.maturity.get_mut(&body.room) {
+                    maturity.observe_leave(&body);
+                }
                 self.insert_event(
                     body.room,
                     body.publication,
