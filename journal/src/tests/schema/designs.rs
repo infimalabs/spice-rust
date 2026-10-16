@@ -83,7 +83,7 @@ fn add(journal: &mut Journal, shape: Shape<'_>) -> TaskStamp {
         priority: None,
         taste: None,
         dependencies,
-        provenance: "task:designs".parse().expect("provenance"),
+        provenance: wire::TaskProvenance::Parentless,
         creation: wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::OperatorActor,
         ),

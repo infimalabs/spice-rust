@@ -12,7 +12,7 @@ fn add_parked(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
         &TaskOopsAdd {
             title: format!("Triage {name}"),
             description: format!("Evidence for {name}"),
-            origin: Some("fixture:wake-claim".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             project: Some("board.test".to_owned()),
         },
     ));

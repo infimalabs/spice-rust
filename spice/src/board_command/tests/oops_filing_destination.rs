@@ -34,7 +34,7 @@ fn file(
         &TaskOopsAdd {
             title: format!("Triage {name}"),
             description: format!("Evidence for {name}"),
-            origin: Some("fixture:oops-destination".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             project: project.map(str::to_owned),
         },
     )

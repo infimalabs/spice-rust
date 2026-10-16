@@ -332,8 +332,8 @@ pub enum TaskRelationKind {
 pub enum TaskRelationNodeRef {
     /// One durable task.
     Task { task: crate::TaskStamp },
-    /// One non-task causal origin.
-    Origin { origin: crate::Origin },
+    /// One non-task cause: a steering directive, document, or operator Draft.
+    Origin { origin: crate::TaskProvenance },
     /// One durable completed review.
     Review {
         task: crate::TaskStamp,
@@ -378,9 +378,8 @@ pub enum TaskRelationNode {
         phase: crate::Phase,
         status: String,
     },
-    Origin {
-        origin: crate::Origin,
-    },
+    /// One non-task cause; a parentless task has no origin node.
+    Origin { origin: crate::TaskProvenance },
     /// One completed review. `phase` and `author` name the most recent
     /// completed phase before it and that phase's author; both are absent when
     /// no phase completed first, as in a flow that begins with review.
@@ -762,7 +761,7 @@ pub struct BoardStatement {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<crate::rooms::QuestionResultRef>,
     /// Creation provenance, immutable across statement revisions.
-    pub provenance: crate::Origin,
+    pub provenance: crate::TaskProvenance,
     /// Creation-time transcript authority, immutable across statement revisions.
     pub creation: crate::body::TaskCreationContext,
     /// Fact that established this statement revision.

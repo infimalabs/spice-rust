@@ -18,7 +18,9 @@
 /// facts and their partition head before strict fact readers admit them.
 /// Schema 67 lifts task priority and taste-review standing out of statement
 /// tags into typed statement fields, which an older release would drop.
-pub const SCHEMA_VERSION: u32 = 67;
+/// Schema 68 closes task statement provenance and resolves every retained
+/// spelling into it.
+pub const SCHEMA_VERSION: u32 = 68;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
@@ -88,8 +90,8 @@ pub mod crossing {
         EnvironmentRequirements, Fact, FactKind, FindingHead, Instant, JournalCursor,
         LaneResidency, LaneSession, LeaseHead, OccupantAddress, Origin, Packed, Phase, Producer,
         ResidencyHead, ResidentState, SeatAddress, Seq, SteeringHead, TapeLocus, TaskFiling,
-        TaskHandle, TaskHead, TaskStamp, TranscriptSourceHead, TranscriptStreamKey, TrustHead,
-        TrustState, WireVersion, Witness, WitnessHead, WorkflowHead,
+        TaskHandle, TaskHead, TaskProvenance, TaskStamp, TranscriptSourceHead, TranscriptStreamKey,
+        TrustHead, TrustState, WireVersion, Witness, WitnessHead, WorkflowHead,
     };
 }
 

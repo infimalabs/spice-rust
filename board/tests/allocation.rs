@@ -140,7 +140,7 @@ fn fixture() -> Journal {
             )
             .expect("registered task fact");
         let statement_task = task.clone();
-        let statement_origin = origin.clone();
+        let statement_origin = wire::TaskProvenance::Task(task.clone());
         write.task_head(fact, move |position| TaskHead {
             preparation: None,
             authorization: None,

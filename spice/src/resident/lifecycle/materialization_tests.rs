@@ -761,7 +761,7 @@ fn seed_write_seated(
             FactCause::Root,
         )
         .expect("task fact builds");
-    attach_task_heads(&mut write, added, task, origin, phase, Vec::new());
+    attach_task_heads(&mut write, added, task, phase, Vec::new());
     let seated = write
         .fact(body::UpSeated { epoch: epoch() }, FactCause::Pending(added))
         .expect("resident fact builds");
@@ -832,7 +832,7 @@ fn ready_task_write(moment: &str, at: Instant) -> JournalWrite {
             FactCause::Root,
         )
         .expect("ready task fact builds");
-    attach_task_heads(&mut write, added, task, origin, phase, Vec::new());
+    attach_task_heads(&mut write, added, task, phase, Vec::new());
     write
 }
 
@@ -875,6 +875,7 @@ fn design_write(at: Instant) -> JournalWrite {
         )
         .expect("Design fact builds");
     let statement_task = born.clone();
+    let statement_provenance = wire::TaskProvenance::Task(born.clone());
     write.task_head(added, move |position| TaskHead {
         preparation: None,
         authorization: None,
@@ -892,7 +893,7 @@ fn design_write(at: Instant) -> JournalWrite {
         priority: None,
         taste: None,
         dependencies: Vec::new(),
-        provenance: origin,
+        provenance: statement_provenance,
         creation,
         revision: position,
     });
@@ -1115,7 +1116,6 @@ fn invalid_late_suffix() -> JournalWrite {
         &mut write,
         added,
         invalid_task,
-        origin,
         phase,
         Vec::new(),
         "outside.bad-segment",
@@ -1127,23 +1127,22 @@ fn attach_task_heads(
     write: &mut JournalWrite,
     added: PendingFact,
     task: TaskStamp,
-    origin: Origin,
     phase: Phase,
     dependencies: Vec<TaskStamp>,
 ) {
-    attach_task_heads_with_project(write, added, task, origin, phase, dependencies, PROJECT);
+    attach_task_heads_with_project(write, added, task, phase, dependencies, PROJECT);
 }
 
 fn attach_task_heads_with_project(
     write: &mut JournalWrite,
     added: PendingFact,
     task: TaskStamp,
-    origin: Origin,
     phase: Phase,
     dependencies: Vec<TaskStamp>,
     project: &'static str,
 ) {
     let statement_task = task.clone();
+    let provenance = wire::TaskProvenance::Task(task.clone());
     write.task_head(added, move |position| TaskHead {
         preparation: None,
         authorization: None,
@@ -1161,7 +1160,7 @@ fn attach_task_heads_with_project(
         priority: None,
         taste: None,
         dependencies,
-        provenance: origin,
+        provenance,
         creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: position,
     });

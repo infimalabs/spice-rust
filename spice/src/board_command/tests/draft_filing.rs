@@ -10,7 +10,7 @@ fn draft_add(name: &str, intent: Option<wire::TaskIntent>, acceptance: &[&str]) 
         description: Some(format!("Context for {name}")),
         acceptance: acceptance.iter().map(|item| (*item).to_owned()).collect(),
         requirements: wire::EnvironmentRequirements::default(),
-        origin: Some("fixture:draft".parse().expect("fixture origin")),
+        origin: Some(fixture_origin()),
         flow: None,
         depends: Vec::new(),
         intent,

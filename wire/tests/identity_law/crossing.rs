@@ -369,7 +369,7 @@ fn cover_task_heads() {
                 priority: None,
                 taste: None,
                 dependencies: Vec::new(),
-                provenance: "repo:genesis".parse().expect("origin"),
+                provenance: wire::TaskProvenance::Parentless,
                 creation: body::TaskCreationContext::unavailable(
                     body::TaskCreationUnavailable::OperatorActor,
                 ),

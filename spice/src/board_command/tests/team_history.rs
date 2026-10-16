@@ -107,7 +107,7 @@ fn team_history_follows_the_claim_lane_not_the_winning_principal() {
     let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     let task = super::read_scope::push_terminal_task(
         &mut write,
-        &origin,
+        &wire::TaskProvenance::Parentless,
         &body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::OperatorActor),
         super::read_scope::TerminalTaskFixture {
             micros: OPERATOR_CLAIMED_MICROS,

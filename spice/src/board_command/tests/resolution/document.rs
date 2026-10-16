@@ -802,7 +802,10 @@ fn assert_initial_document(bus: &Bus, applied: &AppliedDocument) {
         .parse()
         .expect("document digest forms an origin");
     for task in &applied.answer.touched {
-        assert_eq!(at(&applied.board, task).statement.body.provenance, causal);
+        assert_eq!(
+            at(&applied.board, task).statement.body.provenance.origin(),
+            Some(causal.clone())
+        );
         assert_eq!(creation_fact_origin(bus, task), causal);
     }
     assert!(

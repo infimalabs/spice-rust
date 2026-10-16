@@ -1331,27 +1331,38 @@ pub(super) fn task_origin(task: &wire::TaskStamp) -> Result<wire::Origin, Outcom
     })
 }
 
-pub(super) fn normalize_task_origin(
-    origin: wire::Origin,
-) -> Result<wire::Origin, Outcome<CommandAnswer>> {
-    let Some(identity) = origin.as_str().strip_prefix("task:") else {
-        return Ok(origin);
-    };
-    let born = match identity.parse::<wire::TaskStamp>() {
-        Ok(born) => Ok(born),
-        Err(stamp_error) => identity
-            .parse::<TaskHandle>()
-            .map_err(|handle_error| format!("{stamp_error}; {handle_error}"))
-            .and_then(|handle| handle.born().map_err(|error| error.to_string())),
-    };
-    let born = born.map_err(|error| {
-        refusal(
-            "task::origin-invalid",
-            Some(error.to_string()),
-            "name a task origin carrying one canonical birth stamp",
-        )
-    })?;
-    task_origin(&born)
+/// The typed cause of one task-creation transaction and the envelope origin
+/// that cause spells for every fact the transaction writes.
+#[derive(Debug, Clone)]
+pub(super) struct CreationCause {
+    pub(super) provenance: wire::TaskProvenance,
+    pub(super) origin: wire::Origin,
+}
+
+impl CreationCause {
+    fn of(provenance: wire::TaskProvenance) -> Result<Self, Outcome<CommandAnswer>> {
+        let origin = provenance.origin().ok_or_else(|| {
+            protocol_fault(
+                "task::origin-parentless",
+                "task creation resolved a parentless cause, which no creation path mints",
+            )
+        })?;
+        Ok(Self { provenance, origin })
+    }
+}
+
+/// Admit an authored creation origin: a steering directive or a parent task.
+pub(super) fn authored_provenance(
+    origin: &wire::Origin,
+) -> Result<wire::TaskProvenance, Outcome<CommandAnswer>> {
+    wire::TaskProvenance::authored(origin.as_str()).map_err(|error| {
+        let reason = if error.canonical().is_some() {
+            "task::origin-noncanonical"
+        } else {
+            "task::origin-invalid"
+        };
+        refusal(reason, Some(origin.to_string()), &error.to_string())
+    })
 }
 
 /// Resolve the causal realm for one task-creation transaction.
@@ -1359,17 +1370,17 @@ pub(super) fn normalize_task_origin(
 /// Authored provenance wins because it is how an inline steering capture names
 /// its exact `ack:` directive. Otherwise the actor's one active claim is the
 /// parent work that caused the creation. Typed system routes may finally name
-/// an intrinsic cause they have already proved, such as a gate report or
-/// authored-document digest. Dependency edges never participate: scheduling
-/// order and creation causality are independent facts.
+/// an intrinsic cause they have already proved, such as a reviewed parent,
+/// an authored-document digest, or an operator Draft. Dependency edges never
+/// participate: scheduling order and creation causality are independent facts.
 pub(super) fn resolve_creation_origin(
     authored: Option<&wire::Origin>,
     actor: &Actor,
     snapshot: &ValidatedSnapshot,
-    intrinsic: Option<wire::Origin>,
-) -> Result<wire::Origin, Outcome<CommandAnswer>> {
+    intrinsic: Option<wire::TaskProvenance>,
+) -> Result<CreationCause, Outcome<CommandAnswer>> {
     if let Some(origin) = authored {
-        return normalize_task_origin(origin.clone());
+        return CreationCause::of(authored_provenance(origin)?);
     }
     let mut held = snapshot.entries.iter().filter(|entry| {
         entry.claim().is_some_and(|claim| {
@@ -1383,10 +1394,10 @@ pub(super) fn resolve_creation_origin(
                 "one actor holds more than one active claim at task creation",
             ));
         }
-        return task_origin(parent.born());
+        return CreationCause::of(wire::TaskProvenance::Task(parent.born().clone()));
     }
-    if let Some(origin) = intrinsic {
-        return Ok(origin);
+    if let Some(provenance) = intrinsic {
+        return CreationCause::of(provenance);
     }
     Err(refusal(
         "task::origin-required",

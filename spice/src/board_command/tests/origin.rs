@@ -287,9 +287,15 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
     let causal = task_origin(&parent.born().expect("parent handle carries a birth stamp"))
         .expect("parent origin");
     let current = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&current, &parent).statement.body.provenance, ack);
+    assert_eq!(
+        at(&current, &parent).statement.body.provenance.origin(),
+        Some(ack.clone())
+    );
     assert_eq!(creation_fact_origin(&bus, &parent), ack);
-    assert_eq!(at(&current, &child).statement.body.provenance, causal);
+    assert_eq!(
+        at(&current, &child).statement.body.provenance.origin(),
+        Some(causal.clone())
+    );
     assert_eq!(
         at(&current, &child).statement.body.creation,
         expected_creation
@@ -705,7 +711,7 @@ fn assert_rendered_claim_steering(rendered: &str, holder: CanonicalUuid) {
         .lines()
         .filter_map(|line| line.strip_prefix("origin_steering key "))
         .collect::<Vec<_>>();
-    assert_eq!(keys, ["1kLGp2N2", "1kLGp2N7"]);
+    assert_eq!(keys, ["fixtures", "1kLGp2N2", "1kLGp2N7"]);
     assert_eq!(
         rendered
             .matches("origin_steering_text:\nPreserve this directive\n")
@@ -769,13 +775,14 @@ fn task_show_and_review_context_include_only_uncaptured_claim_steering() {
             .map(|row| (row.kind, row.key.as_str()))
             .collect::<Vec<_>>(),
         [
+            (wire::FactKind::TaskAdded, "fixtures"),
             (wire::FactKind::SteerAcked, "1kLGp2N2"),
             (wire::FactKind::SteerAcked, "1kLGp2N7")
         ],
         "only uncaptured operator steering acknowledged by the holder joins the task"
     );
     let task_shown = rendered_task(&answer, &held, Some(context));
-    let (first, third) = (acknowledgments[0].position, acknowledgments[1].position);
+    let (first, third) = (acknowledgments[1].position, acknowledgments[2].position);
     assert!(task_shown.contains(&format!(
         "acknowledgment ack:1kLGp2N2 steer::acked@{first}\n\
          acknowledgment ack:1kLGp2N7 steer::acked@{third}\n"

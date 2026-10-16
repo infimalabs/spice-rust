@@ -266,7 +266,7 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
         priority: None,
         taste: None,
         dependencies: Vec::new(),
-        provenance: "task:claim-index-scale".parse().expect("scale provenance"),
+        provenance: wire::TaskProvenance::Parentless,
         creation: wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::OperatorActor,
         ),

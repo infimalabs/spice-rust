@@ -22,7 +22,7 @@ fn add_planning(
             description: None,
             acceptance: vec!["The declared planning deliverable is supported".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
-            origin: Some("fixture:planning".parse().expect("origin")),
+            origin: Some(fixture_origin()),
             flow: flow.map(str::to_owned),
             depends: Vec::new(),
             intent: Some(intent),
@@ -117,7 +117,7 @@ fn declared_planning_defaults_give_each_purpose_its_flow() {
                 description: None,
                 acceptance: vec!["The design is supported".to_owned()],
                 requirements: wire::EnvironmentRequirements::default(),
-                origin: Some("fixture:planning".parse().expect("origin")),
+                origin: Some(fixture_origin()),
                 flow: Some(flow.to_owned()),
                 depends: Vec::new(),
                 intent: Some(wire::TaskIntent::Design),
@@ -170,7 +170,7 @@ fn plan_intake_releases_its_claim_into_a_passive_design() {
             description: None,
             acceptance: vec!["The output is executable".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
-            origin: Some("fixture:planning".parse().expect("origin")),
+            origin: Some(fixture_origin()),
             flow: Some("todo".to_owned()),
             depends: Vec::new(),
             intent: None,
@@ -500,7 +500,7 @@ fn atomic_recovery_cannot_create_a_declared_planning_task() {
             description: None,
             acceptance: vec!["The recovered behavior is implemented".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
-            origin: Some("fixture:planning".parse().expect("origin")),
+            origin: Some(fixture_origin()),
             flow: None,
             depends: Vec::new(),
             intent: Some(wire::TaskIntent::Plan),
@@ -698,7 +698,7 @@ fn add_associated(
         acceptance: vec!["The executable contract supports the requested behavior".to_owned()],
         requirements: wire::EnvironmentRequirements::default(),
         origin: if actor == Actor::Operator {
-            Some("fixture:planning".parse().expect("origin"))
+            Some(fixture_origin())
         } else {
             None
         },

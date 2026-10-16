@@ -1,7 +1,7 @@
 use board::Entry;
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Instant, LeaseHead, Origin, Phase, Seq,
-    TaskHead, TaskStamp, WorkflowHead,
+    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Instant, LeaseHead, Phase, Seq, TaskHead,
+    TaskStamp, WorkflowHead,
 };
 
 fn stamp(text: &str) -> TaskStamp {
@@ -81,7 +81,7 @@ fn statement(name: &str) -> TaskHead {
         priority: None,
         taste: None,
         dependencies: Vec::new(),
-        provenance: "task:BOARD-root".parse::<Origin>().expect("origin"),
+        provenance: wire::TaskProvenance::Task(stamp(name)),
         creation: wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::SpiceActor,
         ),

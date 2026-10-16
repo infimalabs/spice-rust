@@ -660,7 +660,7 @@ struct PreparedReview {
     source: body::SourceBoundary,
     record: ReviewRecord,
     statement: TaskHead,
-    origin: wire::Origin,
+    origin: CreationCause,
     git: Option<body::GitBoundary>,
     creation: Option<TaskCreationCapture>,
 }
@@ -716,7 +716,7 @@ fn prepare_review(
         note,
         followups: review_followups(review, verdict, &statement),
     };
-    let parent = task_origin(entry.born())?;
+    let parent = wire::TaskProvenance::Task(entry.born().clone());
     let origin = resolve_creation_origin(None, command.actor(), &snapshot, Some(parent))?;
     let git = publish_task_boundary(repository, &snapshot, command, entry)?;
     let creation = review_followup_creation(bus, command, &snapshot, review)?;
@@ -793,7 +793,7 @@ fn commit_review(
     } = prepared;
     let mut write = JournalWrite::new(
         command.actor().clone(),
-        origin.clone(),
+        origin.origin.clone(),
         at,
         Producer::CommandDoor,
     );

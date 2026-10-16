@@ -245,12 +245,10 @@ fn render_scope(view: View, entries: &[Entry], reviews: &[ReviewEdge], live_only
     match view {
         View::Origin => {
             for entry in ordered.into_iter().filter(visible) {
-                writeln!(
-                    text,
-                    "{} -> {}",
-                    entry.statement().provenance,
-                    entry.handle()
-                )
+                match &entry.statement().provenance {
+                    wire::TaskProvenance::Parentless => writeln!(text, "{}", entry.handle()),
+                    provenance => writeln!(text, "{provenance} -> {}", entry.handle()),
+                }
                 .expect("String writes are infallible");
             }
         }

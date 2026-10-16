@@ -9,11 +9,7 @@ fn dependent_add(dependencies: Vec<TaskHandle>, flow: Option<&str>) -> TaskAdd {
         description: None,
         acceptance: Vec::new(),
         requirements: wire::EnvironmentRequirements::default(),
-        origin: Some(
-            "fixture:task-creation-flow"
-                .parse()
-                .expect("fixture origin"),
-        ),
+        origin: Some(fixture_origin()),
         flow: flow.map(str::to_owned),
         depends: dependencies,
         claim: false,

@@ -1143,7 +1143,6 @@ fn seed_write_with_lanes(authority: &Authority, lanes: Vec<LaneResidency>) -> Jo
         &mut write,
         authority,
         phase,
-        origin,
         SeedFacts { added, won, seated },
         lanes,
     );
@@ -1154,13 +1153,12 @@ fn attach_heads(
     write: &mut JournalWrite,
     authority: &Authority,
     phase: Phase,
-    origin: Origin,
     facts: SeedFacts,
     lanes: Vec<LaneResidency>,
 ) {
     let SeedFacts { added, won, seated } = facts;
-    let statement_origin = origin;
     let statement_task = authority.born();
+    let statement_origin = wire::TaskProvenance::Task(authority.born());
     let statement_phase = phase.clone();
     write.task_head(added, move |position| TaskHead {
         preparation: None,

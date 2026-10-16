@@ -26,7 +26,7 @@ pub(super) fn add_oops(
         &TaskOopsAdd {
             title: title.to_owned(),
             description: title.to_owned(),
-            origin: Some("fixture:oops".parse().expect("fixture origin")),
+            origin: Some(fixture_origin()),
             project: Some("board.test".to_owned()),
         },
     ));
@@ -434,9 +434,12 @@ fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
             && task.statement.body.project == "board.test"
             && task.statement.body.filing.is_oops()
     }));
-    let expected: wire::Origin = "fixture:oops".parse().expect("fixture origin");
+    let expected = fixture_origin();
     for task in [operator_oops, lane_oops] {
-        assert_eq!(at(&answer, &task).statement.body.provenance, expected);
+        assert_eq!(
+            at(&answer, &task).statement.body.provenance.origin(),
+            Some(expected.clone())
+        );
         assert_eq!(creation_fact_origin(&bus, &task), expected);
     }
     clean(&root, bus);
@@ -509,7 +512,7 @@ fn assert_forged_hidden_route_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &Ac
                 &TaskOopsAdd {
                     title: "forged hidden route".to_owned(),
                     description: "caller-selected hidden project must not cross".to_owned(),
-                    origin: Some("fixture:oops".parse().expect("fixture origin")),
+                    origin: Some(fixture_origin()),
                     project: Some(project.to_owned()),
                 },
             );

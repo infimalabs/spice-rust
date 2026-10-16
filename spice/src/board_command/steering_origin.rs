@@ -1,17 +1,14 @@
 use super::*;
 
-pub(super) fn task_steering_origin_token(origin: &wire::Origin) -> Option<&str> {
-    origin.as_str().strip_prefix("ack:")
-}
-
 /// Every distinct steering key on one task record: the task's own origin
 /// first, then each other key in the order its first carrying fact landed.
 pub(super) fn task_acknowledgment_keys<'a>(
-    origin: &'a wire::Origin,
+    origin: &'a wire::TaskProvenance,
     acknowledgments: &'a [wire::intent::TaskAcknowledgment],
 ) -> Vec<&'a str> {
     let mut keys = Vec::new();
-    for key in task_steering_origin_token(origin)
+    for key in origin
+        .steering_key()
         .into_iter()
         .chain(acknowledgments.iter().map(|row| row.key.as_str()))
     {
@@ -35,7 +32,7 @@ pub(super) fn steering_origins(
             continue;
         }
         let statement = heads.statement().body();
-        if let Some(key) = task_steering_origin_token(&statement.provenance) {
+        if let Some(key) = statement.provenance.steering_key() {
             origins
                 .entry(key.to_owned())
                 .or_default()
@@ -93,7 +90,8 @@ pub(super) fn steering_during_claims(
                 }
             }
             wire::FactKind::TaskAdded => {
-                if let Some(key) = task_steering_origin_token(&envelope.origin)
+                if let Ok(origin) = envelope.origin.as_str().parse::<wire::TaskProvenance>()
+                    && let Some(key) = origin.steering_key()
                     && let Some(task) = fact_task(envelope)
                 {
                     captured.insert(key.to_owned(), task);
