@@ -505,13 +505,14 @@ fn harness_tools_preview_the_target_they_act_on() {
 /// id stay beside it so the line still correlates with the job it names.
 ///
 /// Updates repeat no intent, so the call's carries through each update and
-/// into the result, which append their state once. A progress update instead
-/// leads with its latest output row so narrow status bars preserve the result;
-/// its intent and operation remain as trailing context. A call without an
-/// intent keeps the operation and id, and only `job` changes: other tools'
-/// typed intents leave their previews as they were.
+/// into the result, which append their state once. A progress update puts its
+/// latest output row right after the tool's name, so narrow status bars
+/// preserve the result and it still reads as that tool's output; the intent
+/// and operation remain as trailing context. A call without an intent keeps
+/// the operation and id, and only `job` changes: other tools' typed intents
+/// leave their previews as they were.
 #[test]
-fn a_job_call_keeps_its_intent_and_leads_progress_updates_with_their_output() {
+fn a_job_call_keeps_its_intent_and_names_its_tool_before_progress_output() {
     let mut previews = CallPreviews::default();
     let job = |intent: Option<&str>| listen::ToolMoment::Call {
         name: "job".to_owned(),
@@ -547,11 +548,20 @@ fn a_job_call_keeps_its_intent_and_leads_progress_updates_with_their_output() {
             &tool("call-1", update("job", &progress)),
             &mut previews
         ),
-        "cargo tests passed — job: Waiting for the gate (wait dVW6Zkf0h)"
+        "job: cargo tests passed — Waiting for the gate (wait dVW6Zkf0h)"
     );
     assert_eq!(
         activity(lane(1), &tool("call-1", succeeded()), &mut previews),
         "job: Waiting for the gate (wait dVW6Zkf0h) succeeded"
+    );
+    let unnamed = activity(
+        lane(1),
+        &tool("call-3", update("", &progress)),
+        &mut previews,
+    );
+    assert!(
+        unnamed.starts_with("call-3: cargo tests passed"),
+        "{unnamed}"
     );
 
     for intent in [None, Some(" \n ")] {
