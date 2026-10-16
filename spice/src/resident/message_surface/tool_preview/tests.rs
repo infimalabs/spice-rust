@@ -508,9 +508,10 @@ fn harness_tools_preview_the_target_they_act_on() {
 /// into the result, which append their state once. A progress update puts its
 /// latest output row right after the tool's name, so narrow status bars
 /// preserve the result and it still reads as that tool's output; the intent
-/// and operation remain as trailing context. A call without an intent keeps
-/// the operation and id, and only `job` changes: other tools' typed intents
-/// leave their previews as they were.
+/// and operation remain as trailing context. An update with no recognizable
+/// tool name keeps its output first. A call without an intent keeps the
+/// operation and id, and only `job` changes: other tools' typed intents leave
+/// their previews as they were.
 #[test]
 fn a_job_call_keeps_its_intent_and_names_its_tool_before_progress_output() {
     let mut previews = CallPreviews::default();
@@ -559,9 +560,9 @@ fn a_job_call_keeps_its_intent_and_names_its_tool_before_progress_output() {
         &tool("call-3", update("", &progress)),
         &mut previews,
     );
-    assert!(
-        unnamed.starts_with("call-3: cargo tests passed"),
-        "{unnamed}"
+    assert_eq!(
+        unnamed, "cargo tests passed — call-3: content[1]",
+        "an unnamed update keeps leading with its output"
     );
 
     for intent in [None, Some(" \n ")] {
