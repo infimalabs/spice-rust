@@ -118,7 +118,7 @@ pub(super) fn activity(
             );
             progress.map_or_else(
                 || flatten(&format!("{preview} update")),
-                |progress| flatten(&format!("{progress} — {preview}")),
+                |progress| flatten(&progress_line(name, &tool.call_id, &preview, &progress)),
             )
         }
         listen::ToolMoment::Result(result) => {
@@ -133,6 +133,24 @@ pub(super) fn activity(
             )
         }
     }
+}
+
+/// A progress update's line: the short prefix naming the tool, then its
+/// latest output, then the call's remaining context, so a narrow status bar
+/// cuts the context before the output and the output still reads as that
+/// tool's.
+fn progress_line(name: &str, call_id: &str, preview: &str, progress: &str) -> String {
+    let prefix = preview_prefix(name, call_id);
+    let context = match preview.strip_prefix(prefix.as_str()) {
+        Some(rest) if rest.starts_with(": ") => &rest[": ".len()..],
+        // Only the preview's completion words follow the prefix.
+        Some(rest) if rest.is_empty() || rest.starts_with(' ') => "",
+        _ => preview,
+    };
+    if context.is_empty() {
+        return format!("{prefix}: {progress}");
+    }
+    format!("{prefix}: {progress} — {context}")
 }
 
 /// A call's typed intent on one line, absent when it says nothing.
@@ -194,8 +212,7 @@ fn reads_steering_attachment(lane: CanonicalUuid, arguments: &str) -> bool {
 }
 
 fn identified_preview(name: &str, arguments: &str, intent: Option<&str>, call_id: &str) -> String {
-    let normalized = normalized_name(name);
-    if normalized.is_empty() || normalized.eq_ignore_ascii_case("tool") {
+    if unnamed(&normalized_name(name)) {
         return named_preview(
             &event_identity(call_id),
             &flatten(&argument_preview(arguments)),
@@ -203,6 +220,20 @@ fn identified_preview(name: &str, arguments: &str, intent: Option<&str>, call_id
         );
     }
     ordinary_call_preview(name, arguments, intent)
+}
+
+/// The short prefix a call's lines open with: its tool's name, or its event
+/// identity where the harness names no recognizable tool.
+fn preview_prefix(name: &str, call_id: &str) -> String {
+    let normalized = normalized_name(name);
+    if unnamed(&normalized) {
+        return event_identity(call_id);
+    }
+    normalized
+}
+
+fn unnamed(normalized: &str) -> bool {
+    normalized.is_empty() || normalized.eq_ignore_ascii_case("tool")
 }
 
 fn event_identity(call_id: &str) -> String {
