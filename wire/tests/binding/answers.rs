@@ -61,6 +61,8 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
           "acceptance": ["the row decodes", "the row re-encodes unchanged"],
           "project": "wire.binding",
           "tags": ["binding"],
+          "priority": "high",
+          "taste": "prepended",
           "dependencies": ["1kKRRsDQ"],
           "provenance": "task:1kKRRsDP",
           "creation": { "kind": "unavailable", "reason": "operator-actor" },

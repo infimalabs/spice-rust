@@ -907,8 +907,7 @@ fn task_list_fixture(
         .expect("first row")
         .statement
         .body
-        .tags
-        .push("priority:medium".to_owned());
+        .priority = Some(wire::TaskPriority::Medium);
     answer
         .tasks
         .iter_mut()

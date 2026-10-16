@@ -168,6 +168,8 @@ fn task_with_intent(
                 project: "rooms".to_owned(),
                 filing: wire::TaskFiling::Filed,
                 tags: Vec::new(),
+                priority: None,
+                taste: None,
                 depends: Vec::new(),
                 flow: flow.clone(),
                 phase: current.clone(),
@@ -194,6 +196,8 @@ fn task_with_intent(
         project: "rooms".to_owned(),
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
+        priority: None,
+        taste: None,
         dependencies: Vec::new(),
         provenance: "task:rooms".parse().expect("provenance"),
         creation: wire::body::TaskCreationContext::unavailable(

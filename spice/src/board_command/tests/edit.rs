@@ -587,16 +587,16 @@ fn statement_head(bus: &Bus, task: &TaskHandle) -> Positioned<TaskHead> {
     positioned(heads.statement())
 }
 
-/// Priority tags carried by the current statement, in stored order.
-fn priority_tags(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> Vec<String> {
+/// Priority the current statement declares.
+fn declared_priority(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    task: &TaskHandle,
+) -> Option<wire::TaskPriority> {
     at(&board(bus, epoch, Actor::Operator), task)
         .statement
         .body
-        .tags
-        .iter()
-        .filter(|tag| tag.starts_with(board::PRIORITY_TAG_PREFIX))
-        .cloned()
-        .collect()
+        .priority
 }
 
 /// A corrected priority moves the allocator's ranking of the task.
@@ -679,9 +679,7 @@ fn a_corrected_priority_moves_the_allocator_ranking_off_the_filed_order() {
         first.to_string(),
     );
 
-    // A second correction of the same task replaces its declaration rather
-    // than adding one: two priority tags would let the allocator keep
-    // scoring the stronger one it already stored.
+    // A second correction of the same task replaces its declaration.
     assert_eq!(
         edited_status(correct(
             &bus,
@@ -695,9 +693,8 @@ fn a_corrected_priority_moves_the_allocator_ranking_off_the_filed_order() {
         "edited"
     );
     assert_eq!(
-        priority_tags(&bus, epoch, &first),
-        vec!["priority:none".to_owned()],
-        "a corrected task carries exactly one priority declaration",
+        declared_priority(&bus, epoch, &first),
+        Some(wire::TaskPriority::None),
     );
     assert_eq!(
         allocated(&bus, epoch, &lane)
@@ -748,11 +745,10 @@ fn a_priority_the_allocator_does_not_score_is_refused() {
         before.position,
         "a refused priority must not cost a revision",
     );
-    assert!(priority_tags(&bus, epoch, &task).is_empty());
+    assert_eq!(declared_priority(&bus, epoch, &task), None);
     assert!(edit_facts(&bus, &task).is_empty());
 
-    // The same word with the case a caller is likely to type is admitted,
-    // and reaches the tag in the one spelling the allocator scores.
+    // The same word with the case a caller is likely to type is admitted.
     assert_eq!(
         edited_status(correct(
             &bus,
@@ -766,19 +762,18 @@ fn a_priority_the_allocator_does_not_score_is_refused() {
         "edited"
     );
     assert_eq!(
-        priority_tags(&bus, epoch, &task),
-        vec!["priority:high".to_owned()],
-        "an authored priority is normalized before it is stored",
+        declared_priority(&bus, epoch, &task),
+        Some(wire::TaskPriority::High),
     );
 
     // Every letter the board renders is a spelling the door takes back, so
     // an agent correcting the row it just read does not have to translate.
     for (letter, stored) in [
-        ("C", "priority:critical"),
-        ("h", "priority:high"),
-        ("M", "priority:medium"),
-        ("L", "priority:low"),
-        ("N", "priority:none"),
+        ("C", wire::TaskPriority::Critical),
+        ("h", wire::TaskPriority::High),
+        ("M", wire::TaskPriority::Medium),
+        ("L", wire::TaskPriority::Low),
+        ("N", wire::TaskPriority::None),
     ] {
         assert_eq!(
             edited_status(correct(
@@ -793,7 +788,7 @@ fn a_priority_the_allocator_does_not_score_is_refused() {
             "edited",
             "the board prints {letter}, so the door has to take it",
         );
-        assert_eq!(priority_tags(&bus, epoch, &task), vec![stored.to_owned()]);
+        assert_eq!(declared_priority(&bus, epoch, &task), Some(stored));
     }
 }
 
@@ -1003,7 +998,8 @@ fn a_priority_or_project_correction_records_its_revision_and_editor() {
     // recorded revisions point at.
     let corrected = statement_head(&bus, &task);
     assert!(corrected.position > filed.position);
-    assert_eq!(corrected.body.tags, vec!["priority:critical".to_owned()]);
+    assert_eq!(corrected.body.priority, Some(wire::TaskPriority::Critical));
+    assert!(corrected.body.tags.is_empty());
     assert_eq!(corrected.body.project, "rim.elsewhere");
     assert_eq!(
         corrected.body.title, filed.body.title,

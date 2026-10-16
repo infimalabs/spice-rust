@@ -677,6 +677,8 @@ mod tests {
                     project: "canvas.work".to_owned(),
                     filing: wire::TaskFiling::Filed,
                     tags: Vec::new(),
+                    priority: None,
+                    taste: None,
                     dependencies: dependencies.iter().map(|value| stamp(*value)).collect(),
                     provenance: "ack:direction".parse().expect("fixture origin"),
                     creation: wire::body::TaskCreationContext::unavailable(

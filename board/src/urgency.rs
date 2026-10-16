@@ -1,4 +1,4 @@
-use dialect::Priority;
+use wire::TaskPriority;
 
 use crate::task::Entry;
 
@@ -24,42 +24,7 @@ impl Urgency {
 }
 
 pub(crate) fn declared_priority(entry: &Entry) -> i64 {
-    entry
-        .statement()
-        .tags
-        .iter()
-        .filter_map(|tag| priority_from_tag(tag))
-        .map(priority_score)
-        .max()
-        .unwrap_or(0)
-}
-
-/// The prefix every priority tag carries on the statement.
-pub const PRIORITY_TAG_PREFIX: &str = "priority:";
-
-/// Read one declared priority off a statement tag, which may not be one.
-///
-/// Priority reaches a task as a statement tag rather than a workflow field, so
-/// a spelling this refuses is not an error anyone sees: it scores zero and the
-/// task ranks below every task that declared a priority. Matching is exact
-/// because this reads stored tags rather than authored input -- a door that
-/// accepts a caller's word normalizes it with [`Priority::parse`] first, so
-/// what reaches a tag is already the canonical spelling.
-#[must_use]
-pub fn priority_from_tag(tag: &str) -> Option<Priority> {
-    priority_from_wire(tag.strip_prefix(PRIORITY_TAG_PREFIX)?)
-}
-
-/// Read one declared priority off the word a stored tag carries.
-///
-/// Every reader of a stored priority goes through here, so what the board
-/// renders and what the allocator scores cannot disagree about which spellings
-/// count.
-#[must_use]
-pub fn priority_from_wire(value: &str) -> Option<Priority> {
-    Priority::ALL
-        .into_iter()
-        .find(|priority| priority.as_str() == value)
+    entry.statement().priority.map_or(0, priority_score)
 }
 
 /// Read one priority a caller wrote, in either form this build uses.
@@ -69,40 +34,58 @@ pub fn priority_from_wire(value: &str) -> Option<Priority> {
 /// alone would refuse the exact spelling the board printed, and the predecessor
 /// takes both. Case and surrounding space are the caller's business either way.
 #[must_use]
-pub fn priority_from_authored(value: &str) -> Option<Priority> {
+pub fn priority_from_authored(value: &str) -> Option<TaskPriority> {
     let value = value.trim();
-    Priority::ALL
-        .into_iter()
-        .find(|priority| priority_label(*priority).eq_ignore_ascii_case(value))
-        .or_else(|| Priority::parse(value))
+    TaskPriority::ALL.into_iter().find(|priority| {
+        priority_label(*priority).eq_ignore_ascii_case(value)
+            || priority.as_str().eq_ignore_ascii_case(value)
+    })
 }
 
-/// The whole statement tag that declares one priority.
+/// The stored priority one task document declares.
 #[must_use]
-pub fn priority_tag(priority: Priority) -> String {
-    format!("{PRIORITY_TAG_PREFIX}{}", priority.as_str())
+pub const fn priority_from_document(priority: dialect::Priority) -> TaskPriority {
+    match priority {
+        dialect::Priority::Critical => TaskPriority::Critical,
+        dialect::Priority::High => TaskPriority::High,
+        dialect::Priority::Medium => TaskPriority::Medium,
+        dialect::Priority::Low => TaskPriority::Low,
+        dialect::Priority::None => TaskPriority::None,
+    }
+}
+
+/// The task-document spelling of one stored priority.
+#[must_use]
+pub const fn priority_to_document(priority: TaskPriority) -> dialect::Priority {
+    match priority {
+        TaskPriority::Critical => dialect::Priority::Critical,
+        TaskPriority::High => dialect::Priority::High,
+        TaskPriority::Medium => dialect::Priority::Medium,
+        TaskPriority::Low => dialect::Priority::Low,
+        TaskPriority::None => dialect::Priority::None,
+    }
 }
 
 /// What one declared priority contributes to the allocation scalar.
 #[must_use]
-pub const fn priority_score(priority: Priority) -> i64 {
+pub const fn priority_score(priority: TaskPriority) -> i64 {
     match priority {
-        Priority::Critical => 5_000,
-        Priority::High => 4_000,
-        Priority::Medium => 3_000,
-        Priority::Low => 2_000,
-        Priority::None => 1_000,
+        TaskPriority::Critical => 5_000,
+        TaskPriority::High => 4_000,
+        TaskPriority::Medium => 3_000,
+        TaskPriority::Low => 2_000,
+        TaskPriority::None => 1_000,
     }
 }
 
 /// The single-letter form the board renders for one declared priority.
 #[must_use]
-pub const fn priority_label(priority: Priority) -> &'static str {
+pub const fn priority_label(priority: TaskPriority) -> &'static str {
     match priority {
-        Priority::Critical => "C",
-        Priority::High => "H",
-        Priority::Medium => "M",
-        Priority::Low => "L",
-        Priority::None => "N",
+        TaskPriority::Critical => "C",
+        TaskPriority::High => "H",
+        TaskPriority::Medium => "M",
+        TaskPriority::Low => "L",
+        TaskPriority::None => "N",
     }
 }

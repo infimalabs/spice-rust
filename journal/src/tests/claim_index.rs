@@ -235,6 +235,8 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
                 project: "journal".to_owned(),
                 filing: wire::TaskFiling::Filed,
                 tags: Vec::new(),
+                priority: None,
+                taste: None,
                 depends: Vec::new(),
                 flow: flow.clone(),
                 phase: phase("todo"),
@@ -261,6 +263,8 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
         project: "journal".to_owned(),
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
+        priority: None,
+        taste: None,
         dependencies: Vec::new(),
         provenance: "task:claim-index-scale".parse().expect("scale provenance"),
         creation: wire::body::TaskCreationContext::unavailable(

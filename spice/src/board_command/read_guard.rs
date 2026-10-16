@@ -993,15 +993,11 @@ pub(super) fn read_ledger(
     let root = document.root;
     let node = &mut document.nodes[root];
     node.acceptance = statement.acceptance.clone();
-    node.priority = statement
+    node.priority = statement.priority.map(board::priority_to_document);
+    node.tags = statement
         .tags
         .iter()
-        .find_map(|tag| tag.strip_prefix(board::PRIORITY_TAG_PREFIX))
-        .and_then(dialect::Priority::parse);
-    node.tags = visible_tags(&statement.tags)
-        .filter(|tag| {
-            !tag.starts_with(board::PRIORITY_TAG_PREFIX) && !tag.starts_with("document-slug:")
-        })
+        .filter(|tag| !tag.starts_with("document-slug:"))
         .cloned()
         .collect();
     node.description = statement.description.clone().unwrap_or_default();

@@ -1074,6 +1074,8 @@ mod tests {
             project: "spice.rooms".to_owned(),
             filing: wire::TaskFiling::Filed,
             tags: Vec::new(),
+            priority: None,
+            taste: None,
             dependencies: Vec::new(),
             intent: None,
             preparation: Some(TaskPreparation {

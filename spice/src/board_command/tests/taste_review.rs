@@ -164,7 +164,7 @@ fn configured_match_routes_accepted_task_through_durable_taste_review() {
             .collect::<Vec<_>>(),
         ["todo", "review"],
     );
-    assert!(!has_taste_review(&clean_entry.statement.body.tags));
+    assert_eq!(clean_entry.statement.body.taste, None);
 
     let held = at(&visible, &review_task);
     assert_eq!(held.workflow.body.phase.as_str(), "plan");
@@ -177,13 +177,12 @@ fn configured_match_routes_accepted_task_through_durable_taste_review() {
             .collect::<Vec<_>>(),
         ["plan", "todo", "review"],
     );
-    assert!(has_taste_review(&held.statement.body.tags));
+    assert_eq!(held.statement.body.taste, Some(wire::TasteHold::Prepended));
 
     let shown = task_show(&visible, held, &[]);
     assert!(shown.contains("taste_review required"));
     assert!(shown.contains(&format!("next: spice task modify {review_task}")));
     assert!(!shown.contains("next: spice task done"));
-    assert!(!shown.contains(TASTE_REVIEW_TAG));
     assert!(!shown.contains("delay"));
     assert!(!shown.contains("Rewrite the task wording"));
 
@@ -293,9 +292,7 @@ fn modification_rechecks_the_complete_current_policy_before_clearing() {
         "Current lifecycle change",
     ));
     let still_held = board(&bus, epoch, Actor::Operator);
-    assert!(has_taste_review(
-        &at(&still_held, &task).statement.body.tags
-    ));
+    assert!(at(&still_held, &task).statement.body.taste.is_some());
 
     configured_repository(&root, &["unrelated"]);
     assert_committed(modify_with_repository(
@@ -307,7 +304,7 @@ fn modification_rechecks_the_complete_current_policy_before_clearing() {
         "Current lifecycle change",
     ));
     let cleared = board(&bus, epoch, Actor::Operator);
-    assert!(!has_taste_review(&at(&cleared, &task).statement.body.tags));
+    assert_eq!(at(&cleared, &task).statement.body.taste, None);
     let audits = bus
         .fact_snapshot()
         .expect("taste-review recheck facts read")
@@ -389,6 +386,14 @@ fn clearing_a_hold_withdraws_only_the_plan_phase_the_hold_inserted() {
         phases(&held, &authored),
         ("plan".to_owned(), vec!["plan".into(), "todo".into()]),
     );
+    assert_eq!(
+        at(&held, &inserted).statement.body.taste,
+        Some(wire::TasteHold::Prepended),
+    );
+    assert_eq!(
+        at(&held, &authored).statement.body.taste,
+        Some(wire::TasteHold::Authored),
+    );
 
     for (task, title) in [
         (&inserted, "Ship the lifecycle change"),
@@ -415,15 +420,7 @@ fn clearing_a_hold_withdraws_only_the_plan_phase_the_hold_inserted() {
         "an authored plan phase outlives the hold",
     );
     for task in [&inserted, &authored] {
-        assert!(
-            at(&cleared, task)
-                .statement
-                .body
-                .tags
-                .iter()
-                .all(|tag| !SYSTEM_TAGS.contains(&tag.as_str())),
-            "a cleared hold leaves no board-owned tags behind",
-        );
+        assert_eq!(at(&cleared, task).statement.body.taste, None);
     }
     assert!(
         at(&cleared, &inserted).claim.is_none(),
@@ -635,14 +632,7 @@ fn clearing_an_authored_plan_retains_its_active_claim() {
     assert_eq!(cleared_claim.body.disposition, ClaimDisposition::Active);
     assert_eq!(cleared_claim.body.claimed, held_claim.body.claimed);
     assert_eq!(cleared_claim.body.actor, held_claim.body.actor);
-    assert!(
-        cleared_heads
-            .statement
-            .body
-            .tags
-            .iter()
-            .all(|tag| !SYSTEM_TAGS.contains(&tag.as_str())),
-    );
+    assert_eq!(cleared_heads.statement.body.taste, None);
     clean(&root, bus);
 }
 

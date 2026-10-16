@@ -315,14 +315,13 @@ fn create_task<B: serde::Serialize>(
     if let Err(outcome) = admit_prepared(&snapshot, command, add, filing, &mut prepared) {
         return outcome;
     }
-    let mut tags = Vec::new();
     if taste_review_required {
-        hold_for_taste(&mut prepared.flow, &mut tags);
+        hold_for_taste(&mut prepared.flow, &mut prepared.statement.taste);
         prepared.phase = prepared.flow[0].clone();
         prepared.workflow.flow.clone_from(&prepared.flow);
         prepared.workflow.phase.clone_from(&prepared.phase);
     }
-    let post = prepared_entry(&mut prepared, &tags, projects);
+    let post = prepared_entry(&prepared, projects);
     let added_claim = if add.claim {
         match prepare_capture_claim(bus, command, repository, &snapshot, &post) {
             Ok(claim) => Some(claim),
@@ -340,7 +339,6 @@ fn create_task<B: serde::Serialize>(
         &snapshot,
         prepared,
         post,
-        tags,
         taste_review.as_ref().filter(|review| review.required()),
         dependency_witnesses,
         |_| {},
@@ -473,7 +471,6 @@ fn commit_prepared_task<B, F>(
     snapshot: &ValidatedSnapshot,
     prepared: PreparedTask,
     post: Entry,
-    tags: Vec<String>,
     taste_review: Option<&TasteReview>,
     dependency_witnesses: Vec<Witness>,
     extra_guard: F,
@@ -525,7 +522,9 @@ where
             requirements: add.requirements.clone(),
             project: prepared.project,
             filing: prepared.statement.filing,
-            tags,
+            tags: prepared.statement.tags.clone(),
+            priority: prepared.statement.priority,
+            taste: prepared.statement.taste,
             depends: prepared.statement.dependencies.clone(),
             flow: prepared.flow,
             phase: prepared.phase,
@@ -580,12 +579,7 @@ where
     committed(bus, write, CommandAnswer::Task(answer))
 }
 
-fn prepared_entry(
-    prepared: &mut PreparedTask,
-    tags: &Vec<String>,
-    projects: &ProjectPolicy,
-) -> Entry {
-    prepared.statement.tags.clone_from(tags);
+fn prepared_entry(prepared: &PreparedTask, projects: &ProjectPolicy) -> Entry {
     Entry::new(
         prepared.statement.clone(),
         prepared.workflow.clone(),
@@ -647,6 +641,8 @@ fn prepare_task(
         project: project_text.clone(),
         filing,
         tags: Vec::new(),
+        priority: None,
+        taste: None,
         dependencies: add
             .depends
             .iter()

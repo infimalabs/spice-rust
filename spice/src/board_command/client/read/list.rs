@@ -334,19 +334,10 @@ fn render_task_list_row(task: &BoardTask, title: &str) -> String {
     let priority = task
         .statement
         .body
-        .tags
-        .iter()
-        .find_map(|tag| tag.strip_prefix(board::PRIORITY_TAG_PREFIX))
-        // A spelling the allocator does not score is rendered as written. It
-        // ranks as if no priority were declared, and printing the word rather
-        // than a letter is how a reader sees which task carries it.
-        .map(|priority| {
-            board::priority_from_wire(priority).map_or_else(
-                || priority.to_owned(),
-                |kind| board::priority_label(kind).to_owned(),
-            )
+        .priority
+        .map_or_else(String::new, |priority| {
+            format!(" P:{}", board::priority_label(priority))
         });
-    let priority = priority.map_or_else(String::new, |value| format!(" P:{value}"));
     format!(
         "{} [{state}]{priority} {} {title}",
         task.statement.body.handle, task.statement.body.project,

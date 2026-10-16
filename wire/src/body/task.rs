@@ -144,8 +144,22 @@ pub struct TaskAdded {
     /// Initial filing standing.
     #[serde(default, skip_serializing_if = "crate::TaskFiling::is_filed")]
     pub filing: crate::TaskFiling,
-    /// Free tags carried on the statement.
+    /// Authored labels carried on the statement.
     pub tags: Vec<String>,
+    /// Declared scheduling priority the statement opens with.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub priority: Option<crate::TaskPriority>,
+    /// Taste-review hold the statement opens under.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub taste: Option<crate::TasteHold>,
     /// Tasks this one waits behind.
     pub depends: Vec<TaskStamp>,
     /// Declared Plan or Design intent the statement opens with.

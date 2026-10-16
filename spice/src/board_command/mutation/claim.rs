@@ -476,7 +476,7 @@ pub(in crate::board_command) fn commit_claim(
 /// A task held for taste review is held on its statement, so the admitted
 /// next action is the rewording rather than another read.
 fn claim_activation_next_action(selected: &Entry) -> Box<str> {
-    if has_taste_review(&selected.statement().tags) {
+    if selected.statement().taste.is_some() {
         return format!("spice task modify {} --title \"...\"", selected.handle()).into_boxed_str();
     }
     format!("spice task show {}", selected.handle()).into_boxed_str()

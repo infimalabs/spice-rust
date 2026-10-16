@@ -341,7 +341,7 @@ fn admit_plan_transition(
         transition.kind(),
         board::TransitionKind::Complete { phase } if phase.as_str() == "plan"
     );
-    if has_taste_review(&entry.statement().tags) {
+    if entry.statement().taste.is_some() {
         // Every recheck writes its own audit, and the first one was written
         // when the task was filed. A lane that rewords and refuses again can
         // only tell progress from stasis if the refusal says how many reads

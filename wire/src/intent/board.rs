@@ -721,6 +721,20 @@ pub struct BoardStatement {
     pub filing: crate::TaskFiling,
     /// Authored task labels.
     pub tags: Vec<String>,
+    /// Declared scheduling priority.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub priority: Option<crate::TaskPriority>,
+    /// Board-owned taste-review hold.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub taste: Option<crate::TasteHold>,
     /// Tasks that must complete first.
     pub dependencies: Vec<crate::TaskStamp>,
     /// Declared Plan or Design intent.
@@ -771,6 +785,8 @@ impl From<&crate::TaskHead> for BoardStatement {
             project: statement.project.clone(),
             filing: statement.filing,
             tags: statement.tags.clone(),
+            priority: statement.priority,
+            taste: statement.taste,
             dependencies: statement.dependencies.clone(),
             intent: statement.intent,
             preparation: statement.preparation.clone(),
@@ -801,6 +817,8 @@ impl BoardStatement {
             project: self.project.clone(),
             filing: self.filing,
             tags: self.tags.clone(),
+            priority: self.priority,
+            taste: self.taste,
             dependencies: self.dependencies.clone(),
             intent: self.intent,
             preparation: self.preparation.clone(),

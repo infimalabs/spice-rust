@@ -78,6 +78,8 @@ fn statement(name: &str) -> TaskHead {
         project: "board.kernel".to_owned(),
         filing: wire::TaskFiling::Filed,
         tags: Vec::new(),
+        priority: None,
+        taste: None,
         dependencies: Vec::new(),
         provenance: "task:BOARD-root".parse::<Origin>().expect("origin"),
         creation: wire::body::TaskCreationContext::unavailable(

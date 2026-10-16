@@ -384,7 +384,7 @@ struct FollowupContext<'a> {
 type FollowupPolicy = (
     Vec<wire::Phase>,
     wire::Phase,
-    Vec<String>,
+    Option<wire::TasteHold>,
     Option<TasteReview>,
 );
 
@@ -459,12 +459,12 @@ fn prepare_followup_policy(
         &add.acceptance,
     )?;
     let taste_review_required = taste_review.as_ref().is_some_and(TasteReview::required);
-    let mut tags = Vec::new();
+    let mut taste = None;
     if taste_review_required {
-        hold_for_taste(&mut flow, &mut tags);
+        hold_for_taste(&mut flow, &mut taste);
     }
     let phase = flow[0].clone();
-    Ok((flow, phase, tags, taste_review))
+    Ok((flow, phase, taste, taste_review))
 }
 
 /// Add one statement that must follow the reviewed task.
@@ -501,7 +501,7 @@ fn create_followup(
             "a review follow-up has no creation-time transcript capture",
         )
     })?;
-    let (flow, phase, tags, taste_review) = prepare_followup_policy(context, &followup.add)?;
+    let (flow, phase, taste, taste_review) = prepare_followup_policy(context, &followup.add)?;
     let statement = TaskHead {
         preparation: planning::correction_preparation(context.reviewed_task),
         authorization: None,
@@ -518,7 +518,9 @@ fn create_followup(
         requirements: followup.add.requirements.clone(),
         project: project.as_str().to_owned(),
         filing: wire::TaskFiling::Filed,
-        tags: tags.clone(),
+        tags: Vec::new(),
+        priority: None,
+        taste,
         dependencies: Vec::new(),
         provenance: context.origin.clone(),
         creation: creation.context(),
@@ -559,7 +561,9 @@ fn create_followup(
                 requirements: statement.requirements.clone(),
                 project: statement.project.clone(),
                 filing: statement.filing,
-                tags,
+                tags: Vec::new(),
+                priority: None,
+                taste: statement.taste,
                 depends: statement.dependencies.clone(),
                 flow,
                 phase,
