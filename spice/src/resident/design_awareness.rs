@@ -354,7 +354,7 @@ pub(crate) fn owed_request(
     let Some(design) = entries.iter().find(|entry| entry.born() == &notice.design) else {
         return Ok(None);
     };
-    if !request_is_current(facts, design, lane, notice.statement) {
+    if !request_is_current(facts, design, lane) {
         return Ok(None);
     }
     Ok(Some(design_request(
@@ -475,14 +475,10 @@ fn current_task_statement(
         })
 }
 
-fn request_is_current(
-    facts: &bus::TaskFacts,
-    design: &board::Entry,
-    lane: CanonicalUuid,
-    statement: Seq,
-) -> bool {
-    design.statement().revision == statement
-        && design.is_filed()
+/// Whether a recorded request is still owed. Only the Design's standing or the
+/// lane's own room publication releases it; a statement edit does not.
+fn request_is_current(facts: &bus::TaskFacts, design: &board::Entry, lane: CanonicalUuid) -> bool {
+    design.is_filed()
         && passive(design)
         && !facts.published_in_room(&Actor::Lane(lane), design.born())
 }

@@ -86,6 +86,41 @@ impl Lanes {
             .map(|head| head.body().clone())
     }
 
+    /// Commit one statement edit giving `task` a new title.
+    fn retitle(&self, handle: &wire::TaskHandle, title: &str) {
+        let task = stamp(handle);
+        let statement = self
+            .bus
+            .read({
+                let task = task.clone();
+                move |read| read.task_head(&task)
+            })
+            .expect("statement reads")
+            .expect("statement exists")
+            .into_body();
+        let title = title.to_owned();
+        let mut edit =
+            write(Actor::Operator, self.epoch, Producer::CommandDoor).expect("edit write starts");
+        let edited = edit
+            .fact(
+                wire::body::TaskEdited {
+                    intent: None,
+                    evidence: None,
+                    task,
+                    revision: 2,
+                    dependencies: None,
+                },
+                FactCause::Root,
+            )
+            .expect("edit fact is valid");
+        edit.task_head(edited, move |position| wire::TaskHead {
+            title,
+            revision: position,
+            ..statement
+        });
+        commit(&self.bus, edit).expect("edit commits");
+    }
+
     /// Complete the task under its active claim with one durable `TaskDone`.
     fn complete(&self, handle: &wire::TaskHandle, validation: &str) {
         let claim = self.claim_head(handle).expect("the task is claimed");
@@ -535,6 +570,33 @@ fn active_standing_releases_an_unanswered_request() {
     assert!(
         lanes.request(&config, FIRST).is_none(),
         "an active Design no longer owes the passive request"
+    );
+    lanes.finish();
+}
+
+#[test]
+fn a_design_edit_keeps_the_request_owed() {
+    let lanes = Lanes::new("design-request-edit");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let task = lanes.claimed("dVrD245Kc", FIRST);
+    let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    lanes.complete(&task, MATCHING);
+    let before = lanes
+        .request(&config, FIRST)
+        .expect("the completion owes its Design");
+
+    lanes.retitle(&design, "Page room catch-up by cursor");
+    let after = lanes
+        .request(&config, FIRST)
+        .expect("an edited Design still owes the request");
+    assert_eq!(after.design, design);
+    assert_eq!(after.title, "Page room catch-up by cursor");
+    assert_ne!(after.statement, before.statement);
+    assert_eq!(
+        lanes.noticed().len(),
+        1,
+        "the edit records no second request"
     );
     lanes.finish();
 }
