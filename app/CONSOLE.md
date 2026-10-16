@@ -204,11 +204,13 @@ can advance: missing authority or prerequisites, cycles, and walls at closed,
 parked, passive, deferred, or environment-held work require a human act.
 Ordinary dependency chains that still reach active, ready, review, selection,
 or other neutral work are **Waiting** and carry no danger mark. A tab marks only
-when its own partition holds immediate human-actionable blocked or
-environment-held work; selection, intentional deferral, passive Designs,
-parked work, and ready, review, stale, and in-flight work retain their explicit
-states without the blocked dot. Only a Blocked row is danger-coloured in detail
-and graphs.
+when its own partition holds work only the operator can move now:
+human-actionable blocked work, environment-held work, or an unclaimed,
+undeferred Design awaiting the operator's decision on its candidate, which marks
+only a Design tab. Intentional deferral, passive Designs, parked work, and
+ready, review, stale, and in-flight work retain their explicit states without
+the dot, and the overview's attention rail reads Needs attention whenever any
+tab carries it. Only a Blocked row is danger-coloured in detail and graphs.
 
 Each global stem tab opens its complete visibility-qualified stem within its
 own partition. A local strip has no stem roll-ups: past its total, a team strip

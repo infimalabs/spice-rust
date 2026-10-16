@@ -604,6 +604,8 @@ fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
     let blocked = task(8, "delta.wall");
     let selection = design(9, "alpha.design");
     let passive = design(10, "beta.design");
+    let mut decided = design(11, "gamma.design");
+    decided.grouped = true;
     let mut board = board(vec![
         in_flight,
         stale,
@@ -615,6 +617,7 @@ fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
         blocked,
         selection,
         passive,
+        decided,
     ]);
     board.workflow_waiting.insert(stamp(5));
     board.blocked.insert(stamp(8));
@@ -649,18 +652,41 @@ fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
             .scope_counts(&WorkScope::AllOpen)
             .needs_operator(),
         2,
-        "the execution total counts only immediate human-actionable work"
+        "the execution total never counts a Design awaiting selection"
     );
     assert_eq!(
         marks(&WorkScope::planning()),
-        BTreeMap::from([("alpha".to_owned(), 0), ("beta".to_owned(), 0)]),
-        "selection and passive Design states stay visible without the blocked danger mark"
+        BTreeMap::from([
+            ("alpha".to_owned(), 1),
+            ("beta".to_owned(), 0),
+            ("gamma".to_owned(), 0),
+        ]),
+        "a Design awaiting the operator's decision marks its own Design stem; passive and \
+         decided Designs mark nothing"
     );
     assert_eq!(
         projection
             .scope_counts(&WorkScope::planning())
             .needs_operator(),
-        0,
-        "the Design total has no human-actionable blocked work"
+        1,
+        "the Design total never counts execution work"
+    );
+    let rail = OperatorQueue::new(&projection)
+        .waits()
+        .iter()
+        .map(|wait| {
+            projection.tasks()[wait.task()]
+                .row()
+                .statement
+                .body
+                .born
+                .clone()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rail,
+        [stamp(7), stamp(8), stamp(9)],
+        "the rail lists exactly the held, blocked, and selection work the marks count, \
+         and never the deferral"
     );
 }

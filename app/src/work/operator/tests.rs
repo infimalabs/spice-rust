@@ -95,6 +95,11 @@ fn next_steps_through_the_queue_in_order_and_wraps() {
     assert_eq!(queue.next_after(Some(0)), Some(2));
     assert_eq!(
         queue.next_after(Some(2)),
+        Some(3),
+        "a Design awaiting the operator's decision is a queue stop"
+    );
+    assert_eq!(
+        queue.next_after(Some(3)),
         Some(0),
         "the last wraps to the first"
     );
