@@ -277,6 +277,14 @@ button is absent or disabled. Held-key repeats, modified keys, and keys typed
 into a field never trigger them, and inside the annotation editor A keeps its
 arrow-tool meaning.
 
+While an image pasted into a composer is open full size, Right Arrow opens the
+next image pasted into that same composer and Left Arrow the previous one, in
+the order the composer renders them across its main draft strip and each quote
+shard's strip. Navigation never leaves that composer, either end holds without
+wrapping, and annotating, IME composition, and Alt, Control, or Command keep
+the arrows from stepping. Each image opened this way annotates its own draft
+attachment.
+
 The image annotation editor closes immediately on Cancel, Escape, or backdrop
 while its marks equal the set it opened with; once they differ, those exits
 confirm before discarding, and undoing back to the opening set removes the
