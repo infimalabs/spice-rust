@@ -137,7 +137,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         let Some(turn) = turn else {
             return false;
         };
-        let mut prompt = match turn {
+        let prompt = match turn {
             FirstTurn::Fresh(prompt) => prompt,
             FirstTurn::Resumed(mut prompt) => {
                 prompt.push_str("\n\n");
@@ -145,11 +145,12 @@ impl<W: Write + Send + 'static> Driver<W> {
                 prompt
             }
         };
+        let mut prompt = self.for_seat(prompt);
         if let Some(inbox) = self.startup_inbox() {
             prompt.push_str("\n\n");
             prompt.push_str(&inbox);
         }
-        let prompt = vendor::omp::first_prompt_request(&self.for_seat(prompt));
+        let prompt = vendor::omp::first_prompt_request(&prompt);
         let queued = self
             .background
             .lock()
