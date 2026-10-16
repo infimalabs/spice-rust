@@ -24,6 +24,15 @@ returned `colorScheme` and `colorSchemeSource` report the value and whether it
 came from `"system"` or `"explicit"`. A stored `spice:app-theme` preference
 still wins over the browser preference.
 
+## Theme selector material
+
+The Spice sidebar keeps Light, System, and Dark as three pressed buttons in one
+theme group. Their selected face slides behind the buttons and uses the same
+transmitted, lit glass recipe as an active team or working-group slider thumb.
+The buttons remain the semantic and keyboard controls; the moving face is
+presentation only. Its gradient, edge, and light catches remain legible when
+backdrop filtering is unavailable.
+
 The [glass control studies](design/glass-controls.html) are an interactive
 reference gallery for the [team composer
 controls](CONSOLE.md#team-composer-controls). They send no commands, and
