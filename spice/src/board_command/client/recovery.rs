@@ -412,8 +412,7 @@ fn exact_recovery_claim(
     let workflow_matches = sealed.fresh
         || heads.workflow.position == sealed.workflow
         || (sealed.phase.as_str() == "review"
-            && heads.workflow.body.assignment.as_ref() == Some(&sealed.actor)
-            && heads.workflow.body.review == "assigned");
+            && heads.workflow.body.status.reviewer() == Some(&sealed.actor));
     claim.body.actor == sealed.actor
         && claim.body.disposition == ClaimDisposition::Active
         && claim.body.cell.phase == sealed.phase

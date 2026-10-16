@@ -399,7 +399,7 @@ fn a_settled_task_refuses_a_correction() {
     );
     claim_and_complete_task(&bus, epoch, &seats[0], &lane, &task);
     let settled = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&settled, &task).workflow.body.status, "completed");
+    assert!(at(&settled, &task).workflow.body.status.is_completed());
     let before = at(&settled, &task).statement.clone();
 
     let outcome = correct(

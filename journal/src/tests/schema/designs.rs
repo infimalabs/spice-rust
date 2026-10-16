@@ -89,17 +89,17 @@ fn add(journal: &mut Journal, shape: Shape<'_>) -> TaskStamp {
         ),
         revision,
     });
-    let (status, review) = (shape.status.to_owned(), shape.review.to_owned());
-    let completion = (status != "pending").then(instant);
+    let status = match (shape.status, shape.review) {
+        ("pending", "unassigned" | "none") => wire::WorkflowStatus::pending(),
+        ("completed", "clean") => wire::WorkflowStatus::reviewed(instant()),
+        (status, review) => panic!("unsupported fixture workflow {status}/{review}"),
+    };
     let current = phase(shape.phase);
     write.workflow_head(task.clone(), fact, move |_| wire::WorkflowHead {
         flow,
         phase: current,
         status,
-        review,
-        assignment: None,
         deferral: None,
-        completion,
         generation: 0,
     });
     journal.apply(write).expect("task commits");
@@ -225,11 +225,8 @@ fn open_designs_cross_once_onto_their_open_phase_and_release_their_outputs_edges
     let open = workflow(&journal, &retained.open);
     assert_eq!(open.flow, vec![phase("design")]);
     assert_eq!(open.phase, phase("design"));
-    assert_eq!(
-        (open.status.as_str(), open.completion, open.assignment),
-        ("pending", None, None),
-        "an open Design stays open"
-    );
+    assert!(open.status.is_pending(), "an open Design stays open");
+    assert_eq!(open.status.reviewer(), None);
     assert_eq!(
         workflow(&journal, &retained.concluded),
         concluded,

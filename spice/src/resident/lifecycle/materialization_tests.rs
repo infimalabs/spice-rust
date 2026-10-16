@@ -899,11 +899,8 @@ fn design_write(at: Instant) -> JournalWrite {
     write.workflow_head(born, added, move |_| WorkflowHead {
         flow,
         phase,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     write
@@ -980,11 +977,8 @@ fn deferral_write(deferred: bool, at: Instant) -> JournalWrite {
     write.workflow_head(task, changed, move |_| WorkflowHead {
         flow: vec![phase.clone()],
         phase,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: deferred.then_some(until),
-        completion: None,
         generation: 0,
     });
     write
@@ -1168,11 +1162,8 @@ fn attach_task_heads_with_project(
     write.workflow_head(task, added, move |_| WorkflowHead {
         flow: vec![phase.clone()],
         phase,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
 }

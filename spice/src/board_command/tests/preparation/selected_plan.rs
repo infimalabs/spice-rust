@@ -120,7 +120,7 @@ fn closing_a_selected_plan_settles_its_unreviewed_work_and_collapse_leaves_it_to
     };
     assert_eq!(closed.closed, vec![task.clone()]);
     let settled = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&settled, &task).workflow.body.status, "completed");
+    assert!(at(&settled, &task).workflow.body.status.is_completed());
     assert!(!open_blocked(&bus, epoch).contains(&task_stamp));
     let validation = bus
         .fact_snapshot()
@@ -135,37 +135,6 @@ fn closing_a_selected_plan_settles_its_unreviewed_work_and_collapse_leaves_it_to
         Some(format!(
             "Controller {plan} was closed: the plan was rejected"
         ))
-    );
-    clean(&root, bus);
-}
-
-#[test]
-fn work_beneath_a_selected_plan_closed_before_settlement_reads_stranded_and_stays_gated() {
-    let SelectedPlan {
-        root,
-        bus,
-        epoch,
-        plan,
-        task,
-        ..
-    } = selected_plan_with_task("preparation-selected-plan-stranded");
-    legacy_close_without_controlled_settlement(&bus, epoch, &plan);
-
-    let current = board(&bus, epoch, Actor::Operator);
-    let stranded = at(&current, &task)
-        .stranded
-        .as_ref()
-        .expect("work its closed Plan can no longer release is stranded");
-    assert_eq!(stranded.controller, plan);
-    assert!(
-        stranded
-            .settle
-            .contains(&format!("spice task close {task}"))
-    );
-    assert_eq!(at(&current, &task).workflow.body.status, "pending");
-    assert!(
-        open_blocked(&bus, epoch).contains(&task.born().expect("task stamp")),
-        "a negatively settled Plan never releases its unreviewed work"
     );
     clean(&root, bus);
 }

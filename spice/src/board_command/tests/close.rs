@@ -125,9 +125,9 @@ fn an_operator_closure_completes_from_any_phase_and_releases_its_dependents() {
     assert_eq!(answer.status, "completed");
     let after = board(&bus, epoch, Actor::Operator);
     let row = at(&after, &blocker);
-    assert_eq!(row.workflow.body.status, "completed");
+    assert!(row.workflow.body.status.is_completed());
     assert_eq!(row.workflow.body.phase.as_str(), "todo");
-    assert!(row.workflow.body.completion.is_some());
+    assert!(row.workflow.body.status.completion().is_some());
     assert_eq!(
         closures(&bus, &blocker),
         vec![body::TaskClosed {
@@ -187,7 +187,7 @@ fn a_live_claim_refuses_the_closure_until_it_is_forced_and_then_names_the_holder
     assert_committed(close(&bus, epoch, &task, "done already", true));
     let row = board(&bus, epoch, Actor::Operator);
     let row = at(&row, &task);
-    assert_eq!(row.workflow.body.status, "completed");
+    assert!(row.workflow.body.status.is_completed());
     assert_eq!(
         row.claim
             .as_ref()
@@ -284,12 +284,12 @@ fn a_closure_without_validation_or_against_a_settled_task_is_refused() {
         refused_as(&close(&bus, epoch, &task, " \n\t", false)).0,
         "task::close-validation-empty"
     );
-    assert_eq!(
+    assert!(
         at(&board(&bus, epoch, Actor::Operator), &task)
             .workflow
             .body
-            .status,
-        "pending"
+            .status
+            .is_pending()
     );
     assert_committed(close(&bus, epoch, &task, "verified", false));
     assert_eq!(

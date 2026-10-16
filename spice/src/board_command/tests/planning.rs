@@ -200,8 +200,7 @@ fn plan_intake_releases_its_claim_into_a_passive_design() {
     let view = board(&bus, epoch, Actor::Operator);
     let heads = at(&view, &design);
     assert_eq!(heads.workflow.body.phase.as_str(), "design");
-    assert_eq!(heads.workflow.body.status, "pending");
-    assert_eq!(heads.workflow.body.completion, None);
+    assert!(heads.workflow.body.status.is_pending());
     assert_eq!(
         heads.claim.as_ref().map(|claim| claim.body.disposition),
         Some(ClaimDisposition::Freed),
@@ -321,7 +320,10 @@ fn clean_review_intake_releases_its_claim_into_a_passive_design() {
     let view = board(&bus, epoch, Actor::Operator);
     let design = at(&view, &design);
     assert_eq!(design.workflow.body.phase.as_str(), "design");
-    assert_eq!(design.workflow.body.review, "clean");
+    assert!(matches!(
+        design.workflow.body.status,
+        wire::WorkflowStatus::Pending(wire::WorkflowReview::Clean)
+    ));
     assert_eq!(
         design.claim.as_ref().map(|claim| claim.body.disposition),
         Some(ClaimDisposition::Freed),
@@ -389,7 +391,10 @@ fn finding_review_intake_enters_design_with_its_correction_recorded() {
     let finding_view = board(&bus, epoch, Actor::Operator);
     let finding_design = at(&finding_view, &design);
     assert_eq!(finding_design.workflow.body.phase.as_str(), "review");
-    assert_eq!(finding_design.workflow.body.review, "unassigned");
+    assert!(matches!(
+        finding_design.workflow.body.status,
+        wire::WorkflowStatus::Pending(wire::WorkflowReview::Unassigned)
+    ));
     assert_eq!(
         finding_design
             .claim
@@ -435,7 +440,10 @@ fn finding_review_intake_enters_design_with_its_correction_recorded() {
     let view = board(&bus, epoch, Actor::Operator);
     let design = at(&view, &design);
     assert_eq!(design.workflow.body.phase.as_str(), "design");
-    assert_eq!(design.workflow.body.review, "clean");
+    assert!(matches!(
+        design.workflow.body.status,
+        wire::WorkflowStatus::Pending(wire::WorkflowReview::Clean)
+    ));
     assert_eq!(
         design.claim.as_ref().map(|claim| claim.body.disposition),
         Some(ClaimDisposition::Freed),
@@ -465,13 +473,7 @@ fn a_lane_never_completes_a_design_it_holds() {
     );
     let view = board(&bus, epoch, Actor::Operator);
     let held = at(&view, &design);
-    assert_eq!(
-        (
-            held.workflow.body.status.as_str(),
-            held.workflow.body.completion
-        ),
-        ("pending", None)
-    );
+    assert!(held.workflow.body.status.is_pending());
     clean(&root, bus);
 }
 
@@ -675,7 +677,7 @@ fn ordinary_done_cannot_supply_a_required_review_verdict() {
     };
     assert_eq!(refusal.reason(), "task::review-required");
     let view = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&view, &task).workflow.body.status, "pending");
+    assert!(at(&view, &task).workflow.body.status.is_pending());
     clean(&root, bus);
 }
 
@@ -904,7 +906,7 @@ fn planning_corrections_keep_the_original_construction_duty_and_later_declared_p
         at(&view, &correction).workflow.body.phase.as_str(),
         "verify"
     );
-    assert_eq!(at(&view, &plan).workflow.body.status, "pending");
+    assert!(at(&view, &plan).workflow.body.status.is_pending());
     clean(&root, bus);
 }
 
@@ -984,12 +986,12 @@ fn a_correction_outlives_its_settled_plan_without_the_construction_duty() {
         },
     ));
     claim_and_complete_task(&bus, epoch, &seats[0], &actor, &correction);
-    assert_eq!(
+    assert!(
         at(&board(&bus, epoch, actor), &correction)
             .workflow
             .body
-            .status,
-        "completed"
+            .status
+            .is_completed()
     );
     clean(&root, bus);
 }

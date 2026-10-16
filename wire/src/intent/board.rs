@@ -1134,8 +1134,7 @@ impl BoardTask {
     pub fn is_active_public(&self) -> bool {
         !self.visibility.is_hidden()
             && self.statement.body.filing.is_filed()
-            && self.workflow.body.status == "pending"
-            && self.workflow.body.completion.is_none()
+            && self.workflow.body.status.is_pending()
     }
 
     /// This Design's lifecycle standing; `None` for a task without Design
@@ -1158,8 +1157,7 @@ impl BoardTask {
 #[must_use]
 pub fn is_open_design(intent: Option<crate::TaskIntent>, workflow: &crate::WorkflowHead) -> bool {
     intent == Some(crate::TaskIntent::Design)
-        && workflow.status == "pending"
-        && workflow.completion.is_none()
+        && workflow.status.is_pending()
         && workflow.phase.as_str() == "design"
 }
 
@@ -1199,15 +1197,24 @@ impl DesignStanding {
         if intent != Some(crate::TaskIntent::Design) {
             return None;
         }
-        Some(match workflow.status.as_str() {
-            "deleted" => Self::Deleted,
-            "completed" if workflow.concluded_positively() => Self::Done,
-            "completed" => Self::Collapsed {
+        Some(match workflow.status {
+            crate::WorkflowStatus::Settled {
+                conclusion: crate::WorkflowConclusion::Negative(crate::WorkflowNegative::Deleted),
+                ..
+            } => Self::Deleted,
+            crate::WorkflowStatus::Settled {
+                conclusion: crate::WorkflowConclusion::Positive { .. },
+                ..
+            } => Self::Done,
+            crate::WorkflowStatus::Settled {
+                conclusion: crate::WorkflowConclusion::Negative(crate::WorkflowNegative::Closed),
+                ..
+            } => Self::Collapsed {
                 reason: collapse_reason.map(str::to_owned),
             },
-            _ if !is_open_design(intent, workflow) => return None,
-            _ if active => Self::Active,
-            _ => Self::Passive,
+            crate::WorkflowStatus::Pending(_) if !is_open_design(intent, workflow) => return None,
+            crate::WorkflowStatus::Pending(_) if active => Self::Active,
+            crate::WorkflowStatus::Pending(_) => Self::Passive,
         })
     }
 

@@ -587,7 +587,7 @@ fn prior_proposals(
                 task.statement.body.born.clone(),
                 (
                     task.statement.body.handle.clone(),
-                    task.workflow.body.completion.is_some(),
+                    !task.workflow.body.status.is_pending(),
                 ),
             )
         })

@@ -752,7 +752,7 @@ fn wk_plan_only_flow_completes_only_with_connected_accepted_child() {
         },
     ));
     let completed = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&completed, &parent).workflow.body.status, "completed");
+    assert!(at(&completed, &parent).workflow.body.status.is_completed());
     clean(&root, bus);
 }
 

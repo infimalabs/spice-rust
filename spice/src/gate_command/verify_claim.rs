@@ -140,7 +140,7 @@ fn admit_snapshot(snapshot: VerifyClaimSnapshot<'_>) -> Result<(), VerifyClaimRe
     {
         return Err(VerifyClaimRefusal::ForeignClaim);
     }
-    if entry.workflow().status != "pending" || entry.workflow().completion.is_some() {
+    if !entry.workflow().status.is_pending() {
         return Err(VerifyClaimRefusal::SettledTask);
     }
     if entry.workflow().phase.as_str() != "verify" {

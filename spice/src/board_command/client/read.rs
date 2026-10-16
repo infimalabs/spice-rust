@@ -559,7 +559,7 @@ fn task_show_context_lines(
     let mut lines = vec![
         format!("origin {}", statement.provenance),
         task_flow_line(&workflow.flow),
-        format!("review {}", workflow.review),
+        format!("review {}", workflow.review_str()),
         format!("version {}", statement.revision),
         format!("claim_thread {}", claim_thread(task)),
     ];
@@ -1094,7 +1094,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
     let statement = &task.statement.body;
     let workflow = &task.workflow.body;
     if !statement.filing.is_filed()
-        || workflow.status != "pending"
+        || !workflow.status.is_pending()
         || workflow.phase.as_str() != "plan"
     {
         return Vec::new();
@@ -1146,7 +1146,7 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
 fn render_dependency(board: &BoardAnswer, dependency: &TaskStamp) -> String {
     match task_heads_by_stamp(board, dependency) {
         Ok(dependency) => {
-            let mut state = dependency.workflow.body.status.clone();
+            let mut state = dependency.workflow.body.status.as_str().to_owned();
             if dependency
                 .claim
                 .as_ref()

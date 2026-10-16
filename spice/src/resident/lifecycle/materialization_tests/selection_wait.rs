@@ -139,11 +139,8 @@ fn output_write(at: Instant) -> JournalWrite {
     write.workflow_head(output, added, move |_| WorkflowHead {
         flow: vec![phase()],
         phase: phase(),
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     write

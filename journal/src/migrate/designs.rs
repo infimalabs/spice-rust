@@ -48,11 +48,10 @@ fn cross_open_workflows(transaction: &Transaction<'_>) -> Result<BTreeSet<String
         let refuse = |detail: String| retained("workflow_heads", &stamp, detail);
         let mut head: wire::WorkflowHead = wire::decode(&body)
             .map_err(|error| refuse(format!("the stored workflow does not decode: {error}")))?;
-        if head.flow != [phase.clone()] || head.phase != phase || head.assignment.is_some() {
+        if head.flow != [phase.clone()] || head.phase != phase || head.status.reviewer().is_some() {
             head.flow = vec![phase.clone()];
             head.phase = phase.clone();
-            head.review = "unassigned".to_owned();
-            head.assignment = None;
+            head.status = wire::WorkflowStatus::pending();
             let bytes = wire::encode(&head)
                 .map_err(|error| refuse(format!("the crossed workflow cannot encode: {error}")))?;
             update(

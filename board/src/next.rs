@@ -73,8 +73,7 @@ impl ResolvedTasks {
             .filter(|entry| {
                 let workflow = entry.workflow();
                 entry.is_filed()
-                    && workflow.status == "pending"
-                    && workflow.completion.is_none()
+                    && workflow.status.is_pending()
                     && workflow.deferral.is_none()
                     && !gather_task(entry.statement(), workflow)
                     && control_satisfied(entry.statement(), false, self)
@@ -106,8 +105,7 @@ impl ResolvedTasks {
         workflow: &wire::WorkflowHead,
     ) -> bool {
         statement.intent == Some(TaskIntent::Design)
-            && workflow.status == "pending"
-            && workflow.completion.is_none()
+            && workflow.status.is_pending()
             && self.working.contains(&statement.born)
     }
 
@@ -248,8 +246,7 @@ pub fn unaccepted_output_of<'a>(
     workflow: &wire::WorkflowHead,
 ) -> Option<&'a TaskStamp> {
     let preparation = statement.preparation.as_ref()?;
-    (workflow.status == "pending"
-        && workflow.completion.is_none()
+    (workflow.status.is_pending()
         && statement.authorization.is_none()
         && preparation.construction == statement.born
         && !gather_task(statement, workflow))
@@ -362,7 +359,7 @@ fn progress(
     }
     let entry = &entries[task];
     let workflow = entry.workflow();
-    if workflow.status != "pending" || workflow.completion.is_some() {
+    if !workflow.status.is_pending() {
         states[task] = Progress::Distinct;
         return Progress::Distinct;
     }
@@ -449,9 +446,7 @@ fn normal_control_wait(
         index.get(task).is_some_and(|index| {
             let task = &entries[*index];
             match task.statement().intent {
-                Some(TaskIntent::Plan) => {
-                    task.workflow().status == "pending" && task.workflow().completion.is_none()
-                }
+                Some(TaskIntent::Plan) => task.workflow().status.is_pending(),
                 Some(TaskIntent::Design) => {
                     wire::intent::is_open_design(task.statement().intent, task.workflow())
                 }
@@ -1009,10 +1004,7 @@ fn downstream_weights(graph: &RankingGraph) -> Vec<usize> {
 
 fn unsettled_public(entry: &Entry) -> bool {
     let workflow = entry.workflow();
-    !entry.project().visibility().is_hidden()
-        && entry.is_filed()
-        && workflow.status == "pending"
-        && workflow.completion.is_none()
+    !entry.project().visibility().is_hidden() && entry.is_filed() && workflow.status.is_pending()
 }
 
 /// Whether this lane may be *handed* the entry.
@@ -1084,12 +1076,11 @@ fn workable(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
 
 fn operational(entry: &Entry, actor: &Actor, completed: &ResolvedTasks) -> bool {
     let workflow = entry.workflow();
-    workflow.status == "pending"
-        && workflow.completion.is_none()
+    workflow.status.is_pending()
         && workflow.deferral.is_none()
         && workflow
-            .assignment
-            .as_ref()
+            .status
+            .reviewer()
             .is_none_or(|assignment| assignment == actor || assignment_lapsed(entry, assignment))
         && dependencies_satisfied(entry, completed)
         && !awaits_selection(entry, completed)
@@ -1124,8 +1115,7 @@ fn assignment_lapsed(entry: &Entry, assignment: &Actor) -> bool {
 
 fn operational_without_assignment(entry: &Entry, completed: &ResolvedTasks) -> bool {
     let workflow = entry.workflow();
-    workflow.status == "pending"
-        && workflow.completion.is_none()
+    workflow.status.is_pending()
         && workflow.deferral.is_none()
         && dependencies_satisfied(entry, completed)
         && !awaits_selection(entry, completed)
@@ -1312,8 +1302,7 @@ pub fn stealable_entry(
 pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
     let mut resolved = ResolvedTasks::new();
     for candidate in entries {
-        let status = candidate.workflow().status.as_str();
-        if status == "completed" || status == "deleted" {
+        if !candidate.workflow().status.is_pending() {
             resolved.settle(
                 candidate.born().clone(),
                 candidate.workflow().concluded_positively(),

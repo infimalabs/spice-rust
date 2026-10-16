@@ -610,6 +610,47 @@ fn instant(spelled: &str) -> Instant {
     spelled.parse().expect("an instant")
 }
 
+#[test]
+fn workflow_documents_round_trip_every_admitted_state_in_the_canonical_shape() {
+    const DOCUMENTS: &[&str] = &[
+        r#"{"flow":["todo"],"phase":"todo","status":"pending","review":"unassigned"}"#,
+        r#"{"flow":["todo"],"phase":"todo","status":"pending","review":"assigned","assignment":"operator"}"#,
+        r#"{"flow":["todo"],"phase":"todo","status":"pending","review":"clean"}"#,
+        r#"{"flow":["todo"],"phase":"todo","status":"completed","review":"unassigned","completion":"2026-08-01T06:07:19.000Z"}"#,
+        r#"{"flow":["todo"],"phase":"todo","status":"completed","review":"clean","completion":"2026-08-01T06:07:19.000Z"}"#,
+        r#"{"flow":["todo"],"phase":"todo","status":"completed","review":"closed","completion":"2026-08-01T06:07:19.000Z"}"#,
+        r#"{"flow":["todo"],"phase":"todo","status":"deleted","review":"closed","completion":"2026-08-01T06:07:19.000Z"}"#,
+    ];
+
+    for document in DOCUMENTS {
+        let expected: serde_json::Value =
+            serde_json::from_str(document).expect("canonical workflow JSON");
+        let workflow: WorkflowHead =
+            serde_json::from_str(document).expect("canonical workflow decodes");
+        assert_eq!(
+            serde_json::to_value(workflow).expect("workflow encodes"),
+            expected
+        );
+    }
+}
+
+#[test]
+fn workflow_documents_refuse_contradictory_state_fields() {
+    const DOCUMENTS: &[&str] = &[
+        r#"{"flow":["todo"],"phase":"todo","status":"pending","review":"unassigned","completion":"2026-08-01T06:07:19.000Z"}"#,
+        r#"{"flow":["todo"],"phase":"todo","status":"completed","review":"unassigned"}"#,
+        r#"{"flow":["todo"],"phase":"todo","status":"pending","review":"assigned"}"#,
+        r#"{"flow":["todo"],"phase":"todo","status":"pending","review":"unassigned","assignment":"operator"}"#,
+        r#"{"flow":["todo"],"phase":"todo","status":"deleted","review":"unassigned","completion":"2026-08-01T06:07:19.000Z"}"#,
+    ];
+
+    for document in DOCUMENTS {
+        assert!(
+            serde_json::from_str::<WorkflowHead>(document).is_err(),
+            "contradictory workflow decoded: {document}"
+        );
+    }
+}
 /// The board task row, built field by field, must encode to the spelled row.
 ///
 /// This is the guard the JSON table cannot be: a struct literal naming every
@@ -665,11 +706,8 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
             body: WorkflowHead {
                 flow: vec![phase("todo"), phase("review")],
                 phase: phase("todo"),
-                status: "pending".to_owned(),
-                review: "unassigned".to_owned(),
-                assignment: Some(actor("operator")),
+                status: wire::WorkflowStatus::assigned(actor("operator")),
                 deferral: Some(instant("2026-08-01T07:07:19.000Z")),
-                completion: Some(instant("2026-08-01T08:07:19.000Z")),
                 generation: 0,
             },
         },

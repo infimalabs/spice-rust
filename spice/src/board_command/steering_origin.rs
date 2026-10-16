@@ -31,7 +31,7 @@ pub(super) fn steering_origins(
 ) -> std::collections::BTreeMap<String, Vec<wire::TaskHandle>> {
     let mut origins = std::collections::BTreeMap::<String, Vec<wire::TaskHandle>>::new();
     for heads in observed.tasks() {
-        if heads.workflow().body().status == "deleted" {
+        if heads.workflow().body().status.is_deleted() {
             continue;
         }
         let statement = heads.statement().body();
