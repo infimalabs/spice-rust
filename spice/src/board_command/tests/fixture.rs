@@ -324,10 +324,37 @@ pub(super) fn fixture_group() -> wire::rooms::RoomAuthorityStamp {
     wire::rooms::RoomAuthorityStamp::for_micros(1_750_000_000_000_000).expect("fixture group stamp")
 }
 
-/// Make `design` active by standing it in the fixture group.
+/// Make `design` active by standing it in the fixture group and setting that
+/// group's stance to Explore when the move founded it in Passive.
 pub(super) fn group_design(bus: &Bus, epoch: CanonicalUuid, design: &TaskHandle) {
     let born = design.born().expect("fixture design stamp");
-    assert_committed(move_design_now(bus, epoch, &born, Some(&fixture_group())));
+    let group = fixture_group();
+    assert_committed(move_design_now(bus, epoch, &born, Some(&group)));
+    let partition = bus
+        .read(|read| read.group_partition())
+        .expect("partition reads")
+        .expect("fixture group stands")
+        .into_body();
+    if partition
+        .groups
+        .iter()
+        .find(|standing| standing.group == group)
+        .is_some_and(|standing| standing.stance == wire::rooms::WorkingGroupStance::Passive)
+    {
+        assert_committed(issue(
+            bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::WorkingGroupStance,
+            vec![Witness::Group {
+                revision: partition.revision,
+            }],
+            &wire::rooms::WorkingGroupStanceSet {
+                group,
+                stance: wire::rooms::WorkingGroupStance::Explore,
+            },
+        ));
+    }
 }
 
 /// The rows an Open read reports as blocked execution trouble, after proving

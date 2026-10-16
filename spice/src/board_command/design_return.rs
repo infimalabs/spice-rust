@@ -53,7 +53,7 @@ pub(crate) fn owed_returns(
         };
         if !wire::intent::is_open_design(statement.intent, workflow)
             || claim.disposition != ClaimDisposition::Active
-            || !snapshot.facts().grouped(&statement.born)
+            || !snapshot.facts().design_is_active(&statement.born)
         {
             continue;
         }

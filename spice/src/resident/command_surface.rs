@@ -391,6 +391,16 @@ impl<'a> Surface<'a> {
                     &self.config.allocation,
                 )
             }
+            (CommandKind::WorkingGroupStance, Intent::WorkingGroupStance(request)) => {
+                crate::board_command::set_working_group_stance(
+                    self.bus,
+                    command,
+                    request,
+                    &self.config.steering,
+                    &self.config.projects,
+                    &self.config.allocation,
+                )
+            }
             (CommandKind::RoomLeave, Intent::RoomLeave(leave)) => (
                 crate::board_command::room_leave(
                     self.bus,

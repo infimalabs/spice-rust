@@ -78,7 +78,7 @@ fn next_action(
         return "The anchor is settled; nothing remains to coordinate.".to_owned();
     }
     if lifecycle == Some(&DesignStanding::Passive) {
-        return "Move the Design into a working group before coordinating a lane onto it."
+        return "Set the Design's working group to Explore or Converge before coordinating a lane onto it; if ungrouped, group it first."
             .to_owned();
     }
     let owed = participants.iter().any(|participant| {

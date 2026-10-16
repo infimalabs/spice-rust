@@ -4,12 +4,13 @@ use wire::intent::BoardTask;
 use super::{DesignStanding, RoomProjection, prepared_open_count};
 use crate::work::tests::{board, claim, stamp, task};
 
-fn design(grouped: bool) -> BoardTask {
+fn design(active: bool) -> BoardTask {
     let mut design = task(1, "rooms.design");
     design.statement.body.intent = Some(wire::TaskIntent::Design);
     design.workflow.body.flow = vec!["design".parse().expect("fixture phase")];
     design.workflow.body.phase = "design".parse().expect("fixture phase");
-    design.grouped = grouped;
+    design.grouped = active;
+    design.design_active = active;
     design
 }
 

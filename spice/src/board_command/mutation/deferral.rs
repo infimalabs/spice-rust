@@ -439,7 +439,9 @@ fn file_unfiled(
         entry.lease().cloned(),
         projects,
     ) {
-        Ok(post) => post.with_grouped(entry.grouped()),
+        Ok(post) => post
+            .with_grouped(entry.grouped())
+            .with_design_active(entry.design_is_active()),
         Err(error) => {
             return refusal(
                 "task::filing-refused",
@@ -589,7 +591,8 @@ fn deferral_transition(
                     "wake a task into a valid pending state",
                 )
             })?
-            .with_grouped(entry.grouped()),
+            .with_grouped(entry.grouped())
+            .with_design_active(entry.design_is_active()),
         )
     } else {
         None

@@ -1,49 +1,23 @@
 //! A working group's browser-local panel state and its team-panel controls:
-//! TURBO, the speech slider, and the mock stance slider. Group state lives
+//! TURBO, the speech slider, and the shared stance slider. Group state lives
 //! beside the team controls because a group's speech raises the speech of the
 //! team planes its claimants draw in.
 
 use super::*;
 use crate::client_action::GroupChange;
 use crate::speech_queue::{LaneSpeech, SpeechMode, group_speech};
-use wire::rooms::{RoomAuthorityStamp, WorkingGroupFast};
+use wire::rooms::{
+    RoomAuthorityStamp, WorkingGroupFast, WorkingGroupStance, WorkingGroupStanceSet,
+};
 
 const GROUP_SPEECH_STORAGE: &str = "spice:group-speech:v1";
-
-/// The second group slider's stops. It decides nothing yet.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum GroupStance {
-    #[default]
-    Hold,
-    Explore,
-    Converge,
-}
-
-impl GroupStance {
-    const ALL: [Self; 3] = [Self::Hold, Self::Explore, Self::Converge];
-
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Hold => "Hold",
-            Self::Explore => "Explore",
-            Self::Converge => "Converge",
-        }
-    }
-
-    const fn index(self) -> usize {
-        match self {
-            Self::Hold => 0,
-            Self::Explore => 1,
-            Self::Converge => 2,
-        }
-    }
-}
 
 /// One working group's browser-local panel state.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(super) struct GroupControl {
     speech: SpeechMode,
-    stance: GroupStance,
+    /// Group stance requested and not yet answered by the resident.
+    pending_stance: Option<WorkingGroupStance>,
     /// Group fast-mode flag requested and not yet answered by the resident.
     pending_fast: Option<bool>,
 }
@@ -53,9 +27,14 @@ pub(crate) enum GroupControlAction {
         group: RoomAuthorityStamp,
         speech: SpeechMode,
     },
-    SetStance {
+    RequestStance {
         group: RoomAuthorityStamp,
-        stance: GroupStance,
+        stance: WorkingGroupStance,
+    },
+    /// The resident answered the request for `stance`.
+    SettleStance {
+        group: RoomAuthorityStamp,
+        stance: WorkingGroupStance,
     },
     RequestFast {
         group: RoomAuthorityStamp,
@@ -103,8 +82,15 @@ impl TeamControls {
                 self.groups.entry(group).or_default().speech = speech;
                 self.store_group_speech();
             }
-            GroupControlAction::SetStance { group, stance } => {
-                self.groups.entry(group).or_default().stance = stance;
+            GroupControlAction::RequestStance { group, stance } => {
+                self.groups.entry(group).or_default().pending_stance = Some(stance);
+            }
+            GroupControlAction::SettleStance { group, stance } => {
+                if let Some(control) = self.groups.get_mut(&group)
+                    && control.pending_stance == Some(stance)
+                {
+                    control.pending_stance = None;
+                }
             }
             GroupControlAction::RequestFast { group, fast_mode } => {
                 self.groups.entry(group).or_default().pending_fast = Some(fast_mode);
@@ -243,14 +229,23 @@ impl GroupPanel<'_> {
             .get(self.group)
             .cloned()
             .unwrap_or_default();
+        let stance = control.pending_stance.unwrap_or_else(|| {
+            self.runtime
+                .room_projection()
+                .partition()
+                .groups
+                .iter()
+                .find(|group| group.group == *self.group)
+                .map_or(WorkingGroupStance::Passive, |group| group.stance)
+        });
         GroupControls {
             turbo: self.turbo(control.pending_fast),
             speech: control.speech.label(),
-            stance: control.stance.label(),
+            stance: stance_label(stance),
             sliders: html! {
                 <>
                     {self.speech_slider(control.speech)}
-                    {self.stance_slider(control.stance)}
+                    {self.stance_slider(stance)}
                 </>
             },
         }
@@ -372,18 +367,58 @@ impl GroupPanel<'_> {
         }
     }
 
-    /// A mock until its purpose is decided: it sends nothing and changes no
-    /// authority.
-    fn stance_slider(&self, stance: GroupStance) -> Html {
+    /// The group's shared activity stance. Passive keeps its Designs passive;
+    /// Explore and Converge make them active.
+    fn stance_slider(&self, stance: WorkingGroupStance) -> Html {
+        let partition = self.runtime.room_projection().partition();
+        let revision = partition.revision;
+        let standing = partition
+            .groups
+            .iter()
+            .any(|group| group.group == *self.group);
+        let can_configure = standing && self.runtime.offers(wire::CommandKind::WorkingGroupStance);
         let controls = self.controls.clone();
+        let sender = self.sender.clone();
+        let report = self.report.clone();
         let group = self.group.clone();
         let oninput = Callback::from(move |event: InputEvent| {
             let input: HtmlInputElement = event.target_unchecked_into();
             let index = input.value().parse::<usize>().unwrap_or(0);
-            controls.dispatch(TeamControlAction::Group(GroupControlAction::SetStance {
-                group: group.clone(),
-                stance: GroupStance::ALL[index.min(GroupStance::ALL.len() - 1)],
-            }));
+            let stance = WorkingGroupStance::ALL[index.min(WorkingGroupStance::ALL.len() - 1)];
+            let respond = {
+                let (controls, report, group) = (controls.clone(), report.clone(), group.clone());
+                Rc::new(
+                    move |result: Result<wire::intent::WorkingGroupChange, String>| {
+                        controls.dispatch(TeamControlAction::Group(
+                            GroupControlAction::SettleStance {
+                                group: group.clone(),
+                                stance,
+                            },
+                        ));
+                        if let Err(error) = result {
+                            report.emit(error);
+                        }
+                    },
+                )
+            };
+            if admit_action(
+                &sender,
+                ClientAction::WorkingGroupChange {
+                    change: GroupChange::Stance(WorkingGroupStanceSet {
+                        group: group.clone(),
+                        stance,
+                    }),
+                    revision,
+                    respond,
+                },
+            ) {
+                controls.dispatch(TeamControlAction::Group(
+                    GroupControlAction::RequestStance {
+                        group: group.clone(),
+                        stance,
+                    },
+                ));
+            }
         });
         html! {
             <label
@@ -396,12 +431,21 @@ impl GroupPanel<'_> {
                     max="2"
                     step="1"
                     value={stance.index().to_string()}
-                    aria-label={format!("Group stance, which does nothing yet: {}", stance.label())}
-                    title="Hold, Explore, or Converge: this slider does nothing yet"
+                    disabled={!can_configure}
+                    aria-label={format!("Group stance: {}", stance_label(stance))}
+                    title="Passive keeps this group's Designs passive; Explore and Converge make them active"
                     {oninput}
                 />
-                {slider_words(GroupStance::ALL.map(GroupStance::label), stance.index())}
+                {slider_words(WorkingGroupStance::ALL.map(stance_label), stance.index())}
             </label>
         }
+    }
+}
+
+const fn stance_label(stance: WorkingGroupStance) -> &'static str {
+    match stance {
+        WorkingGroupStance::Passive => "Passive",
+        WorkingGroupStance::Explore => "Explore",
+        WorkingGroupStance::Converge => "Converge",
     }
 }

@@ -107,10 +107,15 @@ none:
   lane's live agent prose, drawn in its team's console, is voiced at the louder
   of its team's mode and every covering group's mode, each line at most once.
   Room publications stay records and are never voiced.
-- **The allocation slider** becomes a mock stance slider with stops Hold /
-  Explore / Converge, keyboard-operable like the team sliders and browser-local.
-  It sends no command and changes no authority; its title and accessible label
-  say it does nothing yet. A working group allocates and authorizes nothing.
+- **The allocation slider** becomes the group's shared stance control with
+  Passive / Explore / Converge stops. It reads the stance from the shared
+  working-group partition and sends one guarded `group::stance` command at the
+  revision it displays. Passive makes every open Design in the group passive;
+  Explore and Converge make them active and currently differ only in name. A
+  pending choice is shown until the resident answers; refusal returns the
+  slider to partition authority and shows its reason. The slider is disabled
+  when the resident does not offer the command. Stance and group TURBO are
+  independent.
 - **Keyboard broadcast and waking** have none: a post reaches only its own
   room and wakes no lane.
 

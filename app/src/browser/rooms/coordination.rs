@@ -61,7 +61,7 @@ pub(super) fn coordination_form(
         Some(DesignStanding::Passive) => {
             return html! {
                 <p class="room-notice" data-room-coordination-passive={room.to_string()}>
-                    {"Passive: no lane can claim this Design or be coordinated onto it. Move it into a working group to activate it."}
+                    {"Passive: no lane can claim this Design or be coordinated onto it. Set its working group to Explore or Converge; if ungrouped, group it first."}
                 </p>
             };
         }

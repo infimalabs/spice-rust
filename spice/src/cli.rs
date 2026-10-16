@@ -179,6 +179,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::WorkingGroupMove
         | CommandKind::WorkingGroupArrange
         | CommandKind::WorkingGroupFast
+        | CommandKind::WorkingGroupStance
         | CommandKind::CandidateRetain
         | CommandKind::CandidateCritiqueRecord
         | CommandKind::CandidateCoverageRecord
@@ -434,6 +435,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["group", "list"]
             | ["group", "move"]
             | ["group", "arrange"]
+            | ["group", "stance"]
             | ["principal", "list"]
             | ["principal", "admit"]
             | ["principal", "profile"]

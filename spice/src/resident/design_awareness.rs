@@ -442,9 +442,9 @@ fn open(entry: &board::Entry) -> bool {
     workflow.status == "pending" && workflow.completion.is_none()
 }
 
-/// Whether `entry` is an open Design outside every working group.
+/// Whether `entry` is an open Design inactive under its group stance.
 fn passive(entry: &board::Entry) -> bool {
-    wire::intent::is_open_design(entry.statement().intent, entry.workflow()) && !entry.grouped()
+    board::passive_design(entry)
 }
 
 /// Whether `lane` holds an active claim on `design` or created it.
@@ -624,12 +624,9 @@ fn passive_design(read: &JournalRead<'_>, told: &Told) -> Result<(), GuardError>
     {
         return Err(stale("the Design is no longer open"));
     }
-    let grouped = read.group_partition()?.is_some_and(|head| {
-        head.body()
-            .groups
-            .iter()
-            .any(|group| group.anchors.contains(&told.design))
-    });
+    let active = read
+        .group_partition()?
+        .is_some_and(|head| head.body().design_is_active(&told.design));
     let held = read.claim_head(&told.design)?.is_some_and(|head| {
         head.body().disposition == ClaimDisposition::Active && head.body().lane == told.lane
     });
@@ -638,7 +635,7 @@ fn passive_design(read: &JournalRead<'_>, told: &Told) -> Result<(), GuardError>
         wire::body::TaskCreationContext::Transcript { boundary, .. }
             if boundary.lane == told.lane
     );
-    if grouped || held || created {
+    if active || held || created {
         return Err(stale("the Design is no longer passive for this lane"));
     }
     if read

@@ -74,6 +74,8 @@ pub enum CommandKind {
     WorkingGroupArrange,
     /// Set one working group's fast-mode flag at the observed revision.
     WorkingGroupFast,
+    /// Set one working group's shared activity stance at the observed revision.
+    WorkingGroupStance,
     /// Retain one exact preparation candidate.
     CandidateRetain,
     /// Record one source-backed critique of a retained candidate.

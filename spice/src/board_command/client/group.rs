@@ -1,7 +1,10 @@
 use super::*;
 
 use wire::intent::{WorkingGroupAnchor, WorkingGroupPage, WorkingGroupRead};
-use wire::rooms::{RoomAuthorityStamp, WorkingGroup, WorkingGroupArrange, WorkingGroupMove};
+use wire::rooms::{
+    RoomAuthorityStamp, WorkingGroup, WorkingGroupArrange, WorkingGroupMove, WorkingGroupStance,
+    WorkingGroupStanceSet,
+};
 
 pub(super) fn client_group_list(
     repository: &Repository,
@@ -110,6 +113,52 @@ pub(super) fn client_group_arrange(
     ))
 }
 
+/// Set one standing group's shared activity stance at the partition revision
+/// observed immediately before the write.
+pub(super) fn client_group_stance(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let Some(written_group) = matches.get_one::<String>("GROUP") else {
+        return refusal("group::identity-missing", None, "name the working group");
+    };
+    let group = match group(written_group) {
+        Ok(group) => group,
+        Err(outcome) => return outcome,
+    };
+    let Some(written_stance) = matches.get_one::<String>("STANCE") else {
+        return refusal(
+            "group::stance-missing",
+            None,
+            "name passive, explore, or converge",
+        );
+    };
+    let stance = match written_stance.parse::<WorkingGroupStance>() {
+        Ok(stance) => stance,
+        Err(error) => {
+            return refusal(
+                "group::stance-invalid",
+                Some(written_stance.to_owned()),
+                error,
+            );
+        }
+    };
+    let page = match observed(repository) {
+        Ok(page) => page,
+        Err(outcome) => return outcome,
+    };
+    render_change(crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::WorkingGroupStance,
+        vec![Witness::Group {
+            revision: page.revision,
+        }],
+        &WorkingGroupStanceSet { group, stance },
+    ))
+}
+
 /// The current partition a change witnesses.
 fn observed(repository: &Repository) -> Result<WorkingGroupPage, Outcome<CommandAnswer>> {
     let contract = crate::cli::contract(&["group", "list"])
@@ -199,6 +248,7 @@ fn grouping(written: &str) -> Result<WorkingGroup, Outcome<CommandAnswer>> {
             .filter(|anchor| !anchor.is_empty())
             .map(anchor)
             .collect::<Result<_, _>>()?,
+        stance: WorkingGroupStance::Passive,
     })
 }
 
@@ -218,6 +268,7 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
                         wire::intent::WorkingGroupChangeStatus::Ended => "moved; its group ended",
                         wire::intent::WorkingGroupChangeStatus::Arranged => "arranged",
                         wire::intent::WorkingGroupChangeStatus::Retuned => "fast mode set",
+                        wire::intent::WorkingGroupChangeStatus::Stanced => "stance set",
                     }
                 ),
             }),
@@ -232,7 +283,7 @@ fn render_groups(page: &WorkingGroupPage) -> String {
         text.push_str("no working groups\n");
     }
     for group in &page.groups {
-        text.push_str(&format!("{}\n", group.group));
+        text.push_str(&format!("{} {}\n", group.group, group.stance));
         for anchor in &group.anchors {
             match anchor {
                 WorkingGroupAnchor::Available { handle, design, .. } => {

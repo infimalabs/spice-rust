@@ -82,6 +82,7 @@ fn group(extra: &[&str]) -> WorkingGroup {
         anchors: std::iter::once(room())
             .chain(extra.iter().map(|design| fixture_stamp(design)))
             .collect(),
+        stance: wire::rooms::WorkingGroupStance::Explore,
     }
 }
 

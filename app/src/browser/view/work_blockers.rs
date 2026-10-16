@@ -320,7 +320,7 @@ fn render_wall(wall: DependencyWall<'_>) -> Html {
         DependencyWall::Passive(_) => (
             "passive",
             "Passive Design",
-            "It stands outside every working group; no lane can acquire it until you move it into one.",
+            "It is ungrouped or its working group is Passive; no lane can acquire it until the group is in Explore or Converge.",
             "Operator required",
         ),
         DependencyWall::Selection(_) => (

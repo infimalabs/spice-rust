@@ -69,44 +69,43 @@ its horizon, live fact at or before it, or stream overflow invalidates the
 projection and reconnects for a fresh snapshot. It is never merged
 speculatively.
 
-Working groups are shared catalog organization only. Opened group consoles,
-their order and layout, composer drafts, reader and scroll positions, and focus
-remain browser preferences. Those preferences cannot grant task, room, group,
-team, or lane authority, and a group edit never mounts, reorders, or closes a
-browser view.
+Working groups carry shared catalog organization and a shared activity stance.
+Opened group consoles, their order and layout, composer drafts, reader and
+scroll positions, speech, and focus remain browser preferences. Those
+preferences cannot grant task, room, group, team, or lane authority, and a
+group edit never mounts, reorders, or closes a browser view.
 
 The Spice sidebar's working-group catalog is the design-side twin of the team
 roster and is drawn by the same roster (see [Resident topology in the global
 menu](OVERVIEW.md#resident-topology-in-the-global-menu)).
 It reads one shared partition: every group in partition order, each holding its
-designs in order, guarded by one revision. A group exists only while designs
-belong to it: it is never created empty, never named, and never removed as an
-object. Its card is labelled from its lead design, member zero, as a team is
-from its host. A group's **Open** mounts its console, as a team's watchband
-shows it, and is the only foreground action. In that console a design's menu
-carries **New working group** and **Leave group**, the twins of an agent's
-**Create new team** and **Leave all teams**: the first moves the design alone
-into a fresh group and is offered only while its group holds another design;
-the second takes it out of its group. They and every drop send one
-`group::move` or `group::arrange` witnessing the partition revision the browser
-last folded, and a change that partition revision no longer matches is refused
-rather than merged. A group whose last design leaves ends, and once a completed
-room snapshot lacks the group, every browser closes that group's open console
-and forgets it, so a reload does not restore it. Ending a group moves no task:
-its designs and the work they produced stay on the board. While room
-authority loads or reconnects, an open console keeps its last label and
-geometry and closes nothing.
+designs in order and one Passive, Explore, or Converge stance, guarded by one
+revision. A group exists only while designs belong to it: it is never created
+empty, never named, and never removed as an object. Its card is labelled from
+its lead design, member zero, as a team is from its host. A group's **Open**
+mounts its console, as a team's watchband shows it, and is the only foreground
+action. In that console a design's menu carries **New working group** and
+**Leave group**, the twins of an agent's **Create new team** and **Leave all
+teams**: the first moves the design alone into a fresh group and is offered
+only while its group holds another design; the second takes it out of its
+group. They and every drop send one `group::move` or `group::arrange`
+witnessing the partition revision the browser last folded; the console's stance
+slider sends `group::stance` under that same revision. A change that partition
+revision no longer matches is refused rather than merged. A group whose last
+design leaves ends, and once a completed room snapshot lacks the group, every
+browser closes that group's open console and forgets it, so a reload does not
+restore it. Ending a group moves no task: its designs and the work they
+produced stay on the board. While room authority loads or reconnects, an open
+console keeps its last label and geometry and closes nothing.
 
 **Designs** lists the open Design tasks no group holds, as Unassigned Agents
-lists lanes in no team; each tile there reads open, passive, and each grouped
-tile reads its [standing](CONSOLE.md#design-standing). Dropping a design on
-**New working group** begins a
-group holding only that design, standing where the design stood in the
-partition order or, for an ungrouped design, last. The catalog notice reports
-every outcome; the authority's typed refusals, `group::design-limit` from a
-stale view of a full group, `group::design-only` for a task without Design
-intent and `group::partition-moved` for a partition that changed since the
-browser read it, each leave every group unchanged.
+lists lanes in no team; each tile there reads open, passive, while a grouped
+tile reads the standing its group's stance grants. Passive and no group are
+passive; Explore and Converge are active. Dropping a design on **New working
+group** begins a Passive group containing only that design, standing where the
+design stood in partition order or, for an ungrouped design, last. The catalog
+notice reports every outcome; typed refusals such as `group::design-limit`,
+`group::design-only`, and `group::partition-moved` leave every group unchanged.
 
 Each opened group is a console in the team fleet, after the teams, read exactly
 as a team console with tasks and agents swapped. Its base and durable Design

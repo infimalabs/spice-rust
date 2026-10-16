@@ -50,6 +50,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::WorkingGroupMove
         | CommandKind::WorkingGroupArrange
         | CommandKind::WorkingGroupFast
+        | CommandKind::WorkingGroupStance
         | CommandKind::CandidateRetain
         | CommandKind::CandidateCritiqueRecord
         | CommandKind::CandidateCoverageRecord

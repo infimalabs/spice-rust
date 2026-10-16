@@ -1384,8 +1384,9 @@ fn healthy_plan_sequences_and_planning_control_are_neutral_not_blocked() {
 
 #[test]
 fn design_selection_wins_its_gate_and_its_output_waits_neutrally() {
-    let design =
-        planning("WAIT-design", wire::TaskIntent::Design, Standing::Open).with_grouped(true);
+    let design = planning("WAIT-design", wire::TaskIntent::Design, Standing::Open)
+        .with_grouped(true)
+        .with_design_active(true);
     let output = named_output("WAIT-design-output", "WAIT-design", "WAIT-design");
     let entries = [design, output];
     let waits = board::work_waits(&entries, &environment());
