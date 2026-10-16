@@ -1,41 +1,30 @@
-//! Deterministic word matching between an open Design and a lane's claimed
-//! task.
+//! Deterministic recent-window TF-IDF matching between completed work and
+//! passive Designs.
 //!
-//! A statement's terms are its lowercase alphabetic words: text splits on
-//! every character that is not a letter or digit, a run that holds any digit
-//! is inert (as in taste bags), words shorter than [`MIN_TERM_CHARS`] letters,
-//! words whose lowercase form is not wholly lowercase letters, and common
-//! function words are dropped, and one trailing `s` after a longer
-//! stem is folded away so `designs` and `design` agree. A Design's terms come
-//! from its title and description; a task's from its title, description, and
-//! acceptance. The task matches the Design when they share at least
-//! [`MIN_SHARED_TERMS`] distinct terms that are not [common](CommonTerms)
-//! across the project's most recently revised statements, and at least one of
-//! them is a term of the Design's title.
+//! Documents use lowercase alphabetic terms from authored task fields. Digit
+//! runs, short words, and function words are inert; one trailing `s` is folded.
+//! A corpus fitted from the most recently revised statements supplies smooth
+//! inverse document frequency. Logarithmic term frequency and L2-normalized
+//! sparse vectors then produce one cosine score.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BTreeMap, BinaryHeap};
 
 pub use wire::rooms::COMPLETION_VALIDATION_BYTES;
-use wire::rooms::DESIGN_NOTICE_TERMS;
+use wire::rooms::DESIGN_NOTICE_SHOWN_TERMS;
+use wire::{TaskHead, TaskStamp};
 
 /// Fewest letters a word needs to count as a term.
 pub const MIN_TERM_CHARS: usize = 4;
-/// Fewest distinct shared terms that match a task to a Design.
-pub const MIN_SHARED_TERMS: usize = 3;
 /// Most characters of a Design's one-line pitch.
 pub const PITCH_CHARS: usize = 160;
 /// Most rendered bytes of whole open questions one Design request carries.
 pub const DESIGN_REQUEST_QUESTIONS_BYTES: usize = 2 * 1024;
-/// Most recently revised task statements, open or completed, whose
-/// vocabulary decides which terms are common.
-pub const COMMON_TERM_WINDOW: usize = 256;
-/// Fewest statements the window needs before any term can be common.
-pub const COMMON_TERM_MIN_STATEMENTS: usize = 8;
-/// A term in more than this fraction, numerator over denominator, of the
-/// window's statements is common.
-pub const COMMON_TERM_SHARE: (usize, usize) = (1, 4);
-/// Most distinct terms retained in one completion matching profile.
-pub const COMPLETION_PROFILE_TERMS: usize = 256;
+/// Most recently revised task statements, open or completed, in the frequency
+/// corpus.
+pub const FREQUENCY_WINDOW: usize = 256;
+/// Minimum cosine similarity that can create a Design request.
+pub const MATCH_SCORE_FLOOR: f64 = 0.15;
 
 /// Common words that say nothing about what a statement concerns.
 const STOP: &[&str] = &[
@@ -47,145 +36,263 @@ const STOP: &[&str] = &[
     "within", "without", "would", "your",
 ];
 
-/// The terms of one Design's statement, its title's terms kept apart.
+/// Normalized term occurrence counts for one document.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DesignTerms {
-    title: BTreeSet<String>,
-    all: BTreeSet<String>,
-}
+pub struct TermCounts(BTreeMap<String, u32>);
 
-impl DesignTerms {
-    /// Terms of a Design's title, description, and open `questions`.
+impl TermCounts {
+    /// Count terms across arbitrary document fields.
     #[must_use]
-    pub fn new(title: &str, description: Option<&str>, questions: &[String]) -> Self {
-        let title = terms([title]);
-        let mut all = title.clone();
-        all.extend(terms(description));
-        all.extend(terms(questions.iter().map(String::as_str)));
-        Self { title, all }
-    }
-
-    /// The shared terms that are not `common`, ascending and at most
-    /// [`DESIGN_NOTICE_TERMS`], when `task` matches this Design; `None`
-    /// otherwise.
-    #[must_use]
-    pub fn matched(&self, task: &BTreeSet<String>, common: &CommonTerms) -> Option<Vec<String>> {
-        let shared = self
-            .all
-            .intersection(task)
-            .filter(|term| !common.0.contains(*term))
-            .collect::<Vec<_>>();
-        let titled = shared.iter().any(|term| self.title.contains(*term));
-        (shared.len() >= MIN_SHARED_TERMS && titled).then(|| {
-            shared
-                .into_iter()
-                .take(DESIGN_NOTICE_TERMS)
-                .cloned()
-                .collect()
-        })
-    }
-}
-
-/// Terms so widespread across the project's recent work that sharing them says
-/// nothing about what a task and a Design have in common.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CommonTerms(BTreeSet<String>);
-
-impl CommonTerms {
-    /// The terms found in more than [`COMMON_TERM_SHARE`] of `statements`,
-    /// each one statement's terms. Fewer than [`COMMON_TERM_MIN_STATEMENTS`]
-    /// statements yield none. Memory is bounded by the statements' distinct
-    /// terms.
-    #[must_use]
-    pub fn of(statements: impl IntoIterator<Item = BTreeSet<String>>) -> Self {
-        let mut counts = BTreeMap::<String, usize>::new();
-        let mut total = 0_usize;
-        for statement in statements {
-            total += 1;
-            for term in statement {
-                *counts.entry(term).or_default() += 1;
+    pub fn from_texts<'a>(texts: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut counts = BTreeMap::<String, u32>::new();
+        for text in texts {
+            for run in text.split(|c: char| !c.is_alphanumeric()) {
+                if let Some(term) = normalize(run) {
+                    let count = counts.entry(term).or_default();
+                    *count = count.saturating_add(1);
+                }
             }
         }
-        if total < COMMON_TERM_MIN_STATEMENTS {
-            return Self::default();
-        }
-        let (numerator, denominator) = COMMON_TERM_SHARE;
-        Self(
-            counts
-                .into_iter()
-                .filter(|(_, count)| count * denominator > total * numerator)
-                .map(|(term, _)| term)
-                .collect(),
+        Self(counts)
+    }
+
+    /// Count a task statement's title, description, and itemized acceptance.
+    #[must_use]
+    pub fn statement(title: &str, description: Option<&str>, acceptance: &[String]) -> Self {
+        Self::from_texts(
+            std::iter::once(title)
+                .chain(description)
+                .chain(acceptance.iter().map(String::as_str)),
         )
     }
-}
 
-/// Terms of a task statement: its title, description, and acceptance.
-#[must_use]
-pub fn task_terms(
-    title: &str,
-    description: Option<&str>,
-    acceptance: &[String],
-) -> BTreeSet<String> {
-    terms(
-        std::iter::once(title)
-            .chain(description)
-            .chain(acceptance.iter().map(String::as_str)),
-    )
-}
-
-/// Terms of a completed task's statement plus a bounded prefix of its
-/// validation, capped again after deduplication.
-#[must_use]
-pub fn completion_terms(
-    title: &str,
-    description: Option<&str>,
-    acceptance: &[String],
-    validation: &str,
-) -> BTreeSet<String> {
-    let mut validation_end = validation.len().min(COMPLETION_VALIDATION_BYTES);
-    while !validation.is_char_boundary(validation_end) {
-        validation_end -= 1;
+    /// Count a completed statement plus its bounded successful validation.
+    #[must_use]
+    pub fn completion(
+        title: &str,
+        description: Option<&str>,
+        acceptance: &[String],
+        validation: &str,
+    ) -> Self {
+        let mut validation_end = validation.len().min(COMPLETION_VALIDATION_BYTES);
+        while !validation.is_char_boundary(validation_end) {
+            validation_end -= 1;
+        }
+        Self::from_texts(
+            std::iter::once(title)
+                .chain(description)
+                .chain(acceptance.iter().map(String::as_str))
+                .chain(std::iter::once(&validation[..validation_end])),
+        )
     }
-    terms_capped(
-        std::iter::once(title)
-            .chain(description)
-            .chain(acceptance.iter().map(String::as_str))
-            .chain(std::iter::once(&validation[..validation_end])),
-        COMPLETION_PROFILE_TERMS,
-    )
+
+    fn terms(&self) -> impl Iterator<Item = &String> {
+        self.0.keys()
+    }
 }
 
-/// The distinct terms of `texts`.
-fn terms<'a>(texts: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
-    terms_capped(texts, usize::MAX)
+/// Bounded statement document frequencies shared by both compared texts.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FrequencyProfile {
+    statements: usize,
+    document_frequency: BTreeMap<String, usize>,
 }
 
-fn terms_capped<'a>(texts: impl IntoIterator<Item = &'a str>, maximum: usize) -> BTreeSet<String> {
-    let mut terms = BTreeSet::new();
-    for text in texts {
-        for run in text.split(|c: char| !c.is_alphanumeric()) {
-            if terms.len() == maximum {
-                return terms;
-            }
-            if run.chars().any(char::is_numeric) {
-                continue;
-            }
-            let word = run.to_lowercase();
-            let word = match word.strip_suffix('s') {
-                Some(stem) if stem.chars().count() >= MIN_TERM_CHARS && !stem.ends_with('s') => {
-                    stem.to_owned()
-                }
-                _ => word,
-            };
-            if word.chars().count() >= MIN_TERM_CHARS
-                && word.chars().all(|c| c.is_alphabetic() && !c.is_uppercase())
-                && !STOP.contains(&word.as_str())
-            {
-                terms.insert(word);
+impl FrequencyProfile {
+    /// Fit one profile from document-presence counts.
+    #[must_use]
+    pub fn of(documents: impl IntoIterator<Item = TermCounts>) -> Self {
+        let mut profile = Self::default();
+        for document in documents {
+            profile.statements = profile.statements.saturating_add(1);
+            for term in document.terms() {
+                let count = profile.document_frequency.entry(term.clone()).or_default();
+                *count = count.saturating_add(1);
             }
         }
+        profile
     }
+
+    /// Fit from the [`FREQUENCY_WINDOW`] most recently revised task statements.
+    #[must_use]
+    pub fn recent<'a>(statements: impl Iterator<Item = &'a TaskHead>) -> Self {
+        let mut recent = BinaryHeap::with_capacity(FREQUENCY_WINDOW + 1);
+        for statement in statements {
+            recent.push(Reverse(RecentStatement(statement)));
+            if recent.len() > FREQUENCY_WINDOW {
+                recent.pop();
+            }
+        }
+        Self::of(
+            recent
+                .into_iter()
+                .map(|Reverse(RecentStatement(statement))| {
+                    TermCounts::statement(
+                        &statement.title,
+                        statement.description.as_deref(),
+                        &statement.acceptance,
+                    )
+                }),
+        )
+    }
+
+    /// Cosine similarity for two documents fitted against this same profile.
+    #[must_use]
+    pub fn score(&self, left: &TermCounts, right: &TermCounts) -> Option<f64> {
+        let left = self.vector(left)?;
+        let right = self.vector(right)?;
+        let score = dot(&left, &right);
+        score.is_finite().then_some(score)
+    }
+
+    /// Select the highest qualifying candidate; lower durable identity wins an
+    /// exact finite-score tie. Explanations retain the strongest weighted
+    /// overlaps, then sort those terms for the wire contract.
+    #[must_use]
+    pub fn select<'a, T>(
+        &self,
+        completion: &TermCounts,
+        candidates: impl IntoIterator<Item = MatchCandidate<'a, T>>,
+    ) -> Option<(&'a T, Vec<String>)> {
+        let completion = self.vector(completion)?;
+        let mut best: Option<(&TaskStamp, &T, f64, Vec<String>)> = None;
+        for candidate in candidates {
+            let Some(design) = self.vector(&candidate.document) else {
+                continue;
+            };
+            let score = dot(&design, &completion);
+            if !score.is_finite() || score < MATCH_SCORE_FLOOR {
+                continue;
+            }
+            let replace =
+                best.as_ref()
+                    .is_none_or(|(identity, _, known, _)| match score.total_cmp(known) {
+                        Ordering::Greater => true,
+                        Ordering::Equal => candidate.identity < *identity,
+                        Ordering::Less => false,
+                    });
+            if replace {
+                best = Some((
+                    candidate.identity,
+                    candidate.value,
+                    score,
+                    explanation(&design, &completion),
+                ));
+            }
+        }
+        best.map(|(_, value, _, terms)| (value, terms))
+    }
+
+    fn vector(&self, document: &TermCounts) -> Option<BTreeMap<String, f64>> {
+        let population = self.statements as f64;
+        let mut weights = BTreeMap::new();
+        let mut squared_norm = 0.0;
+        for (term, count) in &document.0 {
+            let frequency = *self.document_frequency.get(term).unwrap_or(&0) as f64;
+            let tf = 1.0 + f64::from(*count).ln();
+            let idf = 1.0 + ((population + 1.0) / (frequency + 1.0)).ln();
+            let weight = tf * idf;
+            if !weight.is_finite() {
+                return None;
+            }
+            squared_norm += weight * weight;
+            weights.insert(term.clone(), weight);
+        }
+        let norm = squared_norm.sqrt();
+        if !norm.is_finite() || norm == 0.0 {
+            return None;
+        }
+        for weight in weights.values_mut() {
+            *weight /= norm;
+        }
+        Some(weights)
+    }
+}
+
+/// One eligible value and the document scored under its durable identity.
+pub struct MatchCandidate<'a, T> {
+    identity: &'a TaskStamp,
+    value: &'a T,
+    document: TermCounts,
+}
+
+impl<'a, T> MatchCandidate<'a, T> {
+    #[must_use]
+    pub fn new(identity: &'a TaskStamp, value: &'a T, document: TermCounts) -> Self {
+        Self {
+            identity,
+            value,
+            document,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RecentStatement<'a>(&'a TaskHead);
+
+impl PartialEq for RecentStatement<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.revision == other.0.revision
+    }
+}
+
+impl Eq for RecentStatement<'_> {}
+
+impl PartialOrd for RecentStatement<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RecentStatement<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.revision.cmp(&other.0.revision)
+    }
+}
+
+fn normalize(run: &str) -> Option<String> {
+    if run.chars().any(char::is_numeric) {
+        return None;
+    }
+    let word = run.to_lowercase();
+    let word = match word.strip_suffix('s') {
+        Some(stem) if stem.chars().count() >= MIN_TERM_CHARS && !stem.ends_with('s') => {
+            stem.to_owned()
+        }
+        _ => word,
+    };
+    (word.chars().count() >= MIN_TERM_CHARS
+        && word.chars().all(|c| c.is_alphabetic() && !c.is_uppercase())
+        && !STOP.contains(&word.as_str()))
+    .then_some(word)
+}
+
+fn dot(left: &BTreeMap<String, f64>, right: &BTreeMap<String, f64>) -> f64 {
+    left.iter()
+        .map(|(term, weight)| weight * right.get(term).copied().unwrap_or(0.0))
+        .sum()
+}
+
+fn explanation(design: &BTreeMap<String, f64>, completion: &BTreeMap<String, f64>) -> Vec<String> {
+    let mut products = design
+        .iter()
+        .filter_map(|(term, design_weight)| {
+            completion
+                .get(term)
+                .map(|completion_weight| (term, design_weight * completion_weight))
+        })
+        .collect::<Vec<_>>();
+    products.sort_by(|(left_term, left), (right_term, right)| {
+        right
+            .total_cmp(left)
+            .then_with(|| left_term.cmp(right_term))
+    });
+    let mut terms = products
+        .into_iter()
+        .take(DESIGN_NOTICE_SHOWN_TERMS)
+        .map(|(term, _)| term.clone())
+        .collect::<Vec<_>>();
+    terms.sort();
     terms
 }
 
@@ -254,211 +361,166 @@ pub fn request_questions(questions: &[String]) -> Vec<String> {
 mod tests {
     use super::*;
 
-    fn task(title: &str, description: &str) -> BTreeSet<String> {
-        task_terms(title, Some(description), &[])
+    fn document(text: &str) -> TermCounts {
+        TermCounts::from_texts([text])
     }
 
-    /// `count` open statements each holding `generic` plus its own filler.
-    fn board(count: usize, generic: &str) -> CommonTerms {
-        let filler = [
-            "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
-        ];
-        CommonTerms::of(
-            filler
-                .iter()
-                .cycle()
-                .take(count)
-                .map(|word| task(&format!("{generic} {word}"), "")),
-        )
+    fn generated_word(index: usize) -> String {
+        let first = char::from(b'a' + ((index / (26 * 26)) % 26) as u8);
+        let second = char::from(b'a' + ((index / 26) % 26) as u8);
+        let third = char::from(b'a' + (index % 26) as u8);
+        format!("term{first}{second}{third}")
+    }
+
+    fn close(left: f64, right: f64) {
+        assert!((left - right).abs() < 1e-12, "{left} != {right}");
     }
 
     #[test]
-    fn a_task_matches_on_enough_shared_terms_including_a_title_term() {
-        let design = DesignTerms::new(
-            "Room catch-up pagination",
-            Some("Lanes page retained publications through bounded cursors."),
-            &[],
-        );
-        let matched = design
-            .matched(
-                &task(
-                    "Page room catch-up",
-                    "Bound the cursor of retained publications per lane.",
-                ),
-                &CommonTerms::default(),
-            )
-            .expect("shared title and statement terms match");
-        assert_eq!(
-            matched,
-            [
-                "catch",
-                "cursor",
-                "lane",
-                "page",
-                "publication",
-                "retained",
-                "room"
-            ]
-        );
+    fn term_and_document_frequency_are_logarithmic_presence_counts() {
+        let profile = FrequencyProfile::of([document("alpha alpha beta"), document("alpha gamma")]);
+        assert_eq!(profile.statements, 2);
+        assert_eq!(profile.document_frequency["alpha"], 2);
+        assert_eq!(profile.document_frequency["beta"], 1);
+
+        let vector = profile.vector(&document("alpha alpha beta")).unwrap();
+        let alpha = (1.0 + 2.0_f64.ln()) * (1.0 + (3.0_f64 / 3.0).ln());
+        let beta = (1.0 + 1.0_f64.ln()) * (1.0 + (3.0_f64 / 2.0).ln());
+        let norm = (alpha * alpha + beta * beta).sqrt();
+        close(vector["alpha"], alpha / norm);
+        close(vector["beta"], beta / norm);
+        close(vector.values().map(|weight| weight * weight).sum(), 1.0);
     }
 
     #[test]
-    fn shared_terms_outside_the_design_title_or_too_few_do_not_match() {
-        let design = DesignTerms::new(
-            "Working groups",
-            Some("Retained publications page through bounded cursors."),
-            &[],
-        );
-        assert_eq!(
-            design.matched(
-                &task(
-                    "Cursor paging",
-                    "Retained publications and bounded cursors."
-                ),
-                &CommonTerms::default()
-            ),
-            None,
-            "no shared term names what the Design's title is about"
-        );
-        assert_eq!(
-            design.matched(
-                &task("Working groups", "Arrange the board."),
-                &CommonTerms::default()
-            ),
-            None,
-            "two shared terms are below the threshold"
-        );
-    }
-
-    #[test]
-    fn board_common_terms_neither_count_nor_satisfy_the_title_requirement() {
-        let common = board(8, "lane room work");
-        let generic = DesignTerms::new("Lane room work", None, &[]);
-        let claimed = task("Lane room work", "");
-        assert!(generic.matched(&claimed, &CommonTerms::default()).is_some());
-        assert_eq!(
-            generic.matched(&claimed, &common),
-            None,
-            "an overlap of only board-common terms invites nothing"
-        );
-
-        let titled_by_common = DesignTerms::new(
-            "Room lanes",
-            Some("Retained publications page through bounded cursors."),
-            &[],
-        );
-        let paging = task(
-            "Paging",
-            "Retained publications and bounded cursors in rooms.",
-        );
+    fn empty_nonoverlapping_and_below_floor_documents_never_select() {
+        let profile = FrequencyProfile::of([document("alpha beta")]);
         assert!(
-            titled_by_common
-                .matched(&paging, &CommonTerms::default())
-                .is_some()
+            profile
+                .score(&TermCounts::default(), &document("alpha"))
+                .is_none()
         );
-        assert_eq!(
-            titled_by_common.matched(&paging, &common),
-            None,
-            "a common title term does not satisfy the title requirement"
+        close(
+            profile
+                .score(&document("alpha"), &document("bravo"))
+                .unwrap(),
+            0.0,
         );
 
-        let specific = DesignTerms::new(
-            "Room catch-up pagination",
-            Some("Lanes page retained publications through bounded cursors."),
-            &[],
-        );
-        assert_eq!(
-            specific
-                .matched(
-                    &task(
-                        "Page room catch-up",
-                        "Bound the cursor of retained publications per lane.",
-                    ),
-                    &common,
+        let shared = generated_word(0);
+        let left = (0..64).map(generated_word).collect::<Vec<_>>().join(" ");
+        let right = std::iter::once(shared)
+            .chain((64..127).map(generated_word))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(profile.score(&document(&left), &document(&right)).unwrap() < MATCH_SCORE_FLOOR);
+        let identity = TaskStamp::for_micros(1).unwrap();
+        let candidate = 1_u8;
+        assert!(
+            profile
+                .select(
+                    &document(&right),
+                    [MatchCandidate::new(&identity, &candidate, document(&left))]
                 )
-                .expect("specific shared terms still match"),
-            ["catch", "cursor", "page", "publication", "retained"],
-            "matched terms omit the common ones"
+                .is_none()
+        );
+        assert_eq!(MATCH_SCORE_FLOOR, 0.15);
+    }
+
+    #[test]
+    fn selection_ranks_by_cosine_then_durable_identity() {
+        let profile = FrequencyProfile::of([document("alpha beta gamma")]);
+        let completion = document("alpha beta");
+        let first = TaskStamp::for_micros(1).unwrap();
+        let second = TaskStamp::for_micros(2).unwrap();
+        let best = 3_u8;
+        let lesser = 2_u8;
+        assert_eq!(
+            profile
+                .select(
+                    &completion,
+                    [
+                        MatchCandidate::new(&first, &lesser, document("alpha")),
+                        MatchCandidate::new(&second, &best, document("alpha beta")),
+                    ],
+                )
+                .map(|(value, _)| *value),
+            Some(best)
+        );
+
+        let lower_identity = 1_u8;
+        let higher_identity = 2_u8;
+        assert_eq!(
+            profile
+                .select(
+                    &completion,
+                    [
+                        MatchCandidate::new(&second, &higher_identity, document("alpha beta")),
+                        MatchCandidate::new(&first, &lower_identity, document("alpha beta")),
+                    ],
+                )
+                .map(|(value, _)| *value),
+            Some(lower_identity)
         );
     }
 
     #[test]
-    fn open_questions_contribute_design_matching_terms() {
-        let design = DesignTerms::new(
+    fn explanations_keep_the_strongest_products_then_store_them_sorted() {
+        let profile = FrequencyProfile::of([document(
+            "alpha bravo charlie delta foxtrot gamma hotel india",
+        )]);
+        let completion =
+            document("alpha alpha alpha bravo bravo charlie delta foxtrot gamma hotel india");
+        let identity = TaskStamp::for_micros(1).unwrap();
+        let candidate = 1_u8;
+        let (_, terms) = profile
+            .select(
+                &completion,
+                [MatchCandidate::new(
+                    &identity,
+                    &candidate,
+                    document(
+                        "alpha alpha alpha bravo bravo charlie delta foxtrot gamma hotel india",
+                    ),
+                )],
+            )
+            .unwrap();
+        assert_eq!(
+            terms,
+            ["alpha", "bravo", "charlie", "delta", "foxtrot", "gamma"]
+        );
+        assert_eq!(terms.len(), DESIGN_NOTICE_SHOWN_TERMS);
+    }
+
+    #[test]
+    fn statement_items_contribute_and_completion_validation_is_only_byte_bounded() {
+        let statement = TermCounts::statement(
             "Snapshot proposal",
             None,
             &["Should retained cursors bound each publication page?".to_owned()],
         );
-        assert_eq!(
-            design
-                .matched(
-                    &task(
-                        "Snapshot cursor",
-                        "Retained publications use a bounded page."
-                    ),
-                    &CommonTerms::default(),
-                )
-                .expect("title and question terms match"),
-            ["cursor", "page", "publication", "retained", "snapshot"]
-        );
-    }
+        assert!(statement.0.contains_key("cursor"));
+        assert!(statement.0.contains_key("publication"));
 
-    #[test]
-    fn a_term_is_common_only_above_its_share_of_a_large_enough_board() {
-        assert_eq!(
-            board(COMMON_TERM_MIN_STATEMENTS - 1, "lane room work"),
-            CommonTerms::default(),
-            "a small board discounts nothing"
-        );
-        let (numerator, denominator) = COMMON_TERM_SHARE;
-        let at_share = COMMON_TERM_MIN_STATEMENTS * numerator / denominator;
-        let mut statements = (0..COMMON_TERM_MIN_STATEMENTS)
-            .map(|_| task("Lane", ""))
-            .collect::<Vec<_>>();
-        for statement in &mut statements[..at_share] {
-            statement.insert("page".to_owned());
-        }
-        for statement in &mut statements[..=at_share] {
-            statement.insert("cursor".to_owned());
-        }
-        assert_eq!(
-            CommonTerms::of(statements),
-            CommonTerms(BTreeSet::from(["cursor".to_owned(), "lane".to_owned()])),
-            "exactly the share is not common; one statement more is"
-        );
-    }
-
-    #[test]
-    fn a_completion_profile_bounds_validation_bytes_and_distinct_terms() {
-        let distinct = (0..COMPLETION_PROFILE_TERMS + 20)
-            .map(|index| {
-                let first = char::from(b'a' + ((index / (26 * 26)) % 26) as u8);
-                let second = char::from(b'a' + ((index / 26) % 26) as u8);
-                let third = char::from(b'a' + (index % 26) as u8);
-                format!("term{first}{second}{third}")
-            })
-            .collect::<Vec<_>>();
-        let excluded = distinct.last().expect("generated terms").clone();
-        let profile = completion_terms(
+        let distinct = (0..300).map(generated_word).collect::<Vec<_>>();
+        let completion = TermCounts::completion(
             "Retained statement marker",
             Some("Statement description"),
             &[],
             &distinct.join(" "),
         );
-        assert_eq!(profile.len(), COMPLETION_PROFILE_TERMS);
-        assert!(profile.contains("retained"));
         assert!(
-            !profile.contains(&excluded),
-            "validation terms beyond the profile cap are not retained"
+            completion.0.len() > FREQUENCY_WINDOW,
+            "the bounded validation has no distinct-term cap"
         );
 
         let validation = format!(
             "{}é boundarymarker",
             "x".repeat(COMPLETION_VALIDATION_BYTES - 1)
         );
-        let clipped = completion_terms("Retained statement marker", None, &[], &validation);
+        let clipped = TermCounts::completion("Retained statement marker", None, &[], &validation);
         assert!(
-            !clipped.contains("boundarymarker"),
+            !clipped.0.contains_key("boundarymarker"),
             "validation after a partial UTF-8 boundary contributes no terms"
         );
     }
@@ -466,16 +528,19 @@ mod tests {
     #[test]
     fn function_words_short_words_digit_runs_and_unrecordable_words_are_not_terms() {
         assert_eq!(
-            terms(["The lane's v2 work with each task: designs and rooms"]),
+            document("The lane's v2 work with each task: designs and rooms")
+                .0
+                .into_keys()
+                .collect::<Vec<_>>(),
             ["design", "lane", "room", "task", "work"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect()
         );
         assert_eq!(
-            terms(["İstanbul 𝐁𝐎𝐋𝐃 builds"]),
-            BTreeSet::from(["build".to_owned()]),
-            "a word whose lowercase holds a mark or an uppercase letter is never a recorded term"
+            document("İstanbul 𝐁𝐎𝐋𝐃 builds")
+                .0
+                .into_keys()
+                .collect::<Vec<_>>(),
+            ["build"],
+            "a word whose lowercase holds a mark or an uppercase letter is never recorded"
         );
     }
 

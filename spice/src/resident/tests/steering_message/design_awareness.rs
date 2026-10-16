@@ -515,7 +515,7 @@ fn only_a_completion_owes_the_best_single_design_request() {
 }
 
 #[test]
-fn resident_and_next_use_the_same_completed_statement_window() {
+fn resident_and_next_use_the_same_tfidf_statement_window() {
     let mut selected = None;
     for (tag, next_first) in [
         ("design-request-common-next-first", true),
@@ -546,8 +546,8 @@ fn resident_and_next_use_the_same_completed_statement_window() {
         );
         let _generic = lanes.design(
             "dVrD245Kd",
-            "Lane room cursor retained publication bounded",
-            "Lane room cursor retained publication bounded.",
+            "Lane notes",
+            "A lane retains ordinary room notes.",
         );
         let distinctive = lanes.design(
             "dVrD245Km",
@@ -559,7 +559,7 @@ fn resident_and_next_use_the_same_completed_statement_window() {
                 .expect("completion cursor starts");
         let mut seated = claimant_seats();
 
-        lanes.complete(&task, "Lane room cursor retained publication bounded.");
+        lanes.complete(&task, "Catchup pagination snapshot.");
         let request = if next_first {
             let request = lanes
                 .request(&config, FIRST)

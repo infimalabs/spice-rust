@@ -514,19 +514,24 @@ owns each rule summarized here.
   own item in the statement list; Design surfaces label that typed list
   Questions while ordinary tasks continue to present it as Acceptance.
 - **Design awareness.** At a natural break after `task done`, a lane whose
-  completed work matches an open passive Design owes one private
+  completed work has at least 0.15 recent-window TF-IDF cosine similarity to
+  an open passive Design owes one private
   [request](invariants/identity.md#identity-a-completed-lane-owes-one-passive-design-request)
-  before its next allocation. The deterministic match uses the completed
-  task's statement and bounded validation prefix against each Design's title,
-  description, and open questions. Each record names the exact Design
-  statement, completed task and claim, and up to twelve matched terms; an
-  occupant is never requested for a Design twice. The request quotes the first
-  substantive description sentence and an in-order, bounded prefix of whole
-  open questions. One contribution or `spice room leave --clause` in that room
-  answers the request. A standing change away from open passive releases it.
-  The request grants no claim, starts no work, and adds no workflow state;
-  `spice room awareness HANDLE` shows its statement, recipient, completed task,
-  and matched terms.
+  before its next allocation. Both the resident pass and `task next` use the
+  same 256-statement document-frequency profile, logarithmic term frequency,
+  smooth inverse document frequency, L2 normalization, eligibility predicates,
+  ranking, and durable-identity tie break. They compare the completed task's
+  statement and bounded validation prefix with each Design's title,
+  description, and every open question. Each record names the exact Design
+  statement, completed task and claim, and at most six strongest weighted
+  overlaps, stored in ascending term order so the request shows all of them;
+  an occupant is never requested for a Design twice. The request quotes the
+  first substantive description sentence and an in-order, bounded prefix of
+  whole open questions. One contribution or `spice room leave --clause` in
+  that room answers the request. A standing change away from open passive
+  releases it. The request grants no claim, starts no work, and adds no
+  workflow state; `spice room awareness HANDLE` shows its statement,
+  recipient, completed task, and matched terms.
 - **Design maturity.** One bounded projection per Design folds admitted
   requests and typed contributions in journal order. It reports contribution
   counts by kind, distinct contributing lanes, requested reach, and

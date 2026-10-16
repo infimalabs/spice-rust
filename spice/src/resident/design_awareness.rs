@@ -4,13 +4,11 @@
 //! durable notice records that choice, while `task next` can project the same
 //! choice directly when it races the resident recognition pass.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use journal::{GuardError, JournalRead};
 use spice::rooms::awareness::{
-    COMMON_TERM_WINDOW, CommonTerms, DesignTerms, completion_terms, pitch, request_questions,
-    task_terms,
+    FrequencyProfile, MatchCandidate, TermCounts, pitch, request_questions,
 };
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::DesignNoticed;
@@ -28,29 +26,6 @@ const STALE: &str = "room::awareness-stale";
 const COMPLETION_PAGE_ROWS: usize = 64;
 /// Aggregate completion envelope bytes decoded in one reconciliation pass.
 const COMPLETION_PAGE_BYTES: usize = 256 * 1024;
-
-#[derive(Clone, Copy)]
-struct RecentStatement<'a>(&'a wire::TaskHead);
-
-impl PartialEq for RecentStatement<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.revision == other.0.revision
-    }
-}
-
-impl Eq for RecentStatement<'_> {}
-
-impl PartialOrd for RecentStatement<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for RecentStatement<'_> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.revision.cmp(&other.0.revision)
-    }
-}
 
 /// One Design request and the journal position its planning read covered.
 #[derive(Clone)]
@@ -202,7 +177,7 @@ fn plan(
         return Vec::new();
     }
     let entries = &planning.entries;
-    let common = common_terms(entries.iter().map(board::Entry::statement));
+    let frequency = FrequencyProfile::recent(entries.iter().map(board::Entry::statement));
     let facts = &planning.facts;
     let mut requested: BTreeMap<CanonicalUuid, BTreeSet<TaskStamp>> = BTreeMap::new();
     let mut owed = Vec::new();
@@ -217,35 +192,38 @@ fn plan(
         if occupied.get(&completed.lane) != Some(&completed.occupant) || already_requested {
             continue;
         }
-        let terms = completion_terms(
+        let completion = TermCounts::completion(
             &completed.statement.title,
             completed.statement.description.as_deref(),
             &completed.statement.acceptance,
             &completed.validation,
         );
         let actor = Actor::Lane(completed.lane);
-        let mut eligible = Vec::new();
-        for design in entries.iter().filter(|entry| {
-            passive(entry)
-                && entry.is_filed()
-                && entry.born() != &completed.task
-                && !facts.design_was_noticed(completed.occupant, entry.born())
-                && !requested
-                    .get(&completed.occupant)
-                    .is_some_and(|designs| designs.contains(entry.born()))
-                && !facts.published_in_room(&actor, entry.born())
-        }) {
-            let statement = design.statement();
-            let design_terms = DesignTerms::new(
-                &statement.title,
-                statement.description.as_deref(),
-                &statement.acceptance,
-            );
-            if let Some(matched) = design_terms.matched(&terms, &common) {
-                eligible.push((design, matched));
-            }
-        }
-        let Some((design, matched)) = best_design(eligible) else {
+        let candidates = entries
+            .iter()
+            .filter(|entry| {
+                passive(entry)
+                    && entry.is_filed()
+                    && entry.born() != &completed.task
+                    && !facts.design_was_noticed(completed.occupant, entry.born())
+                    && !requested
+                        .get(&completed.occupant)
+                        .is_some_and(|designs| designs.contains(entry.born()))
+                    && !facts.published_in_room(&actor, entry.born())
+            })
+            .map(|design| {
+                let statement = design.statement();
+                MatchCandidate::new(
+                    design.born(),
+                    design,
+                    TermCounts::statement(
+                        &statement.title,
+                        statement.description.as_deref(),
+                        &statement.acceptance,
+                    ),
+                )
+            });
+        let Some((design, matched)) = frequency.select(&completion, candidates) else {
             continue;
         };
         requested
@@ -260,19 +238,6 @@ fn plan(
         ));
     }
     owed
-}
-
-fn best_design<'a>(
-    candidates: Vec<(&'a board::Entry, Vec<String>)>,
-) -> Option<(&'a board::Entry, Vec<String>)> {
-    candidates
-        .into_iter()
-        .min_by(|(left, left_terms), (right, right_terms)| {
-            right_terms
-                .len()
-                .cmp(&left_terms.len())
-                .then_with(|| left.born().cmp(right.born()))
-        })
 }
 
 fn planned_request(
@@ -292,29 +257,6 @@ fn planned_request(
         terms,
         horizon,
     }
-}
-
-/// Common vocabulary in the [`COMMON_TERM_WINDOW`] task statements most
-/// recently revised, open or completed.
-fn common_terms<'a>(statements: impl Iterator<Item = &'a wire::TaskHead>) -> CommonTerms {
-    let mut recent = BinaryHeap::with_capacity(COMMON_TERM_WINDOW + 1);
-    for statement in statements {
-        recent.push(Reverse(RecentStatement(statement)));
-        if recent.len() > COMMON_TERM_WINDOW {
-            recent.pop();
-        }
-    }
-    CommonTerms::of(
-        recent
-            .into_iter()
-            .map(|Reverse(RecentStatement(statement))| {
-                task_terms(
-                    &statement.title,
-                    statement.description.as_deref(),
-                    &statement.acceptance,
-                )
-            }),
-    )
 }
 
 /// Whether `entry` is an open Design inactive under its group stance.
@@ -426,13 +368,13 @@ pub(crate) fn project_request(
         return Ok(None);
     }
 
-    let common = common_terms(
+    let frequency = FrequencyProfile::recent(
         observed
             .tasks()
             .iter()
             .map(|heads| heads.statement().body()),
     );
-    let completed_terms = completion_terms(
+    let completion = TermCounts::completion(
         &task_statement.title,
         task_statement.description.as_deref(),
         &task_statement.acceptance,
@@ -447,18 +389,19 @@ pub(crate) fn project_request(
                 && !facts.design_was_noticed(occupant, entry.born())
                 && !facts.published_in_room(&actor, entry.born())
         })
-        .filter_map(|design| {
+        .map(|design| {
             let statement = design.statement();
-            DesignTerms::new(
-                &statement.title,
-                statement.description.as_deref(),
-                &statement.acceptance,
+            MatchCandidate::new(
+                design.born(),
+                design,
+                TermCounts::statement(
+                    &statement.title,
+                    statement.description.as_deref(),
+                    &statement.acceptance,
+                ),
             )
-            .matched(&completed_terms, &common)
-            .map(|matched| (design, matched))
-        })
-        .collect();
-    let Some((design, terms)) = best_design(candidates) else {
+        });
+    let Some((design, terms)) = frequency.select(&completion, candidates) else {
         return Ok(None);
     };
     let request = PlannedRequest {
