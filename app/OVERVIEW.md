@@ -146,15 +146,18 @@ pended authority is current. Journal-schema and appliance-version blockers
 carry no controls: the app never renders an action the resident cannot
 perform.
 
-## Drafts and OOPS
+## Drafts and OOPS intake
 
-A task's filing state is one of three standings. **Filed** work is ordinary
-board work. An **OOPS** report asserts unexpected behavior and stays parked
-until it is filed through `spice task file` or its task detail's **File**.
-A **Draft** is prospective work its author is still shaping. It asserts
-nothing, never joins OOPS grooming, and stays outside allocation, claims,
-capture, dependency satisfaction, completion, team strips, and execution
-summaries until the same `spice task file` transition admits it.
+A task's filing state is either **Filed** ordinary board work or a **Draft**
+its author is still shaping. A Draft asserts nothing and stays outside
+allocation, claims, capture, dependency satisfaction, completion, team strips,
+execution summaries, and preparation candidates until `spice task file`
+admits it.
+
+`spice task oops` instead records a filed Plan directly under the current
+repository-owned OOPS Design. Those Plans stay behind that Design's preparation
+gate until the operator accepts or rejects each line in its composed candidate;
+there is no separate OOPS filing state or filing action.
 
 The Spice view's **Drafts** section follows Jobs. It lists each open Draft the
 operator can read, then keeps the Task/Plan/Design creator behind one compact

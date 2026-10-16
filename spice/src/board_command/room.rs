@@ -4,10 +4,7 @@ use spice::rooms::{
     Declared, LaneAvailability, RoomDuty, RoomDutyKind, RoomDutyStanding, RoomProjectionBudget,
     RoomProjectionError, RoomProjectionSources, RoomWork, derive_room_attention,
 };
-use wire::rooms::{
-    OOPS_GROOMING_REPORT_LIMIT, ROOM_ACTIVITY_SECONDS, ROOM_PUBLICATION_BYTES_LIMIT,
-    RoomAuthorityStamp,
-};
+use wire::rooms::{ROOM_ACTIVITY_SECONDS, ROOM_PUBLICATION_BYTES_LIMIT, RoomAuthorityStamp};
 
 const ROOM_PUBLICATION_PAGES: usize =
     spice::rooms::MAX_ROOM_ATTENTION_SIGNALS.div_ceil(journal::MAX_RETAINED_FACT_PAGE_ROWS);
@@ -51,18 +48,6 @@ pub(super) fn room_post(
             Some(format!("{} deleted", anchor.handle())),
             "a deleted task's room stays readable; publish to a task that is not deleted",
         );
-    }
-    if post.grooming.is_some() && matches!(command.actor(), Actor::Lane(_)) {
-        return refusal(
-            "room::oops-grooming-operator",
-            Some(anchor.handle().to_string()),
-            "only the operator records OOPS grooming; publish evidence as an observation",
-        );
-    }
-    if let Some(grooming) = &post.grooming
-        && let Err(outcome) = validate_oops_grooming(anchor, &snapshot.entries, command, grooming)
-    {
-        return outcome;
     }
     let room = anchor.born().clone();
     let publications = match room_publications(bus, &room) {
@@ -133,114 +118,24 @@ pub(super) fn anchor_settlement(workflow: &wire::WorkflowHead) -> Option<&'stati
 }
 
 fn room_post_content(post: &RoomPost) -> Result<RoomPublicationContent, Outcome<CommandAnswer>> {
-    match (post.text.trim(), &post.grooming) {
-        ("", None) => Err(refusal(
+    let text = post.text.trim();
+    if text.is_empty() {
+        return Err(refusal(
             "room::post-empty",
             Some(post.room.to_string()),
-            "supply complete authored text or one typed OOPS disposition",
-        )),
-        (text, None) if text.len() > ROOM_PUBLICATION_BYTES_LIMIT => Err(refusal(
+            "supply complete authored observation text",
+        ));
+    }
+    if text.len() > ROOM_PUBLICATION_BYTES_LIMIT {
+        return Err(refusal(
             "room::post-too-large",
             Some(text.len().to_string()),
             &format!("shorten the observation to at most {ROOM_PUBLICATION_BYTES_LIMIT} bytes"),
-        )),
-        (text, None) => Ok(RoomPublicationContent::Authored {
-            text: text.to_owned(),
-        }),
-        ("", Some(grooming)) => Ok(RoomPublicationContent::OopsGroomed {
-            grooming: grooming.clone(),
-        }),
-        (_, Some(_)) => Err(refusal(
-            "room::post-shape",
-            Some(post.room.to_string()),
-            "supply either authored text or one OOPS disposition, never both",
-        )),
-    }
-}
-
-fn validate_oops_grooming(
-    anchor: &Entry,
-    entries: &[Entry],
-    command: &wire::AdmittedCommand,
-    grooming: &OopsGrooming,
-) -> Result<(), Outcome<CommandAnswer>> {
-    if !wire::intent::is_open_design(anchor.statement().intent, anchor.workflow()) {
-        return Err(refusal(
-            "room::oops-batch-not-open",
-            Some(anchor.handle().to_string()),
-            "record grooming under an open Design room",
         ));
     }
-    if grooming.reports.is_empty() {
-        return Err(refusal(
-            "room::oops-reports-missing",
-            Some(anchor.handle().to_string()),
-            "name at least one parked OOPS report",
-        ));
-    }
-    if grooming.reports.len() > OOPS_GROOMING_REPORT_LIMIT {
-        return Err(refusal(
-            "room::oops-batch-too-large",
-            Some(format!(
-                "{} reports; limit={OOPS_GROOMING_REPORT_LIMIT}",
-                grooming.reports.len()
-            )),
-            "split the evidence into separate bounded grooming commitments",
-        ));
-    }
-    if grooming.cause.trim().is_empty() {
-        return Err(refusal(
-            "room::oops-cause-missing",
-            Some(anchor.handle().to_string()),
-            "retain the evidenced common cause or negative basis",
-        ));
-    }
-    if grooming.disposition == wire::rooms::OopsDisposition::ProposedWork
-        && grooming.reports.len() != 1
-    {
-        return Err(refusal(
-            "room::oops-proposal-ambiguous",
-            Some(anchor.handle().to_string()),
-            "record proposed-work against exactly one original report before controlled filing",
-        ));
-    }
-    let mut seen = Vec::with_capacity(grooming.reports.len());
-    for report in &grooming.reports {
-        if seen.contains(report) {
-            return Err(refusal(
-                "room::oops-report-duplicate",
-                Some(report.to_string()),
-                "name each source report once",
-            ));
-        }
-        seen.push(report.clone());
-        let Some(entry) = entries.iter().find(|entry| entry.born() == report) else {
-            return Err(refusal(
-                "room::oops-report-missing",
-                Some(report.to_string()),
-                "read the board and name a retained parked OOPS report",
-            ));
-        };
-        if !entry.is_oops() || !entry.workflow().status.is_pending() {
-            return Err(refusal(
-                "room::oops-report-not-parked",
-                Some(entry.handle().to_string()),
-                "groom only pending reports still held by typed OOPS filing state",
-            ));
-        }
-        let witness = Witness::Task {
-            task: report.clone(),
-            head: entry.statement().revision,
-        };
-        if !command.expected().contains(&witness) {
-            return Err(refusal(
-                "room::oops-report-witness-moved",
-                Some(entry.handle().to_string()),
-                "read the board again and retry with every report's current statement witness",
-            ));
-        }
-    }
-    Ok(())
+    Ok(RoomPublicationContent::Authored {
+        text: text.to_owned(),
+    })
 }
 
 pub(crate) fn room_publications(

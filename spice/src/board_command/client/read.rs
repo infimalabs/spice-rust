@@ -1330,7 +1330,7 @@ pub(in crate::board_command) fn task_status(
          trust-grant required={} \
          appliance-version after={} observed={} \
          satisfied={} blocked={}\n\
-         stale {stale}\noops {oops}\ndrafts {drafts}\n{stranded}",
+         stale {stale}\ndrafts {drafts}\n{stranded}",
         board.actor_route.actor,
         actor_route_filter(board),
         board.project_policy.public_min_depth,
@@ -1347,7 +1347,6 @@ pub(in crate::board_command) fn task_status(
         workflow_waiting = parked.workflow_waiting,
         deferred = parked.deferred,
         stale = parked.stale,
-        oops = parked.oops,
         drafts = actor_drafts(board, &entries),
     ))
 }

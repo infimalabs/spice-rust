@@ -29,8 +29,9 @@
 /// state without changing their positive or negative standing.
 /// Schema 73 makes each retained Design pass proposal's justification explicit.
 /// Schema 74 lifts each taste hold's evidence out of its statement's audit
-/// notes into the typed hold, which an older release cannot decode.
-pub const SCHEMA_VERSION: u32 = 74;
+/// notes into the typed hold. Schema 75 crosses retained OOPS filing rows into
+/// ordinary Plans controlled by one repository-owned opportunistic Design.
+pub const SCHEMA_VERSION: u32 = 75;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

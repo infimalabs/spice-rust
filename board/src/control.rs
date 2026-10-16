@@ -22,10 +22,10 @@ pub fn controlled_pending_tasks(entries: &[Entry]) -> BTreeMap<TaskStamp, Vec<Ta
     entries
         .iter()
         .filter(|entry| {
-            matches!(
-                entry.statement().intent,
-                Some(TaskIntent::Plan | TaskIntent::Design)
-            )
+            entry
+                .statement()
+                .intent
+                .is_some_and(|intent| intent == TaskIntent::Plan || intent.is_design())
         })
         .filter_map(|entry| {
             let tasks = gated_closure(&gated, entry.born());
@@ -68,10 +68,11 @@ pub fn stranded_tasks(entries: &[Entry]) -> BTreeMap<TaskStamp, TaskStamp> {
     entries
         .iter()
         .filter(|entry| {
-            matches!(
-                entry.statement().intent,
-                Some(TaskIntent::Plan | TaskIntent::Design)
-            ) && settled_negatively(entry)
+            entry
+                .statement()
+                .intent
+                .is_some_and(|intent| intent == TaskIntent::Plan || intent.is_design())
+                && settled_negatively(entry)
         })
         .flat_map(|entry| {
             gated_closure(&gated, entry.born())
@@ -104,7 +105,7 @@ fn gate<'a>(entry: &'a Entry, indexed: &BTreeMap<&TaskStamp, &Entry>) -> Option<
         return Some(&preparation.controller);
     }
     let released_by_parent = indexed.get(&preparation.parent).is_some_and(|parent| {
-        parent.statement().intent != Some(TaskIntent::Design)
+        !parent.statement().intent.is_some_and(TaskIntent::is_design)
             && parent.workflow().concluded_positively()
     });
     (!released_by_parent).then_some(&preparation.parent)

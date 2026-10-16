@@ -11,6 +11,7 @@ mod decisions;
 mod designs;
 mod fact_bounds;
 mod maturity;
+mod oops_design;
 mod provenance;
 mod residual;
 mod settings_receipts;
@@ -70,14 +71,12 @@ const PREPARED: &str = "prepared";
 /// retained task provenance spelling into the closed provenance type. Current
 /// readers therefore need no release-specific execution arm. Retained terminal
 /// review fields cross before any migration decodes a typed workflow head.
-const PREDECESSOR_SCHEMAS: [u32; 41] = [
+const PREDECESSOR_SCHEMAS: [u32; 42] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
+    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
-/// Schema release whose hidden OOPS namespace is crossed into filing state.
-const OOPS_FILING_RELEASE: &str = "schema-53";
 /// Release that added the residency subscription table without a schema step.
 const RESIDENCY_SUBSCRIPTIONS_RELEASE: &str = "4047a2a4f";
 /// Release whose formation instants follow the one teamed predicate, so a lone
@@ -340,6 +339,18 @@ fn admit_version(version: u32) -> Result<u32, OpenError> {
     Ok(version)
 }
 
+fn cross_current_rows(
+    transaction: &rusqlite::Transaction<'_>,
+) -> Result<taste_holds::Audits, OpenError> {
+    workflows::cross(transaction)?;
+    oops_design::cross(transaction)?;
+    provenance::cross(transaction)?;
+    task_tags::cross_heads(transaction)?;
+    let taste_audits = taste_holds::Audits::read(transaction)?;
+    taste_holds::cross_heads(transaction, &taste_audits)?;
+    Ok(taste_audits)
+}
+
 /// Move a finalized predecessor authority to the current schema exactly once.
 fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, OpenError> {
     let transaction = connection
@@ -351,11 +362,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
-    workflows::cross(&transaction)?;
-    provenance::cross(&transaction)?;
-    task_tags::cross_heads(&transaction)?;
-    let taste_audits = taste_holds::Audits::read(&transaction)?;
-    taste_holds::cross_heads(&transaction, &taste_audits)?;
+    let taste_audits = cross_current_rows(&transaction)?;
     if version <= WHOLE_CANDIDATE_DECISION_SCHEMA {
         cross_shape_predecessor(&transaction, version)?;
     } else {
@@ -395,7 +402,6 @@ fn cross_shape_predecessor(
     version: u32,
 ) -> Result<(), OpenError> {
     refuse_creation_omission(transaction)?;
-    cross_oops_filing(transaction)?;
     let vendor_holds = residual::refuse(transaction)?;
     cross_residency_subscriptions(transaction)?;
     cross_retired_gate_filed(transaction)?;
@@ -449,138 +455,6 @@ fn create_principal_heads(
             .map_err(OpenError::Sqlite)?;
     }
     Ok(())
-}
-
-/// Move retained hidden OOPS tasks onto their public project and explicit
-/// filing state. The task stamp remains unchanged, so every historical
-/// reference keeps naming the same task.
-fn cross_oops_filing(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenError> {
-    transaction
-        .execute_batch(
-            "UPDATE task_heads
-             SET body = CAST(json_set(
-                 CAST(body AS TEXT),
-                 '$.project',
-                 CASE
-                     WHEN json_extract(CAST(body AS TEXT), '$.project') = '.oops'
-                         THEN 'task.oops'
-                     ELSE substr(json_extract(CAST(body AS TEXT), '$.project'), 7)
-                 END,
-                 '$.filing',
-                 'oops'
-             ) AS BLOB)
-             WHERE json_extract(CAST(body AS TEXT), '$.project') = '.oops'
-                OR json_extract(CAST(body AS TEXT), '$.project') LIKE '.oops.%';
-
-             UPDATE fact_envelopes
-             SET envelope = CAST(json_set(
-                 CAST(envelope AS TEXT),
-                 '$.fact.project',
-                 CASE
-                     WHEN json_extract(CAST(envelope AS TEXT), '$.fact.project') = '.oops'
-                         THEN 'task.oops'
-                     ELSE substr(json_extract(CAST(envelope AS TEXT), '$.fact.project'), 7)
-                 END,
-                 '$.fact.filing',
-                 'oops'
-             ) AS BLOB)
-             WHERE kind = 'task::added'
-               AND (
-                   json_extract(CAST(envelope AS TEXT), '$.fact.project') = '.oops'
-                   OR json_extract(CAST(envelope AS TEXT), '$.fact.project') LIKE '.oops.%'
-               );",
-        )
-        .map_err(OpenError::Sqlite)?;
-
-    let heads = {
-        let mut query = transaction
-            .prepare(
-                "SELECT stamp, body FROM task_heads
-                 WHERE json_extract(CAST(body AS TEXT), '$.filing') = 'oops'
-                 ORDER BY stamp",
-            )
-            .map_err(OpenError::Sqlite)?;
-        query
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
-            })
-            .map_err(OpenError::Sqlite)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(OpenError::Sqlite)?
-    };
-    for (stamp, bytes) in heads {
-        let head: wire::TaskHead = wire::decode(&bytes).map_err(|error| {
-            oops_filing_error(
-                "task_heads",
-                &stamp,
-                format!("head does not decode: {error}"),
-            )
-        })?;
-        let canonical = wire::encode(&head).map_err(|error| {
-            oops_filing_error(
-                "task_heads",
-                &stamp,
-                format!("head does not encode: {error}"),
-            )
-        })?;
-        transaction
-            .execute(
-                "UPDATE task_heads SET body = ?1 WHERE stamp = ?2",
-                params![canonical, stamp],
-            )
-            .map_err(OpenError::Sqlite)?;
-    }
-
-    let facts = {
-        let mut query = transaction
-            .prepare(
-                "SELECT seq, envelope FROM fact_envelopes
-                 WHERE kind = 'task::added'
-                   AND json_extract(CAST(envelope AS TEXT), '$.fact.filing') = 'oops'
-                 ORDER BY seq",
-            )
-            .map_err(OpenError::Sqlite)?;
-        query
-            .query_map([], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
-            })
-            .map_err(OpenError::Sqlite)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(OpenError::Sqlite)?
-    };
-    for (seq, bytes) in facts {
-        let envelope: wire::Envelope<wire::AnyFact> = wire::decode(&bytes).map_err(|error| {
-            oops_filing_error(
-                "fact_envelopes",
-                &seq,
-                format!("envelope does not decode: {error}"),
-            )
-        })?;
-        let canonical = wire::encode(&envelope).map_err(|error| {
-            oops_filing_error(
-                "fact_envelopes",
-                &seq,
-                format!("envelope does not encode: {error}"),
-            )
-        })?;
-        transaction
-            .execute(
-                "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = ?2",
-                params![canonical, seq],
-            )
-            .map_err(OpenError::Sqlite)?;
-    }
-    Ok(())
-}
-
-fn oops_filing_error(table: &'static str, row: &impl ToString, detail: String) -> OpenError {
-    MigrationError::RetainedRow {
-        table,
-        row: row.to_string(),
-        release: OOPS_FILING_RELEASE,
-        detail,
-    }
-    .into()
 }
 
 /// Refuse a predecessor whose retained task authority omits its creation
@@ -1446,8 +1320,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 74, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 75, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 74;
+PRAGMA user_version = 75;
 "#;

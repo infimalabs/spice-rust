@@ -286,7 +286,6 @@ impl Lanes {
         let request = wire::rooms::RoomPost {
             room: design.clone(),
             text: "Operator input for the room.".to_owned(),
-            grooming: None,
         };
         let task = stamp(design);
         let statement = self

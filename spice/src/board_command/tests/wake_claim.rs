@@ -1,24 +1,5 @@
 use super::*;
 
-fn add_parked(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
-    let born = stamp(name);
-    let task = TaskHandle::for_filing("board.test", &born, wire::TaskFiling::Oops);
-    assert_committed(issue(
-        bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskOopsAdd,
-        vec![Witness::Absence { task: born }],
-        &TaskOopsAdd {
-            title: format!("Triage {name}"),
-            description: format!("Evidence for {name}"),
-            origin: Some(fixture_origin()),
-            project: Some("board.test".to_owned()),
-        },
-    ));
-    task
-}
-
 fn claim_transition_expected(
     answer: &BoardAnswer,
     task: &TaskHandle,
@@ -288,64 +269,6 @@ fn self_defer_releases_the_claim_but_peer_defer_leaves_it_held() {
         heads.claim.as_ref().map(|claim| &claim.body.actor),
         Some(&owner),
     );
-    clean(&root, bus);
-}
-
-#[test]
-fn parked_oops_files_and_claims_in_one_transaction() {
-    let (root, bus, epoch, seats) = fixture("oops-file-claim", 1);
-    let seat = &seats[0];
-    let actor = Actor::Lane(seat.lane);
-    authorize_lane_creation(&bus, epoch, seat);
-    let parked = add_parked(&bus, epoch, "WAKE-oops0001");
-    let visible = board(&bus, epoch, actor.clone());
-
-    let Outcome::Reply(Reply {
-        position: ReplyPosition::Committed(range),
-        body: CommandAnswer::Task(answer),
-    }) = issue(
-        &bus,
-        epoch,
-        actor.clone(),
-        CommandKind::TaskFile,
-        claim_transition_expected(&visible, &parked, seat, true),
-        &TaskFile {
-            task: parked.clone(),
-            into: Some("board.test".to_owned()),
-            preparation: None,
-            claim: true,
-        },
-    )
-    else {
-        panic!("file-and-claim did not commit")
-    };
-    let filed = TaskHandle::for_project(
-        "board.test",
-        &parked.born().expect("fixture handle carries a birth stamp"),
-    );
-    assert_eq!(answer.task, filed);
-    let held = answer
-        .claim
-        .expect("task file --claim returns its held claim");
-    assert_eq!(held.task, filed);
-    assert_eq!(held.holder, Some(actor.clone()));
-    let committed = bus
-        .fact_snapshot()
-        .expect("fixture facts remain readable")
-        .facts()
-        .iter()
-        .filter(|fact| fact.seq >= range.first && fact.seq <= range.last)
-        .map(|fact| fact.fact.kind())
-        .collect::<Vec<_>>();
-    assert!(committed.contains(&wire::FactKind::TaskFiled));
-    assert!(committed.contains(&wire::FactKind::ClaimWon));
-    let current = board(&bus, epoch, actor.clone());
-    let heads = at(&current, &filed);
-    assert_eq!(heads.statement.body.project, "board.test");
-    assert_eq!(heads.workflow.body.deferral, None);
-    let claim = heads.claim.as_ref().expect("filed task is held");
-    assert_eq!(claim.body.actor, actor);
-    assert_eq!(claim.body.disposition, ClaimDisposition::Active);
     clean(&root, bus);
 }
 

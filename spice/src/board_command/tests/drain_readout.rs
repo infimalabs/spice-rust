@@ -38,7 +38,7 @@ fn seed_parked_board(seats: &[Seat], bus: &Bus, epoch: CanonicalUuid) {
             wait: until,
         },
     ));
-    add_oops(
+    add_draft_row(
         bus,
         epoch,
         Actor::Operator,
@@ -75,7 +75,6 @@ fn next_read_classifies_peer_only_parked_work_without_board_rows() {
             workflow_waiting: 1,
             designs: Default::default(),
             deferred: 1,
-            oops: 1,
         }
     );
     clean(&root, bus);
@@ -170,7 +169,6 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
                 ..Default::default()
             },
             deferred: 0,
-            oops: 0,
         },
         "the Design counts once by its cycle and its unauthorized output keeps its workflow \
          wait"
@@ -458,7 +456,6 @@ fn next_read_returns_each_authoritative_team_policy() {
                 workflow_waiting: 0,
                 designs: Default::default(),
                 deferred: 0,
-                oops: 0,
             }
         );
     }

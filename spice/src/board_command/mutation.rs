@@ -3,6 +3,7 @@ use super::*;
 mod claim;
 mod deferral;
 mod edit;
+mod oops;
 mod requirements;
 mod settlement;
 mod taste_proposal;
@@ -16,6 +17,7 @@ pub(super) use claim::{ClaimPlan, claim_git_boundary, claim_grant, claim_plan, c
 use claim::{PreparedClaim, prepare_capture_claim};
 pub(super) use claim::{claim_win, task_parked_commits};
 pub(super) use edit::task_edit;
+pub(super) use oops::task_oops_add;
 pub(super) use taste_proposal::taste_proposal_add;
 
 /// One actor-filtered board snapshot whose cursor and entries were validated together.
@@ -140,7 +142,6 @@ pub(super) fn task_add_with(
 }
 
 /// A Draft names its exact public project and enters no claim or preparation.
-///
 /// Both attachments are filing-time authority, so the repair moves them to
 /// the file transition rather than dropping them.
 fn draft_creation_admitted(add: &TaskAdd) -> Result<(), Outcome<CommandAnswer>> {
@@ -179,54 +180,37 @@ fn manual_project_repair(projects: &ProjectPolicy) -> String {
     )
 }
 
-pub(super) fn task_oops_add(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    add: &TaskOopsAdd,
-    projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
-) -> Outcome<CommandAnswer> {
-    let project = match add.project.as_deref().map(|project| {
-        projects.admit_manual_creation(project).map_err(|error| {
-            refusal(
-                "task::oops-project-refused",
-                Some(error.to_string()),
-                "name a public project this board admits for manual filing",
+fn oops_claim_project(
+    actor: &wire::Actor,
+    entries: &[Entry],
+) -> Result<Project, Outcome<CommandAnswer>> {
+    let mut projects = entries
+        .iter()
+        .filter(|entry| {
+            entry.claim().is_some_and(|claim| {
+                claim.actor == *actor && claim.disposition == wire::ClaimDisposition::Active
+            }) && matches!(
+                entry.project().visibility(),
+                wire::intent::ProjectVisibility::Public
             )
         })
-    }) {
-        Some(Ok(project)) => Some(project),
-        Some(Err(outcome)) => return outcome,
-        None => None,
+        .map(|entry| entry.project().clone());
+    let Some(project) = projects.next() else {
+        return Err(refusal(
+            "task::oops-project-required",
+            Some(actor.to_string()),
+            "pass --project because this actor has no active public claim",
+        ));
     };
-    let normalized = TaskAdd {
-        preparation: None,
-        intent: None,
-        title: add.title.clone(),
-        project: None,
-        description: Some(add.description.clone()),
-        acceptance: Vec::new(),
-        requirements: wire::EnvironmentRequirements::default(),
-        origin: add.origin.clone(),
-        flow: None,
-        depends: Vec::new(),
-        claim: false,
-        draft: false,
-    };
-    create_task(
-        bus,
-        command,
-        &normalized,
-        project,
-        wire::TaskFiling::Oops,
-        add.clone(),
-        None,
-        projects,
-        allocation,
-        || {},
-    )
+    if projects.next().is_some() {
+        return Err(refusal(
+            "task::oops-project-ambiguous",
+            Some(actor.to_string()),
+            "pass --project because this actor has more than one active public claim",
+        ));
+    }
+    Ok(project)
 }
-
 #[allow(
     clippy::too_many_arguments,
     reason = "task creation keeps request identity, repository policy, and board authority explicit"
@@ -377,38 +361,6 @@ fn operator_draft_origin(
         .then_some(wire::TaskProvenance::OperatorDraft)
 }
 
-fn oops_claim_project(
-    actor: &wire::Actor,
-    entries: &[Entry],
-) -> Result<Project, Outcome<CommandAnswer>> {
-    let mut projects = entries
-        .iter()
-        .filter(|entry| {
-            entry.claim().is_some_and(|claim| {
-                claim.actor == *actor && claim.disposition == wire::ClaimDisposition::Active
-            }) && matches!(
-                entry.project().visibility(),
-                wire::intent::ProjectVisibility::Public
-            )
-        })
-        .map(|entry| entry.project().clone());
-    let Some(project) = projects.next() else {
-        return Err(refusal(
-            "task::oops-project-required",
-            Some(actor.to_string()),
-            "pass --project because this actor has no active public claim",
-        ));
-    };
-    if projects.next().is_some() {
-        return Err(refusal(
-            "task::oops-project-ambiguous",
-            Some(actor.to_string()),
-            "pass --project because this actor has more than one active public claim",
-        ));
-    }
-    Ok(project)
-}
-
 pub(super) fn task_add_roots(add: &TaskAdd) -> Vec<wire::TaskStamp> {
     let mut roots = add
         .depends
@@ -454,6 +406,7 @@ pub(super) fn task_review_roots(review: &TaskReview) -> Vec<wire::TaskStamp> {
 }
 
 #[allow(clippy::too_many_arguments)]
+
 fn commit_prepared_task<B, F>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -500,41 +453,8 @@ where
         claim.guard(&mut write, snapshot, command);
     }
     extra_guard(&mut write);
-    let filing = prepared.statement.filing;
-    let added = match write.fact(
-        body::TaskAdded {
-            preparation: prepared.statement.preparation.clone(),
-            intent: prepared.statement.intent,
-            task: prepared.born.clone(),
-            title: add.title.clone(),
-            description: add.description.clone(),
-            acceptance: add.acceptance.clone(),
-            requirements: add.requirements.clone(),
-            project: prepared.project,
-            filing: prepared.statement.filing,
-            priority: prepared.statement.priority,
-            taste: prepared.statement.taste.clone(),
-            document_slug: prepared.statement.document_slug.clone(),
-            taste_proposal: prepared.statement.taste_proposal.clone(),
-            depends: prepared.statement.dependencies.clone(),
-            flow: prepared.flow,
-            phase: prepared.phase,
-            revision: 1,
-            creation: prepared.creation.context(),
-        },
-        FactCause::Root,
-    ) {
-        Ok(fact) => fact,
-        Err(error) => return store_fault("task::add-build", &error.to_string()),
-    };
-    let statement = prepared.statement;
-    write.task_head(added, move |position| TaskHead {
-        queue_origin: position,
-        revision: position,
-        ..statement
-    });
-    write.workflow_head(prepared.born.clone(), added, move |_| prepared.workflow);
-    if let Err(outcome) = add_oops_note(&mut write, filing, add, &prepared.born, added) {
+    let task = prepared.task.clone();
+    if let Err(outcome) = append_prepared_task(&mut write, add, prepared, FactCause::Root) {
         return outcome;
     }
     if let Some(claim) = added_claim
@@ -543,7 +463,7 @@ where
         return outcome;
     }
     let answer = wire::intent::TaskAnswer {
-        task: prepared.task,
+        task,
         status: "pending".to_owned(),
         completion: None,
         claim: claim_answer,
@@ -558,6 +478,47 @@ where
         return store_fault("task::add-receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Task(answer))
+}
+
+fn append_prepared_task(
+    write: &mut JournalWrite,
+    add: &TaskAdd,
+    prepared: PreparedTask,
+    cause: FactCause,
+) -> Result<journal::PendingFact, Outcome<CommandAnswer>> {
+    let added = write
+        .fact(
+            body::TaskAdded {
+                preparation: prepared.statement.preparation.clone(),
+                intent: prepared.statement.intent,
+                task: prepared.born.clone(),
+                title: add.title.clone(),
+                description: add.description.clone(),
+                acceptance: add.acceptance.clone(),
+                requirements: add.requirements.clone(),
+                project: prepared.project,
+                filing: prepared.statement.filing,
+                priority: prepared.statement.priority,
+                taste: prepared.statement.taste.clone(),
+                document_slug: prepared.statement.document_slug.clone(),
+                taste_proposal: prepared.statement.taste_proposal.clone(),
+                depends: prepared.statement.dependencies.clone(),
+                flow: prepared.flow,
+                phase: prepared.phase,
+                revision: 1,
+                creation: prepared.creation.context(),
+            },
+            cause,
+        )
+        .map_err(|error| store_fault("task::add-build", &error.to_string()))?;
+    let statement = prepared.statement;
+    write.task_head(added, move |position| TaskHead {
+        queue_origin: position,
+        revision: position,
+        ..statement
+    });
+    write.workflow_head(prepared.born, added, move |_| prepared.workflow);
+    Ok(added)
 }
 
 fn prepared_entry(prepared: &PreparedTask, projects: &ProjectPolicy) -> Entry {
@@ -590,13 +551,37 @@ fn prepare_task(
             _ => None,
         })
         .collect::<Vec<_>>();
-    let [task] = handles.as_slice() else {
+    let [born] = handles.as_slice() else {
         return Err(protocol_fault(
             "task::add-witness-invalid",
             "task add requires exactly one intended absent birth stamp",
         ));
     };
-    let born = task.clone();
+    prepare_task_for(
+        command,
+        add,
+        project,
+        projects,
+        cause,
+        creation,
+        flow,
+        filing,
+        born.clone(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_task_for(
+    _command: &wire::AdmittedCommand,
+    add: &TaskAdd,
+    project: &Project,
+    projects: &ProjectPolicy,
+    cause: CreationCause,
+    creation: TaskCreationCapture,
+    flow: Vec<wire::Phase>,
+    filing: wire::TaskFiling,
+    born: wire::TaskStamp,
+) -> Result<PreparedTask, Outcome<CommandAnswer>> {
     if cause.provenance.parent() == Some(&born) {
         return Err(refusal(
             "task::origin-self",
@@ -770,28 +755,6 @@ pub(super) fn omit_review_phase(flow: &mut Vec<wire::Phase>, all_review: bool) {
     if all_review {
         flow.retain(|phase| phase.as_str() != "review");
     }
-}
-
-fn add_oops_note(
-    write: &mut JournalWrite,
-    filing: wire::TaskFiling,
-    add: &TaskAdd,
-    task: &wire::TaskStamp,
-    added: PendingFact,
-) -> Result<(), Outcome<CommandAnswer>> {
-    if filing.is_oops()
-        && let Some(note) = &add.description
-        && let Err(error) = write.fact(
-            body::TaskNoted {
-                task: task.clone(),
-                note: note.clone(),
-            },
-            FactCause::Pending(added),
-        )
-    {
-        return Err(store_fault("task::oops-note-build", &error.to_string()));
-    }
-    Ok(())
 }
 
 pub(super) fn task_note(
@@ -1006,13 +969,7 @@ fn dependency_entry<'a>(
     snapshot: &'a ValidatedSnapshot,
     depends: &TaskDepends,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
-    let mut unfiled = referenced_unfiled(&snapshot.entries, depends.after.iter());
-    if let Some(follower) = task_entry(&snapshot.entries, &depends.task)
-        && follower.is_oops()
-        && !unfiled.iter().any(|seen| seen.born() == follower.born())
-    {
-        unfiled.insert(0, follower);
-    }
+    let unfiled = referenced_unfiled(&snapshot.entries, depends.after.iter());
     if !unfiled.is_empty() {
         return Err(unfiled_dependency_refusal(&unfiled));
     }
@@ -1208,12 +1165,11 @@ fn unfiled_dependency_refusal(entries: &[&Entry]) -> Outcome<CommandAnswer> {
         "task::dependency-unfiled",
         Some(offenders.clone()),
         &format!(
-            "unfiled dependency endpoint(s): {offenders}; file every OOPS or Draft row first with spice task file HANDLE [--into PUBLIC_PROJECT]",
+            "unfiled dependency endpoint(s): {offenders}; file every Draft first with spice task file HANDLE [--into PUBLIC_PROJECT]",
         ),
     )
 }
 
-/// Named rows that are not filed work: OOPS evidence and Drafts.
 fn referenced_unfiled<'a, 'b>(
     entries: &'a [Entry],
     handles: impl IntoIterator<Item = &'b TaskHandle>,

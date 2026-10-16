@@ -557,41 +557,6 @@ fn a_non_plan_claim_does_not_gain_the_created_task_as_a_dependency() {
 }
 
 #[test]
-fn oops_filing_under_a_plan_claim_leaves_the_plan_unlinked() {
-    let (root, bus, epoch, seats) = fixture("ambient-plan-oops", 1);
-    let seat = &seats[0];
-    let planner = Actor::Lane(seat.lane);
-    authorize_lane_creation(&bus, epoch, seat);
-    let plan = add(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "PLAN-oopsplan1",
-        "Planning parent",
-        Some("plan"),
-    );
-    claim_task(&bus, epoch, seat, &planner, &plan);
-    assert_committed(issue(
-        &bus,
-        epoch,
-        planner.clone(),
-        CommandKind::TaskOopsAdd,
-        vec![Witness::Absence {
-            task: stamp("PLAN-oopsfile1"),
-        }],
-        &wire::intent::TaskOopsAdd {
-            title: "Planning friction".to_owned(),
-            description: "friction observed while planning".to_owned(),
-            origin: None,
-            project: None,
-        },
-    ));
-    let current = board(&bus, epoch, planner);
-    assert!(at(&current, &plan).statement.body.dependencies.is_empty());
-    clean(&root, bus);
-}
-
-#[test]
 fn ambient_plan_authority_movement_refuses_child_creation() {
     for movement in ["statement", "workflow", "claim"] {
         let (root, bus, epoch, seats) = fixture("ambient-plan-race", 1);

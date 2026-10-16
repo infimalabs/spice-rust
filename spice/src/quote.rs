@@ -564,8 +564,8 @@ impl QuoteStore for ResidentStore<'_> {
     }
 
     /// An operator post quotes as its directive-authored text; a lane packet
-    /// quotes as the exact transcript hunk its occupant wrote. Coordination,
-    /// set-asides, and groomings carry no authored words and quote nothing.
+    /// quotes as the exact transcript hunk its occupant wrote. Coordination
+    /// and set-asides carry no authored words and quote nothing.
     fn room(
         &self,
         room: &wire::TaskStamp,

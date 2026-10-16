@@ -79,7 +79,6 @@ mod tests {
                     workflow_waiting: 0,
                     designs: Default::default(),
                     deferred: 0,
-                    oops: 0,
                 },
                 team: TeamLife::Steer,
             },

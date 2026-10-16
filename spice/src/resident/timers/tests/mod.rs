@@ -505,7 +505,7 @@ fn startup_catches_up_two_overdue_tasks_but_leaves_future_and_parked_work_waitin
     let parked = wire::TaskHandle::for_filing(
         "timer.defer",
         &"1kKRRsDW".parse().expect("fixture task stamp"),
-        wire::TaskFiling::Oops,
+        wire::TaskFiling::Draft,
     );
     seed_timer_task(
         &bus,
@@ -544,14 +544,14 @@ fn startup_catches_up_two_overdue_tasks_but_leaves_future_and_parked_work_waitin
         &bus,
         &parked,
         "timer.defer",
-        wire::TaskFiling::Oops,
+        wire::TaskFiling::Draft,
         Some(shifted(now, -1)),
         dependency.clone(),
     );
 
     let mut timers = start_timers(projects()).expect("timer runtime starts");
     timers.synchronize(&bus).expect("startup deferrals arm");
-    assert_eq!(timers.deferrals.len(), 3, "OOPS filing is not armed");
+    assert_eq!(timers.deferrals.len(), 3, "Draft filing is not armed");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .expect("fixture async runtime builds");

@@ -543,12 +543,12 @@ fn effective_priority_precedes_greater_downstream_weight() {
 }
 
 #[test]
-fn downstream_weight_ignores_hidden_and_settled_branches() {
+fn downstream_weight_ignores_draft_and_settled_branches() {
     let root = entry("BOARD-a1");
-    let mut hidden_head = statement("BOARD-h1");
-    hidden_head.project = "board.correctness".to_owned();
-    hidden_head.filing = wire::TaskFiling::Oops;
-    let hidden = admitted(hidden_head, workflow("todo"), None, None).expect("hidden dependent");
+    let mut draft_head = statement("BOARD-h1");
+    draft_head.project = "board.correctness".to_owned();
+    draft_head.filing = wire::TaskFiling::Draft;
+    let hidden = admitted(draft_head, workflow("todo"), None, None).expect("Draft dependent");
     let mut after_hidden_head = statement("BOARD-z1");
     after_hidden_head.dependencies.push(stamp("BOARD-h1"));
     let after_hidden = admitted(after_hidden_head, workflow("todo"), None, None)
@@ -812,29 +812,4 @@ fn diagrams_and_handout_are_stable_across_input_order() {
         handout::compose(&second, &[])
     );
     assert!(handout::compose(&first, &[]).contains(&expected_edge));
-}
-
-#[test]
-fn oops_routes_friction_to_work_and_observations_to_notes_only() {
-    let friction = Friction::new(
-        "Cargo metadata is blocked",
-        "A duplicate table refuses every command",
-        "tooling.manifest",
-        &board::ProjectPolicy::new(
-            Vec::new(),
-            dialect::PROJECT_MIN_DEPTH as u64,
-            dialect::PROJECT_MAX_DEPTH as u64,
-        )
-        .expect("fixture project policy"),
-    )
-    .expect("valid project");
-    let Routed::Wakeable(task) = board::oops::route(Report::Friction(friction)) else {
-        panic!("friction becomes wakeable work")
-    };
-    assert_eq!(task.project.as_str(), "tooling.manifest");
-
-    assert_eq!(
-        board::oops::route(Report::Observation("saw one retry".to_owned())),
-        Routed::Note("saw one retry".to_owned())
-    );
 }

@@ -1,9 +1,9 @@
 use super::*;
 use wire::rooms::{
     CandidateCoverageRecord, CandidateCovered, CandidateCritiqueRecord, CandidateCritiqued,
-    CoverageAuthority, DecisionOutcome, DesignPassProposal, DesignPropose, DesignProposed,
-    ExecutionAuthorization, ExecutionAuthorized, OutputAdopt, OutputControlled, PreparationDecide,
-    PreparationDecided, ProposalRef,
+    CandidateReference, CoverageAuthority, DecisionOutcome, DesignPassProposal, DesignPropose,
+    DesignProposed, ExecutionAuthorization, ExecutionAuthorized, OutputAdopt, OutputControlled,
+    OutputDecision, PreparationDecide, PreparationDecided, ProposalRef, RoomSource,
 };
 
 mod nudge;
@@ -51,7 +51,11 @@ pub(super) fn require_no_pending_controlled_outputs(
     snapshot: &ValidatedSnapshot,
     controller: &Entry,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    if controller.statement().intent != Some(wire::TaskIntent::Design) {
+    if !controller
+        .statement()
+        .intent
+        .is_some_and(wire::TaskIntent::is_design)
+    {
         return Ok(());
     }
     let mut outputs = snapshot
@@ -203,7 +207,12 @@ fn design_controller(
     heads: &journal::TaskHeads,
     controller: &TaskStamp,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    if heads.statement().body().intent == Some(wire::TaskIntent::Design) {
+    if heads
+        .statement()
+        .body()
+        .intent
+        .is_some_and(wire::TaskIntent::is_design)
+    {
         return Ok(());
     }
     Err(refusal(
@@ -591,6 +600,35 @@ enum Consequence<'a> {
     },
 }
 
+fn require_opportunistic_source(
+    retain_candidate: bool,
+    candidate: &DesignPassProposal,
+    decision: &wire::rooms::PreparationDecision,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if !retain_candidate {
+        return Ok(());
+    }
+    let source = candidate
+        .references
+        .iter()
+        .filter_map(|reference| match &reference.source {
+            RoomSource::Journal { fact } => Some(fact),
+            RoomSource::Transcript(_)
+            | RoomSource::Artifact { .. }
+            | RoomSource::Contribution { .. } => None,
+        })
+        .max_by_key(|fact| fact.get())
+        .map(|fact| RoomSource::Journal { fact: *fact });
+    if source.as_ref() != Some(&decision.source) {
+        return Err(refusal(
+            "preparation::oops-source-mismatch",
+            Some(decision.outcome.candidate().candidate.to_string()),
+            "preview the current OOPS candidate again",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn decide_preparation(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -606,14 +644,18 @@ pub(super) fn decide_preparation(
         return outcome;
     }
     let candidate_ref = decision.outcome.candidate();
-    let candidate = match proposed_candidate(bus, command, candidate_ref) {
-        Ok(candidate) => candidate,
-        Err(outcome) => return outcome,
-    };
     let snapshot = match bus.task_snapshot() {
         Ok(snapshot) => snapshot,
         Err(error) => return store_fault("preparation::heads-unreadable", &error.to_string()),
     };
+    let (candidate, retain_candidate) =
+        match proposed_candidate(bus, command, &snapshot, &decision.outcome) {
+            Ok(candidate) => candidate,
+            Err(outcome) => return outcome,
+        };
+    if let Err(outcome) = require_opportunistic_source(retain_candidate, &candidate, decision) {
+        return outcome;
+    }
     let controller = match task_heads(&snapshot, &candidate_ref.controller) {
         Ok(heads) => heads,
         Err(outcome) => return outcome,
@@ -690,16 +732,27 @@ pub(super) fn decide_preparation(
             }
         }
     };
-    commit_decision(bus, command, request_body, candidate, consequence)
+    commit_decision(
+        bus,
+        command,
+        request_body,
+        candidate,
+        retain_candidate,
+        consequence,
+    )
 }
 
-/// The exact Design pass proposal a decision disposes of: present, witnessed
-/// at its head, and not withdrawn by its author.
+/// The exact Design pass proposal a decision disposes of. Ordinary proposals
+/// must already be retained. An opportunistic OOPS Design instead composes its
+/// proposal from the exact pending line-item prefix named by the decision and
+/// retains proposal plus decision atomically.
 fn proposed_candidate(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    candidate: &wire::rooms::CandidateRef,
-) -> Result<DesignPassProposal, Outcome<CommandAnswer>> {
+    snapshot: &bus::TaskSnapshot,
+    outcome: &DecisionOutcome,
+) -> Result<(DesignPassProposal, bool), Outcome<CommandAnswer>> {
+    let candidate = outcome.candidate();
     let subject = ProposalRef::Candidate {
         candidate: candidate.clone(),
     };
@@ -715,34 +768,149 @@ fn proposed_candidate(
             ))
         })
         .map_err(|error| store_fault("preparation::authority-unreadable", &error.to_string()))?;
-    let head = head.ok_or_else(|| {
-        refusal(
-            "preparation::candidate-missing",
-            Some(candidate.candidate.to_string()),
-            "record the exact Design pass proposal before deciding it",
-        )
-    })?;
-    if withdrawn {
-        return Err(refusal(
-            "preparation::candidate-withdrawn",
-            Some(candidate.candidate.to_string()),
-            "its author withdrew this proposal; decide the corrected proposal instead",
-        ));
+    if let Some(head) = head {
+        if withdrawn {
+            return Err(refusal(
+                "preparation::candidate-withdrawn",
+                Some(candidate.candidate.to_string()),
+                "its author withdrew this proposal; decide the corrected proposal instead",
+            ));
+        }
+        require_witness(
+            command,
+            &Witness::Proposal {
+                proposal: subject,
+                head: Some(head.position()),
+            },
+        )?;
+        return match head.into_body() {
+            journal::ProposalAuthority::Candidate(candidate) => Ok((candidate, false)),
+            _ => Err(store_fault(
+                "preparation::candidate-invalid",
+                "proposal authority decoded as another proposal family",
+            )),
+        };
     }
     require_witness(
         command,
         &Witness::Proposal {
             proposal: subject,
-            head: Some(head.position()),
+            head: None,
         },
     )?;
-    match head.into_body() {
-        journal::ProposalAuthority::Candidate(candidate) => Ok(candidate),
-        _ => Err(store_fault(
-            "preparation::candidate-invalid",
-            "proposal authority decoded as another proposal family",
-        )),
+    let controller = task_heads(snapshot, &candidate.controller)?;
+    if controller.statement().body().intent != Some(wire::TaskIntent::OpportunisticDesign) {
+        return Err(refusal(
+            "preparation::candidate-missing",
+            Some(candidate.candidate.to_string()),
+            "record the exact Design pass proposal before deciding it",
+        ));
     }
+    let DecisionOutcome::Resolved { outputs, .. } = outcome else {
+        return Err(refusal(
+            "preparation::oops-decision-incomplete",
+            Some(candidate.candidate.to_string()),
+            "accept or reject every shown OOPS line item; this system proposal cannot be returned",
+        ));
+    };
+    let candidate = opportunistic_candidate(snapshot, command, controller, candidate, outputs)?;
+    Ok((candidate, true))
+}
+
+fn opportunistic_candidate(
+    snapshot: &bus::TaskSnapshot,
+    command: &wire::AdmittedCommand,
+    controller: &journal::TaskHeads,
+    candidate: &wire::rooms::CandidateRef,
+    decisions: &[OutputDecision],
+) -> Result<DesignPassProposal, Outcome<CommandAnswer>> {
+    let cutoff = TaskStamp::for_micros(candidate.candidate.micros()).map_err(|_| {
+        refusal(
+            "preparation::oops-candidate-invalid",
+            Some(candidate.candidate.to_string()),
+            "preview the current OOPS candidate again",
+        )
+    })?;
+    let governed = snapshot
+        .facts()
+        .iter()
+        .filter_map(|fact| fact.fact.read::<PreparationDecided>())
+        .filter(|decided| decided.decision.decision.controller == candidate.controller)
+        .flat_map(|decided| match decided.decision.outcome {
+            DecisionOutcome::Resolved { outputs, .. } => outputs
+                .into_iter()
+                .map(|output| output.output)
+                .collect::<Vec<_>>(),
+            DecisionOutcome::Returned { .. } | DecisionOutcome::Accepted { .. } => Vec::new(),
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut lines = snapshot
+        .tasks()
+        .iter()
+        .filter(|heads| {
+            let statement = heads.statement().body();
+            heads.workflow().body().status.is_pending()
+                && statement.intent == Some(wire::TaskIntent::Plan)
+                && statement.authorization.is_none()
+                && statement.born <= cutoff
+                && statement.preparation.as_ref().is_some_and(|association| {
+                    association.parent == candidate.controller
+                        && association.controller == candidate.controller
+                        && association.construction == statement.born
+                })
+                && !governed.contains(&statement.born)
+        })
+        .collect::<Vec<_>>();
+    lines.sort_by(|left, right| {
+        left.statement()
+            .body()
+            .born
+            .cmp(&right.statement().body().born)
+    });
+    if lines.is_empty()
+        || lines
+            .last()
+            .is_none_or(|line| line.statement().body().born != cutoff)
+        || lines.len() != decisions.len()
+        || lines
+            .iter()
+            .zip(decisions)
+            .any(|(line, decision)| line.statement().body().born != decision.output)
+    {
+        return Err(refusal(
+            "preparation::oops-candidate-moved",
+            Some(candidate.candidate.to_string()),
+            "preview the current OOPS candidate again; no shown line was decided",
+        ));
+    }
+    for line in &lines {
+        require_statement_workflow_witnesses(command, line)?;
+    }
+    let references = lines
+        .iter()
+        .map(|line| CandidateReference {
+            relation: "input".parse().expect("input is a wire name"),
+            source: RoomSource::Journal {
+                fact: wire::SequenceCode::new(line.statement().position().get()),
+            },
+        })
+        .collect();
+    Ok(DesignPassProposal {
+        candidate: candidate.clone(),
+        statement: controller.statement().position(),
+        claim: None,
+        recommendation: wire::rooms::DesignPassRecommendation::Work,
+        governed_inputs: Vec::new(),
+        outputs: lines
+            .iter()
+            .map(|line| line.statement().body().born.clone())
+            .collect(),
+        justification:
+            "Resolve each pending unexpected-behavior line item through an explicit verdict."
+                .to_owned(),
+        references,
+        evidence: Vec::new(),
+    })
 }
 
 fn prepare_selection(
@@ -862,6 +1030,7 @@ fn commit_decision(
     command: &wire::AdmittedCommand,
     request_body: &PreparationDecide,
     candidate: DesignPassProposal,
+    retain_candidate: bool,
     consequence: Consequence<'_>,
 ) -> Outcome<CommandAnswer> {
     let decision = &request_body.decision;
@@ -875,11 +1044,26 @@ fn commit_decision(
     };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
+    let cause = if retain_candidate {
+        match write.fact(
+            DesignProposed {
+                candidate: candidate.clone(),
+            },
+            FactCause::Root,
+        ) {
+            Ok(fact) => FactCause::Pending(fact),
+            Err(error) => {
+                return store_fault("preparation::proposal-invalid", &error.to_string());
+            }
+        }
+    } else {
+        FactCause::Root
+    };
     let decided = match write.fact(
         PreparationDecided {
             decision: decision.clone(),
         },
-        FactCause::Root,
+        cause,
     ) {
         Ok(fact) => fact,
         Err(error) => return store_fault("preparation::decision-invalid", &error.to_string()),

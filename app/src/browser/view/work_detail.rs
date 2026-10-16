@@ -326,19 +326,16 @@ fn render_available(
                 {render_claim_context(row)}
                 {render_git_context(row)}
             </section>
-            {render_activity(render, answer, projected.map_or(row, |task| task.row()))}
+            {render_activity(render, answer)}
         </div>
     }
 }
 
 /// The task's observations, newest first, beneath the composer that appends
-/// to them, so a submitted observation lands directly under its draft. An
-/// open OOPS report's File sits in that composer's action row, so reading,
-/// observing, and filing it happen in one place.
+/// Task observations and closure authority.
 fn render_activity(
     render: &WorkDetailRender<'_, '_>,
     answer: &wire::intent::TaskDetailAnswer,
-    row: &wire::intent::BoardTask,
 ) -> Html {
     let statement = &answer.task.statement.body;
     html! {
@@ -360,14 +357,8 @@ fn render_activity(
                 task_detail::closure(render.can_close, &answer.task).as_ref(),
                 &render.notes.shown(&statement.born),
                 &render.submit_note,
-                super::super::drafts::render_oops_file_action(
-                    render.runtime,
-                    render.draft_controls,
-                    render.sender,
-                    row,
-                ),
+                Html::default(),
             )}
-            {super::super::drafts::render_oops_file_notice(render.draft_controls, row)}
             if answer.notes.is_empty() {
                 <p class="muted">{"No observations have been recorded."}</p>
             } else {

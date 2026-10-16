@@ -46,8 +46,6 @@ pub type RoomAnchor = TaskStamp;
 pub const WORKING_GROUP_ANCHOR_LIMIT: usize = 100;
 /// Most designs a working group holds, matching the lanes one team admits.
 pub const WORKING_GROUP_DESIGN_LIMIT: usize = crate::head::TEAM_MEMBER_LIMIT;
-/// Most parked reports one OOPS grooming record may cluster.
-pub const OOPS_GROOMING_REPORT_LIMIT: usize = 100;
 /// How long a room contribution or lane-addressed room packet keeps an
 /// activity-only attention reason; native duties do not age.
 pub const ROOM_ACTIVITY_SECONDS: i64 = 24 * 60 * 60;
@@ -308,78 +306,6 @@ pub enum RoomSourceView {
     },
 }
 
-/// Triage result for one bounded cluster of parked OOPS reports.
-///
-/// These are evidence dispositions, not task workflow states. In particular,
-/// deferred-for-later carries no clock and proposed-work does not authorize
-/// execution.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum OopsDisposition {
-    /// The reports describe the same evidenced cause as another retained input.
-    Duplicate,
-    /// The evidence does not justify execution work.
-    NoWork,
-    /// Keep the reports parked for a later grooming batch, without scheduling.
-    DeferredForLater,
-    /// Existing or already-proposed work covers the reports.
-    Covered,
-    /// One report is proposed for explicit controlled promotion.
-    ProposedWork,
-}
-
-impl fmt::Display for OopsDisposition {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Duplicate => "duplicate",
-            Self::NoWork => "no-work",
-            Self::DeferredForLater => "deferred-for-later",
-            Self::Covered => "covered",
-            Self::ProposedWork => "proposed-work",
-        })
-    }
-}
-
-/// A disposition outside the closed OOPS grooming vocabulary.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "invalid OOPS disposition {0:?}; expected duplicate, no-work, deferred-for-later, covered, or proposed-work"
-)]
-pub struct OopsDispositionError(String);
-
-impl FromStr for OopsDisposition {
-    type Err = OopsDispositionError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "duplicate" => Ok(Self::Duplicate),
-            "no-work" => Ok(Self::NoWork),
-            "deferred-for-later" => Ok(Self::DeferredForLater),
-            "covered" => Ok(Self::Covered),
-            "proposed-work" => Ok(Self::ProposedWork),
-            _ => Err(OopsDispositionError(value.to_owned())),
-        }
-    }
-}
-
-/// One source-preserving OOPS grooming record under a Design room.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OopsGrooming {
-    /// Exact parked reports considered together; order records the bounded cluster.
-    pub reports: Vec<TaskStamp>,
-    /// Triage result for the complete cluster.
-    pub disposition: OopsDisposition,
-    /// Evidence-backed common cause or negative basis.
-    pub cause: String,
-    /// Exceptions that keep apparently related reports distinct.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub exceptions: String,
-    /// Known uncertainty retained instead of resolved by assumption.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub uncertainty: String,
-}
-
 /// Content authority of one room publication.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "kebab-case", deny_unknown_fields)]
@@ -389,8 +315,6 @@ pub enum RoomPublicationContent {
     Authored { text: String },
     /// Agent text remains owned by its transcript or retained artifact.
     Linked { link: RoomSource },
-    /// Typed, source-preserving OOPS triage under a bounded Design room.
-    OopsGroomed { grooming: OopsGrooming },
 }
 
 /// Immutable room publication fact body.
@@ -483,9 +407,6 @@ pub struct RoomPost {
     pub room: TaskHandle,
     /// Complete authored observation bytes.
     pub text: String,
-    /// Typed OOPS grooming record; mutually exclusive with nonempty `text`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grooming: Option<OopsGrooming>,
 }
 /// Successful operator room-publication reply.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1087,7 +1008,7 @@ mod tests {
         assert!(serde_json::from_value::<WorkingGroup>(oversized).is_err());
         let named = serde_json::json!({
             "group": "1kKRRsDR1",
-            "name": "OOPS grooming",
+            "name": "Operator batch",
             "anchors": ["1kKRRsDR0"]
         });
         assert!(

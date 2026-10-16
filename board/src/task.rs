@@ -4,9 +4,6 @@ use std::fmt;
 use wire::intent::ProjectVisibility;
 use wire::{ClaimHead, LeaseHead, TaskHandle, TaskHead, TaskStamp, WorkflowHead};
 
-/// Public project used when retained bare `.oops` evidence has no owner.
-pub const OOPS_UNASSIGNED_PROJECT: &str = "task.oops";
-
 /// Hidden system roots compiled into every project policy, in declaration order.
 pub const BUILTIN_HIDDEN_STEMS: [&str; 1] = ["maxim_proposal"];
 
@@ -535,11 +532,6 @@ impl Entry {
     #[must_use]
     pub const fn statement(&self) -> &TaskHead {
         &self.statement
-    }
-    /// Whether this row is parked as OOPS evidence.
-    #[must_use]
-    pub const fn is_oops(&self) -> bool {
-        self.statement.filing.is_oops()
     }
 
     /// Whether this row is an unfiled draft.

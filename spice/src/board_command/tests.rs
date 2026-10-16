@@ -367,12 +367,11 @@ fn current_board_edits_are_guarded_deterministic_and_render_form_invariant() {
         actor_seat(&initial).expect("sole operator seat"),
         (seats[0].lane, seats[0].occupant,)
     );
-    let (alpha, beta, oops) = seed_edit_tasks(&bus, epoch);
+    let (alpha, beta, _draft) = seed_edit_tasks(&bus, epoch);
     exercise_deferral_staleness(&bus, epoch, &alpha);
     add_dependency(&bus, epoch, &alpha, &beta);
     let graph = assert_graph_handout_and_ledger(&bus, epoch, &alpha);
     assert_render_form_parity(&graph);
-    assert_oops_note_exists(&bus, &oops);
     clean(&root, bus);
 }
 
@@ -1084,15 +1083,13 @@ mod closing_boundary;
 mod hidden;
 use hidden::*;
 
-// Typed OOPS rows have one deliberate exit: exact capture may hold one for
-// triage, and atomic filing moves it into allocator-visible work.
-mod oops_filing;
-// Filing without rehoming keeps an OOPS row's public project; explicit
-// rehoming and atomic refusals share one seam.
-mod oops_filing_destination;
 // Drafts are prospective work outside every execution rail until the same
 // explicit file transition admits them as ordinary work.
 mod draft_filing;
+
+// Unexpected-behavior intake is ordinary Plan preparation under one typed,
+// repository-owned Design; exact candidate decisions are its only release.
+mod oops_design;
 
 // Statement correction and its refusals are one bounded scenario seam, so
 // this file stays inside the structural review bound as it grows.

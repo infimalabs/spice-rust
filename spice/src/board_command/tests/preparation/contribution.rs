@@ -186,7 +186,6 @@ fn lanes_contribute_typed_records_that_read_grouped_and_authorize_nothing() {
         &RoomPost {
             room: design.clone(),
             text: "Weigh the journal index.".to_owned(),
-            grooming: None,
         },
     ));
     let cited = journal_source(&visible, &design);

@@ -931,7 +931,7 @@ fn desired_deferrals(
             continue;
         }
         let statement = heads.statement().body();
-        if statement.filing.is_oops() {
+        if statement.filing.is_draft() {
             continue;
         }
         let project = projects.admit(&statement.project).map_err(|error| {

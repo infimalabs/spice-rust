@@ -725,7 +725,6 @@ fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
         "blocked 0",
         "waiting 0",
         "stale 0",
-        "oops 0",
     ] {
         assert!(status.lines().any(|line| line == expected), "{status}");
     }

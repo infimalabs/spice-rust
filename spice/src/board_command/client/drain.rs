@@ -27,7 +27,6 @@ pub(crate) struct ParkedCounts {
     pub(crate) workflow_waiting: usize,
     pub(crate) designs: wire::rooms::DesignCycleCounts,
     pub(crate) deferred: usize,
-    pub(crate) oops: usize,
 }
 
 impl ParkedCounts {
@@ -37,7 +36,7 @@ impl ParkedCounts {
     /// judged, never as an execution gate.
     pub(in crate::board_command) fn measure(
         board: &BoardAnswer,
-        entries: &[Entry],
+        _entries: &[Entry],
         execution_rows: &[&Entry],
         wait_rows: &[&Entry],
     ) -> Self {
@@ -79,27 +78,7 @@ impl ParkedCounts {
                 .iter()
                 .filter(|entry| entry.workflow().deferral.is_some())
                 .count(),
-            oops: {
-                let satisfied = board::resolved_tasks(entries);
-                entries
-                    .iter()
-                    .filter(|entry| {
-                        entry.is_oops()
-                            && entry.workflow().status.is_pending()
-                            && !satisfied
-                                .speculative_design_work(entry.statement(), entry.workflow())
-                    })
-                    .count()
-            },
         }
-    }
-
-    /// Pending parked OOPS rows across the whole visible board.
-    pub(in crate::board_command) fn oops(entries: &[Entry]) -> usize {
-        entries
-            .iter()
-            .filter(|entry| entry.is_oops() && entry.workflow().status.is_pending())
-            .count()
     }
 
     /// The `board:` line: every non-zero category with its reason, or the
@@ -127,10 +106,11 @@ impl ParkedCounts {
         ]
         .into_iter()
         .chain(designs)
-        .chain([
-            (self.deferred, "deferred", "until their scheduled time"),
-            (self.oops, "oops", "parked on the deferred triage board"),
-        ])
+        .chain(std::iter::once((
+            self.deferred,
+            "deferred",
+            "until their scheduled time",
+        )))
         .filter(|(count, _, _)| *count > 0)
         .map(|(count, label, reason)| format!("{count} {label} ({reason})"))
         .collect::<Vec<_>>();
@@ -254,7 +234,6 @@ impl DrainReadout {
                 workflow_waiting: board.workflow_waiting,
                 designs: board.designs,
                 deferred: board.deferred,
-                oops: board.oops,
             },
             team,
         )

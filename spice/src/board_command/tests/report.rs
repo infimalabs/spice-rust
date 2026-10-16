@@ -13,7 +13,7 @@ fn report_admits_public_facts_and_refuses_a_different_generation_pin() {
         "Visible report work",
         Some("todo"),
     );
-    let hidden = hidden::add_oops(
+    let hidden = hidden::add_draft_row(
         &bus,
         epoch,
         Actor::Operator,

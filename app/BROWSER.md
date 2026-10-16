@@ -272,12 +272,13 @@ restored only while nothing else holds focus. Incoming cards, receipts,
 conclusions, lane changes, and late hydration never mount, close, reorder, or
 focus a console.
 
-A Design room's recorded OOPS grooming, made through `spice room post DESIGN
---report REPORT...`, renders in its history and group plane with the reports it
-considered, each report's standing, its disposition, evidenced cause, and any
-exceptions or uncertainty. The browser records no grooming: a Design's menu
-carries no grooming form, and an OOPS report leaves parking only through
-filing.
+The repository-owned OOPS Design uses the ordinary Design room and proposal
+surface. Its generated candidate shows each pending report Plan as one line
+item with its complete statement and an Accept or Reject verdict; Return is
+not offered because every submitted line receives a disposition. Accepted
+lines receive ordinary execution authorization. Rejected and previously
+decided lines remain history, while reports arriving during a decision appear
+in the next candidate.
 
 ## Composer images
 

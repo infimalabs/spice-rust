@@ -332,14 +332,6 @@ fn dry_counts(
         workflow_waiting: 0,
         designs: wire::rooms::DesignCycleCounts::default(),
         deferred: 0,
-        oops: entries
-            .iter()
-            .filter(|entry| {
-                entry.is_oops()
-                    && entry.workflow().status.is_pending()
-                    && !satisfied.speculative_design_work(entry.statement(), entry.workflow())
-            })
-            .count(),
     };
     let waits = board::work_waits(entries, environment);
     for entry in visible.filter(|entry| entry.is_filed() && entry.workflow().status.is_pending()) {

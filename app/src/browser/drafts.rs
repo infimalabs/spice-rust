@@ -1,7 +1,7 @@
-//! The operator's unfiled work: Drafts, prospective work with an admitted
-//! public project and editable content, and parked OOPS reports. No allocator,
-//! dependency, claim, or strip sees either until the explicit file transition
-//! turns it into ordinary filed work.
+//! The operator's unfiled Drafts: prospective work with an admitted public
+//! project and editable content. No allocator, dependency, claim, or strip sees
+//! a Draft until the explicit file transition turns it into ordinary filed
+//! work.
 
 use std::cell::Cell;
 
@@ -134,36 +134,6 @@ pub(super) fn render_section(
     }
 }
 
-/// The open OOPS reports the operator can read, each opening the task detail
-/// that files it.
-pub(super) fn render_oops_section(
-    runtime: Option<&AppRuntime>,
-    open: &Callback<TaskStamp>,
-) -> Html {
-    let parked = runtime
-        .and_then(AppRuntime::board)
-        .map_or_else(Vec::new, |board| {
-            board
-                .tasks
-                .iter()
-                .filter(|task| open_oops(task))
-                .collect::<Vec<_>>()
-        });
-    html! {
-        <section class="app-sheet-section draft-section" aria-labelledby="spice-oops-heading" data-oops="">
-            <div class="section-heading">
-                <h2 id="spice-oops-heading">{"OOPS"}</h2>
-                <span class="section-count">{format!("{} parked", parked.len())}</span>
-            </div>
-            if parked.is_empty() {
-                <p class="empty">{"No parked OOPS reports."}</p>
-            } else {
-                {unfiled_list(parked, open)}
-            }
-        </section>
-    }
-}
-
 /// Unfiled rows, each a button that opens its task detail.
 fn unfiled_list(tasks: Vec<&BoardTask>, open: &Callback<TaskStamp>) -> Html {
     html! {
@@ -251,65 +221,8 @@ pub(super) fn render_editor(
     }
 }
 
-/// The File action an open OOPS report's observation composer carries beside
-/// Add, so the operator can record observations and file in one place. It
-/// files the report as ordinary work under its current project through the
-/// guarded file transition, so the allocator can offer it at once; re-homing a
-/// report under another project stays with `spice task file --into`.
-pub(super) fn render_oops_file_action(
-    runtime: Option<&AppRuntime>,
-    controls: &Controls,
-    sender: &SenderHandle,
-    row: &BoardTask,
-) -> Html {
-    if !open_oops(row) {
-        return Html::default();
-    }
-    let files = runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskFile));
-    let statement = &row.statement.body;
-    let title = format!(
-        "File under {} as ordinary work the allocator can offer; a refusal keeps it parked",
-        statement.project
-    );
-    let file = {
-        let controls = controls.clone();
-        let sender = sender.clone();
-        let row = row.clone();
-        Callback::from(move |_: MouseEvent| {
-            let notice = controls.notice.clone();
-            let landed = Callback::from(move |answer: TaskAnswer| {
-                notice.set(Some(format!("Filed {}.", answer.task)));
-            });
-            controls.send(&sender, filing_request(&row), landed);
-        })
-    };
-    html! {
-        <button
-            type="button"
-            class="team-send"
-            data-oops-file={statement.handle.to_string()}
-            disabled={!files}
-            title={title}
-            onclick={file}
-        >{"File"}</button>
-    }
-}
-
-/// The outcome of the last filing beside an open OOPS report's File action.
-pub(super) fn render_oops_file_notice(controls: &Controls, row: &BoardTask) -> Html {
-    if open_oops(row) {
-        controls.notice()
-    } else {
-        Html::default()
-    }
-}
-
 fn open_draft(task: &BoardTask) -> bool {
     task.statement.body.filing.is_draft() && task.workflow.body.status.is_pending()
-}
-
-fn open_oops(task: &BoardTask) -> bool {
-    task.statement.body.filing.is_oops() && task.workflow.body.status.is_pending()
 }
 
 /// The editable content of a new Draft, or of `row` when it exists.

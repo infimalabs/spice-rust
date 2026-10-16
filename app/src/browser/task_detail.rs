@@ -504,8 +504,8 @@ fn submitted_settlement(event: &SubmitEvent) -> Option<ComposerSettlement> {
 /// The one observation composer every surface showing `task` renders, bound
 /// to that task and preserving only that task's draft while feedback uses its task-owned toast.
 /// With a `closure`, the same draft can instead close the task as its validation.
-/// `actions` are the task's own further controls, such as an OOPS report's
-/// File, kept in the composer's action row so they follow an observation.
+/// `actions` are the task's own further controls, kept in the composer's action
+/// row so they follow an observation.
 #[expect(
     clippy::too_many_arguments,
     reason = "one composer binds its task, capabilities, draft, and action row"

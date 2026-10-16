@@ -5,7 +5,7 @@ use super::*;
 // default, and nothing else. Every read renders its prose in full, because
 // an unreadable row cannot be triaged.
 
-pub(super) fn add_oops(
+pub(super) fn add_draft_row(
     bus: &Bus,
     epoch: CanonicalUuid,
     actor: Actor,
@@ -15,25 +15,33 @@ pub(super) fn add_oops(
     let value = task.bytes().fold(0_i64, |value, byte| {
         (value * 131 + i64::from(byte)) % 10_000_000_000_000
     });
-    let born = wire::TaskStamp::for_micros(value).expect("oops fixture stamp");
-    let task = TaskHandle::for_filing("board.test", &born, wire::TaskFiling::Oops);
+    let born = wire::TaskStamp::for_micros(value).expect("Draft fixture stamp");
+    let task = TaskHandle::for_filing("board.test", &born, wire::TaskFiling::Draft);
     assert_committed(issue(
         bus,
         epoch,
         actor,
-        CommandKind::TaskOopsAdd,
+        CommandKind::TaskAdd,
         vec![Witness::Absence { task: born }],
-        &TaskOopsAdd {
+        &TaskAdd {
+            preparation: None,
+            intent: None,
             title: title.to_owned(),
-            description: title.to_owned(),
-            origin: Some(fixture_origin()),
             project: Some("board.test".to_owned()),
+            description: Some(title.to_owned()),
+            acceptance: Vec::new(),
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some(fixture_origin()),
+            flow: Some("plan,todo,review".to_owned()),
+            depends: Vec::new(),
+            claim: false,
+            draft: true,
         },
     ));
     task
 }
 
-fn assert_hidden_actor_document(
+fn assert_unfiled_actor_document(
     answer: &BoardAnswer,
     actor: &Actor,
     hidden: &TaskHandle,
@@ -48,7 +56,7 @@ fn assert_hidden_actor_document(
     );
     assert_eq!(hidden_heads.statement.body.handle, *hidden);
     assert_eq!(hidden_heads.statement.body.project, "board.test");
-    assert!(hidden_heads.statement.body.filing.is_oops());
+    assert!(hidden_heads.statement.body.filing.is_draft());
     assert_eq!(hidden_heads.presentation_title(), title);
     assert_eq!(
         hidden_heads.statement.body.description.as_deref(),
@@ -71,7 +79,7 @@ fn assert_hidden_actor_document(
         hidden_json["visibility"],
         serde_json::json!({"kind": "public"})
     );
-    assert_eq!(hidden_json["statement"]["body"]["filing"], "oops");
+    assert_eq!(hidden_json["statement"]["body"]["filing"], "draft");
     assert_eq!(hidden_json["presentation_title"], title);
     assert_eq!(hidden_json["statement"]["body"]["description"], title);
     assert_eq!(hidden_json["workflow"]["body"]["status"], "pending");
@@ -105,7 +113,7 @@ fn assert_hidden_actor_document(
 fn board_read_carries_hidden_prose_while_next_stays_public() {
     let (root, bus, epoch, seats) = fixture("hidden-visibility", 1);
     let lane = Actor::Lane(seats[0].lane);
-    let hidden = add_oops(
+    let hidden = add_draft_row(
         &bus,
         epoch,
         Actor::Operator,
@@ -123,7 +131,7 @@ fn board_read_carries_hidden_prose_while_next_stays_public() {
     );
 
     let operator = board(&bus, epoch, Actor::Operator);
-    assert_hidden_actor_document(
+    assert_unfiled_actor_document(
         &operator,
         &Actor::Operator,
         &hidden,
@@ -131,7 +139,7 @@ fn board_read_carries_hidden_prose_while_next_stays_public() {
         "Allocator failure needing triage",
     );
     let available = board(&bus, epoch, lane.clone());
-    assert_hidden_actor_document(
+    assert_unfiled_actor_document(
         &available,
         &lane,
         &hidden,
@@ -168,117 +176,10 @@ fn board_read_carries_hidden_prose_while_next_stays_public() {
 }
 
 #[test]
-fn document_ledgers_render_hidden_tasks_in_full() {
-    let (root, bus, epoch, seats) = fixture("hidden-ledger", 1);
-    let title = "Document ledger triage detail";
-    let hidden = add_oops(&bus, epoch, Actor::Operator, "HIDDEN-ledger1", title);
-    let public = add_project(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "PUBLIC-ledger1",
-        "Visible document ledger",
-        "board.visibility",
-        Some("todo"),
-    );
-
-    let mut hidden_ledgers = Vec::new();
-    let mut public_ledgers = Vec::new();
-    for actor in [Actor::Operator, Actor::Lane(seats[0].lane)] {
-        let actor_board = board(&bus, epoch, actor.clone());
-        let retained_hidden = actor_board
-            .tasks
-            .iter()
-            .find(|task| task.statement.body.handle == hidden)
-            .expect("actor retains hidden board row")
-            .statement
-            .body
-            .handle
-            .clone();
-        let hidden_ledger = issue(
-            &bus,
-            epoch,
-            actor.clone(),
-            CommandKind::DocLedger,
-            Vec::new(),
-            &DocLedger {
-                task: retained_hidden,
-            },
-        );
-        let Outcome::Reply(Reply {
-            body: CommandAnswer::Text(answer),
-            ..
-        }) = &hidden_ledger
-        else {
-            panic!("hidden ledger was not a text snapshot: {hidden_ledger:?}");
-        };
-        assert!(
-            answer.text.starts_with(&format!("# {title}\n")),
-            "hidden ledger withheld its title: {}",
-            answer.text
-        );
-        assert!(
-            answer.text.contains("Flow: plan, todo, review"),
-            "hidden ledger dropped its flow: {}",
-            answer.text
-        );
-        assert!(
-            answer.text.contains(&format!("~~~\n{title}\n~~~")),
-            "hidden ledger dropped the oops note a triager reads: {}",
-            answer.text
-        );
-        hidden_ledgers.push(answer.text.clone());
-        for form in [crate::render::Form::Text, crate::render::Form::Json] {
-            let document = crate::render::render(&hidden_ledger, form)
-                .expect("hidden ledger renders")
-                .document()
-                .to_vec();
-            let document = String::from_utf8(document).expect("ledger rendering is UTF-8");
-            assert!(document.contains(title), "{form:?} withheld hidden title");
-        }
-
-        let retained_public = actor_board
-            .tasks
-            .iter()
-            .find(|task| task.statement.body.handle == public)
-            .expect("actor retains public board row")
-            .statement
-            .body
-            .handle
-            .clone();
-        let public_ledger = issue(
-            &bus,
-            epoch,
-            actor,
-            CommandKind::DocLedger,
-            Vec::new(),
-            &DocLedger {
-                task: retained_public,
-            },
-        );
-        let Outcome::Reply(Reply {
-            body: CommandAnswer::Text(answer),
-            ..
-        }) = public_ledger
-        else {
-            panic!("public ledger was not a text snapshot: {public_ledger:?}");
-        };
-        assert_eq!(
-            answer.text.as_bytes(),
-            b"# Visible document ledger\nFlow: todo\n"
-        );
-        public_ledgers.push(answer.text);
-    }
-    assert_eq!(hidden_ledgers[0], hidden_ledgers[1]);
-    assert_eq!(public_ledgers[0], public_ledgers[1]);
-    clean(&root, bus);
-}
-
-#[test]
 fn graph_and_handout_reads_carry_hidden_rows_beside_public_ones() {
     let (root, bus, epoch, seats) = fixture("hidden-board-documents", 1);
     let title = "Graph and handout triage detail";
-    let hidden = add_oops(&bus, epoch, Actor::Operator, "HIDDEN-graph1", title);
+    let hidden = add_draft_row(&bus, epoch, Actor::Operator, "HIDDEN-graph1", title);
     let public = add_project(
         &bus,
         epoch,
@@ -389,59 +290,10 @@ fn graph_and_handout_reads_carry_hidden_rows_beside_public_ones() {
 }
 
 #[test]
-fn manual_hidden_creation_is_zero_write_and_system_routes_are_explicit() {
+fn manual_hidden_creation_is_zero_write() {
     let (root, bus, epoch, seats) = fixture("hidden-creation", 1);
     let lane = Actor::Lane(seats[0].lane);
-
     assert_manual_system_project_refuses(&bus, epoch, &lane);
-    assert_forged_hidden_route_refuses(&bus, epoch, &lane);
-    authorize_lane_creation(&bus, epoch, &seats[0]);
-
-    let ungrounded = stamp("SYSTEM-oops0");
-    let before = facts_len(&bus, "facts before ungrounded oops");
-    let refused = issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskOopsAdd,
-        vec![Witness::Absence { task: ungrounded }],
-        &TaskOopsAdd {
-            title: "Ungrounded system filing".to_owned(),
-            description: "The hidden route still needs causal authority".to_owned(),
-            origin: None,
-            project: Some("board.test".to_owned()),
-        },
-    );
-    assert!(matches!(
-        refused,
-        Outcome::Refusal(ref refusal) if refusal.reason() == "task::origin-required"
-    ));
-    assert_eq!(facts_len(&bus, "facts after ungrounded oops"), before);
-
-    let operator_oops = add_oops(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "SYSTEM-oops1",
-        "Operator oops route",
-    );
-    let lane_oops = add_oops(&bus, epoch, lane, "SYSTEM-oops2", "Lane oops route");
-
-    let answer = board(&bus, epoch, Actor::Operator);
-    assert_eq!(answer.tasks.len(), 2);
-    assert!(answer.tasks.iter().all(|task| {
-        task.visibility == wire::intent::ProjectVisibility::Public
-            && task.statement.body.project == "board.test"
-            && task.statement.body.filing.is_oops()
-    }));
-    let expected = fixture_origin();
-    for task in [operator_oops, lane_oops] {
-        assert_eq!(
-            at(&answer, &task).statement.body.provenance.origin(),
-            Some(expected.clone())
-        );
-        assert_eq!(creation_fact_origin(&bus, &task), expected);
-    }
     clean(&root, bus);
 }
 
@@ -495,41 +347,6 @@ fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &
     }
 }
 
-/// A hidden project named for an OOPS row never reaches the journal: typed
-/// OOPS filing requires a public project admitted by the board.
-fn assert_forged_hidden_route_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &Actor) {
-    for actor in [Actor::Operator, lane.clone()] {
-        for project in [".oops", ".maxim_proposal.theme_2", ".sandbox.audit"] {
-            let before = facts_len(bus, "facts before route refusal");
-            let refused = issue(
-                bus,
-                epoch,
-                actor.clone(),
-                CommandKind::TaskOopsAdd,
-                vec![Witness::Absence {
-                    task: wire::TaskStamp::for_micros(43).expect("fixture task stamp"),
-                }],
-                &TaskOopsAdd {
-                    title: "forged hidden route".to_owned(),
-                    description: "caller-selected hidden project must not cross".to_owned(),
-                    origin: Some(fixture_origin()),
-                    project: Some(project.to_owned()),
-                },
-            );
-            assert!(
-                matches!(&refused, Outcome::Refusal(refusal)
-                    if refusal.reason() == "task::oops-project-refused"),
-                "unexpected outcome for {project}: {refused:?}",
-            );
-            assert_eq!(
-                facts_len(bus, "facts after route refusal"),
-                before,
-                "forged route mutated the journal for {project}",
-            );
-        }
-    }
-}
-
 pub(super) fn seed_edit_tasks(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -550,7 +367,7 @@ pub(super) fn seed_edit_tasks(
         "Beta prerequisite",
         Some("todo"),
     );
-    let oops = add_oops(
+    let oops = add_draft_row(
         bus,
         epoch,
         Actor::Operator,
@@ -775,20 +592,4 @@ pub(super) fn assert_render_form_parity(graph: &Outcome<CommandAnswer>) {
         serde_json::to_value(json_outcome).expect("decoded JSON outcome re-encodes"),
         serde_json::to_value(graph).expect("source outcome encodes"),
     );
-}
-
-pub(super) fn assert_oops_note_exists(bus: &Bus, oops: &TaskHandle) {
-    let facts = bus.fact_snapshot().expect("fixture facts read");
-    let born = oops
-        .born()
-        .expect("fixture oops handle carries a birth stamp");
-    assert!(facts.facts().iter().any(|fact| {
-        fact.fact.kind() == wire::FactKind::TaskNoted
-            && fact
-                .fact
-                .body()
-                .get("task")
-                .and_then(serde_json::Value::as_str)
-                == Some(born.as_str())
-    }));
 }

@@ -23,12 +23,10 @@ impl<'a> HiddenInventory<'a> {
     }
 }
 
-/// Active filed public routes, parked OOPS evidence, unfiled Drafts, and
-/// hidden system rows.
+/// Active filed public routes, unfiled Drafts, and hidden system rows.
 #[derive(Clone, Debug)]
 pub struct Inventory<'a> {
     public: Vec<&'a Entry>,
-    oops: Vec<&'a Entry>,
     drafts: Vec<&'a Entry>,
     hidden: BTreeMap<&'a str, Vec<&'a Entry>>,
 }
@@ -38,16 +36,13 @@ impl<'a> Inventory<'a> {
     #[must_use]
     pub fn new(entries: &'a [Entry]) -> Self {
         let mut public = Vec::new();
-        let mut oops = Vec::new();
         let mut drafts = Vec::new();
         let mut hidden = BTreeMap::<&str, Vec<&Entry>>::new();
         for entry in entries {
             if !entry.workflow().status.is_pending() {
                 continue;
             }
-            if entry.is_oops() {
-                oops.push(entry);
-            } else if entry.is_draft() {
+            if entry.is_draft() {
                 drafts.push(entry);
             } else if let Some(stem) = entry.project().visibility().hidden_stem() {
                 hidden.entry(stem).or_default().push(entry);
@@ -57,7 +52,6 @@ impl<'a> Inventory<'a> {
         }
         Self {
             public,
-            oops,
             drafts,
             hidden,
         }
@@ -67,12 +61,6 @@ impl<'a> Inventory<'a> {
     #[must_use]
     pub fn public(&self) -> &[&'a Entry] {
         &self.public
-    }
-
-    /// Every parked OOPS row, independent of its public owner project.
-    #[must_use]
-    pub fn oops(&self) -> &[&'a Entry] {
-        &self.oops
     }
 
     /// Every unfiled Draft, independent of its public owner project.

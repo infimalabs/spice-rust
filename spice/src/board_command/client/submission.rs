@@ -335,12 +335,10 @@ pub(super) fn client_oops(
     submit_oops_add(
         repository,
         contract,
-        TaskOopsAdd {
-            title: text.clone(),
-            description: text,
-            origin,
-            project: matches.get_one::<String>("project").cloned(),
-        },
+        text.clone(),
+        text,
+        origin,
+        matches.get_one::<String>("project").cloned(),
     )
 }
 
@@ -349,18 +347,79 @@ type ClientMapping = (CommandKind, Vec<Witness>, serde_json::Value);
 pub(super) fn submit_oops_add(
     repository: &Repository,
     contract: &Contract,
-    body: TaskOopsAdd,
+    title: String,
+    description: String,
+    origin: Option<wire::Origin>,
+    project: Option<String>,
 ) -> Outcome<CommandAnswer> {
     mutate_from_board(
         repository,
         contract,
         BoardRead::All { family: None },
         |board| {
-            let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond())?;
+            let mut current = board.tasks.iter().filter(|task| {
+                task.statement.body.intent == Some(wire::TaskIntent::OpportunisticDesign)
+                    && task
+                        .design_standing()
+                        .is_some_and(|standing| standing.is_open())
+            });
+            let design = current.next();
+            if current.next().is_some() {
+                return Err(protocol_fault(
+                    "task::oops-design-ambiguous",
+                    "the board contains more than one current opportunistic OOPS Design",
+                ));
+            }
+            let now = jiff::Timestamp::now().as_microsecond();
+            let (design, mut expected) = match design {
+                Some(design) => {
+                    let report = allocate_task_stamp(&board, now)?;
+                    (
+                        design.statement.body.born.clone(),
+                        vec![
+                            Witness::Absence { task: report },
+                            Witness::Task {
+                                task: design.statement.body.born.clone(),
+                                head: design.statement.position,
+                            },
+                            Witness::Workflow {
+                                task: design.statement.body.born.clone(),
+                                head: design.workflow.position,
+                                phase: design.workflow.body.phase.clone(),
+                            },
+                        ],
+                    )
+                }
+                None => {
+                    let mut stamps = allocate_task_stamps(&board, now, 2)?;
+                    let design = stamps.remove(0);
+                    let report = stamps.remove(0);
+                    (
+                        design.clone(),
+                        vec![
+                            Witness::Absence { task: report },
+                            Witness::Absence {
+                                task: design.clone(),
+                            },
+                        ],
+                    )
+                }
+            };
+            expected.push(Witness::Barrier {
+                name: "board".parse().expect("board is a wire name"),
+                digest: board_barrier(&board),
+            });
             Ok((
                 CommandKind::TaskOopsAdd,
-                vec![Witness::Absence { task: stamp }],
-                serde_json::to_value(body).expect("typed intent encodes"),
+                expected,
+                serde_json::to_value(TaskOopsAdd {
+                    design,
+                    title: title.clone(),
+                    description: description.clone(),
+                    origin: origin.clone(),
+                    project: project.clone(),
+                })
+                .expect("typed intent encodes"),
             ))
         },
     )
@@ -760,12 +819,11 @@ pub(in crate::board_command) fn mutation_read(
         .collect();
     // Plan progress witnesses inspect prerequisite heads, including settled ones.
     let mut dependencies = matches!(contract.path, ["task", "done" | "review"]);
-    // Every handle an option names joins the scoped read; a typed OOPS report
-    // or grooming controller is otherwise absent from it.
+    // Every handle an option names joins the scoped read; a preparation
+    // controller is otherwise absent from it.
     for (argument, invalid, graph) in [
         ("AFTER", "task::dependency-invalid", true),
         ("followup", "task::handle-invalid", true),
-        ("report", "room::oops-report-invalid", false),
         ("preparation", "preparation::controller-invalid", false),
     ] {
         for written in matches

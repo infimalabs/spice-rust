@@ -114,7 +114,6 @@ pub(super) async fn send_room_post(
         wire::rooms::RoomPost {
             room: room.clone(),
             text: text.to_owned(),
-            grooming: None,
         },
     )
     .await

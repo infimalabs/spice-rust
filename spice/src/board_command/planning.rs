@@ -13,8 +13,14 @@ pub(super) fn default_flow<'a>(
 ) -> Option<&'a str> {
     flow.or(match intent {
         Some(wire::TaskIntent::Plan) => Some("plan,review"),
-        Some(wire::TaskIntent::Design) if substantive_acceptance(acceptance) => Some(DESIGN_PHASE),
-        Some(wire::TaskIntent::Design) => Some("plan,design"),
+        Some(wire::TaskIntent::Design | wire::TaskIntent::OpportunisticDesign)
+            if substantive_acceptance(acceptance) =>
+        {
+            Some(DESIGN_PHASE)
+        }
+        Some(wire::TaskIntent::Design | wire::TaskIntent::OpportunisticDesign) => {
+            Some("plan,design")
+        }
         None => None,
     })
 }
@@ -24,7 +30,7 @@ pub(super) fn admit_design_flow(
     intent: Option<wire::TaskIntent>,
     flow: &[wire::Phase],
 ) -> Result<(), Outcome<CommandAnswer>> {
-    if intent != Some(wire::TaskIntent::Design)
+    if !intent.is_some_and(wire::TaskIntent::is_design)
         || matches!(
             flow,
             [design] if design.as_str() == DESIGN_PHASE
@@ -62,7 +68,11 @@ pub(super) fn constructing_design<'a>(
         .filter(|preparation| preparation.construction == statement.born)?;
     board.tasks.iter().find(|heads| {
         heads.statement.body.born == preparation.parent
-            && heads.statement.body.intent == Some(wire::TaskIntent::Design)
+            && heads
+                .statement
+                .body
+                .intent
+                .is_some_and(wire::TaskIntent::is_design)
     })
 }
 
@@ -137,7 +147,7 @@ pub(super) fn preparation_parent<'a>(
         return task_heads(board, parent).map(Some);
     }
     if add.origin.is_some()
-        || add.intent == Some(wire::TaskIntent::Design)
+        || add.intent.is_some_and(wire::TaskIntent::is_design)
         || !matches!(board.principal, Actor::Lane(_))
     {
         return Ok(None);
@@ -200,12 +210,16 @@ pub(super) fn bind_preparation(
 ) -> Result<(), Outcome<CommandAnswer>> {
     require_expected(command, &statement_witness(parent))?;
     require_expected(command, &workflow_witness(parent))?;
-    if statement.intent == Some(wire::TaskIntent::Design)
+    if statement.intent.is_some_and(wire::TaskIntent::is_design)
         || !parent.workflow.body.status.is_pending()
         || (parent.statement.body.intent.is_none()
             && !constructs_work(parent.workflow.body.phase.as_str())
             && !requires_construction(parent.statement.body.intent, &parent.workflow.body.flow))
-        || (parent.statement.body.intent == Some(wire::TaskIntent::Design)
+        || (parent
+            .statement
+            .body
+            .intent
+            .is_some_and(wire::TaskIntent::is_design)
             && !wire::intent::is_open_design(parent.statement.body.intent, &parent.workflow.body))
     {
         return Err(refusal(
@@ -242,7 +256,11 @@ pub(super) fn bind_preparation(
 fn is_design(board: &BoardAnswer, task: &TaskStamp) -> bool {
     board.tasks.iter().any(|heads| {
         heads.statement.body.born == *task
-            && heads.statement.body.intent == Some(wire::TaskIntent::Design)
+            && heads
+                .statement
+                .body
+                .intent
+                .is_some_and(wire::TaskIntent::is_design)
     })
 }
 

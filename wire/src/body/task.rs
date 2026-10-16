@@ -399,7 +399,7 @@ pub struct TaskWoken {
     pub task: TaskStamp,
 }
 
-/// A parked OOPS row entered ordinary filed work.
+/// An unfiled Draft entered ordinary filed work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskFiled {
     /// Filed task.
