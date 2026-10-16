@@ -40,6 +40,8 @@ mod stream;
 mod task_detail;
 pub use consent::ConsentRuling;
 pub use contribution_sources::ContributionSources;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use conversation_text::operator_destination_label;
 pub use conversation_text::{ConversationText, ItemConcern};
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};

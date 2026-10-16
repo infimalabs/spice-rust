@@ -26,9 +26,10 @@
 //! addresses in a private background notice. A packet the grammar refuses
 //! needs no record, since its text refuses identically on every read.
 //!
-//! ASK, ANS, and an MSG naming `operator` also write one `room::conversed`
-//! record in that same write; its identity is the packet's exact transcript
-//! hunk, so a reread finds it instead of publishing again.
+//! ASK, ANS, and an MSG naming the exact key of an operator direction also
+//! write one `room::conversed` record in that same write; its identity is the
+//! packet's exact transcript hunk, so a reread finds it instead of publishing
+//! again.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
