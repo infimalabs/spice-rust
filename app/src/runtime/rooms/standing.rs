@@ -196,6 +196,71 @@ impl RoomProjection {
             .collect()
     }
 
+    /// Whether any lane currently has a reason to receive bounded catch-up.
+    ///
+    /// A contribution keeps a lane listening until its later leave. Native
+    /// duties and invitations admitted after a leave still listen.
+    #[must_use]
+    pub fn has_current_listener(
+        &self,
+        room: &TaskStamp,
+        board: Option<&BoardView>,
+        now_micros: i64,
+    ) -> bool {
+        self.participants(room, board, now_micros)
+            .iter()
+            .any(|participant| {
+                let left = participant
+                    .reasons
+                    .iter()
+                    .any(|reason| matches!(reason, ParticipantReason::Left { .. }));
+                participant.reasons.iter().any(|reason| match reason {
+                    ParticipantReason::Contribution(_) => !left,
+                    ParticipantReason::Left { .. } => false,
+                    ParticipantReason::Activity(_)
+                    | ParticipantReason::Invitation(_)
+                    | ParticipantReason::Asked(_)
+                    | ParticipantReason::Work(_)
+                    | ParticipantReason::Coordination(_)
+                    | ParticipantReason::Receipt(_)
+                    | ParticipantReason::Result(_)
+                    | ParticipantReason::Stop(_) => true,
+                })
+            })
+    }
+
+    /// Whether an operator-authored post is still unproved as heard.
+    ///
+    /// Current listening authority suppresses the mark immediately. A later
+    /// lane-authored room event suppresses it permanently, including after
+    /// that lane leaves and no current listening reason remains. Callers
+    /// rendering several cards compute `has_current_listener` once.
+    #[must_use]
+    pub fn unheard_post(
+        &self,
+        room: &TaskStamp,
+        publication: &authority::RoomAuthorityStamp,
+        has_current_listener: bool,
+    ) -> bool {
+        let Some(state) = self.rooms.get(room) else {
+            return false;
+        };
+        let Some(post) = state.events.get(publication) else {
+            return false;
+        };
+        !has_current_listener
+            && matches!(
+                &post.kind,
+                RoomEventKind::Published {
+                    author: wire::Actor::Operator | wire::Actor::Human(_),
+                    content: authority::RoomPublicationContent::Authored { .. },
+                }
+            )
+            && state
+                .latest_lane_event
+                .is_none_or(|position| position <= post.position)
+    }
+
     /// Reasons a lane listens regardless of any leave: a pending result it
     /// owes, a claim on associated work, a live coordination request, and the
     /// stop it holds.

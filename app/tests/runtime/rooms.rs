@@ -30,6 +30,11 @@ fn authority(text: &str) -> RoomAuthorityStamp {
     text.parse().expect("fixture room authority")
 }
 
+fn operator_post() -> RoomAuthorityStamp {
+    RoomAuthorityStamp::for_micros(authority(ROOM_EVENT).micros() + 1)
+        .expect("fixture operator post authority")
+}
+
 fn envelope<T: Serialize>(position: u64, kind: &str, body: &T) -> serde_json::Value {
     let mut fact = serde_json::to_value(body)
         .expect("fact body serializes")
@@ -158,6 +163,20 @@ fn room_message(position: u64) -> serde_json::Value {
         directed: Vec::new(),
     };
     envelope(position, "room::messaged", &body)
+}
+
+fn room_post(position: u64) -> serde_json::Value {
+    envelope(
+        position,
+        "room::published",
+        &wire::rooms::RoomPublished {
+            room: room(),
+            publication: operator_post(),
+            content: wire::rooms::RoomPublicationContent::Authored {
+                text: "Please inspect this room.".to_owned(),
+            },
+        },
+    )
 }
 
 /// The operator direction a coordination record follows, one position earlier.
@@ -406,6 +425,69 @@ fn opening(session: &Session) -> [app::Admitted<StreamFrame>; 3] {
             8,
         ),
     ]
+}
+
+#[test]
+fn unheard_operator_post_tracks_current_listening_and_later_lane_events() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    runtime.apply_stream(&operator_facts(&session, 1));
+    runtime.apply_stream(&room_page(&session, &[room_post(1)], None, 1));
+    runtime.apply_board(&room_board(&session, Some("app.rooms"), None, None));
+
+    let is_unheard = |runtime: &AppRuntime| {
+        let projection = runtime.room_projection();
+        let has_current_listener =
+            projection.has_current_listener(&room(), runtime.board(), aged());
+        projection.unheard_post(&room(), &operator_post(), has_current_listener)
+    };
+    assert!(is_unheard(&runtime), "no lane can have heard the post");
+    assert!(
+        !runtime
+            .room_projection()
+            .unheard_post(&room(), &authority(ROOM_EVENT), false),
+        "non-post room authority is never marked unheard"
+    );
+
+    runtime.apply_board(&room_board(&session, Some("app.rooms"), Some(3), None));
+    assert!(
+        !is_unheard(&runtime),
+        "a current participant receives the post through catch-up"
+    );
+
+    runtime.apply_board(&room_board(&session, Some("app.rooms"), None, None));
+    runtime.apply_stream(&admitted_stream(&session, &live_fact(room_message(2))));
+    let left = authority(COORDINATION_EVENT);
+    runtime.apply_stream(&admitted_stream(
+        &session,
+        &live_fact(envelope(
+            3,
+            "room::left",
+            &wire::rooms::RoomLeft {
+                room: room(),
+                publication: left,
+                lane: uuid(LANE),
+                clause: "read the post".to_owned(),
+            },
+        )),
+    ));
+    assert!(
+        !runtime
+            .room_projection()
+            .has_current_listener(&room(), runtime.board(), aged()),
+        "the lane's leave ends its current listening authority"
+    );
+    assert!(
+        !is_unheard(&runtime),
+        "a later lane event permanently proves that the post was heard"
+    );
+    assert!(
+        !runtime
+            .room_projection()
+            .unheard_post(&room(), &authority(ROOM_EVENT), false),
+        "a lane-authored room event is not an operator post"
+    );
 }
 
 #[test]

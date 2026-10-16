@@ -136,9 +136,12 @@ cards, and linked bytes that are not present stay labeled source
 placeholders. Each room card is a single top-level card shaped like a team
 message card, with no card nested inside it and no publication key shown. Its
 words lead with the relative age, the speaker in their lane's team accent, an
-arrow to any receivers, and one badge: ASK or ANS for a question or answer, or
-the contribution kind (reason for, reason against, evidence, question). Its
-receipts, result, or cited sources follow the words. A lane's departure from a
+arrow to any receivers, and one badge: ASK or ANS for a question or answer, the
+contribution kind (reason for, reason against, evidence, question), or Unheard
+on an operator post that no current or later lane authority proves was heard.
+The Unheard pill's tooltip and accessible label explain that no lane listens
+yet and that starting or directing one will have the post read.
+Its receipts, result, or cited sources follow the words. A lane's departure from a
 design's room is instead one full-width divider, the group's counterpart of a
 team's compaction card and in its compact shape: two rules in the design's
 accent around the leave's linked age, the leaving lane, the design it left, and
@@ -170,7 +173,8 @@ it from the room's journal record. Room posts carry no images. The composer's
 accessible label preserves the guarantee that a post is recorded in the room
 and asks no lane for anything; no generic prose occupies the composer face. An
 admitted reply clears the composer only while it still holds exactly the posted
-text and shards; a refusal keeps everything and shows in the composer toast.
+text and shards and raises no success toast; a refusal keeps everything and
+shows in the composer toast.
 The design's menu carries its
 [standing](CONSOLE.md#design-standing), the
 [coordination controls](DESIGNS.md#room-coordination) that ask a seated lane

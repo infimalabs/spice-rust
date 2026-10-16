@@ -138,6 +138,7 @@ pub(super) fn face(
     controls: Option<CardControls<'_>>,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
+    unheard: bool,
 ) -> Option<Face> {
     let act = Act { runtime, controls };
     let Spoken {
@@ -173,7 +174,11 @@ pub(super) fn face(
     Some(Face {
         speaker: Some(Speaker { name: author, lane }),
         receivers,
-        badge: badge.map(Badge::Packet),
+        badge: if unheard {
+            Some(Badge::Unheard)
+        } else {
+            badge.map(Badge::Packet)
+        },
         words: text.unwrap_or_else(|| "Source remains in the author's lane transcript.".to_owned()),
         tail: html! {
             <>
