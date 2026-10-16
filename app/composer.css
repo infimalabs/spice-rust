@@ -717,12 +717,7 @@
 .message-image-quote {
   position: absolute;
   z-index: 3;
-  inset: 6px 6px auto auto;
-  min-width: 0;
-  padding: 4px 6px;
-  border-radius: var(--app-radius-control);
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
-  backdrop-filter: blur(8px);
+  inset: 6px 0 auto auto;
 }
 /* Message card actions form one cutout rather than separate circles. The pair
    has no gap: Quote is square and Play rounds both inline-start corners into a
@@ -736,15 +731,21 @@
    a hovered card's 10% wash reveals it. The remaining static edges
    use the stream surface colour in every state. Hovered, pressed, or speaking,
    the control fills at the 10% hover strength and its glyph lights to ink;
-   nothing else changes. */
+   nothing else changes.
+
+   An image's Quote action uses this exact quote half, seated flush against the
+   image's inline edge so that edge closes the control as the card edge does. */
 .team-surface .mosaic-message-card .message-actions.app-control-rail {
   gap: 0;
   overflow: visible;
   border: 0;
   background: transparent;
 }
-.team-surface .mosaic-message-card .message-actions > .app-card-action {
+.team-surface .mosaic-message-card .message-actions > .app-card-action,
+.team-surface .mosaic-message-card .message-image-quote {
   --app-card-action-accent: var(--accent-slot, var(--accent-neutral));
+  min-width: 0;
+  margin: 0;
   border: var(--app-control-edge-width) solid var(--message-stream-surface);
   border-right: 0;
   border-radius: 0;
@@ -755,11 +756,13 @@
 .team-surface .mosaic-message-card .message-actions > .app-card-action--speak {
   border-radius: var(--app-radius-circle) 0 0 var(--app-radius-circle);
 }
-.team-surface .mosaic-message-card .message-actions > .app-card-action:is(:hover, :active, .active) {
+.team-surface .mosaic-message-card .message-actions > .app-card-action:is(:hover, :active, .active),
+.team-surface .mosaic-message-card .message-image-quote:is(:hover, :active, .active) {
   background: color-mix(in srgb, var(--app-card-action-accent) 10%, var(--message-stream-surface));
   color: var(--ink);
 }
-.team-surface .message-controls-slot .app-card-action {
+.team-surface .message-controls-slot .app-card-action,
+.team-surface .message-image-quote {
   width: var(--message-control-size);
   height: var(--message-control-size);
   font-size: calc(var(--message-control-size) * .4);
@@ -768,6 +771,7 @@
   width: 62.5%;
   height: 62.5%;
 }
+.team-surface .message-image-quote:focus-visible { outline-offset: -2px; }
 .markdown-body .message-attribution {
   display: inline-flex;
   min-width: 0;

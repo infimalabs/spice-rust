@@ -92,7 +92,8 @@ pub(super) fn image_preview_html(
             "<button type=\"button\" class=\"app-card-action app-card-action--quote \
              message-image-quote\" data-image-quote-action=\"\" \
              data-image-quote-target=\"{target}\" data-image-quote-name=\"{name}\" \
-             title=\"{action}\" aria-label=\"{action}\">Quote</button>"
+             title=\"{action}\" aria-label=\"{action}\"><span \
+             class=\"app-card-action__icon\" aria-hidden=\"true\">❝</span></button>"
         )
     });
     format!("<span class=\"message-image-shell\">{preview}{quote}</span>")
