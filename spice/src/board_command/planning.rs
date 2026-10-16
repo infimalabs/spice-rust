@@ -3,10 +3,18 @@ use super::*;
 /// The one open phase a Design walks until the operator concludes it.
 const DESIGN_PHASE: &str = "design";
 
-pub(super) fn default_flow(intent: Option<wire::TaskIntent>, flow: Option<&str>) -> Option<&str> {
+/// The flow a creation that names none walks. A Design's open questions are
+/// its acceptance: without one it is framed in plan intake first, as ordinary
+/// work without acceptance gets a plan bookend from [`task_flow`].
+pub(super) fn default_flow<'a>(
+    intent: Option<wire::TaskIntent>,
+    flow: Option<&'a str>,
+    acceptance: &[String],
+) -> Option<&'a str> {
     flow.or(match intent {
         Some(wire::TaskIntent::Plan) => Some("plan,review"),
-        Some(wire::TaskIntent::Design) => Some(DESIGN_PHASE),
+        Some(wire::TaskIntent::Design) if substantive_acceptance(acceptance) => Some(DESIGN_PHASE),
+        Some(wire::TaskIntent::Design) => Some("plan,design"),
         None => None,
     })
 }
