@@ -505,11 +505,13 @@ fn harness_tools_preview_the_target_they_act_on() {
 /// id stay beside it so the line still correlates with the job it names.
 ///
 /// Updates repeat no intent, so the call's carries through each update and
-/// into the result, which append their state once. A call without one keeps
-/// the operation and id, and only `job` changes: other tools' typed intents
-/// leave their previews as they were.
+/// into the result, which append their state once. A progress update instead
+/// leads with its latest output row so narrow status bars preserve the result;
+/// its intent and operation remain as trailing context. A call without an
+/// intent keeps the operation and id, and only `job` changes: other tools'
+/// typed intents leave their previews as they were.
 #[test]
-fn a_job_call_leads_with_its_typed_intent_through_updates_and_its_result() {
+fn a_job_call_keeps_its_intent_and_leads_progress_updates_with_their_output() {
     let mut previews = CallPreviews::default();
     let job = |intent: Option<&str>| listen::ToolMoment::Call {
         name: "job".to_owned(),
@@ -545,7 +547,7 @@ fn a_job_call_leads_with_its_typed_intent_through_updates_and_its_result() {
             &tool("call-1", update("job", &progress)),
             &mut previews
         ),
-        "job: Waiting for the gate (wait dVW6Zkf0h) — cargo tests passed"
+        "cargo tests passed — job: Waiting for the gate (wait dVW6Zkf0h)"
     );
     assert_eq!(
         activity(lane(1), &tool("call-1", succeeded()), &mut previews),

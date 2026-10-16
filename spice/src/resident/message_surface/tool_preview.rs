@@ -118,7 +118,7 @@ pub(super) fn activity(
             );
             progress.map_or_else(
                 || flatten(&format!("{preview} update")),
-                |progress| flatten(&format!("{preview} — {progress}")),
+                |progress| flatten(&format!("{progress} — {preview}")),
             )
         }
         listen::ToolMoment::Result(result) => {
