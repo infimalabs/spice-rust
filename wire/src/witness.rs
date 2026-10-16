@@ -83,6 +83,17 @@ impl TaskStamp {
     pub fn micros(&self) -> i64 {
         moment_micros(&self.0).expect("a parsed task stamp names a representable moment")
     }
+
+    /// Order two births by the moment each encodes, then by spelling. Text
+    /// order is birth order only within one width; this order also holds
+    /// across a retained millisecond stamp and a current microsecond stamp,
+    /// including two that name one moment.
+    #[must_use]
+    pub fn birth_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.micros()
+            .cmp(&other.micros())
+            .then_with(|| self.0.cmp(&other.0))
+    }
 }
 
 /// Decode the Unix microsecond a moment-coded key names: nine base-52 digits
@@ -214,6 +225,31 @@ mod task_stamp_tests {
         assert_eq!(rows.len(), 2);
         assert!(rows.contains(&retained));
         assert!(rows.contains(&current));
+    }
+
+    #[test]
+    fn birth_order_follows_the_encoded_moment_across_widths() {
+        let retained = |millis: u64| TaskStamp(TaskStamp::encode(millis, TaskStamp::LEGACY_WIDTH));
+        // A retained 2030 birth spells lower than a current 2020 birth.
+        let later = retained(1_900_000_000_000);
+        let earlier = TaskStamp::for_micros(1_580_000_000_000_000).unwrap();
+        assert!(later < earlier, "text order disagrees with chronology");
+        assert_eq!(later.birth_cmp(&earlier), std::cmp::Ordering::Greater);
+        assert_eq!(earlier.birth_cmp(&later), std::cmp::Ordering::Less);
+
+        // Two widths naming one moment still order one way, by spelling.
+        let millis = retained(1_760_000_000_000);
+        let micros = TaskStamp::for_micros(1_760_000_000_000_000).unwrap();
+        assert_eq!(millis.micros(), micros.micros());
+        assert_eq!(
+            millis.birth_cmp(&micros),
+            millis.as_str().cmp(micros.as_str())
+        );
+        assert_eq!(
+            micros.birth_cmp(&millis),
+            millis.birth_cmp(&micros).reverse()
+        );
+        assert_eq!(millis.birth_cmp(&millis), std::cmp::Ordering::Equal);
     }
 
     #[test]

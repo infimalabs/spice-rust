@@ -824,13 +824,9 @@ fn opportunistic_candidate(
     candidate: &wire::rooms::CandidateRef,
     decisions: &[OutputDecision],
 ) -> Result<DesignPassProposal, Outcome<CommandAnswer>> {
-    let cutoff = TaskStamp::for_micros(candidate.candidate.micros()).map_err(|_| {
-        refusal(
-            "preparation::oops-candidate-invalid",
-            Some(candidate.candidate.to_string()),
-            "preview the current OOPS candidate again",
-        )
-    })?;
+    // The candidate names its newest line's birth moment; a retained line
+    // keeps its own spelling, so lines are bounded and ordered by moment.
+    let cutoff = candidate.candidate.micros();
     let governed = snapshot
         .facts()
         .iter()
@@ -852,7 +848,7 @@ fn opportunistic_candidate(
             heads.workflow().body().status.is_pending()
                 && statement.intent == Some(wire::TaskIntent::Plan)
                 && statement.authorization.is_none()
-                && statement.born <= cutoff
+                && statement.born.micros() <= cutoff
                 && statement.preparation.as_ref().is_some_and(|association| {
                     association.parent == candidate.controller
                         && association.controller == candidate.controller
@@ -865,12 +861,12 @@ fn opportunistic_candidate(
         left.statement()
             .body()
             .born
-            .cmp(&right.statement().body().born)
+            .birth_cmp(&right.statement().body().born)
     });
     if lines.is_empty()
         || lines
             .last()
-            .is_none_or(|line| line.statement().body().born != cutoff)
+            .is_none_or(|line| line.statement().body().born.micros() != cutoff)
         || lines.len() != decisions.len()
         || lines
             .iter()

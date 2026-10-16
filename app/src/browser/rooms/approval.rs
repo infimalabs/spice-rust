@@ -228,7 +228,12 @@ fn opportunistic_candidate(
                 && !governed.contains(&task.statement.body.born)
         })
         .collect::<Vec<_>>();
-    lines.sort_by(|left, right| left.statement.body.born.cmp(&right.statement.body.born));
+    lines.sort_by(|left, right| {
+        left.statement
+            .body
+            .born
+            .birth_cmp(&right.statement.body.born)
+    });
     let newest = lines.last()?;
     let candidate = RoomAuthorityStamp::for_micros(newest.statement.body.born.micros())
         .expect("a task birth instant is a room authority instant");

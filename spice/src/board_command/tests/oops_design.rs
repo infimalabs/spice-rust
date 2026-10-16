@@ -504,3 +504,55 @@ fn oops_lines_share_one_design_and_exact_decisions_leave_new_arrivals_for_the_ne
     collapse_and_open_next_generation(&bus, epoch, design);
     clean(&root, bus);
 }
+
+/// A crossed journal keeps eight-character millisecond report identities. A
+/// candidate whose newest line is retained names that line's moment, and the
+/// decision matches each line by its own identity, never a reminted one.
+#[test]
+fn retained_report_identities_are_decided_without_reminting() {
+    let (root, bus, epoch, _seats) = fixture("oops-design-retained", 0);
+    let design_stamp = task(1_759_999_999_000_000);
+    let current = task(1_759_999_999_999_999);
+    let retained: TaskStamp = "1j14rjy8".parse().expect("retained report stamp");
+    assert!(retained < current && current.birth_cmp(&retained).is_lt());
+    let first = add_line(
+        &bus,
+        epoch,
+        &design_stamp,
+        current.clone(),
+        "Current friction",
+    );
+    let second = add_line(
+        &bus,
+        epoch,
+        &design_stamp,
+        retained.clone(),
+        "Retained friction",
+    );
+    let later = add_line(
+        &bus,
+        epoch,
+        &design_stamp,
+        task(1_760_000_000_000_001),
+        "Later friction",
+    );
+    let design = TaskHandle::for_project(wire::OOPS_DESIGN_PROJECT, &design_stamp);
+    let decision = decide_two_lines(
+        &bus,
+        epoch,
+        &design_stamp,
+        &design,
+        [&first, &second],
+        [current, retained.clone()],
+    );
+
+    let decided = board(&bus, epoch, Actor::Operator);
+    assert_eq!(
+        at(&decided, &first).statement.body.authorization,
+        Some(decision)
+    );
+    assert_eq!(at(&decided, &second).statement.body.born, retained);
+    assert_eq!(at(&decided, &second).statement.body.authorization, None);
+    assert_eq!(at(&decided, &later).statement.body.authorization, None);
+    clean(&root, bus);
+}
