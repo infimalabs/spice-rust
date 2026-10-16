@@ -33,8 +33,9 @@ the tasks it would touch, and applies only that exact digest.
 Applying an edited document replaces rather than patches: title, description,
 acceptance, priority, and the explicit dependency graph are replaced, and an
 absent value clears the old one. Flow is set only at creation. Annotations
-are the exception: they append as task notes, skipping exact duplicates, and
-omission never erases a note. `due` is normalized but has no board effect. The
+are the exception: each publishes as an observation in the task's room unless
+the room already holds that exact text, and omission never erases one. `due`
+is normalized but has no board effect. The
 dialect's `Flow:` field has its own closed vocabulary — `design`, `plan`,
 `todo`, `verify`, `review` — distinct from the board's open phase words.
 
@@ -128,7 +129,7 @@ task handles instead, and `preparation nudge` one open Design's handle.
 | Design possession | open Design in an Explore or Converge group | `claim::design-passive` on capture, steal, or recovery and `room::design-passive` on coordination: finish intake, group it if needed, then run `spice group stance GROUP explore` or `converge` |
 | Deactivating a held Design | a holder address proved by its seat or its claimed occupant's birth | `room::holder-address-unavailable`: a move records nothing, while a stance change commits and names that Design owed; free or reseat the holder, then retry the move or set the group Passive again |
 | Gather task creation | the bare `gather` flow without intent, created directly under an open Design in an Explore or Converge group | `task::gather-design`: make the group active, then create it while holding the Design or with `--preparation DESIGN` |
-| Candidate outputs | no gather task | `preparation::gather-output`: cite the gather task's note or artifact as a candidate reference instead |
+| Candidate outputs | no gather task | `preparation::gather-output`: cite an observation in the gather task's room or its artifact as a candidate reference instead |
 | Automated resumes per rule | 1 through 8 | `room::auto-resume-out-of-range` |
 | Scoped request field | 2048 bytes | `room::coordination-scope-too-large` |
 | Live coordination per room | one request | `room::coordination-live`: retire or put aside the unanswered request |

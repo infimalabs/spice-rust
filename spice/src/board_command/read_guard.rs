@@ -7,7 +7,7 @@ mod capture;
 mod context;
 pub(super) use capture::guard_capture;
 mod task_detail;
-pub(super) use task_detail::read_task_detail;
+pub(super) use task_detail::{read_task_detail, recorded_note};
 mod task_relations;
 pub(super) use task_relations::read_task_relations;
 mod task_timeline;
@@ -1011,10 +1011,9 @@ pub(super) fn read_ledger(
         .facts
         .iter()
         .filter_map(|envelope| {
-            let noted = envelope.fact.read::<body::TaskNoted>()?;
-            (noted.task == statement.born).then_some((envelope.seq, noted.note))
+            let (task, note) = recorded_note(envelope)?;
+            (task == statement.born).then_some((envelope.seq, note_annotation(&note)))
         })
-        .map(|(position, note)| (position, note_annotation(&note)))
         .collect::<Vec<_>>();
     annotations.extend(ledger_step_annotations(
         &snapshot.facts,

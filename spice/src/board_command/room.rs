@@ -40,17 +40,8 @@ pub(super) fn room_post(
             "read the board and name one current task handle",
         );
     };
-    if matches!(
-        anchor.workflow().status.conclusion(),
-        Some(wire::WorkflowConclusion::Negative(
-            wire::WorkflowNegative::Deleted
-        ))
-    ) {
-        return refusal(
-            "room::anchor-deleted",
-            Some(format!("{} deleted", anchor.handle())),
-            "a deleted task's room stays readable; publish to a task that is not deleted",
-        );
+    if let Err(outcome) = publishable_room(anchor) {
+        return outcome;
     }
     if post.grooming.is_some() && matches!(command.actor(), Actor::Lane(_)) {
         return refusal(
@@ -132,26 +123,56 @@ pub(super) fn anchor_settlement(workflow: &wire::WorkflowHead) -> Option<&'stati
     }
 }
 
-fn room_post_content(post: &RoomPost) -> Result<RoomPublicationContent, Outcome<CommandAnswer>> {
-    let text = post.text.as_str();
-    match (text.trim().is_empty(), &post.grooming) {
-        (true, None) => Err(refusal(
+/// Refuse a publication into a deleted task's room; every other task's room
+/// takes observations, whatever its standing.
+pub(super) fn publishable_room(anchor: &Entry) -> Result<(), Outcome<CommandAnswer>> {
+    if matches!(
+        anchor.workflow().status.conclusion(),
+        Some(wire::WorkflowConclusion::Negative(
+            wire::WorkflowNegative::Deleted
+        ))
+    ) {
+        return Err(refusal(
+            "room::anchor-deleted",
+            Some(format!("{} deleted", anchor.handle())),
+            "a deleted task's room stays readable; publish to a task that is not deleted",
+        ));
+    }
+    Ok(())
+}
+
+/// An authored observation of exactly `text`: refused when blank or over the
+/// room publication bound, measured on the authored bytes.
+pub(super) fn authored_observation(
+    text: &str,
+    room: &TaskHandle,
+) -> Result<RoomPublicationContent, Outcome<CommandAnswer>> {
+    if text.trim().is_empty() {
+        return Err(refusal(
             "room::post-empty",
-            Some(post.room.to_string()),
-            "supply complete authored text or one typed OOPS disposition",
-        )),
-        (false, None) if text.len() > ROOM_PUBLICATION_BYTES_LIMIT => Err(refusal(
+            Some(room.to_string()),
+            "supply complete authored text",
+        ));
+    }
+    if text.len() > ROOM_PUBLICATION_BYTES_LIMIT {
+        return Err(refusal(
             "room::post-too-large",
             Some(text.len().to_string()),
             &format!("shorten the observation to at most {ROOM_PUBLICATION_BYTES_LIMIT} bytes"),
-        )),
-        (false, None) => Ok(RoomPublicationContent::Authored {
-            text: text.to_owned(),
-        }),
-        (true, Some(grooming)) => Ok(RoomPublicationContent::OopsGroomed {
+        ));
+    }
+    Ok(RoomPublicationContent::Authored {
+        text: text.to_owned(),
+    })
+}
+
+fn room_post_content(post: &RoomPost) -> Result<RoomPublicationContent, Outcome<CommandAnswer>> {
+    match &post.grooming {
+        None => authored_observation(&post.text, &post.room),
+        Some(grooming) if post.text.trim().is_empty() => Ok(RoomPublicationContent::OopsGroomed {
             grooming: grooming.clone(),
         }),
-        (false, Some(_)) => Err(refusal(
+        Some(_) => Err(refusal(
             "room::post-shape",
             Some(post.room.to_string()),
             "supply either authored text or one OOPS disposition, never both",

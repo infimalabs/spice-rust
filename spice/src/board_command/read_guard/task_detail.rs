@@ -92,6 +92,21 @@ pub(super) struct TaskRecord {
         std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskDetailStep>>,
 }
 
+/// The task note one fact records: an authored observation in a task's room,
+/// or a note retained from before notes became room observations.
+pub(in crate::board_command) fn recorded_note(
+    envelope: &wire::Envelope<wire::AnyFact>,
+) -> Option<(wire::TaskStamp, String)> {
+    if let Some(published) = envelope.fact.read::<wire::rooms::RoomPublished>() {
+        let wire::rooms::RoomPublicationContent::Authored { text } = published.content else {
+            return None;
+        };
+        return Some((published.room, text));
+    }
+    let noted = envelope.fact.read::<body::TaskNoted>()?;
+    Some((noted.task, noted.note))
+}
+
 /// Read the named tasks' notes, closures, workflow steps, and acknowledgments
 /// from the snapshot's facts, naming each author as `roles` resolves it.
 pub(super) fn task_record(
@@ -116,18 +131,17 @@ pub(super) fn task_record(
                     step,
                 });
         }
-        if let Some(noted) = envelope.fact.read::<body::TaskNoted>()
-            && tasks.contains(&noted.task)
-        {
+        let note = recorded_note(envelope).filter(|(task, _)| tasks.contains(task));
+        if let Some((task, text)) = &note {
             record
                 .notes
-                .entry(noted.task)
+                .entry(task.clone())
                 .or_default()
                 .push(wire::intent::TaskDetailNote {
                     position: envelope.seq,
                     at: envelope.at,
                     author: roles.author(&envelope.actor),
-                    text: noted.note,
+                    text: text.clone(),
                 });
         }
         if let Some(closed) = envelope.fact.read::<body::TaskClosed>()
@@ -155,10 +169,11 @@ pub(super) fn task_record(
             continue;
         };
         let kind = envelope.fact.kind();
-        let Some(("task" | "claim", _)) = kind.as_str().split_once("::") else {
-            continue;
+        let task = match kind.as_str().split_once("::") {
+            Some(("task" | "claim", _)) => super::fact_task(envelope),
+            _ => note.map(|(task, _)| task),
         };
-        let Some(task) = super::fact_task(envelope) else {
+        let Some(task) = task else {
             continue;
         };
         if tasks.contains(&task) {

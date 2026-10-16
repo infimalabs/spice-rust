@@ -462,8 +462,9 @@ owns each rule summarized here.
   `ASK AUDIENCE[#TASK]` opens a question result, and `ANS RESULT[#TASK]`
   answers one ([grammar](invariants/identity.md#steering-an-msg-packet-owns-exactly-its-body-hunk)).
   The operator or any lane records an observation, text the room's fact owns,
-  with `spice room post` in any task's room that is not deleted; writing one
-  makes its author no listener. The operator answers with `spice room answer`
+  with `spice room post` or `spice task note` in any task's room that is not
+  deleted; writing one makes its author no listener, and it changes no task
+  generation. The operator answers with `spice room answer`
   and replies to a lane's MSG or ANS item with `spice room reply`, operator
   direction to that lane. When the source packet speaks in exactly one room,
   the reply records there too. A tool call's intent may retire a key, but
@@ -668,8 +669,9 @@ owns each rule summarized here.
   while holding the Design, or with `--preparation DESIGN`. It runs under
   ordinary routing with no execution authorization while its Design stays
   open and its group stays in Explore or Converge. Like a planning claim it
-  holds no commit authority, so it lands nothing; its deliverable is task notes
-  and retained artifacts that a Design pass proposal cites by exact source. A
+  holds no commit authority, so it lands nothing; its deliverable is
+  observations in its room and retained artifacts that a Design pass proposal
+  cites by exact source. A
   gather task is never a proposed Plan output, so turning a finding into work
   still takes a work proposal whose output the operator accepts.
 - **Organization and foreground.** The

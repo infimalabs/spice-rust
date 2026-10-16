@@ -339,9 +339,7 @@ fn changes_task_attention(fact: &AnyFact) -> bool {
     (fact.task_subject().is_some()
         && !matches!(
             fact.kind(),
-            wire::FactKind::TaskNoted
-                | wire::FactKind::ClaimRenewed
-                | wire::FactKind::ClaimLeaseWarned
+            wire::FactKind::ClaimRenewed | wire::FactKind::ClaimLeaseWarned
         ))
         || fact.kind() == wire::FactKind::PreparationDecided
 }

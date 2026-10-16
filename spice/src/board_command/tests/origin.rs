@@ -455,24 +455,30 @@ fn add_task_noted_under_a_second_ask(
             draft: false,
         },
     ));
-    // A note written under another directive carries that directive's key.
+    // An observation written under another directive carries that directive's
+    // key.
+    let at = fixture_instant("observation fixture instant");
     let mut write = JournalWrite::new(
         Actor::Operator,
-        "ack:1kLGp2NK".parse().expect("note origin"),
-        fixture_instant("note fixture instant"),
+        "ack:1kLGp2NK".parse().expect("observation origin"),
+        at,
         Producer::CommandDoor,
     );
     write
         .fact(
-            body::TaskNoted {
-                task: born.clone(),
-                note: "observed under a second ask".to_owned(),
+            wire::rooms::RoomPublished {
+                room: born.clone(),
+                publication: wire::rooms::RoomAuthorityStamp::for_micros(at.get().as_microsecond())
+                    .expect("fixture publication"),
+                content: wire::rooms::RoomPublicationContent::Authored {
+                    text: "observed under a second ask".to_owned(),
+                },
             },
             FactCause::Root,
         )
-        .expect("note builds");
+        .expect("observation builds");
     assert!(matches!(
-        bus.commit(write).expect("note commits"),
+        bus.commit(write).expect("observation commits"),
         CommitOutcome::Committed(_)
     ));
     let Outcome::Reply(Reply {
@@ -522,7 +528,7 @@ fn task_show_follows_every_acknowledged_key_to_the_session_that_answered_it() {
             .collect::<Vec<_>>(),
         [
             (wire::FactKind::TaskAdded, "1kLGp2NJ"),
-            (wire::FactKind::TaskNoted, "1kLGp2NK"),
+            (wire::FactKind::RoomPublished, "1kLGp2NK"),
         ]
     );
     let keys = task_acknowledgment_keys(
@@ -553,10 +559,10 @@ fn task_show_follows_every_acknowledged_key_to_the_session_that_answered_it() {
         },
         Some(&context),
     );
-    let (added, noted) = (acknowledgments[0].position, acknowledgments[1].position);
+    let (added, observed) = (acknowledgments[0].position, acknowledgments[1].position);
     assert!(shown.contains(&format!(
         "acknowledgment ack:1kLGp2NJ task::added@{added}\n\
-         acknowledgment ack:1kLGp2NK task::noted@{noted}\n\
+         acknowledgment ack:1kLGp2NK room::published@{observed}\n\
          origin_steering key 1kLGp2NJ\n"
     )));
     assert!(shown.contains(&format!(
@@ -568,7 +574,7 @@ fn task_show_follows_every_acknowledged_key_to_the_session_that_answered_it() {
     )));
     assert!(shown.contains("origin_steering_answer unavailable live\n"));
     assert!(shown.contains(&format!(
-        "  {noted} 2030-04-12T18:44:09.271Z operator ack:1kLGp2NK\n    observed under a second ask"
+        "  {observed} 2030-04-12T18:44:09.271Z operator ack:1kLGp2NK\n    observed under a second ask"
     )));
     clean(&root, bus);
 }

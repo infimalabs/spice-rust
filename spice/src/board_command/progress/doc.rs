@@ -221,11 +221,18 @@ fn commit_doc_plan(
             Ok(spec) => spec,
             Err(outcome) => return outcome,
         };
-        previous =
-            match write_doc_task(&mut write, plan, spec, &origin, creation.as_ref(), previous) {
-                Ok(fact) => Some(fact),
-                Err(outcome) => return outcome,
-            };
+        previous = match write_doc_task(
+            &mut write,
+            bus,
+            plan,
+            spec,
+            &origin,
+            creation.as_ref(),
+            previous,
+        ) {
+            Ok(fact) => Some(fact),
+            Err(outcome) => return outcome,
+        };
         operations = operations.saturating_add(1);
     }
     finish_doc_commit(bus, command, apply, plan, write, previous, operations)
@@ -331,13 +338,14 @@ fn doc_task_spec(
 
 fn write_doc_task(
     write: &mut JournalWrite,
+    bus: &Bus,
     plan: &DocPlan,
     spec: DocTaskSpec,
     origin: &CreationCause,
     creation: Option<&TaskCreationCapture>,
     previous: Option<PendingFact>,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
-    let task = spec.born.clone();
+    let (task, born) = (spec.task.clone(), spec.born.clone());
     let annotations = spec.annotations.clone();
     let cause = previous.map_or(FactCause::Root, FactCause::Pending);
     let existing = plan
@@ -349,13 +357,17 @@ fn write_doc_task(
         Some(entry) => edit_doc_task(write, entry, spec, cause),
         None => add_doc_task(write, spec, origin, creation, cause),
     }?;
-    append_doc_annotations(write, plan, &task, annotations, written)
+    append_doc_annotations(write, bus, plan, &task, &born, annotations, written)
 }
 
+/// Publish each annotation the task's room does not already hold as an
+/// observation there, each under its own publication identity.
 fn append_doc_annotations(
     write: &mut JournalWrite,
+    bus: &Bus,
     plan: &DocPlan,
-    task: &wire::TaskStamp,
+    task: &TaskHandle,
+    born: &wire::TaskStamp,
     annotations: Vec<String>,
     mut cause: PendingFact,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
@@ -363,29 +375,34 @@ fn append_doc_annotations(
         .snapshot
         .facts
         .iter()
-        .filter_map(|envelope| envelope.fact.read::<body::TaskNoted>())
-        .filter(|noted| &noted.task == task)
-        .map(|noted| noted.note)
+        .filter_map(recorded_note)
+        .filter(|(noted, _)| noted == born)
+        .map(|(_, note)| note)
         .collect::<std::collections::BTreeSet<_>>();
     retained.extend(
         ledger_step_annotations(
             &plan.snapshot.facts,
             &plan.snapshot.answer,
-            task,
+            born,
             &plan.roles,
         )
         .into_iter()
         .map(|(_, annotation)| annotation),
     );
+    let mut micros = write.at().get().as_microsecond();
     for note in annotations {
         if !retained.insert(note.clone()) {
             continue;
         }
+        let content = room::authored_observation(&note, task)?;
+        let publication = room::mint_publication(bus, born, micros)?;
+        micros = publication.micros().saturating_add(1);
         cause = write
             .fact(
-                body::TaskNoted {
-                    task: task.clone(),
-                    note,
+                wire::rooms::RoomPublished {
+                    room: born.clone(),
+                    publication,
+                    content,
                 },
                 FactCause::Pending(cause),
             )

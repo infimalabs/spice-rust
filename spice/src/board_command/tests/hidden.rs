@@ -223,8 +223,8 @@ fn document_ledgers_render_hidden_tasks_in_full() {
             answer.text
         );
         assert!(
-            answer.text.contains(&format!("~~~\n{title}\n~~~")),
-            "hidden ledger dropped the oops note a triager reads: {}",
+            answer.text.contains(&format!("\n\n{title}\n")) && !answer.text.contains("~~~"),
+            "hidden ledger carries the oops description once, on the statement: {}",
             answer.text
         );
         hidden_ledgers.push(answer.text.clone());
@@ -775,20 +775,4 @@ pub(super) fn assert_render_form_parity(graph: &Outcome<CommandAnswer>) {
         serde_json::to_value(json_outcome).expect("decoded JSON outcome re-encodes"),
         serde_json::to_value(graph).expect("source outcome encodes"),
     );
-}
-
-pub(super) fn assert_oops_note_exists(bus: &Bus, oops: &TaskHandle) {
-    let facts = bus.fact_snapshot().expect("fixture facts read");
-    let born = oops
-        .born()
-        .expect("fixture oops handle carries a birth stamp");
-    assert!(facts.facts().iter().any(|fact| {
-        fact.fact.kind() == wire::FactKind::TaskNoted
-            && fact
-                .fact
-                .body()
-                .get("task")
-                .and_then(serde_json::Value::as_str)
-                == Some(born.as_str())
-    }));
 }

@@ -179,7 +179,7 @@ fn seed_is_deterministic_quoted_and_reopenable_without_touching_parent_state() {
     assert_eq!(
         kinds
             .iter()
-            .filter(|kind| **kind == wire::FactKind::TaskNoted)
+            .filter(|kind| **kind == wire::FactKind::RoomPublished)
             .count(),
         CANNED_TRANSCRIPT.len()
     );
