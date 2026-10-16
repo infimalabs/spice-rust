@@ -49,8 +49,8 @@ pub enum WorkAvailability {
     Review,
     /// Open, with a lapsed claim awaiting takeover.
     Stale,
-    /// Open and unclaimed, held back by the allocator's prerequisite and
-    /// controller gate.
+    /// Open and unclaimed, held at a dependency or controller gate only a
+    /// human can repair.
     Blocked,
     /// Open and unclaimed, following normal Plan/Design control or a
     /// prerequisite chain that still reaches advancing work.
@@ -335,14 +335,14 @@ impl WorkCounts {
             + self.parked
     }
 
-    /// Open work only the operator can move: a dependency or controller wall
-    /// with no advancing path, a Design awaiting output selection, a
-    /// deferral, or an environment hold such as a trust grant. Neutral
-    /// workflow waiting, passive Designs, and parked work need nothing from
-    /// the operator.
+    /// Open work carrying the blocked danger mark now: a dependency or
+    /// controller wall with no advancing path, or an environment hold such as
+    /// a trust grant. Selection and deferral remain explicit ordinary states;
+    /// neutral workflow waiting, passive Designs, and parked work also need no
+    /// immediate intervention.
     #[must_use]
     pub const fn needs_operator(self) -> usize {
-        self.blocked + self.selection + self.deferred + self.held
+        self.blocked + self.held
     }
     #[must_use]
     pub const fn open(self) -> usize {

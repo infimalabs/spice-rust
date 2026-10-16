@@ -14,6 +14,9 @@ use super::{WorkAvailability, WorkDependency, WorkProjection};
 /// The task where an unsatisfied dependency chain stops moving, and why.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DependencyWall<'a> {
+    /// The resident found a human-actionable dependency or controller gate
+    /// whose unavailable source is not represented in the open projection.
+    Gate(&'a TaskStamp),
     /// The task carries a deferral.
     Deferred(&'a TaskStamp),
     /// The task remains OOPS or Draft work until it is filed.

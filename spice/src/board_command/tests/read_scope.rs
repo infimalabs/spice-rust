@@ -288,12 +288,12 @@ fn open_read_offers_the_full_board_allocation_order_from_its_bounded_rows() {
         open.offer,
         crate::board_command::read_guard::board_offer(&entries, &full)
     );
+    assert!(open.blocked.is_empty());
     assert_eq!(
-        open.blocked,
+        open.workflow_waiting,
         [waiting.born().expect("waiting stamp")],
-        "an ordinary unsettled dependency remains blocked execution work"
+        "an ordinary unsettled dependency waits behind advancing work"
     );
-    assert!(open.workflow_waiting.is_empty());
     assert!(open.awaiting_selection.is_empty());
     let offered = open
         .offer

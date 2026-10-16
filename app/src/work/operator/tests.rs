@@ -33,6 +33,7 @@ fn only_execution_walls_wait_in_the_operator_danger_queue() {
     let mut behind_deferral = task(7, "queue.aside");
     behind_deferral.statement.body.dependencies = vec![stamp(6)];
     let ready = task(8, "queue.ready");
+    let blocked_gate = task(9, "queue.blocked");
 
     let mut board = board(vec![
         claimed_design,
@@ -43,13 +44,16 @@ fn only_execution_walls_wait_in_the_operator_danger_queue() {
         deferred_upgrade,
         behind_deferral,
         ready,
+        blocked_gate,
     ]);
     board.awaiting_selection.extend([stamp(1), stamp(2)]);
-    board.blocked.extend([stamp(4), stamp(5), stamp(7)]);
+    board
+        .blocked
+        .extend([stamp(4), stamp(5), stamp(7), stamp(9)]);
     let work = WorkProjection::from_board(&board);
     let queue = OperatorQueue::new(&work);
 
-    assert_eq!(queued(&queue), [2, 5]);
+    assert_eq!(queued(&queue), [2, 5, 8]);
     let waits = queue.waits();
     assert!(waits[0].environment());
     assert_eq!(
@@ -63,6 +67,11 @@ fn only_execution_walls_wait_in_the_operator_danger_queue() {
     );
     assert_eq!(waits[1].wall(), Some(DependencyWall::Deferred(&stamp(6))));
     assert_eq!(waits[1].holds(), [6]);
+    assert_eq!(waits[2].wall(), Some(DependencyWall::Gate(&stamp(9))),);
+    assert!(
+        waits[2].holds().is_empty(),
+        "a resident-classified blocked gate appears even without a projected dependency wall"
+    );
     assert!(
         !queued(&queue).contains(&0) && !queued(&queue).contains(&1),
         "selection stays visible through Work without entering the red danger queue"

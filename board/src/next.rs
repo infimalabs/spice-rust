@@ -284,7 +284,8 @@ pub fn awaits_authorized_work(entry: &Entry, satisfied: &ResolvedTasks) -> bool 
 /// and stale claims are separate standings and therefore do not appear here.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkWait {
-    /// An unresolved gate has no route through current open work.
+    /// An unresolved gate has no route through current open work and needs
+    /// human intervention.
     Blocked,
     /// The task follows normal Plan/Design control or an advancing prerequisite.
     Workflow,
@@ -295,11 +296,11 @@ pub enum WorkWait {
 /// Classify every open allocator gate from one exact task generation.
 ///
 /// This is presentation evidence only: allocation continues to use
-/// [`dependencies_satisfied`]. A Plan-constructed dependency sequence is a
-/// normal workflow wait only when every unresolved edge reaches active, ready,
-/// review, selection, or another normal wait. Ordinary dependency gates,
-/// missing authority, cycles, and distinct parked states terminate the chain
-/// as blocked execution trouble.
+/// [`dependencies_satisfied`]. Any dependency sequence is a normal workflow
+/// wait while every unresolved edge reaches active, ready, review, selection,
+/// or another normal wait. Missing authority, missing prerequisites, cycles,
+/// and distinct parked states terminate the chain as human-actionable blocked
+/// work.
 #[must_use]
 pub fn work_waits<'a>(
     entries: &'a [Entry],
@@ -413,13 +414,6 @@ fn progress(
         .dependencies
         .iter()
         .filter(|dependency| !resolved.settled(dependency));
-    if !entry.statement().dependencies.is_empty()
-        && !normal_control
-        && !plan_constructed(entry, entries, index)
-    {
-        states[task] = Progress::Blocked;
-        return Progress::Blocked;
-    }
     for dependency in unresolved_dependencies {
         let Some(dependency) = index.get(dependency).copied() else {
             states[task] = Progress::Blocked;
@@ -435,16 +429,6 @@ fn progress(
     }
     states[task] = Progress::Neutral;
     Progress::Neutral
-}
-
-fn plan_constructed(entry: &Entry, entries: &[Entry], index: &BTreeMap<&TaskStamp, usize>) -> bool {
-    let Some(preparation) = &entry.statement().preparation else {
-        return false;
-    };
-    preparation.construction == entry.statement().born
-        && index
-            .get(&preparation.parent)
-            .is_some_and(|parent| entries[*parent].statement().intent == Some(TaskIntent::Plan))
 }
 
 fn normal_control_wait(

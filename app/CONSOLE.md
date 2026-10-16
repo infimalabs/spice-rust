@@ -196,18 +196,19 @@ sits on its button. Its title and accessible name then lead with that count.
 The dot is out of flow, so marking or clearing a tab never moves its box,
 badge, label, or focus ring; local task tabs carry no mark.
 
-The resident classifies each closed allocation gate once as blocked execution
-trouble, neutral workflow waiting, or awaiting Design selection. Dependency
-graphs, detail standings, counts, operator attention, and tab marks consume that
-same partition. Work only the operator can move is a Blocked wall with no
-advancing workflow path, a Design awaiting output selection (a passive one
-included), a deferral, or an environment hold such as an executable-configuration
-trust grant; each marks only the exact total or stem whose partition holds it,
-so Design work never marks an execution tab and execution work never marks a
-Design tab. A healthy Plan sequence and work waiting under an open Plan or
-Design use the neutral Waiting treatment and mark nothing, nor do passive
-Designs, parked work, or ready, review, stale, and in-flight work. Only a
-Blocked row is danger-coloured in detail and graphs.
+The resident classifies each closed allocation gate once as human-actionable
+blocked work, neutral workflow waiting, or awaiting Design selection.
+Dependency graphs, detail standings, counts, operator attention, and tab marks
+consume that same partition. **Blocked** means no path reaches work an agent
+can advance: missing authority or prerequisites, cycles, and walls at closed,
+parked, passive, deferred, or environment-held work require a human act.
+Ordinary dependency chains that still reach active, ready, review, selection,
+or other neutral work are **Waiting** and carry no danger mark. A tab marks only
+when its own partition holds immediate human-actionable blocked or
+environment-held work; selection, intentional deferral, passive Designs,
+parked work, and ready, review, stale, and in-flight work retain their explicit
+states without the blocked dot. Only a Blocked row is danger-coloured in detail
+and graphs.
 
 Each global stem tab opens its complete visibility-qualified stem within its
 own partition. A local strip has no stem roll-ups: past its total, a team strip

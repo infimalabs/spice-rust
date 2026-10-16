@@ -637,30 +637,30 @@ fn only_work_the_operator_must_move_marks_exactly_its_own_partition() {
         marks(&WorkScope::AllOpen),
         BTreeMap::from([
             ("alpha".to_owned(), 0),
-            ("beta".to_owned(), 1),
+            ("beta".to_owned(), 0),
             ("delta".to_owned(), 1),
             ("gamma".to_owned(), 1),
         ]),
-        "in-flight, stale, review, ready, and neutral waiting need nothing; a deferral, \
-         a blocked wall, and an environment hold each mark only their own stem"
+        "in-flight, stale, review, ready, neutral waiting, and work intentionally set aside \
+         need nothing now; only a blocked wall and an environment hold mark their own stem"
     );
     assert_eq!(
         projection
             .scope_counts(&WorkScope::AllOpen)
             .needs_operator(),
-        3,
-        "the execution total never counts a Design awaiting selection"
+        2,
+        "the execution total counts only immediate human-actionable work"
     );
     assert_eq!(
         marks(&WorkScope::planning()),
-        BTreeMap::from([("alpha".to_owned(), 1), ("beta".to_owned(), 0)]),
-        "a Design awaiting selection marks its own Design stem; a passive one marks nothing"
+        BTreeMap::from([("alpha".to_owned(), 0), ("beta".to_owned(), 0)]),
+        "selection and passive Design states stay visible without the blocked danger mark"
     );
     assert_eq!(
         projection
             .scope_counts(&WorkScope::planning())
             .needs_operator(),
-        1,
-        "the Design total never counts execution work"
+        0,
+        "the Design total has no human-actionable blocked work"
     );
 }

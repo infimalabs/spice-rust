@@ -1342,6 +1342,12 @@ fn healthy_plan_sequences_and_planning_control_are_neutral_not_blocked() {
             false,
         ));
     }
+    sequence.push(entry("WAIT-ready"));
+    let mut ordinary_wait = statement("WAIT-ordinary");
+    ordinary_wait.dependencies.push(stamp("WAIT-ready"));
+    sequence.push(
+        admitted(ordinary_wait, workflow("todo"), None, None).expect("ordinary dependency wait"),
+    );
     let mut broken = statement("WAIT-broken");
     broken.dependencies.push(stamp("WAIT-missing"));
     sequence.push(admitted(broken, workflow("todo"), None, None).expect("blocked task"));
@@ -1355,6 +1361,11 @@ fn healthy_plan_sequences_and_planning_control_are_neutral_not_blocked() {
             "each Plan step behind progressing work is a neutral workflow wait"
         );
     }
+    assert_eq!(
+        waits.get(&stamp("WAIT-ordinary")),
+        Some(&board::WorkWait::Workflow),
+        "an ordinary dependency on ready work is waiting its turn"
+    );
     assert_eq!(
         waits.get(&stamp("WAIT-broken")),
         Some(&board::WorkWait::Blocked),

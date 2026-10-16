@@ -44,15 +44,14 @@ those badges. A completed task wears a muted **Done** badge, quieter than
 **Blocked**; a withdrawn one wears **Deleted**.
 
 Open work falls into the board's exclusive standings, in their precedence: a
-live claim reads **In flight**, a lapsed one **Stale**, a deferral
-**Deferred**, then the allocator's gate decides **Blocked**, an unclaimed
-review reads **Review**, an unmet environment requirement **Held**, and the
-rest **Ready**, so each count equals `spice board`'s. The gate is the
-allocator's verdict: the resident's open board names every row it holds back,
-judged over terminal evidence the browser never receives, so an unauthorized
-controlled output reads Blocked exactly when `task next` skips it. A row in a
-typed OOPS filing state reads **Parked**: its public project remains visible,
-but the allocator never offers it until the operator files it as ordinary work.
+live claim reads **In flight**, a lapsed one **Stale**, and explicit set-asides
+read **Deferred** or **Parked**. The resident's gate then decides **Waiting**,
+**Awaiting selection**, or **Blocked** before unclaimed review,
+environment **Held**, and **Ready** work, so each count equals `spice board`'s.
+**Waiting** means every unresolved dependency or planning-control edge still
+reaches work an agent can advance. **Blocked** is reserved for a missing
+authority, missing prerequisite, cycle, or other non-advancing wall that needs
+a human to repair; merely waiting its turn is never Blocked.
 A **Draft** row is prospective work its author is still editing. It counts in
 no standing, and nothing offers it until `spice task file` turns it into Filed
 work.
@@ -94,21 +93,21 @@ footprint that scrolls beyond it.
 ## Task blocker review
 
 Every task overview reserves one fixed-height status rail under its header. It
-counts every task on the board only the operator can move, whatever overview
-scope is selected: a Design awaiting the operator's selection of its outputs,
-whatever its standing or claim; a task whose unsatisfied environmental
-requirement (trust grant, journal schema, appliance version) needs the
-operator, unless that task is already set aside (closed, Draft, parked,
-deferred, or a passive Design); and the task where a held task's dependency
-chain stops because a link is deferred, parked, cyclic, closed without
-completing, passive, awaiting selection, or held by such a requirement. Each
-such task counts once, in board order, however many reasons or held tasks
-reach it. A dependency on work an agent can claim or is working is an ordinary
-wait and never counts. A waiting board pairs the danger-styled `!` with
-**Needs attention**; otherwise a quiet `✓` pairs with **Ready to proceed**,
-even while tasks wait on peers. Both states share one geometry, and detail
-reads do not own the rail's data; an item leaves on the board update that
-records the operator's act.
+counts every task on the board that needs an operator act now, whatever
+overview scope is selected: a task whose unsatisfied environmental requirement
+(trust grant, journal schema, appliance version) needs the operator, unless
+that task is already set aside (closed, Draft, parked, deferred, or a passive
+Design); and each human-actionable Blocked gate or the task where its
+dependency chain stops. A deferred task or Design awaiting selection keeps its
+own explicit standing without entering this danger queue merely for waiting;
+it enters only when a Blocked dependency chain reaches it. Each queue item
+appears once, in board order, however many reasons or held tasks reach it. A
+dependency on work an agent can claim or is working is ordinary **Waiting** and
+never counts. A waiting board pairs the danger-styled `!` with **Needs
+attention**; otherwise a quiet `✓` pairs with **Ready to proceed**, even while
+tasks wait on peers. Both states share one geometry, and detail reads do not
+own the rail's data; an item leaves on the board update that records the
+operator's act.
 
 **Next** opens the next waiting task's own overview in board order, stepping
 from the task the overview currently shows and wrapping after the last; it is
