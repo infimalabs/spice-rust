@@ -102,9 +102,7 @@ fn render_media_button(
                     data-image-quote-name={media_quote.name.clone()}
                     title={format!("Quote {}", media_quote.name)}
                     aria-label={format!("Quote {}", media_quote.name)}
-                >
-                    {"Quote"}
-                </button>
+                ><span class="app-card-action__icon" aria-hidden="true">{"❝"}</span></button>
             }
         </span>
     }
