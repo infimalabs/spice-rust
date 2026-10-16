@@ -97,8 +97,10 @@ revision. A group exists only while designs belong to it: it is never created
 empty, never named, and never removed as an object. Its card is labelled from
 its lead design, member zero, as a team is from its host. The whole card mounts
 the group's console by click, Enter, or Space; its nested Design controls keep
-their own actions. The console's group menu can move or close that
-browser-local console;
+their own actions. The formed card's frame binds to the same stable base-flavor
+accent index as the corresponding team or group console; member and Design
+accent slots remain independent. The console's group menu can move or close
+that browser-local console;
 its **Disband working group** action sends `group::disband` at the displayed
 partition revision, leaves every Design ungrouped, and causes every browser to
 close the vanished group's console after authoritative room state arrives.

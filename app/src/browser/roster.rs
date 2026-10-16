@@ -75,6 +75,8 @@ pub(super) struct RosterView<'a, G, M> {
     pub(super) submit: Rc<dyn Fn(Change<G, M>)>,
     /// A group card's header content, named for its member zero.
     pub(super) head: &'a dyn Fn(&G, &[M]) -> Html,
+    /// A formed card's stable object base, shared with its corresponding console.
+    pub(super) base: &'a dyn Fn(&G) -> Option<usize>,
     /// A formed card's optional accessible whole-card action.
     pub(super) open: Option<&'a GroupOpen<'a, G, M>>,
     /// A member tile's content, grouped or not; it marks its handle with
@@ -248,11 +250,16 @@ where
     let accepts = view.enabled && view.roster.accepts(group);
     let lift = gesture.lift_value(&Lift::Group(group.clone()));
     let opener = view.open.map(|open| open(group, members));
+    let base = (view.base)(group);
+    let base_flavor = base.map(|_| "roster");
+    let base_accent = base.map(|base| base.to_string());
     html! {
         <article
             class="app-roster-group"
             key={group.to_string()}
             data-roster-group={group.to_string()}
+            data-base-flavor={base_flavor}
+            data-base-accent={base_accent}
             data-roster-drop={gesture.drop_value(&format!("group:{group}"))}
             data-drop-enabled={accepts.to_string()}
             data-roster-lift={lift.clone()}

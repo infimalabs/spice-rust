@@ -50,6 +50,12 @@ pub(super) fn render_arrangement(
             </div>
         }
     };
+    let base = |team: &CanonicalUuid| {
+        teams
+            .iter()
+            .find(|row| row.lane == *team)
+            .map(|team| team.accent(0))
+    };
     let member = |lane: &CanonicalUuid, grouped: bool| {
         let member = teams.iter().find_map(|row| row.member(*lane));
         let standing = standings.iter().find(|standing| standing.lane == *lane);
@@ -72,6 +78,7 @@ pub(super) fn render_arrangement(
             }
         }),
         head: &head,
+        base: &base,
         open: None,
         member: &member,
     })

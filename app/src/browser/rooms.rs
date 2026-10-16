@@ -368,6 +368,7 @@ fn render_roster(
             </div>
         }
     };
+    let base = |group: &RoomAuthorityStamp| console::group_base(&partition.groups, group);
     let open = |group: &RoomAuthorityStamp, designs: &[TaskStamp]| {
         let name = lead_label(runtime, group, designs.first());
         let group = group.clone();
@@ -392,6 +393,7 @@ fn render_roster(
         empty: "No ungrouped designs",
         submit,
         head: &head,
+        base: &base,
         open: Some(&open),
         member: &member,
     })
