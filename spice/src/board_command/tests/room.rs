@@ -522,18 +522,24 @@ fn authored_observations_enforce_the_room_publication_byte_bound() {
         "Room",
         None,
     );
-    let boundary = "x".repeat(ROOM_PUBLICATION_BYTES_LIMIT);
+    let boundary = format!(" {}\n", "x".repeat(ROOM_PUBLICATION_BYTES_LIMIT - 2));
     assert_committed(
         dispatch(&bus, &post_command(&bus, epoch, &room, &boundary))
             .expect("boundary observation dispatches"),
     );
 
-    let oversized = format!("{boundary}x");
+    let oversized = format!("{boundary} ");
     let outcome = dispatch(&bus, &post_command(&bus, epoch, &room, &oversized))
         .expect("oversized observation dispatches");
     assert!(matches!(
         outcome,
         Outcome::Refusal(refusal) if refusal.reason() == "room::post-too-large"
+    ));
+    let blank = dispatch(&bus, &post_command(&bus, epoch, &room, " \n\t"))
+        .expect("blank observation dispatches");
+    assert!(matches!(
+        blank,
+        Outcome::Refusal(refusal) if refusal.reason() == "room::post-empty"
     ));
 
     let page = publication_page(&bus, &room);

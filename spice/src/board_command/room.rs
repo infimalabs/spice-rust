@@ -133,24 +133,25 @@ pub(super) fn anchor_settlement(workflow: &wire::WorkflowHead) -> Option<&'stati
 }
 
 fn room_post_content(post: &RoomPost) -> Result<RoomPublicationContent, Outcome<CommandAnswer>> {
-    match (post.text.trim(), &post.grooming) {
-        ("", None) => Err(refusal(
+    let text = post.text.as_str();
+    match (text.trim().is_empty(), &post.grooming) {
+        (true, None) => Err(refusal(
             "room::post-empty",
             Some(post.room.to_string()),
             "supply complete authored text or one typed OOPS disposition",
         )),
-        (text, None) if text.len() > ROOM_PUBLICATION_BYTES_LIMIT => Err(refusal(
+        (false, None) if text.len() > ROOM_PUBLICATION_BYTES_LIMIT => Err(refusal(
             "room::post-too-large",
             Some(text.len().to_string()),
             &format!("shorten the observation to at most {ROOM_PUBLICATION_BYTES_LIMIT} bytes"),
         )),
-        (text, None) => Ok(RoomPublicationContent::Authored {
+        (false, None) => Ok(RoomPublicationContent::Authored {
             text: text.to_owned(),
         }),
-        ("", Some(grooming)) => Ok(RoomPublicationContent::OopsGroomed {
+        (true, Some(grooming)) => Ok(RoomPublicationContent::OopsGroomed {
             grooming: grooming.clone(),
         }),
-        (_, Some(_)) => Err(refusal(
+        (false, Some(_)) => Err(refusal(
             "room::post-shape",
             Some(post.room.to_string()),
             "supply either authored text or one OOPS disposition, never both",
