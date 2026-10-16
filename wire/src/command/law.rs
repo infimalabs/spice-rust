@@ -107,11 +107,13 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
-    /// Exact current room-anchor statement, published only by the operator.
+    /// Exact current room-anchor statement. Any connection may publish an
+    /// authored observation; the resident admits OOPS grooming only from the
+    /// operator.
     pub const ROOM_POST: Self = Self {
         required: &[WitnessKind::Task],
         optional: &[],
-        authority: Authority::Operator,
+        authority: Authority::Connected,
     };
     /// Operator ACK, NAK, answer, or recovery of exact room authority. The
     /// resident guards each item and result head it reads, so the operator

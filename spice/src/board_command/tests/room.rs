@@ -244,7 +244,7 @@ fn publication_page(bus: &Bus, room: &TaskHandle) -> journal::SelectedFactPage {
     .expect("room publication page reads")
 }
 
-fn publish_listener(bus: &Bus, room: &TaskHandle, lane: CanonicalUuid, micros: i64) {
+fn publish_observation(bus: &Bus, room: &TaskHandle, lane: CanonicalUuid, micros: i64) {
     let room = room.born().expect("fixture room has a birth stamp");
     let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
     let origin = format!("task:{room}").parse().expect("fixture task origin");
@@ -256,7 +256,7 @@ fn publish_listener(bus: &Bus, room: &TaskHandle, lane: CanonicalUuid, micros: i
                 publication: RoomAuthorityStamp::for_micros(micros)
                     .expect("fixture publication identity"),
                 content: RoomPublicationContent::Authored {
-                    text: "substantive listener evidence".to_owned(),
+                    text: "another party's observation".to_owned(),
                 },
             },
             FactCause::Root,
@@ -312,38 +312,60 @@ fn post_command(
     room: &TaskHandle,
     text: &str,
 ) -> wire::AdmittedCommand {
-    let current = board(bus, epoch, Actor::Operator);
+    observe_command(bus, epoch, Actor::Operator, room, text, None)
+}
+
+fn observe_command(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    actor: Actor,
+    room: &TaskHandle,
+    text: &str,
+    grooming: Option<OopsGrooming>,
+) -> wire::AdmittedCommand {
+    let current = board(bus, epoch, actor.clone());
     let heads = at(&current, room);
     fixture_command(
         epoch,
-        Actor::Operator,
+        actor,
         CommandKind::RoomPost,
         vec![statement_witness(heads)],
         &RoomPost {
             room: room.clone(),
             text: text.to_owned(),
-            grooming: None,
+            grooming,
         },
     )
 }
 
 fn publish_packet(bus: &Bus, room: &TaskHandle, seat: &Seat) -> RoomAuthorityStamp {
+    publish_message(bus, room, seat.lane, seat.occupant, 1_790_000_000_000_001)
+}
+
+/// Record one MSG packet `lane` authored in `room`, from its own ingested
+/// transcript source. A packet, unlike an observation, makes its author a
+/// participant.
+fn publish_message(
+    bus: &Bus,
+    room: &TaskHandle,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    micros: i64,
+) -> RoomAuthorityStamp {
     let vendor: wire::Name = "omp".parse().expect("fixture vendor");
-    let source = uuid(90_001);
+    let source = uuid(micros.unsigned_abs() % 0x1_0000_0000_0000);
     let next = wire::body::TranscriptPosition {
         member: 1,
         offset: 64,
     };
     let head = wire::TranscriptSourceHead {
-        lane: seat.lane,
+        lane,
         vendor: vendor.clone(),
         stream: "session".to_owned(),
         source,
         next,
     };
-    let origin = format!("lane:{}", seat.lane)
-        .parse()
-        .expect("fixture lane origin");
+    let origin = format!("lane:{lane}").parse().expect("fixture lane origin");
     let at = Instant::new(jiff::Timestamp::now()).expect("fixture instant");
     let mut ingest = JournalWrite::new(
         Actor::Spice,
@@ -354,7 +376,7 @@ fn publish_packet(bus: &Bus, room: &TaskHandle, seat: &Seat) -> RoomAuthoritySta
     let fact = ingest
         .fact(
             wire::body::JournalIngested {
-                lane: seat.lane,
+                lane,
                 vendor,
                 stream: "session".to_owned(),
                 source,
@@ -381,10 +403,9 @@ fn publish_packet(bus: &Bus, room: &TaskHandle, seat: &Seat) -> RoomAuthoritySta
         CommitOutcome::Committed(_)
     ));
 
-    let publication =
-        RoomAuthorityStamp::for_micros(1_790_000_000_000_001).expect("fixture packet identity");
+    let publication = RoomAuthorityStamp::for_micros(micros).expect("fixture packet identity");
     let mut packet = JournalWrite::new(
-        Actor::Lane(seat.lane),
+        Actor::Lane(lane),
         "task:room-history".parse().expect("fixture packet origin"),
         at,
         Producer::AckScanner,
@@ -404,7 +425,7 @@ fn publish_packet(bus: &Bus, room: &TaskHandle, seat: &Seat) -> RoomAuthoritySta
                     },
                     text: wire::rooms::TextRange { start: 0, end: 6 },
                 },
-                author: seat.occupant,
+                author: occupant,
                 directed: Vec::new(),
             },
             FactCause::Root,
@@ -615,10 +636,10 @@ fn room_post_reports_occupied_vacant_and_unknown_listeners_without_waking() {
         None,
     );
     let micros = jiff::Timestamp::now().as_microsecond();
-    publish_listener(&bus, &room, seats[0].lane, micros);
-    publish_listener(&bus, &room, seats[1].lane, micros + 1);
+    publish_message(&bus, &room, seats[0].lane, seats[0].occupant, micros);
+    publish_message(&bus, &room, seats[1].lane, seats[1].occupant, micros + 1);
     let unknown = uuid(900_000);
-    publish_listener(&bus, &room, unknown, micros + 2);
+    publish_message(&bus, &room, unknown, uuid(900_001), micros + 2);
     vacate(&bus, epoch, &seats[1]);
 
     let answer = assert_committed(
@@ -675,7 +696,7 @@ fn a_left_lane_stops_listening_until_it_contributes_again() {
         None,
     );
     let micros = jiff::Timestamp::now().as_microsecond();
-    publish_listener(&bus, &room, lane, micros);
+    publish_message(&bus, &room, lane, seats[0].occupant, micros);
     assert_eq!(post_listeners(&bus, epoch, &room), vec![lane]);
 
     let (committed, first) = leave_answer(leave(&bus, epoch, Actor::Lane(lane), &room));
@@ -687,7 +708,7 @@ fn a_left_lane_stops_listening_until_it_contributes_again() {
     assert!(!committed && !repeated.recorded, "{repeated:?}");
     assert_eq!(repeated.publication, first.publication);
 
-    publish_listener(&bus, &room, lane, micros + 1_000_000_000);
+    publish_message(&bus, &room, lane, seats[0].occupant, micros + 1_000_000_000);
     assert_eq!(post_listeners(&bus, epoch, &room), vec![lane]);
 }
 
@@ -758,12 +779,12 @@ fn room_post_refuses_unknown_anchor_without_recording() {
     assert!(publication_page(&bus, &unknown).rows.is_empty());
 }
 
-/// Every way an anchor settles closes its room to new posts: the refusal
-/// names the standing, records nothing, and the room's history keeps what it
-/// held before settlement.
+/// An observation reaches every room whose anchor is not deleted: a closed or
+/// completed room takes one from the operator or a lane, and a deleted anchor
+/// refuses naming its standing, records nothing, and keeps its history.
 #[test]
-fn room_post_refuses_every_settled_anchor_without_recording() {
-    let (_root, bus, epoch, seats) = fixture("room-post-settled", 1);
+fn observations_reach_every_room_except_a_deleted_anchor() {
+    let (_root, bus, epoch, seats) = fixture("room-post-settled", 2);
     let closed = add(
         &bus,
         epoch,
@@ -830,35 +851,120 @@ fn room_post_refuses_every_settled_anchor_without_recording() {
     ));
     complete_through_claim(&bus, epoch, &seats[0], &completed);
 
-    for (room, standing) in [
-        (&closed, "closed"),
-        (&deleted, "deleted"),
-        (&completed, "completed"),
-    ] {
-        let outcome = dispatch(&bus, &post_command(&bus, epoch, room, "After settlement."))
-            .expect("room command dispatches");
+    let lane = Actor::Lane(seats[1].lane);
+    for room in [&closed, &completed] {
+        for author in [Actor::Operator, lane.clone()] {
+            assert_committed(
+                dispatch(
+                    &bus,
+                    &observe_command(&bus, epoch, author, room, "After settlement.", None),
+                )
+                .expect("room command dispatches"),
+            );
+        }
+        assert_eq!(publication_page(&bus, room).rows.len(), 3);
+    }
+
+    for author in [Actor::Operator, lane] {
+        let outcome = dispatch(
+            &bus,
+            &observe_command(&bus, epoch, author, &deleted, "After deletion.", None),
+        )
+        .expect("room command dispatches");
         let Outcome::Refusal(refusal) = outcome else {
-            panic!("a post to a {standing} anchor recorded: {outcome:?}");
+            panic!("an observation on a deleted anchor recorded: {outcome:?}");
         };
-        assert_eq!(refusal.reason(), "room::anchor-settled");
+        assert_eq!(refusal.reason(), "room::anchor-deleted");
         assert_eq!(
             refusal
                 .diagnostic()
                 .and_then(wire::RefusalDiagnostic::observed),
-            Some(format!("{room} {standing}").as_str())
-        );
-        let page = publication_page(&bus, room);
-        assert_eq!(page.rows.len(), 1, "{standing} room history changed");
-        assert_eq!(
-            page.rows[0]
-                .fact
-                .read::<RoomPublished>()
-                .map(|row| row.content),
-            Some(RoomPublicationContent::Authored {
-                text: "While open.".to_owned()
-            })
+            Some(format!("{deleted} deleted").as_str())
         );
     }
+    let page = publication_page(&bus, &deleted);
+    assert_eq!(page.rows.len(), 1, "deleted room history changed");
+    assert_eq!(
+        page.rows[0]
+            .fact
+            .read::<RoomPublished>()
+            .map(|row| row.content),
+        Some(RoomPublicationContent::Authored {
+            text: "While open.".to_owned()
+        })
+    );
+}
+
+/// A lane's observation reaches the task's holder as a current listener, but
+/// its author gains no listening from writing it, and only the operator
+/// records OOPS grooming.
+#[test]
+fn a_lane_observation_reaches_the_holder_without_making_its_author_listen() {
+    let (_root, bus, epoch, seats) = fixture("room-observation-listeners", 2);
+    let room = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "room-observation-held",
+        "Held",
+        Some("todo"),
+    );
+    let holder = Actor::Lane(seats[0].lane);
+    let available = board(&bus, epoch, holder.clone());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        holder,
+        CommandKind::ClaimWin,
+        claim_expected(&available, &room, &seats[0]),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+            recovery: None,
+        },
+    ));
+
+    let author = Actor::Lane(seats[1].lane);
+    for text in ["First observation.", "Second observation."] {
+        let answer = assert_committed(
+            dispatch(
+                &bus,
+                &observe_command(&bus, epoch, author.clone(), &room, text, None),
+            )
+            .expect("room command dispatches"),
+        );
+        let CommandAnswer::RoomPost(answer) = answer else {
+            panic!("room post returned another answer shape: {answer:?}");
+        };
+        let RoomPostOutcome::RecordedWithListeners { listeners } = answer.outcome else {
+            panic!("the holder was not reported as a listener");
+        };
+        assert_eq!(
+            listeners
+                .iter()
+                .map(|listener| listener.lane)
+                .collect::<Vec<_>>(),
+            vec![seats[0].lane],
+            "{text}"
+        );
+    }
+
+    let grooming = OopsGrooming {
+        reports: Vec::new(),
+        disposition: OopsDisposition::NoWork,
+        cause: "A lane's triage.".to_owned(),
+        exceptions: String::new(),
+        uncertainty: String::new(),
+    };
+    let outcome = dispatch(
+        &bus,
+        &observe_command(&bus, epoch, author, &room, "", Some(grooming)),
+    )
+    .expect("room command dispatches");
+    assert!(matches!(
+        outcome,
+        Outcome::Refusal(refusal) if refusal.reason() == "room::oops-grooming-operator"
+    ));
+    assert_eq!(publication_page(&bus, &room).rows.len(), 2);
 }
 
 /// Claim `task` from the allocator under `seat`'s lane and complete it.

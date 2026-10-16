@@ -384,7 +384,8 @@ pub struct OopsGrooming {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum RoomPublicationContent {
-    /// Operator composer text is owned directly by the admitted journal fact.
+    /// An authored observation, the operator's or a lane's, whose text the
+    /// admitted journal fact owns directly.
     Authored { text: String },
     /// Agent text remains owned by its transcript or retained artifact.
     Linked { link: RoomSource },
@@ -480,7 +481,7 @@ pub struct RoomHorizon {
 pub struct RoomPost {
     /// Current rendered handle resolved to the room's anchor birth stamp.
     pub room: TaskHandle,
-    /// Complete operator-authored publication bytes.
+    /// Complete authored observation bytes.
     pub text: String,
     /// Typed OOPS grooming record; mutually exclusive with nonempty `text`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

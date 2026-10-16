@@ -37,11 +37,23 @@ pub(super) fn room_post(
             "read the board and name one current task handle",
         );
     };
-    if let Some(standing) = anchor_settlement(anchor.workflow()) {
+    if matches!(
+        anchor.workflow().status.conclusion(),
+        Some(wire::WorkflowConclusion::Negative(
+            wire::WorkflowNegative::Deleted
+        ))
+    ) {
         return refusal(
-            "room::anchor-settled",
-            Some(format!("{} {standing}", anchor.handle())),
-            "a settled room stays readable and its open questions and receipts still settle; post only to an unresolved anchor",
+            "room::anchor-deleted",
+            Some(format!("{} deleted", anchor.handle())),
+            "a deleted task's room stays readable; publish to a task that is not deleted",
+        );
+    }
+    if post.grooming.is_some() && matches!(command.actor(), Actor::Lane(_)) {
+        return refusal(
+            "room::oops-grooming-operator",
+            Some(anchor.handle().to_string()),
+            "only the operator records OOPS grooming; publish evidence as an observation",
         );
     }
     if let Some(grooming) = &post.grooming
@@ -106,8 +118,8 @@ pub(super) fn room_post(
 }
 
 /// The terminal standing that settled a room's anchor, or `None` while the
-/// anchor is unresolved. Only an unresolved anchor's room takes new operator
-/// posts and coordination; a settled room stays readable, and duties already
+/// anchor is unresolved. Only an unresolved anchor's room takes new
+/// coordination; a settled room still takes observations, and duties already
 /// open in it still settle.
 pub(super) fn anchor_settlement(workflow: &wire::WorkflowHead) -> Option<&'static str> {
     match workflow.status.conclusion()? {
@@ -122,7 +134,7 @@ fn room_post_content(post: &RoomPost) -> Result<RoomPublicationContent, Outcome<
         ("", None) => Err(refusal(
             "room::post-empty",
             Some(post.room.to_string()),
-            "supply complete operator-authored text or one typed OOPS disposition",
+            "supply complete authored text or one typed OOPS disposition",
         )),
         (text, None) => Ok(RoomPublicationContent::Authored {
             text: text.to_owned(),
