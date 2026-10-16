@@ -5,47 +5,83 @@ fn oops_snapshot(
     add: &TaskOopsAdd,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
-) -> Result<(ValidatedSnapshot, bool), Outcome<CommandAnswer>> {
+) -> Result<(ValidatedSnapshot, bool, wire::OopsGenerationHead), Outcome<CommandAnswer>> {
     let observed = bus
         .task_snapshot()
         .map_err(|error| store_fault("task::oops-heads-unreadable", &error.to_string()))?;
-    let current = observed
-        .tasks()
+    let (generation_head, witnessed_design) = command
+        .expected()
         .iter()
-        .filter(|heads| {
-            heads.statement().body().intent == Some(wire::TaskIntent::OpportunisticDesign)
-                && wire::intent::is_open_design(
-                    heads.statement().body().intent,
-                    heads.workflow().body(),
-                )
+        .find_map(|witness| match witness {
+            Witness::OopsGeneration { head, design } => Some((*head, design.clone())),
+            _ => None,
         })
-        .collect::<Vec<_>>();
-    if current.len() > 1 {
+        .ok_or_else(|| {
+            protocol_fault(
+                "task::oops-generation-witness-missing",
+                "OOPS intake requires one repository generation witness",
+            )
+        })?;
+    if generation_head.is_none() && witnessed_design.is_some() {
         return Err(protocol_fault(
-            "task::oops-design-ambiguous",
-            "the board contains more than one current opportunistic OOPS Design",
+            "task::oops-generation-witness-invalid",
+            "an OOPS generation cannot name a Design before its first head",
         ));
     }
-    let roots = std::iter::once(add.design.clone())
-        .chain(
-            current
-                .iter()
-                .map(|heads| heads.statement().body().born.clone()),
-        )
-        .collect::<Vec<_>>();
+    if witnessed_design
+        .as_ref()
+        .is_some_and(|design| design != &add.design)
+    {
+        return Err(protocol_fault(
+            "task::oops-generation-design-mismatch",
+            "the OOPS request must name the Design carried by its generation witness",
+        ));
+    }
+    let generation = observed
+        .oops_generation()
+        .filter(|head| {
+            Some(head.position()) == generation_head && head.body().design == witnessed_design
+        })
+        .map(|head| head.body().clone())
+        .unwrap_or(wire::OopsGenerationHead {
+            revision: 0,
+            design: witnessed_design.clone(),
+        });
+    let design = witnessed_design
+        .as_ref()
+        .map(|design| {
+            observed.task_heads(design).ok_or_else(|| {
+                protocol_fault(
+                    "task::oops-generation-task-missing",
+                    "the witnessed OOPS generation names a task absent from the board",
+                )
+            })
+        })
+        .transpose()?;
+    if let Some(heads) = design {
+        if heads.statement().body().intent != Some(wire::TaskIntent::OpportunisticDesign)
+            || !wire::intent::is_open_design(
+                heads.statement().body().intent,
+                heads.workflow().body(),
+            )
+        {
+            return Err(protocol_fault(
+                "task::oops-generation-invalid",
+                "the witnessed OOPS generation does not name one open opportunistic Design",
+            ));
+        }
+    }
     let snapshot = validated_working_snapshot_for_tasks(
         bus,
         command.actor().clone(),
-        &roots,
+        std::slice::from_ref(&add.design),
         projects,
         allocation,
     )?;
-    let design = current.first().copied();
     if design.is_some_and(|heads| heads.statement().body().born != add.design) {
-        return Err(refusal(
-            "task::oops-design-moved",
-            Some(add.design.to_string()),
-            "read the current board and retry under its current opportunistic OOPS Design",
+        return Err(protocol_fault(
+            "task::oops-generation-design-mismatch",
+            "the OOPS request must name the Design carried by its generation witness",
         ));
     }
     if let Some(heads) = design {
@@ -63,7 +99,7 @@ fn oops_snapshot(
             "opening an opportunistic OOPS Design requires its intended absent birth stamp",
         ));
     }
-    Ok((snapshot, creates_design))
+    Ok((snapshot, creates_design, generation))
 }
 
 pub(in crate::board_command) fn task_oops_add(
@@ -73,10 +109,11 @@ pub(in crate::board_command) fn task_oops_add(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let (snapshot, creates_design) = match oops_snapshot(bus, command, add, projects, allocation) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
+    let (snapshot, creates_design, generation) =
+        match oops_snapshot(bus, command, add, projects, allocation) {
+            Ok(snapshot) => snapshot,
+            Err(outcome) => return outcome,
+        };
     let report_born = command
         .expected()
         .iter()
@@ -146,6 +183,7 @@ pub(in crate::board_command) fn task_oops_add(
         &snapshot,
         design_prepared,
         report,
+        generation,
         projects,
     )
 }
@@ -253,6 +291,7 @@ fn commit_oops_intake(
     snapshot: &ValidatedSnapshot,
     design: Option<PreparedTask>,
     report: PreparedTask,
+    generation: wire::OopsGenerationHead,
     projects: &ProjectPolicy,
 ) -> Outcome<CommandAnswer> {
     let post = prepared_entry(&report, projects);
@@ -280,6 +319,7 @@ fn commit_oops_intake(
     creation.guard(&mut write);
     let cause = match design {
         Some(design) => {
+            let design_stamp = design.statement.born.clone();
             let design_add = TaskAdd {
                 preparation: None,
                 intent: Some(wire::TaskIntent::OpportunisticDesign),
@@ -294,9 +334,27 @@ fn commit_oops_intake(
                 claim: false,
                 draft: false,
             };
-            match append_prepared_task(&mut write, &design_add, design, FactCause::Root) {
-                Ok(fact) => FactCause::Pending(fact),
+            let added = match append_prepared_task(&mut write, &design_add, design, FactCause::Root)
+            {
+                Ok(fact) => fact,
                 Err(outcome) => return outcome,
+            };
+            let Some(revision) = generation.revision.checked_add(1) else {
+                return store_fault(
+                    "task::oops-generation-exhausted",
+                    "the OOPS generation revision cannot advance",
+                );
+            };
+            let advanced = wire::body::OopsGenerationAdvanced {
+                revision,
+                from: generation.design,
+                to: Some(design_stamp),
+            };
+            match write.fact(advanced, FactCause::Pending(added)) {
+                Ok(fact) => FactCause::Pending(fact),
+                Err(error) => {
+                    return store_fault("task::oops-generation-build", &error.to_string());
+                }
             }
         }
         None => FactCause::Root,

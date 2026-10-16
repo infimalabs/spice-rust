@@ -266,9 +266,19 @@ pub(in crate::board_command) fn stage_conclusion(
     if !settlement.negative() {
         require_no_pending_controlled_outputs(&snapshot, entry)?;
     }
+    let oops_generation = prepare_oops_settlement(write, &snapshot, entry)?;
     let cause = FactCause::Pending(cause);
-    stage_with_controlled(write, &snapshot, entry, settlement, cause, at, projects)
-        .map(|(_, closed)| closed)
+    stage_with_controlled(
+        write,
+        &snapshot,
+        entry,
+        settlement,
+        cause,
+        at,
+        projects,
+        oops_generation,
+    )
+    .map(|(_, closed)| closed)
 }
 
 fn settle(
@@ -315,6 +325,10 @@ fn settle(
     {
         guard_task_projection(&mut write, snapshot.task_barrier.clone());
     }
+    let oops_generation = match prepare_oops_settlement(&mut write, &snapshot, entry) {
+        Ok(generation) => generation,
+        Err(outcome) => return outcome,
+    };
     let (post, closed) = match stage_with_controlled(
         &mut write,
         &snapshot,
@@ -323,6 +337,7 @@ fn settle(
         FactCause::Root,
         at,
         projects,
+        oops_generation,
     ) {
         Ok(staged) => staged,
         Err(outcome) => return outcome,
@@ -351,13 +366,22 @@ fn stage_with_controlled(
     cause: FactCause,
     at: Instant,
     projects: &ProjectPolicy,
+    oops_generation: Option<wire::OopsGenerationHead>,
 ) -> Result<(Entry, Vec<TaskHandle>), Outcome<CommandAnswer>> {
     let controlled = settlement
         .negative()
         .then(|| board::controlled_pending(&snapshot.entries, entry.born()))
         .unwrap_or_default();
     require_controlled_unheld(&controlled, settlement)?;
-    let (post, settled) = stage(write, entry, settlement, cause, at, projects)?;
+    let (post, settled) = stage(
+        write,
+        entry,
+        settlement,
+        cause,
+        at,
+        projects,
+        oops_generation,
+    )?;
     if controlled.is_empty() {
         return Ok((post, Vec::new()));
     }
@@ -376,6 +400,7 @@ fn stage_with_controlled(
             FactCause::Pending(settled),
             at,
             projects,
+            None,
         )?;
         closed.push(controlled.handle().clone());
     }
@@ -391,6 +416,7 @@ fn stage(
     cause: FactCause,
     at: Instant,
     projects: &ProjectPolicy,
+    oops_generation: Option<wire::OopsGenerationHead>,
 ) -> Result<(Entry, PendingFact), Outcome<CommandAnswer>> {
     let claimed = entry
         .claim()
@@ -400,6 +426,24 @@ fn stage(
     let settled = settlement.fact(write, entry, claimed.clone(), cause)?;
     let workflow = post.workflow().clone();
     write.workflow_head(entry.born().clone(), settled, move |_| workflow);
+    if let Some(generation) = oops_generation {
+        let revision = generation.revision.checked_add(1).ok_or_else(|| {
+            store_fault(
+                "task::oops-generation-exhausted",
+                "the OOPS generation revision cannot advance",
+            )
+        })?;
+        write
+            .fact(
+                body::OopsGenerationAdvanced {
+                    revision,
+                    from: generation.design,
+                    to: None,
+                },
+                FactCause::Pending(settled),
+            )
+            .map_err(|error| store_fault("task::oops-generation-build", &error.to_string()))?;
+    }
     if claimed.is_some() {
         let claim = post
             .claim()
@@ -411,6 +455,44 @@ fn stage(
         });
     }
     Ok((post, settled))
+}
+
+fn prepare_oops_settlement(
+    write: &mut JournalWrite,
+    snapshot: &ValidatedSnapshot,
+    entry: &Entry,
+) -> Result<Option<wire::OopsGenerationHead>, Outcome<CommandAnswer>> {
+    if entry.statement().intent != Some(wire::TaskIntent::OpportunisticDesign) {
+        return Ok(None);
+    }
+    let Some(observed) = snapshot.answer.oops_generation.as_ref() else {
+        return Err(protocol_fault(
+            "task::oops-generation-missing",
+            "the current opportunistic Design has no generation authority",
+        ));
+    };
+    if observed.body.design.as_ref() != Some(entry.born()) {
+        return Err(refusal(
+            "task::oops-generation-moved",
+            Some(entry.handle().to_string()),
+            "read the current OOPS generation and retry its settlement",
+        ));
+    }
+    let position = observed.position;
+    let design = observed.body.design.clone();
+    write.guard(JournalGuard::new(move |read| {
+        let current = read.oops_generation()?;
+        if current.as_ref().map(journal::JournalHead::position) == Some(position)
+            && current.and_then(|head| head.into_body().design) == design
+        {
+            Ok(())
+        } else {
+            Err(GuardError::refused(
+                "task::oops-generation-moved: OOPS generation changed before settlement",
+            ))
+        }
+    }));
+    Ok(Some(observed.body.clone()))
 }
 
 fn require_controlled_unheld(

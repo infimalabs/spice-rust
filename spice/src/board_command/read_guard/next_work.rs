@@ -95,6 +95,7 @@ pub(crate) fn read_next_work(
     Ok(BoardAnswer {
         schema: journal::SCHEMA_VERSION,
         cursor,
+        oops_generation: observed.oops_generation().map(positioned),
         principal: principal.clone(),
         project_policy: BoardProjectPolicy {
             public_min_depth: projects.public_min_depth(),

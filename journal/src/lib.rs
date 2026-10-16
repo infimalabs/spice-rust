@@ -31,7 +31,8 @@
 /// Schema 74 lifts each taste hold's evidence out of its statement's audit
 /// notes into the typed hold. Schema 75 crosses retained OOPS filing rows into
 /// ordinary Plans controlled by one repository-owned opportunistic Design.
-pub const SCHEMA_VERSION: u32 = 75;
+/// Schema 76 gives that Design generation one typed singleton authority.
+pub const SCHEMA_VERSION: u32 = 76;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
@@ -99,11 +100,12 @@ pub mod crossing {
         Actor, AnyFact, CanonicalUuid, ClaimCell, ClaimDisposition, ClaimHead, Command,
         CommandKind, Digest, Envelope, Environment, EnvironmentRequirement,
         EnvironmentRequirements, Fact, FactKind, FindingHead, Instant, JournalCursor,
-        LaneResidency, LaneSession, LeaseHead, OccupantAddress, Origin, Packed, Phase, Producer,
-        ResidencyHead, ResidentState, SeatAddress, Seq, SteeringHead, TapeLocus, TaskFiling,
-        TaskHandle, TaskHead, TaskProvenance, TaskStamp, TranscriptSourceHead, TranscriptStreamKey,
-        TrustHead, TrustState, WireVersion, Witness, WitnessHead, WorkflowCompletionReview,
-        WorkflowConclusion, WorkflowHead, WorkflowNegative, WorkflowReview, WorkflowStatus,
+        LaneResidency, LaneSession, LeaseHead, OccupantAddress, OopsGenerationHead, Origin, Packed,
+        Phase, Producer, ResidencyHead, ResidentState, SeatAddress, Seq, SteeringHead, TapeLocus,
+        TaskFiling, TaskHandle, TaskHead, TaskProvenance, TaskStamp, TranscriptSourceHead,
+        TranscriptStreamKey, TrustHead, TrustState, WireVersion, Witness, WitnessHead,
+        WorkflowCompletionReview, WorkflowConclusion, WorkflowHead, WorkflowNegative,
+        WorkflowReview, WorkflowStatus,
     };
 }
 

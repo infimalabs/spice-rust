@@ -69,6 +69,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (
         CommandKind::TaskOopsAdd,
         r#"{
+  "design": "dWDyW325w",
   "title": "Create one system-owned hidden task",
   "description": "The server fixes this route to .oops"
 }"#,

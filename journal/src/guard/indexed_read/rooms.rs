@@ -73,6 +73,28 @@ impl JournalRead<'_> {
         decode_head(position, &bytes).map(Some)
     }
 
+    /// Current repository OOPS generation, absent before its first transition.
+    pub fn oops_generation(
+        &self,
+    ) -> Result<Option<JournalHead<wire::OopsGenerationHead>>, GuardError> {
+        read_metrics::observe_query();
+        let row = self
+            .connection
+            .query_row(
+                "SELECT head_seq, body FROM oops_generation_head WHERE singleton = 1",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        let Some((position, bytes)) = row else {
+            return Ok(None);
+        };
+        read_metrics::observe_row();
+        read_metrics::observe_decode(bytes.len());
+        decode_head(position, &bytes).map(Some)
+    }
+
     /// The write-once head of one proposal subject, absent before recording.
     pub fn proposal_head(
         &self,

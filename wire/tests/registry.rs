@@ -348,13 +348,17 @@ fn sample_witnesses() -> Vec<Witness> {
             head: seq(2),
             phase: "verify".parse().expect("a phase"),
         },
+        Witness::OopsGeneration {
+            head: Some(seq(3)),
+            design: Some(task.clone()),
+        },
         Witness::Claim {
             task: task.clone(),
-            head: Some(seq(3)),
+            head: Some(seq(4)),
         },
         Witness::Lease {
             task: task.clone(),
-            head: seq(4),
+            head: seq(5),
         },
         Witness::Residency {
             lane,
@@ -369,13 +373,13 @@ fn sample_witnesses() -> Vec<Witness> {
         },
         Witness::Deferral {
             task: task.clone(),
-            head: seq(5),
+            head: seq(6),
             deferred: true,
         },
         Witness::Eligibility { rule: name("next") },
         Witness::Assignment {
             task: task.clone(),
-            head: seq(6),
+            head: seq(7),
             reviewer: "lane:018f82d4-6f59-7d06-92e3-bce9131163c2"
                 .parse()
                 .expect("an actor"),
@@ -413,7 +417,7 @@ fn sample_witnesses() -> Vec<Witness> {
         },
         Witness::Observation {
             key: digest('e'),
-            head: seq(7),
+            head: seq(8),
         },
         Witness::Sealed {
             proof: digest('f'),

@@ -316,6 +316,8 @@ vocabulary! {
     TaskClosed = "task::closed" by CommandDoor;
     /// The operator concluded an open Design done or collapsed.
     TaskConcluded = "task::concluded" by CommandDoor;
+    /// The repository OOPS generation moved between vacancy and one Design.
+    OopsGenerationAdvanced = "oops::generation" by CommandDoor;
     /// An existing task entered exactly one preparation controller's gating.
     OutputControlled = "task::controlled" by CommandDoor;
 

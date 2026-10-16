@@ -352,77 +352,99 @@ pub(super) fn submit_oops_add(
     origin: Option<wire::Origin>,
     project: Option<String>,
 ) -> Outcome<CommandAnswer> {
-    mutate_from_board(
-        repository,
-        contract,
-        BoardRead::All { family: None },
-        |board| {
-            let mut current = board.tasks.iter().filter(|task| {
-                task.statement.body.intent == Some(wire::TaskIntent::OpportunisticDesign)
-                    && task
-                        .design_standing()
-                        .is_some_and(|standing| standing.is_open())
-            });
-            let design = current.next();
-            if current.next().is_some() {
-                return Err(protocol_fault(
-                    "task::oops-design-ambiguous",
-                    "the board contains more than one current opportunistic OOPS Design",
-                ));
-            }
-            let now = jiff::Timestamp::now().as_microsecond();
-            let (design, mut expected) = match design {
-                Some(design) => {
-                    let report = allocate_task_stamp(&board, now)?;
-                    (
-                        design.statement.body.born.clone(),
-                        vec![
-                            Witness::Absence { task: report },
-                            Witness::Task {
-                                task: design.statement.body.born.clone(),
-                                head: design.statement.position,
-                            },
-                            Witness::Workflow {
-                                task: design.statement.body.born.clone(),
-                                head: design.workflow.position,
-                                phase: design.workflow.body.phase.clone(),
-                            },
-                        ],
-                    )
-                }
-                None => {
-                    let mut stamps = allocate_task_stamps(&board, now, 2)?;
-                    let design = stamps.remove(0);
-                    let report = stamps.remove(0);
-                    (
-                        design.clone(),
-                        vec![
-                            Witness::Absence { task: report },
-                            Witness::Absence {
-                                task: design.clone(),
-                            },
-                        ],
-                    )
-                }
-            };
-            expected.push(Witness::Barrier {
-                name: "board".parse().expect("board is a wire name"),
-                digest: board_barrier(&board),
-            });
-            Ok((
-                CommandKind::TaskOopsAdd,
-                expected,
-                serde_json::to_value(TaskOopsAdd {
-                    design,
-                    title: title.clone(),
-                    description: description.clone(),
-                    origin: origin.clone(),
-                    project: project.clone(),
-                })
-                .expect("typed intent encodes"),
-            ))
-        },
-    )
+    for attempt in 0..2 {
+        let outcome = mutate_from_board(
+            repository,
+            contract,
+            BoardRead::All { family: None },
+            |board| {
+                let generation = board.oops_generation.as_ref();
+                let current = generation.and_then(|head| head.body.design.as_ref());
+                let now = jiff::Timestamp::now().as_microsecond();
+                let (design, mut expected) = match current {
+                    Some(design) => {
+                        let design = board
+                            .tasks
+                            .iter()
+                            .find(|task| task.statement.body.born == *design)
+                            .ok_or_else(|| {
+                                protocol_fault(
+                                    "task::oops-generation-task-missing",
+                                    "the OOPS generation names a task absent from the board",
+                                )
+                            })?;
+                        if design.statement.body.intent
+                            != Some(wire::TaskIntent::OpportunisticDesign)
+                            || !design
+                                .design_standing()
+                                .is_some_and(|standing| standing.is_open())
+                        {
+                            return Err(protocol_fault(
+                                "task::oops-generation-invalid",
+                                "the OOPS generation does not name one open opportunistic Design",
+                            ));
+                        }
+                        let report = allocate_task_stamp(&board, now)?;
+                        (
+                            design.statement.body.born.clone(),
+                            vec![
+                                Witness::Absence { task: report },
+                                Witness::Task {
+                                    task: design.statement.body.born.clone(),
+                                    head: design.statement.position,
+                                },
+                                Witness::Workflow {
+                                    task: design.statement.body.born.clone(),
+                                    head: design.workflow.position,
+                                    phase: design.workflow.body.phase.clone(),
+                                },
+                            ],
+                        )
+                    }
+                    None => {
+                        let mut stamps = allocate_task_stamps(&board, now, 2)?;
+                        let design = stamps.remove(0);
+                        let report = stamps.remove(0);
+                        (
+                            design.clone(),
+                            vec![
+                                Witness::Absence { task: report },
+                                Witness::Absence {
+                                    task: design.clone(),
+                                },
+                            ],
+                        )
+                    }
+                };
+                expected.push(Witness::OopsGeneration {
+                    head: generation.map(|head| head.position),
+                    design: current.cloned(),
+                });
+                Ok((
+                    CommandKind::TaskOopsAdd,
+                    expected,
+                    serde_json::to_value(TaskOopsAdd {
+                        design,
+                        title: title.clone(),
+                        description: description.clone(),
+                        origin: origin.clone(),
+                        project: project.clone(),
+                    })
+                    .expect("typed intent encodes"),
+                ))
+            },
+        );
+        if attempt == 0
+            && matches!(
+                &outcome,
+                Outcome::Refusal(refusal) if refusal.reason() == "board::witness-moved"
+            )
+        {
+            continue;
+        }
+        return outcome;
+    }
+    unreachable!("OOPS generation retry loop always returns")
 }
 
 pub(crate) fn submit_task_add(

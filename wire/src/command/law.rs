@@ -176,11 +176,11 @@ impl Law {
         ],
         authority: Authority::Connected,
     };
-    /// Opportunistic OOPS intake names an absent report and either an absent
-    /// generation or the exact current generation, under the board projection
-    /// barrier that prevents duplicate first generations.
+    /// Opportunistic OOPS intake names an absent report and the exact
+    /// repository generation; a current generation additionally carries its
+    /// exact task and workflow heads.
     pub const OOPS_ADD: Self = Self {
-        required: &[WitnessKind::Absence, WitnessKind::Barrier],
+        required: &[WitnessKind::Absence, WitnessKind::OopsGeneration],
         optional: &[WitnessKind::Task, WitnessKind::Workflow],
         authority: Authority::Connected,
     };

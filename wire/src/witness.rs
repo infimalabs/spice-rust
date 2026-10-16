@@ -655,6 +655,25 @@ pub enum Witness {
         /// Revision the change was observed at.
         revision: u64,
     },
+    /// The repository OOPS generation's exact projected head and Design.
+    #[serde(rename = "oops-generation")]
+    OopsGeneration {
+        /// Fact that established the current generation, absent before the
+        /// first generation.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        head: Option<Seq>,
+        /// Sole current open opportunistic Design, absent between generations.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        design: Option<TaskStamp>,
+    },
     /// One proposal-authority subject's current head, or witnessed absence.
     Proposal {
         /// Exact candidate, critique, coverage, or decision subject.
@@ -771,6 +790,9 @@ pub enum WitnessKind {
     Source,
     /// The working-group partition's current revision.
     Group,
+    /// The repository OOPS generation's exact head and current Design.
+    #[serde(rename = "oops-generation")]
+    OopsGeneration,
     /// One candidate, critique, coverage, or decision authority head.
     Proposal,
     /// A selected output's current authorization head.
@@ -813,6 +835,7 @@ impl WitnessKind {
         Self::Sealed,
         Self::Source,
         Self::Group,
+        Self::OopsGeneration,
         Self::Proposal,
         Self::Authorization,
         Self::Delivery,
@@ -849,12 +872,22 @@ impl Witness {
             Self::Observation { .. } => WitnessKind::Observation,
             Self::Sealed { .. } => WitnessKind::Sealed,
             Self::Source { .. } => WitnessKind::Source,
-            Self::Group { .. } => WitnessKind::Group,
+            singleton @ (Self::Group { .. } | Self::OopsGeneration { .. }) => {
+                singleton.singleton_kind()
+            }
             Self::Proposal { .. } => WitnessKind::Proposal,
             Self::Authorization { .. } => WitnessKind::Authorization,
             Self::Delivery { .. } => WitnessKind::Delivery,
             Self::Question { .. } => WitnessKind::Question,
             Self::Transition { .. } => WitnessKind::Transition,
+        }
+    }
+
+    const fn singleton_kind(&self) -> WitnessKind {
+        match self {
+            Self::Group { .. } => WitnessKind::Group,
+            Self::OopsGeneration { .. } => WitnessKind::OopsGeneration,
+            _ => panic!("only singleton witnesses reach this helper"),
         }
     }
 }

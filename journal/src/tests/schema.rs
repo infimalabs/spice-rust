@@ -124,11 +124,16 @@ fn restore_predecessor(journal: &Journal, predecessor: u32) {
     } else {
         ""
     };
+    let oops_generation = if predecessor < crate::migrate::OOPS_GENERATION_SCHEMA {
+        "DROP TABLE IF EXISTS oops_generation_head;"
+    } else {
+        ""
+    };
     journal
         .connection
         .execute_batch(&format!(
             "{rooms} {groups} {cursors} {coordination} {horizons} {conversations} {evidence} \
-             {relevance} {principals}
+             {relevance} {principals} {oops_generation}
              UPDATE journal_schema SET version = {predecessor} WHERE singleton = 1;
              PRAGMA user_version = {predecessor};",
         ))
