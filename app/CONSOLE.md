@@ -122,7 +122,9 @@ none:
   room and wakes no lane.
 
 Each design heading resolves, as a member heading does, from the room's newest
-publication whose authored words this browser holds. It shows that line, aged
+publication whose authored words this browser holds, a lane's typed
+contribution included; a departure or coordination says nothing and never
+displaces it. It shows that line, aged
 and linked to its card. Until one is held it shows the Design's title, or, for a
 design the board does not carry, its handle with that availability.
 

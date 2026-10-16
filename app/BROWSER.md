@@ -144,7 +144,8 @@ team's compaction card and in its compact shape: two rules in the design's
 accent around the leave's linked age, the leaving lane, the design it left, and
 its clause, which alone yields width; the label's title keeps the whole
 sentence. As on a team toolbar, the status band shows the newest thing said in
-any of the group's designs and no group name.
+any of the group's designs, a contribution named by its lane and kind, and no
+group name; a departure or coordination never displaces it.
 
 As on a team's rail, the group's total leads its tab rail and opens the group's
 work overview. After it, toward the end, the rail lists each lane that holds an

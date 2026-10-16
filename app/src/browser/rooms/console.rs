@@ -643,7 +643,7 @@ fn render_settled_design(
 fn render_design_heading(render: &GroupRender<'_, '_>, channel: &Channel) -> Html {
     let newest = newest_words(render.runtime, &channel.stamp);
     let age = match &newest {
-        Some((publication, _)) => {
+        Some((publication, _, _)) => {
             let source_id = format!("{ROOM_CARD_PREFIX}{publication}");
             html! {
                 <a
@@ -664,7 +664,7 @@ fn render_design_heading(render: &GroupRender<'_, '_>, channel: &Channel) -> Htm
     };
     let prose = newest.map_or_else(
         || design_title(render.runtime, &channel.stamp).unwrap_or_else(|| channel.label.clone()),
-        |(_, prose)| prose,
+        |(_, _, prose)| prose,
     );
     html! {
         <header class="app-glass-control-surface composer-shard-heading">
@@ -687,8 +687,12 @@ fn design_title(runtime: &AppRuntime, design: &TaskStamp) -> Option<String> {
 }
 
 /// The newest room event, in journal order, whose words this browser holds,
-/// as its publication and first authored line.
-fn newest_words(runtime: &AppRuntime, design: &TaskStamp) -> Option<(RoomAuthorityStamp, String)> {
+/// with its publication and first authored line. A lane's contribution speaks
+/// as a post or message does; a departure or coordination carries no words.
+fn newest_words<'a>(
+    runtime: &'a AppRuntime,
+    design: &TaskStamp,
+) -> Option<(&'a RoomAuthorityStamp, &'a RoomEvent, String)> {
     let mut events = runtime
         .room_projection()
         .room(design)?
@@ -697,9 +701,14 @@ fn newest_words(runtime: &AppRuntime, design: &TaskStamp) -> Option<(RoomAuthori
         .collect::<Vec<_>>();
     events.sort_by_key(|(_, event)| Reverse(event.position));
     events.into_iter().find_map(|(publication, event)| {
-        let text = super::conversation::spoken(runtime, publication, event)?.text?;
-        let line = watchband::first_nonquoted_prose(&text)?;
-        Some((publication.clone(), line))
+        let line = match &event.kind {
+            RoomEventKind::Contributed { text, .. } => watchband::first_nonquoted_prose(text)?,
+            _ => {
+                let text = super::conversation::spoken(runtime, publication, event)?.text?;
+                watchband::first_nonquoted_prose(&text)?
+            }
+        };
+        Some((publication, event, line))
     })
 }
 
