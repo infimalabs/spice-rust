@@ -94,3 +94,143 @@ async fn etags_revalidate_without_retransmitting_the_asset() {
     task.abort();
     assert!(task.await.expect_err("aborted server task").is_cancelled());
 }
+
+fn embedded_generation() -> wire::Digest {
+    wire::Digest::compute(wire::Domain::DistArtifact, b"embedded generation")
+}
+
+/// A complete generation archived the way staging writes it, held for the
+/// `'static` lifetime an executable's linked archive has.
+static EMBEDDED_ARCHIVE: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| {
+    use wire::manifest::renderer::{self, File, Kind, Member};
+    let renderer_document = b"<script type=\"importmap\">{}</script>".to_vec();
+    let declaration = renderer::encode(&[Member {
+        digest: wire::Digest::compute(wire::Domain::InstallArtifact, &renderer_document),
+        file: File::new(Kind::Document, 0).expect("index is in bounds"),
+    }])
+    .expect("declaration encodes");
+    let generation = embedded_generation();
+    let mut files = APP
+        .assets()
+        .iter()
+        .map(|asset| {
+            let bytes = if asset.path() == "/" {
+                format!(
+                    "<main id=\"app\" data-app-generation=\"{generation}\" {}=\"{declaration}\"></main>{INLINE_THEME_OPEN}theme();{INLINE_MODULE_CLOSE}{INLINE_MODULE_OPEN}start();{INLINE_MODULE_CLOSE}",
+                    renderer::ATTRIBUTE
+                )
+            } else {
+                format!("embedded {}", asset.file()).repeat(64)
+            };
+            (asset.file().to_owned(), bytes.into_bytes())
+        })
+        .collect::<Vec<_>>();
+    files.push(("renderer-000.html".to_owned(), renderer_document));
+    crate::canvas::CanvasArchive::write(
+        files
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
+    )
+    .expect("fixture archive writes")
+});
+
+#[tokio::test(flavor = "current_thread")]
+async fn embedded_archive_serves_its_stored_gzip_slices_and_refuses_what_it_cannot() {
+    let held = embedded_generation();
+    let archive: &'static [u8] = &EMBEDDED_ARCHIVE;
+    let stored = crate::canvas::CanvasArchive::admit(archive).expect("fixture archive admits");
+    let app = CanvasAssets::EmbeddedArchive(
+        crate::canvas::EmbeddedArchive::admit(archive).expect("fixture archive indexes"),
+    );
+    let (server, _control) = Server::bind(Generation::new(
+        epoch(),
+        Capabilities::default(),
+        app_version(&app),
+        app,
+    ))
+    .await
+    .expect("binds");
+    let address = server.local_addr().expect("local address");
+    let host = address.to_string();
+    let task = tokio::spawn(server.up());
+
+    let wasm = format!("{}/{held}/app_bg.wasm", crate::APP_GENERATION_ROUTE);
+    for (route, member, accept) in [
+        ("/", wire::manifest::APP_HTML, Some("br, gzip;q=0.5")),
+        (wasm.as_str(), "app_bg.wasm", None),
+    ] {
+        let headers = accept.map(|accept| ("Accept-Encoding", accept));
+        let response = request_with_headers(address, &host, route, headers.as_slice()).await;
+        assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"), "{route}");
+        let gzip = stored.member(member).expect("member is archived").gzip();
+        assert_eq!(
+            response_body(&response),
+            gzip,
+            "{route} is the stored slice"
+        );
+        assert_eq!(
+            response_header(&response, "content-length"),
+            Some(gzip.len().to_string().as_str())
+        );
+        assert_eq!(response_header(&response, "content-encoding"), Some("gzip"));
+        assert_eq!(response_header(&response, "vary"), Some("accept-encoding"));
+        assert_eq!(
+            response_header(&response, "etag"),
+            Some(format!("\"{held}/{member}\"").as_str())
+        );
+    }
+    let shell = request(address, &host, "/").await;
+    assert!(response_header(&shell, "content-security-policy").is_some());
+
+    for refused in ["identity", "gzip;q=0, *", "br"] {
+        let response =
+            request_with_headers(address, &host, &wasm, &[("Accept-Encoding", refused)]).await;
+        assert!(
+            response.starts_with(b"HTTP/1.1 406 Not Acceptable\r\n"),
+            "{refused}"
+        );
+    }
+
+    let retired = wire::Digest::compute(wire::Domain::DistArtifact, b"retired generation");
+    let gone = request(
+        address,
+        &host,
+        &format!("{}/{retired}/app.module", crate::APP_GENERATION_ROUTE),
+    )
+    .await;
+    assert!(gone.starts_with(b"HTTP/1.1 410 Gone\r\n"));
+    assert_eq!(
+        response_header(&gone, wire::hello::APP_GENERATION_HEADER),
+        Some(held.as_str())
+    );
+    assert_eq!(response_header(&gone, "cache-control"), Some("no-store"));
+
+    task.abort();
+    assert!(task.await.expect_err("aborted server task").is_cancelled());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn development_directory_answers_gone_for_a_generation_it_no_longer_holds() {
+    let app = TestApp::new();
+    let (server, _control) = Server::bind(generation(&app, Capabilities::default()))
+        .await
+        .expect("binds");
+    let address = server.local_addr().expect("local address");
+    let task = tokio::spawn(server.up());
+
+    let retired = wire::Digest::compute(wire::Domain::DistArtifact, b"pruned generation");
+    let gone = request(
+        address,
+        &address.to_string(),
+        &format!("{}/{retired}/app_bg.wasm", crate::APP_GENERATION_ROUTE),
+    )
+    .await;
+    assert!(gone.starts_with(b"HTTP/1.1 410 Gone\r\n"));
+    assert_eq!(
+        response_header(&gone, wire::hello::APP_GENERATION_HEADER),
+        Some(FIXTURE_GENERATION)
+    );
+
+    task.abort();
+    assert!(task.await.expect_err("aborted server task").is_cancelled());
+}

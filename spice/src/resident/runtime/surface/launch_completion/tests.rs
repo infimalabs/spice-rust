@@ -190,18 +190,16 @@ async fn command_server(
         format!("{app_identity}\n"),
     )
     .expect("fixture app pointer writes");
-    let app = serve::AppSource::resolve(&fixture.root).expect("fixture app resolves");
+    let app = serve::canvas::CanvasAssets::DevelopmentDirectory(
+        serve::AppSource::resolve(&fixture.root).expect("fixture app resolves"),
+    );
     let version = wire::Version {
         product: "1.2.3".parse().expect("fixture product version"),
         binary: wire::Digest::compute(wire::Domain::DistArtifact, b"fixture native"),
         wire: wire::WireVersion::CURRENT,
         journal: journal::SCHEMA_VERSION,
         app_protocol: wire::AppProtocolVersion::CURRENT,
-        app: app
-            .current_generation()
-            .expect("fixture app reads")
-            .identity()
-            .clone(),
+        app: app.generation().expect("fixture app reads"),
     };
     let roles = bus
         .read(|read| read.principal_roles())

@@ -20,7 +20,7 @@ pub(super) async fn bootstrap(
         }
         .into_response();
     };
-    let app_generation = match state.app.current_generation() {
+    let app_generation = match state.app.generation() {
         Ok(generation) => generation,
         Err(error) => {
             return (
@@ -34,7 +34,7 @@ pub(super) async fn bootstrap(
     // the published endpoint is not when a remote browser is on the other end
     // of a wildcard bind. It reached this surface somehow; that is the address.
     let mut version = state.version.clone();
-    version.app = app_generation.identity().clone();
+    version.app = app_generation.clone();
     let discovery = wire::AppBootstrap {
         endpoint: format!("http://{host}"),
         capability,
@@ -59,7 +59,7 @@ pub(super) async fn bootstrap(
     );
     response.headers_mut().insert(
         wire::hello::APP_GENERATION_HEADER,
-        HeaderValue::from_str(app_generation.identity().as_str())
+        HeaderValue::from_str(app_generation.as_str())
             .expect("the canonical app generation is a valid header value"),
     );
     install_browser_headers(&mut response);

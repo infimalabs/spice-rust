@@ -8,7 +8,7 @@ use gloo_timers::callback::Timeout;
 use yew::{AttrValue, Callback};
 
 use super::Theme;
-use super::frame::Frame;
+use super::frame::{Frame, document_route};
 
 const SOURCE_UNITS: usize = 50_000;
 const QUEUE_JOBS: usize = 16;
@@ -255,6 +255,7 @@ impl Service {
                 Ok(frame) => {
                     service.frame = Some(frame);
                     service.arm_deadline(shared);
+                    service.probe_retired();
                 }
                 Err(_) => {
                     drop(service);
@@ -313,6 +314,9 @@ impl Service {
             return;
         }
         service.deadline = None;
+        if outcome.is_err() {
+            service.probe_retired();
+        }
         let job = service.active.take().expect("matched active render");
         if Self::has_subscribers(&job)
             && let Ok(render) = &outcome
@@ -340,6 +344,7 @@ impl Service {
 
     pub(super) fn close(shared: &Shared, reason: &'static str) {
         let mut service = shared.borrow_mut();
+        service.probe_retired();
         service.dispatch = None;
         service.deadline = None;
         service.frame = None;
@@ -354,5 +359,13 @@ impl Service {
                 subscriber.deliver(Err(error.clone()));
             }
         }
+    }
+
+    /// A renderer that cannot load may belong to a generation the resident no
+    /// longer serves; that answer reloads the tab into the served one.
+    fn probe_retired(&self) {
+        wasm_bindgen_futures::spawn_local(super::super::connection::reload_if_retired(
+            document_route(&self.generation),
+        ));
     }
 }

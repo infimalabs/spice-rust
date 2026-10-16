@@ -246,10 +246,7 @@ fn admission_refuses_header_disagreement_and_noncanonical_members() {
 
     let mut corrupt = bytes;
     corrupt[data.start + GZIP_BODY] ^= 0xff;
-    assert!(matches!(
-        CanvasArchive::admit(&corrupt),
-        Err(CanvasArchiveError::Shell(_))
-    ));
+    assert_eq!(refused_member(CanvasArchive::admit(&corrupt)), "app.html");
 }
 
 #[test]
