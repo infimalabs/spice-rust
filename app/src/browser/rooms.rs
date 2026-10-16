@@ -32,7 +32,7 @@ mod coordination;
 mod reading;
 mod standing;
 pub(super) use console::{GroupRender, group_base, render_group_surfaces};
-pub(super) use reading::render_design_room;
+pub(super) use reading::render_task_room;
 
 const STORAGE: &str = "spice:room-views:v2";
 

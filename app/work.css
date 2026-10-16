@@ -157,7 +157,6 @@
 .work-relationship-link small { max-width: 100%; overflow-wrap: anywhere; }
 .work-relationship-link small { color: var(--muted); }
 
-.work-note-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 0; padding: 0; list-style: none; }
 .work-note-card {
   padding: 10px 11px;
   border: var(--app-edge-soft);

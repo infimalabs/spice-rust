@@ -13,7 +13,7 @@ pub(super) use settlement::{stage_conclusion, task_close, task_conclude, task_de
 pub(super) use claim::Possession;
 #[cfg(test)]
 pub(super) use claim::{ClaimPlan, claim_git_boundary, claim_grant, claim_plan, commit_claim};
-use claim::{PreparedClaim, prepare_capture_claim};
+use claim::{PreparedClaim, claim_room, prepare_capture_claim};
 pub(super) use claim::{claim_win, task_parked_commits};
 pub(super) use edit::task_edit;
 pub(super) use taste_proposal::taste_proposal_add;
@@ -56,9 +56,11 @@ fn prepare_mutation_claim(
     if !requested {
         return Ok(None);
     }
+    let room_context = claim_room(bus, repository, selected)?;
     let prepared = prepare_capture_claim(bus, command, repository, snapshot, selected)?;
     let origin_context = task_steering_origin_output(bus, &snapshot.facts, selected)?;
-    let answer = Box::new(prepared.answer(command, snapshot, selected, origin_context));
+    let answer =
+        Box::new(prepared.answer(command, snapshot, selected, origin_context, room_context));
     Ok(Some(AtomicClaim { prepared, answer }))
 }
 
@@ -478,9 +480,10 @@ where
     } else {
         None
     };
+    // A task born in this transaction has published nothing in its room.
     let claim_answer = added_claim
         .as_ref()
-        .map(|claim| Box::new(claim.answer(command, snapshot, &post, origin_context)));
+        .map(|claim| Box::new(claim.answer(command, snapshot, &post, origin_context, None)));
     let next = claim_answer
         .as_ref()
         .and_then(|claim| claim.next.clone())

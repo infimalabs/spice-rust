@@ -269,12 +269,6 @@ pub(crate) enum ClientAction {
         /// Optional result reporter for an explicit menu lifecycle action.
         respond: Option<ArrangementResponse>,
     },
-    Note {
-        id: CanonicalUuid,
-        task: TaskHandle,
-        note: String,
-        after: Option<wire::Seq>,
-    },
     /// Close one task as completed with the composed text as its validation.
     ///
     /// The witnesses are the heads of the detail the operator closed from, so

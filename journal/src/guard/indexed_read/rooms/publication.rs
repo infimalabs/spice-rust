@@ -63,7 +63,19 @@ impl JournalRead<'_> {
         after: Option<wire::Seq>,
         budget: FactReadBudget,
     ) -> Result<SelectedFactPage, GuardError> {
-        self.publication_page(room, after, budget, None)
+        self.publication_page(room, Walk::After(after), budget, None)
+    }
+
+    /// One bounded page of a room's publications strictly before `before`,
+    /// or from the current horizon when `before` is absent, newest first. A
+    /// page's continuation is its oldest row, the next page's `before`.
+    pub fn room_publications_newest(
+        &self,
+        room: &wire::TaskStamp,
+        before: Option<wire::Seq>,
+        budget: FactReadBudget,
+    ) -> Result<SelectedFactPage, GuardError> {
+        self.publication_page(room, Walk::Before(before), budget, None)
     }
 
     /// One bounded page of a room's typed contributions strictly after
@@ -74,7 +86,12 @@ impl JournalRead<'_> {
         after: Option<wire::Seq>,
         budget: FactReadBudget,
     ) -> Result<SelectedFactPage, GuardError> {
-        self.publication_page(room, after, budget, Some(wire::FactKind::RoomContributed))
+        self.publication_page(
+            room,
+            Walk::After(after),
+            budget,
+            Some(wire::FactKind::RoomContributed),
+        )
     }
     /// Current bounded maturity evidence for one Design.
     pub fn design_maturity(
@@ -178,11 +195,12 @@ impl JournalRead<'_> {
         })
     }
 
-    /// [`Self::room_publications`] restricted to facts of kind `only`.
+    /// [`Self::room_publications`] or [`Self::room_publications_newest`],
+    /// restricted to facts of kind `only`.
     fn publication_page(
         &self,
         room: &wire::TaskStamp,
-        after: Option<wire::Seq>,
+        walk: Walk,
         budget: FactReadBudget,
         only: Option<wire::FactKind>,
     ) -> Result<SelectedFactPage, GuardError> {
@@ -193,30 +211,39 @@ impl JournalRead<'_> {
                 horizon: None,
             });
         };
-        let after = after.map_or(Ok(0), |seq| i64::try_from(seq.get()));
-        let horizon_sql = i64::try_from(horizon.get());
-        let (Ok(after), Ok(horizon_sql)) = (after, horizon_sql) else {
-            return Err(GuardError::Invalid(
-                "room publication cursor exceeds SQLite".to_owned(),
-            ));
-        };
-        read_metrics::observe_query();
-        let mut statement = self
-            .connection
-            .prepare(
+        let (bound, sql) = match walk {
+            Walk::After(after) => (
+                after.map_or(Ok(0), |seq| i64::try_from(seq.get())),
                 "SELECT facts.seq, facts.kind, length(facts.envelope), facts.envelope \
                  FROM room_publications AS published \
                  JOIN fact_envelopes AS facts ON facts.seq = published.seq \
                  WHERE published.room = ?1 AND published.seq > ?2 AND published.seq <= ?3 \
                  AND (?5 IS NULL OR facts.kind = ?5) \
                  ORDER BY published.seq LIMIT ?4",
-            )
-            .map_err(GuardError::Store)?;
+            ),
+            Walk::Before(before) => (
+                i64::try_from(before.map_or(horizon.get().saturating_add(1), wire::Seq::get)),
+                "SELECT facts.seq, facts.kind, length(facts.envelope), facts.envelope \
+                 FROM room_publications AS published \
+                 JOIN fact_envelopes AS facts ON facts.seq = published.seq \
+                 WHERE published.room = ?1 AND published.seq < ?2 AND published.seq <= ?3 \
+                 AND (?5 IS NULL OR facts.kind = ?5) \
+                 ORDER BY published.seq DESC LIMIT ?4",
+            ),
+        };
+        let horizon_sql = i64::try_from(horizon.get());
+        let (Ok(bound), Ok(horizon_sql)) = (bound, horizon_sql) else {
+            return Err(GuardError::Invalid(
+                "room publication cursor exceeds SQLite".to_owned(),
+            ));
+        };
+        read_metrics::observe_query();
+        let mut statement = self.connection.prepare(sql).map_err(GuardError::Store)?;
         let probe = probe_limit(budget)?;
         let mut rows = statement
             .query(params![
                 room.as_str(),
-                after,
+                bound,
                 horizon_sql,
                 probe,
                 only.map(wire::FactKind::as_str)
@@ -517,4 +544,13 @@ impl JournalRead<'_> {
             })
             .transpose()
     }
+}
+
+/// Which way one publication page walks a room from its cursor.
+#[derive(Clone, Copy)]
+enum Walk {
+    /// Journal order, strictly after the cursor.
+    After(Option<wire::Seq>),
+    /// Newest first, strictly before the cursor or from the horizon.
+    Before(Option<wire::Seq>),
 }

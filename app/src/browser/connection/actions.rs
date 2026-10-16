@@ -58,7 +58,6 @@ pub(super) async fn dispatch_client_action(
         if matches!(
             lease.action(),
             ClientAction::GlobalSettings(_)
-                | ClientAction::Note { .. }
                 | ClientAction::Close { .. }
                 | ClientAction::Delete { .. }
                 | ClientAction::Steer { .. }

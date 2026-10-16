@@ -472,8 +472,7 @@ async fn dispatch_action(
         ClientAction::ConsentRuling { .. } => {
             unreachable!("consent rulings reserve runtime state before dispatch")
         }
-        action @ (ClientAction::Note { .. }
-        | ClientAction::Close { .. }
+        action @ (ClientAction::Close { .. }
         | ClientAction::Delete { .. }
         | ClientAction::Steer { .. }) => {
             dispatch_authored_action(principal, writer, actions, action)
@@ -554,12 +553,6 @@ async fn dispatch_authored_action(
     action: &ClientAction,
 ) -> Result<CanonicalUuid, String> {
     match action {
-        ClientAction::Note {
-            id,
-            task,
-            note,
-            after,
-        } => send_task_note(principal, writer, actions, *id, task, note, *after).await,
         ClientAction::Close {
             id,
             task,
@@ -749,43 +742,6 @@ async fn drain_submissions(
         submissions.publish();
     }
     Ok(())
-}
-
-async fn send_task_note(
-    principal: &Principal,
-    writer: &mut SocketWriter,
-    actions: &ActionQueue,
-    id: CanonicalUuid,
-    task: &TaskHandle,
-    note: &str,
-    after: Option<wire::Seq>,
-) -> Result<CanonicalUuid, String> {
-    let born = task
-        .born()
-        .map_err(|error| format!("task handle {task} has no canonical birth stamp: {error}"))?;
-    let body = BorrowedTaskNote { task, note };
-    let expected = vec![Witness::Existence { task: born.clone() }];
-    send_typed_as(
-        principal,
-        writer,
-        actions,
-        id,
-        PendingKind::Note {
-            task: born,
-            text: note.to_owned(),
-            after,
-        },
-        CommandKind::TaskNote,
-        expected,
-        body,
-    )
-    .await
-}
-
-#[derive(Serialize)]
-struct BorrowedTaskNote<'a> {
-    task: &'a TaskHandle,
-    note: &'a str,
 }
 
 #[derive(Serialize)]

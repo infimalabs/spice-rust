@@ -192,6 +192,7 @@ pub(in crate::board_command) fn claim_free(
         warnings: Box::default(),
         creation_context: None,
         origin_context: None,
+        room_context: None,
         next,
         phase: None,
         transplant: None,

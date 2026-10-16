@@ -246,6 +246,7 @@ fn task_show_separates_current_context_and_bounded_history() {
         &[],
         TaskShowHistory::default(),
         None,
+        None,
         &TaskShowOptions {
             context: false,
             history: false,
@@ -302,6 +303,7 @@ fn task_show_separates_current_context_and_bounded_history() {
             ..TaskShowHistory::default()
         },
         None,
+        None,
         &TaskShowOptions {
             context: false,
             history: true,
@@ -323,6 +325,7 @@ fn task_show_separates_current_context_and_bounded_history() {
         &[],
         TaskShowHistory::default(),
         Some(&oversized),
+        None,
         &TaskShowOptions {
             context: true,
             history: false,
@@ -357,6 +360,7 @@ fn task_show_labels_design_items_as_questions() {
         &design,
         &[],
         TaskShowHistory::default(),
+        None,
         None,
         &TaskShowOptions {
             context: false,
@@ -401,6 +405,7 @@ fn task_show_prints_the_authored_statement_whole() {
             &row,
             &[],
             TaskShowHistory::default(),
+            None,
             None,
             &TaskShowOptions {
                 context,
@@ -447,6 +452,7 @@ fn task_show_context_uses_aggregate_detail_budget_and_exact_continuation() {
         at(&answer, &task),
         &[],
         TaskShowHistory::default(),
+        None,
         None,
         &TaskShowOptions {
             context: true,

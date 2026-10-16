@@ -528,6 +528,15 @@ pub struct ClaimAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub origin_context: Option<Box<str>>,
+    /// The task's room conversation, newest first under the interactive read
+    /// bounds, with the `task show` command that pages the rest; absent when
+    /// the room holds no publication.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub room_context: Option<Box<str>>,
     /// Exact CLI command admitted as the next action, when one is available.
     #[serde(
         default,
