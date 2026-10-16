@@ -763,7 +763,7 @@ fn client_free(
         })?;
         let mut expected = vec![claim_witness(heads)];
         if heads.workflow.body.phase.as_str() == "review"
-            && heads.workflow.body.assignment.as_ref() == Some(&board.principal)
+            && heads.workflow.body.status.reviewer() == Some(&board.principal)
         {
             expected.push(workflow_witness(heads));
         }
@@ -1191,13 +1191,19 @@ pub(super) fn progress_witnesses(
         residency_witness(board, lane, occupant),
     ];
     if require_assignment {
-        let reviewer = heads.workflow.body.assignment.clone().ok_or_else(|| {
-            refusal(
-                "review::assignment-missing",
-                Some(heads.statement.body.handle.to_string()),
-                "win the review phase with task next before recording its verdict",
-            )
-        })?;
+        let reviewer = heads
+            .workflow
+            .body
+            .status
+            .reviewer()
+            .cloned()
+            .ok_or_else(|| {
+                refusal(
+                    "review::assignment-missing",
+                    Some(heads.statement.body.handle.to_string()),
+                    "win the review phase with task next before recording its verdict",
+                )
+            })?;
         expected.push(Witness::Assignment {
             task: heads.statement.body.born.clone(),
             head: heads.workflow.position,
@@ -1209,7 +1215,7 @@ pub(super) fn progress_witnesses(
         heads.statement.body.preparation.as_ref(),
     );
     let construction = task_heads_by_stamp(board, owner)?;
-    if (construction.workflow.body.status == "pending"
+    if (construction.workflow.body.status.is_pending()
         && planning::requires_construction(
             construction.statement.body.intent,
             &construction.workflow.body.flow,

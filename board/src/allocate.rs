@@ -115,8 +115,9 @@ fn assignment_cause(write: &mut JournalWrite, request: &Mint<'_>) -> Result<Fact
         )
         .map_err(MintError::Assignment)?;
     let mut workflow = request.workflow.clone();
-    workflow.assignment = Some(request.actor.clone());
-    workflow.review = "assigned".to_owned();
+    workflow.status = wire::WorkflowStatus::Pending(wire::WorkflowReview::Assigned {
+        reviewer: request.actor.clone(),
+    });
     write.workflow_head(request.task.clone(), assigned, move |_| workflow);
     Ok(FactCause::Pending(assigned))
 }

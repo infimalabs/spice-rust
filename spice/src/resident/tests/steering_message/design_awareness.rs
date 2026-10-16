@@ -157,7 +157,7 @@ impl Lanes {
                     validation,
                     terminal: Some(wire::body::TaskCompletionTerminal {
                         operation,
-                        status: "completed".to_owned(),
+                        status: wire::body::TaskCompletionStatus::Completed,
                         next: None,
                     }),
                     git: None,
@@ -167,8 +167,7 @@ impl Lanes {
             )
             .expect("completion fact is valid");
         completion.workflow_head(task.clone(), done, move |_| wire::WorkflowHead {
-            status: "completed".to_owned(),
-            completion: Some(at),
+            status: wire::WorkflowStatus::completed(at),
             ..workflow
         });
         completion.claim_head(task, done, move |fact| wire::ClaimHead {

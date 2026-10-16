@@ -199,11 +199,8 @@ fn workflow(current: &str) -> WorkflowHead {
     WorkflowHead {
         flow: ["todo", "verify", "review"].map(phase).to_vec(),
         phase: phase(current),
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     }
 }

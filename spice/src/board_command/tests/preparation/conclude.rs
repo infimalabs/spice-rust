@@ -136,7 +136,7 @@ fn the_operator_alone_concludes_an_unheld_open_design() {
         Some(lane.to_string().as_str()),
         "the refusal names the holder who must free it"
     );
-    assert_eq!(workflow(&bus, epoch, &design).status, "pending");
+    assert!(workflow(&bus, epoch, &design).status.is_pending());
 
     // A conclusion witnessed while the Design was held refuses once the holder
     // frees it, rather than concluding over heads it did not read.
@@ -151,7 +151,7 @@ fn the_operator_alone_concludes_an_unheld_open_design() {
         stale,
     );
     assert!(matches!(raced, Outcome::Refusal(_)), "{raced:?}");
-    assert_eq!(workflow(&bus, epoch, &design).status, "pending");
+    assert!(workflow(&bus, epoch, &design).status.is_pending());
 
     assert_committed(conclude(
         &bus,
@@ -161,8 +161,8 @@ fn the_operator_alone_concludes_an_unheld_open_design() {
         done_conclusion(),
     ));
     let concluded = workflow(&bus, epoch, &design);
-    assert_eq!(concluded.status, "completed");
-    assert!(concluded.completion.is_some());
+    assert!(concluded.status.is_completed());
+    assert!(concluded.status.completion().is_some());
     assert!(
         concluded.concluded_positively(),
         "done concludes positively"
@@ -211,7 +211,7 @@ fn conclusion_and_closure_each_refuse_the_other_purpose() {
         },
     );
     assert_eq!(refusal_reason(&closed), "task::close-design");
-    assert_eq!(workflow(&bus, epoch, &design).status, "pending");
+    assert!(workflow(&bus, epoch, &design).status.is_pending());
     clean(&root, bus);
 }
 
@@ -255,21 +255,19 @@ fn collapse_settles_unselected_tree_without_retracting_selected_output() {
         "the answer names every pending task settled with the controller"
     );
     let collapsed = workflow(&bus, epoch, &design);
-    assert_eq!(collapsed.status, "completed");
+    assert!(collapsed.status.is_completed());
     assert!(
         !collapsed.concluded_positively(),
         "collapse concludes negatively"
     );
-    assert_eq!(
-        workflow(&bus, epoch, &output).status,
-        "pending",
+    assert!(
+        workflow(&bus, epoch, &output).status.is_pending(),
         "an authorized output remains live"
     );
     assert!(!open_blocked(&bus, epoch).contains(&output_stamp));
     for closed in [&spare, &descendant] {
-        assert_eq!(
-            workflow(&bus, epoch, closed).status,
-            "completed",
+        assert!(
+            workflow(&bus, epoch, closed).status.is_completed(),
             "every unselected branch member is settled"
         );
     }

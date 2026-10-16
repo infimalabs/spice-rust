@@ -91,7 +91,8 @@ pub mod crossing {
         LaneResidency, LaneSession, LeaseHead, OccupantAddress, Origin, Packed, Phase, Producer,
         ResidencyHead, ResidentState, SeatAddress, Seq, SteeringHead, TapeLocus, TaskFiling,
         TaskHandle, TaskHead, TaskProvenance, TaskStamp, TranscriptSourceHead, TranscriptStreamKey,
-        TrustHead, TrustState, WireVersion, Witness, WitnessHead, WorkflowHead,
+        TrustHead, TrustState, WireVersion, Witness, WitnessHead, WorkflowCompletionReview,
+        WorkflowConclusion, WorkflowHead, WorkflowNegative, WorkflowReview, WorkflowStatus,
     };
 }
 

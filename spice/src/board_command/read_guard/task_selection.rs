@@ -185,7 +185,7 @@ fn context_tasks(
                     .ok()
                     .is_some_and(|index| {
                         let heads = &observed.tasks()[index];
-                        heads.workflow().body().status == "pending"
+                        heads.workflow().body().status.is_pending()
                             && (heads.workflow().body().phase.as_str() == "plan"
                                 || planning::requires_construction(
                                     heads.statement().body().intent,
@@ -316,9 +316,9 @@ fn history_selection(
                 heads
                     .workflow()
                     .body()
-                    .completion
-                    .as_ref()
-                    .is_some_and(|completed| completed <= cutoff)
+                    .status
+                    .completion()
+                    .is_some_and(|completed| completed <= *cutoff)
             })
         })
         .filter(|heads| team.as_ref().is_none_or(|team| team.admits(heads)))
@@ -434,6 +434,5 @@ pub(in crate::board_command) fn history_cursor_order(
 }
 
 fn terminal_task(heads: &journal::TaskHeads) -> bool {
-    let workflow = heads.workflow().body();
-    workflow.status != "pending" || workflow.completion.is_some()
+    !heads.workflow().body().status.is_pending()
 }

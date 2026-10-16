@@ -111,9 +111,9 @@ fn workflow_advances_only_one_declared_station_and_completes_only_the_last() {
         .expect("active claim");
     let complete = Transition::complete(&review, &active, instant("2026-08-01T06:06:00.000Z"))
         .expect("final station completes");
-    assert_eq!(complete.next().status, "completed");
+    assert!(complete.next().status.is_completed());
     assert_eq!(
-        complete.next().completion,
+        complete.next().status.completion(),
         Some(instant("2026-08-01T06:06:00.000Z"))
     );
 }
@@ -192,7 +192,7 @@ fn urgency_band_changes_only_the_winner_inside_one_priority_class() {
     let mut lower_statement = statement("BOARD-a1");
     lower_statement.queue_origin = seq(101);
     let mut assigned_workflow = workflow("todo");
-    assigned_workflow.assignment = Some(Actor::Spice);
+    assigned_workflow.status = wire::WorkflowStatus::assigned(Actor::Spice);
     let lower_handle =
         admitted(lower_statement, assigned_workflow, None, None).expect("newer assigned candidate");
     let higher_handle = entry("BOARD-z1");
@@ -373,7 +373,7 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
         admitted(blocked_head, workflow("todo"), None, None).expect("valid blocked heads");
 
     let mut assigned_workflow = workflow("todo");
-    assigned_workflow.assignment = Some(Actor::Operator);
+    assigned_workflow.status = wire::WorkflowStatus::assigned(Actor::Operator);
     let mut assigned_head = statement("BOARD-y8");
     assigned_head.priority = Some(wire::TaskPriority::Critical);
     let assigned =
@@ -388,8 +388,8 @@ fn allocation_is_deterministic_and_has_one_eligibility_path() {
         admitted(deferred_head, deferred_workflow, None, None).expect("valid deferred heads");
 
     let mut completed_workflow = workflow("todo");
-    completed_workflow.status = "completed".to_owned();
-    completed_workflow.completion = Some(instant("2026-08-01T06:30:00.000Z"));
+    completed_workflow.status =
+        wire::WorkflowStatus::completed(instant("2026-08-01T06:30:00.000Z"));
     let mut completed_head = statement("BOARD-v5");
     completed_head.priority = Some(wire::TaskPriority::Critical);
     let completed =
@@ -478,7 +478,7 @@ fn downstream_weight_precedes_native_urgency_and_handle_order() {
     let mut weighted_head = statement("BOARD-z1");
     weighted_head.queue_origin = seq(10);
     let mut weighted_workflow = workflow("todo");
-    weighted_workflow.assignment = Some(Actor::Spice);
+    weighted_workflow.status = wire::WorkflowStatus::assigned(Actor::Spice);
     let weighted = admitted(weighted_head, weighted_workflow, None, None)
         .expect("assigned weighted candidate");
     let mut direct_head = statement("BOARD-z2");
@@ -557,8 +557,7 @@ fn downstream_weight_ignores_hidden_and_settled_branches() {
     let mut settled_head = statement("BOARD-s1");
     settled_head.dependencies.push(stamp("BOARD-a1"));
     let mut settled_workflow = workflow("review");
-    settled_workflow.status = "completed".to_owned();
-    settled_workflow.completion = Some(instant("2026-08-01T06:06:00.000Z"));
+    settled_workflow.status = wire::WorkflowStatus::completed(instant("2026-08-01T06:06:00.000Z"));
     let settled = admitted(
         settled_head,
         settled_workflow,
@@ -626,7 +625,10 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
                 statement.priority = Some(wire::TaskPriority::Critical);
             }
             let mut workflow = workflow("todo");
-            workflow.assignment = assignment;
+            workflow.status = assignment.map_or_else(
+                wire::WorkflowStatus::pending,
+                wire::WorkflowStatus::assigned,
+            );
             admitted(statement, workflow, None, None)
                 .expect("scoped fixture entry")
                 .with_creator_team(creator)

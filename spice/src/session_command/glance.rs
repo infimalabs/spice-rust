@@ -45,7 +45,7 @@ pub(super) fn board(read: &JournalRead<'_>) -> Result<BoardGlanceView, GuardErro
                 .claim()
                 .is_some_and(|claim| claim.body().disposition == ClaimDisposition::Active);
             if held
-                || workflow.status != "pending"
+                || !workflow.status.is_pending()
                 || statement.project.starts_with('.')
                 || speculative_design_work(
                     read,
@@ -107,7 +107,7 @@ fn resolve_authority_task(
     let statement = heads.statement().body();
     let workflow = heads.workflow().body();
     resolved.know(task.clone(), statement.intent);
-    if workflow.status == "completed" || workflow.status == "deleted" {
+    if !workflow.status.is_pending() {
         resolved.settle(task.clone(), workflow.concluded_positively());
     }
     Ok(())

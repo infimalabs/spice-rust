@@ -419,7 +419,7 @@ fn standing(
     satisfied: &board::ResolvedTasks,
 ) -> Standing {
     let workflow = entry.workflow();
-    if workflow.status != "pending" || workflow.completion.is_some() {
+    if !workflow.status.is_pending() {
         return Standing::Closed;
     }
     match entry.claim().map(|claim| (claim.disposition, &claim.actor)) {

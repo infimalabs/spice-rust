@@ -146,7 +146,7 @@ fn workflow_witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<b
             head,
             reviewer,
         } => read.workflow_head(task)?.is_some_and(|observed| {
-            observed.position() == *head && observed.body().assignment.as_ref() == Some(reviewer)
+            observed.position() == *head && observed.body().status.reviewer() == Some(reviewer)
         }),
         _ => unreachable!("workflow witness partition is closed"),
     })

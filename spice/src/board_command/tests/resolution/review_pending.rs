@@ -428,8 +428,10 @@ fn repeated_finding_reuses_one_completed_correction_without_a_duplicate_edge() {
 
     let pending = board(&review.bus, review.epoch, review.reviewer.clone());
     let reviewed = at(&pending, &review.reviewed);
-    assert_eq!(reviewed.workflow.body.status, "pending");
-    assert_eq!(reviewed.workflow.body.review, "unassigned");
+    assert!(matches!(
+        reviewed.workflow.body.status,
+        wire::WorkflowStatus::Pending(wire::WorkflowReview::Unassigned)
+    ));
     assert_eq!(reviewed.statement.body.dependencies, vec![correction_stamp]);
     assert_eq!(
         review

@@ -77,8 +77,7 @@ impl ParkedCounts {
                     .iter()
                     .filter(|entry| {
                         entry.is_oops()
-                            && entry.workflow().status == "pending"
-                            && entry.workflow().completion.is_none()
+                            && entry.workflow().status.is_pending()
                             && !satisfied
                                 .speculative_design_work(entry.statement(), entry.workflow())
                     })
@@ -91,11 +90,7 @@ impl ParkedCounts {
     pub(in crate::board_command) fn oops(entries: &[Entry]) -> usize {
         entries
             .iter()
-            .filter(|entry| {
-                entry.is_oops()
-                    && entry.workflow().status == "pending"
-                    && entry.workflow().completion.is_none()
-            })
+            .filter(|entry| entry.is_oops() && entry.workflow().status.is_pending())
             .count()
     }
 
@@ -165,9 +160,7 @@ fn actor_pending<'a>(board: &BoardAnswer, entries: &'a [Entry]) -> impl Iterator
         .map(|task| task.statement.body.handle.clone())
         .collect::<std::collections::BTreeSet<_>>();
     entries.iter().filter(move |entry| {
-        routed.contains(entry.handle())
-            && entry.workflow().status == "pending"
-            && entry.workflow().completion.is_none()
+        routed.contains(entry.handle()) && entry.workflow().status.is_pending()
     })
 }
 

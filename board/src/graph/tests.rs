@@ -2,7 +2,7 @@ use super::{View, render, review_history};
 use crate::task::{Entry, ProjectPolicy};
 use wire::{
     Actor, AnyFact, Body, CanonicalUuid, Envelope, Fact, Instant, Phase, Seq, TaskHead, TaskStamp,
-    WireVersion, WorkflowHead, body,
+    WireVersion, WorkflowHead, WorkflowStatus, body,
 };
 
 fn stamp(micros: i64) -> TaskStamp {
@@ -47,13 +47,8 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
     let workflow = WorkflowHead {
         flow: vec![phase("todo"), phase("review")],
         phase: phase("review"),
-        status: "pending".to_owned(),
-        review: assignment
-            .as_ref()
-            .map_or_else(|| "unassigned".to_owned(), |_| "assigned".to_owned()),
-        assignment,
+        status: assignment.map_or_else(WorkflowStatus::pending, WorkflowStatus::assigned),
         deferral: None,
-        completion: None,
         generation: 0,
     };
     let projects = ProjectPolicy::new(Vec::new(), 2, 8).expect("fixture project policy");

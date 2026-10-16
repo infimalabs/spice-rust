@@ -481,7 +481,7 @@ fn append_dependency_candidates(
         }));
     }
     if direction.includes_dependents() {
-        let satisfied = task.row().workflow.body.completion.is_some();
+        let satisfied = !task.row().workflow.body.status.is_pending();
         candidates.extend(task.dependents().iter().map(|dependent| {
             let dependent = &work.tasks()[dependent.task()].row().statement.body.born;
             Candidate {
@@ -696,11 +696,8 @@ mod tests {
                 body: wire::WorkflowHead {
                     flow: vec!["todo".parse().expect("fixture phase")],
                     phase: "todo".parse().expect("fixture phase"),
-                    status: "pending".to_owned(),
-                    review: "unassigned".to_owned(),
-                    assignment: None,
+                    status: wire::WorkflowStatus::pending(),
                     deferral: None,
-                    completion: None,
                     generation: 0,
                 },
             },
@@ -728,7 +725,7 @@ mod tests {
                 task.statement.body.dependencies.iter().any(|dependency| {
                     tasks.iter().any(|other| {
                         other.statement.body.born == *dependency
-                            && other.workflow.body.completion.is_none()
+                            && other.workflow.body.status.is_pending()
                     })
                 })
             })

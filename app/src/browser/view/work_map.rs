@@ -402,7 +402,7 @@ fn task_tone(
         WorkAvailability::Parked => "Parked",
         WorkAvailability::Draft => "Draft",
         WorkAvailability::Terminal => {
-            return Some(settled_tone(task.row().workflow.body.status == "deleted"));
+            return Some(settled_tone(task.row().workflow.body.status.is_deleted()));
         }
     };
     Some(TaskTone {

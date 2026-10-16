@@ -66,9 +66,9 @@ pub(super) fn accepted_transition(
     entry: &Entry,
     environment: &wire::Environment,
 ) -> NextTransition {
-    // This check is deliberately first. A completed workflow retains its final
+    // This check is deliberately first. A settled workflow retains its final
     // phase, but no command may infer another review merely from that phase.
-    if entry.workflow().status == "completed" || entry.workflow().completion.is_some() {
+    if !entry.workflow().status.is_pending() {
         return allocator_continuation(principal, residency, entries, entry, environment)
             .unwrap_or(NextTransition::Settled);
     }
@@ -81,7 +81,7 @@ pub(super) fn accepted_transition(
         let workflow = entry.workflow();
         if workflow.phase.as_str() == "review"
             && workflow.flow.last() == Some(&workflow.phase)
-            && workflow.assignment.as_ref() == Some(principal)
+            && workflow.status.reviewer() == Some(principal)
         {
             return NextTransition::Review;
         }

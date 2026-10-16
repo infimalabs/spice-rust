@@ -277,18 +277,13 @@ fn dry_counts(
             .iter()
             .filter(|entry| {
                 entry.is_oops()
-                    && entry.workflow().status == "pending"
-                    && entry.workflow().completion.is_none()
+                    && entry.workflow().status.is_pending()
                     && !satisfied.speculative_design_work(entry.statement(), entry.workflow())
             })
             .count(),
     };
     let waits = board::work_waits(entries, environment);
-    for entry in visible.filter(|entry| {
-        entry.is_filed()
-            && entry.workflow().status == "pending"
-            && entry.workflow().completion.is_none()
-    }) {
+    for entry in visible.filter(|entry| entry.is_filed() && entry.workflow().status.is_pending()) {
         match waits.get(entry.born()) {
             Some(board::WorkWait::Blocked) => counts.blocked += 1,
             Some(board::WorkWait::Workflow) => counts.workflow_waiting += 1,

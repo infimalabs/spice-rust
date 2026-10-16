@@ -7,10 +7,8 @@ fn an_open_design_waits_while_its_released_work_is_in_progress() {
             .with_grouped(true)
             .with_design_active(true)
     };
-    let settled = |status: &str, review: &str| WorkflowHead {
-        status: status.to_owned(),
-        review: review.to_owned(),
-        completion: Some(instant("2026-08-01T06:00:00.000Z")),
+    let settled = |status| WorkflowHead {
+        status,
         ..workflow("review")
     };
     let deferred = WorkflowHead {
@@ -54,11 +52,21 @@ fn an_open_design_waits_while_its_released_work_is_in_progress() {
     for (reason, entries) in [
         (
             "its output completed",
-            vec![design(), selected(settled("completed", "clean"))],
+            vec![
+                design(),
+                selected(settled(wire::WorkflowStatus::reviewed(instant(
+                    "2026-08-01T06:00:00.000Z",
+                )))),
+            ],
         ),
         (
             "its output was deleted",
-            vec![design(), selected(settled("deleted", "unassigned"))],
+            vec![
+                design(),
+                selected(settled(wire::WorkflowStatus::deleted(instant(
+                    "2026-08-01T06:00:00.000Z",
+                )))),
+            ],
         ),
         (
             "its only output is deferred",

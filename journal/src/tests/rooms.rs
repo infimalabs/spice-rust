@@ -84,17 +84,19 @@ fn authorization_write(
     let fact = write
         .fact(body, FactCause::Root)
         .expect("authorization builds");
-    let review = match conclusion {
-        Conclusion::Completed => workflow.review.clone(),
-        Conclusion::Closed => "closed".to_owned(),
-        Conclusion::Untouched => String::new(),
-    };
     if !matches!(conclusion, Conclusion::Untouched) {
+        let status = match conclusion {
+            Conclusion::Completed
+                if matches!(workflow.status.review(), Some(wire::WorkflowReview::Clean)) =>
+            {
+                wire::WorkflowStatus::reviewed(instant())
+            }
+            Conclusion::Completed => wire::WorkflowStatus::completed(instant()),
+            Conclusion::Closed => wire::WorkflowStatus::closed(instant()),
+            Conclusion::Untouched => unreachable!("untouched workflow is not written"),
+        };
         write.workflow_head(controller, fact, move |_| WorkflowHead {
-            status: "completed".to_owned(),
-            review,
-            completion: Some(instant()),
-            assignment: None,
+            status,
             ..workflow
         });
     }
@@ -209,11 +211,8 @@ fn task_with_intent(
     write.workflow_head(workflow, fact, move |_| WorkflowHead {
         flow,
         phase: current,
-        status: "pending".to_owned(),
-        review: "none".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     journal.apply(write).expect("task commits");

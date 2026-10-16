@@ -556,7 +556,12 @@ fn open_room_duties_still_settle_after_the_anchor_settles() {
         .expect("anchor workflow reads")
         .expect("anchor exists");
     assert!(
-        anchor.body().completion.is_some() && anchor.body().review == "closed",
+        matches!(
+            anchor.body().status.conclusion(),
+            Some(wire::WorkflowConclusion::Negative(
+                wire::WorkflowNegative::Closed
+            ))
+        ),
         "the anchor is settled before its open duties settle"
     );
 

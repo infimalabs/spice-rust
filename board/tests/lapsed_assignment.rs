@@ -97,11 +97,8 @@ fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -
     let workflow = WorkflowHead {
         flow: vec![phase("todo"), phase("review")],
         phase: phase("review"),
-        status: "pending".to_owned(),
-        review: "assigned".to_owned(),
-        assignment: Some(assignee.clone()),
+        status: wire::WorkflowStatus::assigned(assignee.clone()),
         deferral: None,
-        completion: None,
         generation: 0,
     };
     let claim = ClaimHead {

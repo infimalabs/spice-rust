@@ -193,7 +193,7 @@ pub(super) fn bind_preparation(
     require_expected(command, &statement_witness(parent))?;
     require_expected(command, &workflow_witness(parent))?;
     if statement.intent == Some(wire::TaskIntent::Design)
-        || parent.workflow.body.status != "pending"
+        || !parent.workflow.body.status.is_pending()
         || (parent.statement.body.intent.is_none()
             && !constructs_work(parent.workflow.body.phase.as_str())
             && !requires_construction(parent.statement.body.intent, &parent.workflow.body.flow))
@@ -279,8 +279,7 @@ pub(super) fn accepted_pending_child<'a>(
 }
 
 pub(super) fn accepted_construction(task: &BoardTask) -> bool {
-    matches!(task.workflow.body.status.as_str(), "pending" | "completed")
-        && task.workflow.body.review != "closed"
+    (task.workflow.body.status.is_pending() || task.workflow.body.concluded_positively())
         && task.statement.body.intent.is_none()
         && !planning::requires_construction(task.statement.body.intent, &task.workflow.body.flow)
         && substantive_acceptance(&task.statement.body.acceptance)

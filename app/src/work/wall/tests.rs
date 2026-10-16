@@ -18,8 +18,12 @@ fn only_chains_agents_cannot_move_are_walls() {
     upgrade.statement.body.requirements = wire::EnvironmentRequirements::one(
         EnvironmentRequirement::journal_schema(2).expect("requirement"),
     );
-    let mut closed = task(7, "wall.chain");
-    closed.workflow.body.status = "closed".to_owned();
+    let mut settled = task(7, "wall.chain");
+    settled.workflow.body.status = wire::WorkflowStatus::closed(
+        "2026-09-23T06:00:00.000Z"
+            .parse()
+            .expect("fixture completion"),
+    );
     let mut behind_deferral = task(8, "wall.chain");
     behind_deferral.statement.body.dependencies = vec![stamp(5)];
     let mut behind_upgrade = task(9, "wall.chain");
@@ -48,7 +52,7 @@ fn only_chains_agents_cannot_move_are_walls() {
         transitive,
         deferred,
         upgrade,
-        closed,
+        settled,
         behind_deferral,
         behind_upgrade,
         cycle_a,
@@ -87,8 +91,8 @@ fn only_chains_agents_cannot_move_are_walls() {
     assert_eq!(walls_of(9), [Some(DependencyWall::Cycle(&stamp(10)))]);
     assert_eq!(
         walls_of(11),
-        [Some(DependencyWall::Unreachable(&stamp(7))), None],
-        "a closed prerequisite is a wall; one the open board omits settled",
+        [None, None],
+        "a settled prerequisite is no wall whether retained in context or omitted"
     );
     assert_eq!(
         walls_of(13),

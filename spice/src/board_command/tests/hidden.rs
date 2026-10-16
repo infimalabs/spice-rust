@@ -54,7 +54,7 @@ fn assert_hidden_actor_document(
         hidden_heads.statement.body.description.as_deref(),
         Some(title)
     );
-    assert_eq!(hidden_heads.workflow.body.status, "pending");
+    assert!(hidden_heads.workflow.body.status.is_pending());
     assert!(!hidden_heads.is_active_public());
     let public_heads = at(answer, public);
     assert_eq!(public_heads.presentation_title(), "Visible allocator work");
