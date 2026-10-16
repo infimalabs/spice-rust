@@ -875,12 +875,10 @@
   font-size: .8125em;
   vertical-align: baseline;
 }
-/* Provenance follows the speaker's final word as an inline span: empty it
-   takes no room; once filled it floats to the inline end of that last line,
-   apart from the word, and the browser wraps it beneath only when the line
-   has no room. */
+/* Provenance follows the speaker's final word as an ordinary inline span:
+   empty it takes no room, and once filled its leading margin supplies the
+   natural word space. The browser wraps it only when the line has no room. */
 .markdown-body .message-hunk-content .message-quote-task-tail {
-  float: inline-end;
   margin-inline-start: .5em;
 }
 .markdown-body .message-quote-task-tail:empty,
