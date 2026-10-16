@@ -322,12 +322,14 @@ delivered to after the arrow. A quote's head keeps the card head's type scale
 and name color.
 
 Each authenticated operator direction a lane's transcript recorded is also a
-top-level card in that lane's team plane, at its earliest recorded delivery.
-The card rests in the operator's neutral accent. Its body is the direction as
-one quote reading operator → receiving members, with that quote's Quote and
-Play controls and its steering quote target. One send fanned out to several
-members of a team is one card naming each of them, so a resend, a nudge,
-a reload, or an older page adds no second card. The direction's relative age
+top-level card in that lane's team plane. Its canonical source row is the
+earliest recorded delivery, while its placement and relative age use the
+direction's operator-authored instant. The card rests in the operator's neutral
+accent. Its body is the direction as one quote reading operator → receiving
+members, with that quote's Quote and Play controls and its steering quote
+target. One send fanned out to several members of a team is one card naming
+each of them, so a resend, a nudge, a reload, or an older page adds no second
+card. The direction's relative age
 links to that card as any card's age does, and a quote of the same direction
 inside another card links there too; with no direction card in the team plane,
 that age stays unlinked. A peer delivery or a post-compaction replay is no
