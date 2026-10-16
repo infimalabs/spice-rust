@@ -284,13 +284,14 @@ pub struct RoomParticipant {
     pub reasons: Vec<ParticipantReason>,
 }
 
-/// Preparation authority retained under stable native identities.
+/// Preparation authority recorded under stable native identities.
 ///
 /// An output's current control is its board statement's preparation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PreparationProjection {
-    /// Retained candidates by stable candidate identity.
-    pub candidates: BTreeMap<authority::CandidateRef, RoomPositioned<authority::RetainedCandidate>>,
+    /// Design pass proposals by stable candidate identity.
+    pub candidates:
+        BTreeMap<authority::CandidateRef, RoomPositioned<authority::DesignPassProposal>>,
     /// Critiques by stable critique identity.
     pub critiques: BTreeMap<authority::CritiqueRef, RoomPositioned<authority::CandidateCritique>>,
     /// Coverage by stable coverage identity.
@@ -304,10 +305,10 @@ pub struct PreparationProjection {
     pub withdrawals: BTreeMap<authority::CandidateRef, RoomPositioned<CandidateWithdrawalRecord>>,
 }
 
-/// One author's withdrawal of a retained candidate, with who and when.
+/// One author's withdrawal of a Design pass proposal, with who and when.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CandidateWithdrawalRecord {
-    /// The withdrawn candidate and the author's reason.
+    /// The withdrawn proposal identity and the author's reason.
     pub withdrawal: authority::CandidateWithdrawal,
     /// The authenticated author that withdrew it.
     pub author: wire::Actor,
@@ -934,17 +935,16 @@ impl RoomProjection {
 
     fn apply_preparation_fact(&mut self, fact: &StreamFact) -> Option<bool> {
         match fact.kind() {
-            FactKind::CandidateRetained => Some(
-                fact.read::<authority::CandidateRetained>()
-                    .is_some_and(|body| {
-                        replace(
-                            &mut self.preparation.candidates,
-                            body.candidate.candidate.clone(),
-                            fact.seq(),
-                            body.candidate,
-                        )
-                    }),
-            ),
+            FactKind::DesignProposed => Some(fact.read::<authority::DesignProposed>().is_some_and(
+                |body| {
+                    replace(
+                        &mut self.preparation.candidates,
+                        body.candidate.candidate.clone(),
+                        fact.seq(),
+                        body.candidate,
+                    )
+                },
+            )),
             FactKind::CandidateCritiqued => Some(
                 fact.read::<authority::CandidateCritiqued>()
                     .is_some_and(|body| {

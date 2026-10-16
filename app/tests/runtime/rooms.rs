@@ -5,11 +5,11 @@ use super::*;
 use serde::Serialize;
 use wire::principal::{PrincipalAdmitted, PrincipalProfile, PrincipalRole};
 use wire::rooms::{
-    CandidateRef, CandidateReference, CandidateRetained, CandidateWithdrawal, CandidateWithdrawn,
-    CoverageRef, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorized,
-    PreparationDecided, PreparationDecision, RetainedCandidate, RoomAuthorityStamp,
-    RoomCoordinationStarted, RoomMessaged, RoomPutAside, RoomSource, RoomStopRequest, TextRange,
-    WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
+    CandidateRef, CandidateReference, CandidateWithdrawal, CandidateWithdrawn, CoverageRef,
+    DecisionOutcome, DecisionRef, DesignPassProposal, DesignPassRecommendation, DesignProposed,
+    ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
+    RoomAuthorityStamp, RoomCoordinationStarted, RoomMessaged, RoomPutAside, RoomSource,
+    RoomStopRequest, TextRange, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
 };
 
 #[path = "rooms/contributions.rs"]
@@ -231,18 +231,26 @@ fn authorized(position: u64, decision: u64) -> serde_json::Value {
     envelope(position, "proposal::authorized", &body)
 }
 
-fn retained(position: u64, candidate: &str, output: &str) -> serde_json::Value {
+fn retained(
+    position: u64,
+    candidate: &str,
+    recommendation: DesignPassRecommendation,
+    output: Option<&str>,
+) -> serde_json::Value {
     envelope(
         position,
         "proposal::retained",
-        &CandidateRetained {
-            candidate: RetainedCandidate {
+        &DesignProposed {
+            candidate: DesignPassProposal {
                 candidate: CandidateRef {
                     controller: room(),
                     candidate: authority(candidate),
                 },
-                governed_inputs: vec![room()],
-                outputs: vec![fixture_stamp(output)],
+                statement: seq(10),
+                claim: seq(11),
+                recommendation,
+                governed_inputs: output.is_some().then(room).into_iter().collect(),
+                outputs: output.into_iter().map(fixture_stamp).collect(),
                 references: vec![CandidateReference {
                     relation: "contract".parse().expect("fixture relation"),
                     source: RoomSource::Journal {
@@ -250,6 +258,7 @@ fn retained(position: u64, candidate: &str, output: &str) -> serde_json::Value {
                     },
                 }],
                 evidence: Vec::new(),
+                justification: "the cited contract supports this pass".to_owned(),
             },
         },
     )
@@ -483,17 +492,24 @@ fn proposal_projection_keeps_every_version_and_each_versions_decision_history() 
         &session,
         &[
             room_message(1),
-            retained(2, CANDIDATE, "HIDDEN-oops1"),
+            retained(
+                2,
+                CANDIDATE,
+                DesignPassRecommendation::Work,
+                Some("HIDDEN-oops1"),
+            ),
             decided(3, CANDIDATE, 1, |candidate| DecisionOutcome::Returned {
                 candidate,
                 reason: "the evidence is incomplete".to_owned(),
             }),
-            retained(4, SECOND_CANDIDATE, "PUBLIC-work2"),
+            retained(
+                4,
+                SECOND_CANDIDATE,
+                DesignPassRecommendation::Collapse,
+                None,
+            ),
             decided(5, SECOND_CANDIDATE, 2, |candidate| {
-                DecisionOutcome::Collapse {
-                    candidate,
-                    reason: "the premise no longer holds".to_owned(),
-                }
+                DecisionOutcome::Accepted { candidate }
             }),
         ],
         None,
@@ -527,12 +543,11 @@ fn proposal_projection_keeps_every_version_and_each_versions_decision_history() 
                 seq(3),
             ),
             (
-                &DecisionOutcome::Collapse {
+                &DecisionOutcome::Accepted {
                     candidate: CandidateRef {
                         controller: room(),
                         candidate: authority(SECOND_CANDIDATE),
                     },
-                    reason: "the premise no longer holds".to_owned(),
                 },
                 seq(5),
             ),
@@ -565,8 +580,18 @@ fn a_withdrawn_version_stays_in_history_with_its_author_reason_and_time() {
         &session,
         &[
             room_message(1),
-            retained(2, CANDIDATE, "HIDDEN-oops1"),
-            retained(3, SECOND_CANDIDATE, "PUBLIC-work2"),
+            retained(
+                2,
+                CANDIDATE,
+                DesignPassRecommendation::Work,
+                Some("HIDDEN-oops1"),
+            ),
+            retained(
+                3,
+                SECOND_CANDIDATE,
+                DesignPassRecommendation::Work,
+                Some("PUBLIC-work2"),
+            ),
             withdrawn,
         ],
         None,
@@ -624,7 +649,12 @@ fn historical_operator_withdrawal_keeps_the_first_principal_after_another_birth(
         &[
             principal_admitted(1, FIRST),
             room_message(2),
-            retained(3, CANDIDATE, "HIDDEN-oops1"),
+            retained(
+                3,
+                CANDIDATE,
+                DesignPassRecommendation::Work,
+                Some("HIDDEN-oops1"),
+            ),
             withdrawn,
         ],
         None,

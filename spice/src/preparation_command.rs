@@ -7,9 +7,10 @@ use serde::Serialize;
 use spice::repository::Repository;
 use wire::output::Bounded;
 use wire::rooms::{
-    CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued, CandidateRetained,
-    CandidateWithdrawal, CandidateWithdrawn, ExecutionAuthorization, ExecutionAuthorized,
-    PreparationDecided, PreparationDecision, ProposalRef, RetainedCandidate,
+    CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued,
+    CandidateWithdrawal, CandidateWithdrawn, DesignPassProposal, DesignProposed,
+    ExecutionAuthorization, ExecutionAuthorized, PreparationDecided, PreparationDecision,
+    ProposalRef,
 };
 use wire::{
     Actor, Fault, FaultClass, Instant, Outcome, Refusal, Reply, ReplyPosition, Seq, SequenceCode,
@@ -40,10 +41,10 @@ pub(crate) struct PreparationRecord {
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum PreparationAuthority {
-    /// A retained candidate, marked with the position of its author's
+    /// A Design pass proposal, marked with the position of its author's
     /// withdrawal when it no longer stands for operator choice.
     Candidate {
-        candidate: RetainedCandidate,
+        candidate: DesignPassProposal,
         #[serde(skip_serializing_if = "Option::is_none")]
         withdrawn: Option<SequenceCode>,
     },
@@ -257,7 +258,7 @@ fn record(
     roles: &wire::principal::PrincipalRoles,
     envelope: wire::Envelope<wire::AnyFact>,
 ) -> Result<PreparationRecord, Failure> {
-    let authority = if let Some(body) = envelope.fact.read::<CandidateRetained>() {
+    let authority = if let Some(body) = envelope.fact.read::<DesignProposed>() {
         let withdrawn = read
             .proposal_head(&ProposalRef::Withdrawal {
                 candidate: body.candidate.candidate.clone(),

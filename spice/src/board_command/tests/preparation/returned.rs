@@ -52,20 +52,39 @@ struct Returnable {
 }
 
 impl Returnable {
-    fn new(name: &str, lanes: usize, holder: Option<usize>) -> Self {
+    fn new(name: &str, lanes: usize) -> Self {
+        Self::with_recommendation(name, lanes, wire::rooms::DesignPassRecommendation::Work)
+    }
+
+    fn with_recommendation(
+        name: &str,
+        lanes: usize,
+        recommendation: wire::rooms::DesignPassRecommendation,
+    ) -> Self {
         let (root, bus, epoch, seats) = fixture(name, lanes);
         let design = add_controller(&bus, epoch, name, wire::TaskIntent::Design, None);
-        if let Some(holder) = holder {
-            group_design(&bus, epoch, &design);
-            let seat = &seats[holder];
-            claim_task(&bus, epoch, seat, &Actor::Lane(seat.lane), &design);
-        }
+        group_design(&bus, epoch, &design);
+        claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
         let outputs = [
-            add_output(&bus, epoch, &design, "First output"),
-            add_output(&bus, epoch, &design, "Second output"),
+            add_plan_output(&bus, epoch, &design, "First output"),
+            add_plan_output(&bus, epoch, &design, "Second output"),
         ];
-        let (candidate, source) =
-            retain_test_candidate(&bus, epoch, &seats, &design, &outputs[0], &outputs[1]);
+        let proposed_outputs = match recommendation {
+            wire::rooms::DesignPassRecommendation::Work => {
+                vec![&outputs[0], &outputs[1]]
+            }
+            wire::rooms::DesignPassRecommendation::Conclude
+            | wire::rooms::DesignPassRecommendation::Collapse => Vec::new(),
+        };
+        let (candidate, source) = propose_candidate_version(
+            &bus,
+            epoch,
+            &seats[0],
+            &design,
+            &proposed_outputs,
+            1_760_000_000_000_001,
+            recommendation,
+        );
         Self {
             root,
             bus,
@@ -191,14 +210,14 @@ impl Returnable {
 }
 
 #[test]
-fn legacy_return_shape_is_read_only_on_the_current_command_path() {
-    let fixture = Returnable::new("design-legacy-return", 1, None);
-    let refused = fixture.decide(fixture.returned("revise the premise"));
-    assert!(matches!(
-        &refused,
-        Outcome::Refusal(refusal) if refusal.reason() == "preparation::decision-retired"
-    ));
-    assert!(fixture.decision_outcomes().is_empty());
+fn returned_proposal_records_feedback_without_authorizing_work() {
+    let fixture = Returnable::new("design-returned-proposal", 1);
+    let returned = fixture.returned("revise the premise");
+    assert_committed(fixture.decide(returned.clone()));
+    assert_eq!(
+        fixture.decision_outcomes(),
+        [serde_json::to_value(returned).expect("decision encodes")]
+    );
     assert!(
         board(&fixture.bus, fixture.epoch, Actor::Operator)
             .tasks
@@ -210,9 +229,10 @@ fn legacy_return_shape_is_read_only_on_the_current_command_path() {
 
 #[test]
 fn rejected_output_and_overall_comments_reach_the_holder_once() {
-    let fixture = Returnable::new("design-resolved-feedback", 1, Some(0));
+    let fixture = Returnable::new("design-resolved-feedback", 1);
     let rejected = fixture.rejected();
     assert_committed(fixture.decide(rejected.clone()));
+    fixture.claim(0);
     assert_eq!(
         fixture.decision_outcomes(),
         [serde_json::to_value(rejected).expect("decision encodes")]
@@ -233,7 +253,7 @@ fn rejected_output_and_overall_comments_reach_the_holder_once() {
 
 #[test]
 fn room_history_resolves_an_operator_decision_to_the_first_principal() {
-    let fixture = Returnable::new("design-decision-author", 1, None);
+    let fixture = Returnable::new("design-decision-author", 1);
     assert_committed(fixture.decide(fixture.rejected()));
     assert_eq!(fixture.decision_actors(), [Actor::Operator]);
 
@@ -260,8 +280,9 @@ fn room_history_resolves_an_operator_decision_to_the_first_principal() {
 
 #[test]
 fn feedback_remains_owed_when_the_claim_moves_before_consumption() {
-    let fixture = Returnable::new("design-feedback-claim-race", 2, Some(0));
+    let fixture = Returnable::new("design-feedback-claim-race", 2);
     assert_committed(fixture.decide(fixture.rejected()));
+    fixture.claim(0);
     let occupied = fixture.occupied();
     let stale = owed_returns(&fixture.bus, &occupied)
         .expect("owed input reads")
@@ -279,17 +300,14 @@ fn feedback_remains_owed_when_the_claim_moves_before_consumption() {
 
 #[test]
 fn collapse_still_uses_the_operator_conclusion_path() {
-    let fixture = Returnable::new("design-collapse", 1, Some(0));
-    let collapse = DecisionOutcome::Collapse {
+    let fixture = Returnable::with_recommendation(
+        "design-collapse",
+        1,
+        wire::rooms::DesignPassRecommendation::Collapse,
+    );
+    let collapse = DecisionOutcome::Accepted {
         candidate: fixture.candidate.clone(),
-        reason: "the premise did not hold".to_owned(),
     };
-    let held = fixture.decide(collapse.clone());
-    assert!(matches!(
-        &held,
-        Outcome::Refusal(refusal) if refusal.reason() == "task::conclude-claimed"
-    ));
-    fixture.free(0);
     let CommandAnswer::Text(answer) = assert_committed(fixture.decide(collapse)) else {
         panic!("collapse decision did not return text");
     };

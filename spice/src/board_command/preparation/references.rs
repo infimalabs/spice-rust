@@ -9,7 +9,7 @@
 
 use std::collections::BTreeSet;
 
-use wire::rooms::{RetainedCandidate, RoomContributed, RoomSource};
+use wire::rooms::{DesignPassProposal, RoomContributed, RoomSource};
 
 use super::*;
 
@@ -31,7 +31,7 @@ enum Resolved {
 /// Refuse the first reference outside `candidate`'s authority closure.
 pub(super) fn require_scoped_references(
     bus: &Bus,
-    candidate: &RetainedCandidate,
+    candidate: &DesignPassProposal,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let sources = candidate
         .references

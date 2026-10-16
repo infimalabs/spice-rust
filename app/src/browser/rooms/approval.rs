@@ -1,6 +1,6 @@
-//! Every immutable proposal version and the operator's exact decision surface.
-//! Output verdicts and Collapse are previewed before one atomic
-//! `preparation decide`; no browser-local standing is invented from a reply.
+//! Every immutable Design pass proposal and the operator's exact decision
+//! surface. Work verdicts, outputless acceptance, and material returns are
+//! previewed before one atomic `preparation decide`.
 //! A version its author withdrew stays in history, apart from the open
 //! versions, and offers no decision.
 
@@ -11,7 +11,8 @@ use web_sys::HtmlInputElement;
 use wire::intent::{BoardTask, TextAnswer};
 use wire::rooms::{
     CandidateCoverage, CandidateCritique, CandidateRef, CoverageAuthority, DecisionOutcome,
-    ExecutionAuthorization, OutputVerdict, PreparationDecision, RetainedCandidate, RoomSource,
+    DesignPassProposal, DesignPassRecommendation, ExecutionAuthorization, OutputVerdict,
+    PreparationDecision, RoomSource,
 };
 use wire::{CommandKind, SequenceCode, TaskStamp};
 use yew::prelude::*;
@@ -55,9 +56,8 @@ impl Reducible for Composer {
 enum Standing<'a> {
     Undecided,
     Returned,
-    Collapse,
+    Accepted(&'a PreparationDecision),
     Resolved(&'a PreparationDecision),
-    Selected(&'a wire::rooms::DecisionRef),
     Authorized(&'a ExecutionAuthorization),
     Withdrawn,
 }
@@ -67,7 +67,9 @@ impl Standing<'_> {
         match self {
             Self::Undecided => "Undecided".to_owned(),
             Self::Returned => "Returned".to_owned(),
-            Self::Collapse => "Collapsed".to_owned(),
+            Self::Accepted(decision) => {
+                format!("Accepted by decision {}", decision.decision.decision)
+            }
             Self::Resolved(decision) => {
                 let accepted = decision.outcome.accepted_outputs().count();
                 format!(
@@ -75,7 +77,6 @@ impl Standing<'_> {
                     decision.decision.decision
                 )
             }
-            Self::Selected(decision) => format!("Selected by decision {}", decision.decision),
             Self::Authorized(authorization) => format!(
                 "Accepted {} output(s) by decision {}",
                 authorization.selected_outputs.len(),
@@ -110,7 +111,7 @@ impl<'a> Context<'a> {
     }
 }
 
-/// Every proposal version retained under one Design, with controls only for an
+/// Every Design pass proposal under one Design, with controls only for an
 /// operator looking at the still-open controller.
 pub(super) fn render_approval(
     runtime: &AppRuntime,
@@ -154,7 +155,7 @@ pub(super) fn render_approval(
                 <span>{open.len()}</span>
             </header>
             <p class="room-notice">
-                {"Every retained version is immutable. Accept or reject every output with optional comments, or Collapse the Design; each choice is previewed before it records authority."}
+                {"Every proposal is immutable. Accept its exact recommendation or return it with material feedback; each decision is previewed before it records authority."}
             </p>
             {for open.into_iter().rev().map(|candidate| render_candidate(&context, candidate))}
             if !withdrawn.is_empty() {
@@ -173,7 +174,10 @@ pub(super) fn render_approval(
     }
 }
 
-fn render_candidate(context: &Context<'_>, positioned: &RoomPositioned<RetainedCandidate>) -> Html {
+fn render_candidate(
+    context: &Context<'_>,
+    positioned: &RoomPositioned<DesignPassProposal>,
+) -> Html {
     let candidate = &positioned.value;
     let empty = DecisionDraft::new(candidate.candidate.clone());
     let composer = &context.controls.decision.0;
@@ -225,6 +229,12 @@ fn render_candidate(context: &Context<'_>, positioned: &RoomPositioned<RetainedC
                 <code title="Retaining journal fact">{fact.to_string()}</code>
             </header>
             {withdrawal.map_or_else(Html::default, |withdrawal| render_withdrawal(context.runtime, withdrawal))}
+            <p class="room-approval-proposal">
+                <strong>{recommendation_label(candidate.recommendation)}</strong>
+                {" · "}{candidate.justification.clone()}
+                {" · statement "}<code>{candidate.statement.to_string()}</code>
+                {" · claim "}<code>{candidate.claim.to_string()}</code>
+            </p>
             {render_inputs(context, candidate)}
             {render_references(candidate)}
             {render_evidence(context, candidate)}
@@ -269,7 +279,7 @@ fn editor(controls: &Controls, candidate: &CandidateRef) -> impl Fn(DraftChange)
     }
 }
 
-fn render_inputs(context: &Context<'_>, candidate: &RetainedCandidate) -> Html {
+fn render_inputs(context: &Context<'_>, candidate: &DesignPassProposal) -> Html {
     if candidate.governed_inputs.is_empty() {
         return html! { <p class="room-approval-inputs">{"Governed inputs: none."}</p> };
     }
@@ -295,7 +305,7 @@ fn render_inputs(context: &Context<'_>, candidate: &RetainedCandidate) -> Html {
     }
 }
 
-fn render_references(candidate: &RetainedCandidate) -> Html {
+fn render_references(candidate: &DesignPassProposal) -> Html {
     html! {
         <div class="room-approval-references">
             <strong>{"Retained references"}</strong>
@@ -312,7 +322,7 @@ fn render_references(candidate: &RetainedCandidate) -> Html {
     }
 }
 
-fn render_evidence(context: &Context<'_>, candidate: &RetainedCandidate) -> Html {
+fn render_evidence(context: &Context<'_>, candidate: &DesignPassProposal) -> Html {
     if candidate.evidence.is_empty() {
         return html! { <p class="room-approval-evidence">{"Question evidence: none cited."}</p> };
     }
@@ -441,7 +451,7 @@ fn render_output(
             });
         })
     };
-    let decisions = interactive && draft.choice() == DecisionChoice::Selected;
+    let decisions = interactive && draft.choice() == DecisionChoice::Accept;
     let controls = decisions.then(|| html! {
         <div class="room-output-decision">
             <div
@@ -568,15 +578,15 @@ fn render_decision_history(
 
 fn render_controls(
     context: &Context<'_>,
-    positioned: &RoomPositioned<RetainedCandidate>,
+    positioned: &RoomPositioned<DesignPassProposal>,
     draft: &DecisionDraft,
     locked: bool,
     edit: &impl Fn(DraftChange) -> DraftCommand,
 ) -> Html {
     let candidate = &positioned.value;
     let choose = |choice| edit(Rc::new(move |draft| draft.set_choice(choice)));
-    let selected = choose(DecisionChoice::Selected);
-    let collapse = choose(DecisionChoice::Collapse);
+    let accept = choose(DecisionChoice::Accept);
+    let return_with_feedback = choose(DecisionChoice::Return);
     let reason = {
         let (composer, candidate) = (
             context.controls.decision.clone(),
@@ -597,6 +607,8 @@ fn render_controls(
             });
         })
     };
+    let show_reason = draft.choice() == DecisionChoice::Return
+        || candidate.recommendation == DesignPassRecommendation::Work;
     let mut previewed = draft.clone();
     let next_decision = SequenceCode::new(
         context
@@ -630,39 +642,41 @@ fn render_controls(
                     <input
                         type="radio"
                         name={format!("proposal-decision-{}", candidate.candidate.candidate)}
-                        checked={draft.choice() == DecisionChoice::Selected}
-                        onchange={Callback::from(move |_: Event| selected())}
+                        checked={draft.choice() == DecisionChoice::Accept}
+                        onchange={Callback::from(move |_: Event| accept())}
                     />
-                    {"Resolve outputs"}
+                    {"Accept proposal"}
                 </label>
                 <label>
                     <input
                         type="radio"
                         name={format!("proposal-decision-{}", candidate.candidate.candidate)}
-                        checked={draft.choice() == DecisionChoice::Collapse}
-                        onchange={Callback::from(move |_: Event| collapse())}
+                        checked={draft.choice() == DecisionChoice::Return}
+                        onchange={Callback::from(move |_: Event| return_with_feedback())}
                     />
-                    {"Collapse"}
+                    {"Return with feedback"}
                 </label>
             </fieldset>
-            <label class="room-decision-reason">
-                <span>{if draft.choice() == DecisionChoice::Selected {
-                    "Overall comment (optional)"
-                } else {
-                    "Collapse reason"
-                }}</span>
-                <input
-                    type="text"
-                    value={draft.reason().to_owned()}
-                    oninput={reason}
-                    disabled={locked}
-                    placeholder={if draft.choice() == DecisionChoice::Selected {
-                        "Comment on the candidate as a whole"
+            if show_reason {
+                <label class="room-decision-reason">
+                    <span>{if draft.choice() == DecisionChoice::Accept {
+                        "Overall comment (optional)"
                     } else {
-                        "Why the Design premise did not hold"
-                    }}
-                />
-            </label>
+                        "Material feedback"
+                    }}</span>
+                    <input
+                        type="text"
+                        value={draft.reason().to_owned()}
+                        oninput={reason}
+                        disabled={locked}
+                        placeholder={if draft.choice() == DecisionChoice::Accept {
+                            "Comment on the proposal as a whole"
+                        } else {
+                            "What must change in the next Design pass"
+                        }}
+                    />
+                </label>
+            }
             <div class="room-inline-actions">
                 <button
                     type="button"
@@ -672,13 +686,14 @@ fn render_controls(
                     {"Preview decision"}
                 </button>
             </div>
-            {render_phase(context, draft, edit)}
+            {render_phase(context, candidate, draft, edit)}
         </div>
     }
 }
 
 fn render_phase(
     context: &Context<'_>,
+    candidate: &DesignPassProposal,
     draft: &DecisionDraft,
     edit: &impl Fn(DraftChange) -> DraftCommand,
 ) -> Html {
@@ -691,17 +706,33 @@ fn render_phase(
         },
         DraftPhase::Previewing(submission) => {
             let effect = match &submission.request.decision.outcome {
-                DecisionOutcome::Selected {
-                    selected_outputs, ..
-                } => format!(
-                    "Release the {} selected output(s): {}. Other outputs stay gated, and the Design remains open.",
-                    selected_outputs.len(),
-                    selected_outputs
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                ),
+                DecisionOutcome::Accepted { .. } => {
+                    let action = match candidate.recommendation {
+                        DesignPassRecommendation::Conclude => "Complete",
+                        DesignPassRecommendation::Collapse => "Collapse",
+                        DesignPassRecommendation::Work => {
+                            unreachable!("work proposals resolve their outputs")
+                        }
+                    };
+                    let closed = context
+                        .controller
+                        .map(|controller| controller.controlled.as_slice())
+                        .unwrap_or_default();
+                    if closed.is_empty() {
+                        format!(
+                            "{action} the Design exactly as proposed. No pending controlled task needs closure."
+                        )
+                    } else {
+                        format!(
+                            "{action} the Design exactly as proposed. This also closes: {}.",
+                            closed
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        )
+                    }
+                }
                 DecisionOutcome::Returned { reason, .. } => format!(
                     "Return this exact proposal version for another preparation pass: {reason}. No output is released, and the Design remains open."
                 ),
@@ -717,26 +748,6 @@ fn render_phase(
                         "Record {accepted} accepted and {rejected} rejected output(s). Accepted outputs are released; rejected outputs stay gated. Overall comment: {}",
                         comment.as_deref().unwrap_or("none"),
                     )
-                }
-                DecisionOutcome::Collapse { reason, .. } => {
-                    let closed = context
-                        .controller
-                        .map(|controller| controller.controlled.as_slice())
-                        .unwrap_or_default();
-                    if closed.is_empty() {
-                        format!(
-                            "Collapse the Design on this proposal's premise: {reason}. No output is released; no pending controlled task needs closure."
-                        )
-                    } else {
-                        format!(
-                            "Collapse the Design on this proposal's premise: {reason}. No output is released. This also closes: {}.",
-                            closed
-                                .iter()
-                                .map(ToString::to_string)
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                        )
-                    }
                 }
             };
             let submit = submit(
@@ -871,11 +882,12 @@ fn standing<'a>(preparation: &'a PreparationProjection, candidate: &CandidateRef
         .max_by_key(|decision| decision.position);
     match latest.map(|decision| &decision.value) {
         None => Standing::Undecided,
-        Some(PreparationDecision {
-            decision,
-            outcome: DecisionOutcome::Selected { .. },
-            ..
-        }) => Standing::Selected(decision),
+        Some(
+            decision @ PreparationDecision {
+                outcome: DecisionOutcome::Accepted { .. },
+                ..
+            },
+        ) => Standing::Accepted(decision),
         Some(PreparationDecision {
             outcome: DecisionOutcome::Returned { .. },
             ..
@@ -886,26 +898,12 @@ fn standing<'a>(preparation: &'a PreparationProjection, candidate: &CandidateRef
                 ..
             },
         ) => Standing::Resolved(decision),
-        Some(PreparationDecision {
-            outcome: DecisionOutcome::Collapse { .. },
-            ..
-        }) => Standing::Collapse,
     }
 }
 
 fn outcome_label(outcome: &DecisionOutcome) -> String {
     match outcome {
-        DecisionOutcome::Selected {
-            selected_outputs, ..
-        } => format!(
-            "selected {} output(s): {}",
-            selected_outputs.len(),
-            selected_outputs
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        DecisionOutcome::Accepted { .. } => "accepted proposal".to_owned(),
         DecisionOutcome::Returned { reason, .. } => format!("returned: {reason}"),
         DecisionOutcome::Resolved {
             outputs, comment, ..
@@ -929,7 +927,14 @@ fn outcome_label(outcome: &DecisionOutcome) -> String {
                 None => format!("resolved {outputs}"),
             }
         }
-        DecisionOutcome::Collapse { reason, .. } => format!("collapsed: {reason}"),
+    }
+}
+
+const fn recommendation_label(recommendation: DesignPassRecommendation) -> &'static str {
+    match recommendation {
+        DesignPassRecommendation::Work => "Work",
+        DesignPassRecommendation::Conclude => "Conclude",
+        DesignPassRecommendation::Collapse => "Collapse",
     }
 }
 
@@ -949,9 +954,8 @@ fn source_label(source: &RoomSource) -> String {
 
 const fn outcome_key(outcome: &DecisionOutcome) -> &'static str {
     match outcome {
-        DecisionOutcome::Selected { .. } => "selected",
+        DecisionOutcome::Accepted { .. } => "accepted",
         DecisionOutcome::Returned { .. } => "returned",
         DecisionOutcome::Resolved { .. } => "resolved",
-        DecisionOutcome::Collapse { .. } => "collapse",
     }
 }

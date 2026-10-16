@@ -52,7 +52,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::WorkingGroupDisband
         | CommandKind::WorkingGroupFast
         | CommandKind::WorkingGroupStance
-        | CommandKind::CandidateRetain
+        | CommandKind::DesignPropose
         | CommandKind::CandidateCritiqueRecord
         | CommandKind::CandidateCoverageRecord
         | CommandKind::PreparationDecide

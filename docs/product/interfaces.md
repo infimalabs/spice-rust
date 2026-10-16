@@ -64,7 +64,7 @@ commands mean; this section fixes their operand bodies and bounds.
 
 ### Preparation command bodies
 
-`preparation retain`, `critique`, `cover`, `decide`, and `withdraw` each take
+`preparation propose`, `critique`, `cover`, `decide`, and `withdraw` each take
 one canonical JSON object. Unknown fields refuse, nothing is lenient, and a
 malformed body refuses with `preparation::argument-invalid`, giving the parse
 detail and a complete body that command accepts. `preparation adopt` takes two
@@ -81,13 +81,18 @@ task handles instead.
   prints), `{"kind": "contribution", "room": STAMP, "publication": STAMP}`
   (the `source` a `room contribute` answer prints, pasted unchanged),
   `{"kind": "artifact", "digest": HEX}`, or a transcript hunk.
-- **`retain CANDIDATE_JSON`.** `candidate`, `governed_inputs` (tasks the
-  candidate assumes), `outputs` (at least one gated output), `references`
-  (at least one `{"relation": NAME, "source": SOURCE}`), and optional
-  `evidence` (question results retained with the candidate). Inputs and outputs
-  are unique and disjoint. Every reference must lie in the controlling Design's
-  scope: a contribution in its room, or a journal fact of its room, the Design,
-  a governed input, an output, or a task prepared under it.
+- **`propose PROPOSAL_JSON`.** `candidate`, `statement`, and `claim` name the
+  exact Design, statement head, and active claim completed by this pass.
+  `recommendation` is `work`, `conclude`, or `collapse`; work names one or more
+  unique `outputs` plus any `governed_inputs`, while conclude and collapse name
+  neither. Every work output must be an acceptance-bearing Plan directly
+  controlled by the Design. `justification` is nonblank and `references`
+  contains at least one `{"relation": NAME, "source": SOURCE}`; optional
+  `evidence` retains question results. Inputs and outputs are unique and
+  disjoint. Every reference must lie in the controlling Design's scope: a
+  contribution in its room, or a journal fact of its room, the Design, a
+  governed input, an output, or a task prepared under it. The command records
+  the immutable proposal and releases that exact claim atomically.
 - **`critique CRITIQUE_JSON`.** `critique` (`{"candidate": …, "critique":
   SEQUENCE}`), `category`, `source`, and `standing` (`clean` or
   `material-finding`).
@@ -95,16 +100,18 @@ task handles instead.
   SEQUENCE}`), nonempty unique `scopes`, and `source`. The command attributes
   the reviewer authority itself.
 - **`decide DECISION_JSON`.** `decision` (`{"controller": STAMP, "decision":
-  SEQUENCE}`), `source`, and one outcome over an exact candidate under that
-  controller. Current writes use `{"kind": "resolved", "candidate": …,
+  SEQUENCE}`), `source`, and one outcome over an exact proposal under that
+  controller. A work proposal uses `{"kind": "resolved", "candidate": …,
   "outputs": [{"output": STAMP, "verdict": "accepted"|"rejected", "comment":
-  TEXT?}, …], "comment": TEXT?}` and name every candidate output exactly once.
+  TEXT?}, …], "comment": TEXT?}` and names every proposal output exactly once.
   Comments are optional but nonblank when present. Exactly the accepted outputs
   receive execution authorization; rejecting all outputs authorizes nothing.
-  `{"kind": "collapse", "candidate": …, "reason": TEXT}` concludes the Design
-  as `task conclude --collapse REASON` would, refusing a held Design with
-  `task::conclude-claimed`. Historical `selected` and `returned` outcomes
-  remain readable.
+  An outputless conclude or collapse proposal uses `{"kind": "accepted",
+  "candidate": …}` and stages the corresponding guarded Design conclusion in
+  the same transaction. Any proposal can instead use `{"kind": "returned",
+  "candidate": …, "reason": TEXT}`; the nonblank material feedback records
+  durably without authorizing or concluding. Historical selected, returned,
+  and collapse records remain readable after migration.
 - **`withdraw WITHDRAWAL_JSON`.** `candidate` (`{"controller": STAMP,
   "candidate": STAMP}`) names the author's own undecided candidate and
   `reason` is nonblank, such as which version corrects it.

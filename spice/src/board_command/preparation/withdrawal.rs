@@ -1,7 +1,7 @@
-//! The author's withdrawal of one exact undecided retained candidate.
+//! The author's withdrawal of one exact undecided Design pass proposal.
 //!
-//! Withdrawal records its own immutable proposal head beside the retained
-//! candidate, which stays exactly as it was retained. The journal fold
+//! Withdrawal records its own immutable proposal head beside the proposal,
+//! which stays exactly as it was recorded. The journal fold
 //! repeats the author and decision rules, so a decision and a withdrawal
 //! racing for one candidate cannot both land.
 

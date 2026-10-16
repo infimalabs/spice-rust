@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::CandidateRef;
 
-/// The author's retraction of one exact retained candidate before any
-/// decision.
+/// The author's retraction of one exact undecided Design pass proposal before
+/// any decision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "CandidateWithdrawalWire", into = "CandidateWithdrawalWire")]
 pub struct CandidateWithdrawal {

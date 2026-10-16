@@ -10,7 +10,9 @@
 //! `task_evidence` an exactly rebuildable and independently verified index.
 
 use rusqlite::{Connection, params};
-use wire::rooms::{QuestionResultHead, QuestionResultRecord, QuestionResultRef, RetainedCandidate};
+use wire::rooms::{
+    DesignPassProposal, QuestionResultHead, QuestionResultRecord, QuestionResultRef,
+};
 use wire::{Actor, AnyFact, Seq, TaskEvidenceEdit, TaskStamp};
 
 use super::{Authority, Change, Refusal, require_operator, unsound};
@@ -91,7 +93,7 @@ fn require_answered(authority: &impl Authority, task: &TaskStamp) -> Result<(), 
 /// Every candidate evidence result must be asked in its controller's room.
 pub(super) fn require_candidate_evidence(
     authority: &impl Authority,
-    candidate: &RetainedCandidate,
+    candidate: &DesignPassProposal,
 ) -> Result<(), Refusal> {
     for result in &candidate.evidence {
         require_asked_in(authority, result, &candidate.candidate.controller)?;

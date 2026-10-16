@@ -7,7 +7,7 @@ mod requirements;
 mod settlement;
 mod taste_proposal;
 pub(super) use deferral::{task_defer, task_file, task_wake};
-pub(super) use settlement::{stage_collapse, task_close, task_conclude, task_delete};
+pub(super) use settlement::{stage_conclusion, task_close, task_conclude, task_delete};
 
 #[cfg(test)]
 pub(super) use claim::Possession;

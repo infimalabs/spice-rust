@@ -33,8 +33,8 @@ pub use withdrawal::*;
 pub use working_group::*;
 
 use crate::{
-    CanonicalUuid, Digest, MessageLocus, Name, Origin, SequenceCode, TaskHandle, TaskPreparation,
-    TaskStamp, TranscriptSourceHead,
+    CanonicalUuid, Digest, MessageLocus, Name, Origin, Seq, SequenceCode, TaskHandle,
+    TaskPreparation, TaskStamp, TranscriptSourceHead,
 };
 
 /// The identity of a room: exactly the anchor task's durable birth stamp.
@@ -51,8 +51,7 @@ pub const OOPS_GROOMING_REPORT_LIMIT: usize = 100;
 pub const ROOM_ACTIVITY_SECONDS: i64 = 24 * 60 * 60;
 
 /// A current nine-digit native moment stamp for non-task room authority.
-///
-/// Working groups and retained candidates need durable identities but are not
+/// Working groups and Design pass proposals need durable identities but are not
 /// tasks. This wrapper reuses the native vowel-free base-52 microsecond codec
 /// while refusing the eight-digit legacy task spelling; no UUID or decimal
 /// protocol handle is introduced.
@@ -144,7 +143,7 @@ impl<'de> Deserialize<'de> for RoomAuthorityStamp {
     }
 }
 
-/// Stable identity of one retained candidate under its controlling task.
+/// Stable identity of one Design pass proposal under its controlling task.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateRef {
@@ -154,7 +153,7 @@ pub struct CandidateRef {
     pub candidate: RoomAuthorityStamp,
 }
 
-/// Stable identity of one critique of an exact retained candidate.
+/// Stable identity of one critique of an exact Design pass proposal.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CritiqueRef {
@@ -164,7 +163,7 @@ pub struct CritiqueRef {
     pub critique: SequenceCode,
 }
 
-/// Stable identity of one coverage statement over an exact retained candidate.
+/// Stable identity of one coverage statement over an exact Design pass proposal.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CoverageRef {
@@ -188,7 +187,7 @@ pub struct DecisionRef {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum ProposalRef {
-    /// One retained candidate.
+    /// One Design pass proposal.
     Candidate { candidate: CandidateRef },
     /// One critique of an exact candidate.
     Critique { critique: CritiqueRef },
@@ -556,7 +555,7 @@ pub enum RoomListenerDelivery {
     PendingAvailability,
 }
 
-/// Open relation from a retained candidate to exact supporting authority.
+/// Open relation from a Design pass proposal to exact supporting authority.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateReference {
@@ -566,93 +565,138 @@ pub struct CandidateReference {
     pub source: RoomSource,
 }
 
-/// Exact retained candidate presented for critique and decision.
+/// What one completed Design pass asks the operator to decide.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DesignPassRecommendation {
+    /// Authorize one or more directly controlled Plan outputs.
+    Work,
+    /// Conclude the Design done without fabricating an output.
+    Conclude,
+    /// Collapse the Design because its premise does not hold.
+    Collapse,
+}
+
+/// Exact proposal that completes one claimed Design pass.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "RetainedCandidateWire", into = "RetainedCandidateWire")]
-pub struct RetainedCandidate {
-    /// Stable candidate identity under its controller.
+#[serde(try_from = "DesignPassProposalWire", into = "DesignPassProposalWire")]
+pub struct DesignPassProposal {
+    /// Stable proposal identity under its controller.
     pub candidate: CandidateRef,
-    /// Governed input tasks whose current composition the candidate assumes.
+    /// Exact Design statement revision this pass answered.
+    pub statement: Seq,
+    /// Exact active claim head this pass releases.
+    pub claim: Seq,
+    /// Work or outputless recommendation this pass asks the operator to decide.
+    pub recommendation: DesignPassRecommendation,
+    /// Governed input tasks whose current composition a work proposal assumes.
     pub governed_inputs: Vec<TaskStamp>,
-    /// Gated output tasks proposed by the candidate.
+    /// Gated Plan outputs named by a work proposal.
     pub outputs: Vec<TaskStamp>,
-    /// Exact source links, with open relation names for later evidence families.
+    /// Nonempty, trimmed explanation for the recommendation.
+    pub justification: String,
+    /// Exact source links supporting the recommendation.
     pub references: Vec<CandidateReference>,
     /// Question results, asked in the controller's room, retained as explicit
-    /// candidate evidence without granting or gating selection authority.
+    /// proposal evidence without granting or gating selection authority.
     pub evidence: Vec<QuestionResultRef>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RetainedCandidateWire {
+struct DesignPassProposalWire {
     candidate: CandidateRef,
+    statement: Seq,
+    claim: Seq,
+    recommendation: DesignPassRecommendation,
     governed_inputs: Vec<TaskStamp>,
     outputs: Vec<TaskStamp>,
+    justification: String,
     references: Vec<CandidateReference>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     evidence: Vec<QuestionResultRef>,
 }
 
-impl TryFrom<RetainedCandidateWire> for RetainedCandidate {
+impl TryFrom<DesignPassProposalWire> for DesignPassProposal {
     type Error = &'static str;
 
-    fn try_from(value: RetainedCandidateWire) -> Result<Self, Self::Error> {
-        if value.outputs.is_empty() {
-            return Err("retained candidate must name at least one gated output");
+    fn try_from(value: DesignPassProposalWire) -> Result<Self, Self::Error> {
+        if value.justification.is_empty() || value.justification.trim() != value.justification {
+            return Err("a Design pass proposal requires a nonempty trimmed justification");
+        }
+        match value.recommendation {
+            DesignPassRecommendation::Work if value.outputs.is_empty() => {
+                return Err("a work proposal must name at least one gated output");
+            }
+            DesignPassRecommendation::Conclude | DesignPassRecommendation::Collapse
+                if !value.governed_inputs.is_empty() || !value.outputs.is_empty() =>
+            {
+                return Err("an outputless proposal cannot name governed inputs or outputs");
+            }
+            DesignPassRecommendation::Work
+            | DesignPassRecommendation::Conclude
+            | DesignPassRecommendation::Collapse => {}
         }
         if !all_unique(&value.governed_inputs) || !all_unique(&value.outputs) {
-            return Err("candidate inputs and outputs must each be unique");
+            return Err("proposal inputs and outputs must each be unique");
         }
         if value
             .outputs
             .iter()
             .any(|output| value.governed_inputs.contains(output))
         {
-            return Err("one task cannot be both governed input and selected output");
+            return Err("one task cannot be both governed input and proposed output");
         }
         if value.references.is_empty() {
-            return Err("retained candidate must link its retained authority");
+            return Err("a Design pass proposal must link its supporting authority");
         }
         if !all_unique(&value.evidence) {
-            return Err("candidate evidence results must be unique");
+            return Err("proposal evidence results must be unique");
         }
         Ok(Self {
             candidate: value.candidate,
+            statement: value.statement,
+            claim: value.claim,
+            recommendation: value.recommendation,
             governed_inputs: value.governed_inputs,
             outputs: value.outputs,
+            justification: value.justification,
             references: value.references,
             evidence: value.evidence,
         })
     }
 }
 
-impl From<RetainedCandidate> for RetainedCandidateWire {
-    fn from(value: RetainedCandidate) -> Self {
+impl From<DesignPassProposal> for DesignPassProposalWire {
+    fn from(value: DesignPassProposal) -> Self {
         Self {
             candidate: value.candidate,
+            statement: value.statement,
+            claim: value.claim,
+            recommendation: value.recommendation,
             governed_inputs: value.governed_inputs,
             outputs: value.outputs,
+            justification: value.justification,
             references: value.references,
             evidence: value.evidence,
         }
     }
 }
 
-/// Command body retaining one exact candidate.
+/// Command body proposing one exact completed Design pass.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CandidateRetain {
+pub struct DesignPropose {
     /// Exact candidate and retained authority.
-    pub candidate: RetainedCandidate,
+    pub candidate: DesignPassProposal,
 }
 
 /// Immutable fact body retaining one exact candidate.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CandidateRetained {
+pub struct DesignProposed {
     /// Exact candidate and retained authority.
-    pub candidate: RetainedCandidate,
+    pub candidate: DesignPassProposal,
 }
 
 /// Result of one critique against an exact candidate.
@@ -665,7 +709,7 @@ pub enum CritiqueStanding {
     MaterialFinding,
 }
 
-/// One source-backed critique of an exact retained candidate.
+/// One source-backed critique of an exact Design pass proposal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateCritique {
@@ -792,7 +836,7 @@ pub struct CandidateCovered {
 pub struct ExecutionAuthorization {
     /// Operator decision that selected this exact output subset.
     pub decision: DecisionRef,
-    /// Exact retained candidate selected by that decision.
+    /// Exact Design pass proposal selected by that decision.
     pub candidate: CandidateRef,
     /// Candidate input tasks witnessed by this authorization.
     pub governed_inputs: Vec<TaskStamp>,
@@ -1091,20 +1135,27 @@ mod tests {
         let candidate_ref = candidate();
         let candidate_value = serde_json::json!({
             "candidate": candidate_ref,
+            "statement": 10,
+            "claim": 11,
+            "recommendation": "work",
             "governed_inputs": ["1kKRRsDR2"],
             "outputs": ["1kKRRsDR3", "1kKRRsDR4"],
+            "justification": "The contract supports the proposed split.",
             "references": [{"relation": "contract", "source": {"kind": "journal", "fact": "2"}}]
         });
-        let retained: RetainedCandidate = serde_json::from_value(candidate_value.clone()).unwrap();
+        let retained: DesignPassProposal = serde_json::from_value(candidate_value.clone()).unwrap();
         assert_eq!(serde_json::to_value(retained).unwrap(), candidate_value);
 
         let decision_value = serde_json::json!({
             "decision": {"controller": "1kKRRsDR0", "decision": "4"},
             "source": {"kind": "journal", "fact": "3"},
             "outcome": {
-                "kind": "selected",
+                "kind": "resolved",
                 "candidate": candidate(),
-                "selected_outputs": ["1kKRRsDR3"]
+                "outputs": [
+                    {"output": "1kKRRsDR3", "verdict": "accepted"},
+                    {"output": "1kKRRsDR4", "verdict": "rejected"}
+                ]
             }
         });
         let decision: PreparationDecision = serde_json::from_value(decision_value.clone()).unwrap();
@@ -1192,24 +1243,22 @@ mod tests {
     }
 
     #[test]
-    fn collapse_decisions_name_an_exact_candidate_and_reason() {
+    fn outputless_acceptance_names_one_exact_proposal() {
         let value = serde_json::json!({
             "decision": {"controller": "1kKRRsDR0", "decision": "5"},
             "source": {"kind": "journal", "fact": "6"},
             "outcome": {
-                "kind": "collapse",
-                "candidate": candidate(),
-                "reason": "the premise no longer holds"
+                "kind": "accepted",
+                "candidate": candidate()
             }
         });
         let decision: PreparationDecision = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(serde_json::to_value(&decision).unwrap(), value);
         assert!(matches!(
             decision.outcome,
-            DecisionOutcome::Collapse {
-                candidate: selected_candidate,
-                reason
-            } if selected_candidate == candidate() && reason == "the premise no longer holds"
+            DecisionOutcome::Accepted {
+                candidate: selected_candidate
+            } if selected_candidate == candidate()
         ));
     }
 

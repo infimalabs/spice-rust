@@ -232,17 +232,17 @@ pub(in crate::board_command) fn task_conclude(
     )
 }
 
-/// Stage a collapse decision's conclusion of `design` into the decision's own
-/// `write`, through the same admission and heads as `task conclude --collapse`.
+/// Stage an accepted pass recommendation into the decision's own `write`,
+/// through the same admission and heads as `task conclude`.
 #[allow(
     clippy::too_many_arguments,
     reason = "the decision's write, cause, and instant join the conclusion's own inputs"
 )]
-pub(in crate::board_command) fn stage_collapse(
+pub(in crate::board_command) fn stage_conclusion(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     design: TaskHandle,
-    reason: String,
+    conclusion: body::DesignConclusion,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
     write: &mut JournalWrite,
@@ -251,7 +251,7 @@ pub(in crate::board_command) fn stage_collapse(
 ) -> Result<Vec<TaskHandle>, Outcome<CommandAnswer>> {
     let conclude = TaskConclude {
         task: design,
-        conclusion: body::DesignConclusion::Collapsed { reason },
+        conclusion,
     };
     let settlement = Settlement::Conclude(&conclude);
     let snapshot = validated_working_snapshot(
@@ -263,6 +263,9 @@ pub(in crate::board_command) fn stage_collapse(
     )?;
     guard_task_projection(write, snapshot.task_barrier.clone());
     let entry = admitted_entry(&snapshot, settlement)?;
+    if !settlement.negative() {
+        require_no_pending_controlled_outputs(&snapshot, entry)?;
+    }
     let cause = FactCause::Pending(cause);
     stage_with_controlled(write, &snapshot, entry, settlement, cause, at, projects)
         .map(|(_, closed)| closed)

@@ -5,9 +5,8 @@ use serde::de::DeserializeOwned;
 use wire::intent::{BoardAnswer, BoardRead, BoardTask};
 use wire::rooms::{
     CandidateCoverage, CandidateCoverageRecord, CandidateCritique, CandidateCritiqueRecord,
-    CandidateRef, CandidateRetain, CandidateWithdraw, CandidateWithdrawal, CoverageAuthority,
-    OutputAdopt, PreparationDecide, PreparationDecision, ProposalRef, RetainedCandidate,
-    RoomSource,
+    CandidateRef, CandidateWithdraw, CandidateWithdrawal, CoverageAuthority, DesignPassProposal,
+    DesignPropose, OutputAdopt, PreparationDecide, PreparationDecision, ProposalRef, RoomSource,
 };
 
 use super::*;
@@ -51,9 +50,9 @@ impl<T: DeserializeOwned> JsonOperand<T> {
     }
 }
 
-const CANDIDATE_JSON: JsonOperand<RetainedCandidate> = JsonOperand::new(
+const CANDIDATE_JSON: JsonOperand<DesignPassProposal> = JsonOperand::new(
     "CANDIDATE_JSON",
-    r#"{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"governed_inputs":[],"outputs":["dVzfwWPSh","dVzfwgs7d"],"references":[{"relation":"contract","source":{"kind":"journal","fact":"6dth"}}]}"#,
+    r#"{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"statement":1,"claim":2,"recommendation":"work","governed_inputs":[],"outputs":["dVzfwWPSh","dVzfwgs7d"],"references":[{"relation":"contract","source":{"kind":"journal","fact":"6dth"}}],"justification":"The cited contract supports this pass."}"#,
 );
 const CRITIQUE_JSON: JsonOperand<CandidateCritique> = JsonOperand::new(
     "CRITIQUE_JSON",
@@ -86,7 +85,7 @@ pub(super) fn dispatch_client(
     verb: &str,
 ) -> Outcome<CommandAnswer> {
     match verb {
-        "retain" => client_candidate_retain(repository, contract, matches),
+        "propose" => client_design_propose(repository, contract, matches),
         "critique" => client_candidate_critique(repository, contract, matches),
         "cover" => client_candidate_cover(repository, contract, matches),
         "decide" => client_preparation_decide(repository, contract, matches),
@@ -96,7 +95,7 @@ pub(super) fn dispatch_client(
     }
 }
 
-pub(super) fn client_candidate_retain(
+pub(super) fn client_design_propose(
     repository: &Repository,
     contract: &Contract,
     matches: &ArgMatches,
@@ -119,9 +118,9 @@ pub(super) fn client_candidate_retain(
             head: None,
         });
         Ok((
-            CommandKind::CandidateRetain,
+            CommandKind::DesignPropose,
             expected,
-            CandidateRetain { candidate },
+            DesignPropose { candidate },
         ))
     })
 }
@@ -265,7 +264,7 @@ pub(super) fn client_candidate_withdraw(
         return refusal(
             "preparation::candidate-missing",
             Some(withdrawal.candidate.candidate.to_string()),
-            "retain the exact candidate before withdrawing it",
+            "the exact proposal is missing or withdrawn",
         );
     };
     let tasks = vec![withdrawal.candidate.controller.clone()];
@@ -328,7 +327,7 @@ fn candidate_reader(
 fn retained_candidate(
     repository: &Repository,
     candidate: &CandidateRef,
-) -> Result<(RetainedCandidate, Seq), Outcome<CommandAnswer>> {
+) -> Result<(DesignPassProposal, Seq), Outcome<CommandAnswer>> {
     let reader = candidate_reader(repository, candidate)?;
     let subject = ProposalRef::Candidate {
         candidate: candidate.clone(),
@@ -345,7 +344,7 @@ fn retained_candidate(
             refusal(
                 "preparation::candidate-missing",
                 Some(candidate.candidate.to_string()),
-                "retain the exact candidate version before deciding it",
+                "record the exact proposal before deciding it",
             )
         })?;
     let position = head.position();

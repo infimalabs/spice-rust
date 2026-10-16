@@ -2,10 +2,10 @@ use super::*;
 
 use wire::rooms::{
     CandidateCoverage, CandidateCoverageRecord, CandidateCritique, CandidateCritiqueRecord,
-    CandidateRef, CandidateReference, CandidateRetain, CoverageAuthority, CoverageRef, CritiqueRef,
-    CritiqueStanding, DecisionOutcome, DecisionRef, OutputAdopt, OutputDecision, OutputVerdict,
-    PreparationDecide, PreparationDecision, ProposalRef, RetainedCandidate, RoomAuthorityStamp,
-    RoomSource,
+    CandidateRef, CandidateReference, CoverageAuthority, CoverageRef, CritiqueRef,
+    CritiqueStanding, DecisionOutcome, DecisionRef, DesignPassProposal, DesignPropose, OutputAdopt,
+    OutputDecision, OutputVerdict, PreparationDecide, PreparationDecision, ProposalRef,
+    RoomAuthorityStamp, RoomSource,
 };
 
 fn add_plan(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
@@ -87,8 +87,16 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
         wire::TaskIntent::Design,
         None,
     );
-    let output = add_output(&bus, epoch, &controller, "Selected output");
-    let spare = add_output(&bus, epoch, &controller, "Unselected output");
+    group_design(&bus, epoch, &controller);
+    claim_task(
+        &bus,
+        epoch,
+        &seats[0],
+        &Actor::Lane(seats[0].lane),
+        &controller,
+    );
+    let output = add_plan_output(&bus, epoch, &controller, "Selected output");
+    let spare = add_plan_output(&bus, epoch, &controller, "Unselected output");
     let (candidate, source) =
         retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
     record_test_critique(&bus, epoch, &seats, &controller, &candidate, &source);
@@ -96,8 +104,12 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
     authorize_test_output(&bus, epoch, &controller, &output, &spare, candidate);
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        [spare.born().expect("spare output stamp")].into(),
-        "the authorized controller releases only its selected output"
+        [
+            controller.born().expect("Design stamp"),
+            spare.born().expect("spare output stamp"),
+        ]
+        .into(),
+        "the Design waits on its selected Plan while the rejected sibling stays gated"
     );
     let first = preparation_page(&root, &[controller.as_str(), "--limit", "2"]);
     assert_eq!(first["controller"], controller.as_str());
@@ -164,7 +176,7 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
 }
 
 #[test]
-fn operator_selection_releases_outputs_and_leaves_a_held_design_open() {
+fn operator_selection_releases_outputs_and_leaves_the_design_unclaimed_and_open() {
     let (root, bus, epoch, seats) = fixture("preparation-held-selection", 2);
     let controller = add_controller(
         &bus,
@@ -181,26 +193,27 @@ fn operator_selection_releases_outputs_and_leaves_a_held_design_open() {
         &Actor::Lane(seats[0].lane),
         &controller,
     );
-    let output = add_output(&bus, epoch, &controller, "Selected held output");
-    let spare = add_output(&bus, epoch, &controller, "Unselected held output");
+    let output = add_plan_output(&bus, epoch, &controller, "Selected held output");
+    let spare = add_plan_output(&bus, epoch, &controller, "Unselected held output");
     let (candidate, source) =
         retain_test_candidate(&bus, epoch, &seats, &controller, &output, &spare);
     record_test_critique(&bus, epoch, &seats, &controller, &candidate, &source);
     let _coverage = record_test_coverage(&bus, epoch, &seats, &controller, &candidate, &source);
-    assert!(
-        open_awaiting_selection(&bus, epoch).is_empty(),
-        "the active claim retains its in-flight standing"
+    assert_eq!(
+        open_awaiting_selection(&bus, epoch),
+        [controller.born().expect("Design stamp")].into(),
+        "the completed pass waits on its exact operator decision"
     );
 
     authorize_test_output(&bus, epoch, &controller, &output, &spare, candidate);
 
     let current = board(&bus, epoch, Actor::Operator);
     assert!(
-        matches!(
-            at(&current, &controller).claim.as_ref(),
-            Some(claim) if claim.body.disposition == ClaimDisposition::Active
-        ),
-        "selection never takes a Design from its holder"
+        at(&current, &controller)
+            .claim
+            .as_ref()
+            .is_none_or(|claim| claim.body.disposition != ClaimDisposition::Active),
+        "the proposal released the Design claim before operator selection"
     );
     let gated = open_gated(&bus, epoch);
     assert!(
@@ -225,8 +238,10 @@ fn later_candidate_versions_release_additional_exact_output_subsets() {
         wire::TaskIntent::Design,
         None,
     );
-    let first = add_output(&bus, epoch, &design, "First version output");
-    let second = add_output(&bus, epoch, &design, "Later version output");
+    group_design(&bus, epoch, &design);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
+    let first = add_plan_output(&bus, epoch, &design, "First version output");
+    let second = add_plan_output(&bus, epoch, &design, "Later version output");
     let (initial, _) = retain_candidate_version(
         &bus,
         epoch,
@@ -242,6 +257,24 @@ fn later_candidate_versions_release_additional_exact_output_subsets() {
         Some(first_decision.clone())
     );
     assert_eq!(at(&after_first, &second).statement.body.authorization, None);
+    let current = board(&bus, epoch, Actor::Operator);
+    let heads = at(&current, &first);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskClose,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+        ],
+        &TaskClose {
+            task: first.clone(),
+            validation: "the first selected Plan is settled".to_owned(),
+            force_claimed: false,
+        },
+    ));
 
     let (later, _) = retain_candidate_version(
         &bus,
@@ -299,19 +332,56 @@ fn retain_candidate_version(
     outputs: &[&TaskHandle],
     candidate_micros: i64,
 ) -> (CandidateRef, RoomSource) {
-    let current = board(bus, epoch, Actor::Lane(seat.lane));
+    propose_candidate_version(
+        bus,
+        epoch,
+        seat,
+        controller,
+        outputs,
+        candidate_micros,
+        wire::rooms::DesignPassRecommendation::Work,
+    )
+}
+
+fn propose_candidate_version(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    controller: &TaskHandle,
+    outputs: &[&TaskHandle],
+    candidate_micros: i64,
+    recommendation: wire::rooms::DesignPassRecommendation,
+) -> (CandidateRef, RoomSource) {
+    let mut current = board(bus, epoch, Actor::Lane(seat.lane));
+    if at(&current, controller)
+        .claim
+        .as_ref()
+        .is_none_or(|claim| claim.body.disposition != ClaimDisposition::Active)
+    {
+        claim_task(bus, epoch, seat, &Actor::Lane(seat.lane), controller);
+        current = board(bus, epoch, Actor::Lane(seat.lane));
+    }
     let candidate = CandidateRef {
         controller: controller.born().expect("controller stamp"),
         candidate: RoomAuthorityStamp::for_micros(candidate_micros).expect("candidate identity"),
     };
-    let retained = RetainedCandidate {
+    let controller_state = at(&current, controller);
+    let retained = DesignPassProposal {
         candidate: candidate.clone(),
+        statement: controller_state.statement.position,
+        claim: controller_state
+            .claim
+            .as_ref()
+            .expect("Design is claimed before proposing a pass")
+            .position,
+        recommendation,
         governed_inputs: Vec::new(),
         outputs: outputs
             .iter()
             .map(|output| output.born().expect("output stamp"))
             .collect(),
         evidence: Vec::new(),
+        justification: "the cited contract supports this Design pass".to_owned(),
         references: vec![CandidateReference {
             relation: "contract".parse().expect("relation"),
             source: journal_source(&current, controller),
@@ -331,9 +401,9 @@ fn retain_candidate_version(
         bus,
         epoch,
         Actor::Lane(seat.lane),
-        CommandKind::CandidateRetain,
+        CommandKind::DesignPropose,
         expected,
-        &CandidateRetain {
+        &DesignPropose {
             candidate: retained,
         },
     ));
@@ -648,7 +718,7 @@ fn adoption_refuses_claimed_work_and_proposal_writes_refuse_stale_subjects() {
         &bus,
         epoch,
         Actor::Operator,
-        CommandKind::CandidateRetain,
+        CommandKind::DesignPropose,
         vec![
             statement_witness(at(&current, &controller)),
             Witness::Proposal {
@@ -658,12 +728,16 @@ fn adoption_refuses_claimed_work_and_proposal_writes_refuse_stale_subjects() {
                 head: Some(Seq::new(1).expect("fixture position")),
             },
         ],
-        &CandidateRetain {
-            candidate: RetainedCandidate {
+        &DesignPropose {
+            candidate: DesignPassProposal {
                 candidate,
+                statement: at(&current, &controller).statement.position,
+                claim: Seq::new(1).expect("fixture claim position"),
+                recommendation: wire::rooms::DesignPassRecommendation::Work,
                 governed_inputs: Vec::new(),
                 outputs: vec![output.born().expect("output stamp")],
                 evidence: Vec::new(),
+                justification: "the cited contract supports this pass".to_owned(),
                 references: vec![CandidateReference {
                     relation: "contract".parse().expect("relation"),
                     source: journal_source(&current, &controller),
@@ -1005,7 +1079,7 @@ fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
         &bus,
         epoch,
         Actor::Lane(seats[0].lane),
-        CommandKind::CandidateRetain,
+        CommandKind::DesignPropose,
         transition_witnesses(at(&current, &plan))
             .into_iter()
             .chain(transition_witnesses(at(&current, &task)))
@@ -1016,12 +1090,19 @@ fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
                 head: None,
             }])
             .collect(),
-        &CandidateRetain {
-            candidate: RetainedCandidate {
+        &DesignPropose {
+            candidate: DesignPassProposal {
                 candidate,
+                statement: at(&current, &plan).statement.position,
+                claim: at(&current, &plan).claim.as_ref().map_or_else(
+                    || Seq::new(1).expect("fixture claim position"),
+                    |claim| claim.position,
+                ),
+                recommendation: wire::rooms::DesignPassRecommendation::Work,
                 governed_inputs: Vec::new(),
                 outputs: vec![task_stamp],
                 evidence: Vec::new(),
+                justification: "the cited contract supports this pass".to_owned(),
                 references: vec![CandidateReference {
                     relation: "contract".parse().expect("relation"),
                     source: journal_source(&current, &plan),
@@ -1051,6 +1132,8 @@ fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
 fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     let (root, bus, epoch, seats) = fixture("preparation-design-plans", 2);
     let design = add_controller(&bus, epoch, "Plan design", wire::TaskIntent::Design, None);
+    group_design(&bus, epoch, &design);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
     let selected = add_plan_output(&bus, epoch, &design, "Selected plan");
     let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
     let stamps = |tasks: &[&TaskHandle]| {
@@ -1071,8 +1154,8 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     authorize_test_output(&bus, epoch, &design, &selected, &sibling, candidate);
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        stamps(&[&sibling]),
-        "the unselected sibling Plan stays gated"
+        stamps(&[&design, &sibling]),
+        "the Design waits on its selected Plan while its sibling stays gated"
     );
 
     let planner = Actor::Lane(seats[0].lane);
@@ -1080,8 +1163,8 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     let task = add_output(&bus, epoch, &selected, "Selected plan task");
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        stamps(&[&sibling, &task]),
-        "the selected Plan holds its task until its own review"
+        stamps(&[&design, &sibling, &task]),
+        "the Design waits while the selected Plan holds its task for review"
     );
     assert_committed(review_clean(&bus, epoch, &seats[0], &selected));
     assert_eq!(
@@ -1093,8 +1176,8 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     );
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
-        stamps(&[&sibling]),
-        "the selected Plan's clean review releases its task without another selection"
+        stamps(&[&design, &sibling]),
+        "the Design waits on the task released by the selected Plan's clean review"
     );
     let worker = Actor::Lane(seats[1].lane);
     claim_task(&bus, epoch, &seats[1], &worker, &task);
@@ -1137,6 +1220,8 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
 fn next_work_offers_a_plan_released_task_whose_open_design_is_off_the_frontier() {
     let (root, bus, epoch, seats) = fixture("preparation-design-next-nested", 2);
     let design = add_controller(&bus, epoch, "Nested design", wire::TaskIntent::Design, None);
+    group_design(&bus, epoch, &design);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
     let selected = add_plan_output(&bus, epoch, &design, "Selected plan");
     let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
     let (candidate, source) =
@@ -1168,7 +1253,6 @@ fn next_work_offers_a_plan_released_task_whose_open_design_is_off_the_frontier()
             force_claimed: false,
         },
     ));
-    group_design(&bus, epoch, &design);
 
     let worker = Actor::Lane(seats[1].lane);
     let Some(NextWorkState::Candidate { task: offered }) =
@@ -1194,6 +1278,8 @@ fn a_design_refuses_authorization_until_its_pending_dependencies_settle() {
         wire::TaskIntent::Design,
         None,
     );
+    group_design(&bus, epoch, &design);
+    claim_task(&bus, epoch, &seats[0], &Actor::Lane(seats[0].lane), &design);
     let selected = add_plan_output(&bus, epoch, &design, "Selected plan");
     let sibling = add_plan_output(&bus, epoch, &design, "Sibling plan");
     let (candidate, source) =

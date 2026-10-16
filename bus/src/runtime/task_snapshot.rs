@@ -295,7 +295,7 @@ impl Indexes {
         match row.fact.kind() {
             FactKind::LaneSessionDeclared | FactKind::LaneStarted => self.observe_lane(row),
             FactKind::TaskAdded => self.observe_task_added(row),
-            FactKind::CandidateRetained
+            FactKind::DesignProposed
             | FactKind::PreparationDecided
             | FactKind::CandidateWithdrawn
             | FactKind::TrustPended => self.observe_selection(row),
@@ -376,10 +376,7 @@ impl Indexes {
     }
 
     fn observe_selection(&mut self, row: &journal::crossing::Envelope<journal::crossing::AnyFact>) {
-        if let Some(retained) = row
-            .fact
-            .read::<journal::crossing::rooms::CandidateRetained>()
-        {
+        if let Some(retained) = row.fact.read::<journal::crossing::rooms::DesignProposed>() {
             self.candidate_selection.retain(retained.candidate);
         } else if let Some(decided) = row
             .fact

@@ -551,30 +551,40 @@ owns each rule summarized here.
   releases its claim and enters the passive open Design; before then the row
   is ordinary claimed work, not a Design room or request target. Active
   Plan and Design claims refuse implementation commits. A Design plans Plans;
-  a Plan plans executable tasks. When a Design finds follow-up warranted, it
-  creates the acceptance-bearing output Plans under itself and runs
-  `preparation retain CANDIDATE_JSON` with a candidate that names those
-  outputs and cites only sources in that Design's scope. A finding that no
-  follow-up is warranted says so explicitly in the Design's notes. An author
-  that retained a mistaken candidate runs `preparation withdraw
-  WITHDRAWAL_JSON` with a reason naming the correction before any decision;
-  the version stays in history but leaves the operator's choices.
+  a Plan plans executable tasks.
+
+  Each claimed Design pass ends with exactly one `preparation propose
+  PROPOSAL_JSON` or with the existing proposal-less free/lapse abandonment.
+  The proposal witnesses the exact Design statement and active claim, records
+  the completed pass horizon, and releases that claim in the same guarded
+  transaction. A work recommendation names one or more acceptance-bearing
+  output Plans the Design constructed directly, with source-backed
+  justification. A conclude or collapse recommendation names no output or
+  governed input and carries the same source-backed justification. A mistaken
+  undecided proposal can be retracted by its author with `preparation withdraw
+  WITHDRAWAL_JSON`; the version stays in history but leaves the operator's
+  choices.
 
   A Design
   [stays open until the operator concludes it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
-  lane `task done` refuses it, so its holder checkpoints and runs `task free`.
-  Only `task conclude HANDLE --done` or `--collapse REASON`, or a collapse
-  decision staging that same conclusion, ends an unheld Design; `task close`
-  refuses Designs. Each Design output waits, gated, until one exact operator
-  `preparation decide` decision assigns every output in the candidate version
-  an accepted or rejected verdict. The decision and execution authorization
-  for exactly the accepted outputs record together; rejected outputs remain
-  gated, and the Design remains open. Per-output comments and an optional
-  overall comment explain the decision. Rejecting every output authorizes
-  nothing, like a historical return. Resolution belongs to the operator; the
-  Design's holders do not infer it, review coverage never gates it, and
-  working-group membership grants no authorization. Rejected-output and
-  overall feedback is [told once to its active holder](invariants/identity.md#identity-a-designs-newest-return-is-told-once-to-its-active-holder)
+  ordinary lane `task done` refuses it. The operator accepts a conclude or
+  collapse proposal through `preparation decide`; that decision stages the
+  existing guarded `task conclude --done` or `--collapse` authority without
+  fabricating an output. Direct `task conclude` remains available. `task close`
+  refuses Designs.
+
+  Each work output waits, gated, until one exact operator `preparation decide`
+  decision assigns every output in its Design pass proposal an accepted or
+  rejected verdict. The decision and execution authorization for exactly the
+  accepted outputs record together; rejected outputs remain gated, and the Design
+  remains open. Per-output comments and an optional overall comment explain
+  the decision. Rejecting every output authorizes nothing. Returning any
+  proposal records nonblank material feedback, authorizes and concludes
+  nothing, and leaves the Design open for another claimed pass. Resolution
+  belongs to the operator; Design holders do not infer it, review coverage
+  never gates it, and working-group membership grants no authorization.
+  Rejected-output, overall, and returned feedback is
+  [told once to the active holder](invariants/identity.md#identity-a-designs-newest-return-is-told-once-to-its-active-holder)
   as its next input, and `room history` lists every verdict and comment.
   A collapse concludes negatively and, in that same journal write, operator-closes
   every still-unselected pending output and every pending task prepared beneath
@@ -596,7 +606,7 @@ owns each rule summarized here.
 
   A Plan is an ordinary reviewed task constructor. It creates its
   acceptance-bearing executable tasks under itself; those tasks wait for its
-  positive review and their ordinary dependencies, with no candidate,
+  positive review and their ordinary dependencies, with no Design proposal,
   selection, or execution authorization. A selected Plan therefore runs, and
   its own review releases its tasks. An open Design with an output it
   constructed that is still unselected
@@ -611,9 +621,9 @@ owns each rule summarized here.
   ordinary routing with no execution authorization while its Design stays
   open and its group stays in Explore or Converge. Like a planning claim it
   holds no commit authority, so it lands nothing; its deliverable is task notes
-  and retained artifacts that a retained candidate cites by exact source. A
-  gather task is never a candidate output, so turning a finding into work
-  still takes a candidate output the operator selects.
+  and retained artifacts that a Design pass proposal cites by exact source. A
+  gather task is never a proposed Plan output, so turning a finding into work
+  still takes a work proposal whose output the operator accepts.
 - **Organization and foreground.** The
   [working-group partition](invariants/identity.md#identity-working-groups-are-one-guarded-partition-of-designs)
   is shared repository organization and stance authority read by `spice group

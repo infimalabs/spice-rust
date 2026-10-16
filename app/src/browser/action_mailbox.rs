@@ -652,14 +652,8 @@ fn preparation_bytes(request: &crate::client_action::PreparationRequest) -> usiz
     match request {
         crate::client_action::PreparationRequest::Decide { request, expected } => {
             let outcome = match &request.decision.outcome {
-                wire::rooms::DecisionOutcome::Selected {
-                    selected_outputs, ..
-                } => selected_outputs
-                    .iter()
-                    .map(|output| output.as_str().len())
-                    .sum(),
-                wire::rooms::DecisionOutcome::Returned { reason, .. }
-                | wire::rooms::DecisionOutcome::Collapse { reason, .. } => reason.len(),
+                wire::rooms::DecisionOutcome::Accepted { .. } => 0,
+                wire::rooms::DecisionOutcome::Returned { reason, .. } => reason.len(),
                 wire::rooms::DecisionOutcome::Resolved {
                     outputs, comment, ..
                 } => outputs

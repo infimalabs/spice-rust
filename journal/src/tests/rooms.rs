@@ -1,9 +1,9 @@
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritique, CandidateCritiqued, CandidateRef,
-    CandidateReference, CandidateRetained, CoverageAuthority, CoverageRef, CritiqueRef,
-    CritiqueStanding, DecisionOutcome, DecisionRef, ExecutionAuthorization, ExecutionAuthorized,
-    OutputControlled, OutputDecision, OutputVerdict, PreparationDecided, PreparationDecision,
-    ProposalRef, RetainedCandidate, RoomAuthorityStamp, RoomPublicationContent, RoomPublished,
+    CandidateReference, CoverageAuthority, CoverageRef, CritiqueRef, CritiqueStanding,
+    DecisionOutcome, DecisionRef, DesignPassProposal, DesignProposed, ExecutionAuthorization,
+    ExecutionAuthorized, OutputControlled, OutputDecision, OutputVerdict, PreparationDecided,
+    PreparationDecision, ProposalRef, RoomAuthorityStamp, RoomPublicationContent, RoomPublished,
     RoomSource, TextRange, TranscriptHunk, WorkingGroup, WorkingGroupMoved, WorkingGroupPartition,
     WorkingGroupsArranged,
 };
@@ -229,6 +229,48 @@ fn statement(journal: &Journal, task: &TaskStamp) -> TaskHead {
         .into_body()
 }
 
+fn claim(journal: &mut Journal, task: &TaskStamp) -> Seq {
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163d1");
+    let occupant = uuid("018f82d4-6f59-7d06-92e3-bce9131163d2");
+    let epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163d3");
+    let actor = Actor::Operator;
+    let cell = wire::ClaimCell {
+        project: "rooms".to_owned(),
+        phase: phase("design"),
+    };
+    let mut write = write();
+    let won = write
+        .fact(
+            wire::body::ClaimWon {
+                task: task.clone(),
+                actor: actor.clone(),
+                lane,
+                occupant,
+                epoch,
+                cell: cell.clone(),
+                until: instant(),
+                git: None,
+                recovery: None,
+                source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
+            },
+            FactCause::Root,
+        )
+        .expect("claim fact builds");
+    write.claim_head(task.clone(), won, move |fact| wire::ClaimHead {
+        actor,
+        fact,
+        claimed: fact,
+        cell,
+        lane,
+        occupant,
+        epoch,
+        recovery: None,
+        disposition: wire::ClaimDisposition::Active,
+        acknowledged: 0,
+    });
+    journal.apply(write).expect("claim commits").last()
+}
+
 /// Adopt `output` with a task head carrying `head_preparation`, which a sound
 /// write makes equal to the controlled preparation.
 fn adopt(
@@ -380,19 +422,29 @@ struct Preparation {
     output: TaskStamp,
     spare: TaskStamp,
     input: TaskStamp,
+    statement: Seq,
+    claim: Seq,
 }
 
 impl Preparation {
     fn new(journal: &mut Journal) -> Self {
         let controller = design_task(journal, 1);
+        let statement = journal
+            .read(|read| read.task_head(&controller))
+            .expect("controller statement reads")
+            .expect("controller exists")
+            .position();
         let output = task(journal, 2, Some(prepared_by(&controller)));
         let spare = task(journal, 3, None);
         let input = task(journal, 4, None);
+        let claim = claim(journal, &controller);
         Self {
             controller,
             output,
             spare,
             input,
+            statement,
+            claim,
         }
     }
 
@@ -403,12 +455,28 @@ impl Preparation {
         }
     }
 
-    fn retained(&self, micros: i64, outputs: Vec<TaskStamp>) -> CandidateRetained {
-        CandidateRetained {
-            candidate: RetainedCandidate {
+    fn retained(&self, micros: i64, outputs: Vec<TaskStamp>) -> DesignProposed {
+        self.proposal(micros, wire::rooms::DesignPassRecommendation::Work, outputs)
+    }
+
+    fn proposal(
+        &self,
+        micros: i64,
+        recommendation: wire::rooms::DesignPassRecommendation,
+        outputs: Vec<TaskStamp>,
+    ) -> DesignProposed {
+        DesignProposed {
+            candidate: DesignPassProposal {
                 candidate: self.candidate(micros),
-                governed_inputs: vec![self.input.clone()],
+                statement: self.statement,
+                claim: self.claim,
+                recommendation,
+                governed_inputs: (recommendation == wire::rooms::DesignPassRecommendation::Work)
+                    .then(|| self.input.clone())
+                    .into_iter()
+                    .collect(),
                 outputs,
+                justification: "the cited contract supports this pass".to_owned(),
                 references: vec![CandidateReference {
                     relation: name("contract"),
                     source: journal_source(1),
@@ -465,6 +533,21 @@ impl Preparation {
                 coverage: Vec::new(),
             },
         }
+    }
+}
+
+fn selected(candidate: CandidateRef, outputs: Vec<TaskStamp>) -> DecisionOutcome {
+    DecisionOutcome::Resolved {
+        candidate,
+        outputs: outputs
+            .into_iter()
+            .map(|output| OutputDecision {
+                output,
+                verdict: OutputVerdict::Accepted,
+                comment: None,
+            })
+            .collect(),
+        comment: None,
     }
 }
 
@@ -567,10 +650,7 @@ fn authorized(journal: &mut Journal) -> Preparation {
         journal,
         preparation.decision(
             1,
-            DecisionOutcome::Selected {
-                candidate: preparation.candidate(1),
-                selected_outputs: vec![preparation.output.clone()],
-            },
+            selected(preparation.candidate(1), vec![preparation.output.clone()]),
         ),
     )
     .expect("decision recorded");
@@ -644,7 +724,7 @@ fn one_write_maintains_the_projection_that_rebuild_reproduces_without_touching_f
     assert!(matches!(
         decision.map(JournalHead::into_body),
         Some(ProposalAuthority::Decision(PreparationDecision {
-            outcome: DecisionOutcome::Selected { .. },
+            outcome: DecisionOutcome::Resolved { .. },
             ..
         }))
     ));
@@ -802,7 +882,7 @@ fn preparation_authority_pages_one_controller_in_journal_order() {
     assert_eq!(
         kinds,
         vec![
-            FactKind::CandidateRetained,
+            FactKind::DesignProposed,
             FactKind::CandidateCovered,
             FactKind::PreparationDecided,
             FactKind::ExecutionAuthorized,
@@ -944,8 +1024,8 @@ fn each_output_has_one_controller_and_rehoming_keeps_room_identity() {
     .expect("both controlled outputs join one candidate");
     let result = commit(
         &mut journal,
-        CandidateRetained {
-            candidate: RetainedCandidate {
+        DesignProposed {
+            candidate: DesignPassProposal {
                 candidate: CandidateRef {
                     controller: other.clone(),
                     candidate: authority(2),

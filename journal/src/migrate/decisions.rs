@@ -1,12 +1,13 @@
-//! Exact crossing for the retired two-step preparation decision protocol.
+//! Exact crossings for retired preparation proposal and decision protocols.
 
 use std::collections::BTreeMap;
 
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use wire::rooms::{
-    CandidateRef, DecisionRef, ExecutionAuthorization, PreparationDecision, RetainedCandidate,
+    CandidateRef, DecisionOutcome, DecisionRef, DesignPassProposal, DesignPropose,
+    ExecutionAuthorization, OutputDecision, PreparationDecision,
 };
 use wire::{AnyFact, Envelope, FactKind};
 
@@ -16,6 +17,9 @@ use super::{OpenError, residual::retained};
 const TWO_STEP_DECISION_RELEASE: &str = "128e75e97";
 const RETAINED_RETURN_REASON: &str =
     "returned before preparation decisions required an explicit reason";
+const DESIGN_PASS_RELEASE: &str = "schema-73";
+const RETAINED_WORK_JUSTIFICATION: &str =
+    "retained work proposal predates explicit Design pass justification";
 
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
@@ -33,19 +37,507 @@ struct RetiredDecision {
     outcome: RetiredOutcome,
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum PreviousOutcome {
+    Selected {
+        candidate: CandidateRef,
+        selected_outputs: Vec<wire::TaskStamp>,
+    },
+    Returned {
+        candidate: CandidateRef,
+        reason: String,
+    },
+    Resolved {
+        candidate: CandidateRef,
+        outputs: Vec<OutputDecision>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        comment: Option<String>,
+    },
+    Collapse {
+        candidate: CandidateRef,
+        reason: String,
+    },
+}
+
+impl PreviousOutcome {
+    const fn candidate(&self) -> &CandidateRef {
+        match self {
+            Self::Selected { candidate, .. }
+            | Self::Returned { candidate, .. }
+            | Self::Resolved { candidate, .. }
+            | Self::Collapse { candidate, .. } => candidate,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviousDecision {
+    decision: DecisionRef,
+    source: wire::rooms::RoomSource,
+    outcome: PreviousOutcome,
+}
+
 /// Cross every retained two-step decision to one exact selected decision.
 ///
 /// An accepted decision is supportable only when its later authorization names
 /// the exact selected outputs. Returns retain their outcome and gain the one
 /// truthful reason absent from the retired shape. A negative decision named no
 /// candidate version, so it cannot be made exact and is refused with its owner.
-pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
+pub(super) fn cross_two_step(transaction: &Transaction<'_>) -> Result<(), OpenError> {
     let authorizations = retained_authorizations(transaction)?;
     let candidates = retained_candidates(transaction)?;
     cross_decision_facts(transaction, &authorizations, &candidates)?;
     cross_authorization_facts(transaction)?;
     cross_decision_heads(transaction, &authorizations, &candidates)?;
     cross_authorization_heads(transaction)
+}
+
+/// Add the exact statement and claim horizon to each output-only predecessor.
+///
+/// The receipt's evaluated witnesses are the immutable authority the old
+/// command actually used. An old candidate without both witnesses cannot be
+/// represented as a completed claimed pass and refuses the whole crossing.
+pub(super) fn cross_design_passes(transaction: &Transaction<'_>) -> Result<(), OpenError> {
+    let collapses = previous_collapses(transaction)?;
+    for (seq, bytes) in fact_rows(transaction, FactKind::DesignProposed)? {
+        let mut envelope = value(&bytes, "fact_envelopes", seq.to_string())?;
+        let fact = fact_object(&mut envelope, seq)?;
+        let Some(candidate) = fact.get("candidate").cloned() else {
+            return Err(proposal_refusal(
+                seq,
+                "the retained proposal has no candidate body",
+            ));
+        };
+        if candidate.get("statement").is_some() {
+            continue;
+        }
+        let identity: CandidateRef =
+            serde_json::from_value(candidate.get("candidate").cloned().ok_or_else(|| {
+                proposal_refusal(seq, "the retained proposal has no candidate identity")
+            })?)
+            .map_err(|error| {
+                proposal_refusal(
+                    seq,
+                    &format!("the retained proposal identity is invalid: {error}"),
+                )
+            })?;
+        let (command_id, request, witnesses) = proposal_receipt(transaction, seq)?;
+        let (statement, claim) = proposal_horizon(&identity.controller, &witnesses)
+            .map_err(|detail| proposal_refusal(seq, &detail))?;
+        let collapse = collapses
+            .get(&candidate_key(&identity).map_err(|detail| proposal_refusal(seq, &detail))?);
+        let mut crossed = candidate;
+        let object = crossed
+            .as_object_mut()
+            .expect("a retained proposal candidate decoded as an object");
+        object.insert(
+            "statement".to_owned(),
+            serde_json::to_value(statement).expect("a sequence encodes"),
+        );
+        object.insert(
+            "claim".to_owned(),
+            serde_json::to_value(claim).expect("a sequence encodes"),
+        );
+        if let Some(reason) = collapse {
+            object.insert(
+                "recommendation".to_owned(),
+                Value::String("collapse".to_owned()),
+            );
+            object.insert("governed_inputs".to_owned(), Value::Array(Vec::new()));
+            object.insert("outputs".to_owned(), Value::Array(Vec::new()));
+            object.insert("justification".to_owned(), Value::String(reason.clone()));
+        } else {
+            object.insert(
+                "recommendation".to_owned(),
+                Value::String("work".to_owned()),
+            );
+            object.insert(
+                "justification".to_owned(),
+                Value::String(RETAINED_WORK_JUSTIFICATION.to_owned()),
+            );
+        }
+        let crossed: DesignPassProposal = serde_json::from_value(crossed).map_err(|error| {
+            proposal_refusal(
+                seq,
+                &format!("the retained proposal cannot cross to one Design pass: {error}"),
+            )
+        })?;
+        fact.insert(
+            "candidate".to_owned(),
+            serde_json::to_value(&crossed).map_err(|error| {
+                proposal_refusal(seq, &format!("the crossed proposal cannot encode: {error}"))
+            })?,
+        );
+        update_fact(transaction, seq, FactKind::DesignProposed, envelope)?;
+        cross_proposal_head(transaction, seq, &crossed)?;
+        cross_proposal_receipt(transaction, seq, &command_id, request, crossed)?;
+    }
+    Ok(())
+}
+fn previous_collapses(
+    transaction: &Transaction<'_>,
+) -> Result<BTreeMap<String, String>, OpenError> {
+    let mut collapses = BTreeMap::new();
+    for (seq, bytes) in fact_rows(transaction, FactKind::PreparationDecided)? {
+        let mut envelope = value(&bytes, "fact_envelopes", seq.to_string())?;
+        let fact = fact_object(&mut envelope, seq)?;
+        let Some(outcome) = fact
+            .get("decision")
+            .and_then(|decision| decision.get("outcome"))
+            .filter(|outcome| outcome.get("kind").and_then(Value::as_str) == Some("collapse"))
+        else {
+            continue;
+        };
+        let candidate: CandidateRef = serde_json::from_value(
+            outcome
+                .get("candidate")
+                .cloned()
+                .ok_or_else(|| proposal_refusal(seq, "a collapse has no candidate identity"))?,
+        )
+        .map_err(|error| {
+            proposal_refusal(seq, &format!("a collapse candidate is invalid: {error}"))
+        })?;
+        let reason = outcome
+            .get("reason")
+            .and_then(Value::as_str)
+            .ok_or_else(|| proposal_refusal(seq, "a collapse has no reason"))?
+            .to_owned();
+        let key = candidate_key(&candidate).map_err(|detail| proposal_refusal(seq, &detail))?;
+        if collapses.insert(key, reason).is_some() {
+            return Err(proposal_refusal(
+                seq,
+                "more than one collapse decision names the same proposal",
+            ));
+        }
+    }
+    Ok(collapses)
+}
+
+fn proposal_receipt(
+    transaction: &Transaction<'_>,
+    seq: i64,
+) -> Result<(String, Vec<u8>, Vec<wire::Witness>), OpenError> {
+    let row = transaction
+        .query_row(
+            "SELECT command_id, request, evaluated_witnesses FROM command_receipts \
+             WHERE first_seq <= ?1 AND last_seq >= ?1 AND command_kind = ?2",
+            params![seq, wire::CommandKind::DesignPropose.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(OpenError::Sqlite)?
+        .ok_or_else(|| {
+            proposal_refusal(seq, "the retained proposal has no owning command receipt")
+        })?;
+    let witnesses = wire::decode(&row.2).map_err(|error| {
+        proposal_refusal(
+            seq,
+            &format!("the retained proposal witnesses do not decode: {error}"),
+        )
+    })?;
+    Ok((row.0, row.1, witnesses))
+}
+
+fn proposal_horizon(
+    controller: &wire::TaskStamp,
+    witnesses: &[wire::Witness],
+) -> Result<(wire::Seq, wire::Seq), String> {
+    let statement = witnesses.iter().find_map(|witness| match witness {
+        wire::Witness::Task { task, head } if task == controller => Some(*head),
+        _ => None,
+    });
+    let claim = witnesses.iter().find_map(|witness| match witness {
+        wire::Witness::Claim {
+            task,
+            head: Some(head),
+        } if task == controller => Some(*head),
+        _ => None,
+    });
+    statement.zip(claim).ok_or_else(|| {
+        format!(
+            "retained proposal controller {controller} lacks exact statement and active-claim witnesses"
+        )
+    })
+}
+
+fn cross_proposal_head(
+    transaction: &Transaction<'_>,
+    seq: i64,
+    proposal: &DesignPassProposal,
+) -> Result<(), OpenError> {
+    let key = serde_json::to_string(&wire::rooms::ProposalRef::Candidate {
+        candidate: proposal.candidate.clone(),
+    })
+    .map_err(|error| {
+        proposal_refusal(
+            seq,
+            &format!("the Design pass proposal identity is invalid: {error}"),
+        )
+    })?;
+    let body = wire::encode(proposal).map_err(|error| {
+        proposal_refusal(
+            seq,
+            &format!("the crossed proposal head cannot encode: {error}"),
+        )
+    })?;
+    let changed = transaction
+        .execute(
+            "UPDATE proposal_heads SET body = ?1 WHERE subject = ?2",
+            params![body, key],
+        )
+        .map_err(OpenError::Sqlite)?;
+    if changed != 1 {
+        return Err(proposal_refusal(
+            seq,
+            "the retained proposal has no exact proposal head",
+        ));
+    }
+    Ok(())
+}
+
+fn cross_proposal_receipt(
+    transaction: &Transaction<'_>,
+    seq: i64,
+    command_id: &str,
+    bytes: Vec<u8>,
+    proposal: DesignPassProposal,
+) -> Result<(), OpenError> {
+    let mut request: Value = wire::decode(&bytes).map_err(|error| {
+        proposal_refusal(
+            seq,
+            &format!("the retained proposal request does not decode: {error}"),
+        )
+    })?;
+    let candidate = request
+        .get_mut("body")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| proposal_refusal(seq, "the retained proposal request has no body object"))?;
+    candidate.insert(
+        "candidate".to_owned(),
+        serde_json::to_value(proposal).map_err(|error| {
+            proposal_refusal(
+                seq,
+                &format!("the crossed proposal request cannot encode: {error}"),
+            )
+        })?,
+    );
+    let request: wire::Command<DesignPropose> =
+        serde_json::from_value(request).map_err(|error| {
+            proposal_refusal(
+                seq,
+                &format!("the crossed proposal request is invalid: {error}"),
+            )
+        })?;
+    let bytes = request
+        .canonical_json()
+        .map_err(|error| {
+            proposal_refusal(
+                seq,
+                &format!("the crossed proposal request cannot encode: {error}"),
+            )
+        })?
+        .into_bytes();
+    let changed = transaction
+        .execute(
+            "UPDATE command_receipts SET request = ?1 WHERE command_id = ?2",
+            params![bytes, command_id],
+        )
+        .map_err(OpenError::Sqlite)?;
+    if changed != 1 {
+        return Err(proposal_refusal(
+            seq,
+            "the retained proposal receipt changed under the exclusive crossing",
+        ));
+    }
+    Ok(())
+}
+
+/// Cross the immediately preceding selected/resolved/returned/collapse model
+/// after its proposal bodies have gained their exact pass horizon.
+pub(super) fn cross_output_decisions(transaction: &Transaction<'_>) -> Result<(), OpenError> {
+    let candidates = retained_candidates(transaction)?;
+    for (seq, bytes) in fact_rows(transaction, FactKind::PreparationDecided)? {
+        let mut envelope = value(&bytes, "fact_envelopes", seq.to_string())?;
+        let fact = fact_object(&mut envelope, seq)?;
+        let previous: PreviousDecision = serde_json::from_value(
+            fact.get("decision")
+                .cloned()
+                .ok_or_else(|| proposal_refusal(seq, "the decision has no body"))?,
+        )
+        .map_err(|error| {
+            proposal_refusal(
+                seq,
+                &format!("the previous Design pass decision is unsupported: {error}"),
+            )
+        })?;
+        let current = current_output_decision(previous, &candidates)
+            .map_err(|detail| proposal_refusal(seq, &detail))?;
+        fact.insert(
+            "decision".to_owned(),
+            serde_json::to_value(current).map_err(|error| {
+                proposal_refusal(seq, &format!("the crossed decision cannot encode: {error}"))
+            })?,
+        );
+        update_fact(transaction, seq, FactKind::PreparationDecided, envelope)?;
+    }
+
+    let rows = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT subject, body FROM proposal_heads \
+                 WHERE json_type(CAST(body AS TEXT), '$.outcome.kind') IS NOT NULL \
+                 ORDER BY subject",
+            )
+            .map_err(OpenError::Sqlite)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(OpenError::Sqlite)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(OpenError::Sqlite)?
+    };
+    for (subject, bytes) in rows {
+        let previous: PreviousDecision = wire::decode(&bytes).map_err(|error| {
+            retained(
+                "proposal_heads",
+                subject.clone(),
+                DESIGN_PASS_RELEASE,
+                format!("the previous Design pass decision is unsupported: {error}"),
+            )
+        })?;
+        let current = current_output_decision(previous, &candidates).map_err(|detail| {
+            retained(
+                "proposal_heads",
+                subject.clone(),
+                DESIGN_PASS_RELEASE,
+                detail,
+            )
+        })?;
+        let body = wire::encode(&current).map_err(|error| {
+            retained(
+                "proposal_heads",
+                subject.clone(),
+                DESIGN_PASS_RELEASE,
+                format!("the crossed decision head cannot encode: {error}"),
+            )
+        })?;
+        let changed = transaction
+            .execute(
+                "UPDATE proposal_heads SET body = ?1 WHERE subject = ?2",
+                params![body, subject],
+            )
+            .map_err(OpenError::Sqlite)?;
+        if changed != 1 {
+            return Err(retained(
+                "proposal_heads",
+                subject,
+                DESIGN_PASS_RELEASE,
+                "the decision head changed under the exclusive crossing".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn current_output_decision(
+    previous: PreviousDecision,
+    candidates: &BTreeMap<String, DesignPassProposal>,
+) -> Result<PreparationDecision, String> {
+    let key = candidate_key(previous.outcome.candidate())?;
+    let proposal = candidates
+        .get(&key)
+        .ok_or_else(|| "the decision has no exact Design pass proposal".to_owned())?;
+    let outcome = match previous.outcome {
+        PreviousOutcome::Selected {
+            candidate,
+            selected_outputs,
+        } => {
+            if proposal.recommendation != wire::rooms::DesignPassRecommendation::Work {
+                return Err("a selected decision does not name a work proposal".to_owned());
+            }
+            let selected = selected_outputs
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>();
+            if selected.len() != selected_outputs.len()
+                || selected_outputs
+                    .iter()
+                    .any(|output| !proposal.outputs.contains(output))
+            {
+                return Err(
+                    "a selected decision does not name one unique subset of its proposal outputs"
+                        .to_owned(),
+                );
+            }
+            DecisionOutcome::Resolved {
+                candidate,
+                outputs: proposal
+                    .outputs
+                    .iter()
+                    .cloned()
+                    .map(|output| OutputDecision {
+                        verdict: if selected_outputs.contains(&output) {
+                            wire::rooms::OutputVerdict::Accepted
+                        } else {
+                            wire::rooms::OutputVerdict::Rejected
+                        },
+                        output,
+                        comment: None,
+                    })
+                    .collect(),
+                comment: None,
+            }
+        }
+        PreviousOutcome::Returned { candidate, reason } => {
+            DecisionOutcome::Returned { candidate, reason }
+        }
+        PreviousOutcome::Resolved {
+            candidate,
+            outputs,
+            comment,
+        } => {
+            if proposal.recommendation != wire::rooms::DesignPassRecommendation::Work
+                || outputs.len() != proposal.outputs.len()
+                || outputs
+                    .iter()
+                    .zip(&proposal.outputs)
+                    .any(|(decision, proposal)| decision.output != *proposal)
+            {
+                return Err(
+                    "a resolved decision does not name every work proposal output in order"
+                        .to_owned(),
+                );
+            }
+            DecisionOutcome::Resolved {
+                candidate,
+                outputs,
+                comment,
+            }
+        }
+        PreviousOutcome::Collapse { candidate, reason } => {
+            if proposal.recommendation != wire::rooms::DesignPassRecommendation::Collapse
+                || proposal.justification != reason
+            {
+                return Err(
+                    "a collapse decision does not match its crossed outputless proposal".to_owned(),
+                );
+            }
+            DecisionOutcome::Accepted { candidate }
+        }
+    };
+    Ok(PreparationDecision {
+        decision: previous.decision,
+        source: previous.source,
+        outcome,
+    })
 }
 
 fn retained_authorizations(
@@ -86,7 +578,7 @@ fn retained_authorizations(
 
 fn retained_candidates(
     transaction: &Transaction<'_>,
-) -> Result<BTreeMap<String, RetainedCandidate>, OpenError> {
+) -> Result<BTreeMap<String, DesignPassProposal>, OpenError> {
     let rows = {
         let mut statement = transaction
             .prepare(
@@ -105,7 +597,7 @@ fn retained_candidates(
     };
     let mut candidates = BTreeMap::new();
     for (subject, body) in rows {
-        let candidate: RetainedCandidate = wire::decode(&body).map_err(|error| {
+        let candidate: DesignPassProposal = wire::decode(&body).map_err(|error| {
             retained(
                 "proposal_heads",
                 subject.clone(),
@@ -129,7 +621,7 @@ fn retained_candidates(
 fn cross_decision_facts(
     transaction: &Transaction<'_>,
     authorizations: &BTreeMap<String, ExecutionAuthorization>,
-    candidates: &BTreeMap<String, RetainedCandidate>,
+    candidates: &BTreeMap<String, DesignPassProposal>,
 ) -> Result<(), OpenError> {
     for (seq, bytes) in fact_rows(transaction, FactKind::PreparationDecided)? {
         let mut envelope = value(&bytes, "fact_envelopes", seq.to_string())?;
@@ -175,7 +667,7 @@ fn cross_authorization_facts(transaction: &Transaction<'_>) -> Result<(), OpenEr
 fn cross_decision_heads(
     transaction: &Transaction<'_>,
     authorizations: &BTreeMap<String, ExecutionAuthorization>,
-    candidates: &BTreeMap<String, RetainedCandidate>,
+    candidates: &BTreeMap<String, DesignPassProposal>,
 ) -> Result<(), OpenError> {
     let rows = {
         let mut statement = transaction
@@ -297,7 +789,7 @@ fn cross_authorization_heads(transaction: &Transaction<'_>) -> Result<(), OpenEr
 fn current_decision(
     retired: RetiredDecision,
     authorizations: &BTreeMap<String, ExecutionAuthorization>,
-    candidates: &BTreeMap<String, RetainedCandidate>,
+    candidates: &BTreeMap<String, DesignPassProposal>,
 ) -> Result<PreparationDecision, String> {
     let outcome = match retired.outcome {
         RetiredOutcome::Accepted { candidate } => {
@@ -333,9 +825,23 @@ fn current_decision(
                     "the retained authorization selects an output outside its candidate".to_owned(),
                 );
             }
-            wire::rooms::DecisionOutcome::Selected {
+            wire::rooms::DecisionOutcome::Resolved {
                 candidate,
-                selected_outputs: authorization.selected_outputs.clone(),
+                outputs: retained
+                    .outputs
+                    .iter()
+                    .cloned()
+                    .map(|output| wire::rooms::OutputDecision {
+                        verdict: if authorization.selected_outputs.contains(&output) {
+                            wire::rooms::OutputVerdict::Accepted
+                        } else {
+                            wire::rooms::OutputVerdict::Rejected
+                        },
+                        output,
+                        comment: None,
+                    })
+                    .collect(),
+                comment: None,
             }
         }
         RetiredOutcome::Returned { candidate } => wire::rooms::DecisionOutcome::Returned {
@@ -436,6 +942,15 @@ fn decision_key(decision: &DecisionRef) -> Result<String, String> {
 fn candidate_key(candidate: &CandidateRef) -> Result<String, String> {
     serde_json::to_string(candidate)
         .map_err(|error| format!("the retained candidate identity is invalid: {error}"))
+}
+
+fn proposal_refusal(seq: i64, detail: &str) -> OpenError {
+    retained(
+        "fact_envelopes",
+        seq.to_string(),
+        DESIGN_PASS_RELEASE,
+        detail.to_owned(),
+    )
 }
 
 fn fact_refusal(seq: i64, detail: &str) -> OpenError {

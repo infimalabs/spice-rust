@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use journal::crossing::TaskStamp;
-use journal::crossing::rooms::{CandidateRef, DecisionRef, RetainedCandidate};
+use journal::crossing::rooms::{CandidateRef, DecisionRef, DesignPassProposal};
 
 use super::persistent_index::PersistentIndex;
 
@@ -43,7 +43,7 @@ pub(super) struct CandidateSelection {
 impl CandidateSelection {
     /// Record a new open candidate version; it shadows any older verdict on
     /// each output it names until it is decided or withdrawn.
-    pub(super) fn retain(&mut self, retained: RetainedCandidate) {
+    pub(super) fn retain(&mut self, retained: DesignPassProposal) {
         if self.versions.get(&retained.candidate).is_some() {
             return;
         }

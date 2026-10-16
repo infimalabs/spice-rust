@@ -50,7 +50,7 @@ fn release_transition(
     })
 }
 
-pub(super) fn prepare_release(
+pub(in crate::board_command) fn prepare_release(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     claimed: Seq,

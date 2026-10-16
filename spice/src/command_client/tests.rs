@@ -866,7 +866,7 @@ fn every_landed_resident_family_leaf_uses_one_current_command_kind() {
         (&["room", "assess"][..], CommandKind::RoomControl),
         (&["room", "decline"][..], CommandKind::RoomClose),
         (&["room", "cancel"][..], CommandKind::RoomClose),
-        (&["preparation", "retain"][..], CommandKind::CandidateRetain),
+        (&["preparation", "propose"][..], CommandKind::DesignPropose),
         (
             &["preparation", "critique"][..],
             CommandKind::CandidateCritiqueRecord,
