@@ -87,7 +87,7 @@ fn working_group_view(
             let task = read.task_head(born)?;
             let workflow = read.workflow_head(born)?;
             Ok(match (task, workflow) {
-                (Some(task), Some(workflow)) if workflow.body().status != "deleted" => {
+                (Some(task), Some(workflow)) if !workflow.body().status.is_deleted() => {
                     match DesignStanding::of(
                         task.body().intent,
                         workflow.body(),

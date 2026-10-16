@@ -436,10 +436,9 @@ fn statement_terms(entry: &board::Entry) -> BTreeSet<String> {
     )
 }
 
-/// Whether `entry` is open work: pending and not completed.
+/// Whether `entry` is open work.
 fn open(entry: &board::Entry) -> bool {
-    let workflow = entry.workflow();
-    workflow.status == "pending" && workflow.completion.is_none()
+    entry.workflow().status.is_pending()
 }
 
 /// Whether `entry` is an open Design inactive under its group stance.

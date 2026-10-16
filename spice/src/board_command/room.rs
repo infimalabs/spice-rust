@@ -110,14 +110,10 @@ pub(super) fn room_post(
 /// posts and coordination; a settled room stays readable, and duties already
 /// open in it still settle.
 pub(super) fn anchor_settlement(workflow: &wire::WorkflowHead) -> Option<&'static str> {
-    if workflow.status == "deleted" {
-        Some("deleted")
-    } else if workflow.completion.is_some() && workflow.review == "closed" {
-        Some("closed")
-    } else if workflow.status != "pending" || workflow.completion.is_some() {
-        Some("completed")
-    } else {
-        None
+    match workflow.status.conclusion()? {
+        wire::WorkflowConclusion::Positive { .. } => Some("completed"),
+        wire::WorkflowConclusion::Negative(wire::WorkflowNegative::Closed) => Some("closed"),
+        wire::WorkflowConclusion::Negative(wire::WorkflowNegative::Deleted) => Some("deleted"),
     }
 }
 
@@ -205,7 +201,7 @@ fn validate_oops_grooming(
                 "read the board and name a retained parked OOPS report",
             ));
         };
-        if !entry.is_oops() || entry.workflow().completion.is_some() {
+        if !entry.is_oops() || !entry.workflow().status.is_pending() {
             return Err(refusal(
                 "room::oops-report-not-parked",
                 Some(entry.handle().to_string()),

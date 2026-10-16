@@ -922,8 +922,8 @@ fn task_list_fixture(
         .iter_mut()
         .find(|task| task.statement.body.handle == completed)
         .expect("completed row");
-    completed_row.workflow.body.status = "completed".to_owned();
-    completed_row.workflow.body.completion = Some(fixture_instant("fixture completion"));
+    completed_row.workflow.body.status =
+        wire::WorkflowStatus::completed(fixture_instant("fixture completion"));
     (answer, first, descendant, waiting)
 }
 

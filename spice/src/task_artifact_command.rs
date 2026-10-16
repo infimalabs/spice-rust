@@ -210,7 +210,10 @@ fn snapshot(
                     })?;
                     statuses.insert(
                         entry.born().clone(),
-                        (entry.handle().clone(), entry.workflow().status.clone()),
+                        (
+                            entry.handle().clone(),
+                            entry.workflow().status.as_str().to_owned(),
+                        ),
                     );
                 }
                 after = page.continuation;

@@ -71,11 +71,8 @@ fn workflow(name: &str) -> WorkflowHead {
     WorkflowHead {
         flow: vec![phase("todo"), phase("review")],
         phase: phase(name),
-        status: "pending".to_owned(),
-        review: "none".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     }
 }
@@ -93,9 +90,7 @@ fn task_added(
 ) {
     let mut workflow = workflow(phase);
     if positive {
-        workflow.status = "completed".to_owned();
-        workflow.review = "clean".to_owned();
-        workflow.completion = Some(instant(9));
+        workflow.status = wire::WorkflowStatus::reviewed(instant(9));
     }
     let title = title.to_owned();
     let project = project.to_owned();

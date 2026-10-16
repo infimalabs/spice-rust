@@ -33,7 +33,7 @@ fn a_holder_self_edit_is_retried_by_the_completion_client() {
 
     assert_committed(outcome);
     let completed = board(&bus, epoch, lane);
-    assert_eq!(at(&completed, &task).workflow.body.status, "completed");
+    assert!(at(&completed, &task).workflow.body.status.is_completed());
     assert_eq!(at(&completed, &task).presentation_title(), "Current title");
     clean(&root, bus);
 }
@@ -69,7 +69,7 @@ fn a_foreign_edit_is_returned_as_witness_movement_by_the_completion_client() {
         Outcome::Refusal(refusal) if refusal.reason() == "board::witness-moved"
     ));
     let pending = board(&bus, epoch, lane);
-    assert_eq!(at(&pending, &task).workflow.body.status, "pending");
+    assert!(at(&pending, &task).workflow.body.status.is_pending());
     assert_eq!(at(&pending, &task).presentation_title(), "Operator title");
     clean(&root, bus);
 }

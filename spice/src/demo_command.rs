@@ -738,11 +738,8 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
     write.workflow_head(workflow_task, added, move |_| WorkflowHead {
         flow: vec![workflow_phase.clone()],
         phase: workflow_phase,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     Ok(journal.apply(write).map_err(commit_failure)?.last())
@@ -764,11 +761,8 @@ fn seed_claim(
     let workflow = WorkflowHead {
         phase: flow[0].clone(),
         flow,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     };
     let actor = Actor::Lane(uuid(lane.lane));
@@ -944,11 +938,8 @@ fn seed_grooming_task(
     write.workflow_head(workflow_task, added, move |_| WorkflowHead {
         flow: phases,
         phase,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     journal.apply(write).map_err(commit_failure)?;

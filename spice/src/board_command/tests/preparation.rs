@@ -266,12 +266,8 @@ fn later_candidate_versions_release_additional_exact_output_subsets() {
         !open_awaiting_selection(&bus, epoch).contains(&design.born().expect("Design stamp")),
         "all direct outputs now carry exact selection authority"
     );
-    assert_eq!(
-        (
-            at(&current, &design).workflow.body.status.as_str(),
-            at(&current, &design).workflow.body.completion,
-        ),
-        ("pending", None),
+    assert!(
+        at(&current, &design).workflow.body.status.is_pending(),
         "selections never conclude the Design"
     );
     clean(&root, bus);
@@ -603,9 +599,8 @@ pub(super) fn authorize_test_output(
     );
     assert_eq!(at(&current, &spare).statement.body.authorization, None);
     let design = &at(&current, &controller).workflow.body;
-    assert_eq!(
-        (design.status.as_str(), design.completion),
-        ("pending", None),
+    assert!(
+        design.status.is_pending(),
         "selection releases outputs and leaves the Design open"
     );
 }
@@ -785,13 +780,20 @@ fn controller_settlement_refuses_a_held_descendant_until_forced_then_closes_the_
         assert!(answer.closed.contains(&branch));
         assert!(answer.closed.contains(&leaf));
         let settled = board(&bus, epoch, Actor::Operator);
-        assert_eq!(
-            at(&settled, &controller).workflow.body.status,
-            if deleted { "deleted" } else { "completed" }
-        );
+        if deleted {
+            assert!(at(&settled, &controller).workflow.body.status.is_deleted());
+        } else {
+            assert!(
+                at(&settled, &controller)
+                    .workflow
+                    .body
+                    .status
+                    .is_completed()
+            );
+        }
         for controlled in [&branch, &leaf] {
             let heads = at(&settled, controlled);
-            assert_eq!(heads.workflow.body.status, "completed");
+            assert!(heads.workflow.body.status.is_completed());
             assert!(
                 heads
                     .claim
@@ -802,114 +804,6 @@ fn controller_settlement_refuses_a_held_descendant_until_forced_then_closes_the_
         }
         clean(&root, bus);
     }
-}
-#[test]
-fn legacy_negative_controller_state_is_reported_as_stranded_without_mutation() {
-    let (root, bus, epoch, _) = fixture("preparation-stranded-readout", 1);
-    let controller = add_plan(&bus, epoch, "Legacy closed Plan");
-    let branch = add_plan_output(&bus, epoch, &controller, "Legacy stranded Plan");
-    let leaf = add_output(&bus, epoch, &branch, "Legacy stranded task");
-    legacy_close_without_controlled_settlement(&bus, epoch, &controller);
-
-    let current = board(&bus, epoch, Actor::Operator);
-    for task in [&branch, &leaf] {
-        let stranded = at(&current, task)
-            .stranded
-            .as_ref()
-            .expect("legacy controlled work is classified as stranded");
-        assert_eq!(stranded.controller, controller);
-        assert!(
-            stranded
-                .settle
-                .contains(&format!("spice task close {task}"))
-        );
-        let shown = task_show(&current, at(&current, task), &[]);
-        assert!(shown.contains(&format!("stranded controller {controller}")));
-        assert!(shown.contains(&format!("settle {}", stranded.settle)));
-    }
-    let status = task_status(&current).expect("stranded task status renders");
-    for task in [&branch, &leaf] {
-        assert!(status.contains(&format!(
-            "stranded {task} controller {controller} settle spice task close {task}"
-        )));
-    }
-
-    let Outcome::Reply(Reply {
-        body: CommandAnswer::TaskDetail(detail),
-        ..
-    }) = issue(
-        &bus,
-        epoch,
-        Actor::Operator,
-        CommandKind::TaskDetail,
-        Vec::new(),
-        &wire::intent::TaskDetail {
-            task: leaf.born().expect("leaf stamp"),
-        },
-    )
-    else {
-        panic!("stranded task detail did not return");
-    };
-    assert_eq!(
-        detail
-            .task
-            .stranded
-            .as_ref()
-            .map(|stranded| &stranded.controller),
-        Some(&controller)
-    );
-    assert_eq!(
-        at(&board(&bus, epoch, Actor::Operator), &branch)
-            .workflow
-            .body
-            .status,
-        "pending",
-        "readout never repairs retained history"
-    );
-    clean(&root, bus);
-}
-
-/// Reproduce the retained pre-fix shape without passing through the current
-/// settlement command, which now closes controlled work atomically.
-fn legacy_close_without_controlled_settlement(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    controller: &TaskHandle,
-) {
-    let current = board(bus, epoch, Actor::Operator);
-    let heads = at(&current, controller);
-    let born = heads.statement.body.born.clone();
-    let mut workflow = heads.workflow.body.clone();
-    let phase = workflow.phase.clone();
-    let at = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
-    workflow.status = "completed".to_owned();
-    workflow.completion = Some(at);
-    workflow.review = "closed".to_owned();
-    workflow.assignment = None;
-    let mut write = JournalWrite::new(
-        Actor::Operator,
-        "fixture:legacy-strand"
-            .parse()
-            .expect("fixture origin parses"),
-        at,
-        Producer::CommandDoor,
-    );
-    let closed = write
-        .fact(
-            body::TaskClosed {
-                task: born.clone(),
-                validation: "legacy close".to_owned(),
-                phase,
-                claimed: None,
-            },
-            FactCause::Root,
-        )
-        .expect("legacy closure fact builds");
-    write.workflow_head(born, closed, move |_| workflow);
-    assert!(matches!(
-        bus.commit(write).expect("legacy closure commits"),
-        CommitOutcome::Committed(_)
-    ));
 }
 
 /// Add an output under `controller` through explicit preparation.
@@ -1214,7 +1108,7 @@ fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
     claim_task(&bus, epoch, &seats[0], &reviewer, &plan);
     assert_committed(review_clean(&bus, epoch, &seats[0], &plan));
     let concluded = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&concluded, &plan).workflow.body.status, "completed");
+    assert!(at(&concluded, &plan).workflow.body.status.is_completed());
     assert_eq!(at(&concluded, &task).statement.body.authorization, None);
     assert!(open_blocked(&bus, epoch).is_empty());
     let worker = Actor::Lane(seats[1].lane);
@@ -1296,7 +1190,7 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
     };
     assert_eq!(answer.closed, vec![sibling.clone()]);
     let collapsed = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&collapsed, &task).workflow.body.status, "pending");
+    assert!(at(&collapsed, &task).workflow.body.status.is_pending());
     assert_eq!(
         at(&collapsed, &task)
             .claim
@@ -1430,7 +1324,7 @@ fn a_design_refuses_authorization_until_its_pending_dependencies_settle() {
         "{refused:?}"
     );
     let unchanged = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&unchanged, &design).workflow.body.status, "pending");
+    assert!(at(&unchanged, &design).workflow.body.status.is_pending());
     assert_eq!(at(&unchanged, &selected).statement.body.authorization, None);
 
     let fixer = Actor::Lane(seats[1].lane);

@@ -31,10 +31,9 @@ pub(in crate::board_command) fn task_edit(
             "read board and name one current task handle",
         );
     };
-    // A withdrawn task is settled exactly as a completed one is, and both stamp
-    // the same instant. Correcting a row that has already left the board would
-    // publish a revision nobody reaches through the working board.
-    if entry.workflow().completion.is_some() {
+    // Correcting a row that has already left the board would publish a
+    // revision nobody reaches through the working board.
+    if !entry.workflow().status.is_pending() {
         return refusal(
             "task::settled",
             Some(entry.handle().to_string()),

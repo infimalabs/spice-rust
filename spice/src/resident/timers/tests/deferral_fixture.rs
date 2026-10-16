@@ -82,11 +82,8 @@ pub(super) fn seed_timer_task(
     write.workflow_head(stamp, workflow_fact, move |_| WorkflowHead {
         flow: vec![statement_phase.clone()],
         phase: statement_phase,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral,
-        completion: None,
         generation: 0,
     });
     assert!(matches!(

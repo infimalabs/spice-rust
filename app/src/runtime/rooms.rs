@@ -451,14 +451,17 @@ impl RoomProjection {
             .map_or(RoomAnchorAuthority::Missing, |task| {
                 let workflow = &task.workflow.body;
                 let handle = task.statement.body.handle.clone();
-                let standing = if workflow.status == "deleted" {
-                    Some(RoomAnchorSettlement::Deleted)
-                } else if workflow.completion.is_some() && workflow.review == "closed" {
-                    Some(RoomAnchorSettlement::Closed)
-                } else if workflow.completion.is_some() {
-                    Some(RoomAnchorSettlement::Completed)
-                } else {
-                    None
+                let standing = match workflow.status.conclusion() {
+                    Some(wire::WorkflowConclusion::Positive { .. }) => {
+                        Some(RoomAnchorSettlement::Completed)
+                    }
+                    Some(wire::WorkflowConclusion::Negative(wire::WorkflowNegative::Closed)) => {
+                        Some(RoomAnchorSettlement::Closed)
+                    }
+                    Some(wire::WorkflowConclusion::Negative(wire::WorkflowNegative::Deleted)) => {
+                        Some(RoomAnchorSettlement::Deleted)
+                    }
+                    None => None,
                 };
                 match standing {
                     Some(standing) => RoomAnchorAuthority::Settled { handle, standing },
@@ -489,8 +492,7 @@ impl RoomProjection {
                     let (statement, workflow) = (&task.statement.body, &task.workflow.body);
                     statement.preparation.as_ref().is_some_and(|preparation| {
                         preparation.parent == *room && preparation.construction == statement.born
-                    }) && workflow.status == "pending"
-                        && workflow.completion.is_none()
+                    }) && workflow.status.is_pending()
                         && statement.authorization.is_none()
                         && statement.engagement.is_none()
                 });

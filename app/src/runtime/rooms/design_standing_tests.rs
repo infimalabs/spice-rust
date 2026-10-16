@@ -19,14 +19,15 @@ fn claimed(mut design: BoardTask) -> BoardTask {
     design
 }
 
-fn concluded(mut design: BoardTask, review: &str, reason: Option<&str>) -> BoardTask {
-    design.workflow.body.status = "completed".to_owned();
-    design.workflow.body.review = review.to_owned();
-    design.workflow.body.completion = Some(
-        "2026-09-23T06:00:00.000Z"
-            .parse()
-            .expect("fixture completion"),
-    );
+fn concluded(
+    mut design: BoardTask,
+    conclusion: fn(wire::Instant) -> wire::WorkflowStatus,
+    reason: Option<&str>,
+) -> BoardTask {
+    let at = "2026-09-23T06:00:00.000Z"
+        .parse()
+        .expect("fixture completion");
+    design.workflow.body.status = conclusion(at);
     design.collapse_reason = reason.map(str::to_owned);
     design
 }
@@ -105,14 +106,18 @@ fn group_membership_alone_decides_an_open_designs_activity() {
 
 #[test]
 fn terminal_standing_outranks_retained_group_membership() {
-    let done = concluded(design(true), "unassigned", None);
+    let done = concluded(design(true), wire::WorkflowStatus::completed, None);
     assert_eq!(
         done.design_standing(),
         Some(wire::intent::DesignStanding::Done)
     );
     assert_eq!(light(vec![done, output(false)]), DesignStanding::Done);
 
-    let collapsed = concluded(claimed(design(true)), "closed", Some("premise failed"));
+    let collapsed = concluded(
+        claimed(design(true)),
+        wire::WorkflowStatus::closed,
+        Some("premise failed"),
+    );
     assert_eq!(
         collapsed.design_standing(),
         Some(wire::intent::DesignStanding::Collapsed {
@@ -121,13 +126,17 @@ fn terminal_standing_outranks_retained_group_membership() {
     );
     assert_eq!(light(vec![collapsed]), DesignStanding::Collapsed);
     assert_eq!(
-        concluded(design(false), "closed", None).design_standing(),
+        concluded(design(false), wire::WorkflowStatus::closed, None).design_standing(),
         Some(wire::intent::DesignStanding::Collapsed { reason: None }),
         "a retained negative conclusion that recorded no reason invents none",
     );
 
     let mut deleted = design(true);
-    deleted.workflow.body.status = "deleted".to_owned();
+    deleted.workflow.body.status = wire::WorkflowStatus::deleted(
+        "2026-09-23T06:00:00.000Z"
+            .parse()
+            .expect("fixture completion"),
+    );
     assert_eq!(
         deleted.design_standing(),
         Some(wire::intent::DesignStanding::Deleted)
@@ -156,8 +165,7 @@ fn prepared_open_count_admits_each_direct_role_once_and_excludes_retained_rows()
         prepared(6, 60, 61, 62),
     ]);
     let mut terminal = prepared(7, 1, 70, 71);
-    terminal.workflow.body.status = "completed".to_owned();
-    terminal.workflow.body.completion = Some(
+    terminal.workflow.body.status = wire::WorkflowStatus::completed(
         "2026-10-14T00:00:00.000Z"
             .parse()
             .expect("fixture completion"),

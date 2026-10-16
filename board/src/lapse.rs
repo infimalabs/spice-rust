@@ -394,11 +394,10 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
 fn released_workflow(observed: &Observation) -> Option<wire::WorkflowHead> {
     let workflow = observed.workflow.body();
     let released = workflow.phase.as_str() == "review"
-        && workflow.assignment.as_ref() == Some(&observed.claim.body().actor);
+        && workflow.status.reviewer() == Some(&observed.claim.body().actor);
     released.then(|| {
         let mut next = workflow.clone();
-        next.assignment = None;
-        next.review = "unassigned".to_owned();
+        next.status = wire::WorkflowStatus::pending();
         next
     })
 }
@@ -664,11 +663,8 @@ mod tests {
         write.workflow_head(born(), fact, move |_| WorkflowHead {
             flow: vec![phase.clone()],
             phase,
-            status: "pending".to_owned(),
-            review: "unassigned".to_owned(),
-            assignment: None,
+            status: wire::WorkflowStatus::pending(),
             deferral: None,
-            completion: None,
             generation: 0,
         });
         write.residency_head(fact, |_| ResidencyHead {

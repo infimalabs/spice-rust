@@ -406,7 +406,7 @@ pub(super) struct TaskClosure {
 /// or once the task is settled. Designs conclude rather than close, but remain
 /// directly withdrawable.
 pub(super) fn closure(can_close: bool, heads: &wire::intent::BoardTask) -> Option<TaskClosure> {
-    let settled = matches!(heads.workflow.body.status.as_str(), "completed" | "deleted");
+    let settled = !heads.workflow.body.status.is_pending();
     (can_close && !settled).then(|| TaskClosure {
         holder: live_holder(heads),
         controlled: heads.controlled.clone(),

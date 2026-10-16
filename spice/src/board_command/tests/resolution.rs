@@ -222,8 +222,8 @@ pub(super) fn complete_review_with_finding(
     ));
     let assigned = board(bus, epoch, lane.clone());
     assert_eq!(
-        at(&assigned, task).workflow.body.assignment,
-        Some(lane.clone())
+        at(&assigned, task).workflow.body.status.reviewer(),
+        Some(lane)
     );
     assert_review_assignment_fact(bus, &assigned, task, lane);
     let expected = progress_witnesses(
@@ -305,10 +305,10 @@ pub(super) fn assert_review_assignment_fact(
 fn assert_review_pending(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> BoardAnswer {
     let pending = board(bus, epoch, Actor::Operator);
     let heads = at(&pending, task);
-    assert_eq!(heads.workflow.body.status, "pending");
-    assert_eq!(heads.workflow.body.review, "unassigned");
-    assert!(heads.workflow.body.assignment.is_none());
-    assert!(heads.workflow.body.completion.is_none());
+    assert!(matches!(
+        heads.workflow.body.status,
+        wire::WorkflowStatus::Pending(wire::WorkflowReview::Unassigned)
+    ));
     assert_eq!(
         heads
             .claim
@@ -433,9 +433,16 @@ fn an_unclean_review_needs_follow_up_tracking_and_clean_does_not() {
     assert_eq!(clean_review.next.as_deref(), Some("spice task next"));
     let settled = board(&bus, epoch, Actor::Operator);
     let heads = at(&settled, &task);
-    assert_eq!(heads.workflow.body.status, "completed");
-    assert_eq!(
-        heads.workflow.body.review, "clean",
+    assert!(
+        matches!(
+            heads.workflow.body.status,
+            wire::WorkflowStatus::Settled {
+                conclusion: wire::WorkflowConclusion::Positive {
+                    review: wire::WorkflowCompletionReview::Clean,
+                },
+                ..
+            }
+        ),
         "the word clean recorded a finding named after the verdict"
     );
     clean(&root, bus);
@@ -762,8 +769,10 @@ fn assert_finding_blocks(
     transitive: &TaskHandle,
 ) {
     let blocked = board(bus, epoch, implementer.clone());
-    assert_eq!(at(&blocked, reviewed).workflow.body.status, "pending");
-    assert_eq!(at(&blocked, reviewed).workflow.body.review, "unassigned");
+    assert!(matches!(
+        at(&blocked, reviewed).workflow.body.status,
+        wire::WorkflowStatus::Pending(wire::WorkflowReview::Unassigned)
+    ));
     assert_eq!(
         at(&blocked, reviewed).statement.body.dependencies,
         vec![at(&blocked, correction).statement.body.born.clone()],
@@ -859,8 +868,15 @@ fn complete_correction_and_clean(
         },
     ));
     let released = board(bus, epoch, implementer.clone());
-    assert_eq!(at(&released, reviewed).workflow.body.status, "completed");
-    assert_eq!(at(&released, reviewed).workflow.body.review, "clean");
+    assert!(matches!(
+        at(&released, reviewed).workflow.body.status,
+        wire::WorkflowStatus::Settled {
+            conclusion: wire::WorkflowConclusion::Positive {
+                review: wire::WorkflowCompletionReview::Clean,
+            },
+            ..
+        }
+    ));
     let entries = actor_entries(&released).expect("clean board projects to entries");
     let downstream_entry = entries
         .iter()
@@ -911,8 +927,10 @@ fn assert_review_followup_tracking(
     assert!(dependencies.contains(&at(&pending, created).statement.body.born));
     assert!(dependencies.contains(&at(&pending, linked).statement.body.born));
     assert_eq!(dependencies.len(), 2);
-    assert_eq!(at(&pending, reviewed).workflow.body.status, "pending");
-    assert_eq!(at(&pending, reviewed).workflow.body.review, "unassigned");
+    assert!(matches!(
+        at(&pending, reviewed).workflow.body.status,
+        wire::WorkflowStatus::Pending(wire::WorkflowReview::Unassigned)
+    ));
     let snapshot = bus.fact_snapshot().expect("review tracking facts read");
     let reviewed_fact = snapshot
         .facts()

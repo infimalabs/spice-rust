@@ -19,7 +19,7 @@ fn review_graph_preserves_reviewer_to_phase_author_after_assignment_clears_and_r
 
     let settled = board(&bus, epoch, Actor::Operator);
     let heads = at(&settled, &task);
-    assert_eq!(heads.workflow.body.assignment, None);
+    assert_eq!(heads.workflow.body.status.reviewer(), None);
     assert_eq!(
         heads
             .claim

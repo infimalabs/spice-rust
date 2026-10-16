@@ -270,9 +270,8 @@ fn authorization_leaves_its_controller_open_and_no_edit_moves_it() {
         .expect("controller workflow reads")
         .expect("controller exists")
         .into_body();
-    assert_eq!(
-        (controller.status.as_str(), controller.completion),
-        ("pending", None),
+    assert!(
+        controller.status.is_pending(),
         "selection leaves the Design open"
     );
 
@@ -379,8 +378,7 @@ fn a_controller_concluded_without_authorization_never_authorizes() {
         )
         .expect("completion builds");
     write.workflow_head(controller, done, move |_| WorkflowHead {
-        status: "completed".to_owned(),
-        completion: Some(instant()),
+        status: wire::WorkflowStatus::completed(instant()),
         ..workflow
     });
     journal.apply(write).expect("ordinary completion commits");

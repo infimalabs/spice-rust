@@ -455,11 +455,8 @@ pub(in crate::resident) fn seed_task_claim(
     write.workflow_head(workflow_task, added, move |_| wire::WorkflowHead {
         flow: vec![statement_phase.clone()],
         phase: statement_phase,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     let claim_task = task.clone();

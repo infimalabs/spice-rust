@@ -28,10 +28,9 @@ fn release_transition(
     post_claim.disposition = ClaimDisposition::Freed;
     let mut workflow = entry.workflow().clone();
     let review_released =
-        workflow.phase.as_str() == "review" && workflow.assignment.as_ref() == Some(actor);
+        workflow.phase.as_str() == "review" && workflow.status.reviewer() == Some(actor);
     if review_released {
-        workflow.assignment = None;
-        workflow.review = "unassigned".to_owned();
+        workflow.status = wire::WorkflowStatus::pending();
     }
     let post = Entry::new(
         entry.statement().clone(),

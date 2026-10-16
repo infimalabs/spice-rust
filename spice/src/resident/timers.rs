@@ -927,7 +927,7 @@ fn desired_deferrals(
         let Some(deadline) = workflow.body().deferral else {
             continue;
         };
-        if workflow.body().completion.is_some() {
+        if !workflow.body().status.is_pending() {
             continue;
         }
         let statement = heads.statement().body();

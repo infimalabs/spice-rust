@@ -667,11 +667,8 @@ fn prepare_task(
     let workflow = WorkflowHead {
         flow: flow.clone(),
         phase: phase.clone(),
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     };
     if let Err(error) = Entry::new(statement.clone(), workflow.clone(), None, None, projects) {
@@ -781,8 +778,7 @@ pub(super) fn derive_dependency_flow(
             continue;
         };
         all_review &= heads.workflow.body.phase.as_str() == "review"
-            && heads.workflow.body.status == "pending"
-            && heads.workflow.body.completion.is_none();
+            && heads.workflow.body.status.is_pending();
         witnesses.push(workflow_witness(heads));
     }
     if !explicit {
@@ -1050,7 +1046,7 @@ fn dependency_entry<'a>(
             "read board and name one current task handle",
         ));
     };
-    if entry.workflow().status == "completed" {
+    if entry.workflow().status.is_completed() {
         return Err(refusal(
             "task::settled",
             Some(entry.handle().to_string()),

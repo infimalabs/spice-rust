@@ -418,7 +418,7 @@ fn edit_doc_task(
     spec: DocTaskSpec,
     cause: FactCause,
 ) -> Result<PendingFact, Outcome<CommandAnswer>> {
-    if existing.workflow().status != "pending" {
+    if !existing.workflow().status.is_pending() {
         return Err(refusal(
             "doc::settled-task",
             Some(spec.task.to_string()),
@@ -528,11 +528,8 @@ fn add_doc_task(
     write.workflow_head(spec.born, added, move |_| WorkflowHead {
         flow: spec.flow,
         phase: spec.initial,
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     if let Some(review) = taste_review.as_ref() {

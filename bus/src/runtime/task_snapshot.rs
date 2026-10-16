@@ -326,7 +326,7 @@ impl Indexes {
                         .pushed(&done.task, terminal.operation, row.seq);
                     // A phase advance also records a terminal answer, but its task stays
                     // allocatable in the next phase and keeps its creation origin.
-                    if terminal.status == "completed" {
+                    if terminal.status == journal::crossing::body::TaskCompletionStatus::Completed {
                         next.retire_task(&done.task);
                     }
                 }
@@ -1420,11 +1420,17 @@ fn remove_dependencies<'a>(
 }
 
 fn task_standing(heads: &journal::TaskHeads) -> DependencyStanding {
-    match heads.workflow().body().status.as_str() {
-        "completed" if heads.workflow().body().review == "closed" => DependencyStanding::Closed,
-        "completed" => DependencyStanding::Completed,
-        "deleted" => DependencyStanding::Deleted,
-        _ => DependencyStanding::Open,
+    match heads.workflow().body().status.conclusion() {
+        Some(journal::crossing::WorkflowConclusion::Positive { .. }) => {
+            DependencyStanding::Completed
+        }
+        Some(journal::crossing::WorkflowConclusion::Negative(
+            journal::crossing::WorkflowNegative::Closed,
+        )) => DependencyStanding::Closed,
+        Some(journal::crossing::WorkflowConclusion::Negative(
+            journal::crossing::WorkflowNegative::Deleted,
+        )) => DependencyStanding::Deleted,
+        None => DependencyStanding::Open,
     }
 }
 

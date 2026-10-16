@@ -230,7 +230,7 @@ fn replay_task_completion(
         position: ReplyPosition::Committed(SeqRange { first, last }),
         body: CommandAnswer::Task(wire::intent::TaskAnswer {
             task: entry.handle().clone(),
-            status: terminal.status,
+            status: terminal.status.to_string(),
             completion: None,
             claim: None,
             closed: Vec::new(),
@@ -330,7 +330,7 @@ fn admit_plan_transition(
     }
     let owner = planning::construction_owner(entry.born(), entry.statement().preparation.as_ref());
     let task = visible_task(snapshot, owner)?;
-    let construction_required = task.workflow.body.status == "pending"
+    let construction_required = task.workflow.body.status.is_pending()
         && planning::requires_construction(task.statement.body.intent, &task.workflow.body.flow);
     if !construction_required && entry.workflow().phase.as_str() != "plan" {
         return Ok(());
@@ -396,7 +396,12 @@ fn append_done(
     next: Option<Box<str>>,
     parked: Option<&body::TaskParkedCommits>,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
-    let status = transition.next().status.clone();
+    let status = transition.next().status.as_str().to_owned();
+    let terminal_status = if transition.next().status.is_pending() {
+        body::TaskCompletionStatus::Pending
+    } else {
+        body::TaskCompletionStatus::Completed
+    };
     let completed = write
         .fact(
             body::TaskDone {
@@ -406,7 +411,7 @@ fn append_done(
                     operation: done
                         .operation
                         .expect("live task completion requires an operation"),
-                    status: status.clone(),
+                    status: terminal_status,
                     next: next.clone(),
                 }),
                 git: published,
@@ -504,7 +509,7 @@ fn admit_review<'a>(
         ));
     };
     if entry.workflow().phase.as_str() != "review"
-        || entry.workflow().assignment.as_ref() != Some(command.actor())
+        || entry.workflow().status.reviewer() != Some(command.actor())
     {
         return Err(refusal(
             "review::assignment-refused",
@@ -840,7 +845,7 @@ fn commit_review(
         Ok(cause) => cause,
         Err(outcome) => return outcome,
     };
-    let status = workflow.status.clone();
+    let status = workflow.status.as_str().to_owned();
     write.workflow_head(entry.born().clone(), state_cause, move |_| workflow);
     write.claim_head(entry.born().clone(), state_cause, move |fact| ClaimHead {
         fact,
@@ -892,13 +897,18 @@ fn review_workflow(
         body::Verdict::Finding => entry.workflow().clone(),
     };
     match verdict {
-        body::Verdict::Clean => workflow.review = "clean".to_owned(),
-        body::Verdict::Finding => {
-            workflow.status = "pending".to_owned();
-            workflow.review = "unassigned".to_owned();
-            workflow.assignment = None;
-            workflow.completion = None;
-        }
+        body::Verdict::Clean => match &mut workflow.status {
+            wire::WorkflowStatus::Pending(review) => *review = wire::WorkflowReview::Clean,
+            wire::WorkflowStatus::Settled {
+                conclusion: wire::WorkflowConclusion::Positive { review },
+                ..
+            } => *review = wire::WorkflowCompletionReview::Clean,
+            wire::WorkflowStatus::Settled {
+                conclusion: wire::WorkflowConclusion::Negative(_),
+                ..
+            } => unreachable!("a clean review cannot negatively settle a workflow"),
+        },
+        body::Verdict::Finding => workflow.status = wire::WorkflowStatus::pending(),
     }
     workflow
 }

@@ -494,7 +494,7 @@ fn render_output(
     let standing = if statement.authorization.is_some() {
         "authorized".to_owned()
     } else {
-        task.workflow.body.status.clone()
+        task.workflow.body.status.as_str().to_owned()
     };
     html! {
         <li data-approval-output={output.to_string()}>

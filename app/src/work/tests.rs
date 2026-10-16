@@ -58,11 +58,8 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
             body: wire::WorkflowHead {
                 flow: vec!["todo".parse().expect("fixture phase")],
                 phase: "todo".parse().expect("fixture phase"),
-                status: "pending".to_owned(),
-                review: "unassigned".to_owned(),
-                assignment: None,
+                status: wire::WorkflowStatus::pending(),
                 deferral: None,
-                completion: None,
                 generation: 0,
             },
         },
@@ -164,7 +161,7 @@ fn lifecycle_precedence_follows_task_status_standings() {
     let review = || "review".parse().expect("review phase");
 
     let mut terminal = task(1, "alpha.lifecycle");
-    terminal.workflow.body.completion = Some(
+    terminal.workflow.body.status = wire::WorkflowStatus::completed(
         "2026-09-23T06:00:00.000Z"
             .parse()
             .expect("fixture completion"),
@@ -335,7 +332,11 @@ fn visibility_qualified_stems_share_counts_without_collapsing_projects() {
     let ready = task(2, "alpha.render");
     let hidden = task(3, ".alpha.audit");
     let mut terminal = task(4, "alpha.runtime");
-    terminal.workflow.body.status = "completed".to_owned();
+    terminal.workflow.body.status = wire::WorkflowStatus::completed(
+        "2026-09-23T06:00:00.000Z"
+            .parse()
+            .expect("fixture completion"),
+    );
     let board = board(vec![active, ready, hidden, terminal]);
     let projection = WorkProjection::from_board(&board);
 
@@ -412,7 +413,7 @@ fn visibility_qualified_stems_share_counts_without_collapsing_projects() {
 #[test]
 fn relationships_claim_dispositions_and_ranking_are_deterministic() {
     let mut complete = task(1, "graph.core");
-    complete.workflow.body.completion = Some(
+    complete.workflow.body.status = wire::WorkflowStatus::completed(
         "2026-09-23T06:00:00.000Z"
             .parse()
             .expect("fixture completion"),
@@ -514,10 +515,10 @@ fn owners_read_as_agent_names_and_unknown_lanes_stay_distinguishable() {
     assert_eq!(owner_label(&Actor::Operator, None, None), "Operator");
 
     let mut held = task(1, "alpha.core");
-    held.workflow.body.assignment = Some(Actor::Spice);
+    held.workflow.body.status = wire::WorkflowStatus::assigned(Actor::Spice);
     held.claim = Some(claim(&held, ClaimDisposition::Active));
     let mut lapsed = task(2, "alpha.core");
-    lapsed.workflow.body.assignment = Some(Actor::Spice);
+    lapsed.workflow.body.status = wire::WorkflowStatus::assigned(Actor::Spice);
     lapsed.claim = Some(claim(&lapsed, ClaimDisposition::Lapsed));
     let board = board(vec![held, lapsed, task(3, "alpha.core")]);
     let projection = WorkProjection::from_board(&board);

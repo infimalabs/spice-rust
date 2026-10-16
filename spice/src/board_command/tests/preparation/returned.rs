@@ -295,10 +295,10 @@ fn collapse_still_uses_the_operator_conclusion_path() {
     };
     let current = board(&fixture.bus, fixture.epoch, Actor::Operator);
     let workflow = &at(&current, &fixture.design).workflow.body;
-    assert_eq!(workflow.status, "completed");
+    assert!(workflow.status.is_completed());
     assert!(!workflow.concluded_positively());
     for output in &fixture.outputs {
-        assert_eq!(at(&current, output).workflow.body.status, "completed");
+        assert!(at(&current, output).workflow.body.status.is_completed());
         assert!(
             answer.text.contains(output.as_str()),
             "the collapse decision answer names every task it closed"

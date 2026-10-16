@@ -277,7 +277,7 @@ fn description_value<'a>(description: &'a str, prefix: &str) -> Option<&'a str> 
 }
 
 fn proposal_open(entry: &Entry) -> bool {
-    entry.workflow().status == "pending" && entry.workflow().completion.is_none()
+    entry.workflow().status.is_pending()
 }
 
 fn state_fault(project: &str, detail: &str) -> Outcome<CommandAnswer> {

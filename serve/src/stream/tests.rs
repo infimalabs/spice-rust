@@ -409,11 +409,8 @@ fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
     write.workflow_head(task.clone(), added, move |_| wire::WorkflowHead {
         flow,
         phase,
-        status: "pending".to_owned(),
-        review: "none".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     });
     let current = bus

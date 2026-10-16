@@ -501,22 +501,19 @@ fn admitted_entry<'a>(
         }
         _ => {}
     }
-    match entry.workflow().status.as_str() {
-        "completed" => {
-            return Err(refusal(
-                "task::settled",
-                Some(entry.handle().to_string()),
-                "a completed task is history and stays on the board",
-            ));
-        }
-        "deleted" => {
-            return Err(refusal(
-                "task::already-deleted",
-                Some(entry.handle().to_string()),
-                "the task is already withdrawn; read its recorded reason",
-            ));
-        }
-        _ => {}
+    if entry.workflow().status.is_completed() {
+        return Err(refusal(
+            "task::settled",
+            Some(entry.handle().to_string()),
+            "a completed task is history and stays on the board",
+        ));
+    }
+    if entry.workflow().status.is_deleted() {
+        return Err(refusal(
+            "task::already-deleted",
+            Some(entry.handle().to_string()),
+            "the task is already withdrawn; read its recorded reason",
+        ));
     }
     if matches!(settlement, Settlement::Conclude(_))
         && !wire::intent::is_open_design(entry.statement().intent, entry.workflow())
@@ -546,12 +543,30 @@ fn projected_settled_entry(
     projects: &ProjectPolicy,
 ) -> Entry {
     let mut workflow = entry.workflow().clone();
-    workflow.status = settlement.status().to_owned();
-    workflow.completion = Some(at);
-    if settlement.negative() {
-        workflow.review = "closed".to_owned();
-    }
-    workflow.assignment = None;
+    let conclusion = match settlement {
+        Settlement::Delete(_) => {
+            wire::WorkflowConclusion::Negative(wire::WorkflowNegative::Deleted)
+        }
+        Settlement::Close(_)
+        | Settlement::Conclude(TaskConclude {
+            conclusion: body::DesignConclusion::Collapsed { .. },
+            ..
+        }) => wire::WorkflowConclusion::Negative(wire::WorkflowNegative::Closed),
+        Settlement::Conclude(TaskConclude {
+            conclusion: body::DesignConclusion::Done {},
+            ..
+        }) => {
+            let review = match workflow.status.review() {
+                Some(wire::WorkflowReview::Clean) => wire::WorkflowCompletionReview::Clean,
+                Some(wire::WorkflowReview::Unassigned | wire::WorkflowReview::Assigned { .. }) => {
+                    wire::WorkflowCompletionReview::Unassigned
+                }
+                None => unreachable!("admission accepts only a pending workflow"),
+            };
+            wire::WorkflowConclusion::Positive { review }
+        }
+    };
+    workflow.status = wire::WorkflowStatus::Settled { at, conclusion };
     let mut claim = entry.claim().cloned();
     if let Some(claim) = claim.as_mut()
         && release_claim

@@ -258,6 +258,7 @@ fn render_available(
                 row,
             )
         });
+    let completion = workflow.status.completion();
     html! {
         <div class="app-sheet-body">
             <div class="app-sheet-identity">
@@ -291,19 +292,19 @@ fn render_available(
                 <h3>{"State"}</h3>
                 <dl class="app-fact-grid">
                     {project_fact(render, &statement.project)}
-                    {fact("Status", workflow.status.clone())}
+                    {fact("Status", workflow.status.as_str().to_owned())}
                     if let Some(stranded) = &row.stranded {
                         {fact("Stranded by", stranded.controller.to_string())}
                         {fact("Settle", stranded.settle.clone())}
                     }
                     {fact("Current phase", workflow.phase.to_string())}
                     {fact("Flow", workflow.flow.iter().map(ToString::to_string).collect::<Vec<_>>().join(" → "))}
-                    {fact("Review", workflow.review.clone())}
-                    {assignment_fact(workflow.assignment.as_ref(), render)}
+                    {fact("Review", workflow.review_str().to_owned())}
+                    {assignment_fact(workflow.status.reviewer(), render)}
                     {priority_fact(&statement.tags)}
                     {fact("Tags", if statement.tags.is_empty() { "None".to_owned() } else { statement.tags.join(", ") })}
                     {deadline_fact("Deferral", workflow.deferral.as_ref(), "None")}
-                    {instant_fact("Completion", workflow.completion.as_ref(), "Open")}
+                    {instant_fact("Completion", completion.as_ref(), "Open")}
                 </dl>
                 {render_possession(row, render)}
             </section>

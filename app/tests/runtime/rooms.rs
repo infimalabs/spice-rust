@@ -299,12 +299,12 @@ fn room_page(
 
 /// The fixture board with the room anchor under `project`, or absent,
 /// optionally held by `LANE` under the claim won at `claimed`, and optionally
-/// settled with `(status, review)`.
+/// settled.
 fn room_board(
     session: &Session,
     project: Option<&str>,
     claimed: Option<u64>,
-    settlement: Option<(&str, &str)>,
+    settlement: Option<wire::WorkflowStatus>,
 ) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
     let original = board_response(session, "hidden");
     let Outcome::Reply(reply) = &original.get().outcome else {
@@ -336,11 +336,8 @@ fn room_board(
             }))
             .expect("fixture claim head")
         });
-        if let Some((status, review)) = settlement {
-            task.workflow.body.status = status.to_owned();
-            task.workflow.body.review = review.to_owned();
-            task.workflow.body.completion =
-                Some("2025-01-01T00:00:00.000Z".parse().expect("fixture instant"));
+        if let Some(status) = settlement {
+            task.workflow.body.status = status;
         }
     } else {
         body.tasks.retain(|task| task.statement.body.born != room);
@@ -1037,17 +1034,22 @@ fn same_scope_reconnect_rebuilds_from_the_new_snapshot_with_stable_identities() 
             .anchor_authority(&room(), runtime.board()),
         app::RoomAnchorAuthority::Available(wire::TaskHandle::for_project("app.rooms", &room()))
     );
-    for (status, review, standing) in [
-        ("completed", "clean", app::RoomAnchorSettlement::Completed),
-        ("completed", "closed", app::RoomAnchorSettlement::Closed),
-        ("deleted", "closed", app::RoomAnchorSettlement::Deleted),
+    let at = || "2025-01-01T00:00:00.000Z".parse().expect("fixture instant");
+    for (status, standing) in [
+        (
+            wire::WorkflowStatus::reviewed(at()),
+            app::RoomAnchorSettlement::Completed,
+        ),
+        (
+            wire::WorkflowStatus::closed(at()),
+            app::RoomAnchorSettlement::Closed,
+        ),
+        (
+            wire::WorkflowStatus::deleted(at()),
+            app::RoomAnchorSettlement::Deleted,
+        ),
     ] {
-        runtime.apply_board(&room_board(
-            &session,
-            Some("app.rooms"),
-            None,
-            Some((status, review)),
-        ));
+        runtime.apply_board(&room_board(&session, Some("app.rooms"), None, Some(status)));
         assert_eq!(
             runtime
                 .room_projection()

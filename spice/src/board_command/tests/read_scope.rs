@@ -55,7 +55,7 @@ fn append_terminal(
                     project: "board.test".to_owned(),
                     completion: at,
                 },
-                "completed",
+                WorkflowFixtureStatus::Completed,
                 intent,
             )
         })
@@ -75,25 +75,38 @@ pub(super) struct TerminalTaskFixture {
     pub(super) completion: Instant,
 }
 
+#[derive(Clone, Copy)]
+enum WorkflowFixtureStatus {
+    Pending,
+    Completed,
+    Deleted,
+}
+
 pub(super) fn push_terminal_task(
     write: &mut JournalWrite,
     origin: &wire::Origin,
     creation: &body::TaskCreationContext,
     fixture: TerminalTaskFixture,
 ) -> TaskStamp {
-    push_task(write, origin, creation, fixture, "completed", None)
+    push_task(
+        write,
+        origin,
+        creation,
+        fixture,
+        WorkflowFixtureStatus::Completed,
+        None,
+    )
 }
 
-/// One task head whose workflow is `status`; only `pending` stays unsettled.
+/// One task head whose workflow has `status`; only `Pending` stays unsettled.
 fn push_task(
     write: &mut JournalWrite,
     origin: &wire::Origin,
     creation: &body::TaskCreationContext,
     fixture: TerminalTaskFixture,
-    status: &str,
+    status: WorkflowFixtureStatus,
     intent: Option<wire::TaskIntent>,
 ) -> TaskStamp {
-    let pending = status == "pending";
     let task = TaskStamp::for_micros(fixture.micros).expect("fixture task stamp");
     let phase: wire::Phase = "todo".parse().expect("fixture phase");
     let flow = vec![phase.clone()];
@@ -143,15 +156,15 @@ fn push_task(
         revision: position,
     });
     let workflow_task = task.clone();
-    let status = status.to_owned();
     write.workflow_head(workflow_task, added, move |_| WorkflowHead {
         flow,
         phase,
-        status,
-        review: if pending { "unassigned" } else { "clean" }.to_owned(),
-        assignment: None,
+        status: match status {
+            WorkflowFixtureStatus::Pending => wire::WorkflowStatus::pending(),
+            WorkflowFixtureStatus::Completed => wire::WorkflowStatus::reviewed(fixture.completion),
+            WorkflowFixtureStatus::Deleted => wire::WorkflowStatus::deleted(fixture.completion),
+        },
         deferral: None,
-        completion: (!pending).then_some(fixture.completion),
         generation: 0,
     });
     task
@@ -217,7 +230,14 @@ fn scoped_reads_preserve_completed_dependencies_and_claim_conflicts_without_unre
         ]
         .into()
     );
-    assert!(at(&context, &completed).workflow.body.completion.is_some());
+    assert!(
+        at(&context, &completed)
+            .workflow
+            .body
+            .status
+            .completion()
+            .is_some()
+    );
     assert!(matches!(recovery_preflight(&context, &selected),
         Err(Outcome::Refusal(refusal)) if refusal.reason() == "claim::active-exists"));
 
@@ -233,7 +253,14 @@ fn scoped_reads_preserve_completed_dependencies_and_claim_conflicts_without_unre
         },
     );
     assert_eq!(handles(&exact), [completed.clone()].into());
-    assert!(at(&exact, &completed).workflow.body.completion.is_some());
+    assert!(
+        at(&exact, &completed)
+            .workflow
+            .body
+            .status
+            .completion()
+            .is_some()
+    );
 
     let trust = scoped(&bus, epoch, actor.clone(), BoardRead::Trust);
     assert!(trust.tasks.is_empty());
@@ -332,7 +359,7 @@ fn open_reads_index_the_work_each_direction_caused_until_it_is_deleted() {
         at,
         Producer::CommandDoor,
     );
-    let mut push = |micros: i64, origin: &wire::Origin, status: &str| {
+    let mut push = |micros: i64, origin: &wire::Origin, status| {
         let fixture = TerminalTaskFixture {
             micros,
             title: format!("Origin fixture {micros}"),
@@ -342,10 +369,14 @@ fn open_reads_index_the_work_each_direction_caused_until_it_is_deleted() {
         };
         push_task(&mut write, origin, &creation, fixture, status, None)
     };
-    let open = push(300_000_000_000, &ack, "pending");
-    let completed = push(300_000_000_001, &ack, "completed");
-    push(300_000_000_002, &ack, "deleted");
-    push(300_000_000_003, &unrelated, "completed");
+    let open = push(300_000_000_000, &ack, WorkflowFixtureStatus::Pending);
+    let completed = push(300_000_000_001, &ack, WorkflowFixtureStatus::Completed);
+    push(300_000_000_002, &ack, WorkflowFixtureStatus::Deleted);
+    push(
+        300_000_000_003,
+        &unrelated,
+        WorkflowFixtureStatus::Completed,
+    );
     assert!(matches!(
         bus.commit(write).expect("origin fixture reaches writer"),
         CommitOutcome::Committed(_)

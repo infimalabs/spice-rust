@@ -143,9 +143,9 @@ fn a_withdrawal_takes_the_row_off_the_board_and_keeps_its_reason_readable() {
 
     let after = board(&bus, epoch, Actor::Operator);
     let row = at(&after, &task);
-    assert_eq!(row.workflow.body.status, "deleted");
+    assert!(row.workflow.body.status.is_deleted());
     assert!(
-        row.workflow.body.completion.is_some(),
+        row.workflow.body.status.completion().is_some(),
         "a withdrawal settles the row, which is what every open-task reader asks"
     );
     assert_eq!(
@@ -224,7 +224,7 @@ fn a_live_claim_refuses_the_withdrawal_until_it_is_forced_and_then_names_the_hol
         "the refusal names the holder, so the operator knows whose work forcing would take"
     );
     let held = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&held, &task).workflow.body.status, "pending");
+    assert!(at(&held, &task).workflow.body.status.is_pending());
     assert_eq!(
         at(&held, &task)
             .claim
@@ -260,7 +260,7 @@ fn a_live_claim_refuses_the_withdrawal_until_it_is_forced_and_then_names_the_hol
 
     let after = board(&bus, epoch, Actor::Operator);
     let row = at(&after, &task);
-    assert_eq!(row.workflow.body.status, "deleted");
+    assert!(row.workflow.body.status.is_deleted());
     assert_eq!(
         row.claim
             .as_ref()
@@ -327,12 +327,12 @@ fn a_forced_withdrawal_stops_the_lane_it_displaced() {
         "claim::active-refused",
         "the freed claim is what stops the holder: {stopped:?}"
     );
-    assert_eq!(
+    assert!(
         at(&board(&bus, epoch, Actor::Operator), &task)
             .workflow
             .body
-            .status,
-        "deleted",
+            .status
+            .is_deleted(),
         "the refused completion left the withdrawal standing"
     );
     clean(&root, bus);
@@ -551,12 +551,12 @@ fn a_withdrawn_task_refuses_the_moves_a_completed_task_refuses() {
             "{kind:?} moved a row the allocator can never hand out again"
         );
     }
-    assert_eq!(
+    assert!(
         at(&board(&bus, epoch, Actor::Operator), &task)
             .workflow
             .body
-            .status,
-        "deleted",
+            .status
+            .is_deleted(),
         "every refusal left the withdrawal exactly as it found it"
     );
     clean(&root, bus);
@@ -595,7 +595,7 @@ fn a_withdrawal_without_a_reason_or_against_a_settled_task_is_refused() {
         );
     }
     let standing = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&standing, &task).workflow.body.status, "pending");
+    assert!(at(&standing, &task).workflow.body.status.is_pending());
     assert!(delete_facts(&bus, &task).is_empty());
 
     assert_committed(withdraw(
@@ -637,12 +637,12 @@ fn a_withdrawal_without_a_reason_or_against_a_settled_task_is_refused() {
         "task::settled",
         "a completed task is history and stays on the board"
     );
-    assert_eq!(
+    assert!(
         at(&board(&bus, epoch, Actor::Operator), &settled)
             .workflow
             .body
-            .status,
-        "completed"
+            .status
+            .is_completed()
     );
     assert!(delete_facts(&bus, &settled).is_empty());
     clean(&root, bus);

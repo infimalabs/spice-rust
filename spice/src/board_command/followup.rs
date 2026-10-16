@@ -208,7 +208,7 @@ pub(super) fn correction_statement(
             }
         }
         let already_related = statement.dependencies.contains(correction.born());
-        if correction.workflow().status == "completed" && !already_related {
+        if correction.workflow().status.is_completed() && !already_related {
             return Err(refusal(
                 "task::settled",
                 Some(correction.handle().to_string()),
@@ -396,8 +396,7 @@ fn prepare_followup_policy(
     let reviewed_statement = &context.reviewed_task.statement.body;
     let reviewed_workflow = &context.reviewed_task.workflow.body;
     let design_intake = reviewed_statement.intent == Some(wire::TaskIntent::Design)
-        && reviewed_workflow.status == "pending"
-        && reviewed_workflow.completion.is_none()
+        && reviewed_workflow.status.is_pending()
         && reviewed_workflow.phase.as_str() == "review"
         && reviewed_workflow
             .flow
@@ -445,9 +444,7 @@ fn prepare_followup_policy(
     if add.flow.is_none() && preparation.is_none() {
         omit_review_phase(
             &mut flow,
-            reviewed.phase.as_str() == "review"
-                && reviewed.status == "pending"
-                && reviewed.completion.is_none(),
+            reviewed.phase.as_str() == "review" && reviewed.status.is_pending(),
         );
     }
     let taste_review = task_taste_review(
@@ -528,11 +525,8 @@ fn create_followup(
     let workflow = WorkflowHead {
         flow: flow.clone(),
         phase: phase.clone(),
-        status: "pending".to_owned(),
-        review: "unassigned".to_owned(),
-        assignment: None,
+        status: wire::WorkflowStatus::pending(),
         deferral: None,
-        completion: None,
         generation: 0,
     };
     if let Err(error) = Entry::new(

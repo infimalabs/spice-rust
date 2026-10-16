@@ -302,7 +302,7 @@ fn render_scope(view: View, entries: &[Entry], reviews: &[ReviewEdge], live_only
                     "{}: {} [{}]",
                     entry.handle(),
                     entry.workflow().phase,
-                    entry.workflow().status
+                    entry.workflow().status.as_str()
                 )
                 .expect("String writes are infallible");
             }
@@ -327,7 +327,7 @@ fn render_scope(view: View, entries: &[Entry], reviews: &[ReviewEdge], live_only
 }
 
 fn live(entry: &Entry) -> bool {
-    entry.workflow().status == "pending" && entry.workflow().completion.is_none()
+    entry.workflow().status.is_pending()
 }
 
 const fn verdict(verdict: body::Verdict) -> &'static str {
