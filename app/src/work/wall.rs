@@ -1,10 +1,12 @@
 //! Which unsatisfied dependencies only the operator can move.
 //!
 //! A dependency on work an agent can claim or is already working resolves
-//! organically, so it is an ordinary wait. A chain is a wall only when every
-//! path forward needs the operator: a deferral, typed OOPS work, a cycle,
-//! a prerequisite that can never complete, an environment requirement only
-//! the operator can satisfy, or a passive Design.
+//! organically, so it is an ordinary wait. A lapsed claim is transparent:
+//! the task's own stale standing remains, while its underlying gate decides the
+//! dependency path. A chain is a wall only when every path forward needs the
+//! operator: a deferral, typed OOPS work, a cycle, a prerequisite that can
+//! never complete, an environment requirement only the operator can satisfy,
+//! or a passive Design.
 
 use wire::TaskStamp;
 
@@ -95,8 +97,8 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
             | WorkAvailability::Ready
             | WorkAvailability::Review
             | WorkAvailability::Waiting
-            | WorkAvailability::Selection
-            | WorkAvailability::Stale => return None,
+            | WorkAvailability::Selection => return None,
+            WorkAvailability::Stale => return self.stale(index),
             WorkAvailability::Held => DependencyWall::Environment(born),
             WorkAvailability::Passive => DependencyWall::Passive(born),
             WorkAvailability::Deferred => DependencyWall::Deferred(born),
@@ -116,6 +118,34 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
             }
         };
         Some((index, wall))
+    }
+
+    /// A lapsed claim changes only the row's own standing. Follow the task's
+    /// underlying gate so its dependents see the same wall they would if the
+    /// stale claim evidence were absent.
+    fn stale(&mut self, index: usize) -> Option<(usize, DependencyWall<'a>)> {
+        let work = self.work;
+        let task = &work.tasks()[index];
+        let born = &task.row().statement.body.born;
+        if task.row().workflow.body.deferral.is_some() {
+            return Some((index, DependencyWall::Deferred(born)));
+        }
+        if task.environment_blocked() {
+            return Some((index, DependencyWall::Environment(born)));
+        }
+        if task.awaiting_selection() {
+            return None;
+        }
+        self.on_path[index] = true;
+        let wall = task.dependencies().iter().find_map(|dependency| {
+            if !dependency.satisfied() && dependency.task().is_none() {
+                Some((index, DependencyWall::Gate(dependency.born())))
+            } else {
+                self.dependency(dependency)
+            }
+        });
+        self.on_path[index] = false;
+        wall
     }
 }
 

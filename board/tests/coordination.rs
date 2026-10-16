@@ -1433,3 +1433,6 @@ mod late;
 
 #[path = "coordination/design_wait.rs"]
 mod design_wait;
+
+#[path = "coordination/work_wait.rs"]
+mod work_wait;

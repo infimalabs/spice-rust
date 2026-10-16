@@ -52,6 +52,8 @@ environment **Held**, and **Ready** work, so each count equals `spice board`'s.
 reaches work an agent can advance. **Blocked** is reserved for a missing
 authority, missing prerequisite, cycle, or other non-advancing wall that needs
 a human to repair; merely waiting its turn is never Blocked.
+A lapsed claim remains **Stale** on its own row but is transparent to a
+dependency walk: its underlying gate decides the dependent's standing.
 A **Draft** row is prospective work its author is still editing. It counts in
 no standing, and nothing offers it until `spice task file` turns it into Filed
 work.
@@ -106,8 +108,10 @@ reaches it. Every task that marks a tab is listed here or holds behind a listed
 wall, so the rail reads **Needs attention** whenever any tab is marked. Each
 queue item appears once, in board order, however many reasons or held tasks
 reach it. A dependency on work an agent can claim or is working is ordinary
-**Waiting** and never counts. A waiting board pairs the danger-styled `!` with
-**Needs attention**; otherwise a quiet `✓` pairs with **Ready to proceed**,
+**Waiting** and never counts. This includes claimable stale prerequisites; when
+stale work has a real wall, the queue names that underlying task and reason
+instead of blaming its dependent. A waiting board pairs the danger-styled `!`
+with **Needs attention**; otherwise a quiet `✓` pairs with **Ready to proceed**,
 even while tasks wait on peers. Both states share one geometry, and detail
 reads do not own the rail's data; an item leaves on the board update that
 records the operator's act.

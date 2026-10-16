@@ -34,6 +34,12 @@ fn only_execution_walls_wait_in_the_operator_danger_queue() {
     behind_deferral.statement.body.dependencies = vec![stamp(6)];
     let ready = task(8, "queue.ready");
     let blocked_gate = task(9, "queue.blocked");
+    let mut stale_deferred = task(10, "queue.stale");
+    stale_deferred.claim = Some(claim(&stale_deferred, ClaimDisposition::Lapsed));
+    stale_deferred.workflow.body.deferral =
+        Some("2026-09-24T06:00:00.000Z".parse().expect("deferral"));
+    let mut behind_stale_deferred = task(11, "queue.stale");
+    behind_stale_deferred.statement.body.dependencies = vec![stamp(10)];
 
     let mut board = board(vec![
         claimed_design,
@@ -45,15 +51,17 @@ fn only_execution_walls_wait_in_the_operator_danger_queue() {
         behind_deferral,
         ready,
         blocked_gate,
+        stale_deferred,
+        behind_stale_deferred,
     ]);
     board.awaiting_selection.extend([stamp(1), stamp(2)]);
     board
         .blocked
-        .extend([stamp(4), stamp(5), stamp(7), stamp(9)]);
+        .extend([stamp(4), stamp(5), stamp(7), stamp(9), stamp(11)]);
     let work = WorkProjection::from_board(&board);
     let queue = OperatorQueue::new(&work);
 
-    assert_eq!(queued(&queue), [2, 5, 8]);
+    assert_eq!(queued(&queue), [2, 5, 8, 9]);
     let waits = queue.waits();
     assert!(waits[0].environment());
     assert_eq!(
@@ -72,6 +80,12 @@ fn only_execution_walls_wait_in_the_operator_danger_queue() {
         waits[2].holds().is_empty(),
         "a resident-classified blocked gate appears even without a projected dependency wall"
     );
+    assert_eq!(
+        waits[3].wall(),
+        Some(DependencyWall::Deferred(&stamp(10))),
+        "a lapsed prerequisite exposes its underlying wall"
+    );
+    assert_eq!(waits[3].holds(), [10]);
     assert!(
         !queued(&queue).contains(&0) && !queued(&queue).contains(&1),
         "selection stays visible through Work without entering the red danger queue"
