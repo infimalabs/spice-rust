@@ -12,6 +12,7 @@ use wire::rooms::{
 };
 
 mod automation;
+mod conversation;
 mod design_standing;
 mod gather;
 

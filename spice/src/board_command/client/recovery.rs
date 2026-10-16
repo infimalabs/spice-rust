@@ -568,6 +568,7 @@ fn reconcile_client_recovery(
                         warnings: Box::default(),
                         creation_context: None,
                         origin_context: None,
+                        room_context: None,
                         next: None,
                         phase: None,
                         transplant: None,

@@ -331,7 +331,7 @@ fn apply_command_response(
             let admitted: crate::Admitted<Response<wire::intent::TaskDetailAnswer>> =
                 admit_response(session, bytes)?;
             runtime.apply_task_detail(&task, &admitted);
-            reconcile_note_detail(handles, runtime, &task)
+            CommandApplication::ordinary(false)
         }
         PendingKind::TaskRelations { key } => {
             let admitted: crate::Admitted<Response<wire::intent::TaskRelationsAnswer>> =
@@ -449,9 +449,6 @@ fn apply_task_mutation_response(
         PendingKind::TrustGrant { digest } => {
             apply_trust_grant_response(session, runtime, digest, bytes)?
         }
-        PendingKind::Note { task, text, after } => {
-            apply_note_response(session, handles, runtime, task, text, after, bytes)?
-        }
         PendingKind::Close { task } => apply_settlement_response(
             session,
             handles,
@@ -518,52 +515,6 @@ fn apply_trust_grant_response(
     Ok(CommandApplication::ordinary(refresh))
 }
 
-fn apply_note_response(
-    session: &Session,
-    handles: &SurfaceHandles,
-    runtime: &mut AppRuntime,
-    task: wire::TaskStamp,
-    text: String,
-    after: Option<wire::Seq>,
-    bytes: &[u8],
-) -> Result<CommandApplication, String> {
-    let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
-    match &admitted.get().outcome {
-        wire::Outcome::Reply(reply) => {
-            let answered = reply
-                .body
-                .task
-                .born()
-                .map_err(|error| format!("note answer named a non-canonical task: {error}"))?;
-            if answered != task {
-                handles.notes.update(&task, |composer| {
-                    composer.submission = NoteSubmission::Failed(
-                        "The resident accepted an observation for a different task; the draft was retained."
-                            .to_owned(),
-                    );
-                });
-                return Err("note answer task identity did not match its command".to_owned());
-            }
-            handles.notes.update(&task, |composer| {
-                *composer = NoteComposer {
-                    submission: NoteSubmission::Reconciling { text, after },
-                    ..NoteComposer::default()
-                };
-            });
-            runtime.reread_task_detail(&task);
-            Ok(CommandApplication::ordinary(false))
-        }
-        outcome => {
-            let issue = outcome_issue("Observation was not saved", outcome)
-                .unwrap_or_else(|| "Observation was not saved.".to_owned());
-            handles.notes.update(&task, |composer| {
-                composer.submission = NoteSubmission::Failed(issue);
-            });
-            Ok(CommandApplication::ordinary(false))
-        }
-    }
-}
-
 /// A settled task clears its composer and rereads the detail; a refusal keeps
 /// the draft with the resident's reason.
 #[expect(
@@ -608,53 +559,6 @@ fn apply_settlement_response(
                 composer.submission = NoteSubmission::Failed(issue);
             });
             Ok(CommandApplication::ordinary(false))
-        }
-    }
-}
-
-fn reconcile_note_detail(
-    handles: &SurfaceHandles,
-    runtime: &mut AppRuntime,
-    task: &wire::TaskStamp,
-) -> CommandApplication {
-    let NoteSubmission::Reconciling { text, after } = handles.notes.submission(task) else {
-        return CommandApplication::ordinary(false);
-    };
-    match runtime.task_detail(task) {
-        Some(TaskDetailState::Available(detail) | TaskDetailState::Refreshing(detail)) => {
-            let actor = runtime.principal().actor();
-            let visible = detail.notes.iter().any(|note| {
-                note.author == *actor
-                    && note.text == text
-                    && after.is_none_or(|position| note.position > position)
-            });
-            if visible {
-                handles.notes.update(task, |composer| {
-                    composer.submission = NoteSubmission::Idle;
-                });
-                CommandApplication::ordinary(false)
-            } else {
-                runtime.reread_task_detail(task);
-                CommandApplication::ordinary(false)
-            }
-        }
-        Some(TaskDetailState::Unavailable { reason, detail }) => {
-            let issue = detail.as_ref().map_or_else(
-                || format!("Observation was saved, but its detail could not be refreshed: {reason}"),
-                |detail| {
-                    format!(
-                        "Observation was saved, but its detail could not be refreshed: {reason}. {detail}"
-                    )
-                },
-            );
-            handles.notes.update(task, |composer| {
-                composer.submission = NoteSubmission::Failed(issue);
-            });
-            CommandApplication::ordinary(false)
-        }
-        Some(TaskDetailState::Loading) | None => {
-            runtime.reread_task_detail(task);
-            CommandApplication::ordinary(false)
         }
     }
 }

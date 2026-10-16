@@ -30,26 +30,9 @@ pub enum Refusal {
         /// What an accepted value for that field looks like.
         hint: &'static str,
     },
-    /// The task field does not spell the wire's task-handle grammar.
-    #[error(
-        "Task must be `<UPPER-STEM>-<stamp>` with an eight- or nine-character canonical task stamp, so {written:?} cannot name one."
-    )]
-    Task {
-        /// Text as the operator wrote it, after surrounding whitespace is removed.
-        written: String,
-    },
     /// No seated agent is selected to receive the message.
     #[error("Select a seated agent before sending direction.")]
     Unseated,
-}
-
-/// One accepted task observation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Note {
-    /// Exact task the observation belongs to.
-    pub task: wire::TaskHandle,
-    /// Trimmed observation text.
-    pub text: String,
 }
 
 /// Compose steering text for a selected agent, or say why it cannot be sent.
@@ -81,37 +64,21 @@ pub fn steer<T>(text: &str, seated: Option<T>) -> Result<(T, String), Refusal> {
     Ok((seated, text))
 }
 
-/// Compose a task observation, or say why it cannot be sent.
-///
-/// Fields are checked in the order the note form presents them: task first,
-/// then observation. A nonempty malformed handle is refused here rather than
-/// disappearing at the browser callback boundary.
+/// Compose the observation one task room publishes, or say why it cannot be
+/// sent.
 ///
 /// # Errors
 ///
-/// Returns [`Refusal::Missing`] for a blank field and [`Refusal::Task`] when
-/// the task text does not spell a [`wire::TaskHandle`].
-pub fn note(task: &str, text: &str) -> Result<Note, Refusal> {
-    let written = task.trim();
-    if written.is_empty() {
-        return Err(Refusal::Missing {
-            field: "Task",
-            hint: "choose a task handle such as SPICE-1kKRRsDP",
-        });
-    }
-    let task = written
-        .parse::<wire::TaskHandle>()
-        .map_err(|_| Refusal::Task {
-            written: written.to_owned(),
-        })?;
-    let text = text.trim().to_owned();
+/// Returns [`Refusal::Missing`] when the observation is blank.
+pub fn observation(text: &str) -> Result<String, Refusal> {
+    let text = text.trim();
     if text.is_empty() {
         return Err(Refusal::Missing {
             field: "Observation",
-            hint: "type the observation to append",
+            hint: "type the observation to publish",
         });
     }
-    Ok(Note { task, text })
+    Ok(text.to_owned())
 }
 
 /// Compose the validation that closes a task, or say why it cannot be sent.

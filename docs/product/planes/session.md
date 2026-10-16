@@ -35,7 +35,8 @@ Operator steering a lane acknowledges while it holds a task, in any phase,
 joins that task's record unless another task cites the key as its origin, in
 which case the ask became that task. Peer messages and resident notices never
 join. A claim answer resolves the same keys, so the next phase's holder and the
-reviewer receive the steering that shaped the work.
+reviewer receive the steering that shaped the work, beside the task room's
+newest conversation under the interactive read bounds.
 
 ### Message shapes
 

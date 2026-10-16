@@ -19,7 +19,7 @@ use wire::intent::{
     TeamArrangement, TeamConfigure, VendorCatalog,
 };
 use wire::{
-    CanonicalUuid, CommandKind, Response, Seq, StreamRequest, TaskHandle, TaskStamp, WireVersion,
+    CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, TaskStamp, WireVersion,
     Witness,
 };
 use yew::prelude::*;
@@ -121,19 +121,13 @@ impl SubmissionHandle {
         self.status.set(status);
     }
 }
-/// The durable submission one task's observation composer is waiting on.
+/// The durable submission one task's room composer is waiting on.
 #[derive(Clone, Default, PartialEq, Eq)]
 enum NoteSubmission {
     #[default]
     Idle,
-    Pending {
-        text: String,
-        after: Option<Seq>,
-    },
-    Reconciling {
-        text: String,
-        after: Option<Seq>,
-    },
+    /// The composed text was sent as an observation in this task's room.
+    Posting,
     /// The composed text was sent as this task's closing validation.
     Closing,
     /// The composed text was sent as this task's withdrawal reason.
@@ -143,10 +137,7 @@ enum NoteSubmission {
 
 impl NoteSubmission {
     const fn busy(&self) -> bool {
-        matches!(
-            self,
-            Self::Pending { .. } | Self::Reconciling { .. } | Self::Closing | Self::Deleting
-        )
+        matches!(self, Self::Posting | Self::Closing | Self::Deleting)
     }
 }
 
@@ -178,14 +169,6 @@ impl NoteComposers {
             state.remove(task);
         }
         self.published.set(state.clone());
-    }
-
-    fn submission(&self, task: &TaskStamp) -> NoteSubmission {
-        self.state
-            .borrow()
-            .get(task)
-            .map(|composer| composer.submission.clone())
-            .unwrap_or_default()
     }
 
     fn shown(&self, task: &TaskStamp) -> NoteComposer {

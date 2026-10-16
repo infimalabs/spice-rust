@@ -181,9 +181,13 @@ Surfaces that refine the law:
   request is indexed outside every limit, so no item hides behind a page.
 - `spice task show` never clips the fields `spice task modify` replaces, so a
   field read there is exactly what a replacement overwrites. `--context` and
-  `--history` add metadata, workflow steps, and notes under the shared limits;
-  any principal that may read the task reads them there, while `spice journal`
-  stays operator-only.
+  `--history` add metadata, workflow steps, notes, and the task's room
+  publications newest first under the shared limits, resuming inside the room
+  at a `room:PUBLICATION` cursor; any principal that may read the task reads
+  them there, while `spice journal` stays operator-only. A claim answer's
+  `room_context` carries the same newest room rows under the interactive
+  defaults, so the next phase's holder and the reviewer receive the task's
+  conversation.
 - `spice board` is a posture — counts, the reader's own claim outside every
   budget, and the ready, review, and blocked rows on its route — not a dump.
   The complete board is only `spice board [FAMILY] --output FILE`.

@@ -1,0 +1,114 @@
+//! A task's room read newest first under `task show`'s detail bounds.
+
+use super::*;
+
+/// `room`'s history page of two rows, resuming at `after` when it names one.
+fn page(
+    bus: &Bus,
+    root: &FixtureRoot,
+    answer: &BoardAnswer,
+    room: &TaskHandle,
+    after: Option<&str>,
+) -> String {
+    let budget = wire::output::INTERACTIVE
+        .budget(wire::output::Request {
+            rows: Some(2),
+            bytes: None,
+            text: None,
+        })
+        .expect("fixture budget");
+    let from = after.map(|cursor| {
+        cursor
+            .strip_prefix("room:")
+            .expect("a room cursor")
+            .parse::<RoomAuthorityStamp>()
+            .expect("a publication cursor")
+    });
+    let anchor = room.born().expect("fixture identity");
+    let read_anchor = anchor.clone();
+    let retain = budget.limits().rows + 1;
+    let rows = bus
+        .read(move |read| {
+            crate::room_command::newest_rows(read, &read_anchor, from.as_ref(), retain)
+        })
+        .expect("the room reads")
+        .expect("the cursor names a publication of the room");
+    let artifacts = artifact::Store::new(
+        root.as_ref().join("artifacts"),
+        root.as_ref().join("locks/task-artifacts.lock"),
+    );
+    let tape = root.as_ref().join("tape");
+    let shown = TaskShowRoom::new(
+        rows,
+        crate::room_command::SourceOwners {
+            tape: &tape,
+            artifacts: &artifacts,
+        },
+        &anchor,
+        budget,
+    );
+    task_show_bounded(
+        answer,
+        at(answer, room),
+        &[],
+        TaskShowHistory::default(),
+        None,
+        Some(shown),
+        &TaskShowOptions {
+            context: false,
+            history: true,
+            limit: Some(2),
+            max_bytes: None,
+            max_text: None,
+            after: after.map(str::to_owned),
+        },
+    )
+    .expect("a room page renders")
+}
+
+/// The observation numbers one page shows, in its order.
+fn observations(text: &str) -> Vec<char> {
+    text.split("| observation-")
+        .skip(1)
+        .filter_map(|rest| rest.chars().next())
+        .collect()
+}
+
+/// The cursor a page's continuation resumes at.
+fn continuation(text: &str) -> &str {
+    text.split("--after ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .unwrap_or_else(|| panic!("the page continues: {text}"))
+}
+
+#[test]
+fn task_show_pages_its_room_newest_first_from_a_room_cursor() {
+    let (root, bus, epoch, _) = fixture("task-show-room-newest", 0);
+    let room = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "task-show-room-newest",
+        "Room",
+        None,
+    );
+    for index in 1..=5 {
+        let command = post_command(&bus, epoch, &room, &format!("observation-{index}"));
+        assert_committed(dispatch(&bus, &command).expect("room post dispatches"));
+    }
+    let answer = board(&bus, epoch, Actor::Operator);
+
+    let first = page(&bus, &root, &answer, &room, None);
+    assert_eq!(observations(&first), ['5', '4'], "{first}");
+    assert!(first.contains("withheld 3 of 5 rows"), "{first}");
+
+    let second = page(&bus, &root, &answer, &room, Some(continuation(&first)));
+    assert_eq!(observations(&second), ['3', '2'], "{second}");
+    assert!(second.contains("withheld 1 of 3 rows"), "{second}");
+
+    let last = page(&bus, &root, &answer, &room, Some(continuation(&second)));
+    assert_eq!(observations(&last), ['1'], "{last}");
+    assert!(!last.contains("continue:"), "{last}");
+    clean(&root, bus);
+}

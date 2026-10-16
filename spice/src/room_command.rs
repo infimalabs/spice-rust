@@ -20,11 +20,13 @@
 pub(crate) mod awareness;
 mod conversation;
 pub(crate) mod inbox;
+mod newest;
 pub(crate) mod relevance;
 pub(crate) mod result;
 pub(crate) mod sections;
 mod sources;
 
+pub(crate) use newest::{NewestRows, newest_rows};
 pub(crate) use sources::{RoomSources, SourceOwners};
 
 use std::collections::BTreeSet;

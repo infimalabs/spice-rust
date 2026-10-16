@@ -6,6 +6,9 @@ pub(super) use list::actor_route_matches;
 #[cfg(test)]
 pub(in crate::board_command) use list::{TaskListOptions, TaskListStatus, task_list};
 use list::{TaskListPageOptions, task_list_page};
+mod room;
+pub(in crate::board_command) use room::{TaskShowRoom, claim_room_context};
+use room::{resumes_in_room, task_show_room};
 
 pub(super) fn client_status(
     repository: &Repository,
@@ -141,6 +144,14 @@ pub(super) fn client_show(
             } else {
                 None
             };
+            let room = if options.context || options.history {
+                match task_show_room(repository, task, &options) {
+                    Ok(room) => Some(room),
+                    Err(outcome) => return outcome,
+                }
+            } else {
+                None
+            };
             let text = match task_show_bounded(
                 &board,
                 task,
@@ -159,6 +170,7 @@ pub(super) fn client_show(
                     principals: principals.as_ref(),
                 },
                 origin_context.as_deref(),
+                room,
                 &options,
             ) {
                 Ok(text) => text,
@@ -399,6 +411,7 @@ pub(in crate::board_command) fn task_show_with_origin(
         artifacts,
         history,
         origin_context,
+        None,
         &TaskShowOptions {
             context: true,
             history: true,
@@ -424,12 +437,12 @@ pub(in crate::board_command) fn task_show_bounded(
     artifacts: &[artifact::Artifact],
     history: TaskShowHistory<'_>,
     origin_context: Option<&str>,
+    room: Option<TaskShowRoom>,
     options: &TaskShowOptions,
 ) -> Result<String, Outcome<CommandAnswer>> {
     let statement = &task.statement.body;
     let workflow = &task.workflow.body;
     let environment = board.environment();
-    let budget = options.budget();
     let mut lines = vec![
         format!("handle {}", statement.handle),
         format!("title {}", task.presentation_title()),
@@ -529,8 +542,9 @@ pub(in crate::board_command) fn task_show_bounded(
             task,
             history,
             origin_context,
+            room,
             options,
-            budget,
+            options.budget(),
         )?);
     }
     lines.extend(phase_guidance_lines(task));
@@ -604,6 +618,7 @@ enum TaskShowDetailSection {
     Closure,
     Step,
     Note,
+    Room,
 }
 
 #[derive(serde::Serialize)]
@@ -618,6 +633,7 @@ fn bounded_detail_lines(
     task: &BoardTask,
     history: TaskShowHistory<'_>,
     origin_context: Option<&str>,
+    room: Option<TaskShowRoom>,
     options: &TaskShowOptions,
     budget: wire::output::Budget,
 ) -> Result<Vec<String>, Outcome<CommandAnswer>> {
@@ -657,7 +673,9 @@ fn bounded_detail_lines(
             text: render_task_note(note, history.acknowledgments, history.principals, budget),
         }));
     }
-    if let Some(after) = &options.after {
+    if resumes_in_room(options) {
+        rows.clear();
+    } else if let Some(after) = &options.after {
         let Some(index) = rows.iter().position(|row| row.cursor == *after) else {
             return Err(refusal(
                 "task::show-after-unknown",
@@ -674,11 +692,17 @@ fn bounded_detail_lines(
             .offer(row)
             .expect("a task detail text row always serializes");
     }
+    let room_empty = room.as_ref().is_some_and(TaskShowRoom::is_empty);
+    if let Some(room) = room {
+        room.offer(&mut admission);
+    }
     let page = admission
         .finish(|resume| task_show_continuation(&task.statement.body.handle, options, resume));
     let mut lines = Vec::new();
     let mut steps_started = false;
     let mut notes_started = false;
+    let mut notes_owed = options.history && history.notes.is_empty();
+    let mut room_started = false;
     for row in page.rows {
         if matches!(row.section, TaskShowDetailSection::Step) && !steps_started {
             lines.push("workflow:".to_owned());
@@ -688,10 +712,20 @@ fn bounded_detail_lines(
             lines.push("notes:".to_owned());
             notes_started = true;
         }
+        if matches!(row.section, TaskShowDetailSection::Room) && !room_started {
+            if std::mem::take(&mut notes_owed) {
+                lines.extend(["notes:".to_owned(), "  -".to_owned()]);
+            }
+            lines.push("room:".to_owned());
+            room_started = true;
+        }
         lines.push(row.text);
     }
-    if options.history && history.notes.is_empty() {
+    if notes_owed {
         lines.extend(["notes:".to_owned(), "  -".to_owned()]);
+    }
+    if room_empty {
+        lines.extend(["room:".to_owned(), "  -".to_owned()]);
     }
     if let Some(omission) = page.omission {
         lines.push(omission.to_string());

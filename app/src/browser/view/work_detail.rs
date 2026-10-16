@@ -247,17 +247,6 @@ fn render_available(
         .find(|task| task.row().statement.body.born == statement.born);
     let messages = render.creator_messages.iter().map(AsRef::as_ref);
     let creator_context = crate::view::creator_context_href(&statement.creation, messages);
-    let design_room = render
-        .runtime
-        .filter(|_| row.design_standing().is_some())
-        .map_or_else(Html::default, |runtime| {
-            super::super::rooms::render_design_room(
-                runtime,
-                render.room_controls,
-                render.sender,
-                row,
-            )
-        });
     let completion = workflow.status.completion();
     html! {
         <div class="app-sheet-body">
@@ -308,7 +297,7 @@ fn render_available(
                 </dl>
                 {render_possession(row, render)}
             </section>
-            {design_room}
+            {render_room(render, answer, projected.map_or(row, |task| task.row()))}
             <section class="app-sheet-section">
                 <h3>{"Relationships"}</h3>
                 {render_relationships(render.work, projected, statement, render.selection, focus_task)}
@@ -326,27 +315,22 @@ fn render_available(
                 {render_claim_context(row)}
                 {render_git_context(row)}
             </section>
-            {render_activity(render, answer, projected.map_or(row, |task| task.row()))}
         </div>
     }
 }
 
-/// The task's observations, newest first, beneath the composer that appends
-/// to them, so a submitted observation lands directly under its draft. An
+/// The task's room beneath the composer that publishes into it, so a
+/// submitted observation lands directly above the conversation it joins. An
 /// open OOPS report's File sits in that composer's action row, so reading,
 /// observing, and filing it happen in one place.
-fn render_activity(
+fn render_room(
     render: &WorkDetailRender<'_, '_>,
     answer: &wire::intent::TaskDetailAnswer,
     row: &wire::intent::BoardTask,
 ) -> Html {
     let statement = &answer.task.statement.body;
-    html! {
-        <section class="app-sheet-section work-activity">
-            <div class="app-section-heading">
-                <h3>{"Activity"}</h3>
-                <span>{format!("{} observations", answer.notes.len())}</span>
-            </div>
+    let composer = html! {
+        <>
             {task_detail::render_closure_record(
                 answer.closure.as_ref(),
                 |actor| actor_name(actor, render),
@@ -368,24 +352,17 @@ fn render_activity(
                 ),
             )}
             {super::super::drafts::render_oops_file_notice(render.draft_controls, row)}
-            if answer.notes.is_empty() {
-                <p class="muted">{"No observations have been recorded."}</p>
-            } else {
-                <ol class="work-note-list">
-                    {for answer.notes.iter().rev().map(|note| html! {
-                        <li class="work-note-card" key={note.position.to_string()} data-note-position={note.position.to_string()}>
-                            <header>
-                                <strong title={note.author.to_string()}>
-                                    {actor_name(&note.author, render)}
-                                </strong>
-                                {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
-                            </header>
-                            {task_detail::render_task_text(&note.text, "work-note-body", |task| selection_has(render.selection, task))}
-                        </li>
-                    })}
-                </ol>
-            }
-        </section>
+        </>
+    };
+    match render.runtime {
+        Some(runtime) => super::super::rooms::render_task_room(
+            runtime,
+            render.room_controls,
+            render.sender,
+            &answer.task,
+            composer,
+        ),
+        None => html! { <section class="app-sheet-section room-reading">{composer}</section> },
     }
 }
 

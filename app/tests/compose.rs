@@ -36,31 +36,3 @@ fn steering_a_blank_message_is_refused_by_name() {
         assert!(matches!(refusal, Refusal::Missing { .. }));
     }
 }
-
-#[test]
-fn a_task_observation_returns_the_typed_handle_and_trimmed_text() {
-    let note = compose::note("  SPICE-1kKRRsDP  ", "  one observation  ")
-        .expect("a complete task observation composes");
-    assert_eq!(note.task.as_str(), "SPICE-1kKRRsDP");
-    assert_eq!(note.text, "one observation");
-}
-
-#[test]
-fn invalid_task_handles_preserve_the_rejected_input() {
-    let underscore_handle = ["SPICE", "_123"].concat();
-    for written in [
-        "not a handle",
-        "spice-aBcD",
-        underscore_handle.as_str(),
-        "SPICE-",
-    ] {
-        let refusal =
-            compose::note(written, "observation").expect_err("an unparseable task handle refuses");
-        assert_eq!(
-            refusal,
-            Refusal::Task {
-                written: written.to_owned(),
-            }
-        );
-    }
-}

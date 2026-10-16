@@ -85,13 +85,14 @@ message without covering or clearing the other at desktop or narrow widths.
 Every selected task owns a full detail section below the graph. Ownership and
 claim, state and contract, project and team, timestamps and lifecycle, origin
 and dependencies answer who, what, where, when, and why from live operational
-state. Evidence, blockers, relationships, provenance, activity, and notes
-appear together rather than behind tabs or pagination. Activating a selected
-graph node scrolls and focuses its detail section; activating a related
-external task follows that lead in the same overview. Each detail's Activity
-section seats its observation composer directly above the newest-first
-observations, so a submitted observation appears right beneath the draft that
-wrote it. A selection of any size
+state. Evidence, blockers, relationships, provenance, the task's room, and its
+closure appear together rather than behind tabs or pagination. Activating a
+selected graph node scrolls and focuses its detail section; activating a
+related external task follows that lead in the same overview. Each detail's
+**Room** section seats its composer directly above the room's conversation,
+newest first, so a submitted observation is published into the task's room
+and appears right beneath the draft that wrote it. A Design's room is the same
+section with its Design authority added. A selection of any size
 hydrates every section: the app keeps a bounded number of detail reads in
 flight beside its other reads and actions, asks for the rest as those answer,
 and reads a task again after a change or reconnect only while it is selected.
@@ -181,8 +182,8 @@ can offer at once.
 
 The **OOPS** section follows Drafts and lists each open OOPS report the
 operator can read, each opening its task detail. There **File** sits in the
-Activity composer's action row beside **Add**, so the operator can read a
-report, record observations, and file it in one place. File takes no input: it
+room composer's action row beside **Add**, so the operator can read a
+report, publish observations, and file it in one place. File takes no input: it
 files the report under its current project, and the allocator can offer the
 result at once. Filing witnesses the statement, workflow, and deferral heads
 the control was drawn from, so a report that changed meanwhile refuses. A

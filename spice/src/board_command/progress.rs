@@ -58,6 +58,7 @@ pub(super) fn claim_reclaim_with_clock(
         warnings: Box::default(),
         creation_context: None,
         origin_context: None,
+        room_context: None,
         next: None,
         phase: None,
         transplant: None,

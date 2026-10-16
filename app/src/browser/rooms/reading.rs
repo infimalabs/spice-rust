@@ -1,7 +1,8 @@
-//! A Design's room read in place: its standing, positive conclusion control,
-//! immutable proposal versions and exact decisions, kind-grouped
-//! contributions, and room history for open and concluded Designs alike.
-//! Showing the view joins, groups, or wakes nothing.
+//! A task's room read in place: the composer that publishes into it, a
+//! Design's authority — its standing, positive conclusion control, immutable
+//! proposal versions and exact decisions, and kind-grouped contributions —
+//! and the room's conversation newest first, for open and settled tasks
+//! alike. Showing the view joins, groups, or wakes nothing.
 
 use wire::TaskStamp;
 use wire::intent::BoardTask;
@@ -13,20 +14,23 @@ use crate::AppRuntime;
 use crate::browser::clock::now_millis;
 use crate::browser::sender::SenderHandle;
 
-/// The read view of one Design's room. `detail` is the Design's row from its
-/// task detail; the board's row wins while the board carries it, since only
-/// the board follows working-group moves.
-pub(in crate::browser) fn render_design_room(
+/// The read view of one task's room beneath `composer`. `detail` is the
+/// task's row from its task detail; the board's row wins while the board
+/// carries it, since only the board follows working-group moves. A Design's
+/// room adds its Design authority above the same conversation.
+pub(in crate::browser) fn render_task_room(
     runtime: &AppRuntime,
     controls: &Controls,
     sender: &SenderHandle,
     detail: &BoardTask,
+    composer: Html,
 ) -> Html {
-    let design = &detail.statement.body.born;
+    let room = &detail.statement.body.born;
     let row = runtime
         .board()
-        .and_then(|board| board.row(design))
+        .and_then(|board| board.row(room))
         .unwrap_or(detail);
+    let design = row.design_standing().is_some();
     let projection = runtime.room_projection();
     let body = match projection.status() {
         RoomProjectionStatus::Loading => {
@@ -37,19 +41,21 @@ pub(in crate::browser) fn render_design_room(
         }
         RoomProjectionStatus::Available => {
             let has_current_listener =
-                projection.has_current_listener(design, runtime.board(), now_millis() * 1_000);
-            let events = projection.room(design).map(|room| room.in_journal_order());
+                projection.has_current_listener(room, runtime.board(), now_millis() * 1_000);
+            let events = projection.room(room).map(|room| room.in_journal_order());
             html! {
                 <>
-                    {super::standing::render_standing(runtime, design, Some(row))}
-                    {render_maturity(projection.maturity(design), design)}
-                    {super::conclusion::render_conclusion(runtime, controls, sender, row)}
-                    {super::approval::render_approval(runtime, controls, sender, design)}
-                    {super::contributions::render_groups(runtime, design)}
-                    {super::contribute::render_note(row)}
-                    <section class="room-history" aria-label="Room history">
+                    if design {
+                        {super::standing::render_standing(runtime, room, Some(row))}
+                        {render_maturity(projection.maturity(room), room)}
+                        {super::conclusion::render_conclusion(runtime, controls, sender, row)}
+                        {super::approval::render_approval(runtime, controls, sender, room)}
+                        {super::contributions::render_groups(runtime, room)}
+                        {super::contribute::render_note(row)}
+                    }
+                    <section class="room-history" aria-label="Room conversation">
                         <header>
-                            <strong>{"Room history"}</strong>
+                            <strong>{"Conversation"}</strong>
                             <span>{events.as_ref().map_or(0, Vec::len)}</span>
                         </header>
                         if let Some(events) = events.filter(|events| !events.is_empty()) {
@@ -57,7 +63,7 @@ pub(in crate::browser) fn render_design_room(
                                 card::render_card(
                                     runtime,
                                     None,
-                                    design,
+                                    room,
                                     has_current_listener,
                                     publication,
                                     event,
@@ -72,11 +78,20 @@ pub(in crate::browser) fn render_design_room(
         }
     };
     html! {
-        <section class="app-sheet-section room-reading" data-design-room={design.to_string()}>
+        <section
+            class="app-sheet-section room-reading"
+            data-task-room={room.to_string()}
+            data-design-room={design.then(|| room.to_string())}
+        >
             <div class="app-section-heading">
-                <h3>{"Design room"}</h3>
-                <a href={crate::view::design_href(design)}>{"Permalink"}</a>
+                if design {
+                    <h3>{"Design room"}</h3>
+                    <a href={crate::view::design_href(room)}>{"Permalink"}</a>
+                } else {
+                    <h3>{"Room"}</h3>
+                }
             </div>
+            {composer}
             {body}
         </section>
     }

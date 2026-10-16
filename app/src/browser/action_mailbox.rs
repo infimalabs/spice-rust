@@ -279,7 +279,6 @@ impl PendingKind {
             | Self::TeamArrange { .. }
             | Self::Steer
             | Self::SteerSubmission { .. }
-            | Self::Note { .. }
             | Self::Close { .. }
             | Self::Delete { .. } => None,
         }
@@ -483,7 +482,6 @@ impl ClientAction {
                 }
                 _ => 0,
             },
-            Self::Note { task, note, .. } => task.as_str().len().saturating_add(note.len()),
             Self::Close {
                 task,
                 validation,

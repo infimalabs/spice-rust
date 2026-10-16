@@ -14,6 +14,7 @@ pub(in crate::board_command) struct ClaimPlan {
     pub(in crate::board_command) selected: Entry,
     grant: ClaimGrant,
     next: Option<Box<str>>,
+    room_context: Option<Box<str>>,
     possession: Possession,
 }
 
@@ -69,6 +70,7 @@ pub(in crate::board_command) fn claim_plan(
         planning::admit_capture(&selected)?;
     }
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
+    let room_context = claim_room(bus, repository, &selected)?;
     let grant = claim_grant(bus, command, repository, &snapshot, &selected, possession)?;
     let next = Some(claim_activation_next_action(&selected));
     Ok(ClaimPlan {
@@ -76,8 +78,22 @@ pub(in crate::board_command) fn claim_plan(
         selected,
         grant,
         next,
+        room_context,
         possession,
     })
+}
+
+/// `selected`'s room conversation for its claim answer, read through the
+/// repository's tape and artifacts; a repository-less dispatch owns neither.
+pub(super) fn claim_room(
+    bus: &Bus,
+    repository: Option<&Repository>,
+    selected: &Entry,
+) -> Result<Option<Box<str>>, Outcome<CommandAnswer>> {
+    repository
+        .map(|repository| claim_room_context(bus, repository, selected.handle(), selected.born()))
+        .transpose()
+        .map(Option::flatten)
 }
 
 fn refuse_if_actor_already_claims(
@@ -288,6 +304,7 @@ impl PreparedClaim {
         snapshot: &ValidatedSnapshot,
         selected: &Entry,
         origin_context: Option<Box<str>>,
+        room_context: Option<Box<str>>,
     ) -> wire::intent::ClaimAnswer {
         claim_answer(
             command,
@@ -295,6 +312,7 @@ impl PreparedClaim {
             &snapshot.entries,
             Some(claim_activation_next_action(selected)),
             origin_context,
+            room_context,
             self.prepared_git
                 .as_ref()
                 .and_then(spice::task_git::ClaimPreparation::transplant),
@@ -343,6 +361,7 @@ fn claim_answer(
     entries: &[Entry],
     next: Option<Box<str>>,
     origin_context: Option<Box<str>>,
+    room_context: Option<Box<str>>,
     transplant: Option<&wire::intent::ClaimTransplant>,
 ) -> wire::intent::ClaimAnswer {
     wire::intent::ClaimAnswer {
@@ -360,6 +379,7 @@ fn claim_answer(
             .into_boxed_slice(),
         creation_context: Some(task_creation_context_output(&selected.statement().creation)),
         origin_context,
+        room_context,
         next,
         phase: Some(claim_phase(selected, command.actor())),
         transplant: transplant.cloned(),
@@ -389,6 +409,7 @@ pub(in crate::board_command) fn commit_claim(
         selected,
         grant,
         next,
+        room_context,
         possession,
     } = plan;
     let ClaimGrant {
@@ -447,6 +468,7 @@ pub(in crate::board_command) fn commit_claim(
         &snapshot.entries,
         next,
         origin_context,
+        room_context,
         prepared_git
             .as_ref()
             .and_then(spice::task_git::ClaimPreparation::transplant),

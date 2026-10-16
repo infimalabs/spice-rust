@@ -194,11 +194,6 @@ pub(crate) enum PendingKind {
     SteerSubmission {
         lane: wire::CanonicalUuid,
     },
-    Note {
-        task: wire::TaskStamp,
-        text: String,
-        after: Option<wire::Seq>,
-    },
     Close {
         task: wire::TaskStamp,
     },

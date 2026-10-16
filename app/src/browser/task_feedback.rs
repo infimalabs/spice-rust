@@ -1,11 +1,10 @@
-//! Out-of-flow feedback for retained task detail and observation state.
+//! Out-of-flow feedback for retained task detail and room composer state.
 
 use super::*;
 
 #[derive(Clone, PartialEq, Eq)]
 enum PendingFeedback {
-    NoteSaving { task: TaskStamp, subject: String },
-    NoteReconciling { task: TaskStamp, subject: String },
+    NotePosting { task: TaskStamp, subject: String },
     Closing { task: TaskStamp, subject: String },
     Deleting { task: TaskStamp, subject: String },
     Reconnecting { task: TaskStamp },
@@ -14,8 +13,7 @@ enum PendingFeedback {
 impl PendingFeedback {
     fn task(&self) -> &TaskStamp {
         match self {
-            Self::NoteSaving { task, .. }
-            | Self::NoteReconciling { task, .. }
+            Self::NotePosting { task, .. }
             | Self::Closing { task, .. }
             | Self::Deleting { task, .. }
             | Self::Reconnecting { task } => task,
@@ -24,11 +22,8 @@ impl PendingFeedback {
 
     fn message(&self) -> AttrValue {
         match self {
-            Self::NoteSaving { subject, .. } => {
-                format!("Saving observation for {subject}…").into()
-            }
-            Self::NoteReconciling { subject, .. } => {
-                format!("Saved for {subject}; waiting for durable activity…").into()
+            Self::NotePosting { subject, .. } => {
+                format!("Publishing observation in {subject}'s room…").into()
             }
             Self::Closing { subject, .. } => format!("Closing {subject}…").into(),
             Self::Deleting { subject, .. } => format!("Deleting {subject}…").into(),
@@ -40,8 +35,8 @@ impl PendingFeedback {
 
     fn completion(&self) -> Option<AttrValue> {
         match self {
-            Self::NoteSaving { subject, .. } | Self::NoteReconciling { subject, .. } => {
-                Some(format!("Observation saved for {subject}.").into())
+            Self::NotePosting { subject, .. } => {
+                Some(format!("Observation published in {subject}'s room.").into())
             }
             Self::Closing { subject, .. } => Some(format!("Closed {subject} as completed.").into()),
             Self::Deleting { subject, .. } => Some(format!("Deleted {subject}.").into()),
@@ -80,11 +75,7 @@ fn feedback(state: &AppState) -> Feedback {
     for (task, composer) in state.task_detail.notes.published.iter() {
         if note_pending.is_none() {
             note_pending = match &composer.submission {
-                NoteSubmission::Pending { .. } => Some(PendingFeedback::NoteSaving {
-                    task: task.clone(),
-                    subject: task_subject(runtime, task),
-                }),
-                NoteSubmission::Reconciling { .. } => Some(PendingFeedback::NoteReconciling {
+                NoteSubmission::Posting => Some(PendingFeedback::NotePosting {
                     task: task.clone(),
                     subject: task_subject(runtime, task),
                 }),
@@ -113,8 +104,7 @@ fn feedback(state: &AppState) -> Feedback {
                         message: issue.clone(),
                     }),
                     NoteSubmission::Idle
-                    | NoteSubmission::Pending { .. }
-                    | NoteSubmission::Reconciling { .. }
+                    | NoteSubmission::Posting
                     | NoteSubmission::Closing
                     | NoteSubmission::Deleting => None,
                 });

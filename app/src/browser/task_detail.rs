@@ -501,11 +501,13 @@ fn submitted_settlement(event: &SubmitEvent) -> Option<ComposerSettlement> {
     }
 }
 
-/// The one observation composer every surface showing `task` renders, bound
-/// to that task and preserving only that task's draft while feedback uses its task-owned toast.
-/// With a `closure`, the same draft can instead close the task as its validation.
-/// `actions` are the task's own further controls, such as an OOPS report's
-/// File, kept in the composer's action row so they follow an observation.
+/// The one room composer every surface showing `task` renders, bound to that
+/// task and preserving only that task's draft while feedback uses its
+/// task-owned toast. Its draft publishes an observation in the task's room;
+/// with a `closure`, the same draft can instead close the task as its
+/// validation. `actions` are the task's own further controls, such as an OOPS
+/// report's File, kept in the composer's action row so they follow an
+/// observation.
 #[expect(
     clippy::too_many_arguments,
     reason = "one composer binds its task, capabilities, draft, and action row"
@@ -523,12 +525,13 @@ pub(super) fn render_note_composer(
     if !can_note {
         return html! {
             <>
-                <p class="work-note-capability">{"This capability can read observations but cannot append them."}</p>
+                <p class="work-note-capability">{"This capability can read this room but cannot publish observations."}</p>
                 <div class="team-composer-controls work-note-actions">{actions}</div>
             </>
         };
     }
     let busy = composer.submission.busy();
+    let posting = composer.submission == NoteSubmission::Posting;
     let closing = composer.submission == NoteSubmission::Closing;
     let deleting = composer.submission == NoteSubmission::Deleting;
     let form_key = task.to_string();
@@ -550,7 +553,7 @@ pub(super) fn render_note_composer(
             >{composer.draft.clone()}</textarea>
             <div class="team-composer-controls work-note-actions">
                 <button type="submit" class="team-send" disabled={busy}>
-                    {if busy && !closing { "Saving…" } else { "Add" }}
+                    {if posting { "Posting…" } else { "Add" }}
                 </button>
                 if let Some(closure) = closure {
                     if closure.closable {
@@ -580,9 +583,9 @@ pub(super) fn render_note_composer(
     }
 }
 
-/// Append one observation to the task named by the submitting surface, or
-/// settle that task with the draft as validation/reason when a destructive
-/// submitter sent the form.
+/// Publish one observation in the room of the task named by the submitting
+/// surface, or settle that task with the draft as validation/reason when a
+/// destructive submitter sent the form.
 pub(super) fn note_submit_callback(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
@@ -599,7 +602,7 @@ pub(super) fn note_submit_callback(
             .unwrap_or_default();
         notes.update(&task, |composer| composer.draft.clone_from(&text));
         let requested_settlement = submitted_settlement(&event);
-        let (handle, after, settlement) = {
+        let (handle, head, settlement) = {
             let data = surface.read();
             let Some(detail) = data
                 .as_ref()
@@ -617,7 +620,7 @@ pub(super) fn note_submit_callback(
             };
             (
                 detail.task.statement.body.handle.clone(),
-                detail.notes.last().map(|note| note.position),
+                detail.task.statement.position,
                 requested_settlement.map(|settlement| {
                     (
                         settlement,
@@ -642,31 +645,40 @@ pub(super) fn note_submit_callback(
             );
             return;
         }
-        match compose::note(handle.as_str(), &text) {
-            Ok(note) => {
-                let Some(id) = action_identity(&sender) else {
-                    retain_note_failure(&notes, &task);
-                    return;
-                };
-                let text = note.text.clone();
-                if admit_action(
-                    &sender,
-                    ClientAction::Note {
-                        id,
-                        task: note.task,
-                        note: note.text,
-                        after,
-                    },
-                ) {
-                    notes.update(&task, |composer| {
-                        composer.notice = Notice::none();
-                        composer.submission = NoteSubmission::Pending { text, after };
-                    });
-                } else {
-                    retain_note_failure(&notes, &task);
-                }
+        let text = match compose::observation(&text) {
+            Ok(text) => text,
+            Err(refusal) => {
+                notes.update(&task, |composer| composer.notice = refusal.into());
+                return;
             }
-            Err(refusal) => notes.update(&task, |composer| composer.notice = refusal.into()),
+        };
+        let respond = {
+            let notes = notes.clone();
+            let task = task.clone();
+            Rc::new(
+                move |result: Result<wire::rooms::RoomPostAnswer, String>| match result {
+                    Ok(_) => notes.update(&task, |composer| *composer = NoteComposer::default()),
+                    Err(issue) => notes.update(&task, |composer| {
+                        composer.submission = NoteSubmission::Failed(issue);
+                    }),
+                },
+            )
+        };
+        if admit_action(
+            &sender,
+            ClientAction::RoomPost(crate::client_action::RoomPostAction {
+                room: handle,
+                head,
+                text,
+                respond,
+            }),
+        ) {
+            notes.update(&task, |composer| {
+                composer.notice = Notice::none();
+                composer.submission = NoteSubmission::Posting;
+            });
+        } else {
+            retain_note_failure(&notes, &task);
         }
     })
 }

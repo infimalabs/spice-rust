@@ -31,15 +31,16 @@ dependency cards label a passive Design **Passive**, waiting on the operator.
 Any Design, open, completed, or closed, opens for reading in its task
 overview: the **Read** action on each design tile in the Spice menu's Working
 groups catalog, a Design-intent task's detail, and a Design permalink all open
-the same view. Below the task's state, its **Design room** section shows the
-room's [standing](#design-standing), its positive
-[conclusion control](#concluding-a-design), every immutable
-[proposal version and decision](#deciding-a-design-proposal), and its full
-room history newest first, resolved through the Design's birth stamp under its
-current handle, with the permalink beside the heading. Room history and
-proposal versions stay readable in every standing. Opening or reading the view
-moves no group, joins, acknowledges, authorizes, and wakes nothing, and commits
-no journal fact. Operator decision controls appear only on an open Design.
+the same view. Below the task's state, its **Design room** section is the
+task room every task detail shows, with its composer and its conversation
+newest first, extended with the room's [standing](#design-standing), its
+positive [conclusion control](#concluding-a-design), and every immutable
+[proposal version and decision](#deciding-a-design-proposal), resolved through
+the Design's birth stamp under its current handle, with the permalink beside
+the heading. The conversation and proposal versions stay readable in every
+standing. Opening or reading the view moves no group, joins, acknowledges,
+authorizes, and wakes nothing, and commits no journal fact. Operator decision
+controls appear only on an open Design.
 Lanes refine a Design's statement through ordinary task edit authority, `spice
 task modify` or a `spice://task/HANDLE/description` write, never from the
 browser, which hosts only principal sessions.
