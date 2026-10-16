@@ -54,6 +54,7 @@ pub(crate) fn direction_cards<'m>(
                 .sort_by_key(|receiver| members.iter().position(|lane| *lane == receiver.lane));
             let authored = card.directive_contexts[0].authored;
             card.authored = authored;
+            card.authored_synthetic = false;
             card.observed = None;
             if let Some(delivery) = card
                 .directive_contexts
@@ -244,6 +245,7 @@ mod tests {
                 .parse()
                 .expect("fixture observation instant"),
         );
+        delivery.authored_synthetic = true;
         let mut response = row(lane, uuid(0xb1), 50, &[]);
         response.activity = AgentActivityKind::Prose;
 
@@ -258,6 +260,7 @@ mod tests {
                 .get()
                 .as_millisecond()
         );
+        assert!(!card.authored_synthetic);
         assert!(card.chronology_key() < response.chronology_key());
     }
 
