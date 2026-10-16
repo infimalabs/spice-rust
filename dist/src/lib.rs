@@ -5,6 +5,7 @@
 //! payload. A pin mismatch returns before any builder method is called.
 
 mod authority;
+mod canvas;
 mod notes;
 mod pins;
 mod release;
@@ -14,6 +15,7 @@ pub use authority::{
     AuthorityError, GitCommand, GitMutation, RefState, ReleaseAuthority, ReleaseRefs,
     admit_authority, admit_workspace_publish_policy, current_authority, current_product_version,
 };
+pub use canvas::{Canvas, CanvasError, ObjectTarget, canvas_object, linked_archive};
 pub use notes::{
     HIGHLIGHTS_PLACEHOLDER, INVENTORY_OPEN, Landing, NotesError, NotesInput, curated_release_notes,
     release_notes,
@@ -25,7 +27,7 @@ pub use release::{
     ReleaseExecutor, ReleaseJournal, ReleaseObservations, ReleasePlan, SealedTarget, plan_release,
 };
 pub use stage::{
-    AppBundle, AppFile, BuildError, BuildStep, Builder, FilePublisher, Pipeline, PublishError,
-    Publisher, StageError, StagedTarget,
+    BuildError, BuildStep, Builder, FilePublisher, Pipeline, PublishError, Publisher, StageError,
+    StagedTarget,
 };
 pub use wire::manifest::ProductVersion;

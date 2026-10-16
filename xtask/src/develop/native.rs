@@ -86,9 +86,18 @@ pub(super) fn perform(
     refuse_seated_lane(&repository, request.lane.as_deref())?;
     writeln!(output, "building app")?;
     crate::app(environment, output)?;
+    let canvas = crate::app::StagedCanvas::read(repository.worktree_root())?;
     let stamp = source_stamp(repository.worktree_root())?;
     writeln!(output, "source stamp {stamp}")?;
-    let built = build(request.release, request.symbols, &stamp, output)?;
+    let build_root = environment.build_root(repository.worktree_root());
+    let built = build(
+        request.release,
+        request.symbols,
+        &stamp,
+        &canvas,
+        &build_root,
+        output,
+    )?;
     install_built(&mut System, &repository, built, request, output)
 }
 
@@ -438,7 +447,8 @@ fn stamp_from_committer_seconds(
     TaskStamp::for_micros(ordered).map_err(|error| error.to_string())
 }
 
-/// Build `spice` and answer the executable Cargo reported for it.
+/// Build `spice` linking `canvas`, and answer the final executable Cargo
+/// reported for it once it links and reports that exact archive.
 ///
 /// `symbols` overrides the profile's own strip setting so the linked
 /// executable keeps its debug information long enough for
@@ -448,12 +458,14 @@ fn build(
     release: bool,
     symbols: bool,
     stamp: &TaskStamp,
+    canvas: &crate::app::StagedCanvas,
+    build_root: &Path,
     output: &mut impl Write,
 ) -> Result<PathBuf, RefreshError> {
     writeln!(output, "building spice profile={}", build_profile(release))?;
     let mut command = Command::new("cargo");
     command.env(SOURCE_STAMP_ENV, stamp.as_str()).args([
-        "build",
+        "rustc",
         "--locked",
         "--package",
         "spice",
@@ -471,6 +483,19 @@ fn build(
             .arg("--config")
             .arg(format!("profile.{profile}.package.spice.strip=false"));
     }
+    let host =
+        dist::ObjectTarget::new(std::env::consts::OS, std::env::consts::ARCH).ok_or_else(|| {
+            RefreshError::Canvas(format!(
+                "no canvas object format for {}-{}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ))
+        })?;
+    command.args(
+        canvas
+            .link_arguments(build_root, host)
+            .map_err(|error| RefreshError::Canvas(error.to_string()))?,
+    );
     let built = command
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -483,7 +508,33 @@ fn build(
     if symbols {
         generate_worktree_symbols(&executable, output)?;
     }
+    verify_canvas(&executable, canvas, output)?;
     Ok(executable)
+}
+
+/// Refuse a final executable whose section is not the staged archive or whose
+/// one version report does not name its generation.
+fn verify_canvas(
+    executable: &Path,
+    staged: &crate::app::StagedCanvas,
+    output: &mut impl Write,
+) -> Result<(), RefreshError> {
+    let canvas = staged.canvas();
+    canvas
+        .verify_linked(&fs::read(executable)?)
+        .map_err(|error| RefreshError::Canvas(error.to_string()))?;
+    let report = Command::new(executable).arg("--version").output()?;
+    if !report.status.success() {
+        return Err(RefreshError::Canvas(format!(
+            "version report failed: {}",
+            refusal_text(&report.stderr)
+        )));
+    }
+    canvas
+        .verify_report(&String::from_utf8_lossy(&report.stdout))
+        .map_err(|error| RefreshError::Canvas(error.to_string()))?;
+    crate::release::render_canvas(output, canvas, staged.tree())?;
+    Ok(())
 }
 
 const fn build_profile(release: bool) -> &'static str {

@@ -3,6 +3,7 @@
 use std::fs::File;
 use std::sync::LazyLock;
 
+use serve::canvas::{CanvasArchive, CanvasArchiveError};
 use wire::manifest::ProductVersion;
 use wire::{Digest, Domain, Fault, FaultClass, TaskStamp};
 
@@ -34,12 +35,37 @@ static PRODUCT: LazyLock<ProductVersion> = LazyLock::new(|| {
 
 static RUNNING: LazyLock<Result<Running, Fault>> = LazyLock::new(capture);
 
+static CANVAS: LazyLock<Option<Result<CanvasArchive<'static>, CanvasArchiveError>>> =
+    LazyLock::new(|| {
+        #[cfg(feature = "canvas")]
+        let linked = Some(::canvas::archive());
+        #[cfg(not(feature = "canvas"))]
+        let linked: Option<&'static [u8]> = None;
+        linked.map(CanvasArchive::admit)
+    });
+
 /// The product version this executable was built as.
 ///
 /// Fixed at compile time, so naming it does not hash the executable the way
 /// [`running`] must.
 pub fn product() -> &'static ProductVersion {
     &PRODUCT
+}
+
+/// The canvas archive linked into this executable, admitted once per process.
+///
+/// `None` when the build linked no archive: only the release target build and
+/// `spice dev xtask -- install` enable the `canvas` feature and link one.
+pub fn canvas() -> Option<&'static Result<CanvasArchive<'static>, CanvasArchiveError>> {
+    CANVAS.as_ref()
+}
+
+/// The version report: the product version and the app generation it links.
+pub fn report() -> String {
+    match canvas() {
+        Some(Ok(archive)) => format!("{} app {}", product(), archive.generation()),
+        _ => product().to_string(),
+    }
 }
 
 /// The running executable's identity, captured once per process.

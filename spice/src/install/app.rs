@@ -167,7 +167,7 @@ fn staged(root: &Path) -> Result<Source, InstallError> {
 }
 
 fn packaged(binary: &Path) -> Result<Option<Source>, InstallError> {
-    let Some((root, target_root)) = package_layout(binary) else {
+    let Some((_, target_root)) = package_layout(binary) else {
         return Ok(None);
     };
     let payload_path = target_root.join("payload.json");
@@ -187,7 +187,7 @@ fn packaged(binary: &Path) -> Result<Option<Source>, InstallError> {
     if payload.native != Digest::compute(Domain::DistArtifact, &binary_bytes) {
         return Err(InstallError::BinaryContextChanged);
     }
-    let files = packaged_files(root, payload)?;
+    let files = packaged_files(&binary_bytes, payload)?;
     Ok(Some(Source {
         generation: payload.app.clone(),
         files,
@@ -208,47 +208,26 @@ pub(super) fn package_layout(binary: &Path) -> Option<(&Path, &Path)> {
         .then_some((root, target))
 }
 
+/// The app files of the generation the verified packaged executable links.
 fn packaged_files(
-    root: &Path,
+    binary: &[u8],
     payload: &wire::manifest::TargetPayload,
 ) -> Result<BTreeMap<Asset, Vec<u8>>, InstallError> {
-    let mut files = BTreeMap::new();
-    let mut renderer_bytes = 0_u64;
-    for (asset, file, entry) in payload.inventory.iter().filter_map(|entry| {
-        let file = entry.path.strip_prefix("app/")?;
-        Some((asset_file(file)?, file, entry))
-    }) {
-        let path = root.join("app").join(file);
-        let metadata = fs::symlink_metadata(&path)
-            .map_err(|error| InstallError::io("inspect appliance app asset", &path, error))?;
-        if !metadata.file_type().is_file() {
-            return Err(InstallError::PathShape(path));
-        }
-        if matches!(asset, Asset::AppRenderer(_)) {
-            renderer_bytes = renderer_bytes
-                .checked_add(metadata.len())
-                .filter(|total| *total <= wire::manifest::renderer::MAX_BYTES)
-                .ok_or(InstallError::BinaryContextChanged)?;
-        }
-        if metadata.len() != entry.bytes {
-            return Err(InstallError::BinaryContextChanged);
-        }
-        let bytes = fs::read(&path)
-            .map_err(|error| InstallError::io("read appliance app asset", &path, error))?;
-        if entry.mode != 0o644
-            || entry.bytes != bytes.len() as u64
-            || entry.digest != Digest::compute(Domain::DistArtifact, &bytes)
-        {
-            return Err(InstallError::BinaryContextChanged);
-        }
-        files.insert(asset, bytes);
+    let invalid = |error: &dyn std::fmt::Display| {
+        InstallError::InvalidRecord(format!("appliance canvas archive: {error}"))
+    };
+    let linked = dist::linked_archive(binary).map_err(|error| invalid(&error))?;
+    if Digest::compute(Domain::DistArtifact, linked) != payload.canvas {
+        return Err(InstallError::BinaryContextChanged);
     }
-    wire::manifest::renderer::validate_bundle(files.iter().map(|(asset, bytes)| {
-        (
-            file(*asset).expect("only app files entered the source"),
-            bytes.as_slice(),
-        )
-    }))
-    .map_err(|error| InstallError::InvalidRecord(error.to_owned()))?;
-    Ok(files)
+    let archive = serve::canvas::CanvasArchive::admit_generation(linked, &payload.app)
+        .map_err(|error| invalid(&error))?;
+    archive
+        .members()
+        .map(|(path, member)| {
+            let asset = asset_file(path).ok_or(InstallError::BinaryContextChanged)?;
+            let bytes = member.inflate().ok_or(InstallError::BinaryContextChanged)?;
+            Ok((asset, bytes.into_vec()))
+        })
+        .collect()
 }

@@ -4,7 +4,8 @@
 //! [`CanvasArchive::write`] is the only writer and [`CanvasArchive::admit`]
 //! the only reader. Every member is one gzip stream under a fixed header, so a
 //! browser receives the stored bytes directly under `Content-Encoding: gzip`.
-//! Admission inflates only the shell: the archive bytes digest and the
+//! Admission inflates only the shell; [`CanvasMember::inflate`] yields any
+//! other member's original bytes on demand. The archive bytes digest and the
 //! executable signature that carries them are the integrity authority, and the
 //! ZIP CRC fields are structural evidence compared between headers.
 
@@ -69,6 +70,31 @@ impl<'a> CanvasMember<'a> {
     #[must_use]
     pub const fn size(self) -> u32 {
         self.size
+    }
+
+    /// The member's original bytes, or `None` unless the stored gzip is exactly
+    /// one stream of the declared size and CRC.
+    #[must_use]
+    pub fn inflate(self) -> Option<Box<[u8]>> {
+        let trailer = self.gzip.len() - GZIP_TRAILER_BYTES;
+        let body = &self.gzip[GZIP_HEADER.len()..trailer];
+        let mut bytes = Vec::with_capacity(self.size as usize);
+        let mut inflater = Decompress::new(false);
+        let status = inflater
+            .decompress_vec(body, &mut bytes, FlushDecompress::Finish)
+            .ok()?;
+        let mut crc = Crc::new();
+        crc.update(&bytes);
+        let declared = u32::from_le_bytes(
+            self.gzip[trailer..trailer + GZIP_CRC_BYTES]
+                .try_into()
+                .ok()?,
+        );
+        (status == Status::StreamEnd
+            && inflater.total_in() == body.len() as u64
+            && bytes.len() == self.size as usize
+            && crc.sum() == declared)
+            .then(|| bytes.into_boxed_slice())
     }
 }
 
@@ -176,7 +202,11 @@ impl<'a> CanvasArchive<'a> {
             .get(wire::manifest::APP_HTML)
             .copied()
             .ok_or(CanvasArchiveError::Shell("archive carries no shell"))
-            .and_then(inflate)?;
+            .and_then(|shell| {
+                shell.inflate().ok_or(CanvasArchiveError::Shell(
+                    "shell is not exactly one gzip stream",
+                ))
+            })?;
         let generation = shell_generation(&shell)?;
         check_inventory(&shell, &members)?;
         Ok(Self {
@@ -606,33 +636,6 @@ fn gzip_size(path: &str, gzip: &[u8]) -> Result<u32, CanvasArchiveError> {
         ));
     }
     Ok(size)
-}
-
-/// Inflate the shell, requiring exactly one stream of its declared size and CRC.
-fn inflate(member: CanvasMember<'_>) -> Result<Box<[u8]>, CanvasArchiveError> {
-    let refused = CanvasArchiveError::Shell("shell is not exactly one gzip stream");
-    let trailer = member.gzip.len() - GZIP_TRAILER_BYTES;
-    let body = &member.gzip[GZIP_HEADER.len()..trailer];
-    let mut shell = Vec::with_capacity(member.size as usize);
-    let mut inflater = Decompress::new(false);
-    let status = inflater
-        .decompress_vec(body, &mut shell, FlushDecompress::Finish)
-        .map_err(|_| refused.clone())?;
-    let mut crc = Crc::new();
-    crc.update(&shell);
-    let declared = u32::from_le_bytes(
-        member.gzip[trailer..trailer + GZIP_CRC_BYTES]
-            .try_into()
-            .map_err(|_| TRUNCATED)?,
-    );
-    if status != Status::StreamEnd
-        || inflater.total_in() != body.len() as u64
-        || shell.len() != member.size as usize
-        || crc.sum() != declared
-    {
-        return Err(refused);
-    }
-    Ok(shell.into_boxed_slice())
 }
 
 fn shell_generation(shell: &[u8]) -> Result<wire::Digest, CanvasArchiveError> {

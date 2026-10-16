@@ -488,21 +488,12 @@ fn prepared(target: ReleaseTarget, source: Digest, clean: bool) -> Prepared {
         cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
         proof_container: format!("registry.example/spice-proof@sha256:{}", "0".repeat(64)),
     };
-    let mut inventory = wire::manifest::APP_FILES
-        .iter()
-        .map(|file| InventoryEntry {
-            path: format!("app/{file}"),
-            mode: 0o644,
-            bytes: file.len() as u64,
-            digest: digest(Domain::DistArtifact, file.as_bytes()),
-        })
-        .collect::<Vec<_>>();
-    inventory.push(InventoryEntry {
+    let mut inventory = vec![InventoryEntry {
         path: "bin/spice".to_owned(),
         mode: 0o755,
         bytes: target.as_str().len() as u64,
         digest: native.clone(),
-    });
+    }];
     let symbols = crate::test_support::symbols(target, &native, &mut inventory);
     inventory.sort_by(|left, right| left.path.cmp(&right.path));
     let payload = TargetPayload {
@@ -510,6 +501,7 @@ fn prepared(target: ReleaseTarget, source: Digest, clean: bool) -> Prepared {
         target,
         source,
         app,
+        canvas: digest(Domain::DistArtifact, b"canvas archive"),
         native,
         symbols,
         pins_digest: digest(Domain::DistPins, &wire::encode(&pins).expect("pins encode")),

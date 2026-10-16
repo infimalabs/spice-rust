@@ -51,13 +51,7 @@ struct LoadedTarget {
 struct Loaded {
     notes: proof::PackageMember,
     manifest: proof::PackageMember,
-    app: Vec<LoadedApp>,
     targets: Vec<LoadedTarget>,
-}
-
-struct LoadedApp {
-    file: String,
-    member: proof::PackageMember,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -214,11 +208,6 @@ fn package_input<'a>(
     version: &'a ProductVersion,
     notes_identity: Digest,
 ) -> proof::PackageInput<'a> {
-    let app = loaded
-        .app
-        .iter()
-        .map(|asset| proof::PackageAppInput::new(&asset.file, asset.member.clone()))
-        .collect();
     let targets = loaded
         .targets
         .iter()
@@ -237,7 +226,6 @@ fn package_input<'a>(
         notes_identity,
         loaded.notes.clone(),
         loaded.manifest.clone(),
-        app,
         targets,
     )
 }
@@ -286,23 +274,6 @@ fn load(
             symbols,
         });
     }
-    let app_files = files
-        .keys()
-        .filter_map(|path| {
-            let file = path.strip_prefix("app/")?;
-            wire::manifest::renderer::is_app_file(file).then(|| file.to_owned())
-        })
-        .collect::<Vec<_>>();
-    let app = app_files
-        .iter()
-        .map(|file| {
-            let path = format!("app/{file}");
-            Ok(LoadedApp {
-                file: file.clone(),
-                member: take_member(&mut files, &path)?,
-            })
-        })
-        .collect::<Result<Vec<_>, PackageFailure>>()?;
     if let Some(path) = files.keys().next() {
         return Err(PackageFailure::Moved(format!(
             "release preflight retained unexpected member {path:?}"
@@ -311,7 +282,6 @@ fn load(
     Ok(Loaded {
         notes,
         manifest: manifest_member,
-        app,
         targets,
     })
 }
@@ -408,12 +378,6 @@ impl ReleasePreflight {
             &mut shapes,
             &mut total,
         )?;
-        let inventory = &document
-            .targets
-            .first()
-            .ok_or_else(|| PackageFailure::Moved("release manifest has no targets".to_owned()))?
-            .inventory;
-        add_app_assets(&stage, inventory, &mut pending, &mut shapes, &mut total)?;
         add_inline(
             &mut shapes,
             &mut total,
@@ -617,31 +581,6 @@ fn add_targets(
     Ok(())
 }
 
-fn add_app_assets(
-    stage: &Path,
-    inventory: &[InventoryEntry],
-    pending: &mut BTreeMap<String, PendingFile>,
-    shapes: &mut BTreeMap<String, MemberShape>,
-    total: &mut CaptureBudget,
-) -> Result<(), PackageFailure> {
-    for entry in inventory
-        .iter()
-        .filter(|entry| entry.path.starts_with("app/"))
-    {
-        let path = &entry.path;
-        add_artifact(
-            stage,
-            pending,
-            shapes,
-            total,
-            entry,
-            path,
-            &format!("staged app asset {path}"),
-        )?;
-    }
-    Ok(())
-}
-
 struct PendingSpec {
     source: PathBuf,
     path: String,
@@ -820,20 +759,6 @@ fn package_bytes(
     if manifest.version != RELEASE_MANIFEST_VERSION || manifest.targets.len() != TARGETS.len() {
         return Err(PackageFailure::Moved(
             "release manifest has no current complete target inventory".to_owned(),
-        ));
-    }
-    let first_app_inventory = manifest.targets[0]
-        .inventory
-        .iter()
-        .filter(|entry| entry.path.starts_with("app/"));
-    if !manifest.targets[1]
-        .inventory
-        .iter()
-        .filter(|entry| entry.path.starts_with("app/"))
-        .eq(first_app_inventory)
-    {
-        return Err(PackageFailure::Moved(
-            "release manifest targets disagree on app inventory".to_owned(),
         ));
     }
     let targets = manifest

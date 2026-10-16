@@ -477,6 +477,7 @@ mod tests {
             target,
             source: digest.clone(),
             app: digest.clone(),
+            canvas: digest.clone(),
             native: digest.clone(),
             symbols: None,
             pins: BuildPins {

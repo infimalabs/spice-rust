@@ -55,7 +55,7 @@ pub struct JournalBackupManifest {
 /// The sole current detached proof receipt schema.
 pub const PROOF_RECEIPT_VERSION: u16 = 3;
 /// The sole current target payload schema.
-pub const TARGET_PAYLOAD_VERSION: u16 = 3;
+pub const TARGET_PAYLOAD_VERSION: u16 = 4;
 /// The sole current deterministic macOS symbol artifact schema.
 pub const MAC_SYMBOL_ARTIFACT_VERSION: u16 = 2;
 const MACHO_UUID_LENGTH: usize = 36;
@@ -563,8 +563,10 @@ pub struct TargetPayload {
     pub target: ReleaseTarget,
     /// Domain-separated identity of the immutable Git commit built.
     pub source: Digest,
-    /// Identity of the complete immutable app generation.
+    /// Identity of the complete immutable app generation the executable links.
     pub app: Digest,
+    /// Identity of the exact canvas archive bytes linked into the executable.
+    pub canvas: Digest,
     pub native: Digest,
     #[serde(
         default,

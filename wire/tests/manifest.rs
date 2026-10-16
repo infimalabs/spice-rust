@@ -79,6 +79,7 @@ fn payload(target: ReleaseTarget, marker: &str) -> TargetPayload {
         target,
         source: digest("source"),
         app: artifact.clone(),
+        canvas: digest("canvas"),
         native: digest("native"),
         symbols: None,
         pins: BuildPins {

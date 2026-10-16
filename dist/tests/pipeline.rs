@@ -5,16 +5,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::{fs, io};
 
 use dist::{
-    AppBundle, AppFile, BuildError, Builder, FilePublisher, PinError, PinName, Pipeline,
-    PublishError, Publisher, RequiredPins, StageError,
+    BuildError, BuildStep, Builder, Canvas, CanvasError, FilePublisher, PinError, PinName,
+    Pipeline, PublishError, Publisher, RequiredPins, StageError,
 };
 use wire::manifest::{
-    APP_FILES, BuildPins, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, ReleaseTarget,
-    TargetPayload,
+    BuildPins, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, ReleaseTarget, TargetPayload,
 };
 use wire::{Digest, Domain};
 
 const OLD_PAYLOAD: &[u8] = b"old-payload";
+const ARCHIVE: &[u8] = b"staged canvas archive";
 
 fn pins() -> BuildPins {
     BuildPins {
@@ -34,27 +34,27 @@ fn source_digest() -> Digest {
 struct RecordingBuilder {
     calls: Vec<String>,
     symbols: Option<Vec<u8>>,
+    linked: Option<&'static [u8]>,
+    report: Option<String>,
 }
 
 impl Builder for RecordingBuilder {
-    fn build_app(&mut self) -> Result<AppBundle, BuildError> {
+    fn build_app(&mut self) -> Result<Canvas, BuildError> {
         self.calls.push("app".to_owned());
-        Ok(app_bundle())
-    }
-
-    fn embed_app(&mut self, app: &AppBundle) -> Result<AppBundle, BuildError> {
-        self.calls.push("embed".to_owned());
-        Ok(app.clone())
+        Ok(canvas())
     }
 
     fn build_native(
         &mut self,
         target: ReleaseTarget,
-        app: &AppBundle,
+        canvas: &Canvas,
     ) -> Result<Vec<u8>, BuildError> {
         self.calls.push(format!("native:{target}"));
-        let mut native = format!("native:{target}:").into_bytes();
-        native.extend_from_slice(app.generation().as_str().as_bytes());
+        let linked = self.linked.unwrap_or(ARCHIVE);
+        let native = match target {
+            ReleaseTarget::Aarch64AppleDarwin => macho(linked),
+            ReleaseTarget::X86_64UnknownLinuxMusl => elf(linked),
+        };
         if target == ReleaseTarget::Aarch64AppleDarwin {
             self.symbols = Some(
                 wire::encode(&MacSymbolArtifact {
@@ -69,7 +69,13 @@ impl Builder for RecordingBuilder {
                 .expect("symbol fixture encodes"),
             );
         }
+        self.report = Some(format!("spice 1.2.3 app {}\n", canvas.generation()));
         Ok(native)
+    }
+
+    fn report_version(&mut self) -> Result<String, BuildError> {
+        self.calls.push("version".to_owned());
+        Ok(self.report.clone().expect("native ran first"))
     }
 
     fn take_symbol_artifact(&mut self) -> Option<Vec<u8>> {
@@ -77,14 +83,67 @@ impl Builder for RecordingBuilder {
     }
 }
 
-fn app_bundle() -> AppBundle {
-    AppBundle::new(
+fn canvas() -> Canvas {
+    Canvas::new(
         Digest::compute(Domain::DistArtifact, b"app generation"),
-        APP_FILES
-            .iter()
-            .map(|path| AppFile::new(*path, format!("app asset {path}").into_bytes()))
-            .collect(),
+        ARCHIVE,
     )
+}
+
+/// A minimal 64-bit Mach-O image whose `__TEXT,__spice_canvas` holds `archive`.
+fn macho(archive: &[u8]) -> Vec<u8> {
+    let name = |text: &str| {
+        let mut field = [0_u8; 16];
+        field[..text.len()].copy_from_slice(text.as_bytes());
+        field
+    };
+    let offset = 32 + 72 + 80;
+    let mut image = Vec::new();
+    for word in [0xfeed_facf_u32, 0x0100_000c, 0, 2, 1, 72 + 80, 0, 0] {
+        image.extend(word.to_le_bytes());
+    }
+    image.extend(0x19_u32.to_le_bytes());
+    image.extend((72_u32 + 80).to_le_bytes());
+    image.extend(name("__TEXT"));
+    image.extend([0; 40]);
+    image.extend(1_u32.to_le_bytes());
+    image.extend(0_u32.to_le_bytes());
+    image.extend(name("__spice_canvas"));
+    image.extend(name("__TEXT"));
+    image.extend(0_u64.to_le_bytes());
+    image.extend((archive.len() as u64).to_le_bytes());
+    image.extend((offset as u32).to_le_bytes());
+    image.extend([0; 28]);
+    image.extend(archive);
+    image
+}
+
+/// A minimal 64-bit ELF image whose `.spice_canvas` holds `archive`.
+fn elf(archive: &[u8]) -> Vec<u8> {
+    let names = b"\0.shstrtab\0.spice_canvas\0";
+    let canvas_at = 64 + names.len();
+    let table = canvas_at + archive.len();
+    let mut image = vec![0_u8; 64];
+    image[..6].copy_from_slice(b"\x7fELF\x02\x01");
+    image[0x28..0x30].copy_from_slice(&(table as u64).to_le_bytes());
+    image[0x3a..0x3c].copy_from_slice(&64_u16.to_le_bytes());
+    image[0x3c..0x3e].copy_from_slice(&3_u16.to_le_bytes());
+    image[0x3e..0x40].copy_from_slice(&1_u16.to_le_bytes());
+    image.extend(names);
+    image.extend(archive);
+    image.extend([0; 64]);
+    for (name, kind, offset, bytes) in [
+        (1_u32, 3_u32, 64, names.len()),
+        (11, 1, canvas_at, archive.len()),
+    ] {
+        let mut header = [0_u8; 64];
+        header[..4].copy_from_slice(&name.to_le_bytes());
+        header[4..8].copy_from_slice(&kind.to_le_bytes());
+        header[24..32].copy_from_slice(&(offset as u64).to_le_bytes());
+        header[32..40].copy_from_slice(&(bytes as u64).to_le_bytes());
+        image.extend(header);
+    }
+    image
 }
 
 #[derive(Default)]
@@ -151,7 +210,7 @@ fn build_order_payload_bytes_and_restaging_are_deterministic() {
     assert_eq!(first.publisher.files, second.publisher.files);
     assert_eq!(
         first.builder.calls,
-        ["app", "embed", "native:aarch64-apple-darwin"]
+        ["app", "native:aarch64-apple-darwin", "version"]
     );
     assert_eq!(
         first.publisher.writes.last(),
@@ -171,53 +230,79 @@ fn build_order_payload_bytes_and_restaging_are_deterministic() {
 }
 
 #[test]
-fn incomplete_app_generation_refuses_before_publication() {
+fn a_final_executable_without_the_staged_archive_or_its_generation_refuses_before_publication() {
     let required = pins();
     let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
-    let app = AppBundle::new(
-        app_bundle().generation().clone(),
-        APP_FILES
-            .iter()
-            .skip(1)
-            .map(|path| AppFile::new(*path, format!("app asset {path}").into_bytes()))
-            .collect(),
-    );
-    struct IncompleteBuilder {
-        app: AppBundle,
+    for target in [
+        ReleaseTarget::Aarch64AppleDarwin,
+        ReleaseTarget::X86_64UnknownLinuxMusl,
+    ] {
+        let mut builder = RecordingBuilder {
+            linked: Some(b"another canvas archive"),
+            ..RecordingBuilder::default()
+        };
+        let mut publisher = MemoryPublisher::default();
+        let error = pipeline
+            .stage(
+                target,
+                source_digest(),
+                &required,
+                &mut builder,
+                &mut publisher,
+            )
+            .expect_err("a different linked archive refuses");
+        let expected = CanvasError::Mismatch {
+            expected: canvas().archive().clone(),
+            observed: Digest::compute(Domain::DistArtifact, b"another canvas archive"),
+        };
+        assert!(
+            matches!(&error, StageError::Build { step: BuildStep::Native, source } if source.to_string() == expected.to_string()),
+            "{error:?}"
+        );
+        assert_eq!(
+            builder.calls,
+            ["app".to_owned(), format!("native:{target}")]
+        );
+        assert!(publisher.writes.is_empty());
     }
-    impl Builder for IncompleteBuilder {
-        fn build_app(&mut self) -> Result<AppBundle, BuildError> {
-            Ok(self.app.clone())
-        }
-        fn embed_app(&mut self, app: &AppBundle) -> Result<AppBundle, BuildError> {
-            Ok(app.clone())
+
+    struct StaleReport(RecordingBuilder);
+    impl Builder for StaleReport {
+        fn build_app(&mut self) -> Result<Canvas, BuildError> {
+            self.0.build_app()
         }
         fn build_native(
             &mut self,
-            _target: ReleaseTarget,
-            _app: &AppBundle,
+            target: ReleaseTarget,
+            canvas: &Canvas,
         ) -> Result<Vec<u8>, BuildError> {
-            Ok(b"native".to_vec())
+            self.0.build_native(target, canvas)
+        }
+        fn report_version(&mut self) -> Result<String, BuildError> {
+            Ok(format!("spice 1.2.3 app {}\n", "7".repeat(64)))
         }
     }
-    let mut builder = IncompleteBuilder { app };
+    let mut builder = StaleReport(RecordingBuilder::default());
     let mut publisher = MemoryPublisher::default();
     let error = pipeline
         .stage(
-            ReleaseTarget::Aarch64AppleDarwin,
+            ReleaseTarget::X86_64UnknownLinuxMusl,
             source_digest(),
             &required,
             &mut builder,
             &mut publisher,
         )
-        .expect_err("missing app asset refuses");
-    assert!(matches!(
-        error,
-        StageError::Build {
-            step: dist::BuildStep::App,
-            ..
-        }
-    ));
+        .expect_err("a report naming another generation refuses");
+    assert!(
+        matches!(
+            error,
+            StageError::Build {
+                step: BuildStep::Native,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
     assert!(publisher.writes.is_empty());
 }
 
@@ -226,7 +311,7 @@ fn interruption_at_every_publication_edge_preserves_the_old_target_pointer() {
     let required = pins();
     let pipeline = Pipeline::new(RequiredPins::new(required.clone()).expect("pins are valid"));
     let payload_path = PathBuf::from("targets/aarch64-apple-darwin/payload.json");
-    for fail_at in 0..=9 {
+    for fail_at in 0..=2 {
         let mut publisher = MemoryPublisher {
             files: BTreeMap::from([(payload_path.clone(), (0o644, OLD_PAYLOAD.to_vec()))]),
             writes: Vec::new(),
@@ -260,6 +345,7 @@ fn target_payload_pointers_and_native_identities_do_not_alias() {
     assert_ne!(darwin.staged.payload.native, linux.staged.payload.native);
     assert_ne!(darwin.staged.payload_digest, linux.staged.payload_digest);
     assert_eq!(darwin.staged.payload.app, linux.staged.payload.app);
+    assert_eq!(darwin.staged.payload.canvas, linux.staged.payload.canvas);
 }
 
 #[test]

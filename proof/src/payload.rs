@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use wire::manifest::{APP_FILES, InventoryEntry, ProofImage, TargetPayload};
+use wire::manifest::{InventoryEntry, ProofImage, TargetPayload};
 use wire::{Digest, Domain};
 
 const PAYLOAD_VERSION: u16 = wire::manifest::TARGET_PAYLOAD_VERSION;
@@ -39,7 +39,8 @@ impl AdmittedPayload {
 ///
 /// Refuses malformed or noncanonical bytes, a stale schema, an unpinned proof
 /// environment, inconsistent subordinate digests, or any inventory other than
-/// the complete app generation and native executable in exact order and mode.
+/// the native executable, which links the app, and its symbols in exact order
+/// and mode.
 pub fn admit(bytes: &[u8]) -> Result<AdmittedPayload, PayloadError> {
     let payload: TargetPayload =
         wire::decode(bytes).map_err(|source| PayloadError::Decode(source.to_string()))?;
@@ -108,25 +109,6 @@ fn verify_symbol_metadata(payload: &TargetPayload) -> Result<(), PayloadError> {
 }
 
 fn verify_inventory(payload: &TargetPayload) -> Result<(), PayloadError> {
-    let mut renderer_files = 0_usize;
-    let mut renderer_bytes = 0_u64;
-    for entry in &payload.inventory {
-        if entry
-            .path
-            .strip_prefix("app/")
-            .and_then(wire::manifest::renderer::File::parse_filename)
-            .is_some()
-        {
-            renderer_files += 1;
-            renderer_bytes = renderer_bytes
-                .checked_add(entry.bytes)
-                .filter(|total| *total <= wire::manifest::renderer::MAX_BYTES)
-                .ok_or_else(|| PayloadError::ExtraArtifact(entry.path.clone()))?;
-            if renderer_files > wire::manifest::renderer::MAX_FILES {
-                return Err(PayloadError::ExtraArtifact(entry.path.clone()));
-            }
-        }
-    }
     let artifacts = expected_artifacts(payload);
     let mut paths = BTreeSet::new();
     for entry in &payload.inventory {
@@ -183,23 +165,7 @@ fn verify_artifact(
 }
 
 fn expected_artifacts(payload: &TargetPayload) -> Vec<Artifact> {
-    let mut artifacts = APP_FILES
-        .iter()
-        .map(|file| Artifact {
-            path: format!("app/{file}"),
-            mode: 0o644,
-            digest: None,
-        })
-        .collect::<Vec<_>>();
-    artifacts.extend(payload.inventory.iter().filter_map(|entry| {
-        let file = entry.path.strip_prefix("app/")?;
-        wire::manifest::renderer::File::parse_filename(file)?;
-        Some(Artifact {
-            path: entry.path.clone(),
-            mode: 0o644,
-            digest: None,
-        })
-    }));
+    let mut artifacts = Vec::new();
     artifacts.push(Artifact {
         path: "bin/spice".to_owned(),
         mode: 0o755,
@@ -421,12 +387,12 @@ mod tests {
         refresh_inventory(&mut missing);
         assert_refuses_before_proof(
             &encode(&missing),
-            PayloadError::MissingArtifact("app/app.html".to_owned()),
+            PayloadError::MissingArtifact("bin/spice".to_owned()),
         );
 
         let mut extra = payload();
         extra.inventory.push(InventoryEntry {
-            path: "extra/debug.txt".to_owned(),
+            path: "app/app.html".to_owned(),
             mode: 0o644,
             bytes: 0,
             digest: Digest::compute(Domain::DistArtifact, b"extra"),
@@ -434,7 +400,7 @@ mod tests {
         refresh_inventory(&mut extra);
         assert_refuses_before_proof(
             &encode(&extra),
-            PayloadError::ExtraArtifact("extra/debug.txt".to_owned()),
+            PayloadError::ExtraArtifact("app/app.html".to_owned()),
         );
 
         let mut duplicate = payload();
@@ -442,18 +408,18 @@ mod tests {
         refresh_inventory(&mut duplicate);
         assert_refuses_before_proof(
             &encode(&duplicate),
-            PayloadError::DuplicateArtifact("app/app.html".to_owned()),
+            PayloadError::DuplicateArtifact("bin/spice".to_owned()),
         );
 
-        let mut reordered = payload();
+        let mut reordered = darwin();
         reordered.inventory.swap(0, 1);
         refresh_inventory(&mut reordered);
         assert_refuses_before_proof(
             &encode(&reordered),
             PayloadError::ReorderedArtifact {
                 index: 0,
-                expected: "app/app.html".to_owned(),
-                observed: "app/app.module".to_owned(),
+                expected: "bin/spice".to_owned(),
+                observed: "symbols/spice.dSYM.json".to_owned(),
             },
         );
     }
@@ -461,16 +427,14 @@ mod tests {
     #[test]
     fn every_canonical_path_has_one_mode_and_the_native_digest_is_named() {
         for (index, entry) in payload().inventory.into_iter().enumerate() {
-            let path = entry.path;
-            let expected = if path == "bin/spice" { 0o755 } else { 0o644 };
             let mut wrong_mode = payload();
             wrong_mode.inventory[index].mode = 0;
             refresh_inventory(&mut wrong_mode);
             assert_refuses_before_proof(
                 &encode(&wrong_mode),
                 PayloadError::ArtifactMode {
-                    path: path.clone(),
-                    expected,
+                    path: entry.path,
+                    expected: 0o755,
                     observed: 0,
                 },
             );
@@ -488,18 +452,25 @@ mod tests {
             &encode(&darwin),
             PayloadError::SymbolMetadata("missing for Darwin"),
         );
-        darwin.symbols =
-            crate::test_support::symbols(darwin.target, &darwin.native, &mut darwin.inventory);
-        darwin
-            .inventory
-            .sort_by(|left, right| left.path.cmp(&right.path));
-        refresh_inventory(&mut darwin);
+        let mut darwin = self::darwin();
         admit(&encode(&darwin)).expect("Darwin symbol metadata admits");
         darwin.symbols.as_mut().expect("Darwin symbols").bytes += 1;
         assert_refuses_before_proof(
             &encode(&darwin),
             PayloadError::SymbolMetadata("disagrees with executable or inventory"),
         );
+    }
+
+    fn darwin() -> TargetPayload {
+        let mut darwin = payload();
+        darwin.target = ReleaseTarget::Aarch64AppleDarwin;
+        darwin.symbols =
+            crate::test_support::symbols(darwin.target, &darwin.native, &mut darwin.inventory);
+        darwin
+            .inventory
+            .sort_by(|left, right| left.path.cmp(&right.path));
+        refresh_inventory(&mut darwin);
+        darwin
     }
 
     fn payload() -> TargetPayload {
@@ -512,27 +483,18 @@ mod tests {
         };
         let app = Digest::compute(Domain::DistArtifact, b"app generation");
         let native = Digest::compute(Domain::DistArtifact, b"native");
-        let mut inventory = wire::manifest::APP_FILES
-            .iter()
-            .map(|file| InventoryEntry {
-                path: format!("app/{file}"),
-                mode: 0o644,
-                bytes: file.len() as u64,
-                digest: Digest::compute(Domain::DistArtifact, file.as_bytes()),
-            })
-            .collect::<Vec<_>>();
-        inventory.push(InventoryEntry {
+        let inventory = vec![InventoryEntry {
             path: "bin/spice".to_owned(),
             mode: 0o755,
             bytes: 6,
             digest: native.clone(),
-        });
-        inventory.sort_by(|left, right| left.path.cmp(&right.path));
+        }];
         TargetPayload {
             version: wire::manifest::TARGET_PAYLOAD_VERSION,
             target: ReleaseTarget::X86_64UnknownLinuxMusl,
             source: Digest::compute(Domain::DistArtifact, b"source"),
             app,
+            canvas: Digest::compute(Domain::DistArtifact, b"canvas archive"),
             native,
             symbols: None,
             pins_digest: Digest::compute(

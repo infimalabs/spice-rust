@@ -115,6 +115,21 @@ digest, not on ZIP CRC fields. Owners:
 [`serve/src/canvas/archive.rs`](../../serve/src/canvas/archive.rs) writes and
 admits the archive, and [`xtask/src/app.rs`](../../xtask/src/app.rs) stages it.
 
+The `canvas` crate declares the two symbols a relocatable object defines: the
+archive bytes alone in their own read-only section, and their length. The
+process reads its app as a direct static slice without parsing its own image.
+Only builds that enable the `spice/canvas` feature resolve the crate, and those
+builds write the object for the staged archive and hand it to the final link
+through `cargo rustc`. The object's name carries the archive digest, so a new
+archive relinks the executable and rebuilds nothing else.
+[`spice/src/version.rs`](../../spice/src/version.rs) admits the linked archive
+once. An installed resident without one refuses with
+`serve::canvas-archive-absent`, or `serve::canvas-archive-invalid` when it does
+not admit. Owners: [`canvas/src/lib.rs`](../../canvas/src/lib.rs) for the
+symbols, [`dist/src/canvas.rs`](../../dist/src/canvas.rs) for writing the
+object and for the section read and identity checks, and
+[`xtask/src/app.rs`](../../xtask/src/app.rs) for the link arguments.
+
 A resident restart keeps the app's last good surface on screen until the new
 session's scope is fully hydrated. A page whose generation the resident no
 longer serves reloads once into the served generation; unsent composer and
@@ -134,7 +149,8 @@ available first-parent chain, treating a declared shallow boundary as the end
 of that history while refusing an unexpectedly missing commit. The version
 never carries the executable digest: the native-binary identity is the running
 executable's complete digest, so identical bytes keep one identity without a
-Git checkout.
+Git checkout. `spice --version` ends with `app G` when the executable links
+generation G's archive.
 
 Owners: [`spice/src/version.rs`](../../spice/src/version.rs) and
 [`xtask/src/develop/native.rs`](../../xtask/src/develop/native.rs).

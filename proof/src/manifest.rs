@@ -347,17 +347,7 @@ fn admit_shared_payload(
     };
     for (matches, field) in [
         (observed.app == first.app, "app identity"),
-        (
-            observed
-                .inventory
-                .iter()
-                .filter(|entry| entry.path.starts_with("app/"))
-                .eq(first
-                    .inventory
-                    .iter()
-                    .filter(|entry| entry.path.starts_with("app/"))),
-            "app inventory",
-        ),
+        (observed.canvas == first.canvas, "canvas archive"),
         (observed.pins == first.pins, "toolchain and container pins"),
     ] {
         if !matches {
@@ -495,18 +485,7 @@ where
         if let Some(first) = &first_payload {
             for (matches, field) in [
                 (admitted.value().app == first.app, "app identity"),
-                (
-                    admitted
-                        .value()
-                        .inventory
-                        .iter()
-                        .filter(|entry| entry.path.starts_with("app/"))
-                        .eq(first
-                            .inventory
-                            .iter()
-                            .filter(|entry| entry.path.starts_with("app/"))),
-                    "app inventory",
-                ),
+                (admitted.value().canvas == first.canvas, "canvas archive"),
                 (
                     admitted.value().pins == first.pins,
                     "toolchain and container pins",
