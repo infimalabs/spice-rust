@@ -7,7 +7,7 @@
 //! identity its millisecond instant and position mint, and every room read
 //! presents it as that authored publication. A taste-review audit was
 //! policy-read noise, so it joins no room. Nothing else decodes a note;
-//! schema 75 crosses every retained one through this fold once.
+//! schema 76 crosses every retained one through this fold once.
 
 use wire::body::TaskNoted;
 use wire::rooms::{RoomAuthorityStamp, RoomPublicationContent, RoomPublished};
