@@ -165,7 +165,10 @@ later band's rounded top rule tapers away against it. A corner at the browser
 edge stays square. Pips follow canonical member order and distinguish active,
 queued, waiting, bound, and unbound states without encoding agent identity. The
 ticker keeps relative age, status, prefix, accent, accessible label, and
-live-region semantics; an empty fleet reserves no pips and invents no status.
+live-region semantics. A running command's latest nonblank output row leads its
+intent and operation context, so a narrow ticker cuts context before the
+result; the complete bounded line remains available on hover. An empty fleet
+reserves no pips and invents no status.
 
 ## Task strips
 
