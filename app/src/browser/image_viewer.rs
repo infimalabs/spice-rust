@@ -95,6 +95,11 @@ impl Reducible for Viewing {
 }
 const LANE_CARD_SELECTOR: &str = ".mosaic-message-card[data-agent-lane][data-mosaic-card-key]";
 const IMAGE_BUTTON_SELECTOR: &str = "button[data-image-preview]:not([disabled])";
+/// One composer: its main draft strip and every quote shard's strip.
+const COMPOSER_SELECTOR: &str = ".agent-composer-stack";
+/// An image pasted into a composer draft, as its strip renders it.
+const COMPOSER_IMAGE_SELECTOR: &str =
+    "button.composer-shard-image-open[data-image-preview]:not([disabled])";
 
 fn open_change(opener: web_sys::Element) -> Option<Change> {
     let image = opener
@@ -167,8 +172,60 @@ fn adjacent_lane_media(
         .and_then(|images| element_at(&images, target_image))
 }
 
-fn lane_navigation_available(opener: &web_sys::Element) -> bool {
-    opener.closest(LANE_CARD_SELECTOR).ok().flatten().is_some()
+/// The neighbouring image pasted into the opener's composer, in rendered order
+/// across its main strip and its quote shards' strips, holding at either end.
+fn adjacent_composer_media(
+    opener: &web_sys::Element,
+    direction: Direction,
+) -> Option<web_sys::Element> {
+    let composer = opener.closest(COMPOSER_SELECTOR).ok().flatten()?;
+    let images = composer.query_selector_all(COMPOSER_IMAGE_SELECTOR).ok()?;
+    let count = images.length() as usize;
+    let current = (0..count)
+        .find(|index| element_at(&images, *index).is_some_and(|candidate| candidate == *opener))?;
+    let (_, target) = image_navigation::adjacent_position(1, 0, current, direction, |_| count)?;
+    element_at(&images, target)
+}
+
+/// What Left and Right step through for the image a viewer opened from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Navigation {
+    /// The opener's lane's message images, in time.
+    Lane,
+    /// The images pasted into the opener's composer.
+    Composer,
+}
+
+impl Navigation {
+    fn of(opener: &web_sys::Element) -> Option<Self> {
+        if opener.closest(LANE_CARD_SELECTOR).ok().flatten().is_some() {
+            Some(Self::Lane)
+        } else if opener.matches(COMPOSER_IMAGE_SELECTOR).unwrap_or(false)
+            && opener.closest(COMPOSER_SELECTOR).ok().flatten().is_some()
+        {
+            Some(Self::Composer)
+        } else {
+            None
+        }
+    }
+
+    fn adjacent(self, opener: &web_sys::Element, direction: Direction) -> Option<web_sys::Element> {
+        match self {
+            Self::Lane => adjacent_lane_media(opener, direction),
+            Self::Composer => adjacent_composer_media(opener, direction),
+        }
+    }
+
+    const fn help(self) -> &'static str {
+        match self {
+            Self::Lane => {
+                "Use Left Arrow for the previous older image in this lane and Right Arrow for the next newer image."
+            }
+            Self::Composer => {
+                "Use Left Arrow for the previous image pasted into this composer and Right Arrow for the next."
+            }
+        }
+    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -305,15 +362,15 @@ fn use_annotation_apply(
     )
 }
 #[hook]
-fn use_lane_navigation(
+fn use_navigation(
     props: &ViewerProps,
     editing: UseStateHandle<bool>,
-) -> (bool, Callback<KeyboardEvent>) {
+) -> (Option<Navigation>, Callback<KeyboardEvent>) {
     let opener = props.selection.opener.clone();
-    let available = lane_navigation_available(&opener);
+    let navigation = Navigation::of(&opener);
     let navigate = use_callback(
-        (opener, props.viewing.clone(), editing),
-        |event: KeyboardEvent, (opener, viewing, editing)| {
+        (opener, navigation, props.viewing.clone(), editing),
+        |event: KeyboardEvent, (opener, navigation, viewing, editing)| {
             if **editing
                 || event.is_composing()
                 || event.alt_key()
@@ -329,12 +386,15 @@ fn use_lane_navigation(
             };
             event.prevent_default();
             event.stop_propagation();
-            if let Some(change) = adjacent_lane_media(opener, direction).and_then(open_change) {
+            if let Some(change) = navigation
+                .and_then(|navigation| navigation.adjacent(opener, direction))
+                .and_then(open_change)
+            {
                 viewing.dispatch(change);
             }
         },
     );
-    (available, navigate)
+    (navigation, navigate)
 }
 
 /// The lightbox's single-letter shortcuts: A annotates and D downloads by
@@ -373,21 +433,21 @@ fn use_action_keys(host: NodeRef, editing: UseStateHandle<bool>) -> Callback<Key
     })
 }
 
-/// The dialog's keyboard: lane navigation by arrows and the action letters.
-/// Says whether lane navigation is offered, for its description.
+/// The dialog's keyboard: lane or composer navigation by arrows and the
+/// action letters. Says which navigation is offered, for its description.
 #[hook]
 fn use_viewer_keys(
     props: &ViewerProps,
     host: NodeRef,
     editing: UseStateHandle<bool>,
-) -> (bool, Callback<KeyboardEvent>) {
-    let (lane_navigation, navigate) = use_lane_navigation(props, editing.clone());
+) -> (Option<Navigation>, Callback<KeyboardEvent>) {
+    let (navigation, navigate) = use_navigation(props, editing.clone());
     let action_keys = use_action_keys(host, editing);
     let keydown = Callback::from(move |event: KeyboardEvent| {
         navigate.emit(event.clone());
         action_keys.emit(event);
     });
-    (lane_navigation, keydown)
+    (navigation, keydown)
 }
 
 /// Whether the key lands in a field that takes typed text.
@@ -470,7 +530,7 @@ fn viewer(props: &ViewerProps) -> Html {
             dialog.close();
         }
     });
-    let (lane_navigation, keydown) = use_viewer_keys(props, host.clone(), editing.clone());
+    let (navigation, keydown) = use_viewer_keys(props, host.clone(), editing.clone());
     use_effect_with(
         (
             host.clone(),
@@ -508,12 +568,12 @@ fn viewer(props: &ViewerProps) -> Html {
             ref={host}
             class="image-lightbox app-modal"
             aria-label="Full-size image"
-            aria-describedby={lane_navigation.then_some("image-lightbox-navigation-help")}
+            aria-describedby={navigation.is_some().then_some("image-lightbox-navigation-help")}
             onkeydown={keydown}
         >
-            if lane_navigation {
+            if let Some(navigation) = navigation {
                 <span id="image-lightbox-navigation-help" class="visually-hidden">
-                    {"Use Left Arrow for the previous older image in this lane and Right Arrow for the next newer image."}
+                    {navigation.help()}
                 </span>
             }
             if *editing && let Some(image) = image {
