@@ -257,22 +257,32 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
         Outcome::Reply(Reply {
             position,
             body: CommandAnswer::WorkingGroupChange(change),
-        }) => Outcome::Reply(Reply {
-            position,
-            body: CommandAnswer::Text(TextAnswer {
-                text: format!(
-                    "revision {} {}",
-                    change.revision,
-                    match change.status {
-                        wire::intent::WorkingGroupChangeStatus::Moved => "moved",
-                        wire::intent::WorkingGroupChangeStatus::Ended => "moved; its group ended",
-                        wire::intent::WorkingGroupChangeStatus::Arranged => "arranged",
-                        wire::intent::WorkingGroupChangeStatus::Retuned => "fast mode set",
-                        wire::intent::WorkingGroupChangeStatus::Stanced => "stance set",
-                    }
-                ),
-            }),
-        }),
+        }) => {
+            let mut text = format!(
+                "revision {} {}",
+                change.revision,
+                match change.status {
+                    wire::intent::WorkingGroupChangeStatus::Moved => "moved",
+                    wire::intent::WorkingGroupChangeStatus::Ended => "moved; its group ended",
+                    wire::intent::WorkingGroupChangeStatus::Arranged => "arranged",
+                    wire::intent::WorkingGroupChangeStatus::Retuned => "fast mode set",
+                    wire::intent::WorkingGroupChangeStatus::Stanced => "stance set",
+                    wire::intent::WorkingGroupChangeStatus::Shelved => "owed shelving committed",
+                }
+            );
+            if !change.owed.is_empty() {
+                text.push_str("; shelving still owed for");
+                for design in &change.owed {
+                    text.push(' ');
+                    text.push_str(&design.to_string());
+                }
+                text.push_str("; set the group passive again to retry");
+            }
+            Outcome::Reply(Reply {
+                position,
+                body: CommandAnswer::Text(TextAnswer { text }),
+            })
+        }
         other => other,
     }
 }

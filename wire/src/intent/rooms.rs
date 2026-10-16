@@ -471,10 +471,17 @@ pub struct WorkingGroupPage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkingGroupChange {
-    /// Partition revision the change committed.
+    /// Partition revision the change committed, or the standing revision when
+    /// it restated no partition.
     pub revision: u64,
     /// Current transition outcome.
     pub status: WorkingGroupChangeStatus,
+    /// Designs this change made or found passive whose holder is still owed
+    /// its shelving stop; setting the group Passive again retries them. Only
+    /// the live reply reports it: a retained receipt records the partition
+    /// change alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owed: Vec<TaskHandle>,
 }
 
 /// Current working-group change outcomes.
@@ -492,4 +499,7 @@ pub enum WorkingGroupChangeStatus {
     Retuned,
     /// One group's shared activity stance was set.
     Stanced,
+    /// The group already stood Passive; shelving still owed to its held
+    /// Designs was committed without restating the partition.
+    Shelved,
 }

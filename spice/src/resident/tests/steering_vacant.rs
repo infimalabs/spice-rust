@@ -74,7 +74,7 @@ fn a_vacant_lane_takes_direction_under_its_vacancy_and_refuses_a_departed_occupa
         matches!(&outcome, Outcome::Refusal(refusal) if refusal.reason() == "steer::witness-moved"),
         "{outcome:?}"
     );
-    assert!(effects.inbox_delivery.is_none());
+    assert!(effects.inbox_lanes.is_empty());
 
     let (outcome, effects) = send_to(&bus, epoch, &send, 32, vacancy);
     let Outcome::Reply(Reply {
@@ -85,7 +85,7 @@ fn a_vacant_lane_takes_direction_under_its_vacancy_and_refuses_a_departed_occupa
         panic!("direction for a vacant lane is durable: {outcome:?}");
     };
     assert_eq!(sent.directive, test_uuid(32));
-    assert_eq!(effects.inbox_delivery, Some(lane));
+    assert_eq!(effects.inbox_lanes, [lane]);
 
     bus.verify().expect("the authority verifies");
     bus.shutdown().expect("fixture bus stops");

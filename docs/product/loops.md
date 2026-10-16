@@ -619,8 +619,10 @@ owns each rule summarized here.
   coordination and sends that holder one stop direction, queued for the lane's
   next seat when vacant. The holder checkpoints and runs ordinary `spice task
   free DESIGN`, which parks unpublished commits and dirty work; its claim stays
-  authoritative until then. Explore or Converge makes it eligible again with
-  its room, candidates, outputs, history, and authorization unchanged.
+  authoritative until then. A stance change names any held Design whose
+  shelving is still owed; setting the group Passive again shelves it. Explore
+  or Converge makes it eligible again with its room, candidates, outputs,
+  history, and authorization unchanged.
 - **OOPS grooming.** `spice room post DESIGN --report REPORT... --disposition
   duplicate|no-work|deferred-for-later|covered|proposed-work --cause TEXT
   [--exceptions TEXT] [--uncertainty TEXT]` records, in an open Design's room,

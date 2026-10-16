@@ -395,8 +395,20 @@ impl GroupPanel<'_> {
                                 stance,
                             },
                         ));
-                        if let Err(error) = result {
-                            report.emit(error);
+                        match result {
+                            Err(error) => report.emit(error),
+                            Ok(change) if !change.owed.is_empty() => {
+                                let owed = change
+                                    .owed
+                                    .iter()
+                                    .map(ToString::to_string)
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                report.emit(format!(
+                                    "Shelving is still owed for {owed}; set the group Passive again."
+                                ));
+                            }
+                            Ok(_) => {}
                         }
                     },
                 )

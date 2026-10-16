@@ -64,7 +64,7 @@ pub(super) async fn dispatch_control_delivery_burst(
 pub(super) struct ControlDispatch {
     pub(super) reached_dark: bool,
     pub(super) lifecycle_witness: Option<lifecycle::ReconciliationWitness>,
-    pub(super) inbox_delivery: Option<CanonicalUuid>,
+    pub(super) inbox_lanes: Vec<CanonicalUuid>,
 }
 
 pub(super) async fn dispatch_control(
@@ -104,7 +104,7 @@ pub(super) async fn dispatch_control(
                 return Ok(ControlDispatch {
                     reached_dark: false,
                     lifecycle_witness: None,
-                    inbox_delivery: None,
+                    inbox_lanes: Vec::new(),
                 });
             }
             Err(outcome) => return Err(outcome),
@@ -124,7 +124,7 @@ pub(super) async fn dispatch_control(
             return Ok(ControlDispatch {
                 reached_dark: false,
                 lifecycle_witness: None,
-                inbox_delivery: None,
+                inbox_lanes: Vec::new(),
             });
         }
     };
@@ -144,7 +144,7 @@ pub(super) async fn dispatch_control(
     Ok(ControlDispatch {
         reached_dark,
         lifecycle_witness,
-        inbox_delivery: effects.inbox_delivery,
+        inbox_lanes: effects.inbox_lanes,
     })
 }
 
@@ -163,7 +163,7 @@ pub(super) async fn dispatch_control_burst(
     let mut burst = ControlDispatch {
         reached_dark: false,
         lifecycle_witness: None,
-        inbox_delivery: None,
+        inbox_lanes: Vec::new(),
     };
     for turn in 0..serve::axum::Control::FAIR_CYCLE_LIMIT {
         let dispatched = dispatch_control(
@@ -177,7 +177,7 @@ pub(super) async fn dispatch_control_burst(
             diagnostic,
         )
         .await?;
-        if let Some(lane) = dispatched.inbox_delivery {
+        for lane in dispatched.inbox_lanes {
             inbox_deliveries.insert(lane);
         }
         burst.reached_dark |= dispatched.reached_dark;

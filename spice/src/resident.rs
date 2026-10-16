@@ -25,16 +25,16 @@ type CommandResult<T> = Result<T, Outcome<()>>;
 
 #[derive(Default)]
 struct CommandEffects {
-    inbox_delivery: Option<CanonicalUuid>,
+    /// Lanes whose inbox this command's write gave something to deliver.
+    inbox_lanes: Vec<CanonicalUuid>,
     live_changes: Vec<lane_surface::LiveChange>,
 }
 
 impl CommandEffects {
     fn notify_inbox(&mut self, lane: CanonicalUuid) {
-        assert!(
-            self.inbox_delivery.replace(lane).is_none(),
-            "one command cannot notify more than one lane inbox"
-        );
+        if !self.inbox_lanes.contains(&lane) {
+            self.inbox_lanes.push(lane);
+        }
     }
 
     /// Owe a running occupant one live change after this command's write.

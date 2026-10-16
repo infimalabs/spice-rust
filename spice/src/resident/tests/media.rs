@@ -102,7 +102,7 @@ fn direct_steer_send_refuses_unjournalable_content_before_mutation() {
                 .contains(&maximum.to_string()),
             "operator refusal must name the violated byte bound"
         );
-        assert!(effects.inbox_delivery.is_none());
+        assert!(effects.inbox_lanes.is_empty());
         let after = bus.fact_snapshot().expect("journal reads after refusal");
         assert_eq!(after.horizon(), before.horizon());
         assert_eq!(after.facts(), before.facts());

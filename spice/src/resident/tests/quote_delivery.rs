@@ -106,7 +106,7 @@ fn send(
     else {
         panic!("steering send commits");
     };
-    assert_eq!(effects.inbox_delivery, Some(lane));
+    assert_eq!(effects.inbox_lanes, [lane]);
     answer
 }
 
