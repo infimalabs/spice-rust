@@ -75,16 +75,11 @@ pub(in crate::browser) fn render_design_room(
 fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Html {
     let empty = DesignMaturity::default();
     let maturity = maturity.unwrap_or(&empty);
-    let (state, summary, attention) = match maturity.state() {
-        DesignMaturityState::Fresh => (
-            "fresh",
-            "No contribution has been recorded.".to_owned(),
-            false,
-        ),
+    let (state, summary) = match maturity.state() {
+        DesignMaturityState::Fresh => ("fresh", "No contribution has been recorded.".to_owned()),
         DesignMaturityState::Steeped => (
             "steeped",
             "Substantive evidence spans three or more contributors.".to_owned(),
-            true,
         ),
         DesignMaturityState::Steeping { unmet } => (
             "steeping",
@@ -96,7 +91,6 @@ fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Htm
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            false,
         ),
     };
     html! {
@@ -105,16 +99,12 @@ fn render_maturity(maturity: Option<&DesignMaturity>, design: &TaskStamp) -> Htm
             aria-label="Design maturity"
             data-design={design.to_string()}
             data-maturity-state={state}
-            data-operator-attention={attention.then_some("true")}
         >
             <header>
                 <strong>{"Maturity"}</strong>
                 <span class="room-maturity-state">{state}</span>
             </header>
             <p>{summary}</p>
-            if attention {
-                <p class="room-maturity-attention">{"Ready for operator attention."}</p>
-            }
             <dl>
                 <div>
                     <dt>{"Contributors"}</dt>

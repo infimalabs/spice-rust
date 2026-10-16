@@ -26,15 +26,61 @@ pub(super) fn client_group_list(
     contract: &Contract,
     _matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    match execute_group_read(repository, contract) {
-        Ok((position, page)) => Outcome::Reply(Reply {
-            position,
-            body: CommandAnswer::Text(TextAnswer {
-                text: render_groups(&page),
-            }),
+    let (position, page) = match execute_group_read(repository, contract) {
+        Ok(read) => read,
+        Err(outcome) => return outcome,
+    };
+    let cycles = match anchor_cycles(repository, &page) {
+        Ok(cycles) => cycles,
+        Err(outcome) => return outcome,
+    };
+    Outcome::Reply(Reply {
+        position,
+        body: CommandAnswer::Text(TextAnswer {
+            text: render_groups(&page, &cycles),
         }),
-        Err(outcome) => outcome,
+    })
+}
+
+/// Each available anchor's pass cycle, judged by one scoped board read.
+fn anchor_cycles(
+    repository: &Repository,
+    page: &WorkingGroupPage,
+) -> Result<
+    std::collections::BTreeMap<TaskStamp, wire::rooms::DesignCyclePresentation>,
+    Outcome<CommandAnswer>,
+> {
+    let tasks = page
+        .groups
+        .iter()
+        .flat_map(|group| &group.anchors)
+        .filter_map(|anchor| match anchor {
+            WorkingGroupAnchor::Available { born, .. } => Some(born.clone()),
+            WorkingGroupAnchor::Unavailable { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    if tasks.is_empty() {
+        return Ok(std::collections::BTreeMap::new());
     }
+    let board = current_board(
+        repository,
+        BoardRead::Tasks {
+            tasks,
+            dependencies: false,
+            claims: false,
+            notes: false,
+        },
+    )?;
+    Ok(board
+        .tasks
+        .iter()
+        .filter_map(|task| {
+            Some((
+                task.statement.body.born.clone(),
+                design_cycle(&board, task)?,
+            ))
+        })
+        .collect())
 }
 
 /// Move one design into `--to GROUP`, into a fresh group with `--new`, or out
@@ -337,7 +383,10 @@ fn render_change(outcome: Outcome<CommandAnswer>) -> Outcome<CommandAnswer> {
     }
 }
 
-fn render_groups(page: &WorkingGroupPage) -> String {
+fn render_groups(
+    page: &WorkingGroupPage,
+    cycles: &std::collections::BTreeMap<TaskStamp, wire::rooms::DesignCyclePresentation>,
+) -> String {
     let mut text = format!("revision {}\n", page.revision);
     if page.groups.is_empty() {
         text.push_str("no working groups\n");
@@ -346,8 +395,21 @@ fn render_groups(page: &WorkingGroupPage) -> String {
         text.push_str(&format!("{} {}\n", group.group, group.stance));
         for anchor in &group.anchors {
             match anchor {
-                WorkingGroupAnchor::Available { handle, design, .. } => {
-                    text.push_str(&format!("  {handle} {design}\n"));
+                WorkingGroupAnchor::Available {
+                    born,
+                    handle,
+                    design,
+                } => {
+                    text.push_str(&format!("  {handle} {design}"));
+                    if let Some(cycle) = cycles.get(born) {
+                        text.push_str(&format!(
+                            ": {}; next ({}): {}",
+                            cycle.cycle.label(),
+                            cycle.actor.label(),
+                            cycle.action
+                        ));
+                    }
+                    text.push('\n');
                 }
                 WorkingGroupAnchor::Unavailable { born } => {
                     text.push_str(&format!("  unavailable:{born}\n"));

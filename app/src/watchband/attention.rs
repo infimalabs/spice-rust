@@ -6,7 +6,7 @@
 //! need the operator, so the band's own clock decides when they appear and a
 //! lease or a waiting direction enters without any new read.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use wire::intent::{ConsentPendingAnswer, ConsentQueueAnswer, InboxAnswer};
 use wire::{Actor, CanonicalUuid, TaskStamp};
@@ -33,13 +33,9 @@ pub enum TaskAttention {
     Blocked,
     /// It waits in review and no claim is working on the verdict.
     Review,
-    /// A Design that concludes only once the operator selects or settles the
-    /// outputs it constructed, so no lane is woken for it.
+    /// A Design whose proposal awaits the operator's decision, so no lane
+    /// can move it.
     Selection,
-    /// A Design whose contributions have steeped: substantive evidence from
-    /// enough lanes is ready for the operator to judge. Advisory only; it
-    /// changes no standing and starts no work.
-    Steeped,
 }
 
 impl TaskAttention {
@@ -51,7 +47,6 @@ impl TaskAttention {
             Self::Blocked => "blocked",
             Self::Review => "review",
             Self::Selection => "selection",
-            Self::Steeped => "steeped",
         }
     }
 
@@ -62,8 +57,7 @@ impl TaskAttention {
             Self::Iced => "Iced",
             Self::Blocked => "Blocked",
             Self::Review => "Review",
-            Self::Selection => "Awaiting selection",
-            Self::Steeped => "Steeped",
+            Self::Selection => "Awaiting decision",
         }
     }
 }
@@ -130,14 +124,12 @@ impl AttentionItem {
 
 /// Every item the team's members may need the operator for, in band order:
 /// consent, then held tasks, leases, and direction, each in roster order.
-/// `steeped` names the Designs whose maturity crossed steeped.
 #[must_use]
 pub fn team_attention(
     standings: &[Standing],
     work: Option<&WorkProjection<'_>>,
     inbox: Option<&InboxAnswer>,
     consent: Option<&ConsentQueueAnswer>,
-    steeped: &BTreeSet<TaskStamp>,
 ) -> Vec<AttentionItem> {
     let members = standings
         .iter()
@@ -172,7 +164,7 @@ pub fn team_attention(
         .into_iter()
         .flat_map(WorkProjection::tasks)
         .filter_map(|task| {
-            let (lane, reason) = held_attention(task, |lane| members.contains_key(&lane), steeped)?;
+            let (lane, reason) = held_attention(task, |lane| members.contains_key(&lane))?;
             let row = task.row();
             item(
                 lane,
@@ -250,12 +242,10 @@ pub fn attention_at(items: &[AttentionItem], now: i64) -> (Vec<&AttentionItem>, 
 ///
 /// A member holds a task as its current assignee, or else as the lane on its
 /// claim, active or last, so finished work waiting in review stays with the
-/// member who did it. A steeped Design needs the operator only when nothing
-/// more pressing does.
+/// member who did it.
 fn held_attention(
     task: &WorkTask<'_>,
     member: impl Fn(CanonicalUuid) -> bool,
-    steeped: &BTreeSet<TaskStamp>,
 ) -> Option<(CanonicalUuid, TaskAttention)> {
     let row = task.row();
     let reason = match task.availability() {
@@ -264,7 +254,6 @@ fn held_attention(
         WorkAvailability::Held => TaskAttention::Blocked,
         WorkAvailability::Blocked if task.environment_blocked() => TaskAttention::Blocked,
         WorkAvailability::Review => TaskAttention::Review,
-        _ if steeped.contains(&row.statement.body.born) => TaskAttention::Steeped,
         _ => return None,
     };
     let assigned = match row.workflow.body.status.reviewer() {
@@ -366,14 +355,6 @@ mod tests {
         reviewing.claim = Some(claim(&reviewing, ClaimDisposition::Active));
         let mut unheld = task(6, "alpha.core");
         unheld.statement.body.requirements = unmet();
-        let mut steeped = task(7, "alpha.core");
-        steeped.claim = Some(claim(&steeped, ClaimDisposition::Freed));
-        // A steeped review keeps its review reason, and a steeped task no
-        // member holds stays out of the band.
-        let steeped_designs = [&review, &unheld, &steeped]
-            .into_iter()
-            .map(|row| row.statement.body.born.clone())
-            .collect();
         let board = board(vec![
             iced,
             blocked,
@@ -381,7 +362,6 @@ mod tests {
             review,
             reviewing,
             unheld,
-            steeped,
         ]);
         let work = WorkProjection::from_board(&board);
         let queue = ConsentQueueAnswer {
@@ -392,13 +372,7 @@ mod tests {
             budgets: Vec::new(),
         };
 
-        let items = team_attention(
-            &[standing(None)],
-            Some(&work),
-            None,
-            Some(&queue),
-            &steeped_designs,
-        );
+        let items = team_attention(&[standing(None)], Some(&work), None, Some(&queue));
 
         let subjects = items
             .iter()
@@ -415,7 +389,6 @@ mod tests {
                 format!("task 1 {:?}", TaskAttention::Iced),
                 format!("task 2 {:?}", TaskAttention::Blocked),
                 format!("task 4 {:?}", TaskAttention::Review),
-                format!("task 7 {:?}", TaskAttention::Steeped),
             ]
         );
         assert!(
@@ -428,13 +401,7 @@ mod tests {
     #[test]
     fn a_lease_enters_the_band_only_near_its_expiry() {
         let expiry = 1_000_000;
-        let items = team_attention(
-            &[standing(Some(expiry))],
-            None,
-            None,
-            None,
-            &std::collections::BTreeSet::new(),
-        );
+        let items = team_attention(&[standing(Some(expiry))], None, None, None);
         let lead = expiry - LEASE_ATTENTION_MILLIS;
 
         let (due, next) = attention_at(&items, lead - 1);

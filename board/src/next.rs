@@ -249,7 +249,16 @@ pub fn work_waits<'a>(
     entries: &'a [Entry],
     environment: &wire::Environment,
 ) -> BTreeMap<&'a TaskStamp, WorkWait> {
-    let resolved = resolved_tasks(entries);
+    work_waits_resolved(entries, &resolved_tasks(entries), environment)
+}
+
+/// [`work_waits`] over a resolution the caller already holds for `entries`.
+#[must_use]
+pub fn work_waits_resolved<'a>(
+    entries: &'a [Entry],
+    resolved: &ResolvedTasks,
+    environment: &wire::Environment,
+) -> BTreeMap<&'a TaskStamp, WorkWait> {
     let index = entries
         .iter()
         .enumerate()
@@ -257,7 +266,7 @@ pub fn work_waits<'a>(
         .collect::<BTreeMap<_, _>>();
     let mut states = vec![Progress::Unknown; entries.len()];
     for task in 0..entries.len() {
-        progress(task, entries, &index, &resolved, environment, &mut states);
+        progress(task, entries, &index, resolved, environment, &mut states);
     }
     entries
         .iter()
@@ -279,6 +288,19 @@ pub fn work_waits<'a>(
             };
             Some((entry.born(), wait))
         })
+        .collect()
+}
+
+/// Every open Design's pass-cycle state among `entries`, judged against
+/// `resolved`, the resolution of the whole live board.
+#[must_use]
+pub fn design_cycles<'a>(
+    entries: impl IntoIterator<Item = &'a Entry>,
+    resolved: &ResolvedTasks,
+) -> BTreeMap<TaskStamp, DesignCycle> {
+    entries
+        .into_iter()
+        .filter_map(|entry| Some((entry.born().clone(), design_cycle(entry, resolved)?)))
         .collect()
 }
 

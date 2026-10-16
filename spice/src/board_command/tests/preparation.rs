@@ -395,6 +395,7 @@ fn propose_candidate_version(
     for output in outputs {
         expected.extend(transition_witnesses(at(&current, output)));
     }
+    expected.push(residency(&current, seat));
     assert_committed(issue(
         bus,
         epoch,
@@ -441,6 +442,7 @@ fn current_proposal_requires_an_exact_active_claim() {
     }];
     expected.extend(transition_witnesses(at(&current, &controller)));
     expected.extend(transition_witnesses(at(&current, &output)));
+    expected.push(residency(&current, &seats[0]));
     let result = issue(
         &bus,
         epoch,
@@ -779,7 +781,7 @@ fn adoption_refuses_claimed_work_and_proposal_writes_refuse_stale_subjects() {
     let stale = issue(
         &bus,
         epoch,
-        Actor::Operator,
+        Actor::Lane(seats[0].lane),
         CommandKind::DesignPropose,
         vec![
             statement_witness(at(&current, &controller)),
@@ -789,6 +791,7 @@ fn adoption_refuses_claimed_work_and_proposal_writes_refuse_stale_subjects() {
                 },
                 head: Some(Seq::new(1).expect("fixture position")),
             },
+            residency(&current, &seats[0]),
         ],
         &DesignPropose {
             candidate: DesignPassProposal {
@@ -1054,12 +1057,15 @@ fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
         transition_witnesses(at(&current, &plan))
             .into_iter()
             .chain(transition_witnesses(at(&current, &task)))
-            .chain([Witness::Proposal {
-                proposal: ProposalRef::Candidate {
-                    candidate: candidate.clone(),
+            .chain([
+                Witness::Proposal {
+                    proposal: ProposalRef::Candidate {
+                        candidate: candidate.clone(),
+                    },
+                    head: None,
                 },
-                head: None,
-            }])
+                residency(&current, &seats[0]),
+            ])
             .collect(),
         &DesignPropose {
             candidate: DesignPassProposal {

@@ -50,8 +50,8 @@ impl<T: DeserializeOwned> JsonOperand<T> {
     }
 }
 
-const CANDIDATE_JSON: JsonOperand<DesignPassProposal> = JsonOperand::new(
-    "CANDIDATE_JSON",
+const PROPOSAL_JSON: JsonOperand<DesignPassProposal> = JsonOperand::new(
+    "PROPOSAL_JSON",
     r#"{"candidate":{"controller":"dVzdhh8Nx","candidate":"dVzfC0000"},"statement":1,"claim":2,"recommendation":"work","governed_inputs":[],"outputs":["dVzfwWPSh","dVzfwgs7d"],"references":[{"relation":"contract","source":{"kind":"journal","fact":"6dth"}}],"justification":"The cited contract supports this pass."}"#,
 );
 const CRITIQUE_JSON: JsonOperand<CandidateCritique> = JsonOperand::new(
@@ -101,29 +101,35 @@ pub(super) fn client_design_propose(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let candidate = match CANDIDATE_JSON.argument(matches) {
+    let candidate = match PROPOSAL_JSON.argument(matches) {
         Ok(candidate) => candidate,
         Err(outcome) => return outcome,
     };
-    let tasks = std::iter::once(candidate.candidate.controller.clone())
+    let design = candidate.candidate.controller.clone();
+    let tasks = std::iter::once(design.clone())
         .chain(candidate.governed_inputs.iter().cloned())
         .chain(candidate.outputs.iter().cloned())
         .collect::<Vec<_>>();
-    submit_with_tasks(repository, contract, tasks, false, |board| {
+    let outcome = submit_with_tasks(repository, contract, tasks, false, |board| {
         let proposal = ProposalRef::Candidate {
             candidate: candidate.candidate.clone(),
         };
+        // The proposal releases the holder's claim at its task Git boundary,
+        // which resolves the holder's worktree from this witness.
+        let (lane, occupant) = actor_seat(board)?;
         let mut expected = task_witnesses(board, &candidate.candidate.controller)?;
         expected.push(Witness::Proposal {
             proposal,
             head: None,
         });
+        expected.push(residency_witness(board, lane, occupant));
         Ok((
             CommandKind::DesignPropose,
             expected,
             DesignPropose { candidate },
         ))
-    })
+    });
+    with_cycle(repository, &design, outcome)
 }
 
 pub(super) fn client_candidate_critique(
@@ -202,12 +208,13 @@ pub(super) fn client_preparation_decide(
             Err(outcome) => return outcome,
         };
     let accepts_outputs = decision.outcome.accepted_outputs().next().is_some();
-    let mut tasks = vec![decision.decision.controller.clone()];
+    let design = decision.decision.controller.clone();
+    let mut tasks = vec![design.clone()];
     if accepts_outputs {
         tasks.extend(candidate.governed_inputs.iter().cloned());
         tasks.extend(decision.outcome.accepted_outputs().cloned());
     }
-    submit_with_tasks(repository, contract, tasks, true, |board| {
+    let outcome = submit_with_tasks(repository, contract, tasks, true, |board| {
         let mut expected = transition_witnesses(task(board, &decision.decision.controller)?);
         expected.push(Witness::Proposal {
             proposal: ProposalRef::Decision {
@@ -238,7 +245,8 @@ pub(super) fn client_preparation_decide(
             expected,
             PreparationDecide { decision },
         ))
-    })
+    });
+    with_cycle(repository, &design, outcome)
 }
 
 pub(super) fn client_candidate_withdraw(
@@ -268,8 +276,9 @@ pub(super) fn client_candidate_withdraw(
             "the exact proposal is missing or withdrawn",
         );
     };
-    let tasks = vec![withdrawal.candidate.controller.clone()];
-    submit_with_tasks(repository, contract, tasks, false, |board| {
+    let design = withdrawal.candidate.controller.clone();
+    let tasks = vec![design.clone()];
+    let outcome = submit_with_tasks(repository, contract, tasks, false, |board| {
         let mut expected = task_witnesses(board, &withdrawal.candidate.controller)?;
         expected.push(Witness::Proposal {
             proposal: candidate,
@@ -284,7 +293,8 @@ pub(super) fn client_candidate_withdraw(
             expected,
             CandidateWithdraw { withdrawal },
         ))
-    })
+    });
+    with_cycle(repository, &design, outcome)
 }
 
 /// Current heads of two proposal subjects, read at one journal position.
@@ -408,13 +418,54 @@ pub(super) fn client_design_nudge(
         Ok(stamp) => stamp,
         Err(error) => return invalid_handle("DESIGN", &error.to_string()),
     };
-    submit_with_tasks(repository, contract, vec![stamp.clone()], false, |board| {
+    let outcome = submit_with_tasks(repository, contract, vec![stamp.clone()], false, |board| {
         let task = task(board, &stamp)?;
         Ok((
             CommandKind::DesignNudge,
             vec![statement_witness(task), workflow_witness(task)],
             wire::rooms::DesignNudge { design },
         ))
+    });
+    with_cycle(repository, &stamp, outcome)
+}
+
+/// Append `design`'s pass cycle, read after the command committed, to a
+/// text reply, so the reply names the state and action the command left.
+/// A failed read leaves the committed reply as the resident wrote it.
+fn with_cycle(
+    repository: &Repository,
+    design: &TaskStamp,
+    outcome: Outcome<CommandAnswer>,
+) -> Outcome<CommandAnswer> {
+    let Outcome::Reply(Reply {
+        position,
+        body: CommandAnswer::Text(TextAnswer { mut text }),
+    }) = outcome
+    else {
+        return outcome;
+    };
+    let read = BoardRead::Tasks {
+        tasks: vec![design.clone()],
+        dependencies: false,
+        claims: false,
+        notes: false,
+    };
+    if let Ok(board) = current_board(repository, read)
+        && let Some(task) = board
+            .tasks
+            .iter()
+            .find(|task| task.statement.body.born == *design)
+        && let Some(cycle) = design_cycle(&board, task)
+    {
+        for line in cycle.lines() {
+            text.push('\n');
+            text.push_str(&line);
+        }
+        text.push_str(&format!("\nnext: {}", cycle.action));
+    }
+    Outcome::Reply(Reply {
+        position,
+        body: CommandAnswer::Text(TextAnswer { text }),
     })
 }
 

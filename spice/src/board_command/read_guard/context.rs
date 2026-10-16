@@ -3,6 +3,9 @@ pub(super) fn route_actor_identity(identity: &str) -> Option<String> {
     if let Ok(identity) = identity.parse::<wire::CanonicalUuid>() {
         return Some(identity.to_string());
     }
+    if let Ok(actor @ wire::Actor::Human(_)) = identity.parse::<wire::Actor>() {
+        return Some(actor.to_string());
+    }
     (!identity.is_empty()
         && identity
             .bytes()

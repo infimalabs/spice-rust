@@ -30,6 +30,7 @@ fn retain_citing(
         },
         head: None,
     });
+    expected.push(residency(&current, seat));
     issue(
         bus,
         epoch,

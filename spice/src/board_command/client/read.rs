@@ -457,6 +457,7 @@ pub(in crate::board_command) fn task_show_bounded(
         task.design_standing()
             .map(|standing| format!("standing {standing}")),
     );
+    lines.extend(design_cycle_lines(board, task));
     if let Some(preparation) = &statement.preparation {
         lines.extend([
             format!("preparation {}", stamp_name(board, &preparation.parent)),
@@ -1185,14 +1186,16 @@ pub(super) fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String
         }
         return "next: spice task next".to_owned();
     }
+    if wire::intent::is_open_design(task.statement.body.intent, &task.workflow.body) {
+        if active_claimed_by_principal(board, task) {
+            return design_holder_next(&task.statement.body.handle);
+        }
+        if let Some(next) = design_cycle_next(board, task) {
+            return next;
+        }
+    }
     if !active_claimed_by_principal(board, task) {
         return "next: spice task next".to_owned();
-    }
-    if wire::intent::is_open_design(task.statement.body.intent, &task.workflow.body) {
-        return format!(
-            "next: spice task free {} (only the operator concludes a Design)",
-            task.statement.body.handle
-        );
     }
     "next: spice task done --validation \"...\"".to_owned()
 }
@@ -1259,7 +1262,7 @@ pub(in crate::board_command) fn task_status(
         .filter(|entry| {
             entry.workflow().phase.as_str() == "review"
                 && !active(entry)
-                && !board.awaiting_selection.contains(entry.born())
+                && !board.awaiting_selection(entry.born())
         })
         .count();
     let status = environment_status(&execution_rows, &environment);
@@ -1293,12 +1296,17 @@ pub(in crate::board_command) fn task_status(
     } else {
         stranded.join("\n")
     };
+    let designs = wire::rooms::DesignCycle::ALL
+        .iter()
+        .map(|cycle| format!(" {}={}", cycle.key(), parked.designs.get(*cycle)))
+        .collect::<String>();
     Ok(format!(
         "claim {claim}\ntaste-review {taste_review}\nactor {}\nfilter {}\n\
          public task project depth {}..{} dotted segments\n\
          active {active}\nready {ready}\n\
-         review {review}\nselection {selection}\nblocked {blocked}\n\
+         review {review}\nblocked {blocked}\n\
          waiting {workflow_waiting}\ndeferred {deferred}\n\
+         designs{designs}\n\
          environment journal-schema required={} observed={} \
          trust-grant required={} \
          appliance-version after={} observed={} \
@@ -1316,7 +1324,6 @@ pub(in crate::board_command) fn task_status(
         status.satisfied,
         status.blocked,
         active = parked.active,
-        selection = parked.selection,
         blocked = parked.blocked,
         workflow_waiting = parked.workflow_waiting,
         deferred = parked.deferred,

@@ -1,5 +1,6 @@
 use wire::head::ClaimDisposition;
 use wire::intent::BoardTask;
+use wire::rooms::DesignCycle;
 
 use super::{DesignStanding, RoomProjection, prepared_open_count};
 use crate::work::tests::{board, claim, stamp, task};
@@ -32,19 +33,13 @@ fn concluded(
     design
 }
 
-fn output(authorized: bool) -> BoardTask {
+fn output() -> BoardTask {
     let mut output = task(2, "rooms.output");
     output.statement.body.preparation = Some(wire::TaskPreparation {
         parent: stamp(1),
         controller: stamp(1),
         construction: output.statement.body.born.clone(),
     });
-    if authorized {
-        output.statement.body.authorization = Some(wire::rooms::DecisionRef {
-            controller: stamp(1),
-            decision: wire::SequenceCode::new(7),
-        });
-    }
     output
 }
 
@@ -72,7 +67,7 @@ fn group_membership_alone_decides_an_open_designs_activity() {
     );
     assert_eq!(light(vec![design(false)]), DesignStanding::Passive);
     assert_eq!(
-        light(vec![claimed(design(false)), output(false)]),
+        light(vec![claimed(design(false)), output()]),
         DesignStanding::Passive,
         "a holder parking a Design that left its group owes the operator nothing new",
     );
@@ -81,17 +76,37 @@ fn group_membership_alone_decides_an_open_designs_activity() {
         design(true).design_standing(),
         Some(wire::intent::DesignStanding::Active)
     );
-    assert_eq!(light(vec![design(true)]), DesignStanding::Active);
-    assert_eq!(light(vec![claimed(design(true))]), DesignStanding::Claimed);
     assert_eq!(
-        light(vec![claimed(design(true)), output(false)]),
-        DesignStanding::Unselected,
-        "an output owing the operator's selection outranks a claim",
+        light(vec![design(true)]),
+        DesignStanding::Unavailable,
+        "an active Design the resident judged no cycle for invents none",
+    );
+    let judged = |design: BoardTask| {
+        let mut view = board(vec![design]);
+        view.design_cycles
+            .insert(stamp(1), DesignCycle::AwaitingDecision);
+        RoomProjection::default().design_standing(&stamp(1), Some(&view))
+    };
+    assert_eq!(
+        judged(design(true)),
+        DesignStanding::Active(DesignCycle::AwaitingDecision),
+        "an active Design shows the resident's cycle",
     );
     assert_eq!(
-        light(vec![claimed(design(true)), output(true)]),
+        judged(claimed(design(true))),
         DesignStanding::Claimed,
-        "an engaged output owes no selection",
+        "a lane's live claim shows the pass it holds",
+    );
+    let mut ended = design(true);
+    ended.claim = Some(claim(&ended, ClaimDisposition::Freed));
+    assert_eq!(
+        judged(ended.clone()),
+        DesignStanding::Active(DesignCycle::AwaitingDecision),
+        "an ended claim keeps its head but holds no pass",
+    );
+    assert_eq!(
+        ended.design_availability(),
+        wire::rooms::DesignAvailability::Unclaimed
     );
 
     let mut retained = design(true);
@@ -114,7 +129,7 @@ fn terminal_standing_outranks_retained_group_membership() {
         done.design_standing(),
         Some(wire::intent::DesignStanding::Done)
     );
-    assert_eq!(light(vec![done, output(false)]), DesignStanding::Done);
+    assert_eq!(light(vec![done, output()]), DesignStanding::Done);
 
     let collapsed = concluded(
         claimed(design(true)),

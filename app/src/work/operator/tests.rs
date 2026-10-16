@@ -54,7 +54,9 @@ fn only_execution_walls_wait_in_the_operator_danger_queue() {
         stale_deferred,
         behind_stale_deferred,
     ]);
-    board.awaiting_selection.extend([stamp(1), stamp(2)]);
+    board.design_cycles.extend(
+        [stamp(1), stamp(2)].map(|task| (task, wire::rooms::DesignCycle::AwaitingDecision)),
+    );
     board
         .blocked
         .extend([stamp(4), stamp(5), stamp(7), stamp(9), stamp(11)]);
@@ -101,7 +103,9 @@ fn next_steps_through_the_queue_in_order_and_wraps() {
     second.statement.body.requirements = upgrade();
     let selection = task(4, "queue.next");
     let mut board = board(vec![first, ready, second, selection]);
-    board.awaiting_selection.insert(stamp(4));
+    board
+        .design_cycles
+        .insert(stamp(4), wire::rooms::DesignCycle::AwaitingDecision);
     let work = WorkProjection::from_board(&board);
     let queue = OperatorQueue::new(&work);
 

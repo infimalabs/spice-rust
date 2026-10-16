@@ -894,7 +894,7 @@ impl<'a> WorkProjection<'a> {
                     availability: availability[index],
                     project: project_by_task[index],
                     environment_blocked: environment_blocked[index],
-                    awaiting_selection: board.awaiting_selection.contains(&row.statement.body.born),
+                    awaiting_selection: board.awaiting_selection(&row.statement.body.born),
                     offer_rank: offer_ranks[index],
                     dependencies,
                     dependents,
@@ -1144,7 +1144,7 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
         // A passive Design still holding an output for the operator's
         // selection waits on that decision, not on grouping.
         _ if task.design_standing() == Some(wire::intent::DesignStanding::Passive) => {
-            return if board.awaiting_selection.contains(&task.statement.body.born) {
+            return if board.awaiting_selection(&task.statement.body.born) {
                 WorkAvailability::Selection
             } else {
                 WorkAvailability::Passive
@@ -1155,7 +1155,7 @@ fn classify(board: &BoardView, task: &BoardTask, environment_blocked: bool) -> W
     }
     if workflow.deferral.is_some() {
         WorkAvailability::Deferred
-    } else if board.awaiting_selection.contains(&task.statement.body.born) {
+    } else if board.awaiting_selection(&task.statement.body.born) {
         WorkAvailability::Selection
     } else if board.workflow_waiting.contains(&task.statement.body.born) {
         WorkAvailability::Waiting

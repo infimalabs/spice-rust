@@ -380,7 +380,7 @@ fn noticed_at(
 }
 
 #[test]
-fn maturity_projection_is_incremental_bounded_and_attention_only() {
+fn maturity_projection_is_incremental_bounded_and_standing_neutral() {
     const THIRD: &str = "33333333-3333-4333-8333-333333333333";
     let session = session(OPERATOR, EPOCH);
     let [first, second, third, ..] = stamps();
@@ -405,12 +405,8 @@ fn maturity_projection_is_incremental_bounded_and_attention_only() {
     assert_eq!(maturity.state(), wire::rooms::DesignMaturityState::Steeped);
     assert_eq!(maturity.recent_heads.len(), 1);
     assert_eq!(maturity.recent_heads[0].requested_contributors(), 3);
-    assert_eq!(
-        projection.maturity_attention().cloned().collect::<Vec<_>>(),
-        vec![room()]
-    );
     assert!(
         projection.room(&room()).is_some(),
-        "attention evidence does not alter ordinary room standing"
+        "maturity evidence does not alter ordinary room standing"
     );
 }

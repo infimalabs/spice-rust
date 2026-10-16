@@ -1368,7 +1368,7 @@ fn design_selection_wins_its_gate_and_its_output_waits_neutrally() {
         .with_design(wire::rooms::DesignFacts {
             active: true,
             cycle: wire::rooms::DesignCycleFacts {
-                undecided: true,
+                proposal: Seq::new(1),
                 ..wire::rooms::DesignCycleFacts::default()
             },
         });

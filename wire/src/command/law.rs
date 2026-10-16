@@ -371,6 +371,14 @@ impl Law {
         optional: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
         authority: Authority::Connected,
     };
+    /// A Design pass proposal: the proposal-record law plus the holder's exact
+    /// residency, since the proposal releases its claim at the task Git
+    /// boundary in the holder's worktree.
+    pub const DESIGN_PROPOSE: Self = Self {
+        required: &[WitnessKind::Proposal, WitnessKind::Residency],
+        optional: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
+        authority: Authority::Connected,
+    };
     /// Exact operator disposition of one immutable candidate. Every decision
     /// witnesses its absent decision head and exact candidate head; selection
     /// additionally witnesses the Design, governed inputs, chosen outputs,
@@ -594,8 +602,8 @@ impl CommandKind {
             Self::RoomPutAside => Law::ROOM_PUT_ASIDE,
             Self::RoomControl => Law::ROOM_CONTROL,
             Self::RoomClose => Law::ROOM_CLOSE,
-            Self::DesignPropose
-            | Self::CandidateCritiqueRecord
+            Self::DesignPropose => Law::DESIGN_PROPOSE,
+            Self::CandidateCritiqueRecord
             | Self::CandidateCoverageRecord
             | Self::CandidateWithdraw => Law::PROPOSAL_RECORD,
             Self::PreparationDecide => Law::PREPARATION_DECIDE,

@@ -225,6 +225,7 @@ fn render_candidate(
             class="room-card room-approval-card"
             key={code.clone()}
             data-candidate={code.clone()}
+            data-fact={fact.to_string()}
             tabindex="0"
         >
             <header>
@@ -573,7 +574,7 @@ fn render_decision_history(
             <strong>{"Decision history"}</strong>
             <ol>
                 {for rows.into_iter().map(|(position, text)| html! {
-                    <li key={position.to_string()}><code>{position.to_string()}</code>{" · "}{text}</li>
+                    <li key={position.to_string()} data-fact={SequenceCode::new(position.get()).to_string()} tabindex="-1"><code>{position.to_string()}</code>{" · "}{text}</li>
                 })}
             </ol>
         </div>

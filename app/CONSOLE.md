@@ -211,12 +211,12 @@ The dot is out of flow, so marking or clearing a tab never moves its box,
 badge, label, or focus ring; local task tabs carry no mark.
 
 The resident classifies each closed allocation gate once as human-actionable
-blocked work, neutral workflow waiting, or awaiting Design selection.
+blocked work, neutral workflow waiting, or an open Design's pass cycle state.
 Dependency graphs, detail standings, counts, operator attention, and tab marks
 consume that same partition. **Blocked** means no path reaches work an agent
 can advance: missing authority or prerequisites, cycles, and walls at closed,
 parked, passive, deferred, or environment-held work require a human act.
-Ordinary dependency chains that still reach active, ready, review, selection,
+Ordinary dependency chains that still reach active, ready, review, awaiting-decision,
 or other neutral work are **Waiting** and carry no danger mark. A lapsed claim
 remains **Stale** on its own row but is transparent to this walk: its underlying
 gate decides whether dependents are Waiting or Blocked. A tab marks only when
@@ -272,15 +272,18 @@ tabs do. It maps each team element to a design-side analog:
 | Team total: counts and opens exactly the tasks its members are actively working | Group total: counts and opens exactly all actively claimed work associated with the group's designs, even when one lane holds several tasks |
 | One tab per task a member actively claims, including Design work | One tab per lane actively claiming work associated with the group's designs, never a task handle |
 | A task handle carries the accent of the lane working it | A lane tab carries that lane's canonical accent and opens its Chat composer when the lane holds a Chat seat |
-| Presence pips: one per member, by state | Design lights: one per design in its accent, distinguishing open passive, open active, claimed, holding unauthorized outputs, concluded done, concluded collapsed, and deleted, with an accessible label naming the standing; a design whose board row is unavailable invents no standing |
+| Presence pips: one per member, by state | Design lights: one per design in its accent, distinguishing open passive, claimed, each of the four pass cycle states (gathering input, ready for proposal, awaiting decision, waiting on selected work), concluded done, concluded collapsed, and deleted, with an accessible label naming the standing; a design whose board row or cycle is unavailable invents no standing |
 | Ticker: the newest member activity, with age, status, prefix, accent, and live region | Ticker: the newest words said across the group's designs, with the same age, prefix, accessible label, and live region; a contribution names its lane and kind, while departures and coordination events do not displace it |
 
 A design light reads its [standing](#design-standing): concluded done,
 concluded collapsed, or deleted once terminal, even while a saved group still
 holds it; open passive outside every group. An open active Design then reads
-holding unauthorized outputs while any output it constructed is pending
-without a selection, then claimed while a lane actively claims it, and open
-active otherwise. The group's name closes the
+claimed while a lane actively claims it for a pass, and otherwise the pass
+cycle state the resident judged; awaiting decision, the one state the operator
+owes, carries the warning colour. The Design room's standing names the same
+cycle, who acts next, whether the last pass ended in a proposal or was
+abandoned, and links the exact proposal awaiting decision and the latest
+decision. The group's name closes the
 status row; this browser's own move-left, move-right, and close controls live
 in the panel's group arrangement menu.
 

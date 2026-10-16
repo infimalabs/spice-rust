@@ -73,7 +73,7 @@ fn next_read_classifies_peer_only_parked_work_without_board_rows() {
             stale: 1,
             blocked: 0,
             workflow_waiting: 1,
-            selection: 0,
+            designs: Default::default(),
             deferred: 1,
             oops: 1,
         }
@@ -165,11 +165,15 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
             stale: 0,
             blocked: 0,
             workflow_waiting: 2,
-            selection: 0,
+            designs: wire::rooms::DesignCycleCounts {
+                gathering_input: 1,
+                ..Default::default()
+            },
             deferred: 0,
             oops: 0,
         },
-        "the Design and its unauthorized output stay on Design surfaces"
+        "the Design counts once by its cycle and its unauthorized output keeps its workflow \
+         wait"
     );
     let status =
         task_status(&board(&bus, epoch, Actor::Lane(seats[0].lane))).expect("task status renders");
@@ -177,9 +181,10 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
         "active 0",
         "ready 1",
         "review 0",
-        "selection 0",
         "blocked 0",
         "waiting 2",
+        "designs gathering-input=1 ready-for-proposal=0 awaiting-decision=0 \
+         waiting-on-selected-work=0",
         "deferred 0",
     ] {
         assert!(
@@ -451,7 +456,7 @@ fn next_read_returns_each_authoritative_team_policy() {
                 stale: 0,
                 blocked: 0,
                 workflow_waiting: 0,
-                selection: 0,
+                designs: Default::default(),
                 deferred: 0,
                 oops: 0,
             }

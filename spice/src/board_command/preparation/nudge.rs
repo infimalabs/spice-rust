@@ -50,10 +50,7 @@ pub(super) fn nudge_design(
             "nudge only an open Design; other work is scheduled by its own workflow",
         );
     }
-    let text = format!(
-        "nudged {}: its next pass is ready for a lane",
-        request_body.design
-    );
+    let text = format!("nudged {}", request_body.design);
     record(
         bus,
         command,

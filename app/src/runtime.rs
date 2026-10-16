@@ -88,9 +88,8 @@ pub struct BoardView {
     /// Rows held by normal Plan/Design control or a prerequisite chain that
     /// still reaches advancing work, judged by the resident.
     pub workflow_waiting: BTreeSet<wire::TaskStamp>,
-    /// Designs the allocator holds for the operator's selection of an output
-    /// they constructed, judged by the resident.
-    pub awaiting_selection: BTreeSet<wire::TaskStamp>,
+    /// Every open Design's pass-cycle state, judged by the resident.
+    pub design_cycles: BTreeMap<wire::TaskStamp, wire::rooms::DesignCycle>,
     /// Resident steering-key origin index: the Work each quoted direction caused.
     pub(crate) quote_tasks: Rc<QuoteTasks>,
     /// Complete environment observed at the same board snapshot barrier.
@@ -165,7 +164,7 @@ impl From<&BoardAnswer> for BoardView {
             offer,
             blocked: answer.blocked.iter().cloned().collect(),
             workflow_waiting: answer.workflow_waiting.iter().cloned().collect(),
-            awaiting_selection: answer.awaiting_selection.iter().cloned().collect(),
+            design_cycles: answer.design_cycles.clone(),
             quote_tasks: Rc::new(answer.origins.clone()),
             environment,
             seats: Seats::new(answer.residency.body.clone(), answer.addresses.clone()),
@@ -174,6 +173,12 @@ impl From<&BoardAnswer> for BoardView {
 }
 
 impl BoardView {
+    /// Whether `task` is a Design the operator's decision holds.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) fn awaiting_selection(&self, task: &wire::TaskStamp) -> bool {
+        self.design_cycles.get(task) == Some(&wire::rooms::DesignCycle::AwaitingDecision)
+    }
+
     /// Pending public work only; hidden rows remain in `tasks` as evidence.
     pub fn active_public_tasks(&self) -> impl Iterator<Item = &BoardTask> {
         self.tasks.iter().filter(|task| task.is_active_public())

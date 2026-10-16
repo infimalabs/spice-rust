@@ -741,7 +741,7 @@ mod tests {
             offer: Vec::new(),
             blocked,
             workflow_waiting: std::collections::BTreeSet::new(),
-            awaiting_selection: std::collections::BTreeSet::new(),
+            design_cycles: std::collections::BTreeMap::new(),
             quote_tasks: std::rc::Rc::default(),
             environment: Environment::journal_schema(1).expect("fixture schema"),
             seats: crate::runtime::Seats::new(

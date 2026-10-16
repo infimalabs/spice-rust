@@ -51,7 +51,7 @@ relationship.
 Open work falls into the board's exclusive standings, in their precedence: a
 live claim reads **In flight**, a lapsed one **Stale**, and explicit set-asides
 read **Deferred** or **Parked**. The resident's gate then decides **Waiting**,
-**Awaiting selection**, or **Blocked** before unclaimed review,
+**Awaiting decision**, or **Blocked** before unclaimed review,
 environment **Held**, and **Ready** work, so each count equals `spice board`'s.
 **Waiting** means every unresolved dependency or planning-control edge still
 reaches work an agent can advance. **Blocked** is reserved for a missing
@@ -352,7 +352,7 @@ Each Chat lane's compact menu button uses a smaller three-bar glyph than the
 team menu, matching its smaller control without shrinking the pointer target.
 It swaps that lane's composer for its seat panel. The panel leads with what the
 agent needs from the operator — consent requests to Allow or Deny in place,
-held tasks iced, blocked, or in review, Designs steeped for a decision, a lease
+held tasks iced, blocked, or in review, Designs awaiting a decision, a lease
 near expiry, and direction left waiting — then the Wake, Drain, Remove, Renew,
 and next-launch model, effort, and fast-mode commands and their refusals. Renew
 submits at once; Drain and Remove confirm first. Effort and fast mode show the

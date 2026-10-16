@@ -330,7 +330,7 @@ fn board_response_with_requirements(
         offer: Vec::new(),
         blocked: Vec::new(),
         workflow_waiting: Vec::new(),
-        awaiting_selection: Vec::new(),
+        design_cycles: Default::default(),
         origins: Default::default(),
         notes: Default::default(),
         acknowledgments: Default::default(),

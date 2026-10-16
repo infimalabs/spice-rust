@@ -539,10 +539,10 @@ owns each rule summarized here.
   contribution; steeped requires reason-for, reason-against, evidence, and
   three distinct contributing lanes; every other contributed Design is
   steeping and names every missing dimension. Questions and requested reach
-  are evidence but do not satisfy maturity. `spice room awareness HANDLE`,
-  the browser room, and operator-attention input read that projection. The
-  state is advisory: it never changes standing, possession, grouping,
-  selection, or authorization.
+  are evidence but do not satisfy maturity. `spice room awareness HANDLE` and
+  the browser room read that projection, and steeped maturity makes a
+  Design's first pass ready. Beyond that the state is advisory: it never
+  changes standing, possession, grouping, selection, or authorization.
 
 - **Preparation.** `task plan` declares a Plan with a `plan,review` flow.
   `task design` defaults to a Design with one open `design` phase and also
@@ -578,6 +578,30 @@ owns each rule summarized here.
   asks, notices, leaves, and group movement do not. Until then the Design
   gathers input, awaits the operator's decision, or waits on its released
   work, deferred work included.
+
+  Every surface names the same cycle state, who acts next, and the exact
+  command: `task show` and `task status`, `board` rows, dry and empty drain,
+  `group list`, `room status`, every preparation command reply, and the
+  browser's Design room and working-group lights. A multi-pass Design reads,
+  from the operator's chair:
+
+  1. **Gathering input**: contributors act. Lanes contribute, the operator
+     posts in the room, or the operator nudges a Design whose first pass has
+     not steeped.
+  2. **Ready for proposal**: a lane acts. Allocation offers the active Design;
+     its holder ends the pass with one `preparation propose`, which releases
+     the claim. Freeing or lapsing instead abandons the pass, and the cycle
+     shows that the last pass ended without a proposal.
+  3. **Awaiting decision**: the operator acts on the cited proposal with
+     `preparation decide`. Accepting work releases its Plans; accepting an
+     outputless conclude or collapse recommendation concludes the Design;
+     returning it or rejecting any output is counted input, so the Design is
+     ready for its next pass at once.
+  4. **Waiting on selected work**: the accepted work runs. Its final
+     settlement, or any earlier counted input, makes the next pass ready.
+
+  A passive Design keeps its cycle and history but no lane may possess it
+  until its working group is Explore or Converge.
 
   A Design
   [stays open until the operator concludes it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
@@ -623,8 +647,9 @@ owns each rule summarized here.
   positive review and their ordinary dependencies, with no Design proposal,
   selection, or execution authorization. A selected Plan therefore runs, and
   its own review releases its tasks. An open Design with an undecided proposal
-  [waits on the operator](invariants/identity.md#work-a-design-awaiting-selection-waits-on-the-operator-without-a-new-state):
-  no lane is offered or woken for it, and status counts it under `selection`.
+  [waits on the operator](invariants/identity.md#work-a-design-awaiting-decision-waits-on-the-operator-without-a-new-state):
+  no lane is offered or woken for it, and status counts it under
+  `designs awaiting-decision`.
   An output a pass constructed without proposing it awaits no decision; it
   stays gated, and its Design follows the pass cycle.
 

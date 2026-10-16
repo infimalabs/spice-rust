@@ -27,7 +27,7 @@ use crate::body::{
     ClaimFreed, ClaimLapsed, TaskAdded, TaskClosed, TaskCompletionStatus, TaskConcluded,
     TaskDeleted, TaskDone,
 };
-use crate::{Actor, AnyFact, CanonicalUuid, FactKind, Seq, TaskHandle, TaskStamp};
+use crate::{Actor, AnyFact, CanonicalUuid, FactKind, Seq, SequenceCode, TaskHandle, TaskStamp};
 
 /// Ask an open Design to take its next pass.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,7 +73,28 @@ pub enum DesignCycleActor {
     SelectedWork,
 }
 
+impl DesignCycleActor {
+    /// Operator-facing name of who acts.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Contributors => "contributors",
+            Self::Lane => "lane",
+            Self::Operator => "operator",
+            Self::SelectedWork => "selected work",
+        }
+    }
+}
+
 impl DesignCycle {
+    /// Every state, in cycle order.
+    pub const ALL: [Self; 4] = [
+        Self::GatheringInput,
+        Self::ReadyForProposal,
+        Self::AwaitingDecision,
+        Self::WaitingOnSelectedWork,
+    ];
+
     /// Operator-facing name of this state.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -82,6 +103,17 @@ impl DesignCycle {
             Self::ReadyForProposal => "ready for proposal",
             Self::AwaitingDecision => "awaiting decision",
             Self::WaitingOnSelectedWork => "waiting on selected work",
+        }
+    }
+
+    /// Stable kebab-case key, the state's serialized name.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::GatheringInput => "gathering-input",
+            Self::ReadyForProposal => "ready-for-proposal",
+            Self::AwaitingDecision => "awaiting-decision",
+            Self::WaitingOnSelectedWork => "waiting-on-selected-work",
         }
     }
 
@@ -96,24 +128,166 @@ impl DesignCycle {
         }
     }
 
-    /// The exact action that moves `design` forward.
+    /// The exact action that moves `design` forward, citing the proposal or
+    /// decision position `facts` holds.
     #[must_use]
-    pub fn next_action(self, design: &TaskHandle) -> String {
+    pub fn next_action(self, design: &TaskHandle, facts: DesignCycleFacts) -> String {
         match self {
             Self::GatheringInput => format!(
-                "contribute with `spice room contribute {design}`, post in its room, or nudge \
-                 it with `spice preparation nudge {design}`"
+                "contribute with `spice room contribute {design}`, post in its room, or the \
+                 operator nudges it with `spice preparation nudge {design}`"
             ),
-            Self::ReadyForProposal => {
-                format!("a lane claims {design} and records one `spice preparation propose`")
-            }
-            Self::AwaitingDecision => format!(
-                "the operator decides the undecided proposal under {design} with \
-                 `spice preparation decide`"
+            Self::ReadyForProposal => format!(
+                "a lane claims {design} through `spice task next` and ends its pass with one \
+                 `spice preparation propose PROPOSAL_JSON`"
             ),
-            Self::WaitingOnSelectedWork => format!(
-                "finish the work {design} released, or add counted input for an earlier pass"
+            Self::AwaitingDecision => facts.proposal.map_or_else(
+                || format!("the operator decides the proposal under {design}"),
+                |proposal| {
+                    format!(
+                        "the operator decides proposal {} under {design} with `spice \
+                         preparation decide DECISION_JSON`",
+                        SequenceCode::new(proposal.get())
+                    )
+                },
             ),
+            Self::WaitingOnSelectedWork => facts.decision.map_or_else(
+                || format!("finish the work {design} released, or add counted input"),
+                |decision| {
+                    format!(
+                        "finish the work decision {} of {design} selected, or add counted input",
+                        SequenceCode::new(decision.get())
+                    )
+                },
+            ),
+        }
+    }
+}
+
+/// One open Design's pass cycle as every surface presents it: the state,
+/// who acts, the exact action, how the latest pass ended, and the proposal
+/// and decision positions that action cites.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignCyclePresentation {
+    /// What the cycle waits on.
+    pub cycle: DesignCycle,
+    /// Who acts next.
+    pub actor: DesignCycleActor,
+    /// The exact action that moves the Design forward.
+    pub action: String,
+    /// How the latest pass ended its claim, once any pass has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_pass: Option<DesignPassEnd>,
+    /// The oldest proposal awaiting the operator's decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<SequenceCode>,
+    /// The operator's latest decision of one of its proposals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<SequenceCode>,
+}
+
+/// Whether a lane may take, or already holds, one open Design's pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DesignAvailability {
+    /// Its working group is not Explore or Converge, so no lane may claim it.
+    Passive,
+    /// Active and unclaimed.
+    Unclaimed,
+    /// A lane holds its current pass.
+    Claimed,
+}
+
+impl DesignCyclePresentation {
+    /// Present `design` in `cycle` with the evidence `facts` carries. A ready
+    /// Design waits on the operator's activation while passive and on its
+    /// holder's proposal while claimed.
+    #[must_use]
+    pub fn new(
+        cycle: DesignCycle,
+        facts: DesignCycleFacts,
+        design: &TaskHandle,
+        availability: DesignAvailability,
+    ) -> Self {
+        let code = |seq: Seq| SequenceCode::new(seq.get());
+        let (actor, action) = match (cycle, availability) {
+            (DesignCycle::ReadyForProposal, DesignAvailability::Passive) => (
+                DesignCycleActor::Operator,
+                format!(
+                    "the operator activates {design} with `spice group stance GROUP explore` \
+                     or `spice group move {design} --to GROUP`; a lane then claims it through \
+                     `spice task next`"
+                ),
+            ),
+            (DesignCycle::ReadyForProposal, DesignAvailability::Claimed) => (
+                DesignCycleActor::Lane,
+                format!(
+                    "the holding lane ends this pass of {design} with one `spice preparation \
+                     propose PROPOSAL_JSON`, which releases its claim"
+                ),
+            ),
+            _ => (cycle.next_actor(), cycle.next_action(design, facts)),
+        };
+        Self {
+            cycle,
+            actor,
+            action,
+            last_pass: facts.end,
+            proposal: facts.proposal.map(code),
+            decision: facts.decision.map(code),
+        }
+    }
+
+    /// Plain-text lines naming the state, actor, latest pass, and cited
+    /// authorities; callers print [`Self::action`] as their next step.
+    #[must_use]
+    pub fn lines(&self) -> Vec<String> {
+        let mut lines = vec![
+            format!("cycle {}", self.cycle.label()),
+            format!("cycle-actor {}", self.actor.label()),
+        ];
+        lines.extend(
+            self.last_pass
+                .map(|end| format!("last-pass {}", end.label())),
+        );
+        lines.extend(self.proposal.map(|code| format!("proposal {code}")));
+        lines.extend(self.decision.map(|code| format!("decision {code}")));
+        lines
+    }
+}
+
+/// How many open Designs stand in each pass-cycle state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignCycleCounts {
+    /// Designs gathering input.
+    pub gathering_input: usize,
+    /// Designs ready for a proposal.
+    pub ready_for_proposal: usize,
+    /// Designs awaiting the operator's decision.
+    pub awaiting_decision: usize,
+    /// Designs waiting on the work they selected.
+    pub waiting_on_selected_work: usize,
+}
+
+impl DesignCycleCounts {
+    /// Count one Design in `cycle`.
+    pub fn observe(&mut self, cycle: DesignCycle) {
+        *self.slot(cycle) += 1;
+    }
+
+    /// Designs counted in `cycle`.
+    #[must_use]
+    pub fn get(mut self, cycle: DesignCycle) -> usize {
+        *self.slot(cycle)
+    }
+
+    fn slot(&mut self, cycle: DesignCycle) -> &mut usize {
+        match cycle {
+            DesignCycle::GatheringInput => &mut self.gathering_input,
+            DesignCycle::ReadyForProposal => &mut self.ready_for_proposal,
+            DesignCycle::AwaitingDecision => &mut self.awaiting_decision,
+            DesignCycle::WaitingOnSelectedWork => &mut self.waiting_on_selected_work,
         }
     }
 }
@@ -126,6 +300,17 @@ pub enum DesignPassEnd {
     Proposed,
     /// The claim was freed or lapsed with no proposal.
     Abandoned,
+}
+
+impl DesignPassEnd {
+    /// Operator-facing name of how the pass ended.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Proposed => "proposed",
+            Self::Abandoned => "abandoned",
+        }
+    }
 }
 
 /// Compact cycle evidence one Design carries into allocation.
@@ -150,9 +335,13 @@ pub struct DesignCycleFacts {
     /// Latest settlement of work this Design released.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settled: Option<Seq>,
-    /// A proposal still awaits the operator's decision.
-    #[serde(default)]
-    pub undecided: bool,
+    /// Position of the oldest proposal still awaiting the operator's
+    /// decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<Seq>,
+    /// Position of the operator's latest decision of one of its proposals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<Seq>,
 }
 
 impl DesignCycleFacts {
@@ -166,7 +355,7 @@ impl DesignCycleFacts {
     /// running, released or deferred.
     #[must_use]
     pub fn cycle(self, working: bool) -> DesignCycle {
-        if self.undecided {
+        if self.proposal.is_some() {
             DesignCycle::AwaitingDecision
         } else if self.counted(working) {
             DesignCycle::ReadyForProposal
@@ -201,8 +390,9 @@ struct DesignCycleFold {
     /// Up to three distinct contributing lanes; maturity needs no more.
     lanes: Vec<CanonicalUuid>,
     counts: DesignContributionCounts,
-    /// Proposals still awaiting the operator's decision.
-    open: Vec<CandidateRef>,
+    /// Proposals still awaiting the operator's decision, oldest first, each
+    /// with the position that recorded it.
+    open: Vec<(CandidateRef, Seq)>,
     /// A proposal arrived since the latest claim release.
     proposed: bool,
     facts: DesignCycleFacts,
@@ -231,15 +421,16 @@ impl DesignCycleFold {
 
     fn proposed(&mut self, seq: Seq, candidate: &CandidateRef) {
         self.boundary(seq);
-        if !self.open.contains(candidate) {
-            self.open.push(candidate.clone());
+        if !self.open.iter().any(|(open, _)| open == candidate) {
+            self.open.push((candidate.clone(), seq));
         }
         self.proposed = true;
-        self.facts.undecided = true;
+        self.facts.proposal = self.open.first().map(|(_, seq)| *seq);
     }
 
     fn decided(&mut self, seq: Seq, outcome: &DecisionOutcome) {
         self.settle(outcome.candidate());
+        self.facts.decision = Some(seq);
         let feedback = match outcome {
             DecisionOutcome::Returned { .. } => true,
             DecisionOutcome::Resolved { outputs, .. } => outputs
@@ -255,8 +446,8 @@ impl DesignCycleFold {
     /// A decision or withdrawal settles `candidate`; any other proposal still
     /// open keeps the operator's decision owed.
     fn settle(&mut self, candidate: &CandidateRef) {
-        self.open.retain(|open| open != candidate);
-        self.facts.undecided = !self.open.is_empty();
+        self.open.retain(|(open, _)| open != candidate);
+        self.facts.proposal = self.open.first().map(|(_, seq)| *seq);
     }
 
     fn released(&mut self, seq: Seq) {

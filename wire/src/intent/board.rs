@@ -1002,10 +1002,10 @@ pub struct NextWorkCounts {
     pub stale: usize,
     /// Closed execution gates with no advancing path.
     pub blocked: usize,
-    /// Normal Plan/Design control and advancing prerequisite chains.
+    /// Advancing prerequisite chains and Plan control.
     pub workflow_waiting: usize,
-    /// Open Designs awaiting exact output selection.
-    pub selection: usize,
+    /// Open Designs in each pass-cycle state.
+    pub designs: crate::rooms::DesignCycleCounts,
     /// Explicitly deferred work.
     pub deferred: usize,
     /// Parked OOPS rows.
@@ -1198,6 +1198,18 @@ impl BoardTask {
             self.collapse_reason.as_deref(),
         )
     }
+
+    /// Whether a lane may take, or already holds, this Design's pass.
+    #[must_use]
+    pub const fn design_availability(&self) -> crate::rooms::DesignAvailability {
+        if matches!(&self.claim, Some(claim) if claim.body.is_active()) {
+            crate::rooms::DesignAvailability::Claimed
+        } else if self.design_active {
+            crate::rooms::DesignAvailability::Unclaimed
+        } else {
+            crate::rooms::DesignAvailability::Passive
+        }
+    }
 }
 /// Whether the current heads describe an open Design.
 ///
@@ -1290,8 +1302,12 @@ impl DesignStanding {
 impl std::fmt::Display for DesignStanding {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Passive => formatter.write_str("open passive (in no working group)"),
-            Self::Active => formatter.write_str("open active (in a working group)"),
+            Self::Passive => {
+                formatter.write_str("open passive (no Explore or Converge working group)")
+            }
+            Self::Active => {
+                formatter.write_str("open active (in an Explore or Converge working group)")
+            }
             Self::Done => formatter.write_str("concluded done"),
             Self::Collapsed {
                 reason: Some(reason),
@@ -1354,12 +1370,12 @@ pub struct BoardAnswer {
     /// order; empty for every other read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workflow_waiting: Vec<crate::TaskStamp>,
-    /// Open-read Designs in their final phase that the allocator holds for
-    /// the operator: an output each constructed still lacks its selection, so
-    /// only an execution authorization or settling that output releases it.
-    /// Durable identity order; empty for every other read.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub awaiting_selection: Vec<crate::TaskStamp>,
+    /// Every open Design's pass-cycle state among this read's rows, judged
+    /// once from the whole live board so each surface renders the same
+    /// value; a Design awaiting decision is the operator's selection wait.
+    /// Empty for [`BoardRead::Next`].
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub design_cycles: std::collections::BTreeMap<crate::TaskStamp, crate::rooms::DesignCycle>,
     /// Every steering key whose direction caused non-deleted work, mapped to
     /// that work's handles in stable order. Open reads carry the whole index,
     /// so a quoted direction keeps its Work after that work settles.
@@ -1403,6 +1419,12 @@ impl BoardAnswer {
     /// Pending public routes only; hidden evidence never enters active inventory.
     pub fn active_public_tasks(&self) -> impl Iterator<Item = &BoardTask> {
         self.tasks.iter().filter(|task| task.is_active_public())
+    }
+
+    /// Whether `task` is a Design the operator's decision holds.
+    #[must_use]
+    pub fn awaiting_selection(&self, task: &crate::TaskStamp) -> bool {
+        self.design_cycles.get(task) == Some(&crate::rooms::DesignCycle::AwaitingDecision)
     }
 
     /// Compile the environmental observations carried by this snapshot.

@@ -831,7 +831,6 @@
 .room-maturity dl > div { min-width: 0; }
 .room-maturity :is(dt, small, .room-maturity-folded) { color: var(--muted); }
 .room-maturity dd { margin: 1px 0 0; font-weight: 600; }
-.room-maturity-attention { font-weight: 650; }
 .room-maturity-heads { display: grid; gap: 3px; }
 .room-maturity-heads p {
   display: flex;
