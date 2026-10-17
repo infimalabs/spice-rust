@@ -256,6 +256,8 @@ pub(crate) trait Authority {
     fn published(&self, room: &str, publication: &str) -> Result<bool, Refusal>;
     /// Whether this position is an indexed room publication.
     fn publication_at(&self, seq: u64) -> Result<bool, Refusal>;
+    /// Whether this position is an indexed Design request.
+    fn request_at(&self, seq: u64) -> Result<bool, Refusal>;
     /// The canonical body of one lane's current catch-up cursor.
     fn cursor(&self, lane: &str) -> Result<Option<Vec<u8>>, Refusal>;
     /// Whether one lane already has a catch-up horizon.
@@ -595,6 +597,13 @@ impl Authority for History {
             .publications
             .values()
             .any(|published| *published == seq))
+    }
+    fn request_at(&self, seq: u64) -> Result<bool, Refusal> {
+        Ok(self
+            .projection
+            .notices
+            .keys()
+            .any(|(_, noticed)| *noticed == seq))
     }
 
     fn cursor(&self, lane: &str) -> Result<Option<Vec<u8>>, Refusal> {
@@ -1112,7 +1121,8 @@ fn require_operator(actor: &Actor, what: &str) -> Result<(), Refusal> {
 }
 
 /// A delivery lands in its own lane's accounted transcript and strictly
-/// advances that lane's cursor to an earlier indexed room publication.
+/// advances that lane's cursor to an earlier indexed room publication or
+/// Design request, the two kinds of item room catch-up carries.
 fn deliver(
     authority: &mut impl Authority,
     seq: Seq,
@@ -1120,9 +1130,11 @@ fn deliver(
 ) -> Result<(), Refusal> {
     require_hunk(authority, &delivered.hunk)?;
     let through = delivered.through;
-    if through.get() >= seq.get() || !authority.publication_at(through.get())? {
+    let indexed =
+        authority.publication_at(through.get())? || authority.request_at(through.get())?;
+    if through.get() >= seq.get() || !indexed {
         return unsound(format!(
-            "delivery cursor {through} names no room publication earlier than {seq}"
+            "delivery cursor {through} names no room publication or Design request earlier than {seq}"
         ));
     }
     let lane = delivered.hunk.head.lane.to_string();

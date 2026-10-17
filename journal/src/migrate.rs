@@ -77,9 +77,9 @@ const PREPARED: &str = "prepared";
 /// pending branch whose terminal or absent controller cannot release it.
 /// Before any current decoder sees a predecessor statement, the retired
 /// authorization field is lifted into transaction-local selection evidence.
-const PREDECESSOR_SCHEMAS: [u32; 47] = [
+const PREDECESSOR_SCHEMAS: [u32; 48] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -1365,8 +1365,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 80, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 81, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 80;
+PRAGMA user_version = 81;
 "#;

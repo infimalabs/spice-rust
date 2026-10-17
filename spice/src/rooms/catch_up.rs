@@ -1,10 +1,12 @@
 //! One lane's next bounded room catch-up.
 //!
 //! A lane's catch-up cursor is one journal position across every room, so
-//! selection walks room publications after it in journal order. Whatever the
-//! lane need not hear, because it authored the packet, already received it as
-//! a directed route, or does not currently listen to its room, is passed over:
+//! selection walks room items after it in journal order. Whatever the lane
+//! need not hear, because it authored the packet, already received it as a
+//! directed route, or does not currently listen to its room, is passed over:
 //! once a delivery lands, the cursor moves past it with the delivered items.
+//! An owed Design invitation sits at its request record's position, so the
+//! cursor passes it only once a delivery carrying it lands.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,23 +52,36 @@ impl CatchUpBudget {
     }
 }
 
-/// One indexed room publication a lane might be told.
+/// One indexed room item a lane might be told.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatchUpSource {
-    /// Journal position of the publication.
+    /// Journal position of the item.
     pub seq: Seq,
-    /// Room the publication belongs to.
+    /// Room the item belongs to.
     pub room: TaskStamp,
-    /// Native identity of the publication.
-    pub publication: RoomAuthorityStamp,
-    /// Journal-authored instant, paired with `publication` for total ordering.
-    pub at: wire::Instant,
-    /// Lane that authored it; operator posts have none.
-    pub author: Option<CanonicalUuid>,
-    /// Lanes its packet already reached as directed routes.
-    pub recipients: BTreeSet<CanonicalUuid>,
-    /// Rendered bytes this publication adds to a delivery.
+    /// What the item is.
+    pub kind: CatchUpKind,
+    /// Rendered bytes this item adds to a delivery.
     pub bytes: usize,
+}
+
+/// What one catch-up item carries.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CatchUpKind {
+    /// A room publication, owed while the lane listens to its room.
+    Publication {
+        /// Native identity of the publication.
+        publication: RoomAuthorityStamp,
+        /// Journal-authored instant, paired with `publication` for total
+        /// ordering.
+        at: wire::Instant,
+        /// Lane that authored it; operator posts have none.
+        author: Option<CanonicalUuid>,
+        /// Lanes its packet already reached as directed routes.
+        recipients: BTreeSet<CanonicalUuid>,
+    },
+    /// The Design request owed to this lane, revalidated when planned.
+    Invitation,
 }
 
 /// The next delivery one lane's cursor admits.
@@ -114,11 +129,21 @@ pub fn select_catch_up(
     let mut bytes = 0usize;
     let mut passed = None;
     for source in sources.into_iter().filter(|source| source.seq > after) {
-        let owed = listened
-            .get(&source.room)
-            .is_some_and(|attention| attention.listens_to(source.at, &source.publication))
-            && source.author != Some(lane)
-            && !source.recipients.contains(&lane);
+        let owed = match &source.kind {
+            CatchUpKind::Publication {
+                publication,
+                at,
+                author,
+                recipients,
+            } => {
+                listened
+                    .get(&source.room)
+                    .is_some_and(|attention| attention.listens_to(*at, publication))
+                    && *author != Some(lane)
+                    && !recipients.contains(&lane)
+            }
+            CatchUpKind::Invitation => true,
+        };
         if !owed {
             passed = Some(source.seq);
             continue;
@@ -181,18 +206,30 @@ mod tests {
     }
 
     fn source(position: u64, room: &TaskStamp, bytes: usize) -> CatchUpSource {
+        routed(position, room, bytes, None, &[])
+    }
+
+    fn routed(
+        position: u64,
+        room: &TaskStamp,
+        bytes: usize,
+        author: Option<CanonicalUuid>,
+        recipients: &[CanonicalUuid],
+    ) -> CatchUpSource {
         CatchUpSource {
             seq: seq(position),
             room: room.clone(),
-            publication: RoomAuthorityStamp::for_micros(
-                1_760_000_000_000_000 + i64::try_from(position).expect("small position"),
-            )
-            .expect("fixture publication"),
-            at: "2026-10-12T07:40:00.000Z"
-                .parse()
-                .expect("fixture publication instant"),
-            author: None,
-            recipients: BTreeSet::new(),
+            kind: CatchUpKind::Publication {
+                publication: RoomAuthorityStamp::for_micros(
+                    1_760_000_000_000_000 + i64::try_from(position).expect("small position"),
+                )
+                .expect("fixture publication"),
+                at: "2026-10-12T07:40:00.000Z"
+                    .parse()
+                    .expect("fixture publication instant"),
+                author,
+                recipients: recipients.iter().copied().collect(),
+            },
             bytes,
         }
     }
@@ -257,6 +294,35 @@ mod tests {
         );
     }
 
+    /// An owed invitation is selected in journal order even in a room the lane
+    /// does not yet listen to, and the cursor passes it only with a delivery
+    /// that carries it.
+    #[test]
+    fn an_owed_invitation_is_delivered_in_order_before_the_cursor_passes_it() {
+        let lane = uuid("05");
+        let (heard, asked) = (room(1), room(2));
+        let rooms = [listening(&heard, &[lane])];
+        let invitation = CatchUpSource {
+            seq: seq(12),
+            room: asked,
+            kind: CatchUpKind::Invitation,
+            bytes: 10,
+        };
+        let sources = vec![source(11, &heard, 10), invitation, source(13, &heard, 10)];
+        let one = CatchUpBudget::new(1, MAX_CATCH_UP_BYTES).expect("budget");
+        let first = select_catch_up(lane, start(), &rooms, sources.clone(), one).expect("selects");
+        assert_eq!(
+            (positions(&first), first.through, first.continuation),
+            (vec![11], Some(seq(11)), Some(seq(12))),
+            "a withheld invitation stays ahead of the cursor"
+        );
+        let second = select_catch_up(lane, seq(11), &rooms, sources, one).expect("resumes");
+        assert_eq!(
+            (positions(&second), second.through),
+            (vec![12], Some(seq(12)))
+        );
+    }
+
     /// Authored packets, directed receipts, and rooms the lane does not listen
     /// to are passed over without delivery; with nothing owed, no delivery
     /// advances the cursor.
@@ -265,14 +331,10 @@ mod tests {
         let (lane, peer) = (uuid("05"), uuid("06"));
         let (heard, unheard) = (room(1), room(2));
         let rooms = [listening(&heard, &[lane]), listening(&unheard, &[peer])];
-        let mut authored = source(11, &heard, 10);
-        authored.author = Some(lane);
-        let mut directed = source(12, &heard, 10);
-        directed.author = Some(peer);
-        directed.recipients.insert(lane);
+        let authored = routed(11, &heard, 10, Some(lane), &[]);
+        let directed = routed(12, &heard, 10, Some(peer), &[lane]);
         let elsewhere = source(13, &unheard, 10);
-        let mut peer_post = source(14, &heard, 10);
-        peer_post.author = Some(peer);
+        let peer_post = routed(14, &heard, 10, Some(peer), &[]);
         let operator_post = source(15, &heard, 10);
         let trailing = source(16, &unheard, 10);
         let sources = vec![

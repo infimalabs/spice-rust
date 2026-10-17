@@ -23,6 +23,8 @@ use wire::{TaskHead, TaskStamp};
 pub const MIN_TERM_CHARS: usize = 4;
 /// Most characters of a Design's one-line pitch.
 pub const PITCH_CHARS: usize = 160;
+/// Most characters of a Design request's supporting-work excerpt.
+pub const EXCERPT_CHARS: usize = 240;
 /// Most rendered bytes of whole open questions one Design request carries.
 pub const DESIGN_REQUEST_QUESTIONS_BYTES: usize = 2 * 1024;
 /// Most recently revised task statements, open or completed, in the frequency
@@ -437,19 +439,65 @@ pub fn pitch(title: &str, description: Option<&str>) -> String {
             trailing.split_whitespace().nth(1).map(|_| trailing)
         })
         .unwrap_or(title);
-    let mut one_line = String::with_capacity(sentence.len().min(PITCH_CHARS));
-    for word in sentence.split_whitespace() {
-        if !one_line.is_empty() {
-            one_line.push(' ');
+    one_line(sentence, PITCH_CHARS)
+}
+
+/// Supporting-work `text` as one line of at most [`EXCERPT_CHARS`] characters.
+#[must_use]
+pub fn excerpt(text: &str) -> String {
+    one_line(text, EXCERPT_CHARS)
+}
+
+/// `text` with whitespace runs collapsed, cut to `chars` characters with an
+/// ellipsis when longer.
+fn one_line(text: &str, chars: usize) -> String {
+    let mut line = String::with_capacity(text.len().min(chars));
+    for word in text.split_whitespace() {
+        if !line.is_empty() {
+            line.push(' ');
         }
-        one_line.push_str(word);
+        line.push_str(word);
     }
-    if one_line.chars().count() <= PITCH_CHARS {
-        return one_line;
+    if line.chars().count() <= chars {
+        return line;
     }
-    let mut cut = one_line.chars().take(PITCH_CHARS - 1).collect::<String>();
+    let mut cut = line.chars().take(chars - 1).collect::<String>();
     cut.push('…');
     cut
+}
+
+/// The invitation one Design request presents wherever it is delivered:
+/// what the asked work did, an excerpt and a compaction-proof source, the
+/// Design's pitch and bounded open questions, and how to contribute or decline.
+#[must_use]
+pub fn request_text(request: &wire::intent::DesignRequest) -> String {
+    let design = &request.design;
+    let task = &request.task;
+    let mut questions = String::new();
+    for question in &request.questions {
+        questions.push_str("\n- ");
+        questions.push_str(question);
+    }
+    if questions.is_empty() {
+        questions.push_str("\n- none recorded");
+    }
+    format!(
+        "Design request {design} \"{}\" at statement revision {}: you {} {task}, which shares: \
+         {}.\nExcerpt: {}\nSource: `spice task show {task} --history`\nPitch: {}\nOpen \
+         questions:{questions}\nRead its room with `spice room history {design}` \
+         (`spice://task/{design}/room`). A concrete observation, risk, or counterexample helps, \
+         and declining is equally fine: answer exactly once with `spice room contribute {design} \
+         reason-for|reason-against|evidence|question TEXT` or decline with `spice room leave \
+         {design} --clause TEXT`. Until either answer publishes, `spice task next` returns this \
+         request instead of allocating. It grants no claim and starts no work; you hear this \
+         room's later posts until you leave it.",
+        request.title,
+        request.statement,
+        request.support.verb(),
+        request.terms.join(", "),
+        request.excerpt,
+        request.pitch,
+    )
 }
 
 /// The longest in-order prefix of whole open questions that fits one request.

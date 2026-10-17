@@ -2,19 +2,20 @@
 //!
 //! A completed claim can owe one request at the lane's natural break. The
 //! durable notice records that choice, while `task next` can project the same
-//! choice directly when it races the resident recognition pass.
+//! choice directly when it races the resident recognition pass. Room catch-up
+//! carries the owed request to the occupant's next ordinary input.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use journal::{GuardError, JournalRead};
 use spice::rooms::awareness::{
-    FrequencyProfile, MatchCandidate, TermCounts, pitch, request_questions,
+    FrequencyProfile, MatchCandidate, TermCounts, excerpt, pitch, request_questions,
 };
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::DesignNoticed;
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Producer, Seq, SequenceCode, TaskStamp,
-    intent::{DesignRequest, TaskDone as TaskDoneIntent},
+    intent::{DesignRequest, DesignSupport, TaskDone as TaskDoneIntent},
 };
 
 use super::room_catch_up::Planning;
@@ -126,8 +127,8 @@ impl CompletionCursor {
 }
 
 /// Record one best matching passive Design for every newly completed claim.
-/// Nothing is delivered in the background: the lane reads the owed request
-/// from its next `task next`.
+/// Room catch-up delivers the owed request with the occupant's next ordinary
+/// input; `task next` shows the same request.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     config: &SurfaceConfig,
@@ -207,7 +208,7 @@ fn plan(
     }
     let entries = &planning.entries;
     let frequency = FrequencyProfile::recent(entries.iter().map(board::Entry::statement));
-    let facts = &planning.facts;
+    let facts = planning.snapshot.facts();
     let mut requested: BTreeMap<CanonicalUuid, BTreeSet<TaskStamp>> = BTreeMap::new();
     let mut owed = Vec::new();
     for completed in completions {
@@ -297,6 +298,7 @@ fn passive(entry: &board::Entry) -> bool {
 struct CurrentCompletion {
     completed: bus::LaneCompletion,
     claim: Seq,
+    support: DesignSupport,
     statement: wire::TaskHead,
 }
 
@@ -314,7 +316,7 @@ fn current_completion(
     if completed.occupant != occupant {
         return Ok(None);
     }
-    let Some((claim, _cell)) = facts.latest_claim(&actor) else {
+    let Some((claim, cell)) = facts.latest_claim(&actor) else {
         return Ok(None);
     };
     if completed.operation != TaskDoneIntent::operation_for_claim(claim) {
@@ -326,8 +328,18 @@ fn current_completion(
     Ok(Some(CurrentCompletion {
         completed,
         claim,
+        support: DesignSupport::for_phase(&cell.phase),
         statement,
     }))
+}
+
+/// One request owed to a lane occupant.
+pub(crate) struct OwedRequest {
+    /// Position of the notice that chose it.
+    pub(crate) at: Seq,
+    /// Design whose room accepts the answer.
+    pub(crate) design: TaskStamp,
+    pub(crate) request: DesignRequest,
 }
 
 /// Read the durable request currently owed to this lane occupant.
@@ -337,7 +349,7 @@ pub(crate) fn owed_request(
     entries: &[board::Entry],
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-) -> Result<Option<DesignRequest>, Outcome<wire::intent::CommandAnswer>> {
+) -> Result<Option<OwedRequest>, Outcome<wire::intent::CommandAnswer>> {
     let Some(current) = current_completion(bus, observed, lane, occupant)? else {
         return Ok(None);
     };
@@ -357,14 +369,18 @@ pub(crate) fn owed_request(
     if !request_is_current(facts, design, lane) {
         return Ok(None);
     }
-    Ok(Some(design_request(
-        design,
-        &current.statement,
-        wire::rooms::shown_notice_terms(&notice.terms)
-            .into_iter()
-            .map(str::to_owned)
-            .collect(),
-    )))
+    Ok(Some(OwedRequest {
+        at: noticed_at,
+        design: notice.design.clone(),
+        request: design_request(
+            design,
+            &current,
+            wire::rooms::shown_notice_terms(&notice.terms)
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+        ),
+    }))
 }
 
 /// Select and record one deterministic request for the latest completion.
@@ -382,10 +398,9 @@ pub(crate) fn project_request(
     let actor = Actor::Lane(lane);
     let completed = &current.completed;
     let claim = current.claim;
-    let task_statement = current.statement;
 
-    if let Some(request) = owed_request(bus, observed, entries, lane, occupant)? {
-        return Ok(Some(request));
+    if let Some(owed) = owed_request(bus, observed, entries, lane, occupant)? {
+        return Ok(Some(owed.request));
     }
     if facts
         .latest_design_notice(lane, occupant)
@@ -404,6 +419,7 @@ pub(crate) fn project_request(
             .iter()
             .map(|heads| heads.statement().body()),
     );
+    let task_statement = &current.statement;
     let completion = TermCounts::completion(
         &task_statement.title,
         task_statement.description.as_deref(),
@@ -449,7 +465,7 @@ pub(crate) fn project_request(
     match record(bus, &request) {
         Ok(None) => Ok(Some(design_request(
             design,
-            &task_statement,
+            &current,
             wire::rooms::shown_notice_terms(&terms)
                 .into_iter()
                 .map(str::to_owned)
@@ -496,13 +512,16 @@ fn request_is_current(facts: &bus::TaskFacts, design: &board::Entry, lane: Canon
 
 fn design_request(
     design: &board::Entry,
-    task: &wire::TaskHead,
+    current: &CurrentCompletion,
     terms: Vec<String>,
 ) -> DesignRequest {
     let statement = design.statement();
+    let task = &current.statement;
     DesignRequest {
         design: wire::TaskHandle::for_filing(&statement.project, &statement.born, statement.filing),
         task: wire::TaskHandle::for_filing(&task.project, &task.born, task.filing),
+        support: current.support,
+        excerpt: excerpt(&current.completed.validation),
         title: statement.title.clone(),
         statement: SequenceCode::new(statement.revision.get()),
         pitch: pitch(&statement.title, statement.description.as_deref()),

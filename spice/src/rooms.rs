@@ -19,7 +19,8 @@ pub mod evidence;
 pub mod profile;
 
 pub use catch_up::{
-    CatchUp, CatchUpBudget, CatchUpSource, MAX_CATCH_UP_BYTES, MAX_CATCH_UP_ITEMS, select_catch_up,
+    CatchUp, CatchUpBudget, CatchUpKind, CatchUpSource, MAX_CATCH_UP_BYTES, MAX_CATCH_UP_ITEMS,
+    select_catch_up,
 };
 
 /// Most authority signals one projection may inspect.
@@ -958,10 +959,12 @@ mod tests {
         let source = |seq: u64, publication: &str, minute| CatchUpSource {
             seq: Seq::new(seq).expect("positive source position"),
             room: room.clone(),
-            publication: publication.parse().expect("publication identity"),
-            at: at(minute),
-            author: Some(peer),
-            recipients: BTreeSet::new(),
+            kind: CatchUpKind::Publication {
+                publication: publication.parse().expect("publication identity"),
+                at: at(minute),
+                author: Some(peer),
+                recipients: BTreeSet::new(),
+            },
             bytes: 10,
         };
         let catch_up = select_catch_up(

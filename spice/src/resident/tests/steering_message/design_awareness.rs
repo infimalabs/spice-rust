@@ -669,6 +669,95 @@ fn contribution_discharges_the_request_and_suppresses_that_design_forever() {
     lanes.finish();
 }
 
+/// Plan room catch-up for the seated lanes and read FIRST's pending notice.
+fn pending_catch_up(
+    lanes: &Lanes,
+    config: &SurfaceConfig,
+    seated: &Seats,
+    diagnostics: &mut Vec<u8>,
+) -> Option<room_catch_up::Notice> {
+    room_catch_up::reconcile(&lanes.bus, &lanes.paths, config, seated, diagnostics)
+        .expect("room catch-up reconciles");
+    room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, test_uuid(FIRST)))
+}
+
+/// The owed request reaches its seated occupant as the same text `task next`
+/// shows, naming the completed phase's kind with an excerpt and a durable
+/// source. Once that delivery lands the cursor passes it, so catch-up never
+/// repeats it, while `task next` keeps it owed until the lane answers.
+#[test]
+fn room_catch_up_delivers_the_owed_request_once_while_task_next_keeps_it() {
+    let lanes = Lanes::new("design-request-delivery");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let mut seated = claimant_seats();
+    let mut diagnostics = Vec::new();
+    assert!(
+        pending_catch_up(&lanes, &config, &seated, &mut diagnostics).is_none(),
+        "nothing is owed before completion"
+    );
+    let task = lanes.claimed("dVrD245Kc", FIRST);
+    lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    lanes.complete(&task, MATCHING);
+
+    let request = lanes
+        .request(&config, FIRST)
+        .expect("task next shows the owed request");
+    assert_eq!(request.support, wire::intent::DesignSupport::Implemented);
+    assert_eq!(request.excerpt, MATCHING);
+    let notice = pending_catch_up(&lanes, &config, &seated, &mut diagnostics)
+        .expect("the seated occupant is told");
+    assert_eq!(notice.occupant, test_uuid(FIRST));
+    assert!(
+        notice
+            .text
+            .contains(&spice::rooms::awareness::request_text(&request)),
+        "catch-up carries the request task next shows: {}",
+        notice.text
+    );
+
+    // The completion fixture reseated FIRST, so its capture names that occupant.
+    let mut landed = lanes.operator(FIRST, &notice.text);
+    landed.occupant = test_uuid(FIRST);
+    let _ = ingest_transcripts(
+        &lanes.bus,
+        &lanes.paths,
+        Some(test_uuid(FIRST)),
+        lane::ingest::Bound::IMMEDIATE,
+        lane::ingest::Coalescing::default(),
+        &mut diagnostics,
+    )
+    .expect("the delivery is accounted");
+    let source = lanes
+        .tape(FIRST)
+        .source_id()
+        .expect("tape source reads")
+        .as_str()
+        .parse()
+        .expect("tape source is a UUID");
+    room_catch_up::recognize(&lanes.bus, &lanes.paths, &landed, source)
+        .expect("the delivery is recognized")
+        .expect("the landed invitation advances the cursor past it");
+    assert!(
+        pending_catch_up(&lanes, &config, &seated, &mut diagnostics).is_none(),
+        "a landed invitation is not delivered again"
+    );
+    assert_eq!(
+        lanes
+            .request(&config, FIRST)
+            .map(|owed| spice::rooms::awareness::request_text(&owed)),
+        Some(spice::rooms::awareness::request_text(&request)),
+        "task next keeps the delivered request owed"
+    );
+    seated.release_all();
+    assert!(
+        diagnostics.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&diagnostics)
+    );
+    lanes.finish();
+}
+
 #[test]
 fn an_asked_lane_hears_later_posts_until_it_leaves_and_is_never_asked_again() {
     let lanes = Lanes::new("design-request-listening");
