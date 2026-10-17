@@ -496,6 +496,11 @@ impl AdmittedPath {
         unreachable!("construction refuses non-Unix filesystems")
     }
 
+    /// Whether every bound parent directory exists.
+    pub(super) const fn is_ready(&self) -> bool {
+        self.ready
+    }
+
     pub(super) fn cleanup_introduced(&mut self) -> Result<(), InstallError> {
         if !self.ready {
             return Ok(());

@@ -80,9 +80,10 @@ fn acquire(upper: Seq, directory: &Path, oracle: &Path, output: &mut dyn Write) 
     if !metadata.file_type().is_file() {
         return Err("installed appliance must be a regular non-symbolic file".into());
     }
-    // Reuse the resident's receipt-owned asset admission; metadata alone is
-    // insufficient before executing a credential-bearing native client.
-    let _publication = spice::install::installed_app_source(&repository, &binary)?;
+    // Admit the receipt-owned executable and the canvas generation it links;
+    // metadata alone is insufficient before executing a credential-bearing
+    // native client.
+    spice::install::admit_installed_executable(&repository, &binary)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};

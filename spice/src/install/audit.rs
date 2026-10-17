@@ -236,25 +236,9 @@ fn load_audit_record(
     preview: &str,
 ) -> Result<Result<AuditLoadedRecord, ApplianceAudit>, InstallError> {
     match read_record_for_refresh(repository) {
-        Ok(Some(RefreshRecord::Current(loaded))) => {
-            let receipt = loaded.record.plan_digest.clone();
-            Ok(Ok(AuditLoadedRecord {
-                refresh: RefreshRecord::Current(loaded),
-                receipt,
-            }))
-        }
-        Ok(Some(RefreshRecord::Repairable {
-            loaded,
-            original_digest,
-        })) => {
-            let receipt = original_digest.clone();
-            Ok(Ok(AuditLoadedRecord {
-                refresh: RefreshRecord::Repairable {
-                    loaded,
-                    original_digest,
-                },
-                receipt,
-            }))
+        Ok(Some(refresh)) => {
+            let receipt = refresh.receipt_digest().clone();
+            Ok(Ok(AuditLoadedRecord { refresh, receipt }))
         }
         Ok(None) => Ok(Err(report(
             ApplianceState::MissingReceipt,
@@ -313,6 +297,7 @@ fn stale_receipt(error: &InstallError) -> bool {
         InstallError::Decode(_)
             | InstallError::InvalidRecord(_)
             | InstallError::LegacyRecord { .. }
+            | InstallError::RetainedRecord { .. }
             | InstallError::PathShape(_)
             | InstallError::PathOutsideRoot(_)
             | InstallError::ParentChanged(_)

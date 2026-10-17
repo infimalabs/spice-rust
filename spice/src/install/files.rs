@@ -5,6 +5,7 @@ use std::path::Path;
 use crate::repository::Repository;
 
 use super::handle::{AdmittedPath, retirement_temporary_name};
+use super::path::relative_path;
 use super::{
     Asset, FileImage, Generation, InstallError, ObservedFile, Operation, ParentObservation,
     ReceiptGeneration, Retirement, fixed_asset_bytes, read_binary,
@@ -80,23 +81,41 @@ pub(super) fn prepare_retirement(
 }
 
 /// Remove the directories a discarded retirement's binding names as missing,
-/// each only while it is empty.
+/// innermost first and each only while it is empty.
 ///
-/// The binding anchors above those directories, so a directory an earlier
-/// attempt already removed leaves nothing to open and nothing to do.
+/// The binding anchors above those directories. An earlier attempt may have
+/// withdrawn an inner part of the chain before stopping, so withdrawal
+/// resumes from the deepest prefix that still exists; a chain already
+/// withdrawn leaves nothing to open and nothing to do.
 pub(super) fn withdraw_parent(
     repository: &Repository,
     retirement: &Retirement,
 ) -> Result<(), InstallError> {
     debug_assert!(retirement.discards_payload());
-    let mut path = AdmittedPath::open(
-        repository.common_dir(),
-        &retirement.destination,
-        &retirement.parent,
-        false,
-        Path::new(&retirement.parent.missing).components().count(),
-    )?;
-    path.cleanup_introduced()
+    let file = Path::new(&retirement.destination)
+        .file_name()
+        .ok_or_else(|| InstallError::PathShape(retirement.destination(repository)))?;
+    for missing in Path::new(&retirement.parent.missing)
+        .ancestors()
+        .filter(|missing| !missing.as_os_str().is_empty())
+    {
+        let parent = ParentObservation {
+            missing: relative_path(missing)?,
+            ..retirement.parent.clone()
+        };
+        let destination = relative_path(&Path::new(&parent.ancestor).join(missing).join(file))?;
+        let mut path = AdmittedPath::open(
+            repository.common_dir(),
+            &destination,
+            &parent,
+            false,
+            missing.components().count(),
+        )?;
+        if path.is_ready() {
+            return path.cleanup_introduced();
+        }
+    }
+    Ok(())
 }
 
 fn temporary_collision(
@@ -159,36 +178,23 @@ pub(super) fn publish_operation(
 pub(super) fn materialize_generated(
     operation: &Operation,
     spice_binary: Option<&Path>,
-    app: Option<&super::app::Source>,
     symbols: Option<&super::symbols::Source>,
     common_git: &Path,
 ) -> Result<FileImage, InstallError> {
-    let retained = super::app::operation_generation(operation.asset, &operation.path)
-        .filter(|generation| app.is_some_and(|source| source.generation() != generation))
-        .map(|_| observe(&common_git.join(&operation.destination)))
-        .transpose()?
-        .flatten()
-        .filter(|observed| observed.generated() == operation.generated)
-        .map(|observed| observed.image.bytes);
-    let bytes = match retained.or_else(|| app.and_then(|source| source.bytes(operation.asset))) {
+    let bytes = match fixed_asset_bytes(operation.asset, common_git)? {
         Some(bytes) => bytes,
-        None => match fixed_asset_bytes(operation.asset, common_git)? {
-            Some(bytes) => bytes,
-            None => match operation.asset {
-                Asset::Exclusions => {
-                    return Err(InstallError::InvalidRecord(
-                        "install plan contains the retired version-5 exclusions asset".to_owned(),
-                    ));
-                }
-                Asset::Binary => {
-                    read_binary(spice_binary.ok_or(InstallError::BinaryContextChanged)?)?
-                }
-                Asset::SymbolsInfo | Asset::SymbolsDwarf => symbols
-                    .and_then(|source| source.bytes(operation.asset))
-                    .ok_or(InstallError::BinaryContextChanged)?
-                    .to_vec(),
-                _ => return Err(InstallError::BinaryContextChanged),
-            },
+        None => match operation.asset {
+            Asset::Exclusions => {
+                return Err(InstallError::InvalidRecord(
+                    "install plan contains the retired version-5 exclusions asset".to_owned(),
+                ));
+            }
+            Asset::Binary => read_binary(spice_binary.ok_or(InstallError::BinaryContextChanged)?)?,
+            Asset::SymbolsInfo | Asset::SymbolsDwarf => symbols
+                .and_then(|source| source.bytes(operation.asset))
+                .ok_or(InstallError::BinaryContextChanged)?
+                .to_vec(),
+            _ => return Err(InstallError::BinaryContextChanged),
         },
     };
     let image = FileImage::new(operation.generated.mode, bytes);
@@ -286,143 +292,4 @@ fn file_mode(metadata: &fs::Metadata) -> u32 {
 #[cfg(not(unix))]
 fn file_mode(_metadata: &fs::Metadata) -> u32 {
     super::DATA_MODE
-}
-
-#[cfg(test)]
-mod tests {
-    use std::os::unix::fs::PermissionsExt as _;
-    use std::path::PathBuf;
-
-    use wire::{Digest, Domain};
-
-    use super::super::binding::bind_destination;
-    use super::super::{DATA_MODE, GeneratedImage, app, retention};
-    use super::*;
-
-    /// One scratch repository, removed again when the test that made it ends.
-    struct Scratch(PathBuf);
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn repository(label: &str) -> (Scratch, Repository) {
-        let root = std::env::temp_dir().join(format!(
-            "spice-install-files-{label}-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4()
-        ));
-        fs::create_dir(&root).expect("scratch root creates");
-        crate::test_repository::initialize(&root);
-        let repository = Repository::discover(&root).expect("scratch repository discovers");
-        (Scratch(root), repository)
-    }
-
-    /// Install one app generation file and the discard planning derives for it.
-    fn installed_discard(repository: &Repository, generation: &str, file: &str) -> Retirement {
-        let path = format!("{}/{generation}/{file}", app::GENERATIONS_PATH);
-        let installed = repository.common_dir().join(&path);
-        fs::create_dir_all(installed.parent().unwrap()).unwrap();
-        write_installed(&installed, file.as_bytes());
-        let bound = bind_destination(repository.common_dir(), &path).unwrap();
-        let mut retirement = Retirement {
-            path,
-            destination: bound.destination,
-            parent: bound.parent,
-            previous: None,
-            observed: None,
-            superseded: Some(GeneratedImage::new(DATA_MODE, file.as_bytes())),
-            discard: true,
-        };
-        (retirement.destination, retirement.parent) =
-            retention::retirement_binding(repository, &retirement).unwrap();
-        retirement
-    }
-
-    fn write_installed(path: &Path, bytes: &[u8]) {
-        fs::write(path, bytes).unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(DATA_MODE)).unwrap();
-    }
-
-    fn temporary(repository: &Repository, retirement: &Retirement, index: usize) -> PathBuf {
-        retirement
-            .destination(repository)
-            .with_file_name(retirement_temporary_name(index))
-    }
-
-    fn generation() -> String {
-        Digest::compute(Domain::InstallArtifact, b"retired generation").to_string()
-    }
-
-    #[test]
-    fn an_interrupted_discard_resumes_and_withdraws_its_generation() {
-        let (_scratch, repository) = repository("resume");
-        let generation = generation();
-        let first = installed_discard(&repository, &generation, "app.html");
-        let second = installed_discard(&repository, &generation, "app.module");
-        let directory = first.destination(&repository).parent().unwrap().to_owned();
-        for (index, retirement) in [&first, &second].into_iter().enumerate() {
-            assert!(prepare_retirement(&repository, retirement, index).is_ok());
-        }
-
-        // Interrupted after the file moved to its fenced temporary name.
-        fs::rename(
-            first.destination(&repository),
-            temporary(&repository, &first, 0),
-        )
-        .unwrap();
-        retire_path(&repository, &first, 0).expect("resume finishes the staged discard");
-        assert!(!temporary(&repository, &first, 0).exists());
-        assert!(!first.destination(&repository).exists());
-        // Interrupted after the discard finished but before progress advanced.
-        retire_path(&repository, &first, 0).expect("a finished discard is a no-op");
-
-        retire_path(&repository, &second, 1).expect("the next discard retires in place");
-        assert!(second.withdraws_parent(None));
-        withdraw_parent(&repository, &second).expect("the empty generation withdraws");
-        assert!(!directory.exists());
-        withdraw_parent(&repository, &second).expect("a withdrawn generation stays withdrawn");
-    }
-
-    #[test]
-    fn a_drifted_or_colliding_discard_refuses_without_moving_any_file() {
-        let (_scratch, repository) = repository("drift");
-        let retirement = installed_discard(&repository, &generation(), "app.html");
-        let installed = retirement.destination(&repository);
-        let staged = temporary(&repository, &retirement, 0);
-
-        write_installed(&installed, b"operator bytes");
-        assert!(matches!(
-            prepare_retirement(&repository, &retirement, 0),
-            Err(InstallError::Drift { .. })
-        ));
-        assert!(matches!(
-            retire_path(&repository, &retirement, 0),
-            Err(InstallError::Drift { .. })
-        ));
-        assert_eq!(fs::read(&installed).unwrap(), b"operator bytes");
-        assert!(!staged.exists());
-
-        write_installed(&installed, b"app.html");
-        write_installed(&staged, b"app.html");
-        assert!(matches!(
-            prepare_retirement(&repository, &retirement, 0),
-            Err(InstallError::ParentChanged(_))
-        ));
-        assert!(matches!(
-            retire_path(&repository, &retirement, 0),
-            Err(InstallError::ParentChanged(_))
-        ));
-        assert!(installed.exists() && staged.exists());
-
-        fs::remove_file(&installed).unwrap();
-        write_installed(&staged, b"operator bytes");
-        assert!(matches!(
-            retire_path(&repository, &retirement, 0),
-            Err(InstallError::Drift { .. })
-        ));
-        assert_eq!(fs::read(&staged).unwrap(), b"operator bytes");
-    }
 }

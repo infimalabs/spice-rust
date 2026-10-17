@@ -183,6 +183,8 @@ pub(crate) fn failure<B>(error: InstallError) -> Outcome<B> {
         | InstallError::BinaryContextChanged
         | InstallError::DigestMismatch { .. }
         | InstallError::LegacyRecord { .. }
+        | InstallError::RetainedRecord { .. }
+        | InstallError::CanvasRefused { .. }
         | InstallError::RecordMissing
         | InstallError::ApplyInProgress
         | InstallError::UnapplyInProgress
@@ -241,7 +243,10 @@ fn install_refusal_reason(error: &InstallError) -> &'static str {
         InstallError::SymbolsRefused { .. } => "install::symbols-refused",
         InstallError::ForeignHookPath { .. } => "install::foreign-hooks",
         InstallError::GitConfigurationDrift { .. } => "install::hook-configuration-drift",
-        InstallError::LegacyRecord { .. } => "install::release-owned-state",
+        InstallError::LegacyRecord { .. } | InstallError::RetainedRecord { .. } => {
+            "install::release-owned-state"
+        }
+        InstallError::CanvasRefused { .. } => "install::canvas-refused",
         InstallError::RecordMissing => "install::record-missing",
         InstallError::ApplyInProgress | InstallError::UnapplyInProgress => {
             "install::transition-incomplete"
@@ -304,6 +309,14 @@ fn install_refusal_remedy(error: &InstallError) -> String {
         .to_owned(),
         InstallError::LegacyRecord { path, owner } => format!(
             "inspect the {owner}-owned record with `{}`; run that retired release's own executable with `install --unapply` before retrying the current preview",
+            inspect_path(path),
+        ),
+        InstallError::RetainedRecord { path, owner, .. } => format!(
+            "inspect the schema-18 record with `{}`; a complete one crosses forward ({owner}) only through this executable's `install` preview and `install --apply=<printed-digest>`, so finish or unapply an interrupted one with the schema-18 release's own executable first",
+            inspect_path(path),
+        ),
+        InstallError::CanvasRefused { path, .. } => format!(
+            "inspect the selected executable with `{}`; install an appliance that links its canvas archive, built by `spice dev xtask -- install` or taken from a sealed release package",
             inspect_path(path),
         ),
         InstallError::RecordMissing => concat!(

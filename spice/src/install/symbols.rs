@@ -20,8 +20,8 @@ use wire::manifest::{
 use wire::{Digest, Domain};
 
 use super::{
-    AppPlanState, Asset, DATA_MODE, GeneratedImage, InstallError, InstallPlan, InstalledOperations,
-    Location, Operation, Repository, destination_state, operation, reversal_context,
+    Asset, DATA_MODE, GeneratedImage, InstallError, InstallPlan, InstalledOperations, Location,
+    Operation, PlanState, Repository, destination_state, operation, reversal_context,
 };
 
 /// Canonical retained dSYM bundle beside the installed executable.
@@ -124,7 +124,7 @@ impl Source {
         repository: &Repository,
         binary: &Path,
     ) -> Result<Option<Self>, InstallError> {
-        let Some((_, target_root)) = super::app::package_layout(binary) else {
+        let Some((_, target_root)) = super::canvas::package_layout(binary) else {
             return Self::resolve_worktree(binary, || worktree_git_state(repository));
         };
         let payload_path = target_root.join("payload.json");
@@ -274,13 +274,13 @@ pub(super) fn append_operations(
     repository: &Repository,
     installed: &InstalledOperations<'_>,
     source: &Source,
-    (directories, operations): AppPlanState<'_>,
+    (directories, operations): PlanState<'_>,
 ) -> Result<(), InstallError> {
     for asset in ASSETS {
         let path = path(asset).expect("symbol assets publish fixed paths");
         let bytes = source.bytes(asset).expect("symbol assets carry bytes");
         let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
-        let (previous, superseded) = reversal_context(installed, asset, path, observed, None);
+        let (previous, superseded) = reversal_context(installed, asset, observed, None);
         operations.push(operation(
             directories,
             asset,

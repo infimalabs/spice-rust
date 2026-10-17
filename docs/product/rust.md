@@ -125,10 +125,18 @@ archive relinks the executable and rebuilds nothing else.
 [`spice/src/version.rs`](../../spice/src/version.rs) admits the linked archive
 once. An installed resident without one refuses with
 `serve::canvas-archive-absent`, or `serve::canvas-archive-invalid` when it does
-not admit. Owners: [`canvas/src/lib.rs`](../../canvas/src/lib.rs) for the
-symbols, [`dist/src/canvas.rs`](../../dist/src/canvas.rs) for writing the
-object and for the section read and identity checks, and
-[`xtask/src/app.rs`](../../xtask/src/app.rs) for the link arguments.
+not admit. The installed executable is the only canvas carrier. Install
+publishes no app file and binds the generation G that its linked archive
+names. `xtask report` admits the installed executable by that same receipt and
+archive check. Install schema 18 published app sidecars. It is a one-crossing
+boundary: `spice install` alone reads a complete schema-18 receipt and
+discards the sidecars it owned. Owners: [`canvas/src/lib.rs`](../../canvas/src/lib.rs)
+for the symbols, [`dist/src/canvas.rs`](../../dist/src/canvas.rs) for writing
+the object and for the section read and identity checks,
+[`xtask/src/app.rs`](../../xtask/src/app.rs) for the link arguments, and
+[`spice/src/install/canvas.rs`](../../spice/src/install/canvas.rs) and
+[`spice/src/install/crossing.rs`](../../spice/src/install/crossing.rs) for
+install admission and the schema-18 crossing.
 
 The resident serves app routes through one boundary, `CanvasAssets`, with
 exactly two sources. Only a staged `spice up` serves `DevelopmentDirectory`:

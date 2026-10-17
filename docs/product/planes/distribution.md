@@ -192,10 +192,22 @@ under their domain-separated content identity. Prior state is captured once, at
 first application, and never re-derived from the installation's own output.
 Recording only the new state would make absence unrecoverable.
 
-**Invariant —** Installed app history is bounded. A refresh retains the current
-generation and the newest predecessors within the bound and retires every other
-installed generation in the same transaction, discarding each file only while it
-still holds the installed image.
+**Invariant —** The installed executable is the app's only carrier.
+Installation writes no app file. Its receipt binds the canvas generation G
+named by the executable's linked archive, beside the executable operation. A
+plan reads the selected executable once and admits that archive, inflating
+only its shell. Upgrading the app is replacing the executable.
+
+**Invariant —** Install schema 18, which published app sidecar files under
+`.spice-install/app`, is a one-crossing boundary. Only `spice install` reads
+such a receipt, and only a complete, canonical, digest-exact one. Its fixed,
+executable, symbol, and hook effects keep their reversal images in a schema-19
+refresh. Its app operations serve only as evidence of the sidecar files it
+owns. That refresh publishes its `applying` receipt first. It then discards
+each owned sidecar only while the file still holds the image schema 18
+recorded, and withdraws each generation, `generations`, and `app` directory
+only once empty. An interrupted, inexact, or otherwise unadmissible schema-18
+receipt refuses, naming its schema and owner.
 
 **Invariant —** Generated artifacts live in a directory the product owns and are
 activated by redirecting the host tool there, never by writing into the location

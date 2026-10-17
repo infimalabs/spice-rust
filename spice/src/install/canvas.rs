@@ -1,0 +1,109 @@
+//! The canvas generation an installed executable carries.
+//!
+//! The executable is the only canvas carrier: installation publishes no app
+//! file, and a receipt names the generation its executable links.
+
+use std::fs;
+use std::path::Path;
+
+use wire::{Digest, Domain};
+
+use super::InstallError;
+
+/// The app generation linked into one selected executable's bytes.
+///
+/// Admission reads the linked archive once and inflates only the shell that
+/// names its generation. A packaged executable must also be the one its
+/// sealed payload binds, carrying that payload's archive and generation.
+pub(super) fn generation(binary: &Path, bytes: &[u8]) -> Result<Digest, InstallError> {
+    let refused = |reason: String| InstallError::CanvasRefused {
+        path: binary.to_path_buf(),
+        reason,
+    };
+    let archive = dist::linked_archive(bytes).map_err(|error| refused(error.to_string()))?;
+    let generation = serve::canvas::CanvasArchive::admit(archive)
+        .map_err(|error| refused(error.to_string()))?
+        .generation()
+        .clone();
+    let Some((_, target_root)) = package_layout(binary) else {
+        return Ok(generation);
+    };
+    let payload_path = target_root.join("payload.json");
+    let payload_bytes = fs::read(&payload_path)
+        .map_err(|error| InstallError::io("read appliance payload", &payload_path, error))?;
+    let admitted = proof::admit(&payload_bytes)
+        .map_err(|error| InstallError::InvalidRecord(format!("appliance payload: {error}")))?;
+    let payload = admitted.value();
+    let target = target_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(InstallError::BinaryContextChanged)?;
+    if payload.target.as_str() != target
+        || payload.native != Digest::compute(Domain::DistArtifact, bytes)
+        || payload.canvas != Digest::compute(Domain::DistArtifact, archive)
+        || payload.app != generation
+    {
+        return Err(InstallError::BinaryContextChanged);
+    }
+    Ok(generation)
+}
+
+/// The release package root and target directory of a packaged executable.
+pub(super) fn package_layout(binary: &Path) -> Option<(&Path, &Path)> {
+    let bin = binary
+        .parent()
+        .filter(|path| path.file_name().is_some_and(|name| name == "bin"))?;
+    let target = bin.parent()?;
+    let targets = target
+        .parent()
+        .filter(|path| path.file_name().is_some_and(|name| name == "targets"))?;
+    let root = targets.parent()?;
+    root.join("release/package.json")
+        .is_file()
+        .then_some((root, target))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn linked(generation: &Digest) -> Vec<u8> {
+        let declaration = wire::manifest::renderer::encode(&[]).expect("empty declaration encodes");
+        let files = serve::APP
+            .assets()
+            .iter()
+            .map(|asset| {
+                let bytes = if asset.path() == "/" {
+                    format!(
+                        "<main data-app-generation=\"{generation}\" {}=\"{declaration}\"></main>",
+                        wire::manifest::renderer::ATTRIBUTE,
+                    )
+                } else {
+                    format!("fixture {}", asset.file())
+                };
+                (asset.file().to_owned(), bytes.into_bytes())
+            })
+            .collect::<Vec<_>>();
+        let archive = serve::canvas::CanvasArchive::write(
+            files
+                .iter()
+                .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+        )
+        .expect("fixture archive writes");
+        dist::canvas_object(&archive, dist::ObjectTarget::LinuxX86_64)
+    }
+
+    #[test]
+    fn an_executable_names_the_generation_its_linked_archive_carries() {
+        let expected = Digest::compute(Domain::DistArtifact, b"linked canvas");
+        let binary = Path::new("spice");
+        assert_eq!(
+            generation(binary, &linked(&expected)).expect("linked archive admits"),
+            expected
+        );
+        assert!(matches!(
+            generation(binary, b"no linked archive"),
+            Err(InstallError::CanvasRefused { .. })
+        ));
+    }
+}
