@@ -385,8 +385,8 @@ fn admit_plan_transition(
         require_expected(command, &workflow_witness(child))?;
         return Ok(());
     }
-    // A disposition recorded when the plan phase closed stands for the rest
-    // of the flow; closing the plan phase again must state its own.
+    // The one disposition recorded when the plan phase closed stands for every
+    // later phase; closing the plan phase again restates it.
     if owner == entry.born()
         && entry.workflow().phase.as_str() != "plan"
         && snapshot.facts.plan_disposition(owner).is_some()
@@ -422,6 +422,18 @@ fn admit_disposition(
     disposition: &body::PlanDisposition,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let plan = entry.born();
+    if snapshot
+        .facts
+        .plan_disposition(plan)
+        .is_some_and(|recorded| recorded != disposition)
+    {
+        return Err(refusal(
+            "task::disposition-conflict",
+            Some(entry.handle().to_string()),
+            "a Plan records one disposition; complete it without --disposition, or restate the \
+             recorded one when closing its plan phase again",
+        ));
+    }
     let owner = planning::construction_owner(plan, entry.statement().preparation.as_ref());
     if owner != plan
         || entry.workflow().phase.as_str() != "plan"
@@ -433,7 +445,9 @@ fn admit_disposition(
             "record a no-construction disposition only when completing a Plan's own plan phase",
         ));
     }
-    if let Some(output) = snapshot.answer.tasks.iter().find(|task| {
+    // Work the Plan constructed, or any linked work that already satisfies its
+    // construction duty, contradicts a claim that no work is warranted.
+    let constructed = snapshot.answer.tasks.iter().find(|task| {
         task.workflow.body.status.is_pending()
             && task
                 .statement
@@ -441,12 +455,13 @@ fn admit_disposition(
                 .preparation
                 .as_ref()
                 .is_some_and(|preparation| preparation.parent == *plan)
-    }) {
+    });
+    if let Some(output) = constructed.or(accepted_pending_child(snapshot, entry)?) {
         return Err(refusal(
             "task::disposition-beside-output",
             Some(output.statement.body.handle.to_string()),
-            "a Plan with live constructed work completes through that work; settle or delete it \
-             before recording that no work is warranted",
+            "a Plan with live or linked constructed work completes through that work; settle, \
+             unlink, or delete it before recording that no work is warranted",
         ));
     }
     let witnessed = |cover: &wire::TaskStamp| {

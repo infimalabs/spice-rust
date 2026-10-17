@@ -1,5 +1,5 @@
-//! The no-construction disposition each task's latest completion recorded, so
-//! review admission reads it with one lookup.
+//! The one no-construction disposition each Plan recorded when its plan phase
+//! closed, so admission of every later phase reads it with one lookup.
 
 use std::sync::Arc;
 
@@ -9,8 +9,8 @@ use journal::crossing::body::PlanDisposition;
 use super::{Indexes, TaskFacts};
 
 impl Indexes {
-    /// Record `task`'s completion disposition; a completion without one
-    /// retires the earlier record.
+    /// Record `task`'s disposition. Later completions without one leave it in
+    /// place, and admission refuses a second, different one.
     pub(super) fn observe_disposition(
         &mut self,
         task: &TaskStamp,
@@ -18,14 +18,12 @@ impl Indexes {
     ) {
         if let Some(disposition) = disposition {
             Arc::make_mut(&mut self.plan_dispositions).insert(task.clone(), disposition);
-        } else if self.plan_dispositions.contains_key(task) {
-            Arc::make_mut(&mut self.plan_dispositions).remove(task);
         }
     }
 }
 
 impl TaskFacts {
-    /// The no-construction disposition a task's latest completion recorded.
+    /// The no-construction disposition `task` recorded, through settlement.
     #[must_use]
     pub fn plan_disposition(&self, task: &TaskStamp) -> Option<&PlanDisposition> {
         self.indexes.plan_dispositions.get(task)

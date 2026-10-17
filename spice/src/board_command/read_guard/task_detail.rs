@@ -84,7 +84,7 @@ pub(super) struct TaskRecord {
     /// The operator's closure of each closed task; a settled task closes once.
     pub(super) closures:
         std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskDetailClosure>,
-    /// The no-construction disposition each task's latest completion recorded.
+    /// The no-construction disposition each Plan recorded, through settlement.
     pub(super) dispositions:
         std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskDetailDisposition>,
     /// Every done, phase advance, and review verdict.
@@ -144,26 +144,21 @@ pub(super) fn task_record(
                 },
             );
         }
+        // A Plan's one disposition persists through its later, plain completions.
         if let Some(done) = envelope.fact.read::<body::TaskDone>()
             && tasks.contains(&done.task)
+            && let Some(disposition) = done.disposition
         {
-            match done.disposition {
-                Some(disposition) => {
-                    record.dispositions.insert(
-                        done.task,
-                        wire::intent::TaskDetailDisposition {
-                            position: envelope.seq,
-                            at: envelope.at,
-                            author: roles.author(&envelope.actor),
-                            disposition,
-                            validation: done.validation,
-                        },
-                    );
-                }
-                None => {
-                    record.dispositions.remove(&done.task);
-                }
-            }
+            record.dispositions.insert(
+                done.task,
+                wire::intent::TaskDetailDisposition {
+                    position: envelope.seq,
+                    at: envelope.at,
+                    author: roles.author(&envelope.actor),
+                    disposition,
+                    validation: done.validation,
+                },
+            );
         }
         let Some(key) = envelope
             .origin
