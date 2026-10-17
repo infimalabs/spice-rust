@@ -34,8 +34,10 @@
 /// Schema 76 indexes each retained task note that is not a taste-review audit
 /// into its task's room, which an older release's room reads cannot present.
 /// Schema 77 gives the repository-owned OOPS Design generation one typed
-/// singleton authority.
-pub const SCHEMA_VERSION: u32 = 77;
+/// singleton authority. Schema 78 replaces derived preparation authorization
+/// with ordinary dependency edges and closes retained work whose controller
+/// can no longer release it.
+pub const SCHEMA_VERSION: u32 = 78;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

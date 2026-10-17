@@ -933,7 +933,6 @@ fn design_write(at: Instant) -> JournalWrite {
     let statement_provenance = wire::TaskProvenance::Task(born.clone());
     write.task_head(added, move |position| TaskHead {
         preparation: None,
-        authorization: None,
         evidence: Vec::new(),
         intent,
         born: statement_task,
@@ -1196,7 +1195,6 @@ fn attach_task_heads_with_project(
     let provenance = wire::TaskProvenance::Task(task.clone());
     write.task_head(added, move |position| TaskHead {
         preparation: None,
-        authorization: None,
         evidence: Vec::new(),
         intent: None,
         born: statement_task,

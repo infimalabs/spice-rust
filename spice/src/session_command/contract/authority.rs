@@ -93,6 +93,10 @@ fn task_added(
     }
     let title = title.to_owned();
     let project = project.to_owned();
+    let dependencies = preparation
+        .as_ref()
+        .map(|preparation| vec![preparation.parent.clone()])
+        .unwrap_or_default();
     let fact = write
         .fact(
             body::TaskAdded {
@@ -109,7 +113,7 @@ fn task_added(
                 taste: None,
                 document_slug: None,
                 taste_proposal: None,
-                depends: Vec::new(),
+                depends: dependencies.clone(),
                 flow: workflow.flow.clone(),
                 phase: workflow.phase.clone(),
                 revision: 1,
@@ -123,7 +127,6 @@ fn task_added(
     let statement_task = task.clone();
     write.task_head(fact, move |position| wire::TaskHead {
         preparation,
-        authorization: None,
         evidence: Vec::new(),
         intent,
         born: statement_task,
@@ -138,7 +141,7 @@ fn task_added(
         taste: None,
         document_slug: None,
         taste_proposal: None,
-        dependencies: Vec::new(),
+        dependencies,
         provenance: wire::TaskProvenance::Parentless,
         creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision: position,

@@ -390,7 +390,6 @@ fn commit_group(bus: &Bus, group: &str, design: &str) -> JournalCommit {
     let born = task.clone();
     write.task_head(added, move |revision| wire::TaskHead {
         preparation: None,
-        authorization: None,
         evidence: Vec::new(),
         intent: Some(wire::TaskIntent::Design),
         born,

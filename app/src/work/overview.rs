@@ -181,33 +181,12 @@ impl TaskOverviewEdge {
     }
 }
 
-/// A then-style edge from a Design controller to one Plan it prepared.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TaskOverviewPreparation {
-    controller: usize,
-    output: usize,
-}
-
-impl TaskOverviewPreparation {
-    #[must_use]
-    pub const fn controller(self) -> usize {
-        self.controller
-    }
-
-    #[must_use]
-    pub const fn output(self) -> usize {
-        self.output
-    }
-}
-
-/// Complete selected roots plus every direct dependency and each selected
-/// Plan's preparing Design controller, without protocol root/node caps. Missing
-/// and out-of-selection neighbors remain explicit.
+/// Complete selected roots plus every direct dependency, without protocol
+/// root/node caps. Missing and out-of-selection neighbors remain explicit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskOverviewGraph {
     nodes: Vec<TaskOverviewNode>,
     edges: Vec<TaskOverviewEdge>,
-    preparations: Vec<TaskOverviewPreparation>,
 }
 
 impl TaskOverviewGraph {
@@ -219,11 +198,6 @@ impl TaskOverviewGraph {
     #[must_use]
     pub fn edges(&self) -> &[TaskOverviewEdge] {
         &self.edges
-    }
-
-    #[must_use]
-    pub fn preparations(&self) -> &[TaskOverviewPreparation] {
-        &self.preparations
     }
 }
 
@@ -353,36 +327,7 @@ impl WorkProjection<'_> {
             }
         }
 
-        let mut preparations = Vec::new();
-        for output in &selection.tasks {
-            let Some(&task_index) = by_task.get(output) else {
-                continue;
-            };
-            let task = &self.tasks[task_index].row.statement.body;
-            if task.intent != Some(wire::TaskIntent::Plan) {
-                continue;
-            }
-            let Some(preparation) = &task.preparation else {
-                continue;
-            };
-            let controller = neighbor(
-                &mut nodes,
-                &mut node_by_task,
-                &by_task,
-                &selected,
-                &preparation.controller,
-            );
-            preparations.push(TaskOverviewPreparation {
-                controller,
-                output: node_by_task[output],
-            });
-        }
-
-        TaskOverviewGraph {
-            nodes,
-            edges,
-            preparations,
-        }
+        TaskOverviewGraph { nodes, edges }
     }
 }
 

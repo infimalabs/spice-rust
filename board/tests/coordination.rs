@@ -97,7 +97,6 @@ fn statement(name: &str) -> TaskHead {
     let born = stamp(name);
     TaskHead {
         preparation: None,
-        authorization: None,
         evidence: Vec::new(),
         intent: None,
         born: born.clone(),
@@ -1087,15 +1086,20 @@ fn constructed(
     selected_by: Option<&str>,
     dependencies: Vec<TaskStamp>,
 ) -> Entry {
+    let parent = stamp(parent);
+    let controller = stamp(controller);
+    let selected_by = selected_by.map(stamp);
+    let mut dependencies = dependencies;
+    if selected_by.as_ref() != Some(&controller) && !dependencies.contains(&parent) {
+        dependencies.push(parent.clone());
+    } else if selected_by.as_ref() == Some(&controller) {
+        dependencies.retain(|dependency| dependency != &parent);
+    }
     let head = TaskHead {
         preparation: Some(wire::TaskPreparation {
-            parent: stamp(parent),
-            controller: stamp(controller),
+            parent,
+            controller,
             construction: stamp("BOARD-output"),
-        }),
-        authorization: selected_by.map(|owner| wire::rooms::DecisionRef {
-            controller: stamp(owner),
-            decision: wire::SequenceCode::new(1),
         }),
         intent,
         dependencies,
@@ -1131,19 +1135,19 @@ fn a_design_output_is_eligible_only_under_that_designs_selection() {
         let selected = Some("BOARD-design");
         for (reason, output, design) in [
             (
-                "positive completion alone",
+                "an unselected output",
                 output(None, Vec::new()),
-                design(Standing::Positive),
+                design(Standing::Open),
             ),
             (
                 "another controller's authorization",
                 output(Some("BOARD-other"), Vec::new()),
-                design(Standing::Positive),
+                design(Standing::Open),
             ),
             (
                 "an open ordinary dependency",
                 output(selected, vec![stamp("BOARD-blocker")]),
-                design(Standing::Positive),
+                design(Standing::Open),
             ),
         ] {
             assert!(
@@ -1191,7 +1195,7 @@ fn speculative_design_work_ends_at_exact_execution_authorization() {
         "BOARD-design",
         None,
         None,
-        vec![stamp("BOARD-plan"), stamp("BOARD-design")],
+        vec![stamp("BOARD-plan")],
     );
     let remains =
         |entry: &Entry| resolved.speculative_design_work(entry.statement(), entry.workflow());
@@ -1203,7 +1207,7 @@ fn speculative_design_work_ends_at_exact_execution_authorization() {
     assert!(!remains(&plan));
     assert!(!remains(&plan_output));
     assert!(!remains(&ordinary));
-    assert!(remains(&nested_output));
+    assert!(!remains(&nested_output));
 
     let released_design = planning("BOARD-design", wire::TaskIntent::Design, Standing::Positive);
     let released = board::resolved_tasks(&[
@@ -1225,16 +1229,11 @@ fn speculative_design_work_ends_at_exact_execution_authorization() {
 fn a_plan_output_waits_only_for_its_plans_positive_conclusion() {
     let plan = |standing| planning("BOARD-plan", wire::TaskIntent::Plan, standing);
     let task = |dependencies| constructed("BOARD-plan", "BOARD-plan", None, None, dependencies);
-    for (reason, plan) in [
-        ("an open Plan", plan(Standing::Open)),
-        ("an operator-closed Plan", plan(Standing::Closed)),
-        ("a deleted Plan", plan(Standing::Deleted)),
-    ] {
-        assert!(
-            !first_eligible(&[task(Vec::new()), plan]),
-            "{reason} must leave its task gated"
-        );
-    }
+    let open = plan(Standing::Open);
+    assert!(
+        !first_eligible(&[task(Vec::new()), open]),
+        "an open Plan must leave its task gated"
+    );
     assert!(
         !first_eligible(&[
             task(vec![stamp("BOARD-blocker")]),
@@ -1270,7 +1269,7 @@ fn a_plan_output_waits_only_for_its_plans_positive_conclusion() {
         );
     }
     assert!(
-        first_eligible(&[
+        !first_eligible(&[
             constructed(
                 "BOARD-plan",
                 "BOARD-plan",
@@ -1280,7 +1279,7 @@ fn a_plan_output_waits_only_for_its_plans_positive_conclusion() {
             ),
             plan(Standing::Open),
         ]),
-        "a preparation a Plan constructs runs alongside it"
+        "a sub-Plan waits for its parent Plan"
     );
 }
 
@@ -1377,9 +1376,14 @@ fn named_output_with(
     dependencies: Vec<TaskStamp>,
     claimed: bool,
 ) -> Entry {
+    let parent = stamp(parent);
+    let mut dependencies = dependencies;
+    if !dependencies.contains(&parent) {
+        dependencies.push(parent.clone());
+    }
     let mut head = statement(name);
     head.preparation = Some(wire::TaskPreparation {
-        parent: stamp(parent),
+        parent,
         controller: stamp(controller),
         construction: head.born.clone(),
     });

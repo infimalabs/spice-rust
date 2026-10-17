@@ -784,13 +784,6 @@ pub struct BoardStatement {
         deserialize_with = "crate::optional::present"
     )]
     pub preparation: Option<crate::TaskPreparation>,
-    /// Selected decision whose execution authorization released this output.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub authorization: Option<crate::rooms::DecisionRef>,
     /// Question results required answered before positive phase completion.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<crate::rooms::QuestionResultRef>,
@@ -824,7 +817,6 @@ impl From<&crate::TaskHead> for BoardStatement {
             dependencies: statement.dependencies.clone(),
             intent: statement.intent,
             preparation: statement.preparation.clone(),
-            authorization: statement.authorization.clone(),
             evidence: statement.evidence.clone(),
             provenance: statement.provenance.clone(),
             creation: statement.creation.clone(),
@@ -857,23 +849,12 @@ impl BoardStatement {
             dependencies: self.dependencies.clone(),
             intent: self.intent,
             preparation: self.preparation.clone(),
-            authorization: self.authorization.clone(),
             evidence: self.evidence.clone(),
             provenance: self.provenance.clone(),
             creation: self.creation.clone(),
             revision: self.revision,
         }
     }
-}
-
-/// Why one pending task can no longer pass its preparation gate.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskStranding {
-    /// Controller whose terminal negative disposition made release impossible.
-    pub controller: TaskHandle,
-    /// Exact operator command that settles this task explicitly.
-    pub settle: String,
 }
 
 /// One complete current task evidence bundle in a board read answer.
@@ -940,13 +921,6 @@ pub struct BoardTask {
         deserialize_with = "crate::optional::present"
     )]
     pub collapse_reason: Option<String>,
-    /// Terminal controller that can no longer release this pending task.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub stranded: Option<TaskStranding>,
     /// Pending work this task's negative settlement would close atomically.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub controlled: Vec<TaskHandle>,
@@ -1107,7 +1081,6 @@ impl BoardTask {
             design_cycle: crate::rooms::DesignCycleFacts::default(),
             preparation_decision: None,
             collapse_reason: None,
-            stranded: None,
             controlled: Vec::new(),
             claim_context: None,
             git_context: None,
@@ -1156,13 +1129,6 @@ impl BoardTask {
     #[must_use]
     pub fn with_collapse_reason(mut self, reason: Option<String>) -> Self {
         self.collapse_reason = reason;
-        self
-    }
-
-    /// Attach a terminal preparation controller that can no longer release this task.
-    #[must_use]
-    pub fn with_stranding(mut self, stranded: Option<TaskStranding>) -> Self {
-        self.stranded = stranded;
         self
     }
 

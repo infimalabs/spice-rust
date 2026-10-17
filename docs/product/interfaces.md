@@ -159,7 +159,7 @@ task handles instead, and `preparation nudge` one open Design's handle.
 | Late answer | the immutable deadline | `room::deadline-passed`: close with `spice room cancel RESULT --clause TEXT --override` |
 | Answer or close by a non-party | stored parties only | `room::not-respondent` or `room::override-required`, naming the `--override` command |
 | Required evidence | each result answered | `task::evidence-unsatisfied`: ask again, or the operator replaces or waives it |
-| Positive Design conclusion with gated outputs | none unselected | `preparation::controlled-outputs-pending`: select the exact subset with `preparation decide`, or close or delete each unselected output |
+| Terminal Design or negative Plan settlement | every pending downstream dependency branch closes in the same transaction | a held branch refuses `task::controlled-descendant-claimed` and names its holder unless explicit force is permitted |
 | Candidate or decision controller | an open Design | `preparation::controller-not-design` or `preparation::controller-concluded`: a Plan's outputs follow its positive review |
 | Selecting Design outputs | no pending Design dependency, including review corrections | `preparation::controller-blocked`: settle the dependency first, so a finding keeps the Design pending |
 

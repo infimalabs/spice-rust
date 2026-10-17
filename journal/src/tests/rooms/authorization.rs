@@ -189,7 +189,7 @@ fn coverage_authority_is_its_writer_and_never_gates_selection() {
 }
 
 #[test]
-fn authorization_leaves_its_controller_open_and_no_edit_moves_it() {
+fn authorization_releases_its_output_and_leaves_its_controller_open() {
     let mut journal = Journal::in_memory().expect("journal");
     let preparation = Preparation::new(&mut journal);
     commit(
@@ -232,8 +232,8 @@ fn authorization_leaves_its_controller_open_and_no_edit_moves_it() {
         refused(&journal, result);
     }
     authorize(&mut journal, exact).expect("exact selection authorized");
-    let granted = statement(&journal, &preparation.output).authorization;
-    assert_eq!(granted, Some(preparation.decision_ref(1)));
+    let released = statement(&journal, &preparation.output);
+    assert!(!released.dependencies.contains(&preparation.controller));
     let controller = journal
         .read(|read| read.workflow_head(&preparation.controller))
         .expect("controller workflow reads")
@@ -244,43 +244,12 @@ fn authorization_leaves_its_controller_open_and_no_edit_moves_it() {
         "selection leaves the Design open"
     );
 
-    // An ordinary edit keeps the grant; no edit drops it or forges another.
     edit_project(&mut journal, &preparation.output, "elsewhere");
-    assert_eq!(
-        statement(&journal, &preparation.output).authorization,
-        granted
+    assert!(
+        !statement(&journal, &preparation.output)
+            .dependencies
+            .contains(&preparation.controller)
     );
-    for (task, authorization) in [
-        (&preparation.output, None),
-        (&preparation.spare, granted.clone()),
-    ] {
-        let head = statement(&journal, task);
-        let mut write = write();
-        let fact = write
-            .fact(
-                wire::body::TaskEdited {
-                    task: task.clone(),
-                    revision: 3,
-                    dependencies: None,
-                    intent: None,
-                    evidence: None,
-                },
-                FactCause::Root,
-            )
-            .expect("edit fact builds");
-        write.task_head(fact, move |revision| TaskHead {
-            authorization,
-            revision,
-            ..head
-        });
-        let result = journal.apply(write);
-        assert!(
-            matches!(&result, Err(CommitError::Refused(refusal))
-                if refusal.to_string().contains("statement authorization")),
-            "an edit cannot move an authorization: {result:?}"
-        );
-        refused(&journal, result);
-    }
     journal.verify().expect("settled authorization verifies");
 }
 
@@ -363,7 +332,11 @@ fn a_controller_concluded_without_authorization_never_authorizes() {
         "authorization cannot follow completion: {result:?}"
     );
     refused(&journal, result);
-    assert_eq!(statement(&journal, &preparation.output).authorization, None);
+    assert!(
+        statement(&journal, &preparation.output)
+            .dependencies
+            .contains(&preparation.controller)
+    );
     journal.verify().expect("unauthorized completion verifies");
 }
 

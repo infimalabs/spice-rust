@@ -811,10 +811,9 @@ fn stored_open_design(connection: &Connection, task: &TaskStamp) -> Result<bool,
 /// task heads it names carrying exactly that authority at its fact, and no
 /// statement this write moved disagrees with the authorization projection.
 ///
-/// Control writes the output's preparation. Authorization writes each
-/// selected output's statement authorization and leaves its controlling
-/// Design open, so a selection can never conclude the Design, and no edit can
-/// grant, change, or drop an authorization.
+/// Control writes the output's preparation and gating dependency.
+/// Authorization removes each selected output's Design dependency and leaves
+/// its controlling Design open, so selection can never conclude the Design.
 pub(crate) fn settle_controls<'a>(
     connection: &Connection,
     facts: impl IntoIterator<Item = (Seq, &'a AnyFact)>,
@@ -825,7 +824,9 @@ pub(crate) fn settle_controls<'a>(
         if let Some(control) = fact.read::<wire::rooms::OutputControlled>() {
             let head = stored::<wire::TaskHead>(connection, STATEMENT, &control.output)?;
             if !head.is_some_and(|(_, head)| {
-                head.revision == seq && head.preparation.as_ref() == Some(&control.preparation)
+                head.revision == seq
+                    && head.preparation.as_ref() == Some(&control.preparation)
+                    && head.dependencies.contains(&control.preparation.parent)
             }) {
                 return unsound(format!(
                     "output {} control at {seq} has no task head carrying its preparation",
@@ -837,7 +838,10 @@ pub(crate) fn settle_controls<'a>(
                 let head = stored::<wire::TaskHead>(connection, STATEMENT, output)?;
                 if !head.is_some_and(|(_, head)| {
                     head.revision == seq
-                        && head.authorization.as_ref() == Some(&authorization.decision)
+                        && head.preparation.as_ref().is_some_and(|preparation| {
+                            preparation.parent == authorization.decision.controller
+                                && !head.dependencies.contains(&preparation.parent)
+                        })
                 }) {
                     return unsound(format!(
                         "selected output {output} authorization at {seq} has no task head \
@@ -859,31 +863,19 @@ pub(crate) fn settle_controls<'a>(
     }
 }
 
-/// Each statement written in `first..=last` carries exactly the decision its
-/// output's authorization head names, or none when it has no such head, and
-/// exactly the evidence explicit evidence changes left it requiring.
+/// Each statement written in `first..=last` carries exactly the evidence that
+/// explicit evidence changes left it requiring.
 fn settle_statements(connection: &Connection, first: Seq, last: Seq) -> Result<(), Refusal> {
     let mut required = connection.prepare("SELECT result FROM task_evidence WHERE task = ?1")?;
     let mut statement = connection.prepare(
-        "SELECT statement.stamp, statement.body, authorization.decision \
+        "SELECT statement.stamp, statement.body \
          FROM task_heads AS statement \
-         LEFT JOIN authorization_heads AS authorization ON authorization.output = statement.stamp \
          WHERE statement.head_seq BETWEEN ?1 AND ?2",
     )?;
     let mut rows = statement.query(params![sql(first.get()), sql(last.get())])?;
     while let Some(row) = rows.next()? {
         let stamp: String = row.get(0)?;
         let head: wire::TaskHead = wire::decode(&row.get::<_, Vec<u8>>(1)?)?;
-        let authorized: Option<String> = row.get(2)?;
-        let carried = head
-            .authorization
-            .map(|decision| super::subject(&wire::rooms::ProposalRef::Decision { decision }))
-            .transpose()?;
-        if carried != authorized {
-            return unsound(format!(
-                "task {stamp} statement authorization disagrees with its execution authorization"
-            ));
-        }
         let projected = required
             .query_map([&stamp], |row| row.get::<_, String>(0))?
             .collect::<Result<std::collections::BTreeSet<_>, _>>()?;

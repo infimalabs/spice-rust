@@ -175,15 +175,6 @@ fn push_local_then_edges(
         }
         push_edge(edges, keys, prerequisite, dependent, label);
     }
-    for preparation in local.preparations() {
-        let (Some(&controller), Some(&output)) = (
-            local_to_merged.get(&preparation.controller()),
-            local_to_merged.get(&preparation.output()),
-        ) else {
-            continue;
-        };
-        push_edge(edges, keys, controller, output, label);
-    }
 }
 
 fn included_nodes(

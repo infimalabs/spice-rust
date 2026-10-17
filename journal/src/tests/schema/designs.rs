@@ -69,7 +69,6 @@ fn add(journal: &mut Journal, shape: Shape<'_>) -> TaskStamp {
     let dependencies = shape.dependencies;
     write.task_head(fact, move |revision| wire::TaskHead {
         preparation,
-        authorization: None,
         evidence: Vec::new(),
         intent: shape.intent,
         born,
@@ -210,7 +209,7 @@ fn dependencies(journal: &Journal, task: &TaskStamp) -> Vec<TaskStamp> {
 }
 
 #[test]
-fn open_designs_cross_once_onto_their_open_phase_and_release_their_outputs_edges() {
+fn open_designs_cross_once_onto_their_open_phase_and_dependency_edges() {
     let mut journal = Journal::in_memory().expect("journal");
     let retained = retained(&mut journal);
     let concluded = workflow(&journal, &retained.concluded);
@@ -235,13 +234,26 @@ fn open_designs_cross_once_onto_their_open_phase_and_release_their_outputs_edges
         "a concluded Design keeps its head"
     );
     for (task, kept) in [
-        (&retained.plan, Vec::new()),
-        (&retained.output, vec![retained.blocker.clone()]),
+        (&retained.plan, vec![retained.open.clone()]),
+        (
+            &retained.output,
+            vec![retained.blocker.clone(), retained.open.clone()],
+        ),
         (&retained.planned, vec![retained.plan.clone()]),
-        (&retained.concluded_output, vec![retained.concluded.clone()]),
+        (&retained.concluded_output, Vec::new()),
     ] {
-        assert_eq!(dependencies(&journal, task), kept);
+        assert_eq!(
+            dependencies(&journal, task),
+            kept,
+            "dependencies for {task}"
+        );
     }
+    assert!(
+        workflow(&journal, &retained.concluded_output)
+            .status
+            .is_completed(),
+        "retained output behind a concluded Design closes"
+    );
     journal.verify().expect("crossed Designs verify");
 
     let crossed = (

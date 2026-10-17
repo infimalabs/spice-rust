@@ -234,10 +234,6 @@ pub(super) fn client_preparation_decide(
             }
             for output in decision.outcome.accepted_outputs() {
                 expected.extend(transition_witnesses(task(board, output)?));
-                expected.push(Witness::Authorization {
-                    output: output.clone(),
-                    head: None,
-                });
             }
         }
         Ok((

@@ -32,7 +32,6 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
             position: seq(1),
             body: BoardStatement {
                 preparation: None,
-                authorization: None,
                 evidence: Vec::new(),
                 intent: None,
                 handle: wire::TaskHandle::for_project(project, &born),
@@ -74,7 +73,6 @@ pub(crate) fn task(value: i64, project: &str) -> BoardTask {
         preparation_decision: None,
         collapse_reason: None,
         controlled: Vec::new(),
-        stranded: None,
         claim_context: None,
         git_context: None,
         parked_commits: None,

@@ -139,7 +139,7 @@ fn draft_filing(
             ));
         }
         let parent = task_heads(&snapshot.answer, named)?;
-        planning::bind_preparation(&snapshot.answer, command, parent, statement)?;
+        planning::bind_preparation(command, parent, statement, &workflow.flow)?;
     }
     planning::admit_design_flow(statement.intent, &workflow.flow)?;
     planning::admit_gather_design(

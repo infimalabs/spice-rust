@@ -217,7 +217,7 @@ fn oops_decision_refuses_when_a_previewed_line_head_moves() {
             .expect("task birth instant is a room authority instant"),
     };
     let decision = DecisionRef {
-        controller: design_stamp,
+        controller: design_stamp.clone(),
         decision: wire::SequenceCode::new(1),
     };
     let expected = vec![
@@ -291,12 +291,12 @@ fn oops_decision_refuses_when_a_previewed_line_head_moves() {
     );
     assert!(matches!(refused, Outcome::Refusal(_)), "{refused:?}");
     assert_eq!(fact_count(&bus), facts);
-    assert_eq!(
+    assert!(
         at(&board(&bus, epoch, Actor::Operator), &line)
             .statement
             .body
-            .authorization,
-        None
+            .dependencies
+            .contains(&design_stamp)
     );
     clean(&root, bus);
 }
@@ -491,7 +491,7 @@ fn oops_lines_share_one_design_and_exact_decisions_leave_new_arrivals_for_the_ne
         third_stamp,
         "Concurrent friction",
     );
-    let decision = decide_two_lines(
+    let _decision = decide_two_lines(
         &bus,
         epoch,
         &design_stamp,
@@ -501,12 +501,27 @@ fn oops_lines_share_one_design_and_exact_decisions_leave_new_arrivals_for_the_ne
     );
 
     let decided = board(&bus, epoch, Actor::Operator);
-    assert_eq!(
-        at(&decided, &first).statement.body.authorization,
-        Some(decision)
+    assert!(
+        !at(&decided, &first)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
     );
-    assert_eq!(at(&decided, &second).statement.body.authorization, None);
-    assert_eq!(at(&decided, &third).statement.body.authorization, None);
+    assert!(
+        at(&decided, &second)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
+    );
+    assert!(
+        at(&decided, &third)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
+    );
     assert!(at(&decided, &design).workflow.body.status.is_pending());
 
     collapse_and_open_next_generation(&bus, epoch, design);
@@ -545,7 +560,7 @@ fn retained_report_identities_are_decided_without_reminting() {
         "Later friction",
     );
     let design = TaskHandle::for_project(wire::OOPS_DESIGN_PROJECT, &design_stamp);
-    let decision = decide_two_lines(
+    let _decision = decide_two_lines(
         &bus,
         epoch,
         &design_stamp,
@@ -555,12 +570,27 @@ fn retained_report_identities_are_decided_without_reminting() {
     );
 
     let decided = board(&bus, epoch, Actor::Operator);
-    assert_eq!(
-        at(&decided, &first).statement.body.authorization,
-        Some(decision)
+    assert!(
+        !at(&decided, &first)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
     );
     assert_eq!(at(&decided, &second).statement.body.born, retained);
-    assert_eq!(at(&decided, &second).statement.body.authorization, None);
-    assert_eq!(at(&decided, &later).statement.body.authorization, None);
+    assert!(
+        at(&decided, &second)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
+    );
+    assert!(
+        at(&decided, &later)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
+    );
     clean(&root, bus);
 }

@@ -252,7 +252,6 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
     let statement_task = task.clone();
     write.task_head(fact, move |revision| TaskHead {
         preparation: None,
-        authorization: None,
         evidence: Vec::new(),
         intent: None,
         born: statement_task,

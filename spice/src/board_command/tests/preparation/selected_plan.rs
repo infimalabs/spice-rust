@@ -96,9 +96,10 @@ fn closing_a_selected_plan_settles_its_unreviewed_work_and_collapse_leaves_it_to
     assert!(open_workflow_waiting(&bus, epoch).contains(&task_stamp));
     assert!(
         at(&board(&bus, epoch, Actor::Operator), &task)
-            .stranded
-            .is_none(),
-        "work a live selected Plan can still release is not stranded"
+            .statement
+            .body
+            .dependencies
+            .contains(&plan.born().expect("Plan stamp"))
     );
 
     assert_eq!(

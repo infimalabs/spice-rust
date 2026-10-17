@@ -1,11 +1,7 @@
-//! Preparation-control settlement and stranded-work classification.
+//! Preparation settlement through ordinary dependency edges.
 //!
-//! Every pending construction root waits on exactly one gate: the task whose
-//! positive act would release it. A Design gates each output it has not
-//! selected; any other preparing parent, a selected Plan included, gates what
-//! it prepared until it concludes positively. Settling a gate negatively
-//! leaves everything it gates, and everything those gate in turn, with nothing
-//! able to release it.
+//! Every pending task downstream of a settling Plan or Design is in its gated
+//! closure while the corresponding dependency edges remain.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,9 +9,9 @@ use wire::{TaskIntent, TaskStamp};
 
 use crate::Entry;
 
-/// Pending work each Plan or Design can no longer release once it settles
-/// negatively: every pending task it gates, then every pending task those
-/// gate in turn.
+/// Pending work each Plan or Design gates through ordinary dependency edges.
+///
+/// Settlement policy decides which controller outcomes consume this closure.
 #[must_use]
 pub fn controlled_pending_tasks(entries: &[Entry]) -> BTreeMap<TaskStamp, Vec<TaskStamp>> {
     let gated = pending_by_gate(entries);
@@ -34,18 +30,6 @@ pub fn controlled_pending_tasks(entries: &[Entry]) -> BTreeMap<TaskStamp, Vec<Ta
         .collect()
 }
 
-/// Preparation roots no gate holds: released by their controller's exact
-/// selection or by their preparing parent's positive conclusion, and every
-/// task inside another task's construction.
-pub(crate) fn released_tasks(entries: &[Entry]) -> BTreeSet<TaskStamp> {
-    let indexed = index(entries);
-    entries
-        .iter()
-        .filter(|entry| entry.statement().preparation.is_some() && gate(entry, &indexed).is_none())
-        .map(|entry| entry.born().clone())
-        .collect()
-}
-
 /// Pending work the Plan or Design `controller` still gates, directly or
 /// through other pending work; empty for any other task.
 #[must_use]
@@ -60,63 +44,11 @@ pub fn controlled_pending<'a>(entries: &'a [Entry], controller: &TaskStamp) -> V
         .collect()
 }
 
-/// Pending tasks a negatively settled Plan or Design still gates, directly or
-/// through other pending work, keyed by task identity to that controller.
-#[must_use]
-pub fn stranded_tasks(entries: &[Entry]) -> BTreeMap<TaskStamp, TaskStamp> {
-    let gated = pending_by_gate(entries);
-    entries
-        .iter()
-        .filter(|entry| {
-            entry
-                .statement()
-                .intent
-                .is_some_and(|intent| intent == TaskIntent::Plan || intent.is_design())
-                && settled_negatively(entry)
-        })
-        .flat_map(|entry| {
-            gated_closure(&gated, entry.born())
-                .into_iter()
-                .map(|task| (task, entry.born().clone()))
-        })
-        .collect()
-}
-
-fn index(entries: &[Entry]) -> BTreeMap<&TaskStamp, &Entry> {
-    entries.iter().map(|entry| (entry.born(), entry)).collect()
-}
-
-/// The task whose positive act would release `entry`, or `None` when nothing
-/// holds it.
-fn gate<'a>(entry: &'a Entry, indexed: &BTreeMap<&TaskStamp, &Entry>) -> Option<&'a TaskStamp> {
-    let preparation = entry.statement().preparation.as_ref()?;
-    if preparation.construction != *entry.born() || preparation.parent == *entry.born() {
-        return None;
-    }
-    if entry
-        .statement()
-        .authorization
-        .as_ref()
-        .is_some_and(|decision| decision.controller == preparation.controller)
-    {
-        return None;
-    }
-    if preparation.parent == preparation.controller {
-        return Some(&preparation.controller);
-    }
-    let released_by_parent = indexed.get(&preparation.parent).is_some_and(|parent| {
-        !parent.statement().intent.is_some_and(TaskIntent::is_design)
-            && parent.workflow().concluded_positively()
-    });
-    (!released_by_parent).then_some(&preparation.parent)
-}
-
 fn pending_by_gate(entries: &[Entry]) -> BTreeMap<&TaskStamp, Vec<&TaskStamp>> {
-    let indexed = index(entries);
     let mut gated = BTreeMap::<&TaskStamp, Vec<&TaskStamp>>::new();
     for entry in entries.iter().filter(|entry| pending(entry)) {
-        if let Some(gate) = gate(entry, &indexed) {
-            gated.entry(gate).or_default().push(entry.born());
+        for dependency in &entry.statement().dependencies {
+            gated.entry(dependency).or_default().push(entry.born());
         }
     }
     gated
@@ -143,11 +75,4 @@ fn gated_closure(
 
 fn pending(entry: &Entry) -> bool {
     entry.workflow().status.is_pending()
-}
-
-fn settled_negatively(entry: &Entry) -> bool {
-    matches!(
-        entry.workflow().status.conclusion(),
-        Some(wire::WorkflowConclusion::Negative(_))
-    )
 }

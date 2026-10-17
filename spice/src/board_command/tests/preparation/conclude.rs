@@ -176,7 +176,7 @@ fn the_operator_alone_concludes_an_unheld_open_design() {
 }
 
 #[test]
-fn conclusion_and_closure_each_refuse_the_other_purpose() {
+fn conclusion_remains_design_only_while_ordinary_close_can_settle_a_design() {
     let (root, bus, epoch, _seats) = fixture("design-conclude-purpose", 1);
     let design = add_controller(&bus, epoch, "Closed design", wire::TaskIntent::Design, None);
     let plan = add_plan(&bus, epoch, "Concluded plan");
@@ -210,8 +210,8 @@ fn conclusion_and_closure_each_refuse_the_other_purpose() {
             force_claimed: true,
         },
     );
-    assert_eq!(refusal_reason(&closed), "task::close-design");
-    assert!(workflow(&bus, epoch, &design).status.is_pending());
+    assert_committed(closed);
+    assert!(workflow(&bus, epoch, &design).status.is_completed());
     clean(&root, bus);
 }
 

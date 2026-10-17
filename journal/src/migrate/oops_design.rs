@@ -395,7 +395,6 @@ fn append_design_heads(
         dependencies: Vec::new(),
         intent: Some(wire::TaskIntent::OpportunisticDesign),
         preparation: None,
-        authorization: None,
         evidence: Vec::new(),
         provenance,
         creation,

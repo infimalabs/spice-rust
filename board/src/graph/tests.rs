@@ -25,7 +25,6 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
     let origin = wire::TaskProvenance::Task(task.clone());
     let statement = TaskHead {
         preparation: None,
-        authorization: None,
         evidence: Vec::new(),
         intent: None,
         born: task,

@@ -309,7 +309,12 @@ fn decided_rejections_end_selection_wait_without_releasing_outputs() {
     assert_eq!(wait_of(&all_rejected, "DECIDE-design"), None);
     assert!(first_eligible(&all_rejected));
     for output in &all_rejected[1..] {
-        assert_eq!(output.statement().authorization, None);
+        assert!(
+            output
+                .statement()
+                .dependencies
+                .contains(&stamp("DECIDE-design"))
+        );
         assert!(output.preparation_decision().is_some());
         assert!(
             !board::eligible_entry(
@@ -338,16 +343,17 @@ fn decided_rejections_end_selection_wait_without_releasing_outputs() {
 /// A filed output `name` under `controller`'s control: selected by that Design
 /// when it is the preparing `parent`, otherwise prepared by `parent`.
 fn released_output(name: &str, parent: &str, controller: &str, workflow: WorkflowHead) -> Entry {
+    let parent = stamp(parent);
+    let controller = stamp(controller);
     let mut head = statement(name);
     head.preparation = Some(wire::TaskPreparation {
-        parent: stamp(parent),
-        controller: stamp(controller),
+        parent: parent.clone(),
+        controller: controller.clone(),
         construction: head.born.clone(),
     });
-    head.authorization = (parent == controller).then(|| wire::rooms::DecisionRef {
-        controller: stamp(controller),
-        decision: wire::SequenceCode::new(1),
-    });
+    if parent != controller {
+        head.dependencies.push(parent);
+    }
     admitted(head, workflow, None, None).expect("released output")
 }
 

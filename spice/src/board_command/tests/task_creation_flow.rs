@@ -471,7 +471,13 @@ fn an_ambient_plan_releases_its_output_on_positive_completion_without_selection(
     ));
     let concluded = board(&bus, epoch, worker.clone());
     assert!(at(&concluded, &plan).workflow.body.status.is_completed());
-    assert_eq!(at(&concluded, &child).statement.body.authorization, None);
+    assert!(
+        at(&concluded, &child)
+            .statement
+            .body
+            .dependencies
+            .contains(&plan.born().expect("Plan stamp"))
+    );
     offered(
         true,
         "the concluded plan releases its output without selection",
@@ -521,6 +527,54 @@ fn explicit_dependencies_suppress_the_ambient_link() {
             .expect("fixture prerequisite has a birth stamp")]
     );
 
+    clean(&root, bus);
+}
+#[test]
+fn every_ambient_planning_child_waits_on_its_parent_plan() {
+    let (root, bus, epoch, seats) = fixture("ambient-subplan", 1);
+    let seat = &seats[0];
+    authorize_lane_creation(&bus, epoch, seat);
+    let parent = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "PLAN-subparent",
+        "Parent Plan",
+        Some("plan"),
+    );
+    let planner = Actor::Lane(seat.lane);
+    claim_task(&bus, epoch, seat, &planner, &parent);
+    let mut children = Vec::new();
+    for (name, intent, flow) in [
+        ("PLAN-subplan01", wire::TaskIntent::Plan, "plan,review"),
+        ("DESIGN-child01", wire::TaskIntent::Design, "design"),
+    ] {
+        let born = stamp(name);
+        let child = TaskHandle::for_project("task.workflow", &born);
+        let held = board(&bus, epoch, planner.clone());
+        let mut add = accepted_child();
+        add.intent = Some(intent);
+        add.flow = Some(flow.to_owned());
+        assert_committed(issue(
+            &bus,
+            epoch,
+            planner.clone(),
+            CommandKind::TaskAdd,
+            public_task_add_expected(&held, &add, born.clone()),
+            &add,
+        ));
+        children.push((born, child));
+    }
+
+    let current = board(&bus, epoch, Actor::Operator);
+    let parent = parent.born().expect("parent Plan stamp");
+    for (born, child) in children {
+        assert_eq!(
+            at(&current, &child).statement.body.dependencies,
+            [parent.clone()]
+        );
+        assert!(!current.offer.contains(&born));
+    }
     clean(&root, bus);
 }
 

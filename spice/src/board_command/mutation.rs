@@ -599,7 +599,6 @@ fn prepare_task_for(
     let at = current_instant()?;
     let statement = TaskHead {
         preparation: None,
-        authorization: None,
         evidence: Vec::new(),
         intent: add.intent,
         born: born.clone(),

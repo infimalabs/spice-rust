@@ -214,7 +214,7 @@ fn opportunistic_candidate(
         .filter(|task| {
             task.workflow.body.status.is_pending()
                 && task.statement.body.intent == Some(wire::TaskIntent::Plan)
-                && task.statement.body.authorization.is_none()
+                && task.statement.body.dependencies.contains(design)
                 && task
                     .statement
                     .body
@@ -606,11 +606,7 @@ fn render_output(
         };
     };
     let statement = &task.statement.body;
-    let standing = if statement.authorization.is_some() {
-        "authorized".to_owned()
-    } else {
-        task.workflow.body.status.as_str().to_owned()
-    };
+    let standing = output_standing(task);
     html! {
         <li data-approval-output={output.to_string()}>
             <div class="room-approval-output-title">
@@ -630,6 +626,18 @@ fn render_output(
                 <p class="room-approval-acceptance">{"No acceptance criteria recorded."}</p>
             }
         </li>
+    }
+}
+
+fn output_standing(task: &BoardTask) -> &str {
+    let statement = &task.statement.body;
+    if statement.preparation.as_ref().is_some_and(|preparation| {
+        preparation.construction == statement.born
+            && !statement.dependencies.contains(&preparation.parent)
+    }) {
+        "authorized"
+    } else {
+        task.workflow.body.status.as_str()
     }
 }
 

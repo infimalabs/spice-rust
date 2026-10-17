@@ -8,21 +8,15 @@ use crate::urgency::{Urgency, declared_priority};
 
 /// Readiness facts every allocation surface shares.
 ///
-/// Ordinary dependencies require settlement: each settled task records whether
-/// it ended positively. Controlled outputs also require that their controller
-/// has not settled negatively, and an output of a Plan further requires that
-/// Plan's positive completion. An output whose immediate preparation is a
-/// Design instead requires that Design's exact selection, which never
-/// concludes it, so each known preparation parent records whether it is a
-/// Design and whether the working-group partition holds it. Each controller
-/// whose released work is still in progress is recorded too, so its Design
-/// waits on that work.
+/// Ordinary dependencies require settlement. Preparation control uses those
+/// same edges: a Design decision removes selected output edges, while a Plan's
+/// positive settlement satisfies its constructed work. Gather tasks carry no
+/// edge and instead run only while their Design is open and active.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResolvedTasks {
     settled: BTreeMap<TaskStamp, bool>,
     designs: BTreeMap<TaskStamp, bool>,
     active_designs: BTreeSet<TaskStamp>,
-    released: BTreeSet<TaskStamp>,
     working: BTreeSet<TaskStamp>,
 }
 
@@ -49,11 +43,9 @@ impl ResolvedTasks {
         self.active_designs.insert(task);
     }
 
-    /// Record each controller whose released work is still in progress among
-    /// `entries`: a filed, pending task, deferred or not, never a gather
-    /// task, whose control allocation already treats as satisfied. Deferral
-    /// never settles released work. Call it once every readiness fact those
-    /// entries read has been recorded.
+    /// Record each Design controller whose selected work is still in progress.
+    /// A selected direct output has had its Design edge removed; a descendant
+    /// becomes working after its ordinary preparation dependencies settle.
     pub fn hold_released_work<'a>(&mut self, entries: impl IntoIterator<Item = &'a Entry>) {
         let working = entries
             .into_iter()
@@ -62,9 +54,10 @@ impl ResolvedTasks {
                 entry.is_filed()
                     && workflow.status.is_pending()
                     && !gather_task(entry.statement(), workflow)
-                    && control_satisfied(entry.statement(), false, self)
+                    && dependencies_satisfied(entry, self)
             })
             .filter_map(|entry| entry.statement().preparation.as_ref())
+            .filter(|preparation| self.design(&preparation.controller) == Some(true))
             .map(|preparation| preparation.controller.clone())
             .collect::<Vec<_>>();
         self.working.extend(working);
@@ -72,20 +65,6 @@ impl ResolvedTasks {
 
     fn settled(&self, task: &TaskStamp) -> bool {
         self.settled.contains_key(task)
-    }
-
-    fn positive(&self, task: &TaskStamp) -> bool {
-        self.settled.get(task) == Some(&true)
-    }
-
-    fn released(&self, task: &TaskStamp) -> bool {
-        self.released.contains(task)
-    }
-
-    /// Whether `task` is known here and has not settled negatively: it is
-    /// still open, or it concluded positively.
-    fn standing(&self, task: &TaskStamp) -> bool {
-        self.designs.contains_key(task) && self.settled.get(task) != Some(&false)
     }
 
     /// Whether `task` is a Design; `None` when its intent is unknown here.
@@ -102,11 +81,9 @@ impl ResolvedTasks {
     /// Whether this row remains Design-side speculative work rather than
     /// execution the allocator may expose in an agent-facing summary.
     ///
-    /// A Design row itself stays on its operator-facing planning surface only
-    /// after it reaches the open `design` phase. Work controlled by a Design
-    /// stays there until the same control predicate used by allocation releases
-    /// it. A gather task is Design-side evidence work that never carries an
-    /// authorization, so it always stays here.
+    /// Open Designs and direct outputs retaining their Design dependency stay
+    /// on the planning surface. Gather tasks remain Design-side while active
+    /// even though they carry no dependency edge.
     #[must_use]
     pub fn speculative_design_work(
         &self,
@@ -117,8 +94,9 @@ impl ResolvedTasks {
             return true;
         }
         statement.preparation.as_ref().is_some_and(|preparation| {
-            self.design(&preparation.controller) == Some(true)
-                && !control_satisfied(statement, false, self)
+            self.design(&preparation.parent) == Some(true)
+                && (gather_task(statement, workflow)
+                    || statement.dependencies.contains(&preparation.parent))
         })
     }
 }
@@ -181,8 +159,7 @@ pub fn gather_task(statement: &wire::TaskHead, workflow: &wire::WorkflowHead) ->
     gather_route(statement.intent, route)
 }
 
-/// The preparation whose live output remains unreleased. Unlike selection
-/// waiting, a rejection does not discharge this completion gate.
+/// The preparation whose live output retains its gating dependency.
 #[must_use]
 pub fn unaccepted_output_of<'a>(
     statement: &'a wire::TaskHead,
@@ -190,8 +167,8 @@ pub fn unaccepted_output_of<'a>(
 ) -> Option<&'a TaskStamp> {
     let preparation = statement.preparation.as_ref()?;
     (workflow.status.is_pending()
-        && statement.authorization.is_none()
         && preparation.construction == statement.born
+        && statement.dependencies.contains(&preparation.parent)
         && !gather_task(statement, workflow))
     .then_some(&preparation.parent)
 }
@@ -330,6 +307,7 @@ fn progress(
         Progress::Unknown => {}
         known => return known,
     }
+    states[task] = Progress::Visiting;
     let entry = &entries[task];
     let workflow = entry.workflow();
     if !workflow.status.is_pending() {
@@ -371,17 +349,6 @@ fn progress(
         return Progress::Moving;
     }
 
-    states[task] = Progress::Visiting;
-    let control_wait = !control_satisfied(
-        entry.statement(),
-        gather_task(entry.statement(), entry.workflow()),
-        resolved,
-    );
-    let normal_control = control_wait && normal_control_wait(entry, entries, index);
-    if control_wait && !normal_control {
-        states[task] = Progress::Blocked;
-        return Progress::Blocked;
-    }
     let unresolved_dependencies = entry
         .statement()
         .dependencies
@@ -402,38 +369,6 @@ fn progress(
     }
     states[task] = Progress::Neutral;
     Progress::Neutral
-}
-
-fn normal_control_wait(
-    entry: &Entry,
-    entries: &[Entry],
-    index: &BTreeMap<&TaskStamp, usize>,
-) -> bool {
-    let Some(preparation) = &entry.statement().preparation else {
-        return false;
-    };
-    if preparation.construction != entry.statement().born
-        || gather_task(entry.statement(), entry.workflow())
-    {
-        return false;
-    }
-    let planning_open = |task: &TaskStamp| {
-        index.get(task).is_some_and(|index| {
-            let task = &entries[*index];
-            match task.statement().intent {
-                Some(TaskIntent::Plan) => task.workflow().status.is_pending(),
-                Some(TaskIntent::Design | TaskIntent::OpportunisticDesign) => {
-                    wire::intent::is_open_design(task.statement().intent, task.workflow())
-                }
-                None => false,
-            }
-        })
-    };
-    let parent_open = planning_open(&preparation.parent);
-    let parent_is_plan = index
-        .get(&preparation.parent)
-        .is_some_and(|parent| entries[*parent].statement().intent == Some(TaskIntent::Plan));
-    parent_open && (parent_is_plan || planning_open(&preparation.controller))
 }
 
 /// Deterministic answer from the board's sole allocation query.
@@ -1096,55 +1031,26 @@ fn operational_without_assignment(entry: &Entry, completed: &ResolvedTasks) -> b
         && !passive_design(entry)
 }
 
-/// Ordinary prerequisites may resolve negatively; planning boundaries may not.
+/// Every ordinary prerequisite has settled. Gather work carries no dependency
+/// edge and instead follows its open, active Design parent.
 #[must_use]
 pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
-    entry
+    let dependencies = entry
         .statement()
         .dependencies
         .iter()
-        .all(|dependency| completed.settled(dependency))
-        && control_satisfied(
-            entry.statement(),
-            gather_task(entry.statement(), entry.workflow()),
-            completed,
-        )
-}
-
-/// A constructed output waits for its controller to stand: known, and not
-/// settled negatively by collapse, closure, or deletion. When its preparation
-/// is a Design, the output, Plan or task, also waits for that Design's exact
-/// execution authorization, which permanently releases that output even when
-/// the Design later concludes negatively. Otherwise it waits for its
-/// preparation to conclude positively; nothing else, including operator
-/// closure, releases it. A preparation a Plan constructs runs alongside it.
-/// An unknown preparation leaves the output gated. A gather task needs no
-/// authorization: it runs exactly while the
-/// Design that constructed it is open and grouped.
-fn control_satisfied(statement: &wire::TaskHead, gather: bool, completed: &ResolvedTasks) -> bool {
-    let Some(preparation) = &statement.preparation else {
-        return !gather;
-    };
-    if gather {
-        return completed.open_active_design(&preparation.parent);
+        .all(|dependency| completed.settled(dependency));
+    if !dependencies {
+        return false;
     }
-    if completed.released(&statement.born) {
+    if !gather_task(entry.statement(), entry.workflow()) {
         return true;
     }
-    if preparation.construction != statement.born {
-        return true;
-    }
-    let controller = completed.standing(&preparation.controller);
-    match completed.design(&preparation.parent) {
-        None => false,
-        Some(true) => statement
-            .authorization
-            .as_ref()
-            .is_some_and(|decision| decision.controller == preparation.controller),
-        Some(false) => {
-            statement.intent.is_some() || (controller && completed.positive(&preparation.parent))
-        }
-    }
+    entry
+        .statement()
+        .preparation
+        .as_ref()
+        .is_some_and(|preparation| completed.open_active_design(&preparation.parent))
 }
 
 /// Whether no claim currently possesses the entry.
@@ -1263,11 +1169,8 @@ pub fn stealable_entry(
 }
 
 /// Each settled task with whether its conclusion is positive, whether each
-/// entry is a Design, and which controllers' released work is still in
-/// progress.
-///
-/// Closing or deleting a task resolves ordinary prerequisites. Neither approves
-/// execution controlled by that task. All readiness surfaces use these facts.
+/// entry is a Design, and which controllers' selected work is still in
+/// progress. Closing or deleting a task resolves ordinary prerequisites.
 #[must_use]
 pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
     let mut resolved = ResolvedTasks::new();
@@ -1283,7 +1186,6 @@ pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
             resolved.group(candidate.born().clone());
         }
     }
-    resolved.released = crate::control::released_tasks(entries);
     resolved.hold_released_work(entries);
     resolved
 }

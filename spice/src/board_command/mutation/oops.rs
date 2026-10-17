@@ -261,6 +261,7 @@ fn prepare_oops_rows(
         controller: add.design.clone(),
         construction: report_born.clone(),
     });
+    report.statement.dependencies.push(add.design.clone());
     Ok((design, report))
 }
 

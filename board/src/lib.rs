@@ -26,7 +26,7 @@ pub use apply::{
 };
 pub use claim::{Active, ClaimRefusal};
 pub use config::{Config, NextConfig};
-pub use control::{controlled_pending, controlled_pending_tasks, stranded_tasks};
+pub use control::{controlled_pending, controlled_pending_tasks};
 pub use graph::{Diagram, View};
 pub use inventory::{HiddenInventory, Inventory};
 pub use next::{

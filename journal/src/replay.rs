@@ -831,15 +831,16 @@ fn verify_task_intents(
             ));
         }
         let authorization = authorizations.get(stamp.as_str());
-        if head.authorization.as_ref() != authorization
-            || authorization.is_some_and(|decision| {
-                preparation.is_none_or(|preparation| preparation.controller != decision.controller)
+        if authorization.is_some_and(|decision| {
+            preparation.is_none_or(|preparation| {
+                preparation.controller != decision.controller
+                    || head.dependencies.contains(&preparation.parent)
             })
-        {
+        }) {
             violations.push(Violation::new(
                 ViolationClass::Head,
                 format!("task_heads:{stamp}"),
-                "authorization differs from the execution authorization its controller admitted"
+                "selected output retains the Design dependency its execution authorization removed"
                     .to_owned(),
             ));
         }
