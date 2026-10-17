@@ -1,0 +1,37 @@
+schema = 1
+target = "x86_64-pc-windows-msvc"
+operator_acceptance = "dWJtpZkw1"
+crt = "14.44.17.14"
+sdk = "10.0.26100"
+channel_manifest_sha256 = "4f0f290bb4d58a061a49a2fa893357a8c9e7e2b49fc91873f533ab8f791e4fa0"
+package_manifest_sha256 = "99dda859c4ae3c446eb25620d1a6237bb135d95d14d55cd1d30a15340bb39d80"
+
+[xwin]
+version = "0.10.0"
+path = "/opt/homebrew/Cellar/xwin/0.10.0/bin/xwin"
+sha256 = "853d5024b3a5ef500db9bbad8258bdbde143cf39162f48aaf8fe5496282feaa5"
+bottle_sha256 = "ea2ec402e94e928e85c1038b249509272510d8952fe142d2cf31ef699af34bd6"
+
+[clang_cl]
+version = "20.1.8"
+path = "/opt/homebrew/Cellar/llvm@20/20.1.8/bin/clang"
+sha256 = "82b1ce0298345eb96a72e9652cd08d93da2529b8baae3615a0fe124f88639866"
+bottle_sha256 = "6447d4899f0cc1ee05cfec845a7097948b137ef99faa9d572e72bc137d933fa0"
+
+[llvm_lib]
+version = "20.1.8"
+path = "/opt/homebrew/Cellar/llvm@20/20.1.8/bin/llvm-lib"
+sha256 = "bb4301d7f6e6609695c616d9d6531c0e881ce524b4b83c1679ba423577907c5b"
+bottle_sha256 = "6447d4899f0cc1ee05cfec845a7097948b137ef99faa9d572e72bc137d933fa0"
+
+[llvm_ml]
+version = "20.1.8"
+path = "/opt/homebrew/Cellar/llvm@20/20.1.8/bin/llvm-ml"
+sha256 = "f99a75d853d0d53595e78e90f234f3e9302b67180899a185f0a8ed72aeebc0b8"
+bottle_sha256 = "6447d4899f0cc1ee05cfec845a7097948b137ef99faa9d572e72bc137d933fa0"
+
+[lld_link]
+version = "20.1.8"
+path = "/opt/homebrew/Cellar/lld@20/20.1.8/bin/lld-link"
+sha256 = "cfcaffdd4c347d8a1b1dbe1014aeda9f46a49bed4b2ca5fd8cc15ae672c3c7c3"
+bottle_sha256 = "9be21e008e9d9d2acb2a58596e1ca5b5e507a79e5fb869779113f7df4f3f4a1e"

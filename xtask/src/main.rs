@@ -21,7 +21,7 @@ const USAGE: &str = concat!(
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "report <acquire UPPER PRIVATE BOARD-ORACLE|analyze PRIVATE|",
     "render PRIVATE PUBLIC FONTS LPPL>|",
-    "stage-target TARGET>"
+    "stage-target TARGET|windows-msvc --operator-acceptance KEY>"
 );
 
 fn help() -> String {
@@ -85,6 +85,9 @@ fn main() -> ExitCode {
         }
         Some(value) if is_exact_command(value, "stage-target", arguments.len(), 1) => {
             run_stage_target(arguments.next(), &mut output)
+        }
+        Some(value) if value == OsStr::new("windows-msvc") => {
+            run_windows_msvc(arguments.collect(), &mut output)
         }
         _ => {
             eprintln!("{}", help());
@@ -225,6 +228,20 @@ fn run_stage_target(argument: Option<OsString>, output: &mut impl io::Write) -> 
             .map(|_| ())
             .map_err(Into::into)
     })
+}
+fn run_windows_msvc(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
+    match arguments.as_slice() {
+        [flag, acceptance] if flag == OsStr::new("--operator-acceptance") => {
+            let acceptance = acceptance.to_str().ok_or_else(usage_error)?;
+            xtask::windows_msvc(acceptance, output)
+                .map(|_| ())
+                .map_err(Into::into)
+        }
+        _ => {
+            eprintln!("{}", help());
+            Err(usage_error().into())
+        }
+    }
 }
 
 #[derive(Debug)]

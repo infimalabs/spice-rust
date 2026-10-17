@@ -20,6 +20,7 @@ mod test_evidence;
 mod verify_error;
 mod verify_execution;
 mod verify_timing;
+mod windows_msvc;
 #[cfg(not(target_arch = "wasm32"))]
 mod workspace_tests;
 
@@ -47,6 +48,7 @@ pub use release::{
 pub use report::report;
 #[cfg(not(target_arch = "wasm32"))]
 pub use test_evidence::{TestEvidenceRunError, run as run_test_evidence};
+pub use windows_msvc::{WindowsMsvcError, windows_msvc};
 #[cfg(not(target_arch = "wasm32"))]
 pub use workspace_tests::{
     WorkspaceTestError, WorkspaceTestExecution,
