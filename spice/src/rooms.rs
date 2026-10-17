@@ -15,6 +15,7 @@ use wire::{Actor, CanonicalUuid, Instant, TaskStamp};
 
 pub mod awareness;
 mod catch_up;
+pub mod evidence;
 
 pub use catch_up::{
     CatchUp, CatchUpBudget, CatchUpSource, MAX_CATCH_UP_BYTES, MAX_CATCH_UP_ITEMS, select_catch_up,
