@@ -259,8 +259,9 @@ fn toast(render: &GroupRender<'_, '_>) -> Callback<String> {
     Callback::from(move |issue| drafts.dispatch(ComposerAction::Report { issue }))
 }
 
-/// Every room publication of every design, interleaved newest first exactly
-/// as a team plane interleaves its lanes.
+/// Every room publication and event-backed listener transition of every
+/// design, interleaved newest first exactly as a team plane interleaves its
+/// lanes.
 fn plane_cards(
     render: &GroupRender<'_, '_>,
     group: &RoomAuthorityStamp,
@@ -273,20 +274,43 @@ fn plane_cards(
         .flat_map(|channel| {
             let has_current_listener =
                 projection.has_current_listener(&channel.stamp, render.runtime.board(), now_micros);
-            projection
-                .room(&channel.stamp)
+            let Some(room) = projection.room(&channel.stamp) else {
+                return Vec::new();
+            };
+            let joins = room.listener_joins(projection.conversation());
+            room.in_journal_order()
                 .into_iter()
-                .flat_map(|room| room.events())
-                .map(move |(publication, event)| {
-                    room_card(
+                .flat_map(|(publication, event)| {
+                    let joins = joins.get(publication).cloned().unwrap_or_default();
+                    let publication_event = u32::try_from(joins.len())
+                        .unwrap_or(u32::MAX)
+                        .saturating_add(1);
+                    let mut event_cards = joins
+                        .into_iter()
+                        .enumerate()
+                        .map(|(event_index, lane)| {
+                            listener_join_card(
+                                render.runtime,
+                                channel,
+                                publication,
+                                event,
+                                lane,
+                                u32::try_from(event_index).unwrap_or(u32::MAX),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    event_cards.push(room_card(
                         render,
                         group,
                         channel,
                         has_current_listener,
                         publication,
                         event,
-                    )
+                        publication_event,
+                    ));
+                    event_cards
                 })
+                .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
     cards.sort_by_key(|card| Reverse(card.chronology_key()));
@@ -300,6 +324,7 @@ fn room_card(
     has_current_listener: bool,
     publication: &RoomAuthorityStamp,
     event: &RoomEvent,
+    event_index: u32,
 ) -> ActivityCard {
     let source_id = format!("{ROOM_CARD_PREFIX}{publication}");
     let display_millis = publication.micros() / 1_000;
@@ -328,11 +353,37 @@ fn room_card(
     ActivityCard::Room {
         accent: channel.accent,
         design: channel.stamp.clone(),
-        publication: publication.clone(),
+        source_id: Rc::from(source_id),
+        display_millis,
         position: event.position,
+        event: event_index,
         divider: event.kind.divides_plane(),
         shape: Rc::from(format!("{:?}", event.kind)),
         body,
+    }
+}
+
+/// One exact publication's transition of an absent lane into listening.
+fn listener_join_card(
+    runtime: &AppRuntime,
+    channel: &Channel,
+    publication: &RoomAuthorityStamp,
+    authority: &RoomEvent,
+    lane: wire::CanonicalUuid,
+    event_index: u32,
+) -> ActivityCard {
+    let source_id = format!("{ROOM_CARD_PREFIX}{publication}-joined-{lane}");
+    let display_millis = publication.micros() / 1_000;
+    ActivityCard::Room {
+        accent: channel.accent,
+        design: channel.stamp.clone(),
+        source_id: Rc::from(source_id.clone()),
+        display_millis,
+        position: authority.position,
+        event: event_index,
+        divider: true,
+        shape: Rc::from(format!("joined:{lane}")),
+        body: render_join(runtime, channel, lane, &source_id, display_millis),
     }
 }
 
@@ -461,6 +512,38 @@ fn render_departure(
                     <span class="mosaic-compaction-agent">{leaver}</span>
                     <span class="message-key">{departure}</span>
                     <span class="mosaic-compaction-clause">{clause.to_owned()}</span>
+                </span>
+            </span>
+            <span class="mosaic-compaction-rule" aria-hidden="true"></span>
+        </>
+    }
+}
+
+/// A lane's exact transition into listening, rendered as the inverse of the
+/// existing departure boundary.
+fn render_join(
+    runtime: &AppRuntime,
+    channel: &Channel,
+    lane: wire::CanonicalUuid,
+    source_id: &str,
+    display_millis: i64,
+) -> Html {
+    let listener = super::conversation::lane_label(runtime, lane);
+    let joined = format!("joined {}", channel.label);
+    let summary = format!("{listener} {joined}");
+    html! {
+        <>
+            <span class="mosaic-compaction-rule" aria-hidden="true"></span>
+            <span class="mosaic-compaction-label" title={summary.clone()}>
+                <Age
+                    authored={display_millis}
+                    class="mosaic-compaction-age"
+                    href={crate::view::card_href(source_id)}
+                    label={format!("Link to {summary}")}
+                />
+                <span class="mosaic-compaction-context">
+                    <span class="mosaic-compaction-agent">{listener}</span>
+                    <span class="message-key">{joined}</span>
                 </span>
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>

@@ -38,15 +38,23 @@ pub(in crate::browser) enum ActivityCard {
         member: crate::runtime::LaneMember,
         boundary: crate::runtime::LaneLifecycleBoundary,
     },
-    /// One working-group room publication, accented by its design channel.
-    /// The group surface renders its body; the plane owns only placement.
+    /// One working-group room publication or listener transition, accented by
+    /// its design channel. The group surface renders its body; the plane owns
+    /// only placement.
     Room {
         accent: usize,
         design: wire::TaskStamp,
-        publication: wire::rooms::RoomAuthorityStamp,
+        /// Stable route identity. A publication and each listener transition
+        /// it causes have distinct identities.
+        source_id: Rc<str>,
+        /// Display time inherited from the exact authority that caused it.
+        display_millis: i64,
         position: wire::Seq,
-        /// A full-width divider rather than a message card: a lane's
-        /// departure, as a compaction is in a team.
+        /// Deterministic order among cards admitted by one fact. A listener
+        /// transition precedes the publication that caused it.
+        event: u32,
+        /// A full-width divider rather than a message card: a lane's listener
+        /// transition, as a compaction is in a team.
         divider: bool,
         /// Everything that can change the card's measured geometry. Receipt
         /// state is excluded: its slots keep one geometry in every state.
@@ -111,25 +119,32 @@ impl PartialEq for ActivityCard {
                 Self::Room {
                     accent: left_accent,
                     design: left_design,
-                    publication: left_publication,
+                    source_id: left_source_id,
+                    display_millis: left_display_millis,
+                    position: left_position,
+                    event: left_event,
                     divider: left_divider,
                     shape: left_shape,
                     body: left_body,
-                    ..
                 },
                 Self::Room {
                     accent: right_accent,
                     design: right_design,
-                    publication: right_publication,
+                    source_id: right_source_id,
+                    display_millis: right_display_millis,
+                    position: right_position,
+                    event: right_event,
                     divider: right_divider,
                     shape: right_shape,
                     body: right_body,
-                    ..
                 },
             ) => {
                 left_accent == right_accent
                     && left_design == right_design
-                    && left_publication == right_publication
+                    && left_source_id == right_source_id
+                    && left_display_millis == right_display_millis
+                    && left_position == right_position
+                    && left_event == right_event
                     && left_divider == right_divider
                     && left_shape == right_shape
                     && left_body == right_body
@@ -248,7 +263,7 @@ impl ActivityCard {
             Self::Lifecycle { boundary, .. } => {
                 format!("{LIFECYCLE_CARD_PREFIX}{}", boundary.seq())
             }
-            Self::Room { publication, .. } => format!("{ROOM_CARD_PREFIX}{publication}"),
+            Self::Room { source_id, .. } => source_id.to_string(),
         }
     }
 
@@ -277,18 +292,11 @@ impl ActivityCard {
                 0,
             ),
             Self::Room {
-                publication,
+                display_millis,
                 position,
+                event,
                 ..
-            } => (
-                publication.micros().div_euclid(1000),
-                2,
-                None,
-                0,
-                0,
-                position.get(),
-                0,
-            ),
+            } => (*display_millis, 2, None, 0, 0, position.get(), *event),
         }
     }
 

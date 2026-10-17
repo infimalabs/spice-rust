@@ -1,7 +1,7 @@
 //! Deterministic room, group, preparation, and conversation authority
 //! projected from facts.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use wire::rooms::{self as authority, RoomAuthorityStamp};
 use wire::{Actor, CanonicalUuid, FactKind, Packed, Seq, StreamFact, TaskHandle, TaskStamp};
@@ -12,6 +12,8 @@ mod contributions;
 mod conversation;
 #[cfg(test)]
 mod design_standing_tests;
+#[cfg(test)]
+mod listener_tests;
 mod standing;
 
 pub use contributions::{Contribution, ContributionGroup};
@@ -243,6 +245,70 @@ impl RoomState {
     pub fn events(&self) -> &BTreeMap<RoomAuthorityStamp, RoomEvent> {
         &self.events
     }
+
+    /// Event-backed transitions into listening, keyed by the exact room
+    /// publication that established each transition. Initial participation
+    /// and post-leave restoration are visible; later publications while the
+    /// lane remains present create no duplicate.
+    #[must_use]
+    pub fn listener_joins<'a>(
+        &'a self,
+        conversation: &ConversationProjection,
+    ) -> BTreeMap<&'a RoomAuthorityStamp, Vec<CanonicalUuid>> {
+        let mut listening = BTreeSet::new();
+        let mut joins = BTreeMap::new();
+        for (publication, event) in self.in_journal_order() {
+            if let RoomEventKind::Left { lane, .. } = &event.kind {
+                listening.remove(lane);
+            }
+            let joined = event_listener_lanes(event, conversation)
+                .into_iter()
+                .filter(|lane| listening.insert(*lane))
+                .collect::<Vec<_>>();
+            if !joined.is_empty() {
+                joins.insert(publication, joined);
+            }
+        }
+        joins
+    }
+}
+
+/// Lanes whose exact room event establishes listening. An ordinary authored
+/// post observes the room but joins no lane; a packet joins its author and
+/// every lane it actually directed.
+fn event_listener_lanes(
+    event: &RoomEvent,
+    conversation: &ConversationProjection,
+) -> BTreeSet<CanonicalUuid> {
+    let mut lanes = BTreeSet::new();
+    match &event.kind {
+        RoomEventKind::Messaged {
+            source,
+            directed,
+            conversation: admitted,
+            ..
+        } => {
+            lanes.insert(source.head.lane);
+            lanes.extend(
+                directed
+                    .iter()
+                    .chain(
+                        admitted
+                            .as_ref()
+                            .and_then(|stamp| conversation.conversation(stamp))
+                            .into_iter()
+                            .flat_map(|conversation| &conversation.directed),
+                    )
+                    .filter_map(|directive| conversation.delivery(directive))
+                    .map(|delivery| delivery.value.lane),
+            );
+        }
+        RoomEventKind::Contributed { lane, .. } => {
+            lanes.insert(*lane);
+        }
+        _ => {}
+    }
+    lanes
 }
 
 /// Why a logical lane currently appears in a room. Each reason names the
