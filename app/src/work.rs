@@ -1035,9 +1035,10 @@ fn accountable_owner(
     if task.design_standing().is_some() {
         return Some(WorkOwner::Design(task.statement.body.born.clone()));
     }
-    // Only a Design's direct output belongs to it. Work a Design-produced Plan
-    // creates inherits that Design as its selection controller, yet it is
-    // ordinary execution work.
+    // Only a Design's direct output belongs to it, whether an ordinary or the
+    // repository's opportunistic Design. Work a Design-produced Plan creates
+    // inherits that Design as its selection controller, yet it is ordinary
+    // execution work.
     if let Some(parent) = task
         .statement
         .body
@@ -1046,7 +1047,11 @@ fn accountable_owner(
         .map(|preparation| &preparation.parent)
         .filter(|parent| {
             by_born.get(*parent).is_some_and(|&index| {
-                board.tasks[index].statement.body.intent == Some(wire::TaskIntent::Design)
+                board.tasks[index]
+                    .statement
+                    .body
+                    .intent
+                    .is_some_and(wire::TaskIntent::is_design)
             })
         })
     {
