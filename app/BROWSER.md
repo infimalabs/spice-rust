@@ -19,6 +19,12 @@ try {
 }
 ```
 
+`spice dev xtask -- app-demo` supplies `appUrl`. It stages the worktree's
+current app sources itself before it serves anything, so an app source edit is
+visible without a separate `spice dev xtask -- app`; its
+`[app-demo] ... sources=... staged_generation=...` line names the source
+identity the served generation was compiled from.
+
 An intentional theme-matrix check passes `contextOptions: { colorScheme }`; the
 returned `colorScheme` and `colorSchemeSource` report the value and whether it
 came from `"system"` or `"explicit"`. A stored `spice:app-theme` preference

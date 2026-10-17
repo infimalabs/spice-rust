@@ -1,4 +1,4 @@
-//! Disposable browser checks against this worktree's staged app generation.
+//! Disposable browser checks against this worktree's current app sources.
 
 use std::fmt;
 use std::fs;
@@ -18,33 +18,46 @@ static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 const READY_POLL: Duration = Duration::from_millis(20);
 const READY_CONNECT: Duration = Duration::from_millis(100);
 
-/// Build the current worktree's native Spice and run an isolated demo using
-/// exactly that worktree's staged app generation.
+/// Stage the current worktree's app sources, build its native Spice, and run
+/// an isolated demo serving exactly the generation those sources produced.
 ///
 /// # Errors
 ///
-/// Refuses an unavailable or moving staged generation, a native build or demo
-/// seed failure, or a resident that cannot launch or exit successfully.
-pub fn app_demo(open: bool, output: &mut impl Write) -> Result<(), AppDemoError> {
+/// Refuses an app build, source, or stage failure, a staged generation that
+/// moved while seeding, a native build or demo seed failure, or a resident
+/// that cannot launch or exit successfully.
+pub fn app_demo(
+    environment: &crate::ReleaseEnvironment,
+    open: bool,
+    output: &mut impl Write,
+) -> Result<(), AppDemoError> {
     let start =
         std::env::current_dir().map_err(|error| fail(format!("current directory: {error}")))?;
     let repository = spice::repository::Repository::discover(&start)
         .map_err(|error| fail(format!("active worktree unavailable: {error}")))?;
-    app_demo_at(repository.worktree_root(), open, output)
+    app_demo_at(repository.worktree_root(), environment, open, output)
 }
 
-fn app_demo_at(root: &Path, open: bool, output: &mut impl Write) -> Result<(), AppDemoError> {
-    let expected = staged_generation(root)?;
+fn app_demo_at(
+    root: &Path,
+    environment: &crate::ReleaseEnvironment,
+    open: bool,
+    output: &mut impl Write,
+) -> Result<(), AppDemoError> {
+    let staged = crate::app::app_from(root, environment, output)
+        .map_err(|error| fail(format!("current app sources did not stage: {error}")))?;
     let executable = build_spice(root, output)?;
     let demo = DemoRoot::create()?;
 
     let result = (|| {
         seed_demo(&executable, root, demo.path())?;
-        let served = matching_generation(demo.path(), &expected)?;
+        let served = matching_generation(demo.path(), &staged.generation)?;
         writeln!(
             output,
-            "[app-demo] worktree={} staged_generation={expected}",
-            root.display()
+            "[app-demo] worktree={} sources={} staged_generation={}",
+            root.display(),
+            staged.sources,
+            staged.generation,
         )
         .map_err(|error| fail(format!("app-demo output failed: {error}")))?;
         writeln!(
