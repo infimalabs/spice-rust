@@ -276,6 +276,13 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
         &working,
         &invocation.arguments,
     );
+    spice::cargo_isolation::bind_windows_msvc(
+        repository.worktree_root(),
+        host.bootstrap_home(),
+        &invocation.arguments,
+        &mut command,
+    )
+    .map_err(isolation_rejection)?;
     prepared
         .retain_pin_for_child(&mut command)
         .map_err(isolation_rejection)?;
