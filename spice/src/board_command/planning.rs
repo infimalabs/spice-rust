@@ -283,10 +283,73 @@ pub(super) fn accepted_pending_child<'a>(
 }
 
 pub(super) fn accepted_construction(task: &BoardTask) -> bool {
-    (task.workflow.body.status.is_pending() || task.workflow.body.concluded_positively())
-        && task.statement.body.intent.is_none()
-        && !planning::requires_construction(task.statement.body.intent, &task.workflow.body.flow)
-        && substantive_acceptance(&task.statement.body.acceptance)
+    constructs(
+        task.statement.body.intent,
+        &task.statement.body.acceptance,
+        &task.workflow.body,
+    )
+}
+
+/// Whether work in this state discharges a Plan's construction duty.
+fn constructs(
+    intent: Option<wire::TaskIntent>,
+    acceptance: &[String],
+    workflow: &wire::WorkflowHead,
+) -> bool {
+    (workflow.status.is_pending() || workflow.concluded_positively())
+        && intent.is_none()
+        && !requires_construction(intent, &workflow.flow)
+        && substantive_acceptance(acceptance)
+}
+
+/// Refuse a created, filed, edited, or relinked statement whose post state
+/// would discharge the construction duty of a pending Plan that already
+/// recorded a no-construction disposition, so the two routes never coexist in
+/// either order. Corrections carry preparation without construction and pass.
+pub(super) fn refuse_disposed_construction(
+    snapshot: &ValidatedSnapshot,
+    statement: &TaskHead,
+    workflow: &wire::WorkflowHead,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let disposed = |plan: &BoardTask| {
+        plan.workflow.body.status.is_pending()
+            && snapshot
+                .facts
+                .plan_disposition(&plan.statement.body.born)
+                .is_some()
+    };
+    let constructed_under = statement
+        .preparation
+        .as_ref()
+        .filter(|preparation| preparation.construction == statement.born)
+        .map(|preparation| &preparation.parent);
+    let linked_to = statement
+        .dependencies
+        .iter()
+        .filter(|_| constructs(statement.intent, &statement.acceptance, workflow));
+    for plan in constructed_under.into_iter().chain(linked_to) {
+        let plan = visible_task(snapshot, plan)?;
+        if disposed(plan) {
+            return Err(disposed_refusal(plan));
+        }
+    }
+    if workflow.status.is_pending() && snapshot.facts.plan_disposition(&statement.born).is_some() {
+        for dependency in &statement.dependencies {
+            if accepted_construction(visible_task(snapshot, dependency)?) {
+                return Err(disposed_refusal(visible_task(snapshot, &statement.born)?));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn disposed_refusal(plan: &BoardTask) -> Outcome<CommandAnswer> {
+    refusal(
+        "task::plan-disposed",
+        Some(plan.statement.body.handle.to_string()),
+        "this Plan recorded that no work is warranted; construct or link accepted work \
+         elsewhere, or let its review find the disposition wrong",
+    )
 }
 
 pub(super) fn visible_task<'a>(
