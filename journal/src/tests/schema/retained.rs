@@ -65,37 +65,109 @@ fn residual_rows(journal: &Journal) -> (Vec<u8>, Vec<u8>) {
     (row(3), row(4))
 }
 
+fn plant_invitation_support(journal: &Journal) {
+    insert_fact(
+        journal,
+        fact(
+            3,
+            Some(2),
+            FactKind::LaneSessionDeclared,
+            json!({
+                "lane": FIXTURE_LANE,
+                "occupant": "018f82d4-6f59-7d06-92e3-bce913116304",
+                "worktree": "/fixture/worktree",
+                "vendor": "omp",
+                "model": "sonnet",
+                "effort": "high",
+                "epoch": "018f82d4-6f59-7d06-92e3-bce913116305",
+                "stream": "session",
+                "source": "018f82d4-6f59-7d06-92e3-bce913116306",
+                "identity": "fixture-session",
+                "member": 1,
+                "offset": 10,
+                "length": 20,
+            }),
+        ),
+    );
+    insert_fact(
+        journal,
+        fact(
+            4,
+            Some(3),
+            FactKind::TaskDone,
+            json!({
+                "task": "1kKRRsDP",
+                "validation": "fixture",
+                "terminal": {
+                    "operation": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+                    "status": "completed",
+                    "next": "spice task next",
+                },
+                "source": {"proven": {"heads": []}},
+            }),
+        ),
+    );
+}
+
+fn current_notice(design: &str) -> serde_json::Value {
+    json!({
+        "design": design,
+        "statement": 1,
+        "lane": FIXTURE_LANE,
+        "occupant": "018f82d4-6f59-7d06-92e3-bce913116304",
+        "session": {"vendor": "omp", "identity": "fixture-session"},
+        "opportunity": {
+            "kind": "task-completion",
+            "task": "1kKRRsDP",
+            "completed": 4,
+        },
+        "evidence": {
+            "kind": "task",
+            "task": "1kKRRsDP",
+            "statement": 1,
+            "completed": 4,
+        },
+        "terms": ["rooms", "state", "tasks"],
+    })
+}
+
 #[test]
 fn writable_open_binds_retained_design_notices_and_retires_provenance() {
     let scratch = Scratch::new();
     let path = scratch.path().join("retained-design-notice.sqlite3");
     let journal = authority_file_fixture(&path);
+    plant_invitation_support(&journal);
     insert_fact(
         &journal,
         fact(
-            3,
-            Some(2),
+            5,
+            Some(4),
             FactKind::DesignNoticed,
-            json!({
-                "design": "1kKRRsDP",
-                "statement": 1,
-                "lane": FIXTURE_LANE,
-                "occupant": FIXTURE_LANE,
-                "task": "1kKRRsDQ",
-                "claim": "2",
-                "terms": ["rooms", "state", "tasks"]
-            }),
+            current_notice("1kKRRsDP"),
         ),
     );
     journal
         .connection
         .execute_batch(
             "UPDATE fact_envelopes SET envelope = CAST(json_remove(
-                 json_set(CAST(envelope AS TEXT), '$.fact.provenance', 'organic'),
-                 '$.fact.statement'
-             ) AS BLOB) WHERE seq = 3;
-             UPDATE cursor_head SET seq = 3, wake = 3 WHERE singleton = 1;
-             UPDATE steering_index SET indexed_seq = 3 WHERE singleton = 1;",
+                 json_set(
+                     json_set(
+                         json_set(CAST(envelope AS TEXT), '$.fact.provenance', 'organic'),
+                         '$.fact.task', '1kKRRsDP'
+                     ),
+                     '$.fact.claim', '2'
+                 ),
+                 '$.fact.statement',
+                 '$.fact.session',
+                 '$.fact.opportunity',
+                 '$.fact.evidence'
+             ) AS BLOB) WHERE seq = 5;
+             INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
+                 (3, 'task:1kKRRsDP', 2, 1, 2),
+                 (4, 'task:1kKRRsDP', 3, 1, 3),
+                 (5, 'task:1kKRRsDP', 4, 1, 4);
+             UPDATE cursor_head SET seq = 5, wake = 5 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 5 WHERE singleton = 1;",
         )
         .expect("retained notice cursor is planted");
     restore_predecessor(&journal, 62);
@@ -105,7 +177,7 @@ fn writable_open_binds_retained_design_notices_and_retires_provenance() {
     let envelope = crossed
         .connection
         .query_row(
-            "SELECT envelope FROM fact_envelopes WHERE seq = 3",
+            "SELECT envelope FROM fact_envelopes WHERE seq = 5",
             [],
             |row| row.get::<_, Vec<u8>>(0),
         )
@@ -116,6 +188,17 @@ fn writable_open_binds_retained_design_notices_and_retires_provenance() {
         .read::<wire::rooms::DesignNoticed>()
         .expect("crossed fact remains a notice");
     assert_eq!(notice.statement, seq(1));
+    assert_eq!(notice.session.identity, "fixture-session");
+    assert!(matches!(
+        notice.evidence,
+        wire::rooms::DesignNoticeEvidence::Task {
+            ref task,
+            statement,
+            completed,
+        } if task == &"1kKRRsDP".parse().expect("task")
+            && statement == seq(1)
+            && completed == seq(4)
+    ));
     assert_eq!(notice.terms, ["rooms", "state", "tasks"]);
 }
 
@@ -124,30 +207,32 @@ fn writable_open_refuses_a_retained_notice_without_a_provable_statement() {
     let scratch = Scratch::new();
     let path = scratch.path().join("unproved-design-notice.sqlite3");
     let journal = authority_file_fixture(&path);
+    plant_invitation_support(&journal);
     insert_fact(
         &journal,
         fact(
-            3,
-            Some(2),
+            5,
+            Some(4),
             FactKind::DesignNoticed,
-            json!({
-                "design": "1kKRRsDQ",
-                "statement": 1,
-                "lane": FIXTURE_LANE,
-                "occupant": FIXTURE_LANE,
-                "task": "1kKRRsDP",
-                "claim": "2",
-                "terms": ["rooms", "state", "tasks"]
-            }),
+            current_notice("1kKRRsDQ"),
         ),
     );
     journal
         .connection
         .execute(
             "UPDATE fact_envelopes SET envelope = CAST(json_remove(
-                 json_set(CAST(envelope AS TEXT), '$.fact.provenance', 'organic'),
-                 '$.fact.statement'
-             ) AS BLOB) WHERE seq = 3",
+                 json_set(
+                     json_set(
+                         json_set(CAST(envelope AS TEXT), '$.fact.provenance', 'organic'),
+                         '$.fact.task', '1kKRRsDP'
+                     ),
+                     '$.fact.claim', '2'
+                 ),
+                 '$.fact.statement',
+                 '$.fact.session',
+                 '$.fact.opportunity',
+                 '$.fact.evidence'
+             ) AS BLOB) WHERE seq = 5",
             [],
         )
         .expect("unproved retained notice shape is planted");
@@ -162,7 +247,7 @@ fn writable_open_refuses_a_retained_notice_without_a_provable_statement() {
             row,
             release: "ROOMS-dW6GpYK65",
             ..
-        }) if row == "3"
+        }) if row == "5"
     ));
 }
 

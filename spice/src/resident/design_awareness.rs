@@ -1,8 +1,8 @@
-//! Completion-bound requests for one contribution to a matching passive Design.
+//! Session-profile requests for one contribution to a matching passive Design.
 //!
-//! A completed claim can owe one request at the lane's natural break. The
-//! durable notice records that choice, while `task next` can project the same
-//! choice directly when it races the resident recognition pass.
+//! Each retained-profile opportunity can owe one request at a session's
+//! allocation boundary. The durable notice records that choice so command
+//! reads never rescore or invent evidence.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,7 +11,7 @@ use spice::rooms::awareness::{
     FrequencyProfile, MatchCandidate, TermCounts, pitch, request_questions,
 };
 use wire::body::TaskDone as CompletedTask;
-use wire::rooms::DesignNoticed;
+use wire::rooms::{DesignNoticeEvidence, DesignNoticeOpportunity, DesignNoticed, DesignSession};
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Producer, Seq, SequenceCode, TaskStamp,
     intent::{DesignRequest, TaskDone as TaskDoneIntent},
@@ -32,11 +32,9 @@ const COMPLETION_PAGE_BYTES: usize = 256 * 1024;
 struct PlannedRequest {
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-    task: TaskStamp,
-    task_statement: Seq,
-    claim: Seq,
-    /// Exact `TaskDone` that owes the request.
-    completed: Seq,
+    session: DesignSession,
+    opportunity: DesignNoticeOpportunity,
+    evidence: DesignNoticeEvidence,
     design: TaskStamp,
     statement: Seq,
     terms: Vec<String>,
@@ -51,7 +49,6 @@ pub(in crate::resident) struct Completion {
     validation: String,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-    claim: Seq,
     statement: wire::TaskHead,
 }
 
@@ -111,7 +108,6 @@ impl CompletionCursor {
                         validation: done.validation,
                         lane,
                         occupant: claim.occupant,
-                        claim: claim.claimed,
                         statement,
                     });
                 }
@@ -181,15 +177,29 @@ fn plan(
     let entries = &planning.entries;
     let frequency = FrequencyProfile::recent(entries.iter().map(board::Entry::statement));
     let facts = &planning.facts;
-    let mut requested: BTreeMap<CanonicalUuid, BTreeSet<TaskStamp>> = BTreeMap::new();
+    let mut planned_sessions = BTreeSet::new();
     let mut owed = Vec::new();
     for completed in completions {
+        let Some(session) = facts
+            .lane_session(completed.lane, completed.occupant)
+            .cloned()
+        else {
+            continue;
+        };
+        let session_key = (completed.lane, session.clone());
+        if planned_sessions.contains(&session_key)
+            || session_has_outstanding(facts, entries, completed.lane, &session)
+        {
+            continue;
+        }
         let already_requested = facts
-            .latest_design_notice(completed.lane, completed.occupant)
-            .is_some_and(|(at, notice)| {
-                at > completed.at
-                    && notice.task == completed.task
-                    && notice.claim.get() == completed.claim.get()
+            .latest_design_notice(completed.lane, &session)
+            .is_some_and(|(_, notice)| {
+                matches!(
+                    &notice.opportunity,
+                    DesignNoticeOpportunity::TaskCompletion { task, completed: at }
+                        if task == &completed.task && at == &completed.at
+                )
             });
         if occupied.get(&completed.lane) != Some(&completed.occupant) || already_requested {
             continue;
@@ -200,18 +210,13 @@ fn plan(
             &completed.statement.acceptance,
             &completed.validation,
         );
-        let actor = Actor::Lane(completed.lane);
         let candidates = entries
             .iter()
             .filter(|entry| {
                 passive(entry)
                     && entry.is_filed()
-                    && entry.born() != &completed.task
-                    && !facts.design_was_noticed(completed.occupant, entry.born())
-                    && !requested
-                        .get(&completed.occupant)
-                        .is_some_and(|designs| designs.contains(entry.born()))
-                    && !facts.published_in_room(&actor, entry.born())
+                    && !facts.design_was_noticed(completed.lane, &session, entry.born())
+                    && !facts.published_in_room_for_session(completed.lane, &session, entry.born())
             })
             .map(|design| {
                 let statement = design.statement();
@@ -228,12 +233,10 @@ fn plan(
         let Some((design, matched)) = frequency.select(&completion, candidates) else {
             continue;
         };
-        requested
-            .entry(completed.occupant)
-            .or_default()
-            .insert(design.born().clone());
+        planned_sessions.insert(session_key);
         owed.push(planned_request(
             completed,
+            session,
             design,
             matched,
             planning.horizon,
@@ -244,6 +247,7 @@ fn plan(
 
 fn planned_request(
     completed: &Completion,
+    session: DesignSession,
     design: &board::Entry,
     terms: Vec<String>,
     horizon: Option<Seq>,
@@ -251,10 +255,16 @@ fn planned_request(
     PlannedRequest {
         lane: completed.lane,
         occupant: completed.occupant,
-        task: completed.task.clone(),
-        task_statement: completed.statement.revision,
-        claim: completed.claim,
-        completed: completed.at,
+        session,
+        opportunity: DesignNoticeOpportunity::TaskCompletion {
+            task: completed.task.clone(),
+            completed: completed.at,
+        },
+        evidence: DesignNoticeEvidence::Task {
+            task: completed.task.clone(),
+            statement: completed.statement.revision,
+            completed: completed.at,
+        },
         design: design.born().clone(),
         statement: design.statement().revision,
         terms,
@@ -269,7 +279,6 @@ fn passive(entry: &board::Entry) -> bool {
 
 struct CurrentCompletion {
     completed: bus::LaneCompletion,
-    claim: Seq,
     statement: wire::TaskHead,
 }
 
@@ -298,41 +307,36 @@ fn current_completion(
     };
     Ok(Some(CurrentCompletion {
         completed,
-        claim,
         statement,
     }))
 }
 
-/// Read the durable request currently owed to this lane occupant.
+/// Read the durable invitation currently owed to this continuing session.
 pub(crate) fn owed_request(
-    bus: &Bus,
+    _bus: &Bus,
     observed: &bus::TaskSnapshot,
     entries: &[board::Entry],
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> Result<Option<DesignRequest>, Outcome<wire::intent::CommandAnswer>> {
-    let Some(current) = current_completion(bus, observed, lane, occupant)? else {
-        return Ok(None);
-    };
     let facts = observed.facts();
-    let Some((noticed_at, notice)) = facts.latest_design_notice(lane, occupant) else {
+    let Some(session) = facts.lane_session(lane, occupant) else {
         return Ok(None);
     };
-    if noticed_at <= current.completed.at
-        || notice.task != current.completed.task
-        || notice.claim.get() != current.claim.get()
-    {
+    let Some((noticed_at, notice)) = facts.latest_design_notice(lane, session) else {
         return Ok(None);
-    }
+    };
     let Some(design) = entries.iter().find(|entry| entry.born() == &notice.design) else {
         return Ok(None);
     };
-    if !request_is_current(facts, design, lane) {
+    if !request_is_current(facts, design, lane, notice.statement, noticed_at) {
         return Ok(None);
     }
     Ok(Some(design_request(
         design,
-        &current.statement,
+        notice.session.clone(),
+        notice.opportunity.clone(),
+        notice.evidence.clone(),
         wire::rooms::shown_notice_terms(&notice.terms)
             .into_iter()
             .map(str::to_owned)
@@ -348,29 +352,32 @@ pub(crate) fn project_request(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> Result<Option<DesignRequest>, Outcome<wire::intent::CommandAnswer>> {
-    let Some(current) = current_completion(bus, observed, lane, occupant)? else {
+    let facts = observed.facts();
+    let Some(session) = facts.lane_session(lane, occupant).cloned() else {
         return Ok(None);
     };
-    let facts = observed.facts();
-    let actor = Actor::Lane(lane);
-    let completed = &current.completed;
-    let claim = current.claim;
-    let task_statement = current.statement;
-
     if let Some(request) = owed_request(bus, observed, entries, lane, occupant)? {
         return Ok(Some(request));
     }
+    let Some(current) = current_completion(bus, observed, lane, occupant)? else {
+        return Ok(None);
+    };
+    let completed = &current.completed;
+    let task_statement = current.statement;
     if facts
-        .latest_design_notice(lane, occupant)
-        .is_some_and(|(at, notice)| {
-            at > completed.at && notice.task == completed.task && notice.claim.get() == claim.get()
+        .latest_design_notice(lane, &session)
+        .is_some_and(|(_, notice)| {
+            matches!(
+                &notice.opportunity,
+                DesignNoticeOpportunity::TaskCompletion { task, completed: at }
+                    if task == &completed.task && at == &completed.at
+            )
         })
     {
-        // A standing or publication change released this completion's chosen
-        // request. It must not retarget the same completion to another Design.
+        // A standing or publication change released this opportunity's chosen
+        // request. It must not retarget the same opportunity to another Design.
         return Ok(None);
     }
-
     let frequency = FrequencyProfile::recent(
         observed
             .tasks()
@@ -389,8 +396,8 @@ pub(crate) fn project_request(
             passive(entry)
                 && entry.is_filed()
                 && entry.born() != &completed.task
-                && !facts.design_was_noticed(occupant, entry.born())
-                && !facts.published_in_room(&actor, entry.born())
+                && !facts.design_was_noticed(lane, &session, entry.born())
+                && !facts.published_in_room_for_session(lane, &session, entry.born())
         })
         .map(|design| {
             let statement = design.statement();
@@ -410,10 +417,16 @@ pub(crate) fn project_request(
     let request = PlannedRequest {
         lane,
         occupant,
-        task: completed.task.clone(),
-        task_statement: task_statement.revision,
-        claim,
-        completed: completed.at,
+        session: session.clone(),
+        opportunity: DesignNoticeOpportunity::TaskCompletion {
+            task: completed.task.clone(),
+            completed: completed.at,
+        },
+        evidence: DesignNoticeEvidence::Task {
+            task: completed.task.clone(),
+            statement: task_statement.revision,
+            completed: completed.at,
+        },
         design: design.born().clone(),
         statement: design.statement().revision,
         terms: terms.clone(),
@@ -422,7 +435,9 @@ pub(crate) fn project_request(
     match record(bus, &request) {
         Ok(None) => Ok(Some(design_request(
             design,
-            &task_statement,
+            session,
+            request.opportunity,
+            request.evidence,
             wire::rooms::shown_notice_terms(&terms)
                 .into_iter()
                 .map(str::to_owned)
@@ -459,23 +474,49 @@ fn current_task_statement(
         })
 }
 
-/// Whether a recorded request is still owed. Only the Design's standing or the
-/// lane's own room publication releases it; a statement edit does not.
-fn request_is_current(facts: &bus::TaskFacts, design: &board::Entry, lane: CanonicalUuid) -> bool {
+fn session_has_outstanding(
+    facts: &bus::TaskFacts,
+    entries: &[board::Entry],
+    lane: CanonicalUuid,
+    session: &DesignSession,
+) -> bool {
+    let Some((noticed_at, notice)) = facts.latest_design_notice(lane, session) else {
+        return false;
+    };
+    entries
+        .iter()
+        .find(|entry| entry.born() == &notice.design)
+        .is_some_and(|design| request_is_current(facts, design, lane, notice.statement, noticed_at))
+}
+
+/// Whether a recorded invitation is still owed. Design closure, statement
+/// replacement, standing, or a room publication releases it.
+fn request_is_current(
+    facts: &bus::TaskFacts,
+    design: &board::Entry,
+    lane: CanonicalUuid,
+    statement: Seq,
+    noticed_at: Seq,
+) -> bool {
     design.is_filed()
         && passive(design)
-        && !facts.published_in_room(&Actor::Lane(lane), design.born())
+        && design.statement().revision == statement
+        && !facts.published_in_room_after(lane, design.born(), noticed_at)
 }
 
 fn design_request(
     design: &board::Entry,
-    task: &wire::TaskHead,
+    session: DesignSession,
+    opportunity: DesignNoticeOpportunity,
+    evidence: DesignNoticeEvidence,
     terms: Vec<String>,
 ) -> DesignRequest {
     let statement = design.statement();
     DesignRequest {
         design: wire::TaskHandle::for_filing(&statement.project, &statement.born, statement.filing),
-        task: wire::TaskHandle::for_filing(&task.project, &task.born, task.filing),
+        session,
+        opportunity,
+        evidence,
         title: statement.title.clone(),
         statement: SequenceCode::new(statement.revision.get()),
         pitch: pitch(&statement.title, statement.description.as_deref()),
@@ -492,82 +533,120 @@ fn command_answer_outcome(outcome: Outcome<()>) -> Outcome<wire::intent::Command
     }
 }
 
-/// Refuse a request whose completion, occupant, statement, standing,
-/// publication, newer lane work, or competing request moved.
+/// Refuse an invitation whose target session, supporting source, Design, room
+/// standing, or competing request moved.
 fn still_owed(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
-    current_recipient(read, request)?;
-    idle_since_completion(read, request)?;
-    passive_design(read, request)?;
+    let declared = current_recipient(read, request)?;
+    supporting_source(read, request)?;
+    passive_design(read, request, declared)?;
     unseen_request(read, request)
 }
 
-fn current_recipient(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
+fn current_recipient(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<Seq, GuardError> {
     let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
-    let occupied = read.residency_head()?.is_some_and(|head| {
-        head.body().lanes.iter().any(|row| {
-            row.lane == request.lane
-                && row.occupant == Some(request.occupant)
-                && row.disposition == "occupied"
+    let occupant = read
+        .residency_head()?
+        .and_then(|head| {
+            head.body()
+                .lanes
+                .iter()
+                .find(|row| row.lane == request.lane && row.disposition == "occupied")
+                .and_then(|row| row.occupant)
         })
-    });
-    if !occupied {
-        return Err(stale("the occupant moved"));
-    }
-    let recipient_current = read.claim_head(&request.task)?.is_some_and(|head| {
-        let claim = head.body();
-        claim.disposition == ClaimDisposition::Freed
-            && claim.lane == request.lane
-            && claim.occupant == request.occupant
-            && claim.claimed == request.claim
-    });
-    if !recipient_current {
-        return Err(stale("the completed claim moved"));
-    }
-    if !read
-        .task_head(&request.task)?
-        .is_some_and(|head| head.body().revision == request.task_statement)
-    {
-        return Err(stale("the task statement moved"));
-    }
-    Ok(())
-}
-
-/// Refuse once the lane won any claim after the owing completion: its natural
-/// break ended whether that newer work is still active or already completed.
-/// Only claim wins are read, so other lanes' and unrelated traffic stay
-/// admissible.
-fn idle_since_completion(
-    read: &JournalRead<'_>,
-    request: &PlannedRequest,
-) -> Result<(), GuardError> {
-    let mut after = Some(request.completed);
+        .ok_or_else(|| stale("the target lane is no longer occupied"))?;
+    let mut after = None;
+    let mut current = None;
     loop {
         let page = read.selected_fact_page(
-            &[wire::FactKind::ClaimWon],
+            &[wire::FactKind::LaneSessionDeclared],
             after,
             None,
             journal::FactReadBudget::RETAINED,
         )?;
         for envelope in &page.rows {
-            let Some(won) = envelope.fact.read::<wire::body::ClaimWon>() else {
+            let Some(declared) = envelope.fact.read::<wire::body::LaneSessionDeclared>() else {
                 return Err(GuardError::Invalid(
-                    "a selected claim win did not decode".to_owned(),
+                    "a selected session declaration did not decode".to_owned(),
                 ));
             };
-            if won.lane == request.lane {
-                return Err(GuardError::refused(format!(
-                    "{STALE}: the lane claimed newer work"
-                )));
+            if declared.lane == request.lane && declared.occupant == occupant {
+                current = Some((
+                    DesignSession {
+                        vendor: declared.vendor,
+                        identity: declared.identity,
+                    },
+                    envelope.seq,
+                ));
             }
         }
         let Some(continuation) = page.continuation else {
-            return Ok(());
+            break;
         };
         after = Some(continuation);
     }
+    match current {
+        Some((session, declared)) if session == request.session => Ok(declared),
+        _ => Err(stale("the target vendor session was replaced")),
+    }
 }
 
-fn passive_design(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
+fn supporting_source(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
+    let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
+    match &request.evidence {
+        DesignNoticeEvidence::Task {
+            task,
+            statement,
+            completed,
+        } => {
+            let statement_exists = read
+                .causal_page(*statement, journal::FactReadBudget::RETAINED)?
+                .is_some_and(|page| {
+                    page.rows.iter().any(|row| {
+                        row.seq == *statement
+                            && row.fact.revised_tasks().any(|revised| revised == task)
+                    })
+                });
+            let completion_exists = read
+                .causal_page(*completed, journal::FactReadBudget::RETAINED)?
+                .is_some_and(|page| {
+                    page.rows.iter().any(|row| {
+                        row.seq == *completed
+                            && row.fact.read::<wire::body::TaskDone>().is_some_and(|done| {
+                                done.task == *task
+                                    && done.terminal.as_ref().is_some_and(|terminal| {
+                                        terminal.status
+                                            == wire::body::TaskCompletionStatus::Completed
+                                    })
+                            })
+                    })
+                });
+            if !statement_exists || !completion_exists {
+                return Err(stale("the supporting task evidence was lost or replaced"));
+            }
+        }
+        DesignNoticeEvidence::Conversation { source } => {
+            let source_exists = read
+                .transcript_source_heads(&request.lane)?
+                .iter()
+                .any(|head| {
+                    head.body().vendor == request.session.vendor
+                        && Some(head.body().source) == source.locus.source
+                });
+            if !source_exists {
+                return Err(stale(
+                    "the supporting conversation source was lost or replaced",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn passive_design(
+    read: &JournalRead<'_>,
+    request: &PlannedRequest,
+    session_declared: Seq,
+) -> Result<(), GuardError> {
     let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
     let Some(statement) = read.task_head(&request.design)? else {
         return Err(stale("the Design disappeared"));
@@ -591,17 +670,16 @@ fn passive_design(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<()
     }
     if read
         .latest_room_publication(&request.design, &Actor::Lane(request.lane))?
-        .is_some()
+        .is_some_and(|head| head.seq > session_declared)
     {
-        return Err(stale("the lane published in the room"));
+        return Err(stale("the session published in the room"));
     }
     Ok(())
 }
 
-/// Refuse when another request for this occupant's Design or completion was
-/// recorded after the planning horizon. Only Design notices are read: every
-/// other authority that can change the chosen request is checked at its
-/// current head, so unrelated journal traffic never makes the plan stale.
+/// Refuse when another invitation for this continuing session was recorded
+/// after the planning horizon. Other authority is checked at its exact head,
+/// so unrelated journal traffic never makes the plan stale.
 fn unseen_request(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
     let mut after = request.horizon;
     loop {
@@ -617,12 +695,9 @@ fn unseen_request(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<()
                     "a selected Design notice did not decode".to_owned(),
                 ));
             };
-            if body.occupant == request.occupant
-                && (body.design == request.design
-                    || (body.task == request.task && body.claim.get() == request.claim.get()))
-            {
+            if body.lane == request.lane && body.session == request.session {
                 return Err(GuardError::refused(format!(
-                    "{STALE}: the occupant already has this request"
+                    "{STALE}: the session already has an invitation"
                 )));
             }
         }
@@ -649,8 +724,9 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> 
                 design: request.design.clone(),
                 lane: request.lane,
                 occupant: request.occupant,
-                task: request.task.clone(),
-                claim: SequenceCode::new(request.claim.get()),
+                session: request.session.clone(),
+                opportunity: request.opportunity.clone(),
+                evidence: request.evidence.clone(),
                 terms: request.terms.clone(),
             },
             FactCause::Root,

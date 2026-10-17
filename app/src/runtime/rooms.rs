@@ -227,8 +227,8 @@ pub struct RoomState {
     /// without rescanning the room for every rendered card.
     latest_lane_event: Option<Seq>,
     /// Each asked lane's newest recorded Design request: its position and
-    /// the completed task that prompted it.
-    asked: BTreeMap<CanonicalUuid, (Seq, TaskStamp)>,
+    /// exact retained evidence.
+    asked: BTreeMap<CanonicalUuid, (Seq, authority::DesignNoticeEvidence)>,
 }
 
 impl RoomState {
@@ -325,9 +325,9 @@ pub enum ParticipantReason {
     /// A room MSG or ASK addressed the lane inside the activity window; it
     /// requests involvement and is not a contribution.
     Invitation(String),
-    /// A recorded Design request asked the lane after it completed this task;
-    /// it requests involvement, never ages, and only a leave ends it.
-    Asked(TaskStamp),
+    /// A recorded Design request asks the lane from this exact retained
+    /// evidence; it never ages, and only a leave ends it.
+    Asked(authority::DesignNoticeEvidence),
     /// The lane currently holds the anchor or explicitly related work.
     Work(TaskStamp),
     /// A live room coordination request addresses the lane.
@@ -801,7 +801,7 @@ impl RoomProjection {
                         .entry(body.design.clone())
                         .or_default()
                         .asked
-                        .insert(body.lane, (fact.seq(), body.task.clone()));
+                        .insert(body.lane, (fact.seq(), body.evidence.clone()));
                     self.maturity
                         .entry(body.design.clone())
                         .or_default()

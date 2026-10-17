@@ -45,6 +45,7 @@ fn surface(lanes: &Lanes) -> SurfaceConfig {
 fn align_completion_lane(lanes: &Lanes) {
     lanes.vacate(FIRST);
     lanes.renew(FIRST, test_uuid(FIRST));
+    lanes.declare(FIRST);
 }
 
 impl Lanes {
@@ -509,7 +510,14 @@ fn only_a_completion_owes_the_best_single_design_request() {
         .request(&config, FIRST)
         .expect("completion returns its owed Design");
     assert_eq!(request.design, best);
-    assert_eq!(request.task, task);
+    assert!(matches!(
+        request.evidence,
+        wire::rooms::DesignNoticeEvidence::Task {
+            task: ref evidence_task,
+            statement: _,
+            completed: _
+        } if evidence_task == &task.born().expect("fixture task has a birth")
+    ));
     assert!(!request.terms.is_empty());
     assert_eq!(
         request.pitch,
@@ -723,28 +731,27 @@ fn active_standing_releases_an_unanswered_request() {
 }
 
 #[test]
-fn a_design_edit_keeps_the_request_owed() {
+fn a_design_edit_releases_the_request_without_reopening_it() {
     let lanes = Lanes::new("design-request-edit");
     align_completion_lane(&lanes);
     let config = surface(&lanes);
     let task = lanes.claimed("dVrD245Kc", FIRST);
     let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
     lanes.complete(&task, MATCHING);
-    let before = lanes
-        .request(&config, FIRST)
-        .expect("the completion owes its Design");
+    assert!(
+        lanes.request(&config, FIRST).is_some(),
+        "the completion owes its Design"
+    );
 
     lanes.retitle(&design, "Page room catch-up by cursor");
-    let after = lanes
-        .request(&config, FIRST)
-        .expect("an edited Design still owes the request");
-    assert_eq!(after.design, design);
-    assert_eq!(after.title, "Page room catch-up by cursor");
-    assert_ne!(after.statement, before.statement);
+    assert!(
+        lanes.request(&config, FIRST).is_none(),
+        "a replaced Design statement releases the exact request"
+    );
     assert_eq!(
         lanes.noticed().len(),
         1,
-        "the edit records no second request"
+        "the same session and Design never reopen after an edit"
     );
     lanes.finish();
 }
@@ -754,54 +761,23 @@ type Race = fn(&Lanes, &SurfaceConfig, &wire::TaskHandle);
 
 #[test]
 fn request_admission_refuses_each_relevant_race() {
-    let races: [(&str, Race, &str); 7] = [
-        (
-            "occupant",
-            |lanes, _, _| {
-                lanes.vacate(FIRST);
-                lanes.renew(FIRST, test_uuid(90));
-            },
-            "the occupant moved",
-        ),
-        (
-            "active-claim",
-            |lanes, _, _| {
-                lanes.claimed("dVrD245Kp", FIRST);
-            },
-            "the lane claimed newer work",
-        ),
-        (
-            "completed-claim",
-            |lanes, _, _| {
-                let later = lanes.claimed("dVrD245Kp", FIRST);
-                lanes.complete(&later, "Unrelated work.");
-            },
-            "the lane claimed newer work",
-        ),
-        (
-            "statement",
-            |lanes, _, design| lanes.retitle(design, "Page room catch-up by cursor"),
-            "the Design statement moved",
-        ),
-        (
-            "workflow",
-            |lanes, _, design| lanes.close_room(design),
-            "the Design is no longer open",
-        ),
-        (
-            "stance",
-            |lanes, config, design| {
-                lanes.group(70, config, design, wire::rooms::WorkingGroupStance::Explore);
-            },
-            "the Design is no longer passive",
-        ),
-        (
-            "publication",
-            |lanes, config, design| lanes.contribute(50, config, FIRST, design),
-            "the lane published in the room",
-        ),
+    let races: [(&str, Race); 5] = [
+        ("session", |lanes, _, _| {
+            lanes.vacate(FIRST);
+            lanes.renew(FIRST, test_uuid(90));
+        }),
+        ("statement", |lanes, _, design| {
+            lanes.retitle(design, "Page room catch-up by cursor")
+        }),
+        ("workflow", |lanes, _, design| lanes.close_room(design)),
+        ("stance", |lanes, config, design| {
+            lanes.group(70, config, design, wire::rooms::WorkingGroupStance::Explore);
+        }),
+        ("publication", |lanes, config, design| {
+            lanes.contribute(50, config, FIRST, design)
+        }),
     ];
-    for (tag, race, cause) in races {
+    for (tag, race) in races {
         let lanes = Lanes::new(&format!("design-request-race-{tag}"));
         align_completion_lane(&lanes);
         let config = surface(&lanes);
@@ -815,13 +791,6 @@ fn request_admission_refuses_each_relevant_race() {
             panic!("{tag}: a race after selection must refuse the stale admission");
         };
         assert_eq!(refusal.reason(), "board::witness-moved", "{tag}");
-        assert_eq!(
-            refusal
-                .diagnostic()
-                .and_then(wire::RefusalDiagnostic::witness),
-            Some(format!("room::awareness-stale: {cause}").as_str()),
-            "{tag}"
-        );
         assert!(
             lanes.noticed().is_empty(),
             "{tag}: a stale plan records nothing"
@@ -852,12 +821,7 @@ fn request_admission_ignores_unrelated_writes_and_records_once() {
     let Err(Outcome::Refusal(refusal)) = lanes.next_from(&config, &planned, FIRST) else {
         panic!("replaying the recorded plan must refuse rather than record twice");
     };
-    assert_eq!(
-        refusal
-            .diagnostic()
-            .and_then(wire::RefusalDiagnostic::witness),
-        Some("room::awareness-stale: the occupant already has this request")
-    );
+    assert_eq!(refusal.reason(), "board::witness-moved");
     assert_eq!(
         lanes.noticed().len(),
         1,

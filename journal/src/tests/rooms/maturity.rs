@@ -1,7 +1,7 @@
 use super::*;
 use wire::rooms::{
-    DesignMaturity, DesignNoticed, RoomAuthorityStamp, RoomContributed, RoomContributionKind,
-    RoomLeft,
+    DesignMaturity, DesignNoticeEvidence, DesignNoticeOpportunity, DesignNoticed, DesignSession,
+    RoomAuthorityStamp, RoomContributed, RoomContributionKind, RoomLeft,
 };
 
 fn current_statement(journal: &Journal, task: &TaskStamp) -> Seq {
@@ -29,13 +29,25 @@ fn noticed(
     claimed: &TaskStamp,
     lane: CanonicalUuid,
 ) -> DesignNoticed {
+    let completed = Seq::new(2).expect("completion");
     let body = DesignNoticed {
         design: design.clone(),
         statement: current_statement(journal, design),
         lane,
         occupant: lane,
-        task: claimed.clone(),
-        claim: SequenceCode::new(1),
+        session: DesignSession {
+            vendor: "omp".parse().expect("vendor"),
+            identity: "fixture-session".to_owned(),
+        },
+        opportunity: DesignNoticeOpportunity::TaskCompletion {
+            task: claimed.clone(),
+            completed,
+        },
+        evidence: DesignNoticeEvidence::Task {
+            task: claimed.clone(),
+            statement: current_statement(journal, claimed),
+            completed,
+        },
         terms: vec![
             "design".to_owned(),
             "maturity".to_owned(),

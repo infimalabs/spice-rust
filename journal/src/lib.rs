@@ -39,7 +39,10 @@
 /// can no longer release it. Schema 79 records every distinct Design decision
 /// that authorizes the same output. Schema 80 lets a task completion carry a
 /// Plan's no-construction disposition, which an older release would drop.
-pub const SCHEMA_VERSION: u32 = 80;
+/// Schema 81 targets Design invitations at continuing vendor sessions and
+/// separates their triggering opportunity from the retained evidence that
+/// supported the match.
+pub const SCHEMA_VERSION: u32 = 81;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

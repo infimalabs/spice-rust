@@ -388,8 +388,10 @@ fn intersection_count(left: &[CanonicalUuid], right: &[CanonicalUuid]) -> usize 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rooms::RoomAuthorityStamp;
-    use crate::{SequenceCode, TaskStamp};
+    use crate::TaskStamp;
+    use crate::rooms::{
+        DesignNoticeEvidence, DesignNoticeOpportunity, DesignSession, RoomAuthorityStamp,
+    };
 
     fn lane(last: u8) -> CanonicalUuid {
         format!("00000000-0000-4000-8000-{last:012}")
@@ -402,13 +404,26 @@ mod tests {
     }
 
     fn notice(statement: u64, lane: u8) -> DesignNoticed {
+        let evidence_task = task(2);
+        let completed = Seq::new(statement.saturating_add(200)).expect("completion");
         DesignNoticed {
             design: task(1),
             statement: Seq::new(statement).expect("statement"),
             lane: self::lane(lane),
             occupant: self::lane(lane.saturating_add(100)),
-            task: task(2),
-            claim: SequenceCode::new(statement.saturating_add(100)),
+            session: DesignSession {
+                vendor: "omp".parse().expect("vendor"),
+                identity: format!("session-{lane}"),
+            },
+            opportunity: DesignNoticeOpportunity::TaskCompletion {
+                task: evidence_task.clone(),
+                completed,
+            },
+            evidence: DesignNoticeEvidence::Task {
+                task: evidence_task,
+                statement: Seq::new(statement.saturating_add(1)).expect("task statement"),
+                completed,
+            },
             terms: vec![
                 "design".to_owned(),
                 "maturity".to_owned(),

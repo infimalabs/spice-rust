@@ -16,6 +16,7 @@ const NOTICE_STATEMENT_RELEASE: &str = "ROOMS-dW6GpYK65";
 /// Add the exact statement current when an old notice was recorded and remove
 /// the superseded provenance field from every retained notice.
 pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
+    let invitation_crossings = super::design_invitations::derive(transaction)?;
     let rows = fact_rows(transaction)?;
     let mut revisions = BTreeMap::<String, u64>::new();
     let mut notice_heads = BTreeMap::<i64, u64>::new();
@@ -54,7 +55,13 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
         "json_type(CAST(envelope AS TEXT), '$.fact.provenance') IS NOT NULL OR \
          json_type(CAST(envelope AS TEXT), '$.fact.statement') IS NULL",
         NOTICE_STATEMENT_RELEASE,
-        |seq, fact| cross_notice(seq, fact, &notice_heads),
+        |seq, fact| {
+            cross_notice(seq, fact, &notice_heads)?;
+            if !fact.contains_key("session") {
+                super::design_invitations::cross_notice(seq, fact, &invitation_crossings)?;
+            }
+            Ok(())
+        },
     )
 }
 

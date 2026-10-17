@@ -8,8 +8,8 @@
 use wasm_bindgen::JsCast as _;
 use wire::intent::{BoardTask, DesignStanding};
 use wire::rooms::{
-    DesignCyclePresentation, DesignPassEnd, RoomProgressStanding, RoomRelevanceClass,
-    RoomRelevanceVerdict, RoomSourceView,
+    DesignCyclePresentation, DesignNoticeEvidence, DesignPassEnd, RoomProgressStanding,
+    RoomRelevanceClass, RoomRelevanceVerdict, RoomSourceView,
 };
 use wire::{Disposition, SequenceCode, TaskStamp};
 use yew::prelude::*;
@@ -337,12 +337,20 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
             "Invited",
             format!("A room packet addressed this lane under key {key}"),
         ),
-        ParticipantReason::Asked(task) => (
+        ParticipantReason::Asked(DesignNoticeEvidence::Task { task, .. }) => (
             "invitation",
             "Asked",
             format!(
-                "A Design request asked this lane after it completed {}",
+                "A Design request asked this lane from retained evidence about {}",
                 task_label(runtime, task)
+            ),
+        ),
+        ParticipantReason::Asked(DesignNoticeEvidence::Conversation { source }) => (
+            "invitation",
+            "Asked",
+            format!(
+                "A Design request asked this lane from retained conversation evidence at member {}, byte {}",
+                source.locus.member, source.locus.offset
             ),
         ),
         ParticipantReason::Work(task) => (

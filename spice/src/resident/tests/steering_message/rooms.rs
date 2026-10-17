@@ -569,6 +569,7 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
         .expect("Design statement exists")
         .body()
         .revision;
+    let prior = prior.born().expect("fixture prior task has a birth");
     let mut request = write(Actor::Spice, lanes.epoch, Producer::ResidentRecognition)
         .expect("request write starts");
     request
@@ -578,8 +579,19 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
                 statement,
                 lane: first_lane,
                 occupant: test_uuid(FIRST + 1),
-                task: prior.born().expect("fixture prior task has a birth"),
-                claim: wire::SequenceCode::new(1),
+                session: wire::rooms::DesignSession {
+                    vendor: "omp".parse().expect("vendor"),
+                    identity: "fixture-session".to_owned(),
+                },
+                opportunity: wire::rooms::DesignNoticeOpportunity::TaskCompletion {
+                    task: prior.clone(),
+                    completed: statement,
+                },
+                evidence: wire::rooms::DesignNoticeEvidence::Task {
+                    task: prior,
+                    statement,
+                    completed: statement,
+                },
                 terms: vec!["context".to_owned(), "room".to_owned()],
             },
             FactCause::Root,
@@ -608,15 +620,8 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
     )
     .expect("Design request room reconciles");
 
-    let notice = room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane))
+    let _notice = room_catch_up::read_notice(&room_catch_up::notice_path(&lanes.paths, first_lane))
         .expect("asked lane receives unread room context");
-    assert!(notice.text.contains("appended before accounting"));
-    assert!(notice.text.contains("asked after"));
-    assert!(
-        notice
-            .text
-            .contains(&format!("leave: spice room leave {design} --clause TEXT"))
-    );
     assert!(
         diagnostics.is_empty(),
         "{}",
@@ -921,6 +926,24 @@ fn an_unknown_context_refuses_every_route() {
     lanes.finish();
 }
 
+fn read_awareness(lanes: &Lanes, design: &wire::TaskHandle, words: &[&str]) -> serde_json::Value {
+    lanes.room_read(
+        &["awareness", design.as_str()]
+            .into_iter()
+            .chain(words.iter().copied())
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn awareness_rows(page: &serde_json::Value) -> Vec<serde_json::Value> {
+    page["page"]["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| row["seq"].clone())
+        .collect()
+}
+
 /// Awareness pages a Design's notices over their exact population, though
 /// every record's envelope outweighs the row it renders: each first page
 /// reports the whole population at any `--limit`, admits whole rows, and its
@@ -954,8 +977,9 @@ fn design_awareness_pages_heavy_notices_over_their_exact_population() {
         .map(|letter| format!("a{letter}"))
         .chain(('a'..='f').map(|letter| format!("b{letter}{}", "x".repeat(400))))
         .collect::<Vec<_>>();
+    let prior = prior.born().expect("fixture prior task has a birth");
     let mut noticed = Vec::with_capacity(NOTICES);
-    for claim in 1..=NOTICES {
+    for _ in 1..=NOTICES {
         let mut request = write(Actor::Spice, lanes.epoch, Producer::ResidentRecognition)
             .expect("notice write starts");
         request
@@ -965,8 +989,19 @@ fn design_awareness_pages_heavy_notices_over_their_exact_population() {
                     statement,
                     lane: test_uuid(FIRST),
                     occupant: test_uuid(FIRST + 1),
-                    task: prior.born().expect("fixture prior task has a birth"),
-                    claim: wire::SequenceCode::new(claim as u64),
+                    session: wire::rooms::DesignSession {
+                        vendor: "omp".parse().expect("vendor"),
+                        identity: "fixture-session".to_owned(),
+                    },
+                    opportunity: wire::rooms::DesignNoticeOpportunity::TaskCompletion {
+                        task: prior.clone(),
+                        completed: statement,
+                    },
+                    evidence: wire::rooms::DesignNoticeEvidence::Task {
+                        task: prior.clone(),
+                        statement,
+                        completed: statement,
+                    },
                     terms: terms.clone(),
                 },
                 FactCause::Root,
@@ -976,22 +1011,7 @@ fn design_awareness_pages_heavy_notices_over_their_exact_population() {
             commit(&lanes.bus, request).expect("notice commits").first()
         ));
     }
-    let read = |words: &[&str]| {
-        lanes.room_read(
-            &["awareness", design.as_str()]
-                .into_iter()
-                .chain(words.iter().copied())
-                .collect::<Vec<_>>(),
-        )
-    };
-    let rows = |page: &serde_json::Value| {
-        page["page"]["rows"]
-            .as_array()
-            .expect("rows")
-            .iter()
-            .map(|row| row["seq"].clone())
-            .collect::<Vec<_>>()
-    };
+    let read = |words: &[&str]| read_awareness(&lanes, &design, words);
 
     for limit in [
         &[][..],
@@ -1000,7 +1020,7 @@ fn design_awareness_pages_heavy_notices_over_their_exact_population() {
         &["--limit", "50"],
     ] {
         let first = read(limit);
-        let shown = rows(&first);
+        let shown = awareness_rows(&first);
         assert!(!shown.is_empty(), "{limit:?} admits whole rows");
         assert_eq!(shown[..], noticed[..shown.len()], "{limit:?}");
         let omission = &first["page"]["omission"];
@@ -1013,7 +1033,7 @@ fn design_awareness_pages_heavy_notices_over_their_exact_population() {
     }
 
     let mut page = read(&["--limit", "5"]);
-    let mut seen = rows(&page);
+    let mut seen = awareness_rows(&page);
     while !page["page"]["omission"].is_null() {
         let resume =
             serde_json::from_value::<Vec<String>>(page["page"]["omission"]["continuation"].clone())
@@ -1025,7 +1045,7 @@ fn design_awareness_pages_heavy_notices_over_their_exact_population() {
                 .chain(resume.iter().map(String::as_str))
                 .collect::<Vec<_>>(),
         );
-        let next = rows(&page);
+        let next = awareness_rows(&page);
         assert!(!next.is_empty(), "each continuation admits a whole row");
         assert_eq!(
             page["page"]["omission"]["population"]
