@@ -161,8 +161,9 @@ plum. Any other selection keeps the page's base.
 
 ## Toolbar
 
-The toolbar has two rows: the team's task strip, then one status band holding
-presence pips beneath the team total and the live ticker in the rest. The
+The toolbar has two rows: the team's task strip, then one status band led by
+the live ticker and closed by presence pips, which sit directly above the
+composer's control panel. The
 status band is the console's top edge, for a team and a working group alike.
 Where two consoles touch, each band rounds its touching top corner with the
 same radius as the lane-top tabs. Only the earlier console draws the dividing
@@ -285,9 +286,9 @@ cycle state the resident judged; awaiting decision, the one state the operator
 owes, carries the warning colour. The Design room's standing names the same
 cycle, who acts next, whether the last pass ended in a proposal or was
 abandoned, and links the exact proposal awaiting decision and the latest
-decision. The group's name closes the
-status row; this browser's own move-left, move-right, and close controls live
-in the panel's group arrangement menu.
+decision. As a team's pips do, the design lights close the
+status row above the control panel; this browser's own move-left, move-right,
+and close controls live in the panel's group arrangement menu.
 
 In the Spice sidebar, a working-group card is its Open control: click or focus
 the card and press Enter or Space to mount that group's console. Design Read
