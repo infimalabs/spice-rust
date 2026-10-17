@@ -194,10 +194,10 @@ plain label.
 
 A design's composer posts the guarded native room-post command to exactly that
 design's room on **Post** or Control/Command+Enter. Its empty back uses three
-lines ordered from durable context to live detail: handle then current title;
-workflow phase and standing then claimant; directly dependent open-task count
-then room-post count. Those facts come from the current board and room
-projection on every render. Quoting
+plain lines ordered from durable context to live detail, never middot-joined:
+`HANDLE: TITLE`; workflow phase, standing, and claimant, comma-separated; then
+the directly dependent open-task count and room-post count. Those facts come
+from the current board and room projection on every render. Quoting
 an operator-authored card drafts a
 `spice://quote/v1/room/ROOM/PUBLICATION/DIGEST` shard above that design's
 composer, the same shard a team composer drafts, and steering delivery expands
