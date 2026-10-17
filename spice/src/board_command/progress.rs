@@ -287,9 +287,10 @@ fn done_transition(
         .iter()
         .position(|phase| phase == &entry.workflow().phase)
         .expect("validated workflow contains its phase");
-    let transition = match entry.workflow().flow.get(current + 1) {
-        Some(next) => board::Transition::advance(entry, &active, next.clone()),
-        None => board::Transition::complete(entry, &active, at),
+    let transition = match (disposition, entry.workflow().flow.get(current + 1)) {
+        (Some(_), _) => board::Transition::dispose(entry, &active, at),
+        (None, Some(next)) => board::Transition::advance(entry, &active, next.clone()),
+        (None, None) => board::Transition::complete(entry, &active, at),
     }
     .map_err(|error| {
         refusal(
@@ -634,9 +635,13 @@ fn admit_review<'a>(
         .iter()
         .position(|phase| phase == &entry.workflow().phase)
         .expect("validated workflow contains its phase");
-    let transition = match entry.workflow().flow.get(current + 1) {
-        Some(next) => board::Transition::advance(entry, &active, next.clone()),
-        None => board::Transition::complete(entry, &active, at),
+    // A disposed Plan constructs nothing, so after review it enters only a later
+    // review or settles.
+    let disposed = snapshot.facts.plan_disposition(entry.born()).is_some();
+    let transition = match (disposed, entry.workflow().flow.get(current + 1)) {
+        (true, _) => board::Transition::dispose(entry, &active, at),
+        (false, Some(next)) => board::Transition::advance(entry, &active, next.clone()),
+        (false, None) => board::Transition::complete(entry, &active, at),
     }
     .map_err(|error| {
         refusal(

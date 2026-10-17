@@ -78,23 +78,39 @@ impl Transition {
         if workflow.flow.last() != Some(&workflow.phase) {
             return Err(PhaseRefusal::NotFinal(workflow.phase.clone()));
         }
+        Ok(settle(entry, workflow, at))
+    }
 
-        let review = match workflow.status.review() {
-            Some(wire::WorkflowReview::Clean) => wire::WorkflowCompletionReview::Clean,
-            Some(wire::WorkflowReview::Unassigned | wire::WorkflowReview::Assigned { .. }) => {
-                wire::WorkflowCompletionReview::Unassigned
-            }
-            None => unreachable!("pending workflow has a live review"),
+    /// Guard a Plan's no-construction disposition from its current phase.
+    ///
+    /// Nothing remains to execute, so the workflow passes every later phase
+    /// before its first later review, which still verifies the disposition; a
+    /// flow with no later review settles. No execution phase ever holds a Plan
+    /// that constructs nothing.
+    pub fn dispose(entry: &Entry, active: &Active<'_>, at: Instant) -> Result<Self, PhaseRefusal> {
+        bind_claim(entry, active)?;
+        let workflow = entry.workflow();
+        if !workflow.status.is_pending() {
+            return Err(PhaseRefusal::Completed);
+        }
+        let from = workflow
+            .flow
+            .iter()
+            .position(|phase| phase == &workflow.phase)
+            .expect("Entry admits only a current phase inside its flow");
+        let Some(review) = workflow.flow[from + 1..]
+            .iter()
+            .find(|phase| phase.as_str() == "review")
+        else {
+            return Ok(settle(entry, workflow, at));
         };
         let mut next = workflow.clone();
-        next.status = wire::WorkflowStatus::Settled {
-            at,
-            conclusion: wire::WorkflowConclusion::Positive { review },
-        };
+        next.phase = review.clone();
         Ok(Self {
             task: entry.handle().clone(),
-            kind: TransitionKind::Complete {
-                phase: workflow.phase.clone(),
+            kind: TransitionKind::Advance {
+                from: workflow.phase.clone(),
+                to: review.clone(),
             },
             next,
         })
@@ -221,6 +237,30 @@ fn bind_claim(entry: &Entry, active: &Active<'_>) -> Result<(), PhaseRefusal> {
         Ok(())
     } else {
         Err(PhaseRefusal::ClaimForAnotherTask)
+    }
+}
+
+/// Settle a pending workflow positively from its current phase, carrying its
+/// live review state into the completion.
+fn settle(entry: &Entry, workflow: &WorkflowHead, at: Instant) -> Transition {
+    let review = match workflow.status.review() {
+        Some(wire::WorkflowReview::Clean) => wire::WorkflowCompletionReview::Clean,
+        Some(wire::WorkflowReview::Unassigned | wire::WorkflowReview::Assigned { .. }) => {
+            wire::WorkflowCompletionReview::Unassigned
+        }
+        None => unreachable!("pending workflow has a live review"),
+    };
+    let mut next = workflow.clone();
+    next.status = wire::WorkflowStatus::Settled {
+        at,
+        conclusion: wire::WorkflowConclusion::Positive { review },
+    };
+    Transition {
+        task: entry.handle().clone(),
+        kind: TransitionKind::Complete {
+            phase: workflow.phase.clone(),
+        },
+        next,
     }
 }
 
