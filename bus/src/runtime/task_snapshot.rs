@@ -246,7 +246,7 @@ struct Indexes {
     /// The reason each Design's collapse recorded, shared until a commit
     /// records another conclusion.
     collapse_reasons: Arc<HashMap<journal::crossing::TaskStamp, String>>,
-    /// Each task's latest completion disposition; see [`disposition`].
+    /// Each Plan's recorded disposition; see [`disposition`].
     plan_dispositions:
         Arc<HashMap<journal::crossing::TaskStamp, journal::crossing::body::PlanDisposition>>,
     /// Candidate-version precedence classifying outputs for selection waiting.

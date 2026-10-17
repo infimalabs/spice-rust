@@ -795,14 +795,8 @@ fn a_plan_disposition_refuses_beside_a_live_output_or_an_unwitnessed_cover() {
         "{unwitnessed:?}"
     );
 
-    add_associated(
-        &bus,
-        epoch,
-        Actor::Operator,
-        "Constructed output",
-        Some(&plan),
-        None,
-    );
+    // Linked accepted work already discharges construction, so no disposition stands beside it.
+    connect_child(&bus, epoch, &plan, &cover);
     let beside = dispose(
         &bus,
         epoch,
