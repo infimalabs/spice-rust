@@ -211,6 +211,84 @@ fn workflow(journal: &Journal, task: &TaskStamp) -> wire::WorkflowHead {
         .into_body()
 }
 
+fn retain_crossed_output(
+    journal: &mut Journal,
+    controller: &TaskStamp,
+    output: &TaskStamp,
+) -> wire::rooms::CandidateRef {
+    let candidate = wire::rooms::CandidateRef {
+        controller: controller.clone(),
+        candidate: wire::rooms::RoomAuthorityStamp::for_micros(1_760_000_000_000_000)
+            .expect("candidate identity"),
+    };
+    let mut write = write();
+    write
+        .fact(
+            wire::rooms::DesignProposed {
+                candidate: wire::rooms::DesignPassProposal {
+                    candidate: candidate.clone(),
+                    statement: statement(journal, controller).revision,
+                    claim: None,
+                    recommendation: wire::rooms::DesignPassRecommendation::Work,
+                    governed_inputs: Vec::new(),
+                    outputs: vec![output.clone()],
+                    justification: "the retained gate still controls this output".to_owned(),
+                    references: vec![wire::rooms::CandidateReference {
+                        relation: "contract".parse().expect("relation"),
+                        source: wire::rooms::RoomSource::Journal {
+                            fact: wire::SequenceCode::new(1),
+                        },
+                    }],
+                    evidence: Vec::new(),
+                },
+            },
+            crate::FactCause::Root,
+        )
+        .expect("proposal builds");
+    journal.apply(write).expect("crossed output is proposed");
+    journal
+        .verify()
+        .expect("crossed output proposal replays from its retained gate");
+    candidate
+}
+
+fn reject_crossed_output(
+    journal: &mut Journal,
+    candidate: wire::rooms::CandidateRef,
+    output: &TaskStamp,
+) {
+    let mut write = write();
+    write
+        .fact(
+            wire::rooms::PreparationDecided {
+                decision: wire::rooms::PreparationDecision {
+                    decision: wire::rooms::DecisionRef {
+                        controller: candidate.controller.clone(),
+                        decision: wire::SequenceCode::new(1),
+                    },
+                    source: wire::rooms::RoomSource::Journal {
+                        fact: wire::SequenceCode::new(1),
+                    },
+                    outcome: wire::rooms::DecisionOutcome::Resolved {
+                        candidate,
+                        outputs: vec![wire::rooms::OutputDecision {
+                            output: output.clone(),
+                            verdict: wire::rooms::OutputVerdict::Rejected,
+                            comment: None,
+                        }],
+                        comment: None,
+                    },
+                },
+            },
+            crate::FactCause::Root,
+        )
+        .expect("decision builds");
+    journal.apply(write).expect("crossed output is decided");
+    journal
+        .verify()
+        .expect("crossed output decision replays from its retained gate");
+}
+
 #[test]
 fn schema_seventy_seven_crosses_live_gates_and_closes_unreleasable_branches() {
     let scratch = Scratch::new();
@@ -272,7 +350,7 @@ fn schema_seventy_seven_crosses_live_gates_and_closes_unreleasable_branches() {
     restore_predecessor(&journal, 77);
     drop(journal);
 
-    let journal = Journal::open(&path).expect("schema-77 preparation gates cross");
+    let mut journal = Journal::open(&path).expect("schema-77 preparation gates cross");
     assert_eq!(
         journal.migration().map(|migration| migration.from()),
         Some(77)
@@ -307,6 +385,8 @@ fn schema_seventy_seven_crosses_live_gates_and_closes_unreleasable_branches() {
         &workflow(&journal, &gather)
     ));
     assert!(workflow(&journal, &gather).status.is_pending());
+    let candidate = retain_crossed_output(&mut journal, &open_design, &open_output);
+    reject_crossed_output(&mut journal, candidate, &open_output);
 
     for task in [
         done_output,

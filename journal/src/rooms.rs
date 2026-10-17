@@ -231,6 +231,12 @@ pub(crate) trait Authority {
     fn task_dependencies(&self, task: &TaskStamp) -> Result<Option<Vec<TaskStamp>>, Refusal>;
     /// Replace one task's replay-visible ordinary dependencies.
     fn set_task_dependencies(&mut self, task: &TaskStamp, dependencies: Vec<TaskStamp>);
+    /// Record dependency authority from a task birth. Replay may restore a
+    /// predecessor preparation gate that schema 77 crossed directly into the
+    /// statement head; live commits retain the fact's exact dependency list.
+    fn set_task_birth_dependencies(&mut self, added: &wire::body::TaskAdded) {
+        self.set_task_dependencies(&added.task, added.depends.clone());
+    }
     /// Current statement head position of one task, when it exists.
     fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal>;
     /// Record one task statement mutation.
@@ -521,6 +527,25 @@ impl Authority for History {
     fn set_task_dependencies(&mut self, task: &TaskStamp, dependencies: Vec<TaskStamp>) {
         self.task_dependencies
             .insert(task.to_string(), dependencies);
+    }
+    fn set_task_birth_dependencies(&mut self, added: &wire::body::TaskAdded) {
+        let mut dependencies = added.depends.clone();
+        let held = added
+            .taste
+            .as_ref()
+            .is_some_and(|hold| hold.plan == wire::TastePlan::Prepended);
+        let route = match added.flow.as_slice() {
+            [first, authored @ ..] if held && first.as_str() == "plan" => authored,
+            authored => authored,
+        };
+        if let Some(preparation) = &added.preparation
+            && preparation.construction == added.task
+            && !wire::gather_route(added.intent, route)
+            && !dependencies.contains(&preparation.parent)
+        {
+            dependencies.push(preparation.parent.clone());
+        }
+        self.set_task_dependencies(&added.task, dependencies);
     }
     fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal> {
         Ok(self.task_statements.get(task.as_str()).copied())
@@ -1217,7 +1242,7 @@ fn cover(
 
 fn track_task_dependencies(authority: &mut impl Authority, fact: &AnyFact) {
     if let Some(added) = fact.read::<wire::body::TaskAdded>() {
-        authority.set_task_dependencies(&added.task, added.depends);
+        authority.set_task_birth_dependencies(&added);
         return;
     }
     if let Some(edited) = fact.read::<wire::body::TaskEdited>()

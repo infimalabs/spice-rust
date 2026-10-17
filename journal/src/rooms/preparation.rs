@@ -210,6 +210,20 @@ pub(super) fn authorize(
     if authority.decision_authorized(&decision_key)? {
         return unsound("decision already authorized a selection");
     }
+    let controller = &authorization.candidate.controller;
+    let mut released = Vec::with_capacity(authorization.selected_outputs.len());
+    for output in &authorization.selected_outputs {
+        let Some(mut dependencies) = authority.task_dependencies(output)? else {
+            return unsound(format!("selected output {output} does not exist"));
+        };
+        if !dependencies.contains(controller) {
+            return unsound(format!(
+                "selected output {output} is not gated by {controller}"
+            ));
+        }
+        dependencies.retain(|dependency| dependency != controller);
+        released.push((output.clone(), dependencies));
+    }
     let outputs = authorization
         .selected_outputs
         .iter()
@@ -222,5 +236,9 @@ pub(super) fn authorize(
             seq: seq.get(),
             body: wire::encode(&authorization)?,
         },
-    })
+    })?;
+    for (output, dependencies) in released {
+        authority.set_task_dependencies(&output, dependencies);
+    }
+    Ok(())
 }
