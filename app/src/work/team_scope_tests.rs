@@ -4,7 +4,7 @@ use wire::CanonicalUuid;
 use wire::head::ClaimDisposition;
 
 use super::tests::{board, claim, design, stamp, task};
-use super::{WorkOwner, WorkProjection, WorkScope};
+use super::{WorkOwner, WorkProjection, WorkScope, WorkStemIdentity, WorkVisibility};
 
 fn uuid(value: &str) -> CanonicalUuid {
     value.parse().expect("fixture uuid")
@@ -262,6 +262,54 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
         "a live last claimant can rehome work without changing its dissolved creator provenance",
     );
     assert_eq!(projection.tasks()[4].row().creator_team, Some(dissolved));
+}
+
+#[test]
+fn opportunistic_design_owns_its_direct_outputs_but_not_their_plan_work() {
+    let root_born = stamp(1);
+    let preparation = |parent: wire::TaskStamp, construction| wire::TaskPreparation {
+        parent,
+        controller: root_born.clone(),
+        construction: stamp(construction),
+    };
+    let mut root = design(1, "spice.oops");
+    root.statement.body.intent = Some(wire::TaskIntent::OpportunisticDesign);
+    let mut output = task(2, "spice.oops");
+    output.statement.body.intent = Some(wire::TaskIntent::Plan);
+    output.statement.body.preparation = Some(preparation(root_born.clone(), 2));
+    let mut execution = task(3, "spice.app");
+    execution.statement.body.preparation = Some(preparation(stamp(2), 3));
+
+    let board = board(vec![root, output, execution]);
+    let projection =
+        WorkProjection::from_board_with_team_memberships(&board, None, BTreeMap::new());
+    let borns = |scope: &WorkScope| {
+        projection
+            .scope_tasks(scope)
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+    };
+
+    assert_eq!(
+        borns(&WorkScope::planning()),
+        BTreeSet::from([stamp(1), stamp(2)]),
+        "the opportunistic Design and its direct output share the Design-planning rail",
+    );
+    let spice = WorkScope::Stem(WorkStemIdentity::new(
+        WorkVisibility::Public,
+        "spice".to_owned(),
+    ));
+    for scope in [WorkScope::AllOpen, spice] {
+        assert_eq!(
+            borns(&scope),
+            BTreeSet::from([stamp(3)]),
+            "{scope:?} counts only the Plan-produced execution work",
+        );
+    }
+    assert_eq!(
+        projection.tasks()[1].accountable_owner(),
+        Some(&WorkOwner::Design(root_born)),
+    );
 }
 
 #[test]
