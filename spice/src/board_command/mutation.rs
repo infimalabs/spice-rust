@@ -291,10 +291,11 @@ fn create_task<B: serde::Serialize>(
         }
     };
     let taste_review = taste_review.filter(TasteReview::required);
-    if taste_review.is_some() && captures_implementation(command) {
-        return refusal(
-            "task::capture-taste-review",
-            Some("captured implementation requires taste-reviewed task prose".to_owned()),
+    if let Some(review) = &taste_review
+        && captures_implementation(command)
+    {
+        return review.refusal(
+            "captured implementation requires taste-reviewed task prose".to_owned(),
             "correct the capture title and retry; no task or claim was created and the local commits remain on this lane",
         );
     }

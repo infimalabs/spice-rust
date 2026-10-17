@@ -181,10 +181,9 @@ fn review_taste(
         Some(review) if was_required || entry.workflow().phase.as_str() == "plan" => {
             keep_taste_hold(&mut statement.taste, &review);
         }
-        Some(_) => {
-            return Err(refusal(
-                "task::taste-review-required",
-                Some(edit.task.to_string()),
+        Some(review) => {
+            return Err(review.refusal(
+                edit.task.to_string(),
                 "revise the proposed task statement so it passes taste review before applying it",
             ));
         }
