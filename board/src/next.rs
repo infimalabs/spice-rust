@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use wire::rooms::DesignCycle;
-use wire::{Actor, ClaimCell, ClaimDisposition, Instant, TaskIntent, TaskStamp, TeamSubscription};
+use wire::{
+    Actor, ClaimCell, ClaimDisposition, Instant, TaskIntent, TaskStamp, TeamSubscription,
+    gather_task,
+};
 
 use crate::task::Entry;
 use crate::urgency::{Urgency, declared_priority};
@@ -128,35 +131,6 @@ impl SelectionIndex {
     pub const fn resolved(&self) -> &ResolvedTasks {
         &self.resolved
     }
-}
-
-/// The phase a gather task walks: evidence-only work under an open, active
-/// Design.
-const GATHER_PHASE: &str = "gather";
-
-/// Whether an authored route with `intent` and `flow` is a gather route: no
-/// declared intent and the one `gather` phase. It holds no commit authority,
-/// lands nothing, and is never a preparation output awaiting selection; any
-/// other route under a Design is an ordinary output.
-#[must_use]
-pub fn gather_route(intent: Option<TaskIntent>, flow: &[wire::Phase]) -> bool {
-    intent.is_none() && matches!(flow, [phase] if phase.as_str() == GATHER_PHASE)
-}
-
-/// Whether a task is a gather task: its authored route, read past a plan
-/// phase a taste hold inserted, is a gather route. A hold therefore never
-/// changes what a task is, only which phase it waits in.
-#[must_use]
-pub fn gather_task(statement: &wire::TaskHead, workflow: &wire::WorkflowHead) -> bool {
-    let held = statement
-        .taste
-        .as_ref()
-        .is_some_and(|hold| hold.plan == wire::TastePlan::Prepended);
-    let route = match workflow.flow.as_slice() {
-        [first, authored @ ..] if held && first.as_str() == "plan" => authored,
-        authored => authored,
-    };
-    gather_route(statement.intent, route)
 }
 
 /// The preparation whose live output retains its gating dependency.

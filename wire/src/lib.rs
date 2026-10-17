@@ -105,7 +105,7 @@ pub use head::{
     TaskPriority, TasteFinding, TasteHold, TasteMatch, TastePlan, TasteProposal, TeamSubscription,
     TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,
     WorkflowCompletionReview, WorkflowConclusion, WorkflowHead, WorkflowNegative, WorkflowReview,
-    WorkflowStatus, WorkflowStatusKind,
+    WorkflowStatus, WorkflowStatusKind, gather_route, gather_task,
 };
 pub use hello::{
     Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,

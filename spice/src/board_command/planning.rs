@@ -84,7 +84,7 @@ pub(super) fn admit_gather_design(
     flow: &[wire::Phase],
     design: Option<&BoardTask>,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    if !board::gather_route(intent, flow) {
+    if !wire::gather_route(intent, flow) {
         return Ok(());
     }
     if design.is_some_and(|design| {
@@ -232,7 +232,7 @@ pub(super) fn bind_preparation(
         ),
         construction: statement.born.clone(),
     });
-    if !board::gather_route(statement.intent, flow)
+    if !wire::gather_route(statement.intent, flow)
         && !statement.dependencies.contains(&parent.statement.body.born)
     {
         statement
