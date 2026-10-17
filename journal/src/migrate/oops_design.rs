@@ -3,6 +3,11 @@ use rusqlite::{OptionalExtension, params};
 use super::{MigrationError, OpenError};
 
 const OOPS_DESIGN_RELEASE: &str = "schema-74";
+/// Acceptance this crossing stamped on every retained report it made a Plan.
+const CROSSED_REPORT_ACCEPTANCE: [&str; 2] = [
+    "Explicitly disposition the reported friction as duplicate, no-work, deferred, covered, or change-warranted.",
+    "When change is warranted, construct acceptance-bearing child work that addresses it.",
+];
 
 struct Report {
     seq: i64,
@@ -29,7 +34,7 @@ pub(super) fn cross(transaction: &rusqlite::Transaction<'_>) -> Result<(), OpenE
         controller: design.clone(),
         construction: reports[0].stamp.clone(),
     };
-    let acceptance = wire::OOPS_LINE_ACCEPTANCE.map(str::to_owned).to_vec();
+    let acceptance = CROSSED_REPORT_ACCEPTANCE.map(str::to_owned).to_vec();
     let acceptance = serde_json::to_string(&acceptance)
         .map_err(|error| retained("task_heads", design.to_string(), error.to_string()))?;
 

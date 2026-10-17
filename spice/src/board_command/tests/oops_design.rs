@@ -72,6 +72,10 @@ fn add_line(
         created.statement.body.description, None,
         "the report text is not repeated as a description"
     );
+    assert!(
+        created.statement.body.acceptance.is_empty(),
+        "intake injects no acceptance"
+    );
     answer.task
 }
 
@@ -466,10 +470,6 @@ fn oops_lines_share_one_design_and_exact_decisions_leave_new_arrivals_for_the_ne
     for line in [&first, &second] {
         let heads = at(&preview, line);
         assert_eq!(heads.statement.body.intent, Some(wire::TaskIntent::Plan));
-        assert_eq!(
-            heads.statement.body.acceptance,
-            wire::OOPS_LINE_ACCEPTANCE.map(str::to_owned)
-        );
         let association = heads
             .statement
             .body
