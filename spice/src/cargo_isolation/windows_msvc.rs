@@ -567,7 +567,7 @@ fn require_operator_acceptance(
             let actor = &presentation.created().actor;
             let roles = read.principal_roles()?;
             let text = &presentation.head().body().text;
-            Ok(acceptance_record_authorized(actor, &roles, text).then(|| text.clone()))
+            Ok(operator_authored(actor, &roles).then(|| text.clone()))
         })
         .map_err(|error| {
             IsolationError::new(
@@ -593,14 +593,9 @@ fn require_operator_acceptance(
     }
 }
 
-fn acceptance_record_authorized(
-    actor: &wire::Actor,
-    roles: &wire::principal::PrincipalRoles,
-    text: &str,
-) -> bool {
+fn operator_authored(actor: &wire::Actor, roles: &wire::principal::PrincipalRoles) -> bool {
     matches!(actor, wire::Actor::Human(_))
         && roles.holds(actor, wire::principal::PrincipalRole::Operator)
-        && acceptance_text_matches(text)
 }
 
 fn acceptance_text_matches(text: &str) -> bool {
@@ -964,20 +959,11 @@ mod tests {
         }]);
         let accepted = "I accept the applicable Microsoft Software License Terms for the \
                         Microsoft CRT and Windows SDK components.";
-        assert!(acceptance_record_authorized(&operator, &roles, accepted));
-        assert!(!acceptance_record_authorized(
-            &wire::Actor::Lane(principal),
-            &roles,
-            accepted
-        ));
-        assert!(!acceptance_record_authorized(
-            &wire::Actor::Operator,
-            &roles,
-            accepted
-        ));
-        assert!(!acceptance_record_authorized(
-            &operator,
-            &roles,
+        assert!(operator_authored(&operator, &roles));
+        assert!(!operator_authored(&wire::Actor::Lane(principal), &roles));
+        assert!(!operator_authored(&wire::Actor::Operator, &roles));
+        assert!(acceptance_text_matches(accepted));
+        assert!(!acceptance_text_matches(
             "Install the Microsoft CRT and Windows SDK."
         ));
     }
