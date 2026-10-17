@@ -42,6 +42,11 @@ impl LaunchFixture {
             "version = 4\n\n[[package]]\nname = \"resident-launch\"\nversion = \"0.0.0\"\n",
         )
         .expect("fixture lockfile writes");
+        fs::write(
+            root.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"fixture-1.0\"\ntargets = []\n",
+        )
+        .expect("fixture toolchain declaration writes");
         fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n").expect("fixture source writes");
         fs::create_dir(root.join(".git")).expect("fixture Git directory creates");
         fs::write(root.join("spice-rust.toml"), "[lane]\nlease = \"20s\"\n")
