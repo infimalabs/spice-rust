@@ -174,6 +174,7 @@ fn draft_filing(
         }
         dependency_witnesses.push(workflow_witness(heads));
     }
+    planning::refuse_disposed_construction(snapshot, statement, workflow)?;
     let review = task_taste_review(
         repository,
         snapshot,

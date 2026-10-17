@@ -350,7 +350,8 @@ fn admit_prepared(
         add,
         &prepared.flow,
         &mut prepared.statement,
-    )
+    )?;
+    planning::refuse_disposed_construction(snapshot, &prepared.statement, &prepared.workflow)
 }
 
 /// The operator is the root authority, so a Draft it authors needs no further
@@ -902,6 +903,12 @@ pub(super) fn task_depends_with(
             );
         }
     };
+    if !depends.remove
+        && let Err(outcome) =
+            planning::refuse_disposed_construction(&snapshot, post.statement(), post.workflow())
+    {
+        return outcome;
+    }
     if depends.remove
         && post.workflow().phase.as_str() == "plan"
         && (post.workflow().flow.len() == 1
