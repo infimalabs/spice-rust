@@ -1004,8 +1004,13 @@ pub struct NextWorkTask {
 pub struct DesignRequest {
     /// Design whose room accepts the answer.
     pub design: crate::TaskHandle,
-    /// Completed task whose terms selected the Design.
+    /// Completed task whose terms selected the Design; `spice task show TASK
+    /// --history` keeps it readable after the asked session compacts.
     pub task: crate::TaskHandle,
+    /// What the completed phase of `task` did.
+    pub support: DesignSupport,
+    /// Bounded one-line excerpt of the completion's validation.
+    pub excerpt: String,
     /// Current Design title.
     pub title: String,
     /// Current Design statement revision.
@@ -1016,6 +1021,41 @@ pub struct DesignRequest {
     pub questions: Vec<String>,
     /// Distinctive shared terms that selected this Design.
     pub terms: Vec<String>,
+}
+
+/// What the completed phase supporting a Design request did, named from the
+/// phase its claim held so the request does not overstate it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DesignSupport {
+    /// An implementing phase changed the product.
+    Implemented,
+    /// A plan or Design phase diagnosed or planned the work.
+    Planned,
+    /// A review phase inspected another lane's work.
+    Reviewed,
+}
+
+impl DesignSupport {
+    /// The kind of the supporting work, from the phase its claim held.
+    #[must_use]
+    pub fn for_phase(phase: &crate::Phase) -> Self {
+        match phase.as_str() {
+            "review" => Self::Reviewed,
+            "plan" | "design" => Self::Planned,
+            _ => Self::Implemented,
+        }
+    }
+
+    /// The past-tense clause a request uses for this work.
+    #[must_use]
+    pub const fn verb(self) -> &'static str {
+        match self {
+            Self::Implemented => "implemented",
+            Self::Planned => "diagnosed or planned",
+            Self::Reviewed => "reviewed",
+        }
+    }
 }
 
 /// Exact pending execution-board classification when the allocator has no

@@ -212,6 +212,10 @@ impl Authority for Stored<'_> {
         self.exists("SELECT 1 FROM room_publications WHERE seq = ?1", [sql(seq)])
     }
 
+    fn request_at(&self, seq: u64) -> Result<bool, Refusal> {
+        self.exists("SELECT 1 FROM design_notices WHERE seq = ?1", [sql(seq)])
+    }
+
     fn cursor(&self, lane: &str) -> Result<Option<Vec<u8>>, Refusal> {
         Ok(self
             .connection

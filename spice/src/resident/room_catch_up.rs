@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use spice::rooms::{CatchUpBudget, CatchUpSource, select_catch_up};
+use spice::rooms::{CatchUpBudget, CatchUpKind, CatchUpSource, select_catch_up};
 use wire::rooms::{
     CoordinationControl, QuestionResultRef, RoomDelivered, RoomHorizon, RoomQuestionClosed,
     RoomQuestionTimedOut, TextRange, TranscriptHunk,
@@ -34,7 +34,13 @@ pub(in crate::resident) struct Notice {
 struct Presented {
     room: TaskStamp,
     handle: TaskHandle,
-    publication: crate::room_command::Publication,
+    item: Item,
+}
+
+enum Item {
+    Publication(crate::room_command::Publication),
+    /// The rendered Design request owed to this lane.
+    Invitation(String),
 }
 
 /// One read of the task board, residency, and clock that room projections
@@ -42,7 +48,7 @@ struct Presented {
 pub(in crate::resident) struct Planning {
     pub(in crate::resident) residency: wire::ResidencyHead,
     pub(in crate::resident) entries: Vec<board::Entry>,
-    pub(in crate::resident) facts: bus::TaskFacts,
+    pub(in crate::resident) snapshot: bus::TaskSnapshot,
     pub(in crate::resident) horizon: Option<Seq>,
     rooms: BTreeMap<TaskStamp, usize>,
     pub(in crate::resident) at: Instant,
@@ -266,7 +272,6 @@ impl Planning {
             .enumerate()
             .map(|(index, entry)| (entry.born().clone(), index))
             .collect();
-        let facts = snapshot.facts().clone();
         let horizon = snapshot.cursor();
         let at = Instant::new(jiff::Timestamp::now()).map_err(|error| {
             environment_fault("room::catch-up-clock-invalid", &error.to_string())
@@ -274,7 +279,7 @@ impl Planning {
         Ok(Self {
             residency,
             entries,
-            facts,
+            snapshot,
             horizon,
             rooms,
             at,
@@ -429,6 +434,40 @@ fn plan(
             handles.insert(room, entry.handle().clone());
         }
     }
+    if let Some(owed) = super::design_awareness::owed_request(
+        bus,
+        &planning.snapshot,
+        &planning.entries,
+        lane,
+        occupant,
+    )
+    .map_err(unit_outcome)?
+        && let Some(index) = planning.rooms.get(&owed.design)
+    {
+        let entry = &planning.entries[*index];
+        if !attention
+            .iter()
+            .any(|view: &spice::rooms::RoomAttention| view.room == owed.design)
+        {
+            attention.push(room_attention(bus, lane, planning, &owed.design)?);
+        }
+        let text = spice::rooms::awareness::request_text(&owed.request);
+        sources.push(CatchUpSource {
+            seq: owed.at,
+            room: owed.design.clone(),
+            kind: CatchUpKind::Invitation,
+            bytes: text.len(),
+        });
+        presented.insert(
+            owed.at,
+            Presented {
+                room: owed.design.clone(),
+                handle: entry.handle().clone(),
+                item: Item::Invitation(text),
+            },
+        );
+        handles.insert(owed.design, entry.handle().clone());
+    }
     let selected = select_catch_up(lane, after, &attention, sources, CatchUpBudget::STANDARD)
         .map_err(|error| store_fault("room::catch-up-authority-invalid", &error.to_string()))?;
     let Some(through) = selected.through else {
@@ -450,8 +489,8 @@ fn plan(
     }))
 }
 
-/// The notice text for `selected`: each publication under its room, then why
-/// `lane` listens to each room shown and how it leaves.
+/// The notice text for `selected`: each publication or owed Design request
+/// under its room, then why `lane` listens to each room shown and how it leaves.
 fn render(
     lane: CanonicalUuid,
     through: Seq,
@@ -462,7 +501,7 @@ fn render(
     entries: &[board::Entry],
 ) -> String {
     let mut text = String::from(
-        "<system-notice>\n# Room catch-up\nBounded background publications for rooms this lane currently listens to:\n",
+        "<system-notice>\n# Room catch-up\nBounded background items for rooms this lane currently listens to:\n",
     );
     let mut rooms = Vec::new();
     for item in &selected.items {
@@ -472,9 +511,13 @@ fn render(
         if !rooms.contains(&&item.room) {
             rooms.push(&item.room);
         }
+        let body: &dyn std::fmt::Display = match &item.item {
+            Item::Publication(publication) => publication,
+            Item::Invitation(request) => request,
+        };
         text.push_str(&format!(
-            "\nroom {} anchor {}\n{}\n",
-            item.handle, item.room, item.publication
+            "\nroom {} anchor {}\n{body}\n",
+            item.handle, item.room
         ));
     }
     for room in rooms {
@@ -488,11 +531,14 @@ fn render(
         let withheld = presented
             .get(&continuation)
             .expect("a continuation retains its presentation");
-        text.push_str(&format!(
-            "\ncontinue: spice://task/{}/room?after={}\n",
-            withheld.handle,
-            withheld.publication.publication()
-        ));
+        text.push_str(&match &withheld.item {
+            Item::Publication(publication) => format!(
+                "\ncontinue: spice://task/{}/room?after={}\n",
+                withheld.handle,
+                publication.publication()
+            ),
+            Item::Invitation(_) => "\ncontinue: spice task next\n".to_owned(),
+        });
     }
     text.push_str(&format!(
         "\nroom-delivery lane={lane} through={through}\nThis background delivery needs no acknowledgment and starts no work.\n</system-notice>"
@@ -518,15 +564,7 @@ fn append_room(
     if publications.is_empty() {
         return Ok(());
     }
-    let room_attention = crate::board_command::project_attention(
-        bus,
-        &planning.entries,
-        &planning.residency,
-        &room,
-        latest_lane_activity(bus, &room, lane)?.as_slice(),
-        planning.at,
-    )
-    .map_err(unit_outcome)?;
+    let room_attention = room_attention(bus, lane, planning, &room)?;
     let artifacts = paths.artifacts();
     let owners = crate::room_command::SourceOwners {
         tape: &paths.tape,
@@ -541,12 +579,14 @@ fn append_room(
         sources.push(CatchUpSource {
             seq,
             room: room.clone(),
-            publication: publication.publication().clone(),
-            at: publication.at(),
-            author: publication.author_lane(),
-            recipients: publication
-                .recipients()
-                .map_err(|detail| store_fault("room::catch-up-route-invalid", &detail))?,
+            kind: CatchUpKind::Publication {
+                publication: publication.publication().clone(),
+                at: publication.at(),
+                author: publication.author_lane(),
+                recipients: publication
+                    .recipients()
+                    .map_err(|detail| store_fault("room::catch-up-route-invalid", &detail))?,
+            },
             bytes: display.len(),
         });
         presented.insert(
@@ -554,12 +594,29 @@ fn append_room(
             Presented {
                 room: room.clone(),
                 handle: entry.handle().clone(),
-                publication,
+                item: Item::Publication(publication),
             },
         );
     }
     attention.push(room_attention);
     Ok(())
+}
+
+fn room_attention(
+    bus: &Bus,
+    lane: CanonicalUuid,
+    planning: &Planning,
+    room: &TaskStamp,
+) -> CommandResult<spice::rooms::RoomAttention> {
+    crate::board_command::project_attention(
+        bus,
+        &planning.entries,
+        &planning.residency,
+        room,
+        latest_lane_activity(bus, room, lane)?.as_slice(),
+        planning.at,
+    )
+    .map_err(unit_outcome)
 }
 
 fn latest_lane_activity(
