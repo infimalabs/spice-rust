@@ -39,11 +39,11 @@ pub(super) fn retain(
         require_task(authority, input, "governed input")?;
     }
     for output in &candidate.outputs {
-        match authority.task(output)? {
-            Some(Some(preparation)) if preparation.controller == *controller => {}
+        match authority.task_dependencies(output)? {
+            Some(dependencies) if dependencies.contains(controller) => {}
             Some(_) => {
                 return unsound(format!(
-                    "candidate output {output} is not controlled by {controller}"
+                    "candidate output {output} is not gated by {controller}"
                 ));
             }
             None => return unsound(format!("candidate output {output} does not exist")),
@@ -215,11 +215,6 @@ pub(super) fn authorize(
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
-    for output in &outputs {
-        if authority.output_authorized(output)? {
-            return unsound(format!("output {output} is already authorized"));
-        }
-    }
     authority.change(Change::Authorization {
         outputs,
         row: AuthorizationRow {

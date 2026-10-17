@@ -751,8 +751,8 @@ fn verify_claim_index(
 
 /// Each statement head's declared intent is exactly the fold of its creation
 /// intent and the explicit intent changes its edits admitted, so no other
-/// statement publication can move it. Required evidence, preparation, and
-/// execution authorization likewise equal the facts that admitted them.
+/// statement publication can move it. Required evidence and preparation
+/// likewise equal the facts that admitted them.
 fn verify_task_intents(
     connection: &Connection,
     facts: &BTreeMap<u64, FactRecord>,
@@ -760,7 +760,6 @@ fn verify_task_intents(
 ) -> Result<(), VerifyError> {
     let mut declared = BTreeMap::new();
     let mut preparations = BTreeMap::new();
-    let mut authorizations = BTreeMap::new();
     let mut evidence: BTreeMap<String, Vec<wire::rooms::QuestionResultRef>> = BTreeMap::new();
     for envelope in facts.values().filter_map(|record| record.envelope.as_ref()) {
         if let Some((task, intent)) = envelope.fact.declared_intent() {
@@ -768,11 +767,6 @@ fn verify_task_intents(
         }
         if let Some((task, preparation)) = envelope.fact.task_preparation() {
             preparations.insert(task.as_str(), preparation);
-        }
-        if let Some(wire::rooms::ExecutionAuthorized { authorization }) = envelope.fact.read() {
-            for output in authorization.selected_outputs {
-                authorizations.insert(output.as_str().to_owned(), authorization.decision.clone());
-            }
         }
         if let Some(wire::body::TaskEdited {
             task,
@@ -827,20 +821,6 @@ fn verify_task_intents(
                 ViolationClass::Head,
                 format!("task_heads:{stamp}"),
                 "required evidence differs from the explicit evidence changes its edits admitted"
-                    .to_owned(),
-            ));
-        }
-        let authorization = authorizations.get(stamp.as_str());
-        if authorization.is_some_and(|decision| {
-            preparation.is_none_or(|preparation| {
-                preparation.controller != decision.controller
-                    || head.dependencies.contains(&preparation.parent)
-            })
-        }) {
-            violations.push(Violation::new(
-                ViolationClass::Head,
-                format!("task_heads:{stamp}"),
-                "selected output retains the Design dependency its execution authorization removed"
                     .to_owned(),
             ));
         }

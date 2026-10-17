@@ -64,6 +64,64 @@ fn authorization_matches_one_exact_selected_candidate() {
 }
 
 #[test]
+fn a_readded_design_edge_admits_another_decision_for_the_same_output() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = Preparation::new(&mut journal);
+    let output = vec![preparation.output.clone()];
+    let input = vec![preparation.input.clone()];
+
+    for (candidate, decision) in [(1, 1), (2, 2)] {
+        if candidate == 2 {
+            set_dependencies(
+                &mut journal,
+                &preparation.output,
+                vec![preparation.controller.clone()],
+            );
+        }
+        commit(
+            &mut journal,
+            preparation.retained(candidate, output.clone()),
+        )
+        .expect("candidate retained");
+        commit(
+            &mut journal,
+            preparation.decision(
+                decision,
+                selected(preparation.candidate(candidate), output.clone()),
+            ),
+        )
+        .expect("decision recorded");
+        authorize(
+            &mut journal,
+            preparation.authorization(decision, candidate, input.clone(), output.clone()),
+        )
+        .expect("exact Design edge authorized");
+    }
+
+    assert_eq!(
+        projection(&journal)
+            .authorizations
+            .keys()
+            .filter(|(authorized, _)| authorized == preparation.output.as_str())
+            .count(),
+        2,
+        "both decisions retain their projection rows"
+    );
+    let latest = journal
+        .read(|read| read.authorization_head(&preparation.output))
+        .expect("authorization reads")
+        .expect("authorization exists");
+    assert_eq!(
+        latest.body().decision,
+        preparation.decision_ref(2),
+        "the guarded read witnesses the latest decision"
+    );
+    journal
+        .verify()
+        .expect("ordinary dependency re-add verifies");
+}
+
+#[test]
 fn a_collapse_request_authorizes_nothing() {
     let mut journal = Journal::in_memory().expect("journal");
     let preparation = Preparation::new(&mut journal);

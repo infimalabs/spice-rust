@@ -6,6 +6,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 use crate::SCHEMA_VERSION;
 
+mod authorization_heads;
 mod awareness;
 mod decisions;
 mod designs;
@@ -76,9 +77,9 @@ const PREPARED: &str = "prepared";
 /// pending branch whose terminal or absent controller cannot release it.
 /// Before any current decoder sees a predecessor statement, the retired
 /// authorization field is lifted into transaction-local selection evidence.
-const PREDECESSOR_SCHEMAS: [u32; 45] = [
+const PREDECESSOR_SCHEMAS: [u32; 46] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
+    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -386,9 +387,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
             decisions::cross_output_decisions(&transaction)?;
         }
     }
-    if version < TEAM_FORMATIONS_SCHEMA {
-        team_formations::cross(&transaction)?;
-    }
+    cross_room_successors(&transaction, version)?;
     create_principal_heads(&transaction, version)?;
     working_groups::cross(&transaction)?;
     if version < OOPS_GENERATION_SCHEMA {
@@ -407,6 +406,17 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         from: version,
         to: SCHEMA_VERSION,
     }))
+}
+
+fn cross_room_successors(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<(), OpenError> {
+    authorization_heads::cross(transaction, version)?;
+    if version < TEAM_FORMATIONS_SCHEMA {
+        team_formations::cross(transaction)?;
+    }
+    Ok(())
 }
 
 fn cross_retained_notes(
@@ -1355,8 +1365,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 78, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 79, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 78;
+PRAGMA user_version = 79;
 "#;

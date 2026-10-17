@@ -90,16 +90,14 @@ fn require_design_proposal(
         let output_heads = task_heads(snapshot, output)?;
         require_statement_workflow_witnesses(command, output_heads)?;
         let statement = output_heads.statement().body();
-        let direct_plan = statement.intent == Some(wire::TaskIntent::Plan)
+        let controlled_plan = statement.intent == Some(wire::TaskIntent::Plan)
             && !statement.acceptance.is_empty()
-            && statement.preparation.as_ref().is_some_and(|preparation| {
-                preparation.parent == *controller && preparation.construction == *output
-            });
-        if !direct_plan {
+            && statement.dependencies.contains(controller);
+        if !controlled_plan {
             return Err(refusal(
                 "preparation::proposal-output-invalid",
                 Some(output.to_string()),
-                "name only acceptance-bearing Plan outputs directly controlled by this Design",
+                "name only acceptance-bearing Plan outputs gated by this Design",
             ));
         }
     }
@@ -120,19 +118,11 @@ fn require_design(
     for output in outputs {
         let heads = task_heads(&snapshot, output)?;
         require_transition_witnesses(command, heads)?;
-        if !heads
-            .statement()
-            .body()
-            .preparation
-            .as_ref()
-            .is_some_and(|preparation| {
-                preparation.parent == *controller && preparation.construction == *output
-            })
-        {
+        if !heads.statement().body().dependencies.contains(controller) {
             return Err(refusal(
                 "preparation::output-uncontrolled",
                 Some(output.to_string()),
-                "name only outputs directly controlled by this Design",
+                "name only outputs gated by this Design",
             ));
         }
     }
@@ -941,7 +931,7 @@ fn selected_output_head(
 ) -> Result<TaskHead, Outcome<CommandAnswer>> {
     let heads = task_heads(snapshot, output)?;
     require_transition_witnesses(command, heads)?;
-    if !output_is_authorizable(heads, candidate, output) {
+    if !output_is_authorizable(heads, candidate) {
         return Err(refusal(
             "preparation::output-not-authorizable",
             Some(output.to_string()),
@@ -954,7 +944,6 @@ fn selected_output_head(
 fn output_is_authorizable(
     heads: &journal::TaskHeads,
     candidate: &wire::rooms::CandidateRef,
-    output: &TaskStamp,
 ) -> bool {
     heads.workflow().body().status.is_pending()
         && !active_claim(heads)
@@ -962,17 +951,8 @@ fn output_is_authorizable(
         && heads
             .statement()
             .body()
-            .preparation
-            .as_ref()
-            .is_some_and(|preparation| {
-                preparation.parent == candidate.controller
-                    && preparation.construction == *output
-                    && heads
-                        .statement()
-                        .body()
-                        .dependencies
-                        .contains(&preparation.parent)
-            })
+            .dependencies
+            .contains(&candidate.controller)
 }
 fn commit_decision(
     bus: &Bus,

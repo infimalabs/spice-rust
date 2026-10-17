@@ -626,28 +626,31 @@ owns each rule summarized here.
   an output. Direct conclude remains the normal terminal act; operator close
   and delete remain explicit emergency settlements and close gated outputs too.
 
-  Each work output waits on an ordinary dependency to its Design until one
-  exact operator `preparation decide` decision assigns every output in its
+  Each work output waits on every ordinary dependency to its Designs until an
+  exact operator `preparation decide` decision assigns every output in one
   Design pass proposal an accepted or rejected verdict. The decision and
-  execution-authorization record land together with removal of exactly the
-  accepted outputs' Design edges. Rejected and unproposed outputs keep their
+  execution-authorization record land together with removal of exactly that
+  Design's edge from each accepted output. Another open Design or Plan edge
+  continues to gate the output; its own decision or settlement remains
+  independent. Rejected and unproposed outputs keep the deciding Design's
   edge, and the Design remains open. Rejecting every output and returning a
   proposal remove no edge. A Design edge otherwise has ordinary dependency
-  authority: task dependency edits can add or remove it, and adding one holds
-  an existing task behind that Design. Resolution belongs to the operator;
-  Design holders do not infer a decision, review coverage never gates it, and
-  working-group membership grants no authorization.
+  authority: task dependency edits can add or remove it, and re-adding one
+  admits a later exact decision without erasing prior authorization history.
+  Resolution belongs to the operator; Design holders do not infer a decision,
+  review coverage never gates it, and working-group membership grants no
+  authorization.
 
   Collapse, done conclusion, operator close, or delete of a Design closes every
-  still-dependent pending output and gated descendant in the same write.
-  Negative settlement of a Plan likewise closes each pending branch that still
-  depends on it. A prior exact Design acceptance remains live because its edge
-  is gone. Work behind a positively completed Plan becomes eligible through
-  ordinary dependency settlement. Any live claim in the closure set refuses
-  the whole operation and names its holder; forced close or delete frees those
-  claims atomically. Migration performs the same closure for retained terminal,
-  deleted, or absent parents, so no read-time stranded classification or repair
-  path remains.
+  still-dependent pending output and gated descendant in the same write,
+  except a branch still held by another open Design or Plan. Negative
+  settlement of a Plan follows the same rule. A prior exact Design acceptance
+  remains live because its edge is gone. Work behind a positively completed
+  Plan becomes eligible through ordinary dependency settlement. Any live claim
+  in the closure set refuses the whole operation and names its holder; forced
+  close or delete frees those claims atomically. Migration performs the same
+  closure for retained terminal, deleted, or absent parents, so no read-time
+  stranded classification or repair path remains.
 
   A Plan is an ordinary reviewed task constructor. Every non-gather task it
   constructs, including a sub-Plan, waits on an ordinary dependency to that

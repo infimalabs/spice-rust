@@ -8,6 +8,7 @@
 
 use super::*;
 
+mod authorization_heads;
 mod designs;
 mod formations;
 mod preparation_edges;

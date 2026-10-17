@@ -831,6 +831,75 @@ fn negative_controller_closure_closes_every_dependent_branch() {
 }
 
 #[test]
+fn settling_one_controller_preserves_a_branch_owned_by_another_open_controller() {
+    let (root, bus, epoch, _seats) = fixture("independent-controller", 1);
+    let first = add_planning(
+        &bus,
+        epoch,
+        "First controller",
+        wire::TaskIntent::Plan,
+        None,
+    );
+    let second = add_planning(
+        &bus,
+        epoch,
+        "Second controller",
+        wire::TaskIntent::Plan,
+        None,
+    );
+    let output = add_associated(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "Shared controlled implementation",
+        Some(&first),
+        None,
+    );
+    connect_child(&bus, epoch, &output, &second);
+    let branch = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "TASK-shared-branch",
+        "Follow shared output",
+        "board.test",
+        Some("todo"),
+        &["The follow-on remains owned with its shared output"],
+    );
+    connect_child(&bus, epoch, &branch, &output);
+
+    for (controller, should_close) in [(&first, false), (&second, true)] {
+        let view = board(&bus, epoch, Actor::Operator);
+        let heads = at(&view, controller);
+        assert_committed(issue(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::TaskClose,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+            ],
+            &TaskClose {
+                task: controller.clone(),
+                validation: "No executable output is selected".to_owned(),
+                force_claimed: false,
+            },
+        ));
+        let view = board(&bus, epoch, Actor::Operator);
+        for retained in [&output, &branch] {
+            assert_eq!(
+                at(&view, retained).workflow.body.status.is_completed(),
+                should_close,
+                "{retained} follows the last open controller"
+            );
+        }
+    }
+    clean(&root, bus);
+}
+
+#[test]
 fn planning_corrections_keep_the_original_construction_duty_and_later_declared_phases() {
     let (root, bus, epoch, seats) = fixture("planning-correction-duty", 1);
     let actor = Actor::Lane(seats[0].lane);

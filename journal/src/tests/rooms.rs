@@ -302,6 +302,30 @@ fn adopt(
     journal.apply(write)
 }
 
+fn set_dependencies(journal: &mut Journal, task: &TaskStamp, dependencies: Vec<TaskStamp>) {
+    let head = statement(journal, task);
+    let revision = u32::try_from(head.revision.get() + 1).expect("fixture revision fits");
+    let mut write = write();
+    let fact = write
+        .fact(
+            wire::body::TaskEdited {
+                task: task.clone(),
+                revision,
+                dependencies: Some(dependencies.clone()),
+                intent: None,
+                evidence: None,
+            },
+            FactCause::Root,
+        )
+        .expect("dependency edit builds");
+    write.task_head(fact, move |revision| TaskHead {
+        dependencies,
+        revision,
+        ..head
+    });
+    journal.apply(write).expect("dependency edit commits");
+}
+
 fn edit_project(journal: &mut Journal, task: &TaskStamp, project: &str) {
     let head = statement(journal, task);
     let mut write = write();
