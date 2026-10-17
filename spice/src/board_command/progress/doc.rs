@@ -302,14 +302,13 @@ fn doc_task_spec(
             "an existing taste review cannot clear without repository policy authority",
         ));
     }
-    if matched.is_some()
+    if let Some(review) = matched
         && existing.is_some_and(|entry| {
             entry.statement().taste.is_none() && entry.workflow().phase.as_str() != "plan"
         })
     {
-        return Err(refusal(
-            "task::taste-review-required",
-            Some(task.to_string()),
+        return Err(review.refusal(
+            task.to_string(),
             "revise the authored task statement so it passes taste review before applying it",
         ));
     }

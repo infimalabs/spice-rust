@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use wire::{StatementField, TasteHold, TasteMatch, TastePlan};
 
 use super::*;
@@ -12,6 +14,42 @@ impl TasteReview {
     pub(super) fn required(&self) -> bool {
         !self.matches.is_empty()
     }
+
+    pub(super) fn refusal(&self, observed: String, remedy: &str) -> Outcome<CommandAnswer> {
+        taste_matches_refusal(observed, &self.matches, remedy)
+    }
+}
+
+/// Refuse an authored statement while naming every taste match needed to fix it.
+pub(super) fn taste_matches_refusal(
+    observed: String,
+    matches: &[TasteMatch],
+    remedy: &str,
+) -> Outcome<CommandAnswer> {
+    let mut detail = String::with_capacity(remedy.len() + matches.len().saturating_mul(96));
+    detail.push_str(remedy);
+    for found in matches {
+        let field = match found.field {
+            StatementField::Title => "title",
+            StatementField::Description => "description",
+            StatementField::Acceptance => "acceptance criterion",
+        };
+        match &found.finding {
+            Some(finding) => write!(
+                detail,
+                "\n- taste {} matched word {:?} in {field} line {}, column {}: {}",
+                found.taste, finding.trigger, found.line, finding.column, finding.message,
+            )
+            .expect("writing a taste refusal into a String cannot fail"),
+            None => write!(
+                detail,
+                "\n- taste {} matched {field} line {}; match details are unavailable",
+                found.taste, found.line,
+            )
+            .expect("writing a taste refusal into a String cannot fail"),
+        }
+    }
+    refusal("task::taste-review-required", Some(observed), &detail)
 }
 
 pub(super) fn substantive_acceptance(acceptance: &[String]) -> bool {

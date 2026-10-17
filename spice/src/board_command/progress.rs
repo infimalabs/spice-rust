@@ -353,9 +353,9 @@ fn admit_plan_transition(
                 format!("{count} revisions have been rechecked and the statement still matches")
             }
         };
-        return Err(refusal(
-            "task::taste-review-required",
-            Some(entry.handle().to_string()),
+        return Err(taste_matches_refusal(
+            entry.handle().to_string(),
+            &hold.matches,
             &format!(
                 "{standing}; change what the statement says, then spice task modify {} lets the complete current taste policy recheck it",
                 entry.handle(),

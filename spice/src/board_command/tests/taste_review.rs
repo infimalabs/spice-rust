@@ -200,6 +200,61 @@ fn configured_match_routes_accepted_task_through_durable_taste_review() {
 }
 
 #[test]
+fn refused_statement_edit_names_the_taste_word_field_and_message_in_text_and_json() {
+    let (root, bus, epoch, _seats) = fixture("taste-review-edit-refusal", 0);
+    let repository = configured_repository(&root, &["delay"]);
+    let (task, outcome) = add_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        "TASTE-edit0001",
+        "Ship the lifecycle change",
+        &["focused tests pass"],
+    );
+    assert_committed(outcome);
+
+    let outcome = modify_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        Actor::Operator,
+        &task,
+        "Delay the lifecycle change",
+    );
+    let encoded = wire::encode(&outcome).expect("taste refusal encodes");
+    let json = std::str::from_utf8(&encoded).expect("wire JSON is UTF-8");
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("taste-matched edit did not refuse: {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "task::taste-review-required");
+    for evidence in [
+        "taste taskwording",
+        "word \"delay\"",
+        "title line 1",
+        "Rewrite the task wording.",
+    ] {
+        assert!(
+            refusal.explanation().contains(evidence),
+            "text refusal omits {evidence:?}: {}",
+            refusal.explanation(),
+        );
+    }
+    for evidence in ["taskwording", "delay", "title", "Rewrite the task wording."] {
+        assert!(
+            json.contains(evidence),
+            "JSON refusal omits {evidence:?}: {json}",
+        );
+    }
+    assert_eq!(
+        at(&board(&bus, epoch, Actor::Operator), &task).presentation_title,
+        "Ship the lifecycle change",
+        "a refused edit changed its statement",
+    );
+
+    clean(&root, bus);
+}
+
+#[test]
 fn compound_capture_taste_review_refuses_before_creating_task_or_claim() {
     let (root, bus, epoch, seats) = fixture("taste-review-capture", 1);
     let repository = configured_repository(&root, &["delay"]);
@@ -245,9 +300,11 @@ fn compound_capture_taste_review_refuses_before_creating_task_or_claim() {
         },
     );
     assert!(
-        matches!(outcome, Outcome::Refusal(ref refusal)
-            if refusal.reason() == "task::capture-taste-review"),
-        "taste-required compound capture must refuse: {outcome:?}",
+        matches!(&outcome, Outcome::Refusal(refusal)
+            if refusal.reason() == "task::taste-review-required"
+                && refusal.explanation().contains("taste taskwording")
+                && refusal.explanation().contains("word \"delay\"")),
+        "taste-required compound capture must refuse with its matches: {outcome:?}",
     );
     assert_eq!(
         bus.fact_snapshot()
@@ -748,9 +805,10 @@ fn plan_completion_refuses_while_taste_review_marker_remains() {
         panic!("taste review plan completion did not refuse: {outcome:?}");
     };
     assert_eq!(refusal.reason(), "task::taste-review-required");
-    let diagnostic = format!("{refusal:?}");
-    assert!(!diagnostic.contains("delay"));
-    assert!(!diagnostic.contains("Rewrite the task wording"));
+    let diagnostic = refusal.explanation();
+    assert!(diagnostic.contains("taste taskwording"));
+    assert!(diagnostic.contains("word \"delay\""));
+    assert!(diagnostic.contains("Rewrite the task wording."));
 
     assert_committed(modify_with_repository(
         &bus,
@@ -775,8 +833,9 @@ fn plan_completion_refuses_while_taste_review_marker_remains() {
         panic!("reworded taste review plan completion did not refuse: {outcome:?}");
     };
     assert_eq!(refusal.reason(), "task::taste-review-required");
-    let diagnostic = format!("{refusal:?}");
-    assert!(!diagnostic.contains("delay"));
+    let diagnostic = refusal.explanation();
+    assert!(diagnostic.contains("taste taskwording"));
+    assert!(diagnostic.contains("word \"delay\""));
 
     clean(&root, bus);
 }
