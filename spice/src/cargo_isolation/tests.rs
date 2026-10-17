@@ -56,6 +56,11 @@ impl Fixture {
         .expect("write root manifest");
         fs::write(repository.join("Cargo.lock"), lockfile("initial"))
             .expect("write exact lockfile");
+        fs::write(
+            repository.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"fixture-1.0\"\ntargets = []\n",
+        )
+        .expect("write tracked toolchain fixture");
 
         let cargo = root.join("native-cargo");
         let rustc = root.join("native-rustc");
@@ -514,11 +519,6 @@ fn mixed_native_toolchain_directories_are_refused() {
 #[test]
 fn tracked_toolchain_resolves_the_complete_trio_through_exact_rustup() {
     let fixture = Fixture::new();
-    fs::write(
-        fixture.repository.join("rust-toolchain.toml"),
-        "[toolchain]\nchannel = \"fixture-1.0\"\n",
-    )
-    .expect("write tracked toolchain fixture");
     let bin = fixture.bootstrap.join("bin");
     fs::create_dir(&bin).expect("create bootstrap bin");
     let rustup = bin.join("rustup");
@@ -531,7 +531,7 @@ fn tracked_toolchain_resolves_the_complete_trio_through_exact_rustup() {
     .collect();
 
     let resolved = resolve_tracked_toolchain(
-        &fixture.repository,
+        "fixture-1.0",
         &fixture.bootstrap,
         &entries,
         |asked, home, channel, tool| {

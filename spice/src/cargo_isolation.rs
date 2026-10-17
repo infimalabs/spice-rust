@@ -21,6 +21,7 @@ use wire::CanonicalUuid;
 use crate::repository::Repository;
 
 mod store;
+mod targets;
 
 #[cfg(test)]
 #[path = "cargo_isolation/tests.rs"]
@@ -461,6 +462,7 @@ struct TrackedToolchain {
 #[derive(Deserialize)]
 struct TrackedToolchainBody {
     channel: String,
+    targets: Vec<String>,
 }
 
 fn resolve_native_toolchain(
@@ -473,35 +475,41 @@ fn resolve_native_toolchain(
         entries.get(std::ffi::OsStr::new(NATIVE_RUSTC_VARIABLE)),
         entries.get(std::ffi::OsStr::new(NATIVE_RUSTDOC_VARIABLE)),
     ];
-    match declared.iter().filter(|value| value.is_some()).count() {
-        3 => NativeToolchain::admit(
+    let explicit = match declared.iter().filter(|value| value.is_some()).count() {
+        3 => true,
+        0 => false,
+        _ => {
+            return Err(IsolationError::new(
+                "cargo-isolation::native-toolchain-incomplete",
+                "SPICE_RS_NATIVE_CARGO, SPICE_RS_NATIVE_RUSTC, and SPICE_RS_NATIVE_RUSTDOC must be supplied together",
+            ));
+        }
+    };
+    let bootstrap_home = Path::new(bootstrap_home);
+    let tracked = read_tracked_toolchain(repository)?;
+    let toolchain = if explicit {
+        NativeToolchain::admit(
             PathBuf::from(declared[0].expect("complete native trio has Cargo")),
             PathBuf::from(declared[1].expect("complete native trio has rustc")),
             PathBuf::from(declared[2].expect("complete native trio has rustdoc")),
-        ),
-        0 => {
-            resolve_tracked_toolchain(repository, Path::new(bootstrap_home), entries, rustup_which)
-        }
-        _ => Err(IsolationError::new(
-            "cargo-isolation::native-toolchain-incomplete",
-            "SPICE_RS_NATIVE_CARGO, SPICE_RS_NATIVE_RUSTC, and SPICE_RS_NATIVE_RUSTDOC must be supplied together",
-        )),
-    }
+        )?
+    } else {
+        resolve_tracked_toolchain(&tracked.channel, bootstrap_home, entries, rustup_which)?
+    };
+    targets::admit(
+        &tracked.channel,
+        &tracked.targets,
+        &toolchain.rustc,
+        &BootstrapRustup {
+            bootstrap_home,
+            entries,
+        },
+    )?;
+    Ok(toolchain)
 }
 
-/// Resolve the tracked channel's trio through the bootstrap home's own rustup.
-///
-/// `which` asks one rustup executable, under one Rustup home, for one tool of
-/// one channel.
-fn resolve_tracked_toolchain<W>(
-    repository: &Path,
-    bootstrap_home: &Path,
-    entries: &std::collections::BTreeMap<OsString, OsString>,
-    which: W,
-) -> Result<NativeToolchain, IsolationError>
-where
-    W: Fn(&Path, &Path, &str, &str) -> Result<PathBuf, IsolationError>,
-{
+/// Read the repository's `rust-toolchain.toml`: its release and its targets.
+fn read_tracked_toolchain(repository: &Path) -> Result<TrackedToolchainBody, IsolationError> {
     let declaration = repository.join("rust-toolchain.toml");
     let bytes = fs::read(&declaration).map_err(|error| {
         IsolationError::io(
@@ -528,6 +536,35 @@ where
             format!("{} declares an empty channel", declaration.display()),
         ));
     }
+    Ok(tracked.toolchain)
+}
+
+/// Resolve the tracked channel's trio through the bootstrap home's own rustup.
+///
+/// `which` asks one rustup executable, under one Rustup home, for one tool of
+/// one channel.
+fn resolve_tracked_toolchain<W>(
+    channel: &str,
+    bootstrap_home: &Path,
+    entries: &std::collections::BTreeMap<OsString, OsString>,
+    which: W,
+) -> Result<NativeToolchain, IsolationError>
+where
+    W: Fn(&Path, &Path, &str, &str) -> Result<PathBuf, IsolationError>,
+{
+    let (rustup, rustup_home) = bootstrap_rustup(bootstrap_home, entries)?;
+    NativeToolchain::admit(
+        which(&rustup, &rustup_home, channel, "cargo")?,
+        which(&rustup, &rustup_home, channel, "rustc")?,
+        which(&rustup, &rustup_home, channel, "rustdoc")?,
+    )
+}
+
+/// The bootstrap home's rustup executable and the Rustup home it serves.
+fn bootstrap_rustup(
+    bootstrap_home: &Path,
+    entries: &std::collections::BTreeMap<OsString, OsString>,
+) -> Result<(PathBuf, PathBuf), IsolationError> {
     let rustup = admit_native_executable(bootstrap_home.join("bin/rustup"), "rustup")?;
     let rustup_home = entries
         .get(std::ffi::OsStr::new("RUSTUP_HOME"))
@@ -544,11 +581,49 @@ where
             )
         })?;
     require_absolute(&rustup_home, "Rustup home")?;
-    NativeToolchain::admit(
-        which(&rustup, &rustup_home, &tracked.toolchain.channel, "cargo")?,
-        which(&rustup, &rustup_home, &tracked.toolchain.channel, "rustc")?,
-        which(&rustup, &rustup_home, &tracked.toolchain.channel, "rustdoc")?,
-    )
+    Ok((rustup, rustup_home))
+}
+
+/// Target admission's rustup: the bootstrap home's, resolved only when needed.
+struct BootstrapRustup<'a> {
+    bootstrap_home: &'a Path,
+    entries: &'a std::collections::BTreeMap<OsString, OsString>,
+}
+
+impl targets::Rustup for BootstrapRustup<'_> {
+    fn which_rustc(&self, channel: &str) -> Result<PathBuf, IsolationError> {
+        let (rustup, rustup_home) = bootstrap_rustup(self.bootstrap_home, self.entries)?;
+        rustup_which(&rustup, &rustup_home, channel, "rustc")
+    }
+
+    fn add_targets(&self, channel: &str, targets: &[&str]) -> Result<(), IsolationError> {
+        let (rustup, rustup_home) = bootstrap_rustup(self.bootstrap_home, self.entries)?;
+        let output = Command::new(&rustup)
+            .args(["target", "add", "--toolchain", channel])
+            .args(targets)
+            .env_clear()
+            .env("RUSTUP_HOME", &rustup_home)
+            .output()
+            .map_err(|error| {
+                IsolationError::io(
+                    "cargo-isolation::tracked-target-unavailable",
+                    &rustup,
+                    error,
+                )
+            })?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(IsolationError::new(
+                "cargo-isolation::tracked-target-unavailable",
+                format!(
+                    "{} could not add {targets:?} to tracked channel {channel:?}: {}",
+                    rustup.display(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            ))
+        }
+    }
 }
 
 fn rustup_which(

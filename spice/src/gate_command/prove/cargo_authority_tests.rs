@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::cargo_authority;
 
+const TOOLCHAIN: &str = "[toolchain]\nchannel = \"fixture-1.0\"\ntargets = []\n";
+
 #[test]
 fn staged_lockfile_uses_the_live_worktrees_private_home() {
     use spice::cargo_isolation::{CARGO_HOME_VARIABLE, Host, prepare_lane, prepare_manual};
@@ -22,6 +24,9 @@ fn staged_lockfile_uses_the_live_worktrees_private_home() {
     let lockfile = "version = 4\npackage = []\n";
     fs::write(worktree.join("Cargo.lock"), lockfile).unwrap();
     fs::write(selected.join("Cargo.lock"), lockfile).unwrap();
+    for root in [&worktree, &selected] {
+        fs::write(root.join("rust-toolchain.toml"), TOOLCHAIN).unwrap();
+    }
     for name in ["cargo", "rustc", "rustdoc"] {
         let path = tools.join(name);
         fs::write(&path, "#!/bin/sh\nexit 91\n").unwrap();
@@ -127,6 +132,7 @@ fn cargo_authority_binds_absolute_tools_before_planning() {
     fs::create_dir_all(&bootstrap).expect("create bootstrap Cargo home");
     fs::create_dir(&private_home).expect("create private Cargo home");
     fs::create_dir(&tools).expect("create native tool directory");
+    fs::write(root.join("rust-toolchain.toml"), TOOLCHAIN).expect("write toolchain declaration");
     let cargo = tools.join("cargo");
     let rustc = tools.join("rustc");
     let rustdoc = tools.join("rustdoc");
