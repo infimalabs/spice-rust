@@ -21,6 +21,20 @@ fn fanout() -> CanonicalUuid {
     uuid(0xf1)
 }
 
+fn operator_attribution() -> wire::QuoteAttribution {
+    wire::QuoteAttribution {
+        author: wire::QuoteAuthor::Directive {
+            actor: wire::Actor::Operator,
+        },
+        recipients: vec![wire::QuoteRecipient {
+            lane: lane(),
+            occupant: None,
+        }],
+        packet: None,
+        result: None,
+    }
+}
+
 fn directive(key: &str, text: &str) -> (steer::Key, PresentationDirective) {
     (
         key.parse().expect("fixture key"),
@@ -37,9 +51,7 @@ fn directive(key: &str, text: &str) -> (steer::Key, PresentationDirective) {
             },
             media_quotes: Vec::new(),
             actor: wire::Actor::Operator,
-            sender: None,
-            recipient: None,
-            packet: None,
+            attribution: operator_attribution(),
             published: "2030-04-12T18:44:09.001Z".parse().expect("fixture instant"),
             fanout: Some(fanout()),
             retirement: None,
@@ -107,15 +119,13 @@ fn a_delivery_presents_only_the_operators_plain_direction_to_its_receiver() {
             digest: wire::QuoteTarget::text_digest("Ship the projection STEERIN-dW4Wl4fRP"),
         }
     );
-    assert_eq!(context.actor, wire::Actor::Operator);
+    // The card names the ends its directive's record proves, exactly as any
+    // quote of that directive does; the receiving transcript adds nothing.
+    assert_eq!(context.attribution, operator_attribution());
     assert_eq!(
         context.delivery,
         Some(wire::MessageDelivery {
             fanout: Some(fanout()),
-            receivers: vec![wire::MessageDestination {
-                lane: lane(),
-                occupant: receiver(),
-            }],
         })
     );
     assert!(wire::valid_message_directives(
@@ -165,6 +175,9 @@ fn a_record_that_delivers_no_plain_operator_direction_presents_nothing() {
     ));
     assert!(absent(
         &delivery(),
-        &operator(|row| row.sender = Some(uuid(0xb9)))
+        &operator(|row| row.attribution.author = wire::QuoteAuthor::Agent {
+            lane: uuid(0xa2),
+            occupant: uuid(0xb9),
+        })
     ));
 }

@@ -158,9 +158,7 @@ fn a_packet_and_a_following_acknowledgement_present_as_separate_quotes() {
         key.parse().expect("fixture key parses"),
         PresentationDirective {
             actor: wire::Actor::Operator,
-            sender: None,
-            recipient: None,
-            packet: None,
+            attribution: operator_attribution(),
             fanout: None,
             published: "2030-04-12T18:44:09.001Z"
                 .parse()

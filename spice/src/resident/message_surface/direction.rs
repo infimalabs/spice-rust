@@ -55,14 +55,13 @@ pub(super) fn delivered<'a>(
 
 /// Present the plain operator direction one operator-role record delivered
 /// to the event's lane, one quote per directive in header order. Each
-/// context carries the delivery its card presents: the send's fanout and the
-/// occupant whose transcript recorded it.
+/// context carries its directive's attribution and the send's fanout.
 pub(super) fn present(
     text: &str,
     steering: Option<&PresentationDirectives>,
     event: PresentationEvent,
 ) -> Result<Option<serve::stream::MessagePresentation>, String> {
-    let (Some(steering), Some(receiver)) = (steering, event.author) else {
+    let Some(steering) = steering else {
         return Ok(None);
     };
     let mut rendered = String::new();
@@ -73,8 +72,11 @@ pub(super) fn present(
             continue;
         };
         if !steering.operator_sent(directive)
-            || directive.sender.is_some()
-            || directive.packet.is_some()
+            || matches!(
+                directive.attribution.author,
+                wire::QuoteAuthor::Agent { .. }
+            )
+            || directive.attribution.packet.is_some()
             || directive.lane != event.lane
         {
             continue;
@@ -100,16 +102,12 @@ pub(super) fn present(
         acknowledgement: None,
     };
     let classifications = hydrate_message_classifications(&presented, broadcasts)?;
-    let directive_contexts = hydrate_directive_contexts(&presented, steering, event)?
+    let directive_contexts = hydrate_directive_contexts(&presented, steering)?
         .into_iter()
         .zip(&presented.contexts)
         .map(|(mut context, presented)| {
             context.delivery = Some(wire::MessageDelivery {
                 fanout: steering.directives[&presented.key].fanout,
-                receivers: vec![wire::MessageDestination {
-                    lane: event.lane,
-                    occupant: receiver,
-                }],
             });
             context
         })

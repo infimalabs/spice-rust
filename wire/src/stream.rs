@@ -14,7 +14,7 @@ pub use prose::{MessageProseOrigin, superseded_prose};
 mod annotation;
 pub use annotation::{
     DirectiveBadge, MessageClassification, MessageClassificationKind, MessageDelivery,
-    MessageDestination, MessageDirective, MessageRecipient, MessageSend, MessageSendKind,
+    MessageDirective, MessageRecipient, MessageSend, MessageSendKind,
     valid_message_classifications, valid_message_directives, valid_message_sends,
 };
 

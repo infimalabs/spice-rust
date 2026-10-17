@@ -1,11 +1,40 @@
 //! A directive a room publication delivered presents in its recipient's
 //! acknowledgement as that packet: its kind, the result an ANS names, and the
 //! packet's body without the header its recipient read. Any other directive
-//! stays literal, whatever its words spell.
+//! stays literal, whatever its words spell. Every presentation names the ends
+//! its directive's own record proves, the same in a card as in a quote.
 
 use std::collections::BTreeMap;
 
 use super::*;
+
+/// An attribution from `author` to the lane `lane` delivered, with the
+/// occupant its record proves.
+fn attributed(
+    author: wire::QuoteAuthor,
+    lane: u8,
+    occupant: Option<u8>,
+    packet: Option<wire::MessageSendKind>,
+    result: Option<wire::rooms::QuestionResultRef>,
+) -> wire::QuoteAttribution {
+    wire::QuoteAttribution {
+        author,
+        recipients: vec![wire::QuoteRecipient {
+            lane: test_uuid(lane),
+            occupant: occupant.map(test_uuid),
+        }],
+        packet,
+        result,
+    }
+}
+
+/// A peer packet's author: the exact occupant seated on `lane`.
+fn peer(lane: u8) -> wire::QuoteAuthor {
+    wire::QuoteAuthor::Agent {
+        lane: test_uuid(lane),
+        occupant: test_uuid(lane + 1),
+    }
+}
 
 impl Lanes {
     /// The one directive `lane` holds whose words contain `text`.
@@ -61,16 +90,19 @@ fn an_operator_answer_presents_as_ans_without_its_header() {
     let key = lanes.held(SENDER, "ship");
 
     let (words, context) = lanes.acknowledged(SENDER, &key);
-    assert_eq!(context.packet, Some(wire::MessageSendKind::Ans));
-    assert_eq!(context.result, Some(result.clone()));
-    assert_eq!(context.actor, lanes.bootstrap());
+    // An operator answer's record proves only the lane it reached, whichever
+    // occupant acknowledges it.
     assert_eq!(
-        context.recipient,
-        Some(wire::MessageDestination {
-            lane: test_uuid(SENDER),
-            occupant: test_uuid(SENDER + 1),
-        }),
-        "an operator answer addresses the occupant acknowledging it"
+        context.attribution,
+        attributed(
+            wire::QuoteAuthor::Directive {
+                actor: lanes.bootstrap(),
+            },
+            SENDER,
+            None,
+            Some(wire::MessageSendKind::Ans),
+            Some(result.clone()),
+        )
     );
     assert!(words.contains("ship"), "{words}");
     assert!(!words.contains("ANS"), "{words}");
@@ -90,9 +122,18 @@ fn a_second_principals_answer_presents_as_theirs() {
     let key = lanes.held(SENDER, "the CLI help");
 
     let (_, context) = lanes.acknowledged(SENDER, &key);
-    assert_eq!(context.packet, Some(wire::MessageSendKind::Ans));
-    assert_eq!(context.result, Some(result));
-    assert_eq!(context.actor, Actor::Human(second));
+    assert_eq!(
+        context.attribution,
+        attributed(
+            wire::QuoteAuthor::Directive {
+                actor: Actor::Human(second),
+            },
+            SENDER,
+            None,
+            Some(wire::MessageSendKind::Ans),
+            Some(result),
+        )
+    );
     lanes.finish();
 }
 
@@ -105,21 +146,45 @@ fn lane_packets_present_their_kind_and_answers_their_result() {
         .say(SENDER, &format!("MSG {first}: hold the merge"))
         .expect("the MSG publishes");
     let (words, context) = lanes.acknowledged(FIRST, &lanes.held(FIRST, "hold the merge"));
-    assert_eq!(context.packet, Some(wire::MessageSendKind::Msg));
-    assert_eq!(context.result, None);
+    assert_eq!(
+        context.attribution,
+        attributed(
+            peer(SENDER),
+            FIRST,
+            Some(FIRST + 1),
+            Some(wire::MessageSendKind::Msg),
+            None,
+        )
+    );
     assert!(words.contains("hold the merge"), "{words}");
 
     let result = asked(&lanes.say(SENDER, &format!("ASK {first}: why?")));
     let (_, context) = lanes.acknowledged(FIRST, result.as_str());
-    assert_eq!(context.packet, Some(wire::MessageSendKind::Ask));
-    assert_eq!(context.result, None);
+    assert_eq!(
+        context.attribution,
+        attributed(
+            peer(SENDER),
+            FIRST,
+            Some(FIRST + 1),
+            Some(wire::MessageSendKind::Ask),
+            None,
+        )
+    );
 
     lanes
         .say(FIRST, &format!("ANS {result}: because"))
         .expect("the ANS publishes");
     let (words, context) = lanes.acknowledged(SENDER, &lanes.held(SENDER, "because"));
-    assert_eq!(context.packet, Some(wire::MessageSendKind::Ans));
-    assert_eq!(context.result, Some(result));
+    assert_eq!(
+        context.attribution,
+        attributed(
+            peer(FIRST),
+            SENDER,
+            Some(SENDER + 1),
+            Some(wire::MessageSendKind::Ans),
+            Some(result),
+        )
+    );
     assert!(
         words.contains("because") && !words.contains("ANS"),
         "{words}"
@@ -136,8 +201,18 @@ fn a_direction_spelling_a_packet_header_stays_literal() {
     let key = lanes.direct(SENDER, 40, &spelled);
 
     let (words, context) = lanes.acknowledged(SENDER, &key);
-    assert_eq!(context.packet, None);
-    assert_eq!(context.result, None);
+    assert_eq!(
+        context.attribution,
+        attributed(
+            wire::QuoteAuthor::Directive {
+                actor: lanes.bootstrap(),
+            },
+            SENDER,
+            None,
+            None,
+            None,
+        )
+    );
     assert!(words.contains(&spelled), "{words}");
     lanes.finish();
 }
@@ -193,8 +268,9 @@ fn a_fanout_presents_its_publication_whatever_the_batch_order() {
 }
 
 /// A quote link authenticates the directive text its recipient read, then
-/// presents the packet that opened it: kind, result, body, and addressed
-/// lane. A direction that merely spells a header quotes literally.
+/// presents the packet that opened it: kind, result, and body. A direction
+/// that merely spells a header quotes literally, with no packet. Each quote
+/// names exactly the ends the card acknowledging its directive names.
 #[test]
 fn a_quoted_directive_presents_its_packet_or_stays_literal() {
     let lanes = Lanes::new("packet-quoted");
@@ -215,34 +291,36 @@ fn a_quoted_directive_presents_its_packet_or_stays_literal() {
         }
         .markdown()
     };
+    let keys = [lanes.held(SENDER, "ship"), lanes.held(SENDER, "forged")];
     let reader = lanes.bus.reader();
     let resolver = spice::quote::Resolver::from_tape(&lanes.paths.tape, &reader);
-
     let answer = resolver.present(&directive("ship"));
+    let literal = resolver.present(&directive("forged"));
+    drop(resolver);
+    drop(reader);
+
     let [
         wire::QuotePresentation::Resolved {
             text,
-            packet,
-            result: answered,
-            addressee,
+            attribution: answered,
             ..
         },
     ] = answer.as_slice()
     else {
         panic!("the answer quote resolves: {answer:?}");
     };
-    assert_eq!(*packet, Some(wire::MessageSendKind::Ans));
-    assert_eq!(answered.as_ref(), Some(&result));
     assert_eq!(text, "ship");
-    assert_eq!(*addressee, Some(test_uuid(SENDER)));
+    assert_eq!(answered.packet, Some(wire::MessageSendKind::Ans));
+    assert_eq!(answered.result.as_ref(), Some(&result));
+    assert_eq!(
+        &lanes.acknowledged(SENDER, &keys[0]).1.attribution,
+        answered
+    );
 
-    let literal = resolver.present(&directive("forged"));
     let [
         wire::QuotePresentation::Resolved {
             text,
-            packet: None,
-            result: None,
-            addressee: None,
+            attribution: plain,
             ..
         },
     ] = literal.as_slice()
@@ -250,7 +328,18 @@ fn a_quoted_directive_presents_its_packet_or_stays_literal() {
         panic!("the spelled header quotes as a plain direction: {literal:?}");
     };
     assert_eq!(text, &spelled);
-    drop(resolver);
-    drop(reader);
+    assert_eq!(
+        *plain,
+        attributed(
+            wire::QuoteAuthor::Directive {
+                actor: lanes.bootstrap(),
+            },
+            SENDER,
+            None,
+            None,
+            None,
+        )
+    );
+    assert_eq!(&lanes.acknowledged(SENDER, &keys[1]).1.attribution, plain);
     lanes.finish();
 }

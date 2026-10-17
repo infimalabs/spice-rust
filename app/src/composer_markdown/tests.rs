@@ -1,5 +1,6 @@
 use super::*;
 
+mod attribution;
 mod quote_cards;
 
 const OPENABLE_PNG: &str = "data:image/png;base64,iVBORw0KGgo=";
@@ -8,6 +9,30 @@ fn steering_target(key: &str, text: &str) -> wire::QuoteTarget {
     wire::QuoteTarget::Steering {
         key: key.to_owned(),
         digest: wire::QuoteTarget::text_digest(text),
+    }
+}
+
+fn quote_source(card_id: &str, display_millis: i64) -> QuoteSource {
+    QuoteSource {
+        card_id: Some(card_id.to_owned()),
+        display_millis,
+        agent: None,
+    }
+}
+
+/// Words `author` said to no recorded recipient, delivered as no packet.
+fn attributed(author: wire::QuoteAuthor) -> wire::QuoteAttribution {
+    wire::QuoteAttribution {
+        author,
+        recipients: Vec::new(),
+        packet: None,
+        result: None,
+    }
+}
+
+fn operator() -> wire::QuoteAuthor {
+    wire::QuoteAuthor::Directive {
+        actor: wire::Actor::Operator,
     }
 }
 
