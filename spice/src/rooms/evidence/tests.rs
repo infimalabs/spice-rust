@@ -1,0 +1,288 @@
+use super::*;
+
+fn word(index: usize) -> String {
+    let first = char::from(b'a' + ((index / (26 * 26)) % 26) as u8);
+    let second = char::from(b'a' + ((index / 26) % 26) as u8);
+    let third = char::from(b'a' + (index % 26) as u8);
+    format!("term{first}{second}{third}")
+}
+
+fn words(range: Range<usize>) -> String {
+    range.map(word).collect::<Vec<_>>().join(" ")
+}
+
+fn stamp(micros: i64) -> TaskStamp {
+    TaskStamp::for_micros(micros).unwrap()
+}
+
+fn close(left: f64, right: f64) {
+    assert!((left - right).abs() < 1e-12, "{left} != {right}");
+}
+
+#[test]
+fn conversation_keeps_only_what_the_author_wrote() {
+    let prose = "\
+ACK dWKbTlwPq: implementing evidence cleaning now.
+
+The resident derives `QuoteAttribution` from canonical transcript sources while retaining authored paragraphs.
+
+MSG 783J: Coordinate snapshot cursor publication boundaries carefully.
+
+> MSG 7851: peerpacketbody from another sender
+lazycontinuation stays quoted
+
+> > nestedquote material
+
+````text
+fencedword
+```
+stillfenced
+````
+
+    indentedcode
+
+See [quotedlink](spice://session/source) or <spice://quote/autolinked> for details.
+";
+    let conversation = Conversation::read(prose).expect("authored prose admits");
+    let text = conversation.text();
+    for kept in [
+        "implementing evidence cleaning now.",
+        "QuoteAttribution",
+        "Coordinate snapshot cursor publication boundaries carefully.",
+        "for details.",
+    ] {
+        assert!(text.contains(kept), "{kept:?} missing from {text:?}");
+    }
+    for hidden in [
+        "dWKbTlwPq",
+        "ACK",
+        "783J",
+        "MSG",
+        "peerpacketbody",
+        "lazycontinuation",
+        "nestedquote",
+        "fencedword",
+        "stillfenced",
+        "indentedcode",
+        "quotedlink",
+        "autolinked",
+    ] {
+        assert!(!text.contains(hidden), "{hidden:?} leaked into {text:?}");
+    }
+}
+
+#[test]
+fn admission_passages_and_the_byte_bound_are_explicit() {
+    assert!(Conversation::read(&words(0..MESSAGE_TERMS - 1)).is_none());
+    assert!(Conversation::read(&words(0..MESSAGE_TERMS)).is_some());
+    assert!(
+        Conversation::read(&format!("ACK dWKbTlwPq: noted.\n\n> {}", words(0..40))).is_none(),
+        "quoted material never admits an acknowledgement-only reply"
+    );
+
+    let single = Conversation::read(&words(0..40)).unwrap();
+    assert_eq!(
+        single.passages().count(),
+        0,
+        "one block is already the whole view"
+    );
+
+    let prose = format!(
+        "{}\n\n{}\n\n- {}\n- {}\n\n{}\n\n{}\n\n{}",
+        words(0..5),
+        words(100..112),
+        words(200..212),
+        words(300..311),
+        words(400..412),
+        words(500..512),
+        words(600..612),
+    );
+    let conversation = Conversation::read(&prose).unwrap();
+    assert_eq!(
+        conversation.passages().collect::<Vec<_>>(),
+        [
+            words(100..112),
+            words(200..212),
+            words(400..412),
+            words(500..512)
+        ],
+        "the first four paragraphs or list items with enough distinct terms, in order"
+    );
+
+    let prose = format!(
+        "{}\n\n{}\n\nafterwardmarker {}",
+        words(0..12),
+        "élan ".repeat(1000),
+        words(700..712)
+    );
+    let bounded = Conversation::read(&prose).unwrap();
+    assert!(bounded.text().len() <= CONVERSATION_BYTES);
+    assert!(bounded.text().len() > CONVERSATION_BYTES - 'é'.len_utf8() - 4);
+    assert!(!bounded.text().contains("afterwardmarker"));
+}
+
+#[test]
+fn relevance_is_the_best_view_unchanged_by_unrelated_or_repeated_evidence() {
+    let frequency = FrequencyProfile::of([
+        TermCounts::from_texts([words(0..30).as_str()]),
+        TermCounts::from_texts([words(100..130).as_str()]),
+    ]);
+    let subject = "snapshot cursor publication boundary retention paging";
+    let design_counts = TermCounts::from_texts([subject]);
+    let design_vector = frequency.prepare(&design_counts).unwrap();
+    let design_identity = stamp(1);
+    let design = "design";
+
+    let relevant = format!("{}\n\n{subject} {}", words(0..24), words(800..806));
+    let mut profile = EvidenceProfile::default();
+    profile
+        .insert(Evidence::conversation(
+            10_u32,
+            &Conversation::read(&relevant).unwrap(),
+        ))
+        .unwrap();
+
+    let summary = |profile: &mut EvidenceProfile<u32>| {
+        let found = profile
+            .select(
+                &frequency,
+                [DesignCandidate::new(
+                    &design_identity,
+                    &design,
+                    &design_vector,
+                )],
+            )
+            .unwrap()
+            .expect("the passage clears the floor");
+        (*found.evidence, found.view, found.score, found.terms)
+    };
+    let (evidence, view, score, terms) = summary(&mut profile);
+    assert_eq!((evidence, view), (10, View::Passage(1)));
+    let passage = TermCounts::from_texts([format!("{subject} {}", words(800..806)).as_str()]);
+    close(score, frequency.score(&design_counts, &passage).unwrap());
+    let whole = TermCounts::from_texts([relevant.as_str()]);
+    assert!(frequency.score(&design_counts, &whole).unwrap() < score);
+    assert!(terms.contains(&"snapshot".to_owned()));
+
+    profile
+        .insert(Evidence::task(
+            11,
+            &words(900..910),
+            None,
+            &[],
+            &words(910..930),
+        ))
+        .unwrap();
+    profile
+        .insert(Evidence::conversation(
+            12,
+            &Conversation::read(&words(1000..1040)).unwrap(),
+        ))
+        .unwrap();
+    assert_eq!(
+        summary(&mut profile),
+        (evidence, view, score, terms.clone())
+    );
+
+    let repeated = Evidence::conversation(13, &Conversation::read(&relevant).unwrap());
+    assert_eq!(
+        profile.insert(repeated).map_err(|card| *card.key()),
+        Err(13)
+    );
+    assert_eq!(summary(&mut profile), (evidence, view, score, terms));
+    assert_eq!(profile.evidence().count(), 3);
+}
+
+#[test]
+fn ties_prefer_the_lower_design_then_the_newer_card_then_the_earlier_view() {
+    let subject = "snapshot cursor publication boundary retention paging";
+    let frequency = FrequencyProfile::of([TermCounts::from_texts([subject])]);
+    let vector = frequency
+        .prepare(&TermCounts::from_texts([subject]))
+        .unwrap();
+    let (early, late) = (stamp(1), stamp(2));
+    let (lower, higher) = ("lower", "higher");
+
+    let mut profile = EvidenceProfile::default();
+    profile
+        .insert(Evidence::task(20_u32, subject, None, &[], ""))
+        .unwrap();
+    let found = profile
+        .select(
+            &frequency,
+            [
+                DesignCandidate::new(&late, &higher, &vector),
+                DesignCandidate::new(&early, &lower, &vector),
+            ],
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (*found.design, *found.evidence, found.view),
+        (lower, 20, View::Statement),
+        "equal statement and completion views keep the earlier view"
+    );
+
+    profile
+        .insert(Evidence::task(21, subject, None, &[], "the"))
+        .unwrap();
+    let found = profile
+        .select(&frequency, [DesignCandidate::new(&early, &lower, &vector)])
+        .unwrap()
+        .unwrap();
+    assert_eq!(*found.evidence, 21, "an equal newer card wins");
+}
+
+#[test]
+fn vectors_from_another_frequency_generation_are_refused() {
+    let first = || {
+        FrequencyProfile::of([
+            TermCounts::from_texts(["snapshot cursor"]),
+            TermCounts::from_texts(["publication boundary"]),
+        ])
+    };
+    assert_eq!(first().generation(), first().generation());
+    let second = FrequencyProfile::of([TermCounts::from_texts(["snapshot cursor"])]);
+    assert_ne!(first().generation(), second.generation());
+
+    let design = TermCounts::from_texts(["snapshot cursor publication boundary"]);
+    let stale = first().prepare(&design).unwrap();
+    let current = second.prepare(&design).unwrap();
+    assert_eq!(
+        stale.cosine(&current),
+        Err(GenerationMismatch {
+            left: stale.generation(),
+            right: current.generation(),
+        })
+    );
+
+    let mut profile = EvidenceProfile::default();
+    profile
+        .insert(Evidence::task(
+            1_u32,
+            "snapshot cursor publication boundary",
+            None,
+            &[],
+            "",
+        ))
+        .unwrap();
+    let identity = stamp(1);
+    assert!(
+        profile
+            .select(
+                &second,
+                [DesignCandidate::new(&identity, &"design", &stale)]
+            )
+            .is_err()
+    );
+    assert!(
+        profile
+            .select(
+                &second,
+                [DesignCandidate::new(&identity, &"design", &current)]
+            )
+            .unwrap()
+            .is_some(),
+        "the same profile matches once the Design is weighted under the current fit"
+    );
+}

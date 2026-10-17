@@ -6,9 +6,14 @@
 //! A corpus fitted from the most recently revised statements supplies smooth
 //! inverse document frequency. Logarithmic term frequency and L2-normalized
 //! sparse vectors then produce one cosine score.
+//!
+//! Term counts are canonical and fit-independent. A [`Prepared`] vector is a
+//! derived cache weighted under one fitted [`Generation`]; two vectors compare
+//! only when they share it.
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, BinaryHeap};
+use std::fmt;
 
 pub use wire::rooms::COMPLETION_VALIDATION_BYTES;
 use wire::rooms::DESIGN_NOTICE_SHOWN_TERMS;
@@ -56,6 +61,12 @@ impl TermCounts {
         Self(counts)
     }
 
+    /// Number of distinct terms counted.
+    #[must_use]
+    pub fn distinct(&self) -> usize {
+        self.0.len()
+    }
+
     /// Count a task statement's title, description, and itemized acceptance.
     #[must_use]
     pub fn statement(title: &str, description: Option<&str>, acceptance: &[String]) -> Self {
@@ -74,15 +85,12 @@ impl TermCounts {
         acceptance: &[String],
         validation: &str,
     ) -> Self {
-        let mut validation_end = validation.len().min(COMPLETION_VALIDATION_BYTES);
-        while !validation.is_char_boundary(validation_end) {
-            validation_end -= 1;
-        }
+        let validation = utf8_prefix(validation, COMPLETION_VALIDATION_BYTES);
         Self::from_texts(
             std::iter::once(title)
                 .chain(description)
                 .chain(acceptance.iter().map(String::as_str))
-                .chain(std::iter::once(&validation[..validation_end])),
+                .chain(std::iter::once(validation)),
         )
     }
 
@@ -91,26 +99,112 @@ impl TermCounts {
     }
 }
 
+/// Identity of one fitted document-frequency table.
+///
+/// Two fits over the same statements share a generation, and any change to the
+/// population or a term's document frequency names a different one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Generation([u8; 32]);
+
+impl Generation {
+    fn of(statements: usize, document_frequency: &BTreeMap<String, usize>) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&(statements as u64).to_le_bytes());
+        for (term, frequency) in document_frequency {
+            hasher.update(&(term.len() as u64).to_le_bytes());
+            hasher.update(term.as_bytes());
+            hasher.update(&(*frequency as u64).to_le_bytes());
+        }
+        Self(*hasher.finalize().as_bytes())
+    }
+}
+
+/// A cosine was asked between vectors weighted under different fits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GenerationMismatch {
+    /// Generation of the vector the comparison was asked of.
+    pub left: Generation,
+    /// Generation of the vector it was compared with.
+    pub right: Generation,
+}
+
+impl fmt::Display for GenerationMismatch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("vectors weighted under different frequency generations do not compare")
+    }
+}
+
+impl std::error::Error for GenerationMismatch {}
+
+/// One L2-normalized TF-IDF vector and the fit that weighted it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Prepared {
+    generation: Generation,
+    weights: BTreeMap<String, f64>,
+}
+
+impl Prepared {
+    /// The fit this vector was weighted under.
+    #[must_use]
+    pub fn generation(&self) -> Generation {
+        self.generation
+    }
+
+    /// Cosine similarity with another vector of the same generation.
+    ///
+    /// # Errors
+    ///
+    /// Refuses vectors weighted under different generations rather than
+    /// comparing incommensurable weights.
+    pub fn cosine(&self, other: &Self) -> Result<f64, GenerationMismatch> {
+        if self.generation != other.generation {
+            return Err(GenerationMismatch {
+                left: self.generation,
+                right: other.generation,
+            });
+        }
+        Ok(dot(&self.weights, &other.weights))
+    }
+
+    /// The strongest weighted overlaps with `other`, sorted, as a request
+    /// records them.
+    pub(crate) fn explanation(&self, other: &Self) -> Vec<String> {
+        explanation(&self.weights, &other.weights)
+    }
+}
+
 /// Bounded statement document frequencies shared by both compared texts.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrequencyProfile {
     statements: usize,
     document_frequency: BTreeMap<String, usize>,
+    generation: Generation,
 }
 
 impl FrequencyProfile {
     /// Fit one profile from document-presence counts.
     #[must_use]
     pub fn of(documents: impl IntoIterator<Item = TermCounts>) -> Self {
-        let mut profile = Self::default();
+        let mut statements = 0_usize;
+        let mut document_frequency = BTreeMap::<String, usize>::new();
         for document in documents {
-            profile.statements = profile.statements.saturating_add(1);
+            statements = statements.saturating_add(1);
             for term in document.terms() {
-                let count = profile.document_frequency.entry(term.clone()).or_default();
+                let count = document_frequency.entry(term.clone()).or_default();
                 *count = count.saturating_add(1);
             }
         }
-        profile
+        Self {
+            generation: Generation::of(statements, &document_frequency),
+            statements,
+            document_frequency,
+        }
+    }
+
+    /// The identity of this fit.
+    #[must_use]
+    pub fn generation(&self) -> Generation {
+        self.generation
     }
 
     /// Fit from the [`FREQUENCY_WINDOW`] most recently revised task statements.
@@ -139,10 +233,18 @@ impl FrequencyProfile {
     /// Cosine similarity for two documents fitted against this same profile.
     #[must_use]
     pub fn score(&self, left: &TermCounts, right: &TermCounts) -> Option<f64> {
-        let left = self.vector(left)?;
-        let right = self.vector(right)?;
-        let score = dot(&left, &right);
+        let score = self.prepare(left)?.cosine(&self.prepare(right)?).ok()?;
         score.is_finite().then_some(score)
+    }
+
+    /// Weight one document under this fit. `None` when it has no terms or
+    /// cannot be weighted finitely.
+    #[must_use]
+    pub fn prepare(&self, document: &TermCounts) -> Option<Prepared> {
+        Some(Prepared {
+            generation: self.generation,
+            weights: self.vector(document)?,
+        })
     }
 
     /// Select the highest qualifying candidate; lower durable identity wins an
@@ -154,13 +256,15 @@ impl FrequencyProfile {
         completion: &TermCounts,
         candidates: impl IntoIterator<Item = MatchCandidate<'a, T>>,
     ) -> Option<(&'a T, Vec<String>)> {
-        let completion = self.vector(completion)?;
+        let completion = self.prepare(completion)?;
         let mut best: Option<(&TaskStamp, &T, f64, Vec<String>)> = None;
         for candidate in candidates {
-            let Some(design) = self.vector(&candidate.document) else {
+            let Some(design) = self.prepare(&candidate.document) else {
                 continue;
             };
-            let score = dot(&design, &completion);
+            let Ok(score) = design.cosine(&completion) else {
+                continue;
+            };
             if !score.is_finite() || score < MATCH_SCORE_FLOOR {
                 continue;
             }
@@ -176,7 +280,7 @@ impl FrequencyProfile {
                     candidate.identity,
                     candidate.value,
                     score,
-                    explanation(&design, &completion),
+                    design.explanation(&completion),
                 ));
             }
         }
@@ -265,6 +369,15 @@ fn normalize(run: &str) -> Option<String> {
         && word.chars().all(|c| c.is_alphabetic() && !c.is_uppercase())
         && !STOP.contains(&word.as_str()))
     .then_some(word)
+}
+
+/// The longest prefix of `text` within `bytes` that ends on a UTF-8 boundary.
+pub(crate) fn utf8_prefix(text: &str, bytes: usize) -> &str {
+    let mut end = text.len().min(bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 fn dot(left: &BTreeMap<String, f64>, right: &BTreeMap<String, f64>) -> f64 {

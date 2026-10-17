@@ -19,7 +19,7 @@
 //! the same outcomes, whether it runs at the door or during replay.
 
 use std::fmt;
-use std::ops::ControlFlow;
+use std::ops::{ControlFlow, Range};
 
 use wire::Disposition;
 
@@ -334,6 +334,34 @@ pub fn has_acknowledgement(prose: &str) -> bool {
         Packet::Retirement(_) | Packet::Message { .. } => ControlFlow::Continue(()),
     })
     .is_break()
+}
+
+/// The byte ranges of every placed protocol header, in source order.
+///
+/// An ACK or NAK range runs from its marker, including touching emphasis,
+/// through its key list and separator; a MSG, ASK, or ANS range is that
+/// message's [`Message::header`]. Bodies and response prose are never inside a
+/// range, and quoted, code, rendered-source, negated, hypothetical, and
+/// narrated markers contribute none, so removing every range leaves what the
+/// author wrote around the protocol. The scan needs no standing.
+#[must_use]
+pub fn placed_headers(prose: &str) -> Vec<Range<usize>> {
+    let mut headers = Vec::new();
+    let _ = visit_packets(prose, |_, packet| {
+        match packet {
+            Packet::Retirement(clause) if clause.position == Position::Placed => {
+                headers.push(clause.start..clause.end);
+            }
+            Packet::Message {
+                position: Position::Placed,
+                start,
+                header,
+            } => headers.push(start..header.end),
+            Packet::Retirement(_) | Packet::Message { .. } => {}
+        }
+        ControlFlow::Continue(())
+    });
+    headers
 }
 
 /// One protocol header the authored-context grammar recognized.
