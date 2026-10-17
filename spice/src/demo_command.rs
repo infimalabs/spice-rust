@@ -825,7 +825,7 @@ fn seed_oops_group(journal: &mut journal::Journal) -> DemoResult<()> {
         report.clone(),
         DEMO_OOPS_REPORT_TITLE,
         DEMO_PROJECT,
-        wire::OOPS_LINE_ACCEPTANCE.map(str::to_owned).to_vec(),
+        Vec::new(),
         Some(wire::TaskPreparation {
             parent: batch.clone(),
             controller: batch.clone(),

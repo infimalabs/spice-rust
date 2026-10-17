@@ -85,11 +85,6 @@ pub const OOPS_DESIGN_TITLE: &str = "OOPS";
 /// Stable context of every opportunistic OOPS Design generation.
 pub const OOPS_DESIGN_DESCRIPTION: &str =
     "Repository-owned opportunistic Design for unexpected-behavior line items.";
-/// Contract carried by every OOPS line-item Plan.
-pub const OOPS_LINE_ACCEPTANCE: [&str; 2] = [
-    "Explicitly disposition the reported friction as duplicate, no-work, deferred, covered, or change-warranted.",
-    "When change is warranted, construct acceptance-bearing child work that addresses it.",
-];
 
 impl std::fmt::Display for TaskIntent {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
