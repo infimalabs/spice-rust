@@ -637,6 +637,10 @@ owns each rule summarized here.
   proposal remove no edge. A Design edge otherwise has ordinary dependency
   authority: task dependency edits can add or remove it, and re-adding one
   admits a later exact decision without erasing prior authorization history.
+  Full-history replay follows that same edge timeline: it restores the
+  schema-77 crossing from retained preparation authority, removes the edge at
+  execution authorization, and requires an ordinary dependency edit before a
+  later proposal can name that output under the same Design.
   Resolution belongs to the operator; Design holders do not infer a decision,
   review coverage never gates it, and working-group membership grants no
   authorization.

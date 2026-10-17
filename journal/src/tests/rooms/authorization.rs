@@ -301,13 +301,56 @@ fn authorization_releases_its_output_and_leaves_its_controller_open() {
         controller.status.is_pending(),
         "selection leaves the Design open"
     );
-
     edit_project(&mut journal, &preparation.output, "elsewhere");
     assert!(
         !statement(&journal, &preparation.output)
             .dependencies
             .contains(&preparation.controller)
     );
+
+    let later = preparation.retained(2, vec![preparation.output.clone()]);
+    let result = commit(&mut journal, later.clone());
+    refused(&journal, result);
+
+    let snapshot = journal.fact_snapshot().expect("fact snapshot reads");
+    let appended = Seq::new(
+        snapshot
+            .horizon()
+            .expect("authorization has a journal position")
+            .get()
+            + 1,
+    )
+    .expect("next replay position");
+    let actor = Actor::Operator;
+    let at = instant();
+    let fact: AnyFact =
+        wire::decode(&wire::encode(&wire::Fact { body: later }).expect("later candidate encodes"))
+            .expect("later candidate decodes as an opaque fact");
+    let mut facts = snapshot
+        .facts()
+        .iter()
+        .map(|envelope| (envelope.seq, &envelope.actor, envelope.at, &envelope.fact))
+        .collect::<Vec<_>>();
+    facts.push((appended, &actor, at, &fact));
+    let (_, refusals) = crate::rooms::History::rebuild(facts);
+    assert!(
+        refusals.iter().any(|(seq, refusal)| {
+            *seq == appended && refusal.to_string().contains("is not gated by")
+        }),
+        "replay must reject a candidate after its Design edge was released: {refusals:?}"
+    );
+
+    set_dependencies(
+        &mut journal,
+        &preparation.output,
+        vec![preparation.controller.clone()],
+    );
+    commit(
+        &mut journal,
+        preparation.retained(2, vec![preparation.output.clone()]),
+    )
+    .expect("an ordinary edit can restore the Design gate");
+
     journal.verify().expect("settled authorization verifies");
 }
 
