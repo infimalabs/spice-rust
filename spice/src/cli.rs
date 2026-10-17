@@ -532,10 +532,17 @@ No form writes raw payload bytes to the terminal.
 written file against the retained digest, and reports its path, size, and
 digest without echoing contents. It is never truncated; '-' is refused.";
 
+/// Initial framing for one open Design.
+const TASK_DESIGN_HELP: &str = "\
+A Design is itself a question: phrase TITLE as the question under Design.
+Each --acceptance value is one open question for evidence and proposals to
+answer, not an implementation completion criterion.";
+
 /// Usage notes for a leaf whose bounds its syntax line cannot carry.
 fn leaf_help(path: &[&str]) -> Option<&'static str> {
     match path {
         ["watch"] => Some(WATCH_HELP),
+        ["task", "design"] => Some(TASK_DESIGN_HELP),
         ["task", "artifact", "list"] => Some(ARTIFACT_LIST_HELP),
         ["task", "artifact", "show"] => Some(ARTIFACT_SHOW_HELP),
         _ => None,
