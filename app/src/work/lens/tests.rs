@@ -130,6 +130,7 @@ fn design_plan_outputs_flow_without_shortcutting_nested_work() {
             controller: stamp(1),
             construction: stamp(90),
         });
+        plan.statement.body.dependencies = vec![stamp(1)];
         plan
     };
     let mut execution = task(4, "rooms.work");

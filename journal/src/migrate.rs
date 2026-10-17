@@ -13,6 +13,7 @@ mod fact_bounds;
 mod maturity;
 mod oops_design;
 mod oops_generation;
+mod preparation_edges;
 mod provenance;
 mod residual;
 mod retained_notes;
@@ -70,14 +71,14 @@ const PREPARED: &str = "prepared";
 /// taste hold takes the matches and recheck count its retired audit notes
 /// recorded. Last, every retained task note that is not a taste-review audit
 /// joins its task's room projection at its own position, folded exactly as
-/// verification replays it.
-/// Before any of that decodes a typed statement head, it resolves every
-/// retained task provenance spelling into the closed provenance type. Current
-/// readers therefore need no release-specific execution arm. Retained terminal
-/// review fields cross before any migration decodes a typed workflow head.
-const PREDECESSOR_SCHEMAS: [u32; 44] = [
+/// verification replays it. The final crossing replaces retained derived
+/// preparation authorization with ordinary dependency edges and closes every
+/// pending branch whose terminal or absent controller cannot release it.
+/// Before any current decoder sees a predecessor statement, the retired
+/// authorization field is lifted into transaction-local selection evidence.
+const PREDECESSOR_SCHEMAS: [u32; 45] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
+    57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -374,6 +375,7 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
         transaction.commit().map_err(OpenError::Sqlite)?;
         return Ok(None);
     }
+    preparation_edges::strip_authorization(&transaction)?;
     let taste_audits = cross_current_rows(&transaction)?;
     if version <= WHOLE_CANDIDATE_DECISION_SCHEMA {
         cross_shape_predecessor(&transaction, version)?;
@@ -397,15 +399,24 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     settings_receipts::cross(&transaction)?;
     awareness::cross(&transaction)?;
     maturity::cross(&transaction)?;
-    if version < RETAINED_NOTES_SCHEMA {
-        retained_notes::cross(&transaction)?;
-    }
+    cross_retained_notes(&transaction, version)?;
+    preparation_edges::cross(&transaction)?;
     advance_identity(&transaction)?;
     transaction.commit().map_err(OpenError::Sqlite)?;
     Ok(Some(Migration {
         from: version,
         to: SCHEMA_VERSION,
     }))
+}
+
+fn cross_retained_notes(
+    transaction: &rusqlite::Transaction<'_>,
+    version: u32,
+) -> Result<(), OpenError> {
+    if version < RETAINED_NOTES_SCHEMA {
+        retained_notes::cross(transaction)?;
+    }
+    Ok(())
 }
 
 /// Name the crossed authority the current schema.
@@ -1344,8 +1355,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 77, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 78, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 77;
+PRAGMA user_version = 78;
 "#;

@@ -134,7 +134,6 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
     let task = fixture.task.clone();
     seed.task_head(added, move |position| wire::TaskHead {
         preparation: None,
-        authorization: None,
         evidence: Vec::new(),
         intent: None,
         born: task,

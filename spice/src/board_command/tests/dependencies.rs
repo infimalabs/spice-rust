@@ -138,6 +138,64 @@ fn active_todo_claim_appends_atomically_without_moving_possession() {
     assert_eq!(after_heads.statement.body.dependencies.len(), 2);
     clean(&root, bus);
 }
+#[test]
+fn a_design_dependency_is_an_ordinary_editable_edge() {
+    let (root, bus, epoch, _seats) = fixture("design-dependency-edit", 0);
+    let design = super::preparation::add_controller(
+        &bus,
+        epoch,
+        "Editable Design dependency",
+        wire::TaskIntent::Design,
+        None,
+    );
+    let task = todo_task(&bus, epoch, "DEP-design0001", "Held by a Design edge");
+
+    let before = board(&bus, epoch, Actor::Operator);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        dependency_witnesses(&before, &task, &[&design], None, false),
+        &TaskDepends {
+            task: task.clone(),
+            after: vec![design.clone()],
+            remove: false,
+        },
+    ));
+    let held = board(&bus, epoch, Actor::Operator);
+    let task_stamp = task.born().expect("task stamp");
+    let design_stamp = design.born().expect("Design stamp");
+    assert!(
+        at(&held, &task)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
+    );
+    assert!(!held.offer.contains(&task_stamp));
+
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDepends,
+        dependency_removal_witnesses(&held, &task, &[&design], None, false),
+        &TaskDepends {
+            task: task.clone(),
+            after: vec![design],
+            remove: true,
+        },
+    ));
+    assert!(
+        !at(&board(&bus, epoch, Actor::Operator), &task)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
+    );
+    clean(&root, bus);
+}
 
 #[test]
 fn duplicate_claimed_dependencies_advance_the_revision_without_adding_edges() {

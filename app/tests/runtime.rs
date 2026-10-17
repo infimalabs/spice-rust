@@ -251,7 +251,6 @@ fn board_task(
             body: wire::intent::BoardStatement {
                 intent: None,
                 preparation: None,
-                authorization: None,
                 evidence: Vec::new(),
                 handle: wire::TaskHandle::for_filing(project, &born, filing),
                 born: born.clone(),
@@ -295,7 +294,6 @@ fn board_task(
         preparation_decision: None,
         collapse_reason: None,
         controlled: Vec::new(),
-        stranded: None,
         claim_context: None,
         git_context: None,
         parked_commits: None,

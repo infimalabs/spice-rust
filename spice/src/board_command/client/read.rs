@@ -465,12 +465,6 @@ pub(in crate::board_command) fn task_show_bounded(
         format!("status {}", workflow.status),
         format!("claim {}", claim_line(task)),
     ];
-    if let Some(stranded) = &task.stranded {
-        lines.extend([
-            format!("stranded controller {}", stranded.controller),
-            format!("settle {}", stranded.settle),
-        ]);
-    }
     lines.extend(
         task.design_standing()
             .map(|standing| format!("standing {standing}")),
@@ -1129,9 +1123,9 @@ fn phase_guidance_lines(task: &BoardTask) -> Vec<String> {
             "phase_guidance:".to_owned(),
             "  phase:plan is this task's entire flow; connect at least one pending child task carrying acceptance, because acceptance on this task alone cannot complete it."
                 .to_owned(),
-            "  Create an accepted output with spice task add \"...\" --acceptance \"...\". Without an explicit origin it is associated with the ambient planning controller and waits for planning/review; --preparation HANDLE associates it explicitly. Origin alone never creates an edge."
+            "  Create an accepted output with spice task add \"...\" --acceptance \"...\". Without an explicit origin it is associated with the ambient planning controller and depends on that Plan; --preparation HANDLE associates it explicitly. A sub-Plan waits on its parent Plan like any other constructed task. Origin alone creates no edge."
                 .to_owned(),
-            "  Explicit --depends adds prerequisites; it does not remove an admitted controller gate. Do not add a reciprocal plan-to-output edge."
+            "  Explicit --depends adds ordinary prerequisites. A Design dependency is an ordinary editable edge; preparation decide removes the accepted outputs' exact edges as part of the operator decision. Do not add a reciprocal plan-to-output edge."
                 .to_owned(),
             "  Planning changes board state, not repository files; do not edit or commit implementation."
                 .to_owned(),
@@ -1191,9 +1185,6 @@ pub(super) fn next_command_line(board: &BoardAnswer, task: &BoardTask) -> String
             "next: spice task modify {} --title \"...\"",
             task.statement.body.handle,
         );
-    }
-    if let Some(stranded) = &task.stranded {
-        return format!("next: {}", stranded.settle);
     }
     if task.workflow.body.phase.as_str() == "review" {
         if active_claimed_by_principal(board, task) {
@@ -1292,28 +1283,6 @@ pub(in crate::board_command) fn task_status(
                 && board::eligible_entry(&satisfied, entry, &board.principal, &environment)
         })
         .count();
-    let visible = rows
-        .iter()
-        .map(|entry| entry.born())
-        .collect::<std::collections::BTreeSet<_>>();
-    let stranded = board
-        .tasks
-        .iter()
-        .filter(|task| visible.contains(&task.statement.body.born))
-        .filter_map(|task| {
-            task.stranded.as_ref().map(|stranded| {
-                format!(
-                    "stranded {} controller {} settle {}",
-                    task.statement.body.handle, stranded.controller, stranded.settle,
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-    let stranded = if stranded.is_empty() {
-        "stranded -".to_owned()
-    } else {
-        stranded.join("\n")
-    };
     let designs = wire::rooms::DesignCycle::ALL
         .iter()
         .map(|cycle| format!(" {}={}", cycle.key(), parked.designs.get(*cycle)))
@@ -1329,7 +1298,7 @@ pub(in crate::board_command) fn task_status(
          trust-grant required={} \
          appliance-version after={} observed={} \
          satisfied={} blocked={}\n\
-         stale {stale}\ndrafts {drafts}\n{stranded}",
+         stale {stale}\ndrafts {drafts}",
         board.actor_route.actor,
         actor_route_filter(board),
         board.project_policy.public_min_depth,

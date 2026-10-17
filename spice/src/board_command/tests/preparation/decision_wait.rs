@@ -55,6 +55,7 @@ fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
     let accepted = add_plan_output(&bus, epoch, &design, "Accepted output");
     let rejected = add_plan_output(&bus, epoch, &design, "Rejected output");
     let undecided = add_plan_output(&bus, epoch, &design, "Undecided output");
+    let design_stamp = design.born().expect("Design stamp");
 
     let (mixed, _) = retain_candidate_version(
         &bus,
@@ -70,9 +71,12 @@ fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
         at(&after_mixed, &rejected).preparation_decision,
         Some(mixed_decision.clone())
     );
-    assert_eq!(
-        at(&after_mixed, &rejected).statement.body.authorization,
-        None
+    assert!(
+        at(&after_mixed, &rejected)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
     );
     assert!(
         at(&after_mixed, &rejected)
@@ -81,9 +85,12 @@ fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
             .status
             .is_pending()
     );
-    assert_eq!(
-        at(&after_mixed, &accepted).statement.body.authorization,
-        Some(mixed_decision.clone())
+    assert!(
+        !at(&after_mixed, &accepted)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
     );
     assert_eq!(
         at(&after_mixed, &undecided).preparation_decision,
@@ -95,10 +102,20 @@ fn recorded_rejections_end_selection_wait_without_releasing_outputs() {
         !open_workflow_waiting(&bus, epoch).contains(&design.born().expect("Design stamp")),
         "a recorded rejection is counted input: the Design is ready for its next pass"
     );
-    assert_controlled_output_refusal(
-        conclude(&bus, epoch, Actor::Operator, &design, done_conclusion()),
-        &[&rejected, &undecided],
-    );
+    let CommandAnswer::Task(answer) = assert_committed(conclude(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &design,
+        done_conclusion(),
+    )) else {
+        panic!("Design conclusion returned another answer")
+    };
+    assert_eq!(answer.closed.len(), 2);
+    assert!(answer.closed.contains(&rejected));
+    assert!(answer.closed.contains(&undecided));
+    let settled = board(&bus, epoch, Actor::Operator);
+    assert!(at(&settled, &accepted).workflow.body.status.is_pending());
     clean(&root, bus);
 }
 
@@ -180,12 +197,21 @@ fn a_later_open_candidate_shadows_an_older_verdict_until_decided_or_withdrawn() 
         &[&output],
         1_760_000_000_000_003,
     );
-    assert_eq!(open_awaiting_selection(&bus, epoch), [design_stamp].into());
+    assert_eq!(
+        open_awaiting_selection(&bus, epoch),
+        [design_stamp.clone()].into()
+    );
     let renewed = select_candidate_outputs(&bus, epoch, &design, corrected, &[], 2);
     assert!(open_awaiting_selection(&bus, epoch).is_empty());
     assert_eq!(decision_of(&bus), Some(renewed));
     let current = board(&bus, epoch, Actor::Operator);
-    assert_eq!(at(&current, &output).statement.body.authorization, None);
+    assert!(
+        at(&current, &output)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
+    );
     assert!(at(&current, &output).workflow.body.status.is_pending());
     clean(&root, bus);
 }

@@ -60,7 +60,6 @@ pub(super) fn project_task_rows(
         .map(|entry| (entry.born().clone(), entry.handle().clone()))
         .collect::<std::collections::BTreeMap<_, _>>();
     let controlled = board::controlled_pending_tasks(&entries);
-    let stranded = board::stranded_tasks(&entries);
     for (entry, task) in entries.iter().zip(&mut tasks) {
         if let Some(children) = controlled.get(entry.born()) {
             task.controlled = children
@@ -73,20 +72,6 @@ pub(super) fn project_task_rows(
                 })
                 .collect();
         }
-        let Some(controller) = stranded.get(entry.born()).cloned() else {
-            continue;
-        };
-        let controller = handles
-            .get(&controller)
-            .expect("a stranded task's controller is in its working projection")
-            .clone();
-        task.stranded = Some(wire::intent::TaskStranding {
-            settle: format!(
-                "spice task close {} --validation \"Controller {controller} can no longer release this task\"",
-                entry.handle(),
-            ),
-            controller,
-        });
     }
     Ok((entries, tasks))
 }

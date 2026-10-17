@@ -140,7 +140,6 @@ fn push_task(
     let statement_creation = creation.clone();
     write.task_head(added, move |position| TaskHead {
         preparation: None,
-        authorization: None,
         evidence: Vec::new(),
         intent,
         born: statement_task,

@@ -218,12 +218,17 @@ fn returned_proposal_records_feedback_without_authorizing_work() {
         fixture.decision_outcomes(),
         [serde_json::to_value(returned).expect("decision encodes")]
     );
-    assert!(
-        board(&fixture.bus, fixture.epoch, Actor::Operator)
-            .tasks
-            .iter()
-            .all(|task| task.statement.body.authorization.is_none())
-    );
+    let current = board(&fixture.bus, fixture.epoch, Actor::Operator);
+    let design = fixture.design.born().expect("Design stamp");
+    for output in &fixture.outputs {
+        assert!(
+            at(&current, output)
+                .statement
+                .body
+                .dependencies
+                .contains(&design)
+        );
+    }
     fixture.finish();
 }
 

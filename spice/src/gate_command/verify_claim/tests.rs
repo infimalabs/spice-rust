@@ -172,7 +172,6 @@ fn statement() -> TaskHead {
     let born = TaskStamp::for_micros(1).expect("fixture task stamp");
     TaskHead {
         preparation: None,
-        authorization: None,
         evidence: Vec::new(),
         intent: None,
         born,

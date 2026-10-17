@@ -508,17 +508,6 @@ pub struct TaskHead {
         deserialize_with = "crate::optional::present"
     )]
     pub preparation: Option<TaskPreparation>,
-    /// Accepted operator decision whose execution authorization selected this
-    /// controlled output; omission leaves a controlled output gated.
-    ///
-    /// Only the controller's final positive completion admits it, in the same
-    /// fact that names this task among its exact selected outputs.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub authorization: Option<crate::rooms::DecisionRef>,
     /// Question results, asked in this task's room, that must be answered
     /// before any positive phase completion; answered means available for
     /// assessment, never accepted.

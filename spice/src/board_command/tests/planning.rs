@@ -757,8 +757,8 @@ fn add_associated(
 }
 
 #[test]
-fn negative_controller_closure_resolves_ordinary_edges_without_releasing_controlled_output() {
-    let (root, bus, epoch, seats) = fixture("negative-controller", 1);
+fn negative_controller_closure_closes_every_dependent_branch() {
+    let (root, bus, epoch, _seats) = fixture("negative-controller", 1);
     let plan = add_planning(
         &bus,
         epoch,
@@ -803,22 +803,13 @@ fn negative_controller_closure_resolves_ordinary_edges_without_releasing_control
             force_claimed: false,
         },
     ));
-    let actor = Actor::Lane(seats[0].lane);
-    let view = board(&bus, epoch, actor.clone());
-    let entries = actor_entries(&view).expect("entries");
-    let resolved = board::resolved_tasks(&entries);
-    assert!(!board::eligible_entry(
-        &resolved,
-        task_entry(&entries, &output).expect("output"),
-        &actor,
-        &view.environment()
-    ));
-    assert!(board::eligible_entry(
-        &resolved,
-        task_entry(&entries, &ordinary).expect("ordinary"),
-        &actor,
-        &view.environment()
-    ));
+    let view = board(&bus, epoch, Actor::Operator);
+    for dependent in [&output, &ordinary] {
+        assert!(
+            at(&view, dependent).workflow.body.status.is_completed(),
+            "negative Plan settlement closes every ordinary dependent"
+        );
+    }
     clean(&root, bus);
 }
 

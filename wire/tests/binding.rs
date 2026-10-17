@@ -704,7 +704,6 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
             position: seq(2),
             body: BoardStatement {
                 preparation: None,
-                authorization: None,
                 evidence: Vec::new(),
                 intent: None,
                 handle: handle("SPICE-1kKRRsDP"),
@@ -775,7 +774,6 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
         claim_context: Some(claim_context(epoch)),
         git_context: Some(completion_context()),
         parked_commits: None,
-        stranded: None,
         controlled: Vec::new(),
     };
 

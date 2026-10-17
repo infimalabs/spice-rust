@@ -162,16 +162,16 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
         NextWorkCounts {
             active: 0,
             stale: 0,
-            blocked: 0,
-            workflow_waiting: 2,
+            blocked: 1,
+            workflow_waiting: 1,
             designs: wire::rooms::DesignCycleCounts {
                 gathering_input: 1,
                 ..Default::default()
             },
             deferred: 0,
         },
-        "the Design counts once by its cycle and its unauthorized output keeps its workflow \
-         wait"
+        "the Design counts once by its cycle while dependency edges classify both ordinary and \
+         speculative waits"
     );
     let status =
         task_status(&board(&bus, epoch, Actor::Lane(seats[0].lane))).expect("task status renders");
@@ -179,8 +179,8 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
         "active 0",
         "ready 1",
         "review 0",
-        "blocked 0",
-        "waiting 2",
+        "blocked 1",
+        "waiting 1",
         "designs gathering-input=1 ready-for-proposal=0 awaiting-decision=0 \
          waiting-on-selected-work=0",
         "deferred 0",

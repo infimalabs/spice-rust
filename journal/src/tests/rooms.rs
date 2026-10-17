@@ -100,13 +100,11 @@ fn authorization_write(
             ..workflow
         });
     }
-    for head in heads {
-        let decision = decision.clone();
-        write.task_head(fact, move |revision| TaskHead {
-            authorization: Some(decision),
-            revision,
-            ..head
-        });
+    for mut head in heads {
+        let controller = decision.controller.clone();
+        head.dependencies
+            .retain(|dependency| dependency != &controller);
+        write.task_head(fact, move |revision| TaskHead { revision, ..head });
     }
     write
 }
@@ -156,6 +154,10 @@ fn task_with_intent(
     } else {
         vec![current.clone(), phase("review")]
     };
+    let dependencies = preparation
+        .as_ref()
+        .map(|preparation| vec![preparation.parent.clone()])
+        .unwrap_or_default();
     let mut write = write();
     let fact = write
         .fact(
@@ -173,7 +175,7 @@ fn task_with_intent(
                 taste: None,
                 document_slug: None,
                 taste_proposal: None,
-                depends: Vec::new(),
+                depends: dependencies.clone(),
                 flow: flow.clone(),
                 phase: current.clone(),
                 creation: wire::body::TaskCreationContext::unavailable(
@@ -187,7 +189,6 @@ fn task_with_intent(
     let born = task.clone();
     write.task_head(fact, move |revision| TaskHead {
         preparation,
-        authorization: None,
         evidence: Vec::new(),
         intent,
         born,
@@ -202,7 +203,7 @@ fn task_with_intent(
         taste: None,
         document_slug: None,
         taste_proposal: None,
-        dependencies: Vec::new(),
+        dependencies,
         provenance: wire::TaskProvenance::Parentless,
         creation: wire::body::TaskCreationContext::unavailable(
             wire::body::TaskCreationUnavailable::OperatorActor,
@@ -279,7 +280,10 @@ fn adopt(
     preparation: TaskPreparation,
     head_preparation: TaskPreparation,
 ) -> Commit {
-    let head = statement(journal, output);
+    let mut head = statement(journal, output);
+    if !head.dependencies.contains(&head_preparation.parent) {
+        head.dependencies.push(head_preparation.parent.clone());
+    }
     let mut write = write();
     let fact = write
         .fact(

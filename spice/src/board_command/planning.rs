@@ -146,10 +146,7 @@ pub(super) fn preparation_parent<'a>(
     if let Some(parent) = &add.preparation {
         return task_heads(board, parent).map(Some);
     }
-    if add.origin.is_some()
-        || add.intent.is_some_and(wire::TaskIntent::is_design)
-        || !matches!(board.principal, Actor::Lane(_))
-    {
+    if add.origin.is_some() || !matches!(board.principal, Actor::Lane(_)) {
         return Ok(None);
     }
     let mut held = board.tasks.iter().filter(|task| {
@@ -189,7 +186,7 @@ pub(super) fn admit_preparation(
         if add.preparation.is_none() {
             require_expected(command, &claim_witness(parent))?;
         }
-        bind_preparation(&snapshot.answer, command, parent, statement)?;
+        bind_preparation(command, parent, statement, flow)?;
     }
     admit_gather_design(
         statement.intent,
@@ -200,18 +197,17 @@ pub(super) fn admit_preparation(
 
 /// Bind a new statement to its pending planning parent under current policy.
 ///
-/// An ordinary output also follows its parent and controller; a Design never
-/// becomes a preparation output.
+/// Every non-gather construction root retains one ordinary dependency on its
+/// immediate gating parent.
 pub(super) fn bind_preparation(
-    board: &BoardAnswer,
     command: &wire::AdmittedCommand,
     parent: &BoardTask,
     statement: &mut TaskHead,
+    flow: &[wire::Phase],
 ) -> Result<(), Outcome<CommandAnswer>> {
     require_expected(command, &statement_witness(parent))?;
     require_expected(command, &workflow_witness(parent))?;
-    if statement.intent.is_some_and(wire::TaskIntent::is_design)
-        || !parent.workflow.body.status.is_pending()
+    if !parent.workflow.body.status.is_pending()
         || (parent.statement.body.intent.is_none()
             && !constructs_work(parent.workflow.body.phase.as_str())
             && !requires_construction(parent.statement.body.intent, &parent.workflow.body.flow))
@@ -236,32 +232,14 @@ pub(super) fn bind_preparation(
         ),
         construction: statement.born.clone(),
     });
-    if statement.intent.is_none() {
-        let preparation = statement
-            .preparation
-            .as_ref()
-            .expect("association was admitted");
-        // Selection, not conclusion, releases work a Design controls, and a
-        // Design stays open after selecting it, so an ordinary edge to an open
-        // Design would hold its output until the Design concluded.
-        for prerequisite in [&preparation.parent, &preparation.controller] {
-            if !statement.dependencies.contains(prerequisite) && !is_design(board, prerequisite) {
-                statement.dependencies.push(prerequisite.clone());
-            }
-        }
+    if !board::gather_route(statement.intent, flow)
+        && !statement.dependencies.contains(&parent.statement.body.born)
+    {
+        statement
+            .dependencies
+            .push(parent.statement.body.born.clone());
     }
     Ok(())
-}
-
-fn is_design(board: &BoardAnswer, task: &TaskStamp) -> bool {
-    board.tasks.iter().any(|heads| {
-        heads.statement.body.born == *task
-            && heads
-                .statement
-                .body
-                .intent
-                .is_some_and(wire::TaskIntent::is_design)
-    })
 }
 
 pub(super) fn correction_preparation(entry: &BoardTask) -> Option<wire::TaskPreparation> {

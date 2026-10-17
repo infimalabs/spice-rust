@@ -213,9 +213,8 @@ pub(in crate::board_command) fn task_close(
 
 /// Conclude an open, unheld Design done or collapsed on the operator's word.
 ///
-/// This is a Design's only terminal act: no lane step and no selection
-/// concludes it. Done refuses while an output it constructed still awaits
-/// selection. Collapse closes each unreleased construction subtree atomically.
+/// Every pending output that still retains its Design dependency closes in
+/// the same transaction; conclusion never releases unselected work.
 pub(in crate::board_command) fn task_conclude(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -263,9 +262,6 @@ pub(in crate::board_command) fn stage_conclusion(
     )?;
     guard_task_projection(write, snapshot.task_barrier.clone());
     let entry = admitted_entry(&snapshot, settlement)?;
-    if !settlement.negative() {
-        require_no_pending_controlled_outputs(&snapshot, entry)?;
-    }
     let oops_generation = prepare_oops_settlement(write, &snapshot, entry)?;
     let cause = FactCause::Pending(cause);
     stage_with_controlled(
@@ -302,11 +298,6 @@ fn settle(
         Ok(entry) => entry,
         Err(outcome) => return outcome,
     };
-    if !settlement.negative()
-        && let Err(outcome) = require_no_pending_controlled_outputs(&snapshot, entry)
-    {
-        return outcome;
-    }
     let at = match current_instant() {
         Ok(at) => at,
         Err(outcome) => return outcome,
@@ -317,12 +308,7 @@ fn settle(
     };
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
-    if settlement.negative()
-        && entry
-            .statement()
-            .intent
-            .is_some_and(|intent| intent == wire::TaskIntent::Plan || intent.is_design())
-    {
+    if cascades_controlled(entry, settlement) {
         guard_task_projection(&mut write, snapshot.task_barrier.clone());
     }
     let oops_generation = match prepare_oops_settlement(&mut write, &snapshot, entry) {
@@ -356,8 +342,8 @@ fn settle(
     committed(bus, write, CommandAnswer::Task(answer))
 }
 
-/// Stage one terminal task and every pending subtree its negative disposition
-/// can no longer release.
+/// Stage one terminal task and every pending subtree its disposition can no
+/// longer release.
 fn stage_with_controlled(
     write: &mut JournalWrite,
     snapshot: &ValidatedSnapshot,
@@ -368,8 +354,7 @@ fn stage_with_controlled(
     projects: &ProjectPolicy,
     oops_generation: Option<wire::OopsGenerationHead>,
 ) -> Result<(Entry, Vec<TaskHandle>), Outcome<CommandAnswer>> {
-    let controlled = settlement
-        .negative()
+    let controlled = cascades_controlled(entry, settlement)
         .then(|| board::controlled_pending(&snapshot.entries, entry.born()))
         .unwrap_or_default();
     require_controlled_unheld(&controlled, settlement)?;
@@ -511,7 +496,7 @@ fn require_controlled_unheld(
         return Ok(());
     }
     let remedy = if matches!(settlement, Settlement::Conclude(_)) {
-        "the holder checkpoints its work and runs `spice task free`; retry the collapse once every controlled task is unheld"
+        "the holder checkpoints its work and runs `spice task free`; retry the Design conclusion once every controlled task is unheld"
     } else {
         "rerun with --force-claimed to settle the controller and take every controlled task from its holder"
     };
@@ -522,20 +507,26 @@ fn require_controlled_unheld(
     ))
 }
 
+fn cascades_controlled(entry: &Entry, settlement: Settlement<'_>) -> bool {
+    entry.statement().intent.is_some_and(|intent| {
+        intent.is_design() || (intent == wire::TaskIntent::Plan && settlement.negative())
+    })
+}
+
 fn controlled_validation(controller: &Entry, settlement: Settlement<'_>) -> String {
-    let disposition = match settlement {
-        Settlement::Delete(_) => "was deleted",
-        Settlement::Close(_) => "was closed",
-        Settlement::Conclude(_) => "was collapsed",
+    let detail = match settlement {
+        Settlement::Delete(delete) => format!("was deleted: {}", delete.reason.trim()),
+        Settlement::Close(close) => format!("was closed: {}", close.validation.trim()),
+        Settlement::Conclude(TaskConclude {
+            conclusion: body::DesignConclusion::Done {},
+            ..
+        }) => "was concluded before selecting this output".to_owned(),
+        Settlement::Conclude(TaskConclude {
+            conclusion: body::DesignConclusion::Collapsed { reason },
+            ..
+        }) => format!("was collapsed: {}", reason.trim()),
     };
-    format!(
-        "Controller {} {disposition}: {}",
-        controller.handle(),
-        settlement
-            .text()
-            .expect("every negative controller settlement has stated text")
-            .trim(),
-    )
+    format!("Controller {} {detail}", controller.handle())
 }
 
 /// The named, unsettled entry, refusing empty text, a settlement that does not
@@ -570,16 +561,6 @@ fn admitted_entry<'a>(
         .intent
         .is_some_and(wire::TaskIntent::is_design);
     match settlement {
-        Settlement::Close(_) if design => {
-            return Err(refusal(
-                "task::close-design",
-                Some(entry.handle().to_string()),
-                &format!(
-                    "conclude a Design with `spice task conclude {} --done` or `--collapse REASON`",
-                    entry.handle()
-                ),
-            ));
-        }
         Settlement::Conclude(_) if !design => {
             return Err(refusal(
                 "task::conclude-not-design",

@@ -246,13 +246,23 @@ fn later_candidate_versions_release_additional_exact_output_subsets() {
         &[&first, &second],
         1_760_000_000_000_001,
     );
-    let first_decision = select_candidate_outputs(&bus, epoch, &design, initial, &[&first], 1);
+    let _first_decision = select_candidate_outputs(&bus, epoch, &design, initial, &[&first], 1);
+    let design_stamp = design.born().expect("Design stamp");
     let after_first = board(&bus, epoch, Actor::Operator);
-    assert_eq!(
-        at(&after_first, &first).statement.body.authorization,
-        Some(first_decision.clone())
+    assert!(
+        !at(&after_first, &first)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
     );
-    assert_eq!(at(&after_first, &second).statement.body.authorization, None);
+    assert!(
+        at(&after_first, &second)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
+    );
     let current = board(&bus, epoch, Actor::Operator);
     let heads = at(&current, &first);
     assert_committed(issue(
@@ -280,16 +290,21 @@ fn later_candidate_versions_release_additional_exact_output_subsets() {
         &[&second],
         1_760_000_000_000_002,
     );
-    let second_decision = select_candidate_outputs(&bus, epoch, &design, later, &[&second], 2);
+    let _second_decision = select_candidate_outputs(&bus, epoch, &design, later, &[&second], 2);
     let current = board(&bus, epoch, Actor::Operator);
-    assert_eq!(
-        at(&current, &first).statement.body.authorization,
-        Some(first_decision),
-        "a later candidate never revises prior authority"
+    assert!(
+        !at(&current, &first)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
     );
-    assert_eq!(
-        at(&current, &second).statement.body.authorization,
-        Some(second_decision)
+    assert!(
+        !at(&current, &second)
+            .statement
+            .body
+            .dependencies
+            .contains(&design_stamp)
     );
     assert!(
         !open_awaiting_selection(&bus, epoch).contains(&design.born().expect("Design stamp")),
@@ -725,13 +740,23 @@ pub(super) fn authorize_test_output(
     spare: &TaskHandle,
     candidate: CandidateRef,
 ) {
-    let decision = select_candidate_outputs(bus, epoch, controller, candidate, &[output], 3);
+    let _decision = select_candidate_outputs(bus, epoch, controller, candidate, &[output], 3);
+    let controller_stamp = controller.born().expect("Design stamp");
     let current = board(&bus, epoch, Actor::Operator);
-    assert_eq!(
-        at(&current, &output).statement.body.authorization,
-        Some(decision)
+    assert!(
+        !at(&current, &output)
+            .statement
+            .body
+            .dependencies
+            .contains(&controller_stamp)
     );
-    assert_eq!(at(&current, &spare).statement.body.authorization, None);
+    assert!(
+        at(&current, &spare)
+            .statement
+            .body
+            .dependencies
+            .contains(&controller_stamp)
+    );
     let design = &at(&current, &controller).workflow.body;
     assert!(
         design.status.is_pending(),
@@ -817,23 +842,6 @@ fn adoption_refuses_claimed_work_and_proposal_writes_refuse_stale_subjects() {
     clean(&root, bus);
 }
 
-fn assert_controlled_output_refusal(outcome: Outcome<CommandAnswer>, outputs: &[&TaskHandle]) {
-    let Outcome::Refusal(refusal) = outcome else {
-        panic!("expected controlled-output refusal, got {outcome:?}");
-    };
-    assert_eq!(refusal.reason(), "preparation::controlled-outputs-pending");
-    let observed = refusal
-        .diagnostic()
-        .and_then(wire::RefusalDiagnostic::observed)
-        .expect("refusal names the pending outputs");
-    for output in outputs {
-        assert!(
-            observed.contains(&output.to_string()),
-            "refusal omitted pending output {output}: {observed}"
-        );
-    }
-}
-
 #[test]
 fn controller_settlement_refuses_a_held_descendant_until_forced_then_closes_the_tree() {
     for (fixture_name, deleted) in [
@@ -844,10 +852,23 @@ fn controller_settlement_refuses_a_held_descendant_until_forced_then_closes_the_
         let controller_holder = Actor::Lane(seats[0].lane);
         let lane = Actor::Lane(seats[1].lane);
         let controller = add_plan(&bus, epoch, fixture_name);
-        let branch = add_plan_output(&bus, epoch, &controller, "Controlled Plan");
-        let leaf = add_output(&bus, epoch, &branch, "Controlled task");
         claim_task(&bus, epoch, &seats[0], &controller_holder, &controller);
+        let branch = add_plan(&bus, epoch, "Controlled Plan");
         claim_task(&bus, epoch, &seats[1], &lane, &branch);
+        let leaf = add_output(&bus, epoch, &branch, "Controlled task");
+        let visible = board(&bus, epoch, lane.clone());
+        assert_committed(issue(
+            &bus,
+            epoch,
+            lane.clone(),
+            CommandKind::TaskDepends,
+            dependency_witnesses(&visible, &branch, &[&controller], Some(&seats[1]), false),
+            &TaskDepends {
+                task: branch.clone(),
+                after: vec![controller.clone()],
+                remove: false,
+            },
+        ));
         free_active(&bus, epoch, &controller_holder, &seats[0], &controller);
 
         let settle = |force_claimed| {
@@ -1098,7 +1119,13 @@ fn a_standalone_plan_releases_its_tasks_on_clean_review_without_selection() {
     assert_committed(review_clean(&bus, epoch, &seats[0], &plan));
     let concluded = board(&bus, epoch, Actor::Operator);
     assert!(at(&concluded, &plan).workflow.body.status.is_completed());
-    assert_eq!(at(&concluded, &task).statement.body.authorization, None);
+    assert!(
+        at(&concluded, &task)
+            .statement
+            .body
+            .dependencies
+            .contains(&plan.born().expect("Plan stamp"))
+    );
     assert!(open_blocked(&bus, epoch).is_empty());
     let worker = Actor::Lane(seats[1].lane);
     claim_task(&bus, epoch, &seats[1], &worker, &task);
@@ -1143,12 +1170,12 @@ fn a_design_selects_one_plan_whose_own_review_then_releases_its_tasks() {
         "the selected Plan holds its task for review"
     );
     assert_committed(review_clean(&bus, epoch, &seats[0], &selected));
-    assert_eq!(
+    assert!(
         at(&board(&bus, epoch, Actor::Operator), &task)
             .statement
             .body
-            .authorization,
-        None
+            .dependencies
+            .contains(&selected.born().expect("Plan stamp"))
     );
     assert_eq!(
         open_workflow_waiting(&bus, epoch),
@@ -1318,7 +1345,13 @@ fn a_design_refuses_authorization_until_its_pending_dependencies_settle() {
     );
     let unchanged = board(&bus, epoch, Actor::Operator);
     assert!(at(&unchanged, &design).workflow.body.status.is_pending());
-    assert_eq!(at(&unchanged, &selected).statement.body.authorization, None);
+    assert!(
+        at(&unchanged, &selected)
+            .statement
+            .body
+            .dependencies
+            .contains(&design.born().expect("Design stamp"))
+    );
 
     let fixer = Actor::Lane(seats[1].lane);
     claim_and_complete_task(&bus, epoch, &seats[1], &fixer, &correction);

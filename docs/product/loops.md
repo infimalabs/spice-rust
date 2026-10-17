@@ -619,49 +619,43 @@ owns each rule summarized here.
   until its working group is Explore or Converge.
 
   A Design
-  [stays open until the operator concludes it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
+  [stays open until the operator settles it](invariants/identity.md#work-a-design-stays-open-until-the-operator-concludes-it):
   ordinary lane `task done` refuses it. The operator accepts a conclude or
   collapse proposal through `preparation decide`; that decision stages the
-  existing guarded `task conclude --done` or `--collapse` authority without
-  fabricating an output. Direct `task conclude` remains available. `task close`
-  refuses Designs.
+  guarded `task conclude --done` or `--collapse` authority without fabricating
+  an output. Direct conclude remains the normal terminal act; operator close
+  and delete remain explicit emergency settlements and close gated outputs too.
 
-  Each work output waits, gated, until one exact operator `preparation decide`
-  decision assigns every output in its Design pass proposal an accepted or
-  rejected verdict. The decision and execution authorization for exactly the
-  accepted outputs record together; rejected outputs remain gated, and the Design
-  remains open. Per-output comments and an optional overall comment explain
-  the decision. Rejecting every output authorizes nothing. Returning any
-  proposal records nonblank material feedback, authorizes and concludes
-  nothing, and leaves the Design open for another claimed pass. Resolution
-  belongs to the operator; Design holders do not infer it, review coverage
-  never gates it, and working-group membership grants no authorization.
-  Rejected-output, overall, and returned feedback is
-  [told once to the active holder](invariants/identity.md#identity-a-designs-newest-return-is-told-once-to-its-active-holder)
-  as its next input, and `room history` lists every verdict and comment.
-  A collapse concludes negatively and, in that same journal write, operator-closes
-  every still-unselected pending output and every pending task prepared beneath
-  it; each closure validation names the Design and collapse reason. A prior exact
-  acceptance remains authorized and live, and so does the work a selected Plan
-  prepared: only that Plan's positive review releases it, and a selection never
-  does. Operator close or delete of a Plan or Design, a selected Plan included,
-  likewise closes every pending task it can no longer release, directly or
-  through pending work prepared beneath it, but never closes a task already
-  released by a positive Plan review. Any live claim in the closure set refuses
-  the whole operation and names its holder; `task close` and `task delete` accept
-  `--force-claimed` to free those claims atomically. CLI answers list every task
-  closed, and browser collapse, close, and delete confirmations preview the same
-  set. Historical pending work whose releasing Plan or Design had already
-  collapsed, closed, or been deleted is not repaired on read: board, status, and
-  detail call it `stranded` and print its explicit `spice task close` settlement
-  command.
+  Each work output waits on an ordinary dependency to its Design until one
+  exact operator `preparation decide` decision assigns every output in its
+  Design pass proposal an accepted or rejected verdict. The decision and
+  execution-authorization record land together with removal of exactly the
+  accepted outputs' Design edges. Rejected and unproposed outputs keep their
+  edge, and the Design remains open. Rejecting every output and returning a
+  proposal remove no edge. A Design edge otherwise has ordinary dependency
+  authority: task dependency edits can add or remove it, and adding one holds
+  an existing task behind that Design. Resolution belongs to the operator;
+  Design holders do not infer a decision, review coverage never gates it, and
+  working-group membership grants no authorization.
 
+  Collapse, done conclusion, operator close, or delete of a Design closes every
+  still-dependent pending output and gated descendant in the same write.
+  Negative settlement of a Plan likewise closes each pending branch that still
+  depends on it. A prior exact Design acceptance remains live because its edge
+  is gone. Work behind a positively completed Plan becomes eligible through
+  ordinary dependency settlement. Any live claim in the closure set refuses
+  the whole operation and names its holder; forced close or delete frees those
+  claims atomically. Migration performs the same closure for retained terminal,
+  deleted, or absent parents, so no read-time stranded classification or repair
+  path remains.
 
-  A Plan is an ordinary reviewed task constructor. It creates its
-  acceptance-bearing executable tasks under itself; those tasks wait for its
-  positive review and their ordinary dependencies, with no Design proposal,
-  selection, or execution authorization. A selected Plan therefore runs, and
-  its own review releases its tasks. An open Design with an undecided proposal
+  A Plan is an ordinary reviewed task constructor. Every non-gather task it
+  constructs, including a sub-Plan, waits on an ordinary dependency to that
+  Plan until positive review, along with its other ordinary dependencies. No
+  Design proposal, selection, or execution authorization is involved. A
+  selected Plan therefore runs, and its own review releases its constructed
+  tasks.
+  An open Design with an undecided proposal
   [waits on the operator](invariants/identity.md#work-a-design-awaiting-decision-waits-on-the-operator-without-a-new-state):
   no lane is offered or woken for it, and status counts it under
   `designs awaiting-decision`.

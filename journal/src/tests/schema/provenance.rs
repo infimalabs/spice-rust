@@ -9,11 +9,21 @@ fn head(journal: &Journal, stamp: &str, provenance: &str) {
         .connection
         .execute(
             "INSERT INTO task_heads(stamp, head_seq, body) SELECT ?1, head_seq, \
-             CAST(json_set(CAST(body AS TEXT), '$.born', ?1, '$.provenance', ?2) AS BLOB) \
-             FROM task_heads WHERE stamp = '1kKRRsDP'",
+             CAST(json_remove(json_set(CAST(body AS TEXT), '$.born', ?1, '$.provenance', ?2), \
+             '$.preparation') AS BLOB) FROM task_heads WHERE stamp = '1kKRRsDP'",
             [stamp, provenance],
         )
         .unwrap();
+    let prepared: bool = journal
+        .connection
+        .query_row(
+            "SELECT json_type(CAST(body AS TEXT), '$.preparation') IS NOT NULL \
+             FROM task_heads WHERE stamp = ?1",
+            [stamp],
+            |row| row.get(0),
+        )
+        .expect("cloned preparation reads");
+    assert!(!prepared, "provenance-only fixture is not prepared");
 }
 
 fn steering(journal: &Journal, key: &str) {

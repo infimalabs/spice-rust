@@ -1108,7 +1108,6 @@ mod tests {
                 controller: room.clone(),
                 construction: room.clone(),
             }),
-            authorization: None,
             evidence: Vec::new(),
             provenance: format!("task:{room}").parse().expect("fixture provenance"),
             creation: wire::body::TaskCreationContext::unavailable(

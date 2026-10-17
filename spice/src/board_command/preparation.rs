@@ -39,50 +39,6 @@ pub(super) fn dispatch_preparation(
     })
 }
 
-/// Refuse concluding a Design done while any live output it constructed
-/// directly still lacks that Design's exact execution authorization. A
-/// rejected output is decided for scheduling but remains unaccepted here.
-///
-/// A Plan concludes like any reviewed task; its outputs then wait only for
-/// that positive boundary and ordinary dependencies. Collapse, operator close,
-/// and delete are separate negative dispositions that atomically settle the
-/// pending preparation branches they can no longer release.
-pub(super) fn require_no_pending_controlled_outputs(
-    snapshot: &ValidatedSnapshot,
-    controller: &Entry,
-) -> Result<(), Outcome<CommandAnswer>> {
-    if !controller
-        .statement()
-        .intent
-        .is_some_and(wire::TaskIntent::is_design)
-    {
-        return Ok(());
-    }
-    let mut outputs = snapshot
-        .entries
-        .iter()
-        .filter(|entry| {
-            board::unaccepted_output_of(entry.statement(), entry.workflow())
-                == Some(controller.born())
-        })
-        .map(|entry| entry.handle().to_string())
-        .collect::<Vec<_>>();
-    if outputs.is_empty() {
-        return Ok(());
-    }
-    outputs.sort();
-    Err(refusal(
-        "preparation::controlled-outputs-pending",
-        Some(outputs.join(", ")),
-        &format!(
-            "accept each intended output of {} in one exact resolved candidate decision with \
-             `spice preparation decide DECISION_JSON`, or close or delete every unaccepted output \
-             before concluding it",
-            controller.handle()
-        ),
-    ))
-}
-
 /// Admit the exact claimed Design and every Plan output named by one pass.
 fn require_design_proposal(
     snapshot: &bus::TaskSnapshot,
@@ -847,7 +803,7 @@ fn opportunistic_candidate(
             let statement = heads.statement().body();
             heads.workflow().body().status.is_pending()
                 && statement.intent == Some(wire::TaskIntent::Plan)
-                && statement.authorization.is_none()
+                && statement.dependencies.contains(&candidate.controller)
                 && statement.born.micros() <= cutoff
                 && statement.preparation.as_ref().is_some_and(|association| {
                     association.parent == candidate.controller
@@ -985,18 +941,11 @@ fn selected_output_head(
 ) -> Result<TaskHead, Outcome<CommandAnswer>> {
     let heads = task_heads(snapshot, output)?;
     require_transition_witnesses(command, heads)?;
-    require_witness(
-        command,
-        &Witness::Authorization {
-            output: output.clone(),
-            head: None,
-        },
-    )?;
     if !output_is_authorizable(heads, candidate, output) {
         return Err(refusal(
             "preparation::output-not-authorizable",
             Some(output.to_string()),
-            "select a pending, unclaimed, unauthorized output this Design constructed",
+            "select a pending, unclaimed output that still depends on this Design",
         ));
     }
     Ok(heads.statement().body().clone())
@@ -1009,7 +958,6 @@ fn output_is_authorizable(
 ) -> bool {
     heads.workflow().body().status.is_pending()
         && !active_claim(heads)
-        && heads.statement().body().authorization.is_none()
         && !board::gather_task(heads.statement().body(), heads.workflow().body())
         && heads
             .statement()
@@ -1017,10 +965,15 @@ fn output_is_authorizable(
             .preparation
             .as_ref()
             .is_some_and(|preparation| {
-                preparation.parent == candidate.controller && preparation.construction == *output
+                preparation.parent == candidate.controller
+                    && preparation.construction == *output
+                    && heads
+                        .statement()
+                        .body()
+                        .dependencies
+                        .contains(&preparation.parent)
             })
 }
-
 fn commit_decision(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -1078,13 +1031,12 @@ fn commit_decision(
                 }
             };
             let selected = outputs.len();
-            for output in outputs {
-                let decision = authorization.decision.clone();
-                write.task_head(authorized, move |revision| TaskHead {
-                    authorization: Some(decision),
-                    revision,
-                    ..output
-                });
+            for mut output in outputs {
+                let controller = authorization.decision.controller.clone();
+                output
+                    .dependencies
+                    .retain(|dependency| dependency != &controller);
+                write.task_head(authorized, move |revision| TaskHead { revision, ..output });
             }
             format!("selected {selected} output(s)")
         }
@@ -1161,7 +1113,6 @@ pub(super) fn adopt_output(
     if !output_heads.workflow().body().status.is_pending()
         || active_claim(output_heads)
         || output_heads.statement().body().preparation.is_some()
-        || output_heads.statement().body().authorization.is_some()
         || output_heads.statement().body().intent.is_some()
     {
         return refusal(
@@ -1216,10 +1167,13 @@ pub(super) fn adopt_output(
         Ok(fact) => fact,
         Err(error) => return store_fault("preparation::adoption-invalid", &error.to_string()),
     };
-    let head = TaskHead {
-        preparation: Some(preparation),
-        ..output_heads.statement().body().clone()
-    };
+    let mut head = output_heads.statement().body().clone();
+    head.preparation = Some(preparation);
+    if !board::gather_task(&head, output_heads.workflow().body())
+        && !head.dependencies.contains(&parent)
+    {
+        head.dependencies.push(parent);
+    }
     write.task_head(fact, move |revision| TaskHead { revision, ..head });
     let answer = TextAnswer {
         text: format!(
