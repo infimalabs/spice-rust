@@ -310,6 +310,23 @@ fn a_plan_intake_claimant_revises_the_statement_and_a_stale_head_refuses() {
         Some(ClaimDisposition::Active),
         "refining the statement keeps the intake claim",
     );
+    assert_committed(super::edit::correct(
+        &bus,
+        epoch,
+        lane.clone(),
+        &TaskEdit {
+            description: Some(String::new()),
+            ..super::edit::only(&design)
+        },
+    ));
+    assert_eq!(
+        at(&board(&bus, epoch, Actor::Operator), &design)
+            .statement
+            .body
+            .description,
+        None,
+        "an empty replacement clears the description",
+    );
     assert_committed(complete(&bus, epoch, &seats[0], &design));
     let heads = at(&board(&bus, epoch, Actor::Operator), &design).clone();
     assert_eq!(heads.presentation_title(), "Sharpened Design statement");

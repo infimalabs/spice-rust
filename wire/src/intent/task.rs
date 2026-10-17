@@ -151,7 +151,7 @@ pub struct TaskEdit {
         deserialize_with = "crate::optional::present"
     )]
     pub title: Option<String>,
-    /// Replacement description, when the description moves.
+    /// Replacement description, when the description moves; empty clears it.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
