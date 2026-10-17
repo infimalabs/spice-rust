@@ -40,9 +40,6 @@ pub const MESSAGE_PASSAGES: usize = 4;
 /// so admission uses the same bound as a passage: a message that could not be
 /// one coherent passage carries too little to match on. Acknowledgement-only
 /// replies fall below it once their headers are cut.
-///
-/// TODO(design-invitations): validate this admission bound against fresh
-/// labeled short notes; the audit left it as an explicit open decision.
 pub const MESSAGE_TERMS: usize = PASSAGE_TERMS;
 
 /// Which rendering of one card a score was computed against.
