@@ -90,9 +90,11 @@ The tracked Rust toolchain includes `x86_64-pc-windows-msvc`, but Windows
 development checks also require native C and assembly producers. The repository
 declares one Apple-silicon host toolchain in
 [`dist/windows-msvc.toml`](../../dist/windows-msvc.toml): exact xwin and LLVM
-releases and executable hashes, the Visual Studio channel and package manifest
-hashes, and exact CRT and SDK selectors. The declaration also names the durable
-operator direction that accepted Microsoft's applicable licence terms.
+releases and executable hashes; one closure digest over every Homebrew dylib
+those LLVM tools load and every clang builtin header; the Visual Studio channel
+and package manifest hashes; and exact CRT and SDK selectors. The declaration
+also names the durable operator direction that accepted Microsoft's applicable
+licence terms.
 
 After installing the declared Homebrew bottles (`xwin`, `llvm@20`, and
 `lld@20`), materialize the CRT and SDK with:
@@ -112,12 +114,14 @@ splatting, and publishes a read-only, content-addressed generation under the
 bootstrap Cargo home.
 
 A Cargo invocation selecting `x86_64-pc-windows-msvc` rehashes that
-generation and the pinned host LLVM tools before launch. Only that target gets
-the `cl.exe`, `ml64.exe`, `lib.exe`, and `link.exe` wrappers: they resolve to
-the admitted clang-cl, llvm-ml, llvm-lib, and lld-link bytes, and clang-cl
-receives the admitted xwin `/winsysroot`. Missing or changed bytes refuse
-instead of falling back to Apple's compiler, ambient headers, or another
-toolchain.
+generation, each pinned launcher, every non-platform dylib in its transitive
+load closure, and clang's complete builtin include tree before launch. macOS
+platform libraries remain covered by the signed system volume and dyld shared
+cache rather than mutable Homebrew paths. Only that target gets the `cl.exe`,
+`ml64.exe`, `lib.exe`, and `link.exe` wrappers: they resolve to the admitted
+clang-cl, llvm-ml, llvm-lib, and lld-link bytes, and clang-cl receives the
+admitted xwin `/winsysroot`. Missing or changed bytes refuse instead of falling
+back to Apple's compiler, ambient headers, or another toolchain.
 
 Owners: [`spice/src/cargo_isolation/windows_msvc.rs`](../../spice/src/cargo_isolation/windows_msvc.rs)
 for recorded-acceptance admission, materialization, verification, and Cargo
