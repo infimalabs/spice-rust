@@ -119,10 +119,18 @@ The `canvas` crate declares the two symbols a relocatable object defines:
 `spice_app_zip` at the archive's first byte and `spice_app_zip_len` at its
 length. The linker resolves the first to a mapped address, so the process reads
 its app as a direct static slice without storing a file offset or parsing its
-own image. Only builds that enable the `spice/canvas` feature resolve the crate,
-and those builds write the object for the staged archive and hand it to the
-final link through `cargo rustc`. The object's name carries the archive digest,
-so a new archive relinks the executable and rebuilds nothing else.
+own image. `dist` writes each platform object and reads the final image through
+bounded format-specific code. On Windows the retained PE section is `spiceapp`,
+which fits the executable format's eight-byte section-name limit. The runtime
+symbol names stay unchanged across Mach-O, ELF, and PE.
+
+Only builds that enable the `spice/canvas` feature resolve the crate, and those
+builds write the object for the staged archive and hand it to the final link
+through `cargo rustc`. The object's name carries the archive digest, so a new
+archive relinks the executable and rebuilds nothing else. After applicable
+symbol, strip, and signing steps, the build locates the section through the
+final Mach-O, ELF, or PE metadata and refuses absent, repeated, truncated, or
+wrong bytes. No persisted build-time offset participates.
 [`spice/src/version.rs`](../../spice/src/version.rs) admits the linked archive
 once. An installed resident without one refuses with
 `serve::canvas-archive-absent`, or `serve::canvas-archive-invalid` when it does
@@ -131,10 +139,12 @@ publishes no app file and binds the generation G that its linked archive names.
 `xtask report` admits it by that same receipt and archive check.
 Install schema 18 published app sidecars. It is a one-crossing
 boundary: `spice install` alone reads a complete schema-18 receipt and
-discards the sidecars it owned. Owners: [`canvas/src/lib.rs`](../../canvas/src/lib.rs)
-for the symbols, [`dist/src/canvas.rs`](../../dist/src/canvas.rs) for writing
-the object and for the section read and identity checks,
-[`xtask/src/app.rs`](../../xtask/src/app.rs) for the link arguments, and
+discards the sidecars it owned. Owners:
+[`canvas/src/lib.rs`](../../canvas/src/lib.rs) for the symbols,
+[`dist/src/canvas.rs`](../../dist/src/canvas.rs) and
+[`dist/src/canvas/coff.rs`](../../dist/src/canvas/coff.rs) for object writing
+and final-image section admission, [`xtask/src/app.rs`](../../xtask/src/app.rs)
+for the link arguments, and
 [`spice/src/install/canvas.rs`](../../spice/src/install/canvas.rs) and
 [`spice/src/install/crossing.rs`](../../spice/src/install/crossing.rs) for
 install admission and the schema-18 crossing.

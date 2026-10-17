@@ -325,7 +325,12 @@ impl StagedCanvas {
             path: directory.clone(),
             source,
         })?;
-        let path = directory.join(format!("{}.{}.o", self.canvas.archive(), target.name()));
+        let path = directory.join(format!(
+            "{}.{}.{}",
+            self.canvas.archive(),
+            target.name(),
+            target.object_extension()
+        ));
         let destination = atomic::Destination::new(&path).map_err(AppBuildError::Atomic)?;
         let mut staged = destination.stage().map_err(AppBuildError::Atomic)?;
         staged
