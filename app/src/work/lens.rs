@@ -150,8 +150,8 @@ fn push_edge(
     }
 }
 
-/// The admitted board's own then arrows: each dependency from prerequisite to
-/// dependent, and each Design preparation from controller to Plan output.
+/// The admitted board's own then arrows, from every prerequisite to the
+/// dependent it blocks.
 fn push_local_then_edges(
     local: &TaskOverviewGraph,
     local_to_merged: &BTreeMap<usize, usize>,

@@ -171,6 +171,7 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
     direct_output.creator_team = Some(creator);
     direct_output.statement.body.intent = Some(wire::TaskIntent::Plan);
     direct_output.statement.body.preparation = Some(preparation(design_born.clone()));
+    direct_output.statement.body.dependencies = vec![design_born.clone()];
     let mut active_claim = claim(&direct_output, ClaimDisposition::Active);
     active_claim.body.lane = member;
     direct_output.claim = Some(active_claim);
@@ -179,6 +180,7 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
     plan.creator_team = Some(creator);
     plan.statement.body.intent = Some(wire::TaskIntent::Plan);
     plan.statement.body.preparation = Some(preparation(design_born.clone()));
+    plan.statement.body.dependencies = vec![design_born.clone()];
 
     // A Plan-created task inherits its Plan's Design as selection controller,
     // as task creation binds it, while its direct parent is the Plan.
@@ -189,6 +191,7 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
         controller: design_born.clone(),
         construction: stamp(4),
     });
+    execution.statement.body.dependencies = vec![stamp(3)];
 
     let mut rehomed = task(5, "app.rehomed");
     rehomed.creator_team = Some(dissolved);
@@ -254,7 +257,7 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
     assert_eq!(projection.scope_counts(&team).open(), strip.len());
     assert_eq!(
         projection.tasks()[1].accountable_owner(),
-        Some(&WorkOwner::Design(design_born)),
+        Some(&WorkOwner::Design),
     );
     assert_eq!(
         projection.tasks()[4].accountable_owner(),
@@ -262,6 +265,39 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
         "a live last claimant can rehome work without changing its dissolved creator provenance",
     );
     assert_eq!(projection.tasks()[4].row().creator_team, Some(dissolved));
+}
+
+#[test]
+fn a_shared_plan_stays_on_the_planning_rail_until_its_last_design_edge_is_removed() {
+    let first = design(1, "rooms.first");
+    let second = design(2, "rooms.second");
+    let mut shared = task(3, "rooms.shared");
+    shared.statement.body.intent = Some(wire::TaskIntent::Plan);
+    shared.statement.body.dependencies = vec![stamp(1), stamp(2)];
+
+    let both_edges = board(vec![first.clone(), second.clone(), shared.clone()]);
+    let projection = WorkProjection::from_board(&both_edges);
+    assert_eq!(
+        projection
+            .scope_tasks(&WorkScope::planning())
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([stamp(1), stamp(2), stamp(3)]),
+    );
+
+    shared.statement.body.dependencies = vec![stamp(2)];
+    let one_edge = board(vec![first.clone(), second.clone(), shared.clone()]);
+    let projection = WorkProjection::from_board(&one_edge);
+    assert!(
+        projection.tasks()[2].belongs_to_design(),
+        "selection by one Design leaves the other Design's edge and rail placement intact",
+    );
+
+    shared.statement.body.dependencies.clear();
+    let no_edges = board(vec![first, second, shared]);
+    let projection = WorkProjection::from_board(&no_edges);
+    assert!(!projection.tasks()[2].belongs_to_design());
+    assert!(projection.in_scope(&projection.tasks()[2], &WorkScope::AllOpen));
 }
 
 #[test]
@@ -277,8 +313,10 @@ fn opportunistic_design_owns_its_direct_outputs_but_not_their_plan_work() {
     let mut output = task(2, "spice.oops");
     output.statement.body.intent = Some(wire::TaskIntent::Plan);
     output.statement.body.preparation = Some(preparation(root_born.clone(), 2));
+    output.statement.body.dependencies = vec![root_born.clone()];
     let mut execution = task(3, "spice.app");
     execution.statement.body.preparation = Some(preparation(stamp(2), 3));
+    execution.statement.body.dependencies = vec![stamp(2)];
 
     let board = board(vec![root, output, execution]);
     let projection =
@@ -308,7 +346,7 @@ fn opportunistic_design_owns_its_direct_outputs_but_not_their_plan_work() {
     }
     assert_eq!(
         projection.tasks()[1].accountable_owner(),
-        Some(&WorkOwner::Design(root_born)),
+        Some(&WorkOwner::Design),
     );
 }
 
@@ -332,6 +370,7 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
     activate(&mut active_design);
     let mut active_output = task(2, "rooms.active");
     active_output.statement.body.preparation = Some(preparation());
+    active_output.statement.body.dependencies = vec![design_born.clone()];
     activate(&mut active_output);
     active_output
         .claim
@@ -341,9 +380,11 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
         .lane = second_lane;
     let mut second_active_output = task(5, "rooms.active");
     second_active_output.statement.body.preparation = Some(preparation());
+    second_active_output.statement.body.dependencies = vec![design_born.clone()];
     activate(&mut second_active_output);
     let mut inactive_output = task(3, "rooms.inactive");
     inactive_output.statement.body.preparation = Some(preparation());
+    inactive_output.statement.body.dependencies = vec![design_born.clone()];
     let mut unrelated = task(4, "rooms.unrelated");
     activate(&mut unrelated);
 

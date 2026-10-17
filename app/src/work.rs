@@ -121,13 +121,14 @@ pub enum WorkVisibility {
     Hidden,
 }
 
-/// Current UI-placement owner, separate from immutable creator provenance.
+/// Current UI-placement home, separate from immutable creator provenance.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkOwner {
     /// Current live team home.
     Team(wire::CanonicalUuid),
-    /// Design owning its root or one directly controlled planning task.
-    Design(TaskStamp),
+    /// The Design-planning namespace. A task can depend on more than one open
+    /// Design, so no single Design stamp is an owner identity.
+    Design,
 }
 
 /// Browser-local policy selecting a complete set for the unified overview.
@@ -138,10 +139,10 @@ pub enum WorkScope {
     AllOpen,
     /// Open execution tasks under one exact public or hidden stem.
     ///
-    /// Design-owned planning tasks use [`Self::Planning`] even when they share
+    /// Work gated by an open Design uses [`Self::Planning`] even when it shares
     /// the same project stem.
     Stem(WorkStemIdentity),
-    /// Design roots and directly Design-controlled planning tasks.
+    /// Open Designs and tasks gated directly by at least one open Design.
     Planning { stem: Option<WorkStemIdentity> },
     /// Open execution tasks currently worked by one team's members.
     Team { team: wire::CanonicalUuid },
@@ -642,7 +643,7 @@ impl<'a> WorkTask<'a> {
 
     #[must_use]
     pub fn belongs_to_design(&self) -> bool {
-        matches!(self.owner, Some(WorkOwner::Design(_)))
+        matches!(self.owner, Some(WorkOwner::Design))
     }
 }
 
@@ -1033,29 +1034,19 @@ fn accountable_owner(
     // A Design-intent row in plan or review intake is ordinary claimed work
     // until it enters its open design phase.
     if task.design_standing().is_some() {
-        return Some(WorkOwner::Design(task.statement.body.born.clone()));
+        return Some(WorkOwner::Design);
     }
-    // Only a Design's direct output belongs to it, whether an ordinary or the
-    // repository's opportunistic Design. Work a Design-produced Plan creates
-    // inherits that Design as its selection controller, yet it is ordinary
-    // execution work.
-    if let Some(parent) = task
-        .statement
-        .body
-        .preparation
-        .as_ref()
-        .map(|preparation| &preparation.parent)
-        .filter(|parent| {
-            by_born.get(*parent).is_some_and(|&index| {
-                board.tasks[index]
-                    .statement
-                    .body
-                    .intent
-                    .is_some_and(wire::TaskIntent::is_design)
-            })
+    // Dependency edges are the complete current Design gate. Preparation is
+    // immutable provenance and cannot decide where work is placed: adding an
+    // open Design edge docks the task here, and selection removes that edge.
+    if task.statement.body.dependencies.iter().any(|dependency| {
+        by_born.get(dependency).is_some_and(|&index| {
+            board.tasks[index]
+                .design_standing()
+                .is_some_and(|standing| standing.is_open())
         })
-    {
-        return Some(WorkOwner::Design(parent.clone()));
+    }) {
+        return Some(WorkOwner::Design);
     }
     home_team(task, teams, member_teams).map(WorkOwner::Team)
 }

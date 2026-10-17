@@ -53,13 +53,12 @@ impl Reducible for Composer {
     }
 }
 
-/// Where one version stands under committed authority.
+/// Where one version stands under committed decision authority.
 enum Standing<'a> {
     Undecided,
     Returned,
     Accepted(&'a PreparationDecision),
     Resolved(&'a PreparationDecision),
-    Authorized(&'a ExecutionAuthorization),
     Withdrawn,
 }
 
@@ -78,11 +77,6 @@ impl Standing<'_> {
                     decision.decision.decision
                 )
             }
-            Self::Authorized(authorization) => format!(
-                "Accepted {} output(s) by decision {}",
-                authorization.selected_outputs.len(),
-                authorization.decision.decision
-            ),
             Self::Withdrawn => "Withdrawn by its author".to_owned(),
         }
     }
@@ -93,6 +87,7 @@ struct Context<'a> {
     controls: &'a Controls,
     sender: &'a SenderHandle,
     preparation: &'a PreparationProjection,
+    design: &'a TaskStamp,
     tasks: &'a [BoardTask],
     /// Current open Design row. Absence makes all proposal versions read-only.
     controller: Option<&'a BoardTask>,
@@ -147,6 +142,7 @@ pub(super) fn render_approval(
         runtime,
         controls,
         sender,
+        design,
         preparation,
         tasks: &board.tasks,
         controller: board.row(design).filter(|task| {
@@ -215,16 +211,6 @@ fn opportunistic_candidate(
             task.workflow.body.status.is_pending()
                 && task.statement.body.intent == Some(wire::TaskIntent::Plan)
                 && task.statement.body.dependencies.contains(design)
-                && task
-                    .statement
-                    .body
-                    .preparation
-                    .as_ref()
-                    .is_some_and(|association| {
-                        association.parent == *design
-                            && association.controller == *design
-                            && association.construction == task.statement.body.born
-                    })
                 && !governed.contains(&task.statement.body.born)
         })
         .collect::<Vec<_>>();
@@ -606,7 +592,7 @@ fn render_output(
         };
     };
     let statement = &task.statement.body;
-    let standing = output_standing(task);
+    let standing = output_standing(task, context.design);
     html! {
         <li data-approval-output={output.to_string()}>
             <div class="room-approval-output-title">
@@ -629,15 +615,11 @@ fn render_output(
     }
 }
 
-fn output_standing(task: &BoardTask) -> &str {
-    let statement = &task.statement.body;
-    if statement.preparation.as_ref().is_some_and(|preparation| {
-        preparation.construction == statement.born
-            && !statement.dependencies.contains(&preparation.parent)
-    }) {
-        "authorized"
-    } else {
+fn output_standing<'a>(task: &'a BoardTask, design: &TaskStamp) -> &'a str {
+    if task.statement.body.dependencies.contains(design) {
         task.workflow.body.status.as_str()
+    } else {
+        "selected"
     }
 }
 
@@ -988,14 +970,6 @@ fn render_withdrawal(
 fn standing<'a>(preparation: &'a PreparationProjection, candidate: &CandidateRef) -> Standing<'a> {
     if preparation.withdrawals.contains_key(candidate) {
         return Standing::Withdrawn;
-    }
-    if let Some(authorized) = preparation
-        .authorizations
-        .values()
-        .filter(|authorized| authorized.value.candidate == *candidate)
-        .max_by_key(|authorized| authorized.position)
-    {
-        return Standing::Authorized(&authorized.value);
     }
     let latest = preparation
         .decisions
