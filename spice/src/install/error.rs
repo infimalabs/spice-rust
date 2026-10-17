@@ -64,6 +64,17 @@ pub enum InstallError {
         path: PathBuf,
         owner: &'static str,
     },
+    /// A schema-18 receipt its one forward crossing cannot admit.
+    RetainedRecord {
+        path: PathBuf,
+        owner: &'static str,
+        reason: String,
+    },
+    /// The selected executable carries no admissible linked canvas archive.
+    CanvasRefused {
+        path: PathBuf,
+        reason: String,
+    },
     RecordMissing,
     ApplyInProgress,
     UnapplyInProgress,
@@ -108,6 +119,8 @@ impl fmt::Display for InstallError {
             | Self::DigestMismatch { .. }
             | Self::InvalidRecord(_)
             | Self::LegacyRecord { .. }
+            | Self::RetainedRecord { .. }
+            | Self::CanvasRefused { .. }
             | Self::RecordMissing
             | Self::ApplyInProgress
             | Self::UnapplyInProgress
@@ -226,6 +239,22 @@ fn fmt_progress_error(error: &InstallError, formatter: &mut fmt::Formatter<'_>) 
             formatter,
             "install record at {} belongs to the retired release {owner}; \
                  unapply it with that release before installing Spice",
+            path.display(),
+        ),
+        InstallError::RetainedRecord {
+            path,
+            owner,
+            reason,
+        } => write!(
+            formatter,
+            "install record at {} is schema {}, which {owner} crosses forward only from one \
+                 complete exact receipt refreshed by `spice install`: {reason}",
+            path.display(),
+            super::crossing::SCHEMA,
+        ),
+        InstallError::CanvasRefused { path, reason } => write!(
+            formatter,
+            "Spice executable {} carries no admissible linked canvas archive: {reason}",
             path.display(),
         ),
         InstallError::RecordMissing => formatter.write_str("no Spice install record exists"),

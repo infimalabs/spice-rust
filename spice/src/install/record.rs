@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use wire::Digest;
 
 use super::binding::bind_destination;
+use super::crossing::{self, Sidecar};
 use super::files::{observe_bound, publish_bound};
 use super::{
     FileImage, Generation, InstallError, InstallPlan, InstallPlanSummary, InstallReceipt,
@@ -42,9 +43,13 @@ pub(super) struct LoadedRecord {
 
 pub(super) enum RefreshRecord {
     Current(LoadedRecord),
+    /// A record whose current-schema image differs from the receipt on disk:
+    /// a mount-device repair, or a crossed schema-18 receipt and the sidecar
+    /// files it owned. Only a refresh plan may replace it.
     Repairable {
         loaded: LoadedRecord,
         original_digest: Digest,
+        sidecars: Vec<Sidecar>,
     },
 }
 
@@ -59,9 +64,24 @@ impl RefreshRecord {
         }
     }
 
-    pub(super) fn into_loaded(self) -> LoadedRecord {
+    /// The digest naming the receipt on disk, before any repair or crossing.
+    pub(super) const fn receipt_digest(&self) -> &Digest {
         match self {
-            Self::Current(loaded) | Self::Repairable { loaded, .. } => loaded,
+            Self::Current(loaded) => &loaded.record.plan_digest,
+            Self::Repairable {
+                original_digest, ..
+            } => original_digest,
+        }
+    }
+
+    /// The loaded record, and for a repairable one the sidecars its refresh
+    /// plan discards.
+    pub(super) fn into_parts(self) -> (LoadedRecord, Option<Vec<Sidecar>>) {
+        match self {
+            Self::Current(loaded) => (loaded, None),
+            Self::Repairable {
+                loaded, sidecars, ..
+            } => (loaded, Some(sidecars)),
         }
     }
 }
@@ -91,6 +111,28 @@ impl InstallRecord {
             retired_parents: vec![None; retirements],
             restored_retirements: vec![None; retirements],
         })
+    }
+
+    /// The completed record of a crossed schema-18 receipt's kept effects,
+    /// each progress slot still paired with its operation or retirement.
+    pub(super) fn crossed(
+        plan: InstallPlan,
+        (installed, installed_parents, restored): (
+            Vec<Option<Generation>>,
+            Vec<Option<Generation>>,
+            Vec<Option<Generation>>,
+        ),
+        (retired_parents, restored_retirements): (Vec<Option<Generation>>, Vec<Option<Generation>>),
+    ) -> Result<Self, InstallError> {
+        let mut record = Self::new(plan)?;
+        record.status = InstallStatus::Complete;
+        record.completed = record.plan.operation_count();
+        record.installed = installed;
+        record.installed_parents = installed_parents;
+        record.restored = restored;
+        record.retired_parents = retired_parents;
+        record.restored_retirements = restored_retirements;
+        Ok(record)
     }
 
     pub(super) fn validate(&self) -> Result<(), InstallError> {
@@ -408,8 +450,18 @@ impl InstallRecord {
 }
 
 pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord>, InstallError> {
-    let Some(mut loaded) = decode_record(repository)? else {
+    let Some(decoded) = decode_record(repository)? else {
         return Ok(None);
+    };
+    let mut loaded = match decoded {
+        Decoded::Current(loaded) => loaded,
+        Decoded::Retained { .. } => {
+            return Err(InstallError::RetainedRecord {
+                path: record_path(repository)?,
+                owner: crossing::OWNER,
+                reason: "only `spice install` reads it, to cross it forward".to_owned(),
+            });
+        }
     };
     let _ = finish_loaded_record(repository, &mut loaded)?;
     Ok(Some(loaded))
@@ -418,19 +470,46 @@ pub(super) fn read_record(repository: &Repository) -> Result<Option<LoadedRecord
 pub(super) fn read_record_for_refresh(
     repository: &Repository,
 ) -> Result<Option<RefreshRecord>, InstallError> {
-    let Some(mut loaded) = decode_record(repository)? else {
+    let Some(decoded) = decode_record(repository)? else {
         return Ok(None);
     };
-    match finish_loaded_record(repository, &mut loaded)? {
-        Some(original_digest) => Ok(Some(RefreshRecord::Repairable {
+    let (mut loaded, crossed) = match decoded {
+        Decoded::Current(loaded) => (loaded, None),
+        Decoded::Retained { generation, bytes } => {
+            let crossed = crossing::cross(&record_path(repository)?, &bytes)?;
+            let loaded = LoadedRecord {
+                record: crossed.record,
+                generation,
+            };
+            (loaded, Some((crossed.original_digest, crossed.sidecars)))
+        }
+    };
+    let repaired = finish_loaded_record(repository, &mut loaded)?;
+    Ok(Some(match (crossed, repaired) {
+        (Some((original_digest, sidecars)), _) => RefreshRecord::Repairable {
             loaded,
             original_digest,
-        })),
-        None => Ok(Some(RefreshRecord::Current(loaded))),
-    }
+            sidecars,
+        },
+        (None, Some(original_digest)) => RefreshRecord::Repairable {
+            loaded,
+            original_digest,
+            sidecars: Vec::new(),
+        },
+        (None, None) => RefreshRecord::Current(loaded),
+    }))
 }
 
-fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, InstallError> {
+enum Decoded {
+    Current(LoadedRecord),
+    /// A schema-18 receipt, which only [`crossing::cross`] reads.
+    Retained {
+        generation: ReceiptGeneration,
+        bytes: Vec<u8>,
+    },
+}
+
+fn decode_record(repository: &Repository) -> Result<Option<Decoded>, InstallError> {
     record_path(repository)?;
     let binding = bind_destination(repository.common_dir(), RECORD_PATH)?;
     let (observed, _) = observe_bound(
@@ -444,11 +523,20 @@ fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, Instal
     let generation = ReceiptGeneration::observed(&observed);
     let image = observed.image;
     let header: InstallRecordHeader = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
-    if let Some(ReceiptSupport::Retired(owner)) = super::receipt_support(header.version) {
-        return Err(InstallError::LegacyRecord {
-            path: record_path(repository)?,
-            owner,
-        });
+    match super::receipt_support(header.version) {
+        Some(ReceiptSupport::Retired(owner)) => {
+            return Err(InstallError::LegacyRecord {
+                path: record_path(repository)?,
+                owner,
+            });
+        }
+        Some(ReceiptSupport::Retained) => {
+            return Ok(Some(Decoded::Retained {
+                generation,
+                bytes: image.bytes,
+            }));
+        }
+        Some(ReceiptSupport::Current) | None => {}
     }
     let record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
     let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
@@ -457,7 +545,7 @@ fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, Instal
             "install record is not canonical".to_owned(),
         ));
     }
-    Ok(Some(LoadedRecord { record, generation }))
+    Ok(Some(Decoded::Current(LoadedRecord { record, generation })))
 }
 
 fn finish_loaded_record(

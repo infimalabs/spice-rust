@@ -65,21 +65,12 @@ pub(super) fn apply_prepared_record(
         InstallStatus::Unapplying => return Err(InstallError::UnapplyInProgress),
         InstallStatus::Applying | InstallStatus::Uninstalled => {}
     }
-    let app = spice_binary
-        .map(|binary| app::Source::resolve(repository, binary))
-        .transpose()?;
     let symbols = spice_binary
         .map(|binary| symbols::Source::resolve(repository, binary))
         .transpose()?
         .flatten();
-    let generated = materialize_operations(&record, spice_binary, app.as_ref(), symbols.as_ref())?;
+    let generated = materialize_operations(&record, spice_binary, symbols.as_ref())?;
     if fresh {
-        // Materialization proved every published byte; a source now naming
-        // another generation would still install history the plan no longer
-        // describes.
-        if app.as_ref().map(app::Source::generation) != record.plan.app.as_ref() {
-            return Err(InstallError::BinaryContextChanged);
-        }
         record.plan.validate_pristine(repository)?;
     } else {
         record.plan.validate_for_repository(repository)?;
@@ -132,7 +123,7 @@ fn require_receipt(
 fn apply_file_operations(
     repository: &Repository,
     record: &mut InstallRecord,
-    generated: &[Option<FileImage>],
+    generated: &[FileImage],
     mut record_generation: ReceiptGeneration,
 ) -> Result<ReceiptGeneration, InstallError> {
     let mut durable_completed = record.completed;
@@ -141,7 +132,7 @@ fn apply_file_operations(
         let (generation, changed) = apply_operation(
             repository,
             record,
-            generated[index].as_ref(),
+            &generated[index],
             index,
             record_generation,
             durable_completed,
@@ -231,32 +222,19 @@ fn apply_discards(
 fn materialize_operations(
     record: &InstallRecord,
     spice_binary: Option<&Path>,
-    app: Option<&app::Source>,
     symbols: Option<&symbols::Source>,
-) -> Result<Vec<Option<FileImage>>, InstallError> {
+) -> Result<Vec<FileImage>, InstallError> {
     record
         .plan
         .operations
         .iter()
         .map(|operation| {
-            // A retained immutable generation has no source bytes to publish.
-            // Its exact installed image is still checked by admission and the
-            // operation itself; do not copy every historical payload into RAM.
-            if operation.superseded.as_ref() == Some(&operation.generated)
-                && app::operation_generation(operation.asset, &operation.path).is_some_and(
-                    |generation| app.is_some_and(|source| source.generation() != &generation),
-                )
-            {
-                return Ok(None);
-            }
             materialize_generated(
                 operation,
                 spice_binary,
-                app,
                 symbols,
                 &record.plan.repository.common_git,
             )
-            .map(Some)
         })
         .collect()
 }
@@ -292,17 +270,21 @@ pub(super) fn prepare_over(
     spice_binary: Option<&Path>,
     refresh: RefreshRecord,
 ) -> Result<PreparedInstall, InstallError> {
-    let repairable = refresh.is_repairable();
-    let LoadedRecord { record, generation } = refresh.into_loaded();
+    let (LoadedRecord { record, generation }, repair) = refresh.into_parts();
     if record.status == InstallStatus::Uninstalled {
         verify_progress(repository, &record)?;
         return fresh(build_plan(repository, spice_binary)?, Some(generation));
     }
     if record.status == InstallStatus::Complete
-        && (repairable || refresh_required(repository, &record.plan, spice_binary)?)
+        && (repair.is_some() || refresh_required(repository, &record.plan, spice_binary)?)
     {
         return fresh(
-            refresh_plan(repository, spice_binary, &record)?,
+            refresh_plan(
+                repository,
+                spice_binary,
+                &record,
+                repair.as_deref().unwrap_or_default(),
+            )?,
             Some(generation),
         );
     }
@@ -315,7 +297,8 @@ pub(super) fn prepare_over(
     })
 }
 
-fn fresh(
+/// A plan this process derived from nothing, or over `receipt`, ready to apply.
+pub(super) fn fresh(
     plan: InstallPlan,
     receipt: Option<ReceiptGeneration>,
 ) -> Result<PreparedInstall, InstallError> {
@@ -330,6 +313,7 @@ fn refresh_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
     record: &InstallRecord,
+    sidecars: &[crossing::Sidecar],
 ) -> Result<InstallPlan, InstallError> {
     // One record swap derives a complete current plan before any destination
     // changes. Binary-only drift is the sole reconciled input; fixed assets
@@ -340,6 +324,7 @@ fn refresh_plan(
         spice_binary,
         Some(&record.plan),
         binary_superseded.as_ref(),
+        sidecars,
     )
 }
 
@@ -355,7 +340,7 @@ fn refresh_required(
 fn apply_operation(
     repository: &Repository,
     record: &mut InstallRecord,
-    generated: Option<&FileImage>,
+    generated: &FileImage,
     index: usize,
     mut record_generation: ReceiptGeneration,
     durable_completed: usize,
@@ -387,11 +372,7 @@ fn apply_operation(
         if durable_completed != index {
             record_generation = write_record(repository, record, record_generation)?;
         }
-        publish_operation(
-            repository,
-            operation,
-            generated.ok_or(InstallError::BinaryContextChanged)?,
-        )?
+        publish_operation(repository, operation, generated)?
     } else {
         return Err(drift(operation, current));
     };
@@ -949,7 +930,7 @@ mod tests {
         } = prepared;
         assert!(fresh);
         let generated =
-            materialize_operations(&record, None, None, None).expect("operations materialize");
+            materialize_operations(&record, None, None).expect("operations materialize");
         record
             .plan
             .validate_pristine(&repository)
@@ -971,7 +952,7 @@ mod tests {
             let (next, changed) = apply_operation(
                 &repository,
                 &mut record,
-                generated[index].as_ref(),
+                &generated[index],
                 index,
                 generation,
                 durable_completed,
@@ -988,7 +969,7 @@ mod tests {
         let (_, changed) = apply_operation(
             &repository,
             &mut record,
-            generated[skill].as_ref(),
+            &generated[skill],
             skill,
             generation,
             durable_completed,

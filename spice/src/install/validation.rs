@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use super::*;
 
 pub(super) fn validate_plan(
@@ -26,7 +24,7 @@ fn validate_operation_inventory(
     plan: &InstallPlan,
     content: GeneratedContentAuthority,
 ) -> Result<(), InstallError> {
-    let mut current = vec![
+    let expected = [
         Asset::GitPreCommit,
         Asset::GitCommitMessage,
         Asset::GitReferenceTransaction,
@@ -37,14 +35,12 @@ fn validate_operation_inventory(
         Asset::HookWrapperSpice,
         Asset::Skill,
     ];
-    current.extend(app_operation_inventory(plan, content)?);
-    let expected = &current[..];
     if plan.operations.len() < expected.len()
         || plan
             .operations
             .iter()
             .zip(expected)
-            .any(|(operation, asset)| operation.asset != *asset)
+            .any(|(operation, asset)| operation.asset != asset)
     {
         return Err(InstallError::InvalidRecord(
             "install plan operation order is not canonical".to_owned(),
@@ -79,137 +75,30 @@ fn validate_optional_tail(plan: &InstallPlan, tail: &[Operation]) -> Result<(), 
     if let Some(symbols) = &plan.symbols {
         symbols.validate()?;
     }
-    // Historical inventories place the executable inside the fixed prefix,
-    // so the activation pairs with any installed executable, not the tail.
-    let installed_executable = plan
-        .operations
-        .iter()
-        .any(|operation| operation.asset == Asset::Binary);
+    // The activation and the canvas generation pair with the executable that
+    // carries the hooks' shell and links the canvas archive.
+    let installed_executable = tail.first() == Some(&Asset::Binary);
     if plan.hook_activation.is_some() != installed_executable {
         return Err(InstallError::InvalidRecord(
             "hook activation and installed executable must be planned together".to_owned(),
         ));
     }
+    if plan.app.is_some() != installed_executable {
+        return Err(InstallError::InvalidRecord(
+            "canvas generation and installed executable must be planned together".to_owned(),
+        ));
+    }
     Ok(())
 }
 
-fn app_operation_inventory(
-    plan: &InstallPlan,
-    content: GeneratedContentAuthority,
-) -> Result<Vec<Asset>, InstallError> {
-    if plan.app_predecessors.len() > RETAINED_APP_PREDECESSORS {
-        return Err(InstallError::InvalidRecord(
-            "app predecessor inventory exceeds its schema or bound".to_owned(),
-        ));
-    }
-    let Some(current) = &plan.app else {
-        if !plan.app_predecessors.is_empty() {
-            return Err(InstallError::InvalidRecord(
-                "app predecessors have no current generation".to_owned(),
-            ));
-        }
-        return Ok(Vec::new());
-    };
-    let mut groups = BTreeMap::<&str, BTreeSet<Asset>>::new();
-    for operation in &plan.operations {
-        if app::file(operation.asset).is_none() {
-            continue;
-        }
-        let generation =
-            app::generation_spelling(operation.asset, &operation.path).ok_or_else(|| {
-                InstallError::InvalidRecord("app asset has no canonical generation path".to_owned())
-            })?;
-        if !groups.contains_key(generation) {
-            generation.parse::<Digest>().map_err(|_| {
-                InstallError::InvalidRecord(
-                    "app asset has an invalid generation identity".to_owned(),
-                )
-            })?;
-        }
-        if !groups
-            .entry(generation)
-            .or_default()
-            .insert(operation.asset)
-        {
-            return Err(InstallError::InvalidRecord(
-                "app generation repeats an asset".to_owned(),
-            ));
-        }
-    }
-    for (generation, assets) in &groups {
-        // Stylesheets introduced after the retained-generation protocol do not
-        // belong to older pages that never referenced them. Current
-        // generations remain complete; historical generations retain the
-        // exact inventory they were published with.
-        let historical = content == GeneratedContentAuthority::HistoricalReceipt
-            || *generation != current.as_str();
-        let missing = app::ASSETS.iter().any(|(asset, _)| {
-            !assets.contains(asset)
-                && !(historical && matches!(asset, Asset::AppSpiceSidebar | Asset::AppWork))
-        });
-        let renderers = assets
-            .iter()
-            .filter(|asset| matches!(asset, Asset::AppRenderer(_)))
-            .count();
-        if missing || renderers > wire::manifest::renderer::MAX_FILES {
-            return Err(InstallError::InvalidRecord(
-                "app generation is incomplete or exceeds its bound".to_owned(),
-            ));
-        }
-    }
-    let current_assets = groups.remove(current.as_str()).ok_or_else(|| {
-        InstallError::InvalidRecord("install plan omits its current app generation".to_owned())
-    })?;
-    // Recency lives only in the ordered inventory; operations keep one
-    // canonical digest order, so the inventory must name exactly the retained
-    // generations, each once.
-    let listed = plan
-        .app_predecessors
-        .iter()
-        .map(Digest::as_str)
-        .collect::<BTreeSet<_>>();
-    if listed.len() != plan.app_predecessors.len() || !listed.iter().eq(groups.keys()) {
-        return Err(InstallError::InvalidRecord(
-            "app predecessor inventory does not name exactly its retained generations".to_owned(),
-        ));
-    }
-    let expected = groups
-        .into_iter()
-        .chain([(current.as_str(), current_assets)])
-        .flat_map(|(generation, assets)| assets.into_iter().map(move |asset| (generation, asset)))
-        .collect::<Vec<_>>();
-    let operations = plan
-        .operations
-        .iter()
-        .filter(|operation| app::file(operation.asset).is_some());
-    if operations
-        .zip(&expected)
-        .any(|(operation, (generation, asset))| {
-            operation.asset != *asset
-                || app::generation_spelling(operation.asset, &operation.path) != Some(*generation)
-        })
-    {
-        return Err(InstallError::InvalidRecord(
-            "app generations are not canonical and current-last".to_owned(),
-        ));
-    }
-    Ok(expected
-        .into_iter()
-        .map(|(_, asset)| asset)
-        .chain([Asset::AppCurrent])
-        .collect())
-}
-
 fn validate_retirement_inventory(plan: &InstallPlan) -> Result<(), InstallError> {
-    let retired_generations = plan
+    let sidecars = plan
         .retirements
         .iter()
         .rev()
-        .take_while(|retirement| app::generation_file(&retirement.path).is_some())
+        .take_while(|retirement| crossing::is_sidecar(&retirement.path))
         .count();
-    let (fixed, retired) = plan
-        .retirements
-        .split_at(plan.retirements.len() - retired_generations);
+    let (fixed, sidecars) = plan.retirements.split_at(plan.retirements.len() - sidecars);
     let mut expected = vec![
         RETIRED_XTASK_PATH,
         RETIRED_XTASK_GUARD_PATH,
@@ -238,41 +127,7 @@ fn validate_retirement_inventory(plan: &InstallPlan) -> Result<(), InstallError>
             "install retirement inventory is not exact and ordered".to_owned(),
         ));
     }
-    validate_retired_generations(plan, retired)?;
-    Ok(())
-}
-
-/// Out-of-bound generations retire as discards witnessed by their installed
-/// images, in generation then asset order, each bound to withdraw exactly its
-/// own generation directory and none that the plan still publishes.
-fn validate_retired_generations(
-    plan: &InstallPlan,
-    retired: &[Retirement],
-) -> Result<(), InstallError> {
-    let mut prior = None;
-    for retirement in retired {
-        let (generation, file) =
-            app::generation_file(&retirement.path).expect("the tail holds only generation files");
-        let asset = app::asset_file(file).expect("a generation file names an asset");
-        let published = plan
-            .app
-            .iter()
-            .chain(&plan.app_predecessors)
-            .any(|kept| kept.as_str() == generation);
-        if published
-            || generation.parse::<Digest>().is_err()
-            || !retirement.discard
-            || retirement.superseded.is_none()
-            || retirement.parent.missing != generation
-            || prior.is_some_and(|prior| prior >= (generation, asset))
-        {
-            return Err(InstallError::InvalidRecord(
-                "retired app generations are not exact, ordered discards".to_owned(),
-            ));
-        }
-        prior = Some((generation, asset));
-    }
-    Ok(())
+    crossing::validate_retirements(sidecars)
 }
 
 fn validate_plan_destinations(
@@ -293,7 +148,6 @@ fn validate_plan_destinations(
             &mut introduced,
             content,
             &plan.repository.common_git,
-            plan.app.as_ref(),
         )?;
         if !destinations.insert((operation.location, operation.destination.clone())) {
             return Err(InstallError::InvalidRecord(
@@ -318,7 +172,7 @@ fn validate_retirement(retirement: &Retirement) -> Result<(), InstallError> {
     let expected_parent = Path::new(&retirement.parent.ancestor).join(&retirement.parent.missing);
     let current_discard = retirement.path == RETIRED_FOLD_STORE_PATH
         || symbols::DISCARD_PATHS.contains(&retirement.path.as_str())
-        || app::generation_file(&retirement.path).is_some();
+        || crossing::is_sidecar(&retirement.path);
     let invalid_discard = if current_discard {
         !retirement.discard || retirement.previous.is_some() || retirement.observed.is_some()
     } else {
@@ -352,11 +206,8 @@ pub(super) fn validate_operation(
     introduced: &mut BTreeSet<(Location, String)>,
     content: GeneratedContentAuthority,
     common_git: &Path,
-    app: Option<&Digest>,
 ) -> Result<(), InstallError> {
-    let generation = app::operation_generation(operation.asset, &operation.path);
-    let (location, path, expected_mode) =
-        asset_contract(operation.asset, generation.as_ref().or(app))?;
+    let (location, path, expected_mode) = asset_contract(operation.asset)?;
     validate_operation_contract(operation, location, &path, expected_mode)?;
     validate_generated_content(operation, content, common_git)?;
     validate_introduced_parents(operation, introduced)
@@ -414,8 +265,7 @@ fn validate_generated_content(
     }
     if content == GeneratedContentAuthority::CurrentBuild
         && let Some(bytes) = fixed_asset_bytes(operation.asset, common_git)?
-        && operation.generated
-            != GeneratedImage::new(asset_contract(operation.asset, None)?.2, &bytes)
+        && operation.generated != GeneratedImage::new(asset_contract(operation.asset)?.2, &bytes)
     {
         return Err(InstallError::InvalidRecord(format!(
             "{} differs from this build",
@@ -448,19 +298,15 @@ fn validate_generated_content(
 pub(super) fn fixed_content_differs_from_current_build(
     operation: &Operation,
     common_git: &Path,
-    app: Option<&Digest>,
 ) -> Result<bool, InstallError> {
     let Some(bytes) = fixed_asset_bytes(operation.asset, common_git)? else {
         return Ok(false);
     };
-    let expected = GeneratedImage::new(asset_contract(operation.asset, app)?.2, &bytes);
+    let expected = GeneratedImage::new(asset_contract(operation.asset)?.2, &bytes);
     Ok(operation.generated != expected)
 }
 
 fn asset_name(asset: Asset) -> &'static str {
-    if app::file(asset).is_some() {
-        return "app generation asset";
-    }
     match asset {
         Asset::Exclusions => "retired exclusions asset",
         Asset::GitPreCommit => "Git pre-commit hook",
@@ -472,11 +318,9 @@ fn asset_name(asset: Asset) -> &'static str {
         Asset::HookBash => "Bash startup hook",
         Asset::HookWrapperSpice => "Spice shell wrapper",
         Asset::Skill => "generated skill",
-        Asset::AppCurrent => "app generation pointer",
         Asset::Binary => "Spice executable",
         Asset::SymbolsInfo => "retained dSYM Info.plist",
         Asset::SymbolsDwarf => "retained dSYM DWARF image",
-        _ => unreachable!("app generation assets returned above"),
     }
 }
 
@@ -520,13 +364,7 @@ fn validate_introduced_parents(
     Ok(())
 }
 
-pub(super) fn asset_contract(
-    asset: Asset,
-    app: Option<&Digest>,
-) -> Result<(Location, String, u32), InstallError> {
-    if let Some(path) = app::operation_path(asset, app)? {
-        return Ok((Location::CommonGit, path, DATA_MODE));
-    }
+pub(super) fn asset_contract(asset: Asset) -> Result<(Location, String, u32), InstallError> {
     if let Some(path) = symbols::path(asset) {
         return Ok((Location::CommonGit, path.to_owned(), DATA_MODE));
     }
@@ -566,7 +404,7 @@ pub(super) fn asset_contract(
         ),
         Asset::Skill => (Location::CommonGit, SKILL_PATH.to_owned(), DATA_MODE),
         Asset::Binary => (Location::CommonGit, BINARY_PATH.to_owned(), EXECUTABLE_MODE),
-        _ => unreachable!("app assets returned above"),
+        Asset::SymbolsInfo | Asset::SymbolsDwarf => unreachable!("symbol assets returned above"),
     };
     Ok(contract)
 }
