@@ -167,6 +167,7 @@ fn restore_agent_messages_with(
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
+    seed_session_profiles(residency, reader);
     reader.startup_work = StartupWork::default();
     let generation = publisher
         .batch()
@@ -181,6 +182,18 @@ fn restore_agent_messages_with(
         if let Some(work) = restore_lane(bus, paths, row, &generation, reader, diagnostic)? {
             reader.startup_work.add(work);
         }
+    }
+    if let Some(bus) = bus
+        && let Err(error) = warm_task_profiles(bus, reader)
+    {
+        reader
+            .state
+            .profiles
+            .warm_all_failed(format!("task history: {error:?}"));
+        let _ = writeln!(
+            diagnostic,
+            "session profile task history unavailable: {error:?}"
+        );
     }
     let current = residency
         .lanes
@@ -228,6 +241,117 @@ fn restore_agent_messages_with(
     publisher
         .bound_initial_history()
         .map_err(|error| store_fault("serve::message-history-unavailable", &error.to_string()))?;
+    Ok(())
+}
+
+fn seed_session_profiles(residency: &wire::ResidencyHead, reader: &mut BacklogReader) {
+    for session in residency
+        .lanes
+        .iter()
+        .filter_map(|row| row.session.as_ref())
+    {
+        let key = spice::rooms::profile::SessionKey::new(
+            session.lane,
+            session.vendor.clone(),
+            session.identity.clone(),
+        );
+        reader.state.profiles.bind(session.occupant, key.clone());
+        reader.state.profiles.begin_warming(&key);
+    }
+}
+
+fn warm_task_profiles(bus: &bus::BusReader, reader: &mut BacklogReader) -> CommandResult<()> {
+    const TASK_WARM_ROWS: usize = 256;
+    const TASK_WARM_BYTES: usize = 1024 * 1024;
+
+    let page = bus
+        .recent_fact_page(
+            wire::FactKind::TaskDone,
+            None,
+            journal::FactReadBudget::new(TASK_WARM_ROWS, TASK_WARM_BYTES).map_err(|error| {
+                store_fault(
+                    "room::profile-task-history-budget-invalid",
+                    &error.to_string(),
+                )
+            })?,
+        )
+        .map_err(|error| {
+            store_fault("room::profile-task-history-unreadable", &error.to_string())
+        })?;
+    let continuation = page.continuation;
+    let through = page.rows.last().map(|envelope| envelope.seq);
+    let snapshot = bus
+        .task_snapshot()
+        .map_err(|error| store_fault("room::profile-task-heads-unreadable", &error.to_string()))?;
+    for envelope in page.rows.into_iter().rev() {
+        let completion = envelope.seq;
+        let Some(done) = envelope.fact.read::<wire::body::TaskDone>() else {
+            continue;
+        };
+        let Some(statement) = snapshot
+            .task_heads(&done.task)
+            .map(|heads| heads.statement().body())
+        else {
+            continue;
+        };
+        if statement.revision > completion {
+            continue;
+        }
+        let wire::body::SourceBoundary::Proven { heads } = &done.source;
+        let mut owner = None;
+        for head in heads.iter().rev() {
+            if head.next.offset == 0 {
+                continue;
+            }
+            let session = bus
+                .transcript_session(
+                    head.lane,
+                    head.source,
+                    head.next.member,
+                    head.next.offset - 1,
+                )
+                .map_err(|error| {
+                    store_fault("room::profile-session-unreadable", &error.to_string())
+                })?;
+            let Some(session) = session else {
+                continue;
+            };
+            let key = spice::rooms::profile::SessionKey::new(
+                head.lane,
+                head.vendor.clone(),
+                session.identity,
+            );
+            if reader.state.profiles.profile(&key).is_some() {
+                owner = Some((head.lane, session.occupant, key));
+                break;
+            }
+        }
+        let Some((lane, occupant, key)) = owner else {
+            continue;
+        };
+        let task = done.task;
+        let validation = done.validation;
+        reader.state.profiles.bind(occupant, key);
+        reader.state.profiles.insert(
+            lane,
+            occupant,
+            spice::rooms::evidence::Evidence::task(
+                spice::rooms::profile::EvidenceKey::Task {
+                    task,
+                    statement: statement.revision,
+                    completion,
+                },
+                &statement.title,
+                statement.description.as_deref(),
+                &statement.acceptance,
+                &validation,
+            ),
+        );
+    }
+    reader
+        .state
+        .profiles
+        .warmed_facts(through, continuation.is_none());
     Ok(())
 }
 
@@ -774,6 +898,7 @@ fn restore_lane(
         .join(row.lane.to_string())
         .join(row.vendor.as_str());
     if !tape_available(&tape, row.lane, diagnostic) {
+        fail_session_warm(row, reader, "session transcript is unavailable");
         return Ok(None);
     }
     let transcript = row
@@ -795,15 +920,25 @@ fn restore_lane(
         Ok(tail) => tail,
         Err(error) => {
             let work = error.tail_work().copied();
+            fail_session_warm(row, reader, error.to_string());
             forget_changed_source(error, row.lane, reader, diagnostic);
             return Ok(work);
         }
     };
     let work = tail.work;
     let scan = tail.scan;
+    let source_start = tail.start.clone();
     if let Some(bus) = bus {
         hydrate_observations(bus, row.lane, &scan, reader)?;
         hydrate_steering_presentations(bus, &scan, &mut reader.steering)?;
+        if let Err(error) = warm_conversation_profile(bus, row, &scan, &source_start, reader) {
+            fail_session_warm(row, reader, format!("{error:?}"));
+            let _ = writeln!(
+                diagnostic,
+                "session profile transcript unavailable for lane {}: {error:?}",
+                row.lane
+            );
+        }
     }
     publish_scan(
         scan,
@@ -815,6 +950,98 @@ fn restore_lane(
         diagnostic,
     )?;
     Ok(Some(work))
+}
+
+fn session_key(row: &wire::LaneResidency) -> Option<spice::rooms::profile::SessionKey> {
+    row.session.as_ref().map(|session| {
+        spice::rooms::profile::SessionKey::new(
+            session.lane,
+            session.vendor.clone(),
+            session.identity.clone(),
+        )
+    })
+}
+
+fn fail_session_warm(
+    row: &wire::LaneResidency,
+    reader: &mut BacklogReader,
+    detail: impl Into<String>,
+) {
+    if let Some(key) = session_key(row) {
+        reader.state.profiles.warm_failed(&key, detail);
+    }
+}
+
+fn warm_conversation_profile(
+    bus: &bus::BusReader,
+    row: &wire::LaneResidency,
+    scan: &listen::Scan,
+    start: &listen::Checkpoint,
+    reader: &mut BacklogReader,
+) -> CommandResult<()> {
+    let Some(key) = session_key(row) else {
+        return Ok(());
+    };
+    let source = scan_source(scan)?;
+    for record in &scan.records {
+        let listen::RecordPayload::Events(events) = &record.payload else {
+            continue;
+        };
+        for sourced in events {
+            let listen::Event::Prose(prose) = &sourced.event else {
+                continue;
+            };
+            if prose.role != listen::ProseRole::Assistant {
+                continue;
+            }
+            let Some(session) = bus
+                .transcript_session(row.lane, source, prose.locus.member, prose.locus.offset)
+                .map_err(|error| {
+                    store_fault("room::profile-session-unreadable", &error.to_string())
+                })?
+            else {
+                continue;
+            };
+            if session.vendor != key.vendor.as_str() || session.identity != key.identity {
+                continue;
+            }
+            if reader.state.profiles.session(row.lane, session.occupant) != Some(&key) {
+                reader.state.profiles.bind(session.occupant, key.clone());
+            }
+            let Some(conversation) = spice::rooms::evidence::Conversation::read(&prose.text) else {
+                continue;
+            };
+            reader.state.profiles.insert(
+                row.lane,
+                session.occupant,
+                spice::rooms::evidence::Evidence::conversation(
+                    spice::rooms::profile::EvidenceKey::Conversation {
+                        source,
+                        member: prose.locus.member,
+                        offset: prose.locus.offset,
+                        length: prose.locus.length,
+                    },
+                    &conversation,
+                ),
+            );
+        }
+    }
+    let mut cursor = reader
+        .state
+        .profiles
+        .profile(&key)
+        .map(|profile| profile.warm_state().cursor())
+        .unwrap_or_default();
+    cursor.transcript = Some(spice::rooms::profile::TranscriptCursor {
+        source,
+        member: start.next.member,
+        offset: start.next.offset,
+    });
+    reader
+        .state
+        .profiles
+        .warmed(&key, cursor, start.next == listen::Position::start());
+    Ok(())
 }
 
 fn hydrate_observations(

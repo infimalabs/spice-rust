@@ -470,6 +470,33 @@ mod runtime {
                 .map_err(BusReadError::Head)
         }
 
+        /// Read one bounded newest-first retained-kind page through the writer queue.
+        pub fn recent_fact_page(
+            &self,
+            kind: journal::crossing::FactKind,
+            before: Option<journal::crossing::Seq>,
+            budget: journal::FactReadBudget,
+        ) -> Result<journal::SelectedFactPage, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            let transaction = Box::new(move |journal: &mut Journal| {
+                let result = journal.read(move |read| read.recent_fact_page(kind, before, budget));
+                let respond = Box::new(move || {
+                    let _ = answer.send(result);
+                });
+                TransactionCompletion {
+                    commit: None,
+                    respond,
+                }
+            });
+            self.requests
+                .send(Request::Transaction { transaction })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
         /// Read every operator-authored directive's history projection at one cursor.
         ///
         /// `query` must already be ASCII-lowercased; see

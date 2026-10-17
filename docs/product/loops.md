@@ -526,6 +526,16 @@ owns each rule summarized here.
   states the problem, not a one-word heading. Each unresolved question is its
   own item in the statement list; Design surfaces label that typed list
   Questions while ordinary tasks continue to present it as Acceptance.
+- **Session evidence.** Design matching retains bounded evidence under the
+  exact `(lane, vendor, vendor session identity)` declared by the transcript.
+  A resumed occupant inherits that profile; a fresh identity starts empty, and
+  an undeclared occupant contributes and inherits nothing. Each profile keeps
+  the newest 32 distinct successful task completions and 64 distinct settled
+  assistant messages, suppressing exact content repeats. Startup warming reads
+  bounded transcript and completion-history windows and distinguishes ready,
+  resumably incomplete, and failed acquisition from an empty ready profile.
+  Declaration, newly stored evidence, readiness, and Design-statement changes
+  expose bounded cursor-addressed selection opportunities.
 - **Design awareness.** At a natural break after `task done`, a lane whose
   completed work has at least 0.15 recent-window TF-IDF cosine similarity to
   an open passive Design owes one private

@@ -113,6 +113,7 @@ pub(in crate::resident) struct MessageState {
     observations: MessageObservations,
     prose: BTreeMap<CanonicalUuid, ProseState>,
     pending: pending::PendingPresentations,
+    pub(in crate::resident) profiles: spice::rooms::profile::SessionProfiles,
     pub(in crate::resident) narration: super::narration::Streaks,
     presented: BTreeMap<(CanonicalUuid, CanonicalUuid, Option<CanonicalUuid>), listen::Position>,
     /// Current OMP message creation time, including silent message-start records.
@@ -349,6 +350,26 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
     if !lane_surface::capture_record(bus, epoch, seats, record)? {
         return Ok(());
     }
+    if record.declaration.is_some() {
+        let residency = current_residency(bus, epoch)?;
+        if let Some(session) = residency
+            .body()
+            .lanes
+            .iter()
+            .find(|row| row.lane == record.lane)
+            .and_then(|row| row.session.as_ref())
+            .filter(|session| session.occupant == record.occupant)
+        {
+            lock_state(views.state)?.profiles.bind(
+                record.occupant,
+                spice::rooms::profile::SessionKey::new(
+                    session.lane,
+                    session.vendor.clone(),
+                    session.identity.clone(),
+                ),
+            );
+        }
+    }
     // The bytes behind this record are already durable, so accounting them here
     // keeps the transcript head level with the records the resident has taken
     // responsibility for, rather than leaving the gap for the next start to
@@ -440,6 +461,42 @@ fn publish_swept<P>(
             views.diagnostic,
         );
         let _ = super::room_catch_up::recognize(bus, surfaces.paths, record, source)?;
+        retain_conversation_evidence(record, source, views)?;
+    }
+    Ok(())
+}
+
+fn retain_conversation_evidence(
+    record: &lane::capture::CaptureRecord,
+    source: CanonicalUuid,
+    views: &mut CaptureViews<'_>,
+) -> CommandResult<()> {
+    let mut state = lock_state(views.state)?;
+    for prose in record
+        .decoded
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
+                Some(prose)
+            }
+            _ => None,
+        })
+    {
+        let Some(conversation) = spice::rooms::evidence::Conversation::read(&prose.text) else {
+            continue;
+        };
+        let key = spice::rooms::profile::EvidenceKey::Conversation {
+            source,
+            member: prose.locus.member,
+            offset: prose.locus.offset,
+            length: prose.locus.length,
+        };
+        state.profiles.insert(
+            record.lane,
+            record.occupant,
+            spice::rooms::evidence::Evidence::conversation(key, &conversation),
+        );
     }
     Ok(())
 }

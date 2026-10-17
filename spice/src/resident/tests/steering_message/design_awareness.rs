@@ -417,11 +417,14 @@ impl Lanes {
         completions: &mut crate::resident::design_awareness::CompletionCursor,
     ) {
         let mut diagnostics = Vec::new();
+        let profiles =
+            std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
         crate::resident::design_awareness::reconcile(
             &self.bus,
             config,
             seats,
             completions,
+            &profiles,
             &mut diagnostics,
         )
         .expect("completion awareness reconciles");
