@@ -92,10 +92,8 @@ pub struct TaskAdd {
 pub struct TaskOopsAdd {
     /// Current or intended opportunistic OOPS Design generation.
     pub design: TaskStamp,
-    /// One-line exact account of the unexpected behavior.
+    /// Exact account of the unexpected behavior, retained as its Plan title.
     pub title: String,
-    /// Exact report text retained as its Plan description.
-    pub description: String,
     /// Explicit causal authority when no active claim owns the report.
     #[serde(
         default,
@@ -153,7 +151,7 @@ pub struct TaskEdit {
         deserialize_with = "crate::optional::present"
     )]
     pub title: Option<String>,
-    /// Replacement description, when the description moves.
+    /// Replacement description, when the description moves; empty clears it.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

@@ -235,7 +235,7 @@ fn corrected_statement(
         statement.title = title.clone();
     }
     if let Some(description) = &edit.description {
-        statement.description = Some(description.clone());
+        statement.description = (!description.is_empty()).then(|| description.clone());
     }
     if !edit.acceptance.is_empty() {
         statement.acceptance = edit.acceptance.clone();
