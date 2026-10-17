@@ -61,6 +61,17 @@ fn add_line(
     )) else {
         panic!("OOPS intake returned another answer shape");
     };
+    let view = board(bus, epoch, Actor::Operator);
+    let created = at(&view, &answer.task);
+    assert_eq!(
+        created.presentation_title(),
+        text,
+        "the report text is the title"
+    );
+    assert_eq!(
+        created.statement.body.description, None,
+        "the report text is not repeated as a description"
+    );
     answer.task
 }
 
