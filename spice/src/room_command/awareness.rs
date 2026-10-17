@@ -123,8 +123,8 @@ fn awareness(
         })
         .transpose()?;
     let after = requested.and_then(|seq| seq.get().checked_sub(1).and_then(Seq::new));
-    let budget = journal::FactReadBudget::new(page.retain(), page.limits().bytes).map_err(store)?;
-    let (cursor, design, maturity, rows, more) = journal
+    let retain = page.retain();
+    let (cursor, design, maturity, population, rows) = journal
         .read_with(|read| -> Result<_, Failure> {
             let design = current_handle(read, &anchor, projects)?;
             let cursor = read.cursor().map_err(store)?.ok_or_else(|| {
@@ -135,37 +135,26 @@ fn awareness(
                 )
             })?;
             let maturity = read.design_maturity(&anchor).map_err(store)?;
-            let fetched = read.design_notices(&anchor, after, budget).map_err(store)?;
-            let more = fetched.continuation.is_some();
-            let mut rows = Vec::with_capacity(fetched.rows.len());
-            for envelope in fetched.rows {
-                let Some(body) = envelope.fact.read::<DesignNoticed>() else {
-                    return Err(fault(
-                        FaultClass::Store,
-                        "room::awareness-index-invalid",
-                        "the Design notice index returned another fact kind",
-                    ));
-                };
-                rows.push(Noticed {
-                    seq: envelope.seq,
-                    lane: body.lane,
-                    occupant: body.occupant,
-                    task: current_handle(read, &body.task, projects)?,
-                    claim: Seq::new(body.claim.get()).ok_or_else(|| {
-                        fault(
-                            FaultClass::Store,
-                            "room::awareness-claim-invalid",
-                            "an awareness record names claim position zero",
-                        )
-                    })?,
-                    statement: body.statement,
-                    terms: wire::rooms::shown_notice_terms(&body.terms)
-                        .into_iter()
-                        .map(str::to_owned)
-                        .collect(),
-                });
+            let population = read.design_notice_count(&anchor, after).map_err(store)?;
+            let budget = journal::FactReadBudget::new(
+                retain.clamp(1, journal::FactReadBudget::RETAINED.rows()),
+                journal::FactReadBudget::RETAINED.decoded_bytes(),
+            )
+            .map_err(store)?;
+            let mut rows = Vec::with_capacity(retain.min(population));
+            let mut from = after;
+            while rows.len() < retain.min(population) {
+                let fetched = read.design_notices(&anchor, from, budget).map_err(store)?;
+                let wanted = retain - rows.len();
+                for envelope in fetched.rows.into_iter().take(wanted) {
+                    rows.push(noticed(read, projects, envelope)?);
+                }
+                match fetched.continuation {
+                    Some(next) => from = Some(next),
+                    None => break,
+                }
             }
-            Ok((cursor, design, maturity, rows, more))
+            Ok((cursor, design, maturity, population, rows))
         })
         .map_err(|error| match error {
             journal::ReadError::Journal(error) => store(error),
@@ -174,7 +163,6 @@ fn awareness(
     if let Some(notice) = crate::board_command::rename_notice(&named, &design) {
         eprintln!("{notice}");
     }
-    let population = rows.len().saturating_add(usize::from(more));
     let page = page.shown(
         rows.into_iter()
             .map(|row| {
@@ -194,6 +182,39 @@ fn awareness(
             effect: "advisory only; neither blocks nor authorizes a Design decision",
         },
     ))
+}
+
+/// The row one indexed notice envelope reads as.
+fn noticed(
+    read: &journal::JournalRead<'_>,
+    projects: &board::ProjectPolicy,
+    envelope: wire::Envelope<wire::AnyFact>,
+) -> Result<Noticed, Failure> {
+    let Some(body) = envelope.fact.read::<DesignNoticed>() else {
+        return Err(fault(
+            FaultClass::Store,
+            "room::awareness-index-invalid",
+            "the Design notice index returned another fact kind",
+        ));
+    };
+    Ok(Noticed {
+        seq: envelope.seq,
+        lane: body.lane,
+        occupant: body.occupant,
+        task: current_handle(read, &body.task, projects)?,
+        claim: Seq::new(body.claim.get()).ok_or_else(|| {
+            fault(
+                FaultClass::Store,
+                "room::awareness-claim-invalid",
+                "an awareness record names claim position zero",
+            )
+        })?,
+        statement: body.statement,
+        terms: wire::rooms::shown_notice_terms(&body.terms)
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+    })
 }
 
 impl fmt::Display for DesignAwareness {
