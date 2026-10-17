@@ -298,6 +298,32 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn pe32_plus_archive_uses_virtual_size_not_raw_padding() {
+        const FIRST_SECTION_HEADER: usize = 0x80 + 4 + COFF_HEADER_BYTES + 0xf0;
+
+        let padding = b"section alignment";
+        let mut padded = pe(&[(SECTION, ARCHIVE)]);
+        put_u32(
+            &mut padded,
+            FIRST_SECTION_HEADER + 16,
+            (ARCHIVE.len() + padding.len()) as u32,
+        );
+        padded.extend_from_slice(padding);
+        assert_eq!(pe_archive(&padded), Ok(ARCHIVE));
+
+        let mut virtual_overrun = pe(&[(SECTION, ARCHIVE)]);
+        put_u32(
+            &mut virtual_overrun,
+            FIRST_SECTION_HEADER + 8,
+            (ARCHIVE.len() + 1) as u32,
+        );
+        assert_eq!(
+            pe_archive(&virtual_overrun),
+            Err(CanvasError::Malformed("app ZIP section range"))
+        );
+    }
+
     fn symbol_name<'a>(image: &'a [u8], symbol: usize, strings: usize) -> &'a [u8] {
         assert_eq!(&image[symbol..symbol + 4], &[0; 4]);
         let offset = read_u32(image, symbol + 4, "symbol name").unwrap() as usize;

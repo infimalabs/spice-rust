@@ -117,26 +117,31 @@ admits the archive, and [`xtask/src/app.rs`](../../xtask/src/app.rs) stages it.
 
 The `canvas` crate declares the two symbols a relocatable object defines:
 `spice_app_zip` at the archive's first byte and `spice_app_zip_len` at its
-length. The linker resolves the first to a mapped address, so the process reads
-its app as a direct static slice without storing a file offset or parsing its
-own image. `dist` writes each platform object and reads the final image through
-bounded format-specific code. On Windows the retained PE section is `spiceapp`,
-which fits the executable format's eight-byte section-name limit. The runtime
-symbol names stay unchanged across Mach-O, ELF, and PE.
+length. Current macOS and Linux appliance builds resolve the first to a mapped
+address, so the process reads its app as a direct static slice without storing
+a file offset or parsing its own image.
 
-Only builds that enable the `spice/canvas` feature resolve the crate, and those
-builds write the object for the staged archive and hand it to the final link
-through `cargo rustc`. The object's name carries the archive digest, so a new
-archive relinks the executable and rebuilds nothing else. After applicable
-symbol, strip, and signing steps, the build locates the section through the
-final Mach-O, ELF, or PE metadata and refuses absent, repeated, truncated, or
-wrong bytes. No persisted build-time offset participates.
+At the object-format boundary, `dist` can also write an x86-64 COFF object with
+the same symbols and locate the archive in a final PE32+ image's `spiceapp`
+section. The name fits PE's eight-byte section-name limit. This support is
+format-only: the release pipeline targets only `aarch64-apple-darwin` and
+`x86_64-unknown-linux-musl`, install builds only on supported macOS and Linux
+hosts, and no Windows appliance build currently links the COFF object.
+
+Only current macOS and Linux builds that enable the `spice/canvas` feature
+resolve the crate. They write the object for the staged archive and hand it to
+the final link through `cargo rustc`. The object's name carries the archive
+digest, so a new archive relinks the executable and rebuilds nothing else.
+After symbol, strip, and signing steps as applicable, the build locates the
+section through the final Mach-O or ELF metadata and refuses absent, repeated,
+truncated, or wrong bytes. The PE reader applies the same final-image boundary
+for format admission. No persisted build-time offset participates.
 [`spice/src/version.rs`](../../spice/src/version.rs) admits the linked archive
 once. An installed resident without one refuses with
 `serve::canvas-archive-absent`, or `serve::canvas-archive-invalid` when it does
-not admit. The installed executable is the only app carrier. Install
-publishes no app file and binds the generation G that its linked archive names.
-`xtask report` admits it by that same receipt and archive check.
+not admit. The installed executable is the only app carrier. Install publishes
+no app file and binds the generation G that its linked archive names. The same
+receipt and archive check admits it to `xtask report`.
 Install schema 18 published app sidecars. It is a one-crossing
 boundary: `spice install` alone reads a complete schema-18 receipt and
 discards the sidecars it owned. Owners:

@@ -77,27 +77,34 @@ and both bind the source digest of the already-versioned release commit. Both
 targets bind the same G and archive digest. The inventory carries no app files:
 the executable is the app's only carrier.
 
-**Invariant —** Every appliance executable links its app ZIP. The release
-target build and `spice dev xtask -- install` read the staged
-`generations/G.zip` once and admit it as G. They link it as one retained
-read-only section: `__TEXT,__spice_app_zip` on Mach-O, `spice_app_zip` on ELF,
-and `spiceapp` on PE. Each follows its platform's naming convention: Mach-O
-sections are lowercase after two underscores, the System V gABI reserves
-dot-prefixed ELF section names for the system, and PE executable section names
-are limited to eight bytes. `dist` owns the bounded x86-64 COFF writer and
-PE32+ reader beside its Mach-O and ELF format code.
+**Invariant —** Every appliance executable produced by a current build path
+links its app ZIP. The `aarch64-apple-darwin` and
+`x86_64-unknown-linux-musl` release builds, and `spice dev xtask -- install` on
+supported macOS and Linux hosts, read the staged `generations/G.zip` once and
+admit it as G. They link it as one retained read-only section:
+`__TEXT,__spice_app_zip` on Mach-O and `spice_app_zip` on ELF. Each follows its
+platform's naming convention: Mach-O sections are lowercase after two
+underscores, and the System V gABI reserves dot-prefixed ELF section names for
+the system.
 
-The build then derives symbols, strips, and signs where applicable. No step
-appends bytes after signing. The final image's section metadata is the
-canonical external extraction boundary; no build-time file offset is
-persisted. The running process stores no offset and parses no image: the linker
-resolves `spice_app_zip` and `spice_app_zip_len` to the mapped address and byte
-length on every platform. The final executable is refused unless exactly one
-section carries the staged archive and its one version report names G. Only
-these builds write the object carrying the archive and enable the `canvas`
-feature that names its symbols, so no compile step reads a file outside the
-selected tree. A resident whose executable carries no archive refuses
-installed serving at startup.
+`dist` additionally owns format-level x86-64 Windows support: its COFF object
+defines `spice_app_zip` and `spice_app_zip_len`, and its PE32+ final-image reader
+locates exactly one `spiceapp` section using the header's virtual and raw
+lengths. The section name fits PE's eight-byte limit. This is not a Windows
+appliance build. The release pipeline has no Windows target, install has no
+Windows build path, and no current build links that COFF object into a Spice PE
+executable.
+
+The current Mach-O and ELF builds then derive symbols, strip, and sign where
+applicable. No step appends bytes after signing. The final image's section
+metadata is the canonical external extraction boundary; no build-time file
+offset is persisted. The running process stores no offset and parses no image:
+the linker resolves both symbols to the mapped address and byte length. The
+final executable is refused unless exactly one section carries the staged
+archive and its one version report names G. Only these builds write the object
+carrying the archive and enable the `canvas` feature that names its symbols, so
+no compile step reads a file outside the selected tree. A resident whose
+executable carries no archive refuses installed serving at startup.
 
 **Invariant —** Proof replays the complete current battery against the
 candidate checkout: Linux mounts it read-only in the pinned OCI environment,
