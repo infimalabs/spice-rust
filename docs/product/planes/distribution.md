@@ -80,8 +80,12 @@ the executable is the app's only carrier.
 **Invariant —** Every appliance executable links its app ZIP. The release
 target build and `spice dev xtask -- install` read the staged
 `generations/G.zip` once and admit it as G. They link it as one retained
-read-only section (`__TEXT,spice_app_zip` on Mach-O, `.spice_app_zip` on ELF),
-then derive symbols, strip, and sign, in that order. No step appends bytes
+read-only section, `__TEXT,__spice_app_zip` on Mach-O and `spice_app_zip` on
+ELF. Each follows its platform's naming convention: Mach-O sections are
+lowercase after two underscores, and the System V gABI reserves dot-prefixed
+ELF section names for the system. The `spice_` prefix keeps both clear of
+toolchain sections. The build then derives symbols, strips, and signs, in that
+order. No step appends bytes
 after linking, which would fail strict code-signature verification. The
 section header remains the canonical file offset and length for an external
 extractor. The running process stores neither: the linker resolves

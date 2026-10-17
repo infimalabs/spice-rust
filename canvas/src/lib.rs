@@ -2,7 +2,7 @@
 //!
 //! The release target build and `spice dev xtask -- install` link one
 //! relocatable object that holds the staged archive in its own read-only
-//! section, `__TEXT,spice_app_zip` on Mach-O and `.spice_app_zip` on ELF, and
+//! section, `__TEXT,__spice_app_zip` on Mach-O and `spice_app_zip` on ELF, and
 //! its length beside it. Linked before symbols, stripping, and signing, the
 //! bytes survive `strip -S` and sit inside the signed image; linker symbols
 //! expose them as an ordinary static, so nothing parses the executable at run
