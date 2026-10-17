@@ -171,6 +171,21 @@ impl NoteComposers {
         self.published.set(state.clone());
     }
 
+    fn draft_input(&self, task: &TaskStamp) -> Callback<InputEvent> {
+        let notes = self.clone();
+        let task = task.clone();
+        Callback::from(move |event: InputEvent| {
+            let Some(textarea) = event
+                .target()
+                .and_then(|target| target.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+            else {
+                return;
+            };
+            let draft = textarea.value();
+            notes.update(&task, move |composer| composer.draft = draft);
+        })
+    }
+
     fn shown(&self, task: &TaskStamp) -> NoteComposer {
         self.published.get(task).cloned().unwrap_or_default()
     }

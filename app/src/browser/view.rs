@@ -182,6 +182,7 @@ fn render_sidebar(render: &AppRender<'_>, work: Option<&WorkProjection<'_>>) -> 
                 room_controls: render.room_controls,
                 sender: render.sender,
                 draft_controls: render.draft_controls,
+                connected: render.connection.is_online(),
                 can_note: runtime.is_some_and(|runtime| runtime.offers(CommandKind::RoomPost)),
                 can_close: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskClose)),
                 blocker_review: render.blocker_review,

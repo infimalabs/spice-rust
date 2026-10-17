@@ -113,7 +113,11 @@ related external task follows that lead in the same overview. Each detail's
 **Room** section seats its composer directly above the room's conversation,
 newest first, so a submitted observation is published into the task's room
 and appears right beneath the draft that wrote it. A Design's room is the same
-section with its Design authority added. A selection of any size
+section with its Design authority added. The composer records each input as its
+task-owned browser draft. A connection loss keeps that composer visible with
+its exact text read-only and no publish action until the resident returns;
+reconnect makes the same draft editable, and a generation reload hands it to
+the replacement document without posting it. A selection of any size
 hydrates every section: the app keeps a bounded number of detail reads in
 flight beside its other reads and actions, asks for the rest as those answer,
 and reads a task again after a change or reconnect only while it is selected.
