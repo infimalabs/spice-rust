@@ -54,14 +54,23 @@ static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
 /// missing Cargo home, Trunk execution failure, or a refused generated stage.
 pub fn app(environment: &ReleaseEnvironment, output: &mut impl Write) -> Result<(), AppBuildError> {
     let root = workspace_root()?;
-    app_from(&root, environment, output)
+    app_from(&root, environment, output).map(|_| ())
 }
 
-fn app_from(
+/// The generation a worktree stage serves once [`app_from`] settles it, and
+/// the selected source identity that generation was compiled from.
+pub(crate) struct StagedApp {
+    pub(crate) generation: Digest,
+    pub(crate) sources: Digest,
+}
+
+/// Stage the selected app sources under `root`, reusing a current generation
+/// that already carries their identity and compiling only when it does not.
+pub(crate) fn app_from(
     root: &Path,
     environment: &ReleaseEnvironment,
     output: &mut impl Write,
-) -> Result<(), AppBuildError> {
+) -> Result<StagedApp, AppBuildError> {
     let sources = source::SourceSnapshot::capture(root)?;
     let source_identity = sources.identity().clone();
     if let Some(identity) = current_generation_of(root, &source_identity) {
@@ -71,22 +80,30 @@ fn app_from(
         if !archive_path(&generations, &identity).is_file() {
             publish_archive(&generations, &identity)?;
         }
-        return writeln!(
+        writeln!(
             output,
             "[app] {} generation {identity} from selected sources {} ({source_identity}) is \
              already current; the compiler was not run",
             root.join(spice::serve::APP_STAGE).display(),
             root.display(),
         )
-        .map_err(AppBuildError::Output);
+        .map_err(AppBuildError::Output)?;
+        return Ok(StagedApp {
+            generation: identity,
+            sources: source_identity,
+        });
     }
-    app_at(
+    let generation = app_at(
         root,
         &source_identity,
         output,
         |stage, output| run_trunk(root, environment, stage, &source_identity, output),
         || sources.verify_unchanged(root),
-    )
+    )?;
+    Ok(StagedApp {
+        generation,
+        sources: source_identity,
+    })
 }
 
 fn app_at<W: Write>(
@@ -95,7 +112,7 @@ fn app_at<W: Write>(
     output: &mut W,
     build: impl FnOnce(&Path, &mut W) -> Result<(), AppBuildError>,
     verify_sources: impl FnOnce() -> Result<(), AppBuildError>,
-) -> Result<(), AppBuildError> {
+) -> Result<Digest, AppBuildError> {
     let stage = root.join(spice::serve::APP_STAGE);
     let temporary = root.join("dist").join(format!(
         ".stage-app-build-{}-{}",
@@ -121,7 +138,8 @@ fn app_at<W: Write>(
             stage.display(),
             root.display(),
         )
-        .map_err(AppBuildError::Output)
+        .map_err(AppBuildError::Output)?;
+        Ok(identity)
     })();
     let cleanup = if temporary.exists() {
         fs::remove_dir_all(&temporary).map_err(|source| AppBuildError::Io {
@@ -131,7 +149,7 @@ fn app_at<W: Write>(
     } else {
         Ok(())
     };
-    result.and(cleanup)
+    result.and_then(|identity| cleanup.map(|()| identity))
 }
 
 /// The published generation compiled from exactly these sources, if any.

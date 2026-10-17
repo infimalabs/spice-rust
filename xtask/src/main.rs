@@ -143,14 +143,15 @@ fn run_app(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResu
 
 #[cfg(not(target_arch = "wasm32"))]
 fn run_app_demo(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
-    match arguments.as_slice() {
-        [] => xtask::app_demo(false, output).map_err(Into::into),
-        [open] if open == OsStr::new("--open") => xtask::app_demo(true, output).map_err(Into::into),
+    let open = match arguments.as_slice() {
+        [] => false,
+        [open] if open == OsStr::new("--open") => true,
         _ => {
             eprintln!("{}", help());
-            Err(usage_error().into())
+            return Err(usage_error().into());
         }
-    }
+    };
+    xtask::app_demo(&release_environment(), open, output).map_err(Into::into)
 }
 
 fn run_gate(
