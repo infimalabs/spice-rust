@@ -531,9 +531,12 @@ owns each rule summarized here.
   A resumed occupant inherits that profile; a fresh identity starts empty, and
   an undeclared occupant contributes and inherits nothing. Each profile keeps
   the newest 32 distinct successful task completions and 64 distinct settled
-  assistant messages, suppressing exact content repeats. Startup warming reads
-  bounded transcript and completion-history windows and distinguishes ready,
-  resumably incomplete, and failed acquisition from an empty ready profile.
+  assistant messages, suppressing exact content repeats. Warming walks
+  completion history and the lane tape newest first: startup takes one bounded
+  window of each, and every later journal commit takes at most one more from
+  the recorded cursors, until both histories reach their beginnings or a class
+  is already full of newer cards. It distinguishes ready, resumably incomplete,
+  and failed acquisition from an empty ready profile.
   Declaration, newly stored evidence, readiness, and Design-statement changes
   expose bounded cursor-addressed selection opportunities.
 - **Design awareness.** At a natural break after `task done`, a lane whose

@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use wire::{CanonicalUuid, Name, Seq, TaskStamp, body::LaneSessionDeclared};
 
-use super::evidence::{Digest, Evidence, EvidenceProfile};
+use super::evidence::{Digest, Evidence, EvidenceProfile, Kind};
 
 /// Stable owner of one continuing conversation's evidence.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -73,13 +73,16 @@ pub struct TranscriptCursor {
 /// Independent durable-history continuations for one warm operation.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WarmCursor {
-    /// Last journal fact already folded.
+    /// Completion fact the next page resumes strictly before; `None` begins at
+    /// the newest completion.
     pub facts: Option<Seq>,
     /// Oldest transcript position already crossed.
     pub transcript: Option<TranscriptCursor>,
-    /// Whether the retained task-completion history reached its beginning.
+    /// Whether completion history reached its beginning or the task class is
+    /// already full of newer cards.
     pub facts_complete: bool,
-    /// Whether the retained transcript history reached its beginning.
+    /// Whether transcript history reached its beginning or the conversation
+    /// class is already full of newer cards.
     pub transcript_complete: bool,
 }
 
@@ -155,15 +158,40 @@ impl SessionProfile {
     pub fn evidence_mut(&mut self) -> &mut EvidenceProfile<EvidenceKey> {
         &mut self.evidence
     }
+
+    /// Whether historical acquisition is still owed: neither ready nor failed.
+    const fn owes(&self) -> bool {
+        matches!(
+            self.warm,
+            WarmState::Warming { .. } | WarmState::Incomplete { .. }
+        )
+    }
+
+    /// Adopt `cursor` after a successful step. A class already full of newer
+    /// cards completes its source, since older history can no longer change
+    /// what is retained. Returns the cursor when the profile just became ready.
+    fn settle(&mut self, mut cursor: WarmCursor) -> Option<WarmCursor> {
+        cursor.facts_complete |= self.evidence.is_full(Kind::Task);
+        cursor.transcript_complete |= self.evidence.is_full(Kind::Conversation);
+        let was_ready = self.warm.is_ready();
+        self.warm = if cursor.facts_complete && cursor.transcript_complete {
+            WarmState::Ready { through: cursor }
+        } else {
+            WarmState::Incomplete { cursor }
+        };
+        (!was_ready && self.warm.is_ready()).then_some(cursor)
+    }
 }
 
 /// Result of attempting to retain one card for an occupant.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Inserted {
-    /// The occupant has no admitted vendor-session declaration.
+    /// The occupant or session has no admitted vendor-session declaration.
     Undeclared,
     /// An exact retained content digest already represented this evidence.
     Duplicate,
+    /// Older history found a card whose class is already full of newer cards.
+    Full,
     /// The card was retained, evicting its class's oldest card if necessary.
     Stored,
 }
@@ -309,61 +337,123 @@ impl SessionProfiles {
         }
     }
 
-    /// Record one bounded successful warm step.
-    pub fn warmed(&mut self, key: &SessionKey, through: WarmCursor, complete: bool) {
+    /// Retain one card a newest-first history walk found for `key`, older than
+    /// every retained card of its class.
+    pub fn retain_older(&mut self, key: &SessionKey, evidence: Evidence<EvidenceKey>) -> Inserted {
         let Some(profile) = self.profiles.get_mut(key) else {
+            return Inserted::Undeclared;
+        };
+        let evidence_key = evidence.key().clone();
+        let digest = evidence.digest();
+        let kind = evidence.kind();
+        if profile.evidence.insert_older(evidence).is_err() {
+            return if profile.evidence.is_full(kind) {
+                Inserted::Full
+            } else {
+                Inserted::Duplicate
+            };
+        }
+        self.push_opportunity(
+            key.clone(),
+            ProfileOpportunityKind::Stored {
+                key: evidence_key,
+                digest,
+            },
+        );
+        Inserted::Stored
+    }
+
+    /// The completion cursor the next shared task-history step resumes from,
+    /// when any profile still owes completion history.
+    #[must_use]
+    pub fn owed_facts(&self) -> Option<Option<Seq>> {
+        self.profiles
+            .values()
+            .filter(|profile| profile.owes())
+            .map(|profile| profile.warm.cursor())
+            .find(|cursor| !cursor.facts_complete)
+            .map(|cursor| cursor.facts)
+    }
+
+    /// The first profile, in key order, still owing transcript history, and
+    /// the oldest position its walk has crossed.
+    #[must_use]
+    pub fn owed_transcript(&self) -> Option<(&SessionKey, Option<TranscriptCursor>)> {
+        self.profiles.iter().find_map(|(key, profile)| {
+            let cursor = profile.warm.cursor();
+            (profile.owes() && !cursor.transcript_complete).then_some((key, cursor.transcript))
+        })
+    }
+
+    /// Complete the sources of every owing profile whose class is already full
+    /// of newer cards, without reading the history it would otherwise owe.
+    pub fn settle_full(&mut self) {
+        let mut ready = Vec::new();
+        for (key, profile) in &mut self.profiles {
+            let cursor = profile.warm.cursor();
+            let newly_full = (!cursor.facts_complete && profile.evidence.is_full(Kind::Task))
+                || (!cursor.transcript_complete && profile.evidence.is_full(Kind::Conversation));
+            if profile.owes()
+                && newly_full
+                && let Some(through) = profile.settle(cursor)
+            {
+                ready.push((key.clone(), through));
+            }
+        }
+        for (key, through) in ready {
+            self.push_opportunity(key, ProfileOpportunityKind::Ready { through });
+        }
+    }
+
+    /// Record one bounded successful transcript step for `key`: its walk has
+    /// crossed back to `crossed`, which is the beginning when `complete`.
+    pub fn warmed_transcript(
+        &mut self,
+        key: &SessionKey,
+        crossed: TranscriptCursor,
+        complete: bool,
+    ) {
+        let Some(profile) = self.profiles.get_mut(key).filter(|profile| profile.owes()) else {
             return;
         };
-        let was_ready = profile.warm.is_ready();
-        let mut through = through;
-        through.transcript_complete = complete;
-        profile.warm = if through.facts_complete && through.transcript_complete {
-            WarmState::Ready { through }
-        } else {
-            WarmState::Incomplete { cursor: through }
-        };
-        if !was_ready && profile.warm.is_ready() {
+        let mut cursor = profile.warm.cursor();
+        cursor.transcript = Some(crossed);
+        cursor.transcript_complete = complete;
+        if let Some(through) = profile.settle(cursor) {
             self.push_opportunity(key.clone(), ProfileOpportunityKind::Ready { through });
         }
     }
 
-    /// Apply one shared bounded task-history step to every seated profile.
-    pub fn warmed_facts(&mut self, through: Option<Seq>, complete: bool) {
-        let profiles = &mut self.profiles;
-        let opportunities = &mut self.opportunities;
-        let next = &mut self.next_opportunity;
-        for (key, profile) in profiles {
-            if matches!(profile.warm, WarmState::Failed { .. }) {
+    /// Apply one shared bounded completion-history step to every profile
+    /// still owing completion history; `next` resumes the following step.
+    pub fn warmed_facts(&mut self, next: Option<Seq>, complete: bool) {
+        let mut ready = Vec::new();
+        for (key, profile) in &mut self.profiles {
+            let mut cursor = profile.warm.cursor();
+            if !profile.owes() || cursor.facts_complete {
                 continue;
             }
-            let was_ready = profile.warm.is_ready();
-            let mut cursor = profile.warm.cursor();
-            cursor.facts = through;
+            cursor.facts = next;
             cursor.facts_complete = complete;
-            profile.warm = if cursor.facts_complete && cursor.transcript_complete {
-                WarmState::Ready { through: cursor }
-            } else {
-                WarmState::Incomplete { cursor }
-            };
-            if !was_ready && profile.warm.is_ready() {
-                push_profile_opportunity(
-                    opportunities,
-                    next,
-                    key.clone(),
-                    ProfileOpportunityKind::Ready { through: cursor },
-                );
+            if let Some(through) = profile.settle(cursor) {
+                ready.push((key.clone(), through));
             }
+        }
+        for (key, through) in ready {
+            self.push_opportunity(key, ProfileOpportunityKind::Ready { through });
         }
     }
 
-    /// Mark every currently known profile failed without discarding evidence.
-    pub fn warm_all_failed(&mut self, detail: impl Into<String>) {
+    /// Fail every profile still owing completion history, keeping its cards.
+    pub fn facts_failed(&mut self, detail: impl Into<String>) {
         let detail = detail.into();
         for profile in self.profiles.values_mut() {
-            profile.warm = WarmState::Failed {
-                cursor: profile.warm.cursor(),
-                detail: detail.clone(),
-            };
+            if profile.owes() && !profile.warm.cursor().facts_complete {
+                profile.warm = WarmState::Failed {
+                    cursor: profile.warm.cursor(),
+                    detail: detail.clone(),
+                };
+            }
         }
     }
 

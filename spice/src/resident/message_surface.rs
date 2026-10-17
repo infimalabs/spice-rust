@@ -49,7 +49,7 @@ const HISTORY_DURATION: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
 pub(super) use backlog::restore_agent_messages;
-pub(super) use backlog::{BacklogReader, restore_agent_messages_indexed};
+pub(super) use backlog::{BacklogReader, advance_profile_warming, restore_agent_messages_indexed};
 pub(super) use session_compaction::SessionCompactions;
 pub(super) use tool_preview::CallPreviews;
 

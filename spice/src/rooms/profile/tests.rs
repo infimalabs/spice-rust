@@ -1,3 +1,4 @@
+use super::super::evidence::{CONVERSATION_CARDS, Conversation, TASK_CARDS};
 use super::*;
 
 fn uuid(last: &str) -> CanonicalUuid {
@@ -99,37 +100,156 @@ fn declarations_share_only_the_exact_continuing_session() {
     );
 }
 
+fn crossed(offset: u64) -> TranscriptCursor {
+    TranscriptCursor {
+        source: uuid("99"),
+        member: 1,
+        offset,
+    }
+}
+
+fn conversation(index: usize) -> Evidence<EvidenceKey> {
+    let letter = |value: usize| char::from(b'a' + u8::try_from(value % 26).unwrap());
+    let prose = (0..12)
+        .map(|term| {
+            format!(
+                "note{}{}{}",
+                letter(index / 26),
+                letter(index),
+                letter(term)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    Evidence::conversation(
+        EvidenceKey::Conversation {
+            source: uuid("99"),
+            member: 1,
+            offset: u64::try_from(index).unwrap(),
+            length: 1,
+        },
+        &Conversation::read(&prose).expect("twelve distinct terms admit"),
+    )
+}
+
+fn ready_count(profiles: &SessionProfiles) -> usize {
+    profiles
+        .opportunities(None, PROFILE_OPPORTUNITIES)
+        .rows
+        .iter()
+        .filter(|row| matches!(row.kind, ProfileOpportunityKind::Ready { .. }))
+        .count()
+}
+
 #[test]
-fn warming_never_makes_incomplete_or_failed_history_look_empty() {
+fn warming_resumes_from_recorded_cursors_until_both_histories_begin() {
+    let mut profiles = SessionProfiles::default();
+    let key = profiles.declare(&declaration(uuid("01"), uuid("11"), "session-a"));
+    profiles.begin_warming(&key);
+    assert_eq!(profiles.owed_facts(), Some(None));
+    assert_eq!(profiles.owed_transcript(), Some((&key, None)));
+
+    profiles.warmed_facts(Seq::new(20), false);
+    profiles.warmed_transcript(&key, crossed(500), false);
+    assert_eq!(profiles.owed_facts(), Some(Seq::new(20)));
+    assert_eq!(profiles.owed_transcript(), Some((&key, Some(crossed(500)))));
+    assert!(matches!(
+        profiles.profile(&key).unwrap().warm_state(),
+        WarmState::Incomplete { .. }
+    ));
+
+    profiles.warmed_transcript(&key, crossed(0), true);
+    assert_eq!(profiles.owed_transcript(), None);
+    assert_eq!(
+        ready_count(&profiles),
+        0,
+        "completion history is still owed"
+    );
+    profiles.warmed_facts(None, true);
+    assert!(profiles.profile(&key).unwrap().warm_state().is_ready());
+    assert_eq!(profiles.owed_facts(), None);
+    profiles.warmed_facts(None, true);
+    profiles.settle_full();
+    assert_eq!(ready_count(&profiles), 1, "readiness is announced once");
+}
+
+#[test]
+fn full_classes_complete_warming_without_older_history_displacing_them() {
     let lane = uuid("01");
     let occupant = uuid("11");
     let mut profiles = SessionProfiles::default();
     let key = profiles.declare(&declaration(lane, occupant, "session-a"));
-
     profiles.begin_warming(&key);
+    for index in 0..TASK_CARDS {
+        let index = u64::try_from(index).unwrap();
+        assert_eq!(
+            profiles.insert(lane, occupant, task(index + 100, &format!("live {index}"))),
+            Inserted::Stored
+        );
+    }
     assert_eq!(
-        profiles.profile(&key).unwrap().warm_state(),
-        &WarmState::Warming {
-            cursor: WarmCursor::default()
-        }
+        profiles.retain_older(&key, task(1, "older work")),
+        Inserted::Full
     );
-    let cursor = WarmCursor {
-        facts: Seq::new(20),
-        ..WarmCursor::default()
-    };
-    profiles.warmed(&key, cursor, false);
+    profiles.settle_full();
     assert_eq!(
-        profiles.profile(&key).unwrap().warm_state(),
-        &WarmState::Incomplete { cursor }
+        profiles.owed_facts(),
+        None,
+        "a full task class owes nothing"
     );
-    profiles.warm_failed(&key, "source unavailable");
+    assert!(profiles.owed_transcript().is_some());
+
+    for index in 0..CONVERSATION_CARDS {
+        assert_eq!(
+            profiles.retain_older(&key, conversation(index)),
+            Inserted::Stored
+        );
+    }
     assert_eq!(
-        profiles.profile(&key).unwrap().warm_state(),
-        &WarmState::Failed {
-            cursor,
-            detail: "source unavailable".to_owned()
-        }
+        profiles.retain_older(&key, conversation(CONVERSATION_CARDS)),
+        Inserted::Full
     );
+    profiles.settle_full();
+    assert!(profiles.profile(&key).unwrap().warm_state().is_ready());
+    assert_eq!(ready_count(&profiles), 1);
+
+    let newest = profiles
+        .profile(&key)
+        .unwrap()
+        .evidence()
+        .evidence()
+        .map(|card| card.key().clone())
+        .collect::<Vec<_>>();
+    assert_eq!(newest.first(), Some(task(131, "").key()));
+    assert_eq!(
+        newest.last(),
+        Some(conversation(CONVERSATION_CARDS - 1).key()),
+        "the walk's oldest find is the oldest card"
+    );
+}
+
+#[test]
+fn failed_warming_keeps_its_cursor_and_cards_distinct_from_ready() {
+    let lane = uuid("01");
+    let occupant = uuid("11");
+    let mut profiles = SessionProfiles::default();
+    let key = profiles.declare(&declaration(lane, occupant, "session-a"));
+    profiles.begin_warming(&key);
+    profiles.retain_older(&key, task(1, "found before failing"));
+    profiles.warmed_facts(Seq::new(20), false);
+    profiles.facts_failed("history unreadable");
+
+    let profile = profiles.profile(&key).unwrap();
+    assert!(matches!(
+        profile.warm_state(),
+        WarmState::Failed { cursor, .. } if cursor.facts == Seq::new(20)
+    ));
+    assert_eq!(profile.evidence().evidence().count(), 1);
+    assert_eq!(profiles.owed_facts(), None);
+    assert_eq!(profiles.owed_transcript(), None);
+    profiles.warmed_facts(None, true);
+    profiles.warmed_transcript(&key, crossed(0), true);
+    assert!(!profiles.profile(&key).unwrap().warm_state().is_ready());
 }
 
 #[test]
@@ -151,7 +271,7 @@ fn opportunities_are_cursor_addressed_and_exact_repeats_are_silent() {
         Inserted::Duplicate
     );
     profiles.begin_warming(&key);
-    profiles.warmed(&key, WarmCursor::default(), true);
+    profiles.warmed_transcript(&key, crossed(0), true);
     profiles.warmed_facts(None, true);
     profiles.design_changed(Seq::new(30).unwrap());
 

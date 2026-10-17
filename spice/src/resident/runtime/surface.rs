@@ -1293,6 +1293,12 @@ fn accept_commit_turn(
             diagnostic,
         )?;
     }
+    message_surface::advance_profile_warming(
+        &bus.reader(),
+        command_surface.paths,
+        message_state,
+        diagnostic,
+    )?;
     room_relevance::reconcile(bus, command_surface.epoch(), diagnostic)?;
     room_automation::reconcile(
         bus,
