@@ -891,6 +891,10 @@ fn seed_oops_task(
     let origin: wire::Origin = format!("task:{born}")
         .parse()
         .expect("demo OOPS task origin is valid");
+    let dependencies = preparation
+        .as_ref()
+        .map(|preparation| vec![preparation.parent.clone()])
+        .unwrap_or_default();
     let mut write = JournalWrite::new(Actor::Spice, origin, instant(at), Producer::CommandDoor);
     let added = write
         .fact(
@@ -908,7 +912,7 @@ fn seed_oops_task(
                 taste: None,
                 document_slug: None,
                 taste_proposal: None,
-                depends: Vec::new(),
+                depends: dependencies.clone(),
                 flow: phases.clone(),
                 phase: phase.clone(),
                 revision: 1,
@@ -940,7 +944,7 @@ fn seed_oops_task(
         taste: None,
         document_slug: None,
         taste_proposal: None,
-        dependencies: Vec::new(),
+        dependencies,
         provenance: statement_provenance,
         creation: body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::SpiceActor),
         revision,

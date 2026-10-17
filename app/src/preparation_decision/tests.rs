@@ -112,18 +112,20 @@ fn mixed_verdicts_preview_every_comment_and_authorize_only_accepted_outputs() {
 }
 
 #[test]
-fn every_output_requires_a_verdict_and_all_rejected_authorizes_nothing() {
+fn untouched_outputs_default_to_rejected_and_authorize_nothing() {
     let candidate = candidate();
     let mut draft = DecisionDraft::new(candidate_ref());
+    for output in &candidate.outputs {
+        assert_eq!(draft.verdict(output), OutputVerdict::Rejected);
+    }
+    draft.set_output_verdict(stamp(3), OutputVerdict::Accepted);
+    assert_eq!(draft.verdict(&stamp(3)), OutputVerdict::Accepted);
     draft.set_output_verdict(stamp(3), OutputVerdict::Rejected);
-    preview(&mut draft, &candidate, 1);
-    assert_eq!(refusal(&draft), "preparation::output-undecided");
+    assert_eq!(draft.verdict(&stamp(3)), OutputVerdict::Rejected);
 
-    draft.set_output_verdict(stamp(4), OutputVerdict::Rejected);
-    draft.set_output_comment(stamp(4), "not yet".to_owned());
     preview(&mut draft, &candidate, 1);
     let DraftPhase::Previewing(submission) = draft.phase() else {
-        panic!("all-rejected decision previews");
+        panic!("default-rejected decision previews");
     };
     assert!(
         !submission
