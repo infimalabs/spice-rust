@@ -428,19 +428,29 @@ pub fn bind_if_selected(
 }
 
 fn selects_windows_target(arguments: &[OsString], ambient: Option<&OsStr>) -> bool {
-    let mut selected = None;
+    let windows = OsStr::new(WINDOWS_TARGET);
+    let mut flagged = false;
+    let mut selects_windows = false;
     let mut arguments = arguments.iter();
     while let Some(argument) = arguments.next() {
-        if argument == OsStr::new("--target") {
-            selected = arguments.next().map(OsString::as_os_str);
+        let target = if argument == OsStr::new("--target") {
+            arguments.next().map(OsString::as_os_str)
         } else if let Some(target) = argument
             .to_str()
             .and_then(|argument| argument.strip_prefix("--target="))
         {
-            selected = Some(OsStr::new(target));
-        }
+            Some(OsStr::new(target))
+        } else {
+            continue;
+        };
+        flagged = true;
+        selects_windows |= target == Some(windows);
     }
-    selected.or(ambient) == Some(OsStr::new(WINDOWS_TARGET))
+    if flagged {
+        selects_windows
+    } else {
+        ambient == Some(windows)
+    }
 }
 
 fn admit_at(
@@ -779,6 +789,23 @@ mod tests {
         assert!(!selects_windows_target(
             &["check".into(), "--target=wasm32-unknown-unknown".into()],
             Some(OsStr::new(WINDOWS_TARGET)),
+        ));
+        assert!(selects_windows_target(
+            &[
+                "check".into(),
+                "--target".into(),
+                WINDOWS_TARGET.into(),
+                "--target=aarch64-apple-darwin".into(),
+            ],
+            None,
+        ));
+        assert!(selects_windows_target(
+            &[
+                "--target=aarch64-apple-darwin".into(),
+                "--target".into(),
+                WINDOWS_TARGET.into(),
+            ],
+            None,
         ));
     }
 
