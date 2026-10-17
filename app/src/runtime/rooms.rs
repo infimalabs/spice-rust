@@ -291,9 +291,9 @@ pub struct RoomParticipant {
     pub reasons: Vec<ParticipantReason>,
 }
 
-/// Preparation authority recorded under stable native identities.
+/// Preparation provenance recorded under stable native identities.
 ///
-/// An output's current control is its board statement's preparation.
+/// Current output control lives only in board dependency edges.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PreparationProjection {
     /// Design pass proposals by stable candidate identity.
@@ -305,7 +305,7 @@ pub struct PreparationProjection {
     pub coverage: BTreeMap<authority::CoverageRef, RoomPositioned<authority::CandidateCoverage>>,
     /// Decisions by stable decision identity.
     pub decisions: BTreeMap<authority::DecisionRef, RoomPositioned<authority::PreparationDecision>>,
-    /// Positive authorizations by their selected decision identity.
+    /// Historical positive authorizations by their selected decision identity.
     pub authorizations:
         BTreeMap<authority::DecisionRef, RoomPositioned<authority::ExecutionAuthorization>>,
     /// Author withdrawals by the exact candidate each withdraws.
@@ -1083,35 +1083,20 @@ fn replace_plain<K: Ord, T: PartialEq>(values: &mut BTreeMap<K, T>, key: K, valu
     }
 }
 
-/// Whether one task is associated with a room's anchor task: the anchor
-/// itself, or work whose preparation names it as parent, controller, or
-/// construction.
+/// Whether one task is current work in a Design room: the Design itself or a
+/// task with a direct dependency on it. Selection removes that dependency, so
+/// immutable preparation provenance never keeps released work in the room.
 #[must_use]
 pub fn associated(statement: &wire::intent::BoardStatement, room: &TaskStamp) -> bool {
-    statement.born == *room
-        || statement.preparation.as_ref().is_some_and(|preparation| {
-            preparation.parent == *room
-                || preparation.controller == *room
-                || preparation.construction == *room
-        })
+    statement.born == *room || statement.dependencies.contains(room)
 }
 
-/// Open prepared work that names this Design in any direct preparation role.
+/// Open tasks currently gated by this Design's dependency edge.
 #[must_use]
-pub fn prepared_open_count(board: &super::BoardView, design: &TaskStamp) -> usize {
+pub fn design_dependent_count(board: &super::BoardView, design: &TaskStamp) -> usize {
     board
         .tasks
         .iter()
-        .filter(|task| {
-            task.statement
-                .body
-                .preparation
-                .as_ref()
-                .is_some_and(|preparation| {
-                    preparation.parent == *design
-                        || preparation.controller == *design
-                        || preparation.construction == *design
-                })
-        })
+        .filter(|task| task.statement.body.dependencies.contains(design))
         .count()
 }

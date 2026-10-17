@@ -116,29 +116,19 @@ fn enrichment_resolves_a_missing_selected_task_in_place() {
 }
 
 /// A Design's overview draws its Plan outputs downstream of it, a Plan's own
-/// overview names its preparing Design upstream, and inherited control does
-/// not shortcut the Plan-to-executable dependency.
+/// overview names its gating Design upstream, and a Plan-to-executable edge
+/// remains the only path to nested work.
 #[test]
-fn design_plan_outputs_flow_without_shortcutting_nested_work() {
+fn design_plan_dependency_edges_do_not_shortcut_nested_work() {
     let mut design = task(1, "rooms.design");
     design.statement.body.intent = Some(wire::TaskIntent::Design);
     let plan = |value| {
         let mut plan = task(value, "rooms.plan");
         plan.statement.body.intent = Some(wire::TaskIntent::Plan);
-        plan.statement.body.preparation = Some(wire::TaskPreparation {
-            parent: stamp(1),
-            controller: stamp(1),
-            construction: stamp(90),
-        });
         plan.statement.body.dependencies = vec![stamp(1)];
         plan
     };
     let mut execution = task(4, "rooms.work");
-    execution.statement.body.preparation = Some(wire::TaskPreparation {
-        parent: stamp(2),
-        controller: stamp(1),
-        construction: stamp(4),
-    });
     execution.statement.body.dependencies = vec![stamp(2)];
     let board = board(vec![design, plan(2), plan(3), execution]);
     let work = WorkProjection::from_board(&board);
@@ -177,7 +167,7 @@ fn design_plan_outputs_flow_without_shortcutting_nested_work() {
     assert_eq!(
         arrows(vec![stamp(2)]),
         BTreeSet::from([(Some(stamp(1)), Some(stamp(2)), "then")]),
-        "a Plan alone still shows the Design that prepared it upstream",
+        "a Plan alone still shows its Design prerequisite upstream",
     );
     assert_eq!(
         arrows(vec![stamp(1), stamp(2), stamp(4)]),
@@ -185,7 +175,7 @@ fn design_plan_outputs_flow_without_shortcutting_nested_work() {
             (Some(stamp(1)), Some(stamp(2)), "then"),
             (Some(stamp(2)), Some(stamp(4)), "then"),
         ]),
-        "inherited Design control does not shortcut the Plan-to-task dependency",
+        "the Design edge does not shortcut the Plan-to-task dependency",
     );
 }
 

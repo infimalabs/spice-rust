@@ -61,7 +61,7 @@ impl WorkMapLens {
     const fn context(self) -> &'static str {
         match self {
             Self::Dependency => {
-                "Edges point from each prerequisite to the dependent task it blocks, and from each Design to its prepared Plans."
+                "Edges point from each prerequisite to the dependent task it blocks."
             }
             Self::Origin => {
                 "Task ancestry includes shared parents; non-task ACK and origin identities remain exact."

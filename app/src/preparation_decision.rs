@@ -4,7 +4,7 @@
 //!
 //! The draft never changes rendered authority. A successful command answer
 //! only reports that the write landed; proposal standing moves when the
-//! committed decision and authorization arrive through the room projection.
+//! committed decision and refreshed board dependency edges arrive.
 
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 

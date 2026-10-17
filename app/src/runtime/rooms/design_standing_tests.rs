@@ -2,7 +2,7 @@ use wire::head::ClaimDisposition;
 use wire::intent::BoardTask;
 use wire::rooms::DesignCycle;
 
-use super::{DesignStanding, RoomProjection, prepared_open_count};
+use super::{DesignStanding, RoomProjection, associated, design_dependent_count};
 use crate::work::tests::{board, claim, stamp, task};
 
 fn design(active: bool) -> BoardTask {
@@ -162,33 +162,28 @@ fn terminal_standing_outranks_retained_group_membership() {
     assert_eq!(light(vec![deleted]), DesignStanding::Deleted);
 }
 
-fn prepared(number: i64, parent: i64, controller: i64, construction: i64) -> BoardTask {
-    let mut task = task(number, "rooms.output");
-    task.statement.body.preparation = Some(wire::TaskPreparation {
-        parent: stamp(parent),
-        controller: stamp(controller),
-        construction: stamp(construction),
-    });
-    task
-}
-
 #[test]
-fn prepared_open_count_admits_each_direct_role_once_and_excludes_retained_rows() {
-    let design = stamp(1);
-    let mut board = board(vec![
-        prepared(2, 1, 20, 21),
-        prepared(3, 30, 1, 31),
-        prepared(4, 40, 41, 1),
-        prepared(5, 1, 1, 1),
-        prepared(6, 60, 61, 62),
-    ]);
-    let mut terminal = prepared(7, 1, 70, 71);
-    terminal.workflow.body.status = wire::WorkflowStatus::completed(
-        "2026-10-14T00:00:00.000Z"
-            .parse()
-            .expect("fixture completion"),
-    );
-    board.room_anchors.push(terminal);
+fn design_membership_tracks_each_current_dependency_edge() {
+    let first = stamp(1);
+    let second = stamp(9);
+    let mut shared = task(2, "rooms.shared");
+    shared.statement.body.dependencies = vec![first.clone(), second.clone()];
+    let mut selected_by_first = task(3, "rooms.selected");
+    selected_by_first.statement.body.dependencies = vec![second.clone()];
+    selected_by_first.statement.body.preparation = Some(wire::TaskPreparation {
+        parent: first.clone(),
+        controller: first.clone(),
+        construction: selected_by_first.statement.body.born.clone(),
+    });
+    let unrelated = task(4, "rooms.unrelated");
+    let board = board(vec![shared.clone(), selected_by_first.clone(), unrelated]);
 
-    assert_eq!(prepared_open_count(&board, &design), 4);
+    assert_eq!(design_dependent_count(&board, &first), 1);
+    assert_eq!(design_dependent_count(&board, &second), 2);
+    assert!(associated(&shared.statement.body, &first));
+    assert!(associated(&shared.statement.body, &second));
+    assert!(
+        !associated(&selected_by_first.statement.body, &first),
+        "provenance does not keep a selected output in its former Design room",
+    );
 }

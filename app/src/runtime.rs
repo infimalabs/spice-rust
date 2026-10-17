@@ -52,7 +52,7 @@ pub use rooms::{
     ParticipantReason, PreparationProjection, QuestionResult, Relevance, ResumeAutomation,
     RoomAnchorAuthority, RoomAnchorSettlement, RoomEvent, RoomEventKind, RoomParticipant,
     RoomPositioned, RoomProjection, RoomProjectionStatus, RoomState, associated,
-    prepared_open_count,
+    design_dependent_count,
 };
 use scoped::ScopedValue;
 pub use stale::{Stale, stale_reads};

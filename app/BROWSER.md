@@ -169,11 +169,12 @@ group name; a departure or coordination never displaces it.
 
 As on a team's rail, the group's total leads its tab rail and opens the group's
 work overview. After it, toward the end, the rail lists each lane that holds an
-active claim on an open task
-associated with any of the group's designs: the design itself, or a task
-whose preparation parent, controller, or construction is that design. A lane
-enters and leaves the rail exactly as a task enters and leaves a team's rail
-as board facts change, appears once in its canonical team accent, and replaces
+active claim on an open task associated with any of the group's designs: the
+Design itself, or a task with a direct dependency on that Design. Removing one
+Design edge releases the task only from that Design; another Design edge keeps
+the task on its other group rail. A lane enters and leaves the rail exactly as
+a task enters and leaves a team's rail as board facts change, appears once in
+its canonical team accent, and replaces
 the associated task handle. Activating an admitted lane opens its composer in
 Chat, whose team plane holds its history; a lane with no Chat seat stays a
 plain label.
@@ -181,7 +182,7 @@ plain label.
 A design's composer posts the guarded native room-post command to exactly that
 design's room on **Post** or Control/Command+Enter. Its empty back uses three
 lines ordered from durable context to live detail: handle then current title;
-workflow phase and standing then claimant; directly prepared open-task count
+workflow phase and standing then claimant; directly dependent open-task count
 then room-post count. Those facts come from the current board and room
 projection on every render. Quoting
 an operator-authored card drafts a

@@ -19,8 +19,8 @@ its offered order. Every selected root stays visible however large the set.
 Work-scope selections are durable overlay locations with one canonical grammar:
 `#/work` for all open execution work; `#/work/stem/public/{stem}` and
 `#/work/stem/hidden/{stem}` for one visibility-qualified execution stem;
-`#/work/planning` for all Design-owned work;
-`#/work/planning/public/{stem}` and
+`#/work/planning` for open Designs and work with a direct dependency on at
+least one open Design; `#/work/planning/public/{stem}` and
 `#/work/planning/hidden/{stem}` for one planning stem;
 `#/work/team/{uuid}` for a team; and `#/work/group/{room-stamp}` for a working
 group. A stem is its admitted lowercase `[0-9a-z_]+` spelling and occupies one
@@ -41,11 +41,10 @@ The admitted-board graph renders first, including every selected root, roots
 with no edges, and explicit outside-board or outside-selection neighbors. The
 same graph offers Dependency, Lineage, Reviews, and Lifecycle lenses. A
 Dependency edge points from each prerequisite to every dependent it blocks and
-reads **then**. The same lens draws a **then** arrow from each Design to every
-Plan it prepared, so the Design's Plans flow from it rather than stacking; a
-selected Plan's controller outside the selection joins as an outside neighbor.
-That arrow presents the recorded preparation and is never a dependency or an
-inherited-control shortcut to work beneath the Plan.
+reads **then**. Design control uses that same edge: an unselected Plan flows
+from each Design it depends on, and selection by one Design removes only that
+Design's edge. No preparation-only edge or inherited-control shortcut reaches
+work beneath the Plan.
 Direction and depth/node controls bound only optional resident enrichment,
 never the local selection; first-load, unavailable, retry, and truncation or
 frontier states never replace or silently omit a selected root. A node the
@@ -185,9 +184,9 @@ execution summaries, and preparation candidates until `spice task file`
 admits it.
 
 `spice task oops` instead records a filed Plan directly under the current
-repository-owned OOPS Design. Those Plans stay behind that Design's preparation
-gate until the operator accepts or rejects each line in its composed candidate;
-there is no separate OOPS filing state or filing action.
+repository-owned OOPS Design. Those Plans stay behind that Design's ordinary
+dependency edge until the operator accepts or rejects each line in its
+composed candidate; there is no separate OOPS filing state or filing action.
 
 The Spice view's **Drafts** section follows Jobs. It lists each open Draft the
 operator can read, then keeps the Task/Plan/Design creator behind one compact
