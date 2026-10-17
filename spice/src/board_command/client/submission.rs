@@ -335,7 +335,6 @@ pub(super) fn client_oops(
     submit_oops_add(
         repository,
         contract,
-        text.clone(),
         text,
         origin,
         matches.get_one::<String>("project").cloned(),
@@ -348,7 +347,6 @@ pub(super) fn submit_oops_add(
     repository: &Repository,
     contract: &Contract,
     title: String,
-    description: String,
     origin: Option<wire::Origin>,
     project: Option<String>,
 ) -> Outcome<CommandAnswer> {
@@ -426,7 +424,6 @@ pub(super) fn submit_oops_add(
                     serde_json::to_value(TaskOopsAdd {
                         design,
                         title: title.clone(),
-                        description: description.clone(),
                         origin: origin.clone(),
                         project: project.clone(),
                     })

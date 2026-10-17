@@ -55,7 +55,6 @@ fn add_line(
         &TaskOopsAdd {
             design: design.clone(),
             title: text.to_owned(),
-            description: text.to_owned(),
             origin: Some(fixture_origin()),
             project: Some("board.test".to_owned()),
         },
@@ -85,7 +84,6 @@ fn concurrent_distinct_first_reports_converge_on_one_oops_design() {
     let add = |design: TaskStamp, text: &str| TaskOopsAdd {
         design,
         title: text.to_owned(),
-        description: text.to_owned(),
         origin: Some(fixture_origin()),
         project: Some("board.test".to_owned()),
     };
@@ -181,7 +179,6 @@ fn unrelated_board_churn_does_not_refuse_oops_intake() {
         &TaskOopsAdd {
             design,
             title: "Report after unrelated churn".to_owned(),
-            description: "Report after unrelated churn".to_owned(),
             origin: Some(fixture_origin()),
             project: Some("board.test".to_owned()),
         },
