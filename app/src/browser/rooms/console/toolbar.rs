@@ -32,6 +32,7 @@ pub(super) fn render(render: &GroupRender<'_, '_>, view: &GroupView, channels: &
         <header class="team-toolbar">
             {render_rail(render, view, channels)}
             <div class="app-glass-control-surface app-status-band team-status-row">
+                {render_ticker(render, channels, &standings)}
                 <span
                     class="team-lights"
                     role="group"
@@ -40,7 +41,6 @@ pub(super) fn render(render: &GroupRender<'_, '_>, view: &GroupView, channels: &
                 >
                     {for channels.iter().zip(&standings).map(|(channel, standing)| render_light(channel, *standing))}
                 </span>
-                {render_ticker(render, channels, &standings)}
             </div>
         </header>
     }
