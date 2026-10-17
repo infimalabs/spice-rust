@@ -98,10 +98,10 @@ Owners: [`wire/src/manifest/renderer.rs`](../../wire/src/manifest/renderer.rs),
 [`app/renderer/renderer-000.txt`](../../app/renderer/renderer-000.txt). Which
 activity becomes a Mosaic card lives in [Mosaic card lineage](mosaic-rust.md).
 
-Each staged generation G also has one canvas archive, `generations/G.zip`,
-beside its unzipped directory, which stays the development hot-swap source. G
-is the identity the shell names in every qualified route, not the archive
-digest. Members are sorted by logical path. Each member is one deterministic
+Each staged generation G also has one app ZIP, `generations/G.zip`, beside its
+unzipped directory, which stays the development hot-swap source. G is the
+identity the shell names in every qualified route, not the archive digest.
+Members are sorted by logical path. Each member is one deterministic
 gzip stream (fixed header, one pinned deflate implementation and level) stored
 in ZIP with method STORE and the fixed 1980-01-01 time. The archive has no data
 descriptors, extra fields, comments, encryption, or ZIP64. Its bytes are
@@ -115,20 +115,21 @@ digest, not on ZIP CRC fields. Owners:
 [`serve/src/canvas/archive.rs`](../../serve/src/canvas/archive.rs) writes and
 admits the archive, and [`xtask/src/app.rs`](../../xtask/src/app.rs) stages it.
 
-The `canvas` crate declares the two symbols a relocatable object defines: the
-archive bytes alone in their own read-only section, and their length. The
-process reads its app as a direct static slice without parsing its own image.
-Only builds that enable the `spice/canvas` feature resolve the crate, and those
-builds write the object for the staged archive and hand it to the final link
-through `cargo rustc`. The object's name carries the archive digest, so a new
-archive relinks the executable and rebuilds nothing else.
+The `canvas` crate declares the two symbols a relocatable object defines:
+`spice_app_zip` at the archive's first byte and `spice_app_zip_len` at its
+length. The linker resolves the first to a mapped address, so the process reads
+its app as a direct static slice without storing a file offset or parsing its
+own image. Only builds that enable the `spice/canvas` feature resolve the crate,
+and those builds write the object for the staged archive and hand it to the
+final link through `cargo rustc`. The object's name carries the archive digest,
+so a new archive relinks the executable and rebuilds nothing else.
 [`spice/src/version.rs`](../../spice/src/version.rs) admits the linked archive
 once. An installed resident without one refuses with
 `serve::canvas-archive-absent`, or `serve::canvas-archive-invalid` when it does
-not admit. The installed executable is the only canvas carrier. Install
-publishes no app file and binds the generation G that its linked archive
-names. `xtask report` admits the installed executable by that same receipt and
-archive check. Install schema 18 published app sidecars. It is a one-crossing
+not admit. The installed executable is the only app carrier. Install
+publishes no app file and binds the generation G that its linked archive names.
+`xtask report` admits it by that same receipt and archive check.
+Install schema 18 published app sidecars. It is a one-crossing
 boundary: `spice install` alone reads a complete schema-18 receipt and
 discards the sidecars it owned. Owners: [`canvas/src/lib.rs`](../../canvas/src/lib.rs)
 for the symbols, [`dist/src/canvas.rs`](../../dist/src/canvas.rs) for writing

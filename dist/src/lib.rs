@@ -1,8 +1,8 @@
 //! Deterministic distribution build and staging orchestration.
 //!
 //! Heavyweight build adapters live at the rim. This crate owns their order,
-//! pin admission, content identities, stage layout, and receipt-free wire
-//! payload. A pin mismatch returns before any builder method is called.
+//! pin admission, content identities, stage layout, receipt-free wire payload,
+//! and the embedded app ZIP. A pin mismatch returns before any builder call.
 
 mod authority;
 mod canvas;

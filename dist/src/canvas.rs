@@ -1,4 +1,4 @@
-//! The canvas archive linked into one appliance executable.
+//! The app ZIP linked into one appliance executable.
 //!
 //! The release target build and `spice dev xtask -- install` link one object
 //! that places the staged archive in a retained read-only section. A build
@@ -9,16 +9,16 @@
 
 use wire::{Digest, Domain};
 
-/// Segment holding the canvas section on Mach-O.
+/// Segment holding the app ZIP section on Mach-O.
 const MACHO_SEGMENT: &[u8] = b"__TEXT";
-/// Canvas section on Mach-O.
-const MACHO_SECTION: &[u8] = b"__spice_canvas";
-/// Canvas section on ELF.
-const ELF_SECTION: &[u8] = b".spice_canvas";
-/// First archive byte, as the `canvas` crate declares it.
-const ARCHIVE_SYMBOL: &[u8] = b"spice_canvas_archive";
-/// The archive length as a little-endian `u64`, as the `canvas` crate declares it.
-const LENGTH_SYMBOL: &[u8] = b"spice_canvas_archive_len";
+/// App ZIP section on Mach-O.
+const MACHO_SECTION: &[u8] = b"spice_app_zip";
+/// App ZIP section on ELF.
+const ELF_SECTION: &[u8] = b".spice_app_zip";
+/// First ZIP byte, as the `canvas` crate declares it.
+const ARCHIVE_SYMBOL: &[u8] = b"spice_app_zip";
+/// The ZIP length as a little-endian `u64`, as the `canvas` crate declares it.
+const LENGTH_SYMBOL: &[u8] = b"spice_app_zip_len";
 
 const MACHO_MAGIC_64: u32 = 0xfeed_facf;
 const MACHO_HEADER_BYTES: usize = 32;
@@ -74,7 +74,7 @@ impl ObjectTarget {
 
 /// The relocatable object that links `archive` into one executable for `target`.
 ///
-/// The canvas section holds the archive bytes alone, so the final image's
+/// The app ZIP section holds the archive bytes alone, so the final image's
 /// section is byte-for-byte what [`Canvas::verify_linked`] compares; its
 /// length sits in a read-only constant section. Both are named by global data
 /// symbols the `canvas` crate declares, which is what keeps the linker from
@@ -156,7 +156,7 @@ fn macho_object(archive: &[u8], cpu: u32, subtype: u32, minos: u32) -> Vec<u8> {
 fn elf_object(archive: &[u8], machine: u16) -> Vec<u8> {
     let (section_names, section_offsets) = string_table(&[
         ELF_SECTION,
-        b".rodata.spice_canvas_len",
+        b".rodata.spice_app_zip_len",
         b".note.GNU-stack",
         b".symtab",
         b".strtab",
@@ -270,14 +270,14 @@ fn put64(out: &mut Vec<u8>, values: &[u64]) {
 }
 
 fn word(value: usize) -> u32 {
-    u32::try_from(value).expect("a canvas object offset fits in 32 bits")
+    u32::try_from(value).expect("an app ZIP object offset fits in 32 bits")
 }
 
 fn wide(value: usize) -> u64 {
     value as u64
 }
 
-/// The staged canvas archive one build links: generation G and its exact bytes.
+/// The staged app ZIP one build links: generation G and its exact bytes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Canvas {
     generation: Digest,
@@ -314,7 +314,7 @@ impl Canvas {
         self.bytes
     }
 
-    /// Refuse a final executable whose canvas section is not exactly this archive.
+    /// Refuse a final executable whose app ZIP section is not exactly this archive.
     ///
     /// # Errors
     ///
@@ -350,24 +350,24 @@ impl Canvas {
     }
 }
 
-/// Why a final executable's canvas section was refused.
+/// Why a final executable's app ZIP section was refused.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CanvasError {
     #[error("executable is neither a 64-bit little-endian Mach-O nor ELF image")]
     Format,
     #[error("executable {0} is malformed")]
     Malformed(&'static str),
-    #[error("executable carries no canvas section")]
+    #[error("executable carries no app ZIP section")]
     Absent,
-    #[error("executable carries more than one canvas section")]
+    #[error("executable carries more than one app ZIP section")]
     Repeated,
-    #[error("executable canvas section {observed} differs from the staged archive {expected}")]
+    #[error("executable app ZIP section {observed} differs from the staged archive {expected}")]
     Mismatch { expected: Digest, observed: Digest },
     #[error("executable version report does not name its app generation: {0:?}")]
     Report(String),
 }
 
-/// The archive bytes inside a final executable's canvas section.
+/// The archive bytes inside a final executable's app ZIP section.
 ///
 /// # Errors
 ///
@@ -452,7 +452,9 @@ fn elf(image: &[u8]) -> Result<&[u8], CanvasError> {
             .ok_or(CanvasError::Malformed("section name"))?;
         if name == ELF_SECTION {
             if read_u32(image, section + 4)? == SHT_NOBITS {
-                return Err(CanvasError::Malformed("canvas section holds no file bytes"));
+                return Err(CanvasError::Malformed(
+                    "app ZIP section holds no file bytes",
+                ));
             }
             let offset = read_u64(image, section + 24)?;
             let bytes = read_u64(image, section + 32)?;

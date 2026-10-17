@@ -233,7 +233,7 @@ impl Executor for FakeExecutor {
     }
 }
 
-/// A linkable ELF object whose `.spice_canvas` holds `archive`, followed by
+/// A linkable ELF object whose `.spice_app_zip` holds `archive`, followed by
 /// `tag` so each processing step leaves distinct executable bytes.
 fn linked(archive: &[u8], tag: &[u8]) -> Vec<u8> {
     let mut image = dist::canvas_object(archive, dist::ObjectTarget::LinuxX86_64);

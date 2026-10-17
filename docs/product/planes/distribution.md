@@ -71,20 +71,23 @@ artifact digest, and a plan-keyed executable copy of it must succeed at
 
 **Invariant —** A release has exactly two target payloads, in canonical order:
 `aarch64-apple-darwin` and `x86_64-unknown-linux-musl`. Each receipt-free payload
-binds its target, source identity, app generation G, the digest of the canvas
-archive its executable links, native executable, build pins, and artifact
-inventory, and both bind the source digest of the already-versioned release
-commit. Both targets bind the same G and archive digest. The inventory carries
-no app files: the executable is the app's only carrier.
+binds its target, source identity, app generation G, the digest of the app ZIP
+its executable links, native executable, build pins, and artifact inventory,
+and both bind the source digest of the already-versioned release commit. Both
+targets bind the same G and archive digest. The inventory carries no app files:
+the executable is the app's only carrier.
 
-**Invariant —** Every appliance executable links its canvas archive. The
-release target build and `spice dev xtask -- install` read the staged
+**Invariant —** Every appliance executable links its app ZIP. The release
+target build and `spice dev xtask -- install` read the staged
 `generations/G.zip` once and admit it as G. They link it as one retained
-read-only section (`__TEXT,__spice_canvas` on Mach-O, `.spice_canvas` on ELF),
+read-only section (`__TEXT,spice_app_zip` on Mach-O, `.spice_app_zip` on ELF),
 then derive symbols, strip, and sign, in that order. No step appends bytes
-after linking, which would fail strict code-signature verification. The final
-executable is then refused unless its section's bytes are the staged archive
-and its one version report names G. Only these builds write the object
+after linking, which would fail strict code-signature verification. The
+section header remains the canonical file offset and length for an external
+extractor. The running process stores neither: the linker resolves
+`spice_app_zip` and `spice_app_zip_len` to the mapped address and byte length.
+The final executable is refused unless its section's bytes are the staged
+archive and its one version report names G. Only these builds write the object
 carrying the archive and enable the `canvas` feature that names its symbols,
 so no compile step reads a file outside the selected tree. A resident whose
 executable carries no archive refuses installed serving at startup.
