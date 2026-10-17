@@ -98,13 +98,20 @@ After installing the declared Homebrew bottles (`xwin`, `llvm@20`, and
 `lld@20`), materialize the CRT and SDK with:
 
 ```sh
-spice dev xtask -- windows-msvc --operator-acceptance dWJtpZkw1
+spice dev xtask -- windows-msvc
 ```
 
-The command refuses any other acceptance identity, verifies xwin before it
-downloads Microsoft payloads, verifies both manifests before splatting, and
-publishes a read-only, content-addressed generation under the bootstrap Cargo
-home. A Cargo invocation selecting `x86_64-pc-windows-msvc` rehashes that
+The explicit command consumes the acceptance named by the declaration; callers
+do not repeat that key. Before invoking xwin it resolves the key against the
+repository journal and requires its original record to be a human principal
+holding the operator role whose text accepts the applicable Microsoft Software
+License Terms for both the Microsoft CRT and Windows SDK. An absent, malformed,
+non-operator, or unrelated record refuses. The command then verifies xwin
+before it downloads Microsoft payloads, verifies both manifests before
+splatting, and publishes a read-only, content-addressed generation under the
+bootstrap Cargo home.
+
+A Cargo invocation selecting `x86_64-pc-windows-msvc` rehashes that
 generation and the pinned host LLVM tools before launch. Only that target gets
 the `cl.exe`, `ml64.exe`, `lib.exe`, and `link.exe` wrappers: they resolve to
 the admitted clang-cl, llvm-ml, llvm-lib, and lld-link bytes, and clang-cl
@@ -113,9 +120,9 @@ instead of falling back to Apple's compiler, ambient headers, or another
 toolchain.
 
 Owners: [`spice/src/cargo_isolation/windows_msvc.rs`](../../spice/src/cargo_isolation/windows_msvc.rs)
-for materialization, verification, and Cargo binding, and
-[`xtask/src/windows_msvc.rs`](../../xtask/src/windows_msvc.rs) for the explicit
-licence-bearing developer command.
+for recorded-acceptance admission, materialization, verification, and Cargo
+binding, and [`xtask/src/windows_msvc.rs`](../../xtask/src/windows_msvc.rs) for
+the explicit materialization command.
 
 ## App and renderers
 

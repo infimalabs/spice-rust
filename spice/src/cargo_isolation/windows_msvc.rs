@@ -20,6 +20,11 @@ const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
 const SCHEMA: u64 = 1;
 const LAYOUT_VERSION: u64 = 3;
 const SHA256_HEX_LENGTH: usize = 64;
+const LICENSE_ACCEPTANCE_PHRASES: [&str; 3] = [
+    "i accept the applicable microsoft software license terms",
+    "microsoft crt",
+    "windows sdk",
+];
 
 #[derive(Clone, Debug, Deserialize)]
 struct Declaration {
@@ -75,30 +80,30 @@ struct Admitted {
     declaration: Declaration,
 }
 
-/// Materialize the declared Windows CRT and SDK after exact operator acceptance.
+/// Materialize the declared Windows CRT and SDK under the recorded operator
+/// acceptance.
 ///
 /// The xwin and LLVM executables must already be installed at the pinned paths;
 /// this surface verifies their bytes before xwin can fetch Microsoft payloads.
 ///
 /// # Errors
 ///
-/// Refuses an absent/mismatched acceptance, malformed declaration, altered host
-/// tool, changed upstream manifest, failed xwin run, or corrupt publication.
+/// Refuses an absent or malformed recorded acceptance, malformed declaration,
+/// altered host tool, changed upstream manifest, failed xwin run, or corrupt
+/// publication.
 pub fn materialize(
     repository: &Path,
     bootstrap_home: &Path,
-    acceptance: &str,
+    authority: &Path,
 ) -> Result<WindowsMsvcReport, IsolationError> {
     let (declaration, generation) = read_declaration(repository)?;
-    if acceptance != declaration.operator_acceptance {
-        return Err(IsolationError::new(
+    let authority = journal::JournalReader::open(authority).map_err(|error| {
+        IsolationError::new(
             "cargo-isolation::windows-msvc-license-unaccepted",
-            format!(
-                "materialization requires recorded operator acceptance {:?}",
-                declaration.operator_acceptance
-            ),
-        ));
-    }
+            format!("cannot read recorded operator acceptance: {error}"),
+        )
+    })?;
+    require_operator_acceptance(&authority, &declaration.operator_acceptance)?;
     verify_tools(&declaration)?;
     let generations = bootstrap_home.join(STORE).join("generations");
     fs::create_dir_all(&generations).map_err(|error| {
@@ -513,6 +518,18 @@ fn read_declaration(repository: &Path) -> Result<(Declaration, String), Isolatio
             ),
         ));
     }
+    declaration
+        .operator_acceptance
+        .parse::<steer::Key>()
+        .map_err(|error| {
+            IsolationError::new(
+                "cargo-isolation::windows-msvc-declaration-invalid",
+                format!(
+                    "{} records an invalid operator acceptance: {error}",
+                    path.display()
+                ),
+            )
+        })?;
     for digest in [
         &declaration.channel_manifest_sha256,
         &declaration.package_manifest_sha256,
@@ -526,6 +543,61 @@ fn read_declaration(repository: &Path) -> Result<(Declaration, String), Isolatio
     }
     let generation = generation_digest(&bytes);
     Ok((declaration, generation))
+}
+
+fn require_operator_acceptance(
+    authority: &journal::JournalReader,
+    key: &str,
+) -> Result<(), IsolationError> {
+    let text = authority
+        .read(|read| {
+            let Some(presentation) = bus::SteeringPresentation::read(read, key)? else {
+                return Ok(None);
+            };
+            let actor = &presentation.created().actor;
+            let roles = read.principal_roles()?;
+            let text = &presentation.head().body().text;
+            Ok(acceptance_record_authorized(actor, &roles, text).then(|| text.clone()))
+        })
+        .map_err(|error| {
+            IsolationError::new(
+                "cargo-isolation::windows-msvc-license-unaccepted",
+                format!("cannot resolve recorded operator acceptance {key:?}: {error}"),
+            )
+        })?
+        .ok_or_else(|| {
+            IsolationError::new(
+                "cargo-isolation::windows-msvc-license-unaccepted",
+                format!("{key:?} is not an operator-authored human directive"),
+            )
+        })?;
+    if acceptance_text_matches(&text) {
+        Ok(())
+    } else {
+        Err(IsolationError::new(
+            "cargo-isolation::windows-msvc-license-unaccepted",
+            format!(
+                "{key:?} does not record acceptance of the Microsoft CRT and Windows SDK terms"
+            ),
+        ))
+    }
+}
+
+fn acceptance_record_authorized(
+    actor: &wire::Actor,
+    roles: &wire::principal::PrincipalRoles,
+    text: &str,
+) -> bool {
+    matches!(actor, wire::Actor::Human(_))
+        && roles.holds(actor, wire::principal::PrincipalRole::Operator)
+        && acceptance_text_matches(text)
+}
+
+fn acceptance_text_matches(text: &str) -> bool {
+    let normalized = text.to_ascii_lowercase();
+    LICENSE_ACCEPTANCE_PHRASES
+        .iter()
+        .all(|phrase| normalized.contains(phrase))
 }
 
 fn verify_tools(declaration: &Declaration) -> Result<(), IsolationError> {
@@ -850,5 +922,36 @@ mod tests {
             "cargo-isolation::windows-msvc-toolchain-corrupt"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn licence_acceptance_requires_an_operator_human_and_the_named_terms() {
+        let principal = "018f82d4-6f59-7d06-92e3-bce913116399".parse().unwrap();
+        let operator = wire::Actor::Human(principal);
+        let roles = wire::principal::PrincipalRoles::new([wire::principal::PrincipalHead {
+            principal,
+            born: wire::Seq(std::num::NonZeroU64::new(1).unwrap()),
+            profile: wire::principal::PrincipalProfile::default(),
+            roles: std::collections::BTreeSet::from([wire::principal::PrincipalRole::Operator]),
+            capability: None,
+        }]);
+        let accepted = "I accept the applicable Microsoft Software License Terms for the \
+                        Microsoft CRT and Windows SDK components.";
+        assert!(acceptance_record_authorized(&operator, &roles, accepted));
+        assert!(!acceptance_record_authorized(
+            &wire::Actor::Lane(principal),
+            &roles,
+            accepted
+        ));
+        assert!(!acceptance_record_authorized(
+            &wire::Actor::Operator,
+            &roles,
+            accepted
+        ));
+        assert!(!acceptance_record_authorized(
+            &operator,
+            &roles,
+            "Install the Microsoft CRT and Windows SDK."
+        ));
     }
 }
