@@ -21,6 +21,7 @@ pub(crate) struct Stored<'a> {
     tasks: BTreeMap<String, Option<TaskPreparation>>,
     task_statements: BTreeMap<String, Seq>,
     task_intents: BTreeMap<String, Option<wire::TaskIntent>>,
+    task_dependencies: BTreeMap<String, Vec<TaskStamp>>,
     active_claims: BTreeMap<String, Option<Seq>>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
     directions: BTreeMap<String, Direction>,
@@ -34,6 +35,7 @@ impl<'a> Stored<'a> {
             tasks: BTreeMap::new(),
             task_statements: BTreeMap::new(),
             task_intents: BTreeMap::new(),
+            task_dependencies: BTreeMap::new(),
             active_claims: BTreeMap::new(),
             transcripts: BTreeMap::new(),
             directions: BTreeMap::new(),
@@ -88,6 +90,26 @@ impl Authority for Stored<'_> {
 
     fn set_task_intent(&mut self, task: &TaskStamp, intent: Option<wire::TaskIntent>) {
         self.task_intents.insert(task.to_string(), intent);
+    }
+    fn task_dependencies(&self, task: &TaskStamp) -> Result<Option<Vec<TaskStamp>>, Refusal> {
+        if let Some(dependencies) = self.task_dependencies.get(task.as_str()) {
+            return Ok(Some(dependencies.clone()));
+        }
+        let body = self
+            .connection
+            .query_row(
+                "SELECT body FROM task_heads WHERE stamp = ?1",
+                [task.as_str()],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()?;
+        body.map(|body| Ok(wire::decode::<wire::TaskHead>(&body)?.dependencies))
+            .transpose()
+    }
+
+    fn set_task_dependencies(&mut self, task: &TaskStamp, dependencies: Vec<TaskStamp>) {
+        self.task_dependencies
+            .insert(task.to_string(), dependencies);
     }
     fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal> {
         if let Some(statement) = self.task_statements.get(task.as_str()) {
@@ -264,13 +286,6 @@ impl Authority for Stored<'_> {
              AND json_extract(CAST(body AS TEXT), '$.outcome.candidate.candidate') = ?2 \
              LIMIT 1",
             params![candidate.controller.as_str(), candidate.candidate.as_str()],
-        )
-    }
-
-    fn output_authorized(&self, output: &str) -> Result<bool, Refusal> {
-        self.exists(
-            "SELECT 1 FROM authorization_heads WHERE output = ?1",
-            [output],
         )
     }
 
@@ -645,10 +660,12 @@ impl Projection {
                 connection,
                 "SELECT output, decision, head_seq, body FROM authorization_heads",
                 |row| {
+                    let output: String = row.get(0)?;
+                    let decision: String = row.get(1)?;
                     Ok((
-                        row.get(0)?,
+                        (output, decision.clone()),
                         AuthorizationRow {
-                            decision: row.get(1)?,
+                            decision,
                             seq: unsql(row.get(2)?),
                             body: row.get(3)?,
                         },
@@ -733,7 +750,7 @@ pub(crate) fn write_projection(
     for (subject, row) in &projection.proposals {
         insert_proposal(connection, subject, row)?;
     }
-    for (output, row) in &projection.authorizations {
+    for ((output, _), row) in &projection.authorizations {
         insert_authorization(connection, output, row)?;
     }
     for (lane, (seq, body)) in &projection.cursors {
@@ -838,10 +855,9 @@ pub(crate) fn settle_controls<'a>(
                 let head = stored::<wire::TaskHead>(connection, STATEMENT, output)?;
                 if !head.is_some_and(|(_, head)| {
                     head.revision == seq
-                        && head.preparation.as_ref().is_some_and(|preparation| {
-                            preparation.parent == authorization.decision.controller
-                                && !head.dependencies.contains(&preparation.parent)
-                        })
+                        && !head
+                            .dependencies
+                            .contains(&authorization.decision.controller)
                 }) {
                     return unsound(format!(
                         "selected output {output} authorization at {seq} has no task head \

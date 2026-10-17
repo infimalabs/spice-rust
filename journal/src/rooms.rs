@@ -1,12 +1,12 @@
 //! Room, working-group, and preparation authority folded from immutable facts.
 //!
-//! Facts own every room-authority value; the tables declared here are its
-//! current projection: room publication positions, working-group heads with
-//! their ordered anchors, write-once proposal heads, and one authorization head
-//! per selected output. One fold derives that projection. A commit runs it
-//! against stored authority before any head moves, so an unsound reference
-//! refuses the whole write; verification and reindexing run it over the
-//! complete history, so a stored row is only ever one the fold derives.
+//! The current projection: room publication positions, working-group heads with
+//! their ordered anchors, write-once proposal heads, and one authorization
+//! record per selected output and decision. One fold derives that projection.
+//! A commit runs it against stored authority before any head moves, so an
+//! unsound reference refuses the whole write; verification and reindexing run
+//! it over the complete history, so a stored row is only ever one the fold
+//! derives.
 //!
 //! Source bytes stay with their owners: a projection row names a fact
 //! position, a task, or a canonical link, never copied conversation text.
@@ -79,11 +79,12 @@ CREATE TABLE proposal_heads (
 ) STRICT;
 CREATE INDEX proposal_heads_controller_seq ON proposal_heads(controller, head_seq);
 CREATE TABLE authorization_heads (
-    output TEXT PRIMARY KEY,
+    output TEXT NOT NULL,
     decision TEXT NOT NULL,
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-    body BLOB NOT NULL
-) STRICT;
+    body BLOB NOT NULL,
+    PRIMARY KEY (output, decision)
+) STRICT, WITHOUT ROWID;
 CREATE INDEX authorization_heads_decision ON authorization_heads(decision);
 "#;
 
@@ -170,7 +171,7 @@ pub(crate) struct ProposalRow {
     pub(crate) body: Vec<u8>,
 }
 
-/// One stored authorization head for a selected output.
+/// One stored authorization record for one selected output and decision.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AuthorizationRow {
     pub(crate) decision: String,
@@ -193,8 +194,8 @@ pub(crate) struct Projection {
     pub(crate) partition: Option<(u64, Vec<u8>)>,
     /// Canonical proposal subject to its write-once head.
     pub(crate) proposals: BTreeMap<String, ProposalRow>,
-    /// Selected output to its authorization head.
-    pub(crate) authorizations: BTreeMap<String, AuthorizationRow>,
+    /// `(selected output, decision)` to its authorization record.
+    pub(crate) authorizations: BTreeMap<(String, String), AuthorizationRow>,
     /// Logical lane to its catch-up cursor head position and canonical body.
     pub(crate) cursors: BTreeMap<String, (u64, Vec<u8>)>,
     /// Logical lane to its catch-up horizon position and canonical body.
@@ -226,6 +227,10 @@ pub(crate) trait Authority {
     fn task_intent(&self, task: &TaskStamp) -> Result<Option<Option<wire::TaskIntent>>, Refusal>;
     /// Record an admitted task's declared intent.
     fn set_task_intent(&mut self, task: &TaskStamp, intent: Option<wire::TaskIntent>);
+    /// Current ordinary dependency edges of an existing task.
+    fn task_dependencies(&self, task: &TaskStamp) -> Result<Option<Vec<TaskStamp>>, Refusal>;
+    /// Replace one task's replay-visible ordinary dependencies.
+    fn set_task_dependencies(&mut self, task: &TaskStamp, dependencies: Vec<TaskStamp>);
     /// Current statement head position of one task, when it exists.
     fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal>;
     /// Record one task statement mutation.
@@ -259,8 +264,6 @@ pub(crate) trait Authority {
     fn proposal_author(&self, subject: &str) -> Result<Option<Actor>, Refusal>;
     /// Whether this exact candidate already has an operator decision.
     fn candidate_decided(&self, candidate: &wire::rooms::CandidateRef) -> Result<bool, Refusal>;
-    /// Whether this output already carries an authorization.
-    fn output_authorized(&self, output: &str) -> Result<bool, Refusal>;
     /// Whether this decision already authorized a selection.
     fn decision_authorized(&self, decision: &str) -> Result<bool, Refusal>;
     /// The room-coordination direction one steering key names, if any.
@@ -377,7 +380,8 @@ impl Projection {
             }
             Change::Authorization { outputs, row } => {
                 for output in outputs {
-                    self.authorizations.insert(output, row.clone());
+                    self.authorizations
+                        .insert((output, row.decision.clone()), row.clone());
                 }
             }
             Change::Cursor { lane, seq, body } => {
@@ -457,6 +461,7 @@ pub(crate) struct History {
     projection: Projection,
     tasks: BTreeMap<String, Option<TaskPreparation>>,
     task_intents: BTreeMap<String, Option<wire::TaskIntent>>,
+    task_dependencies: BTreeMap<String, Vec<TaskStamp>>,
     task_statements: BTreeMap<String, Seq>,
     active_claims: BTreeMap<String, Seq>,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
@@ -508,6 +513,14 @@ impl Authority for History {
 
     fn set_task_intent(&mut self, task: &TaskStamp, intent: Option<wire::TaskIntent>) {
         self.task_intents.insert(task.to_string(), intent);
+    }
+    fn task_dependencies(&self, task: &TaskStamp) -> Result<Option<Vec<TaskStamp>>, Refusal> {
+        Ok(self.task_dependencies.get(task.as_str()).cloned())
+    }
+
+    fn set_task_dependencies(&mut self, task: &TaskStamp, dependencies: Vec<TaskStamp>) {
+        self.task_dependencies
+            .insert(task.to_string(), dependencies);
     }
     fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal> {
         Ok(self.task_statements.get(task.as_str()).copied())
@@ -612,10 +625,6 @@ impl Authority for History {
             }
         }
         Ok(false)
-    }
-
-    fn output_authorized(&self, output: &str) -> Result<bool, Refusal> {
-        Ok(self.projection.authorizations.contains_key(output))
     }
 
     fn decision_authorized(&self, decision: &str) -> Result<bool, Refusal> {
@@ -731,6 +740,7 @@ pub(crate) fn fold(
     if let Some(body) = fact.read::<wire::body::OopsGenerationAdvanced>() {
         return advance_oops_generation(authority, seq, &body);
     }
+    track_task_dependencies(authority, fact);
     for task in fact.revised_tasks() {
         authority.set_task_statement(task, seq);
     }
@@ -1205,6 +1215,18 @@ fn cover(
     record(authority, seq, &proposal, controller, &coverage)
 }
 
+fn track_task_dependencies(authority: &mut impl Authority, fact: &AnyFact) {
+    if let Some(added) = fact.read::<wire::body::TaskAdded>() {
+        authority.set_task_dependencies(&added.task, added.depends);
+        return;
+    }
+    if let Some(edited) = fact.read::<wire::body::TaskEdited>()
+        && let Some(dependencies) = edited.dependencies
+    {
+        authority.set_task_dependencies(&edited.task, dependencies);
+    }
+}
+
 fn control(
     authority: &mut impl Authority,
     output: &TaskStamp,
@@ -1230,6 +1252,11 @@ fn control(
     ] {
         require_task(authority, task, "preparation")?;
     }
+    let mut dependencies = authority.task_dependencies(output)?.unwrap_or_default();
+    if !dependencies.contains(&preparation.parent) {
+        dependencies.push(preparation.parent.clone());
+    }
+    authority.set_task_dependencies(output, dependencies);
     authority.set_task(output, Some(preparation));
     Ok(())
 }

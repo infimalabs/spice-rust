@@ -182,24 +182,41 @@ impl JournalRead<'_> {
         Ok(Some(JournalHead::new(position, family(head.into_body()))))
     }
 
-    /// Current authorization of one selected output, absent while unauthorized.
+    /// Latest authorization that selected `output`, absent before any decision.
     pub fn authorization_head(
         &self,
         output: &wire::TaskStamp,
     ) -> Result<Option<JournalHead<ExecutionAuthorization>>, GuardError> {
-        let head = self.text_head::<ExecutionAuthorization>(
-            "authorization_heads",
-            "output",
-            output.as_str(),
-        )?;
-        if let Some(head) = &head
-            && !head.body.selected_outputs.contains(output)
-        {
+        read_metrics::observe_query();
+        let row = self
+            .connection
+            .query_row(
+                "SELECT head_seq, body FROM authorization_heads \
+                 WHERE output = ?1 ORDER BY head_seq DESC LIMIT 1",
+                [output.as_str()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        let Some((position, bytes)) = row else {
+            return Ok(None);
+        };
+        read_metrics::observe_row();
+        read_metrics::observe_decode(bytes.len());
+        let head: JournalHead<ExecutionAuthorization> = decode_head(position, &bytes)?;
+        if !head.body().selected_outputs.contains(output) {
             return Err(GuardError::Invalid(format!(
                 "authorization head indexed as {output} does not select it"
             )));
         }
-        Ok(head)
+        if self.cursor.is_none_or(|cursor| head.position() > cursor) {
+            return Err(GuardError::Invalid(format!(
+                "authorization head for {output} at {} is beyond cursor {:?}",
+                head.position(),
+                self.cursor.map(wire::Seq::get),
+            )));
+        }
+        Ok(Some(head))
     }
 
     /// One bounded journal-ordered page of retained preparation authority for

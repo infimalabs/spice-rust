@@ -172,6 +172,82 @@ fn preparation_commands_derive_review_authority_and_authorize_only_the_exact_sel
 }
 
 #[test]
+fn each_design_decision_removes_only_its_edge_from_a_shared_output() {
+    let (root, bus, epoch, seats) = fixture("preparation-shared-output", 2);
+    let first = add_controller(
+        &bus,
+        epoch,
+        "First selecting Design",
+        wire::TaskIntent::Design,
+        None,
+    );
+    group_design(&bus, epoch, &first);
+    let output = add_plan_output(&bus, epoch, &first, "Shared selected output");
+    let first_spare = add_plan_output(&bus, epoch, &first, "First spare");
+
+    let (first_candidate, first_source) =
+        retain_test_candidate(&bus, epoch, &seats, &first, &output, &first_spare);
+    record_test_critique(&bus, epoch, &seats, &first, &first_candidate, &first_source);
+    record_test_coverage(&bus, epoch, &seats, &first, &first_candidate, &first_source);
+    let second = add_controller(
+        &bus,
+        epoch,
+        "Second selecting Design",
+        wire::TaskIntent::Design,
+        None,
+    );
+    group_design(&bus, epoch, &second);
+    let second_spare = add_plan_output(&bus, epoch, &second, "Second spare");
+    connect_child(&bus, epoch, &output, &second);
+    let (second_candidate, second_source) =
+        retain_test_candidate(&bus, epoch, &seats, &second, &output, &second_spare);
+    record_test_critique(
+        &bus,
+        epoch,
+        &seats,
+        &second,
+        &second_candidate,
+        &second_source,
+    );
+    record_test_coverage(
+        &bus,
+        epoch,
+        &seats,
+        &second,
+        &second_candidate,
+        &second_source,
+    );
+
+    authorize_test_output(&bus, epoch, &first, &output, &first_spare, first_candidate);
+    assert!(
+        open_gated(&bus, epoch).contains(&output.born().expect("output stamp")),
+        "the second Design edge still gates the shared output"
+    );
+    authorize_test_output(
+        &bus,
+        epoch,
+        &second,
+        &output,
+        &second_spare,
+        second_candidate,
+    );
+    assert!(
+        !open_gated(&bus, epoch).contains(&output.born().expect("output stamp")),
+        "both exact Design edges were independently accepted"
+    );
+    for design in [&first, &second] {
+        let page = preparation_page(&root, &[design.as_str(), "--limit", "20"]);
+        assert!(
+            page["page"]["rows"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| row["kind"] == "authorization")),
+            "{design} retains its distinct authorization"
+        );
+    }
+    clean(&root, bus);
+}
+
+#[test]
 fn operator_selection_releases_outputs_and_leaves_the_design_unclaimed_and_open() {
     let (root, bus, epoch, seats) = fixture("preparation-held-selection", 2);
     let controller = add_controller(
@@ -654,6 +730,17 @@ fn candidate_witness(bus: &Bus, candidate: &CandidateRef) -> Witness {
     }
 }
 
+fn authorization_witness(bus: &Bus, output: TaskStamp) -> Witness {
+    let head = bus
+        .read({
+            let output = output.clone();
+            move |read| read.authorization_head(&output)
+        })
+        .expect("authorization head reads")
+        .map(|head| head.position());
+    Witness::Authorization { output, head }
+}
+
 fn select_candidate_outputs(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -670,10 +757,10 @@ fn select_candidate_outputs(
     let mut expected = transition_witnesses(at(&current, controller));
     for output in outputs {
         expected.extend(transition_witnesses(at(&current, output)));
-        expected.push(Witness::Authorization {
-            output: output.born().expect("output stamp"),
-            head: None,
-        });
+        expected.push(authorization_witness(
+            bus,
+            output.born().expect("output stamp"),
+        ));
     }
     expected.push(candidate_witness(bus, &candidate));
     expected.push(Witness::Proposal {

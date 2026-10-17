@@ -722,11 +722,11 @@ pub enum Witness {
         )]
         head: Option<Seq>,
     },
-    /// A selected output's current authorization head, or witnessed absence.
+    /// A selected output's latest authorization head, or witnessed absence.
     Authorization {
         /// Gated output whose exact selection is constrained.
         output: TaskStamp,
-        /// Current authorization head, absent while unauthorized.
+        /// Latest authorization head, absent before the first decision.
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
@@ -831,7 +831,7 @@ pub enum WitnessKind {
     OopsGeneration,
     /// One candidate, critique, coverage, or decision authority head.
     Proposal,
-    /// A selected output's current authorization head.
+    /// A selected output's latest authorization head.
     Authorization,
     /// One directed route's semantic receipt head.
     Delivery,
