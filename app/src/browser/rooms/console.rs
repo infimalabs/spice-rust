@@ -620,9 +620,9 @@ fn design_composer_placeholder(runtime: &AppRuntime, channel: &Channel) -> Strin
     let associated = board.map_or(0, |board| {
         crate::runtime::prepared_open_count(board, &channel.stamp)
     });
-    let (title_separator, title) = title.as_deref().map_or(("", ""), |title| (" · ", title));
+    let (title_separator, title) = title.as_deref().map_or(("", ""), |title| (": ", title));
     format!(
-        "{}{title_separator}{title}\n{phase} · {standing} · {claimant}\n{associated} {} · {posts} {}",
+        "{}{title_separator}{title}\n{phase}, {standing}, {claimant}\n{associated} {}, {posts} {}",
         channel.label,
         count_label(associated, "open task", "open tasks"),
         count_label(posts, "room post", "room posts"),
