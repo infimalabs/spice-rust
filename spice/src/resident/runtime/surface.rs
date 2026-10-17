@@ -1289,6 +1289,7 @@ fn accept_commit_turn(
             command_surface.config,
             seats,
             design_completions,
+            message_state,
             diagnostic,
         )?;
     }

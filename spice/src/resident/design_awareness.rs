@@ -133,9 +133,11 @@ pub(in crate::resident) fn reconcile(
     config: &SurfaceConfig,
     seats: &Seats,
     completions: &mut CompletionCursor,
+    profiles: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let completed = completions.take(bus)?;
+    retain_completed_evidence(&completed, profiles)?;
     if completed.is_empty() {
         return Ok(());
     }
@@ -152,6 +154,31 @@ pub(in crate::resident) fn reconcile(
                 request.lane, request.design
             );
         }
+    }
+    Ok(())
+}
+
+fn retain_completed_evidence(
+    completed: &[Completion],
+    profiles: &std::sync::Mutex<message_surface::MessageState>,
+) -> CommandResult<()> {
+    let mut state = message_surface::lock_state(profiles)?;
+    for completed in completed {
+        state.profiles.insert(
+            completed.lane,
+            completed.occupant,
+            spice::rooms::evidence::Evidence::task(
+                spice::rooms::profile::EvidenceKey::Task {
+                    task: completed.task.clone(),
+                    statement: completed.statement.revision,
+                    completion: completed.at,
+                },
+                &completed.statement.title,
+                completed.statement.description.as_deref(),
+                &completed.statement.acceptance,
+                &completed.validation,
+            ),
+        );
     }
     Ok(())
 }
