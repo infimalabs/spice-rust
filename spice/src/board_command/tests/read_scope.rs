@@ -200,6 +200,7 @@ fn scoped_reads_preserve_completed_dependencies_and_claim_conflicts_without_unre
         &TaskDone {
             task: completed.clone(),
             validation: "scoped history fixture".to_owned(),
+            disposition: None,
             operation: Some(TaskDone::operation_for_claim(
                 heads.claim.as_ref().expect("claim").body.claimed,
             )),
@@ -293,6 +294,7 @@ fn open_read_offers_the_full_board_allocation_order_from_its_bounded_rows() {
         &TaskDone {
             task: completed.clone(),
             validation: "offer order fixture".to_owned(),
+            disposition: None,
             operation: Some(TaskDone::operation_for_claim(
                 heads.claim.as_ref().expect("claim").body.claimed,
             )),
@@ -788,6 +790,7 @@ fn implicit_completion_reads_completed_prerequisites_before_advancing_a_plan() {
         &TaskDone {
             task: plan.clone(),
             validation: "Completed work reconciled".to_owned(),
+            disposition: None,
             operation: Some(TaskDone::operation_for_claim(
                 heads.claim.as_ref().expect("claim").body.claimed,
             )),

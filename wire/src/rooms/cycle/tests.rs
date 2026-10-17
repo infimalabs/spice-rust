@@ -174,6 +174,7 @@ fn completed(subject: i64) -> AnyFact {
     any(TaskDone {
         task: task(subject),
         validation: "checked".to_owned(),
+        disposition: None,
         terminal: Some(TaskCompletionTerminal {
             operation: lane(9),
             status: TaskCompletionStatus::Completed,

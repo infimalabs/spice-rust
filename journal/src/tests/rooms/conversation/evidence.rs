@@ -60,6 +60,7 @@ fn complete(journal: &mut Journal, task: &TaskStamp) -> Commit {
         wire::body::TaskDone {
             task: task.clone(),
             validation: "checked".to_owned(),
+            disposition: None,
             terminal: None,
             git: None,
             source: wire::body::SourceBoundary::Proven { heads: Vec::new() },

@@ -408,6 +408,7 @@ fn completion_terminal_lookup_probes_logarithmic_levels() {
                 body::TaskDone {
                     task,
                     validation: "terminal lookup fixture".to_owned(),
+                    disposition: None,
                     terminal: Some(body::TaskCompletionTerminal {
                         operation,
                         status: body::TaskCompletionStatus::Completed,
@@ -458,6 +459,7 @@ fn terminal_index_distinguishes_stamp_widths_for_the_same_moment() {
     let terminal = |task| body::TaskDone {
         task,
         validation: "stamp-width fixture".to_owned(),
+        disposition: None,
         terminal: Some(body::TaskCompletionTerminal {
             operation,
             status: body::TaskCompletionStatus::Completed,
@@ -573,6 +575,7 @@ fn terminal_workflow_with_an_active_claim_is_an_allocation_fault() {
             body::TaskDone {
                 task: task.clone(),
                 validation: "malformed terminal possession fixture".to_owned(),
+                disposition: None,
                 terminal: None,
                 git: None,
                 source: body::SourceBoundary::Proven { heads: Vec::new() },
@@ -949,6 +952,7 @@ fn append_retained_terminal(
             body::TaskDone {
                 task: task.clone(),
                 validation: "terminal fleet fixture".to_owned(),
+                disposition: None,
                 terminal: None,
                 git: None,
                 source: body::SourceBoundary::Proven { heads: Vec::new() },

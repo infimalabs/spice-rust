@@ -276,6 +276,110 @@ pub struct TaskDone {
     pub git: Option<GitBoundary>,
     /// Accounted transcript the completed phase closes at.
     pub source: SourceBoundary,
+    /// Why a Plan's plan phase completed without constructing work.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub disposition: Option<PlanDisposition>,
+}
+
+/// Why a Plan completed its plan phase without constructing work.
+///
+/// The Plan's own lane records it on the completion that closes the plan
+/// phase; a clean review then settles the Plan with no outputs. `no-work`
+/// stands alone, and every other kind names what already answers the need.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum PlanDisposition {
+    /// The stated need warrants no change.
+    NoWork {},
+    /// Another task or commit already states the same need.
+    Duplicate {
+        /// The task or commit it duplicates.
+        cover: DispositionCover,
+    },
+    /// Existing work already delivers the need.
+    Covered {
+        /// The task or commit that delivers it.
+        cover: DispositionCover,
+    },
+    /// Existing filed work delivers the need later.
+    Deferred {
+        /// The task or commit that will deliver it.
+        cover: DispositionCover,
+    },
+}
+
+impl PlanDisposition {
+    /// Stable kind spelling shared by the CLI flag, reads, and the app.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::NoWork {} => "no-work",
+            Self::Duplicate { .. } => "duplicate",
+            Self::Covered { .. } => "covered",
+            Self::Deferred { .. } => "deferred",
+        }
+    }
+
+    /// What already answers the need; absent only for `no-work`.
+    #[must_use]
+    pub const fn cover(&self) -> Option<&DispositionCover> {
+        match self {
+            Self::NoWork {} => None,
+            Self::Duplicate { cover } | Self::Covered { cover } | Self::Deferred { cover } => {
+                Some(cover)
+            }
+        }
+    }
+
+    /// Build one disposition from its kind spelling and cover.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an unknown kind, a cover on `no-work`, and a missing cover on
+    /// every other kind.
+    pub fn from_parts(kind: &str, cover: Option<DispositionCover>) -> Result<Self, &'static str> {
+        match (kind, cover) {
+            ("no-work", None) => Ok(Self::NoWork {}),
+            ("no-work", Some(_)) => Err("no-work names no cover"),
+            ("duplicate", Some(cover)) => Ok(Self::Duplicate { cover }),
+            ("covered", Some(cover)) => Ok(Self::Covered { cover }),
+            ("deferred", Some(cover)) => Ok(Self::Deferred { cover }),
+            ("duplicate" | "covered" | "deferred", None) => {
+                Err("duplicate, covered, and deferred name the task or commit that covers them")
+            }
+            _ => Err("name one of no-work, duplicate, covered, or deferred"),
+        }
+    }
+}
+
+/// The existing task or commit a disposition rests on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub enum DispositionCover {
+    /// A task by its durable birth stamp.
+    Task(TaskStamp),
+    /// A commit by its full lowercase hexadecimal object id.
+    Commit(String),
+}
+
+impl DispositionCover {
+    /// Whether a commit cover spells one full SHA-1 or SHA-256 object id.
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        match self {
+            Self::Task(_) => true,
+            Self::Commit(id) => {
+                matches!(id.len(), 40 | 64)
+                    && id
+                        .bytes()
+                        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            }
+        }
+    }
 }
 
 /// Workflow status retained by a replayable task completion.

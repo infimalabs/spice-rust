@@ -727,6 +727,9 @@ fn render_task_step(
             rendered.push_str(&format!("\n    … [+{withheld} bytes]"));
         }
     }
+    if let Some(disposition) = step_disposition(step, |stamp| stamp_name(board, stamp)) {
+        push_indented(&mut rendered, &disposition);
+    }
     if let Some(followups) = step_followups(step, |stamp| stamp_name(board, stamp)) {
         push_indented(&mut rendered, &followups);
     }

@@ -242,6 +242,7 @@ pub(super) fn body(validation: &str) -> body::TaskDone {
     body::TaskDone {
         task: stamp("1kKRRsDP"),
         validation: validation.to_owned(),
+        disposition: None,
         terminal: None,
         git: None,
         source: body::SourceBoundary::Proven { heads: Vec::new() },

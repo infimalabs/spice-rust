@@ -1095,7 +1095,7 @@ fn add_prepared(
     TaskHandle::for_project("board.test", &born)
 }
 
-fn review_clean(
+pub(super) fn review_clean(
     bus: &Bus,
     epoch: CanonicalUuid,
     seat: &Seat,

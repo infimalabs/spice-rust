@@ -116,10 +116,11 @@ pub(super) fn task_done(
             ),
         );
     }
-    let (at, lane, transition) = match done_transition(&snapshot, entry, command, false) {
-        Ok(value) => value,
-        Err(outcome) => return outcome,
-    };
+    let (at, lane, transition) =
+        match done_transition(&snapshot, entry, command, false, done.disposition.as_ref()) {
+            Ok(value) => value,
+            Err(outcome) => return outcome,
+        };
     if let Err(outcome) = evidence::require_answered(bus, entry) {
         return outcome;
     }
@@ -215,7 +216,10 @@ fn replay_task_completion(
     let envelope = facts.at(first)?;
     let completed = envelope.fact.read::<body::TaskDone>()?;
     let terminal = completed.terminal?;
-    if envelope.actor != *command.actor() || completed.validation != done.validation {
+    if envelope.actor != *command.actor()
+        || completed.validation != done.validation
+        || completed.disposition != done.disposition
+    {
         return None;
     }
     let last = facts
@@ -245,6 +249,7 @@ fn done_transition(
     entry: &Entry,
     command: &wire::AdmittedCommand,
     resume_epoch: bool,
+    disposition: Option<&body::PlanDisposition>,
 ) -> Result<(Instant, wire::CanonicalUuid, board::Transition), Outcome<CommandAnswer>> {
     let at = current_instant()?;
     let active = board::Active::admit(entry, command.actor(), at).map_err(|error| {
@@ -293,7 +298,7 @@ fn done_transition(
             "complete only the currently held workflow phase",
         )
     })?;
-    admit_plan_transition(snapshot, entry, command, &transition)?;
+    admit_plan_transition(snapshot, entry, command, &transition, disposition)?;
     Ok((at, active.lane(), transition))
 }
 
@@ -320,7 +325,11 @@ fn admit_plan_transition(
     entry: &Entry,
     command: &wire::AdmittedCommand,
     transition: &board::Transition,
+    disposition: Option<&body::PlanDisposition>,
 ) -> Result<(), Outcome<CommandAnswer>> {
+    if let Some(disposition) = disposition {
+        admit_disposition(snapshot, entry, command, disposition)?;
+    }
     if entry.statement().intent == Some(wire::TaskIntent::Design)
         && matches!(
             transition.kind(),
@@ -362,6 +371,9 @@ fn admit_plan_transition(
             ),
         ));
     }
+    if disposition.is_some() {
+        return Ok(());
+    }
     if !construction_required
         && !completes_plan
         && substantive_acceptance(&entry.statement().acceptance)
@@ -373,16 +385,91 @@ fn admit_plan_transition(
         require_expected(command, &workflow_witness(child))?;
         return Ok(());
     }
+    // A disposition recorded when the plan phase closed stands for the rest
+    // of the flow; closing the plan phase again must state its own.
+    if owner == entry.born()
+        && entry.workflow().phase.as_str() != "plan"
+        && snapshot.facts.plan_disposition(owner).is_some()
+    {
+        return Ok(());
+    }
     let remedy = if completes_plan {
-        "connect a pending child carrying acceptance before completing a plan-only flow"
+        "connect a pending child carrying acceptance before completing a plan-only flow, or \
+         record why no work is warranted with --disposition no-work|duplicate|covered|deferred \
+         [--cover HANDLE|COMMIT]"
     } else {
-        "add acceptance to the task, or connect a pending child carrying acceptance, before closing the plan phase"
+        "add acceptance to the task, or connect a pending child carrying acceptance, before \
+         closing the plan phase; a Plan whose need warrants no work records why with \
+         --disposition no-work|duplicate|covered|deferred [--cover HANDLE|COMMIT]"
     };
     Err(refusal(
         "task::plan-incomplete",
         Some(entry.handle().to_string()),
         remedy,
     ))
+}
+
+/// Admit a Plan lane's no-construction disposition on the completion that
+/// closes its plan phase.
+///
+/// Only the Plan's own plan phase records one, never beside work the Plan
+/// constructed that is still live, and a cover names an existing task the
+/// command witnessed or one full commit id.
+fn admit_disposition(
+    snapshot: &ValidatedSnapshot,
+    entry: &Entry,
+    command: &wire::AdmittedCommand,
+    disposition: &body::PlanDisposition,
+) -> Result<(), Outcome<CommandAnswer>> {
+    let plan = entry.born();
+    let owner = planning::construction_owner(plan, entry.statement().preparation.as_ref());
+    if owner != plan
+        || entry.workflow().phase.as_str() != "plan"
+        || !planning::requires_construction(entry.statement().intent, &entry.workflow().flow)
+    {
+        return Err(refusal(
+            "task::disposition-refused",
+            Some(entry.handle().to_string()),
+            "record a no-construction disposition only when completing a Plan's own plan phase",
+        ));
+    }
+    if let Some(output) = snapshot.answer.tasks.iter().find(|task| {
+        task.workflow.body.status.is_pending()
+            && task
+                .statement
+                .body
+                .preparation
+                .as_ref()
+                .is_some_and(|preparation| preparation.parent == *plan)
+    }) {
+        return Err(refusal(
+            "task::disposition-beside-output",
+            Some(output.statement.body.handle.to_string()),
+            "a Plan with live constructed work completes through that work; settle or delete it \
+             before recording that no work is warranted",
+        ));
+    }
+    let witnessed = |cover: &wire::TaskStamp| {
+        command
+            .expected()
+            .iter()
+            .any(|witness| matches!(witness, Witness::Task { task, .. } if task == cover))
+    };
+    match disposition.cover() {
+        Some(cover @ body::DispositionCover::Commit(_)) if !cover.is_well_formed() => Err(refusal(
+            "task::disposition-cover-invalid",
+            Some(format!("{cover:?}")),
+            "name a covering commit by its full object id",
+        )),
+        Some(body::DispositionCover::Task(cover)) if cover == plan || !witnessed(cover) => {
+            Err(refusal(
+                "task::disposition-cover-invalid",
+                Some(cover.to_string()),
+                "name another existing task as the cover and witness its statement",
+            ))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn append_done(
@@ -415,6 +502,7 @@ fn append_done(
                 }),
                 git: published,
                 source,
+                disposition: done.disposition.clone(),
             },
             FactCause::Root,
         )
@@ -707,7 +795,7 @@ fn prepare_review(
     }
     let statement = match verdict {
         body::Verdict::Clean => {
-            admit_plan_transition(&snapshot, entry, command, &transition)?;
+            admit_plan_transition(&snapshot, entry, command, &transition, None)?;
             entry.statement().clone()
         }
         body::Verdict::Finding => {

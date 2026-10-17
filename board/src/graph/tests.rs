@@ -113,6 +113,7 @@ fn completed(position: u64, task: TaskStamp, author: Actor) -> Envelope<AnyFact>
         body::TaskDone {
             task,
             validation: "focused checks pass".to_owned(),
+            disposition: None,
             terminal: None,
             git: None,
             source: body::SourceBoundary::Proven { heads: Vec::new() },

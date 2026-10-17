@@ -328,6 +328,22 @@ fn render_room(render: &WorkDetailRender<'_, '_>, answer: &wire::intent::TaskDet
                 |actor| actor_name(actor, render),
                 |task| selection_has(render.selection, task),
             )}
+            {task_detail::render_disposition_record(
+                answer.disposition.as_ref(),
+                |actor| actor_name(actor, render),
+                |task| {
+                    render
+                        .work
+                        .tasks()
+                        .iter()
+                        .find(|row| row.row().statement.body.born == *task)
+                        .map_or_else(
+                            || task.to_string(),
+                            |row| row.row().statement.body.handle.to_string(),
+                        )
+                },
+                |task| selection_has(render.selection, task),
+            )}
             {task_detail::render_note_composer(
                 format!("work-detail-note-{}", statement.born),
                 statement.handle.as_str(),

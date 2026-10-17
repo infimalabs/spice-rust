@@ -903,6 +903,7 @@ fn complete_through_claim(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &T
         &TaskDone {
             task: task.clone(),
             validation: "done".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     ));

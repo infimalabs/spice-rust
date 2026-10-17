@@ -83,6 +83,7 @@ mod tests {
         body::TaskDone {
             task: "1kRKw9Qj".parse().expect("fixture task stamp"),
             validation: "fixture validation".to_owned(),
+            disposition: None,
             terminal: None,
             git,
             source: body::SourceBoundary::Proven { heads: Vec::new() },

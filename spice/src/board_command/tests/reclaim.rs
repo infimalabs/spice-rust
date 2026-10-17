@@ -655,6 +655,7 @@ fn completion_and_review_wait_for_a_reclaim_after_an_operator_change() {
             &TaskDone {
                 task: task.clone(),
                 validation: "implementation and focused checks complete".to_owned(),
+                disposition: None,
                 operation: Some(completion_operation()),
             },
         )

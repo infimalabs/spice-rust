@@ -466,6 +466,7 @@ fn an_ambient_plan_releases_its_output_on_positive_completion_without_selection(
         &TaskDone {
             task: plan.clone(),
             validation: "accepted implementation child is connected".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     ));
@@ -669,6 +670,7 @@ fn ambient_plan_authority_movement_refuses_child_creation() {
                         &TaskDone {
                             task: plan.clone(),
                             validation: "execution contract is explicit".to_owned(),
+                            disposition: None,
                             operation: Some(completion_operation()),
                         },
                     ));

@@ -186,6 +186,23 @@ pub struct TaskDetailClosure {
     pub claimed: Option<Actor>,
 }
 
+/// The disposition a Plan's lane recorded instead of constructing work, read
+/// back from the Plan's latest completion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDetailDisposition {
+    /// Position of the completion fact.
+    pub position: crate::Seq,
+    /// Commit time recorded by the journal.
+    pub at: crate::Instant,
+    /// Principal that recorded it.
+    pub author: Actor,
+    /// What answers the reported need.
+    pub disposition: crate::body::PlanDisposition,
+    /// Evidence the disposition rests on.
+    pub validation: String,
+}
+
 /// One workflow step on a task's history, read back from its lifecycle fact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -210,6 +227,13 @@ pub enum TaskStep {
         phase: crate::Phase,
         /// Evidence the completion rests on.
         validation: String,
+        /// Why a Plan's plan phase completed without constructing work.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        disposition: Option<crate::body::PlanDisposition>,
     },
     /// The workflow advanced into a phase.
     Phased {
@@ -268,6 +292,13 @@ pub struct TaskDetailAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub closure: Option<TaskDetailClosure>,
+    /// The no-construction disposition the Plan's latest completion recorded.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub disposition: Option<TaskDetailDisposition>,
     /// The request a steering origin names, when its key resolves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_request: Option<OriginRequest>,

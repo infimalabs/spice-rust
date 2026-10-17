@@ -406,6 +406,7 @@ fn a_controller_concluded_without_authorization_never_authorizes() {
             wire::body::TaskDone {
                 task: controller.clone(),
                 validation: "ordinary completion".to_owned(),
+                disposition: None,
                 terminal: None,
                 git: None,
                 source: wire::body::SourceBoundary::Proven { heads: Vec::new() },

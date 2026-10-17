@@ -128,6 +128,7 @@ fn done(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHandle) -> Outc
         &TaskDone {
             task: task.clone(),
             validation: "checked".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     )

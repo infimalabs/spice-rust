@@ -159,7 +159,8 @@ flowchart LR
   atomically opens a fresh generation, and concurrent first reports cannot
   open two. Each line retains its exact report, origin, and public project,
   stays gated by the Design, and carries the contract to record an explicit
-  disposition and construct child work when change is warranted.
+  disposition, through `task done --disposition` when no change is warranted,
+  and to construct child work when it is.
 - `task add --draft` (and `task plan --draft`, `task design --draft`) records a
   typed Draft: prospective work under an admitted public project, distinct from
   Filed work. Default reads show it only to the operator and its origin thread,

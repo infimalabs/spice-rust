@@ -37,8 +37,9 @@
 /// singleton authority. Schema 78 replaces derived preparation authorization
 /// with ordinary dependency edges and closes retained work whose controller
 /// can no longer release it. Schema 79 records every distinct Design decision
-/// that authorizes the same output.
-pub const SCHEMA_VERSION: u32 = 79;
+/// that authorizes the same output. Schema 80 lets a task completion carry a
+/// Plan's no-construction disposition, which an older release would drop.
+pub const SCHEMA_VERSION: u32 = 80;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

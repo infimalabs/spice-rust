@@ -25,6 +25,7 @@ fn task_completion_terminal_replays_once_after_claim_release_and_restart() {
     let done = TaskDone {
         task: task.clone(),
         validation: "one focused evidence execution passed".to_owned(),
+        disposition: None,
         operation: Some(operation),
     };
     let expected = progress_witnesses(

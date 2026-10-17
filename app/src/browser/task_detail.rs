@@ -459,6 +459,38 @@ pub(super) fn render_closure_record(
     }
 }
 
+/// The disposition a Plan's lane recorded instead of constructing work, with
+/// the evidence it rests on and what already answers the need.
+pub(super) fn render_disposition_record(
+    disposition: Option<&wire::intent::TaskDetailDisposition>,
+    name: impl Fn(&wire::Actor) -> String,
+    task_name: impl Fn(&TaskStamp) -> String,
+    resolves: impl Fn(&TaskStamp) -> bool,
+) -> Html {
+    let Some(record) = disposition else {
+        return Html::default();
+    };
+    let kind = record.disposition.kind();
+    let cover = record.disposition.cover().map(|cover| match cover {
+        wire::body::DispositionCover::Task(task) => task_name(task),
+        wire::body::DispositionCover::Commit(commit) => format!("commit {commit}"),
+    });
+    html! {
+        <article class="work-note-card work-closure-card" data-disposition={kind}>
+            <header>
+                <strong title={record.author.to_string()}>
+                    {format!("No work constructed ({kind}) by {}", name(&record.author))}
+                </strong>
+                {task_time(&record.at, TaskTimePresentation::DetailedElapsed)}
+            </header>
+            if let Some(cover) = cover {
+                {render_task_text(&format!("Answered by {cover}."), "work-closure-claim", &resolves)}
+            }
+            {render_task_text(&record.validation, "work-note-body", resolves)}
+        </article>
+    }
+}
+
 /// The heads a closure decides against, spelled as the resident's witnesses.
 fn close_witnesses(heads: &wire::intent::BoardTask) -> Vec<wire::Witness> {
     let task = heads.statement.body.born.clone();

@@ -103,6 +103,7 @@ fn task_show_separates_current_context_and_bounded_history() {
             step: wire::intent::TaskStep::Done {
                 phase: "todo".parse().expect("fixture phase"),
                 validation: format!("evidence-{index}"),
+                disposition: None,
             },
         })
         .collect::<Vec<_>>();

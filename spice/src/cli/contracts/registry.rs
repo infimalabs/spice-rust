@@ -874,7 +874,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "done"],
-        "task done [HANDLE] [--validation TEXT] [--operation OPERATION]",
+        "task done [HANDLE] [--validation TEXT] [--operation OPERATION] \
+         [--disposition KIND] [--cover REFERENCE]",
         Lane,
         Command => DirectOrCommitted,
         [TaskDone, TaskPhased],

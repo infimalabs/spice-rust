@@ -580,6 +580,7 @@ fn clearing_a_claimed_synthetic_hold_releases_before_authored_work() {
         &TaskDone {
             task: task.clone(),
             validation: "planning validation cannot complete execution".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     );
@@ -775,6 +776,7 @@ fn plan_done(
         &TaskDone {
             task: task.clone(),
             validation: "acceptance is already substantive".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     )
