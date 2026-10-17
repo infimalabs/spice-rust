@@ -11,10 +11,12 @@ use wire::{Digest, Domain};
 
 /// Segment holding the app ZIP section on Mach-O.
 const MACHO_SEGMENT: &[u8] = b"__TEXT";
-/// App ZIP section on Mach-O.
-const MACHO_SECTION: &[u8] = b"spice_app_zip";
-/// App ZIP section on ELF.
-const ELF_SECTION: &[u8] = b".spice_app_zip";
+/// App ZIP section on Mach-O: lowercase after two underscores, as Apple's
+/// Mach-O File Format Reference names sections.
+const MACHO_SECTION: &[u8] = b"__spice_app_zip";
+/// App ZIP section on ELF: undotted, since the System V gABI reserves
+/// dot-prefixed section names for the system.
+const ELF_SECTION: &[u8] = b"spice_app_zip";
 /// First ZIP byte, as the `canvas` crate declares it.
 const ARCHIVE_SYMBOL: &[u8] = b"spice_app_zip";
 /// The ZIP length as a little-endian `u64`, as the `canvas` crate declares it.
