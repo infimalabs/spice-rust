@@ -53,7 +53,6 @@ pub struct DecisionDraft {
     candidate: CandidateRef,
     choice: DecisionChoice,
     accepted: BTreeSet<TaskStamp>,
-    rejected: BTreeSet<TaskStamp>,
     output_comments: BTreeMap<TaskStamp, String>,
     reason: String,
     phase: DraftPhase,
@@ -117,7 +116,6 @@ impl DecisionDraft {
             candidate,
             choice: DecisionChoice::Accept,
             accepted: BTreeSet::new(),
-            rejected: BTreeSet::new(),
             output_comments: BTreeMap::new(),
             reason: String::new(),
             phase: DraftPhase::Editing,
@@ -136,13 +134,11 @@ impl DecisionDraft {
     }
 
     #[must_use]
-    pub fn verdict(&self, output: &TaskStamp) -> Option<OutputVerdict> {
+    pub fn verdict(&self, output: &TaskStamp) -> OutputVerdict {
         if self.accepted.contains(output) {
-            Some(OutputVerdict::Accepted)
-        } else if self.rejected.contains(output) {
-            Some(OutputVerdict::Rejected)
+            OutputVerdict::Accepted
         } else {
-            None
+            OutputVerdict::Rejected
         }
     }
 
@@ -178,12 +174,10 @@ impl DecisionDraft {
     pub fn set_output_verdict(&mut self, output: TaskStamp, verdict: OutputVerdict) {
         self.edit(|draft| match verdict {
             OutputVerdict::Accepted => {
-                draft.rejected.remove(&output);
                 draft.accepted.insert(output);
             }
             OutputVerdict::Rejected => {
                 draft.accepted.remove(&output);
-                draft.rejected.insert(output);
             }
         });
     }
@@ -323,7 +317,6 @@ impl DecisionDraft {
                     if self
                         .accepted
                         .iter()
-                        .chain(&self.rejected)
                         .any(|output| !candidate.outputs.contains(output))
                     {
                         return Err(
@@ -334,20 +327,12 @@ impl DecisionDraft {
                     let outputs = candidate
                         .outputs
                         .iter()
-                        .map(|output| {
-                            let verdict = self.verdict(output).ok_or_else(|| {
-                                format!(
-                                    "preparation::output-undecided: accept or reject output {output}"
-                                )
-                            })?;
-                            let comment = trimmed(self.output_comment(output));
-                            Ok(OutputDecision {
-                                output: output.clone(),
-                                verdict,
-                                comment,
-                            })
+                        .map(|output| OutputDecision {
+                            output: output.clone(),
+                            verdict: self.verdict(output),
+                            comment: trimmed(self.output_comment(output)),
                         })
-                        .collect::<Result<Vec<_>, String>>()?;
+                        .collect();
                     Ok(DecisionOutcome::Resolved {
                         candidate: candidate.candidate.clone(),
                         outputs,

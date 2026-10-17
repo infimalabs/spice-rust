@@ -162,11 +162,11 @@ pub(super) fn render_approval(
             </header>
             if opportunistic {
                 <p class="room-notice">
-                    {"Every candidate is immutable. Accept or reject every displayed line; the complete decision is previewed before it records authority."}
+                    {"Every candidate is immutable. Every displayed line starts rejected; accept the lines that should receive authority. The complete decision is previewed before it records authority."}
                 </p>
             } else {
                 <p class="room-notice">
-                    {"Every proposal is immutable. Accept its exact recommendation or return it with material feedback; each decision is previewed before it records authority."}
+                    {"Every proposal is immutable. Work outputs start rejected; select Accept only for outputs that should receive authority. Accept the exact recommendation or return it with material feedback; each decision is previewed before it records authority."}
                 </p>
             }
             {for open.into_iter().rev().map(|candidate| render_candidate(&context, candidate))}
@@ -568,7 +568,7 @@ fn render_output(
                     <input
                         type="radio"
                         name={format!("output-verdict-{}-{output}", draft.candidate().candidate)}
-                        checked={draft.verdict(output) == Some(OutputVerdict::Accepted)}
+                        checked={draft.verdict(output) == OutputVerdict::Accepted}
                         disabled={locked}
                         onchange={Callback::from(move |_: Event| accepted())}
                     />
@@ -578,7 +578,7 @@ fn render_output(
                     <input
                         type="radio"
                         name={format!("output-verdict-{}-{output}", draft.candidate().candidate)}
-                        checked={draft.verdict(output) == Some(OutputVerdict::Rejected)}
+                        checked={draft.verdict(output) == OutputVerdict::Rejected}
                         disabled={locked}
                         onchange={Callback::from(move |_: Event| rejected())}
                     />
