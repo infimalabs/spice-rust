@@ -24,17 +24,27 @@ fn add(
     intent: Option<wire::TaskIntent>,
     preparation: Option<(&TaskStamp, &TaskStamp)>,
 ) -> TaskStamp {
+    let current = if intent.is_some_and(wire::TaskIntent::is_design) {
+        phase("design")
+    } else {
+        phase("todo")
+    };
+    add_routed(journal, offset, intent, preparation, current)
+}
+
+fn add_routed(
+    journal: &mut Journal,
+    offset: i64,
+    intent: Option<wire::TaskIntent>,
+    preparation: Option<(&TaskStamp, &TaskStamp)>,
+    current: wire::Phase,
+) -> TaskStamp {
     let task = TaskStamp::for_micros(80_000 + offset).expect("task stamp");
     let preparation = preparation.map(|(parent, controller)| wire::TaskPreparation {
         parent: parent.clone(),
         controller: controller.clone(),
         construction: task.clone(),
     });
-    let current = if intent.is_some_and(wire::TaskIntent::is_design) {
-        phase("design")
-    } else {
-        phase("todo")
-    };
     let flow = vec![current.clone()];
     let mut write = write();
     let added = write
@@ -210,6 +220,13 @@ fn schema_seventy_seven_crosses_live_gates_and_closes_unreleasable_branches() {
     let open_design = add(&mut journal, 1, Some(wire::TaskIntent::Design), None);
     let open_output = add(&mut journal, 2, None, Some((&open_design, &open_design)));
     let selected_output = add(&mut journal, 3, None, Some((&open_design, &open_design)));
+    let gather = add_routed(
+        &mut journal,
+        15,
+        None,
+        Some((&open_design, &open_design)),
+        phase("gather"),
+    );
 
     let done_design = add(&mut journal, 4, Some(wire::TaskIntent::Design), None);
     let done_output = add(&mut journal, 5, None, Some((&done_design, &done_design)));
@@ -280,6 +297,16 @@ fn schema_seventy_seven_crosses_live_gates_and_closes_unreleasable_branches() {
             .dependencies
             .contains(&open_plan)
     );
+    let crossed_gather = statement(&journal, &gather);
+    assert!(
+        crossed_gather.dependencies.is_empty(),
+        "a gather route stays edge-free under its open Design"
+    );
+    assert!(wire::gather_task(
+        &crossed_gather,
+        &workflow(&journal, &gather)
+    ));
+    assert!(workflow(&journal, &gather).status.is_pending());
 
     for task in [
         done_output,

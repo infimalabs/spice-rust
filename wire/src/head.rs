@@ -86,6 +86,35 @@ pub const OOPS_DESIGN_TITLE: &str = "OOPS";
 pub const OOPS_DESIGN_DESCRIPTION: &str =
     "Repository-owned opportunistic Design for unexpected-behavior line items.";
 
+/// The phase a gather task walks: evidence-only work under an open, active
+/// Design.
+const GATHER_PHASE: &str = "gather";
+
+/// Whether an authored route with `intent` and `flow` is a gather route: no
+/// declared intent and the one `gather` phase. It holds no commit authority,
+/// lands nothing, and is never a preparation output awaiting selection; any
+/// other route under a Design is an ordinary output.
+#[must_use]
+pub fn gather_route(intent: Option<TaskIntent>, flow: &[crate::Phase]) -> bool {
+    intent.is_none() && matches!(flow, [phase] if phase.as_str() == GATHER_PHASE)
+}
+
+/// Whether a task is a gather task: its authored route, read past a plan
+/// phase a taste hold inserted, is a gather route. A hold therefore never
+/// changes what a task is, only which phase it waits in.
+#[must_use]
+pub fn gather_task(statement: &TaskHead, workflow: &WorkflowHead) -> bool {
+    let held = statement
+        .taste
+        .as_ref()
+        .is_some_and(|hold| hold.plan == TastePlan::Prepended);
+    let route = match workflow.flow.as_slice() {
+        [first, authored @ ..] if held && first.as_str() == "plan" => authored,
+        authored => authored,
+    };
+    gather_route(statement.intent, route)
+}
+
 impl std::fmt::Display for TaskIntent {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(self.as_str())

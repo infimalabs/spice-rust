@@ -958,7 +958,7 @@ fn output_is_authorizable(
 ) -> bool {
     heads.workflow().body().status.is_pending()
         && !active_claim(heads)
-        && !board::gather_task(heads.statement().body(), heads.workflow().body())
+        && !wire::gather_task(heads.statement().body(), heads.workflow().body())
         && heads
             .statement()
             .body()
@@ -1169,7 +1169,7 @@ pub(super) fn adopt_output(
     };
     let mut head = output_heads.statement().body().clone();
     head.preparation = Some(preparation);
-    if !board::gather_task(&head, output_heads.workflow().body())
+    if !wire::gather_task(&head, output_heads.workflow().body())
         && !head.dependencies.contains(&parent)
     {
         head.dependencies.push(parent);
