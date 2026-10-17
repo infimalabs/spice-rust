@@ -17,11 +17,13 @@ const DECLARATION: &str = "dist/windows-msvc.toml";
 const STORE: &str = "spice/windows-msvc-v1";
 const RECEIPT: &str = "receipt.json";
 const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
-const SCHEMA: u64 = 1;
-const LAYOUT_VERSION: u64 = 3;
+const SCHEMA: u64 = 2;
+const LAYOUT_VERSION: u64 = 4;
 const SHA256_HEX_LENGTH: usize = 64;
+const HOST_CLOSURE_REASON: &str = "cargo-isolation::windows-msvc-host-closure-altered";
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Declaration {
     schema: u64,
     target: String,
@@ -35,14 +37,23 @@ struct Declaration {
     llvm_lib: ToolPin,
     llvm_ml: ToolPin,
     lld_link: ToolPin,
+    host_closure: HostClosurePin,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ToolPin {
     version: String,
     path: PathBuf,
     sha256: String,
-    bottle_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HostClosurePin {
+    files: Vec<PathBuf>,
+    trees: Vec<PathBuf>,
+    sha256: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -521,9 +532,11 @@ fn read_declaration(repository: &Path) -> Result<(Declaration, String), Isolatio
         &declaration.llvm_lib.sha256,
         &declaration.llvm_ml.sha256,
         &declaration.lld_link.sha256,
+        &declaration.host_closure.sha256,
     ] {
         require_digest(digest)?;
     }
+    validate_host_closure(&declaration.host_closure)?;
     let generation = generation_digest(&bytes);
     Ok((declaration, generation))
 }
@@ -536,7 +549,6 @@ fn verify_tools(declaration: &Declaration) -> Result<(), IsolationError> {
         ("llvm-ml", &declaration.llvm_ml),
         ("lld-link", &declaration.lld_link),
     ] {
-        require_digest(&pin.bottle_sha256)?;
         require_hash(
             &pin.path,
             &pin.sha256,
@@ -545,16 +557,149 @@ fn verify_tools(declaration: &Declaration) -> Result<(), IsolationError> {
         .map_err(|error| {
             IsolationError::new(
                 error.reason(),
-                format!(
-                    "{name} {} (bottle {}): {}",
-                    pin.version,
-                    pin.bottle_sha256,
-                    error.detail()
-                ),
+                format!("{name} {}: {}", pin.version, error.detail()),
             )
         })?;
     }
+    require_host_closure(&declaration.host_closure)?;
     Ok(())
+}
+
+fn validate_host_closure(closure: &HostClosurePin) -> Result<(), IsolationError> {
+    if closure.files.is_empty() || closure.trees.is_empty() {
+        return Err(IsolationError::new(
+            "cargo-isolation::windows-msvc-declaration-invalid",
+            "host_closure must name at least one file and one tree",
+        ));
+    }
+    for paths in [&closure.files, &closure.trees] {
+        if paths.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(IsolationError::new(
+                "cargo-isolation::windows-msvc-declaration-invalid",
+                "host_closure paths must be unique and sorted",
+            ));
+        }
+    }
+    for path in closure.files.iter().chain(&closure.trees) {
+        if !path.is_absolute() {
+            return Err(IsolationError::new(
+                "cargo-isolation::windows-msvc-declaration-invalid",
+                format!("host_closure path must be absolute: {}", path.display()),
+            ));
+        }
+    }
+    if closure
+        .files
+        .iter()
+        .any(|file| closure.trees.contains(file))
+    {
+        return Err(IsolationError::new(
+            "cargo-isolation::windows-msvc-declaration-invalid",
+            "host_closure files and trees must be disjoint",
+        ));
+    }
+    Ok(())
+}
+
+fn require_host_closure(closure: &HostClosurePin) -> Result<(), IsolationError> {
+    let observed = host_closure_digest(closure)?;
+    if observed == closure.sha256 {
+        Ok(())
+    } else {
+        Err(IsolationError::new(
+            HOST_CLOSURE_REASON,
+            format!(
+                "expected host closure sha256 {}, observed {observed}",
+                closure.sha256
+            ),
+        ))
+    }
+}
+
+fn host_closure_digest(closure: &HostClosurePin) -> Result<String, IsolationError> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"spice-windows-msvc-host-closure-v1\0");
+
+    for path in &closure.files {
+        let metadata = fs::metadata(path).map_err(host_closure_error(path))?;
+        if !metadata.is_file() {
+            return Err(IsolationError::new(
+                HOST_CLOSURE_REASON,
+                format!(
+                    "host closure file is not a regular file: {}",
+                    path.display()
+                ),
+            ));
+        }
+        hash_host_file(&mut hasher, b"file", path, path)?;
+    }
+
+    for root in &closure.trees {
+        let metadata = fs::symlink_metadata(root).map_err(host_closure_error(root))?;
+        if !metadata.is_dir() {
+            return Err(IsolationError::new(
+                HOST_CLOSURE_REASON,
+                format!("host closure tree is not a directory: {}", root.display()),
+            ));
+        }
+        let mut paths = Vec::new();
+        collect_host_files(root, &mut paths)?;
+        paths.sort();
+        for path in paths {
+            let relative = path
+                .strip_prefix(root)
+                .expect("collected host path is beneath its root");
+            hash_host_file(&mut hasher, root.as_os_str().as_bytes(), relative, &path)?;
+        }
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn hash_host_file(
+    hasher: &mut Sha256,
+    category: &[u8],
+    identity: &Path,
+    path: &Path,
+) -> Result<(), IsolationError> {
+    hasher.update(category);
+    hasher.update(b"\0");
+    hasher.update(identity.as_os_str().as_bytes());
+    hasher.update(b"\0");
+    let mut file = fs::File::open(path).map_err(host_closure_error(path))?;
+    let length = file.metadata().map_err(host_closure_error(path))?.len();
+    hasher.update(length.to_le_bytes());
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(host_closure_error(path))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(())
+}
+
+fn collect_host_files(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), IsolationError> {
+    let entries = fs::read_dir(directory).map_err(host_closure_error(directory))?;
+    for entry in entries {
+        let path = entry.map_err(host_closure_error(directory))?.path();
+        let metadata = fs::symlink_metadata(&path).map_err(host_closure_error(&path))?;
+        if metadata.is_dir() {
+            collect_host_files(&path, paths)?;
+        } else if metadata.is_file() {
+            paths.push(path);
+        } else {
+            return Err(IsolationError::new(
+                HOST_CLOSURE_REASON,
+                format!("unsupported host closure entry: {}", path.display()),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn host_closure_error(path: &Path) -> impl FnOnce(std::io::Error) -> IsolationError + '_ {
+    move |error| IsolationError::io(HOST_CLOSURE_REASON, path, error)
 }
 
 fn report(admitted: Admitted, generation: String, reused: bool) -> WindowsMsvcReport {
@@ -801,6 +946,37 @@ mod tests {
     }
 
     #[test]
+    fn host_closure_refuses_changed_dylib_or_builtin_header() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-windows-msvc-host-closure-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let includes = root.join("include");
+        fs::create_dir_all(&includes).unwrap();
+        let llvm = root.join("libLLVM.dylib");
+        let lld = root.join("liblldCOFF.dylib");
+        let header = includes.join("intrin.h");
+        for path in [&llvm, &lld, &header] {
+            fs::write(path, "admitted").unwrap();
+        }
+        let mut closure = HostClosurePin {
+            files: vec![llvm.clone(), lld.clone()],
+            trees: vec![includes],
+            sha256: String::new(),
+        };
+        closure.sha256 = host_closure_digest(&closure).unwrap();
+        require_host_closure(&closure).unwrap();
+
+        for path in [&llvm, &lld, &header] {
+            fs::write(path, "altered").unwrap();
+            let error = require_host_closure(&closure).unwrap_err();
+            assert_eq!(error.reason(), HOST_CLOSURE_REASON);
+            fs::write(path, "admitted").unwrap();
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn admission_refuses_an_altered_materialized_component() {
         let root = std::env::temp_dir().join(format!(
             "spice-windows-msvc-admission-{}",
@@ -816,7 +992,6 @@ mod tests {
             version: "test".into(),
             path: PathBuf::from("/test/tool"),
             sha256: digest.clone(),
-            bottle_sha256: digest.clone(),
         };
         let declaration = Declaration {
             schema: SCHEMA,
@@ -831,6 +1006,11 @@ mod tests {
             llvm_lib: tool.clone(),
             llvm_ml: tool.clone(),
             lld_link: tool,
+            host_closure: HostClosurePin {
+                files: vec![PathBuf::from("/test/file")],
+                trees: vec![PathBuf::from("/test/tree")],
+                sha256: "a".repeat(64),
+            },
         };
         let generation = "generation";
         let receipt = Receipt {
