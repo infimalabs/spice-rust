@@ -503,10 +503,12 @@ fn submitted_settlement(event: &SubmitEvent) -> Option<ComposerSettlement> {
 
 /// The one room composer every surface showing `task` renders, bound to that
 /// task and preserving only that task's draft while feedback uses its
-/// task-owned toast. Its draft publishes an observation in the task's room;
-/// with a `closure`, the same draft can instead close the task as its
-/// validation. `actions` are the task's own further controls, kept in the
-/// composer's action row so they follow an observation.
+/// task-owned toast. Typed input enters that retained draft immediately, so a
+/// connection loss can leave the same composer visible and read-only until it
+/// returns. Its draft publishes an observation in the task's room; with a
+/// `closure`, the same draft can instead close the task as its validation.
+/// `actions` are the task's own further controls, kept in the composer's action
+/// row so they follow an observation.
 #[expect(
     clippy::too_many_arguments,
     reason = "one composer binds its task, capabilities, draft, and action row"
@@ -515,13 +517,15 @@ pub(super) fn render_note_composer(
     id: String,
     handle: &str,
     task: &TaskStamp,
+    connected: bool,
     can_note: bool,
     closure: Option<&TaskClosure>,
     composer: &NoteComposer,
+    input: Callback<InputEvent>,
     submit: &Callback<(TaskStamp, SubmitEvent)>,
     actions: Html,
 ) -> Html {
-    if !can_note {
+    if connected && !can_note {
         return html! {
             <>
                 <p class="work-note-capability">{"This capability can read this room but cannot publish observations."}</p>
@@ -530,6 +534,7 @@ pub(super) fn render_note_composer(
         };
     }
     let busy = composer.submission.busy();
+    let locked = busy || !connected;
     let posting = composer.submission == NoteSubmission::Posting;
     let closing = composer.submission == NoteSubmission::Closing;
     let deleting = composer.submission == NoteSubmission::Deleting;
@@ -545,13 +550,14 @@ pub(super) fn render_note_composer(
             <label for={label_id}>{format!("Observation for {handle}")}</label>
             <textarea
                 id={id}
-                key={composer.draft.clone()}
                 data-note-task={form_key}
-                readonly={busy}
-                onkeydown={note_keyboard_submit(!busy)}
-            >{composer.draft.clone()}</textarea>
+                value={composer.draft.clone()}
+                readonly={locked}
+                oninput={input}
+                onkeydown={note_keyboard_submit(!locked)}
+            />
             <div class="team-composer-controls work-note-actions">
-                <button type="submit" class="team-send" disabled={busy}>
+                <button type="submit" class="team-send" disabled={locked}>
                     {if posting { "Posting…" } else { "Add" }}
                 </button>
                 if let Some(closure) = closure {
@@ -560,7 +566,7 @@ pub(super) fn render_note_composer(
                             type="submit"
                             class="team-send"
                             value={CLOSE_SUBMITTER}
-                            disabled={busy}
+                            disabled={locked}
                             title={closure.holder.as_ref().map(|holder| format!("Closing takes this task from {holder}"))}
                         >
                             {if closing { "Closing…" } else { "Close" }}
@@ -570,7 +576,7 @@ pub(super) fn render_note_composer(
                         type="submit"
                         class="team-send"
                         value={DELETE_SUBMITTER}
-                        disabled={busy}
+                        disabled={locked}
                         title={closure.holder.as_ref().map(|holder| format!("Deleting takes this task from {holder}"))}
                     >
                         {if deleting { "Deleting…" } else { "Delete" }}
