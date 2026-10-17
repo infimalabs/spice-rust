@@ -6,6 +6,7 @@
 //! and signing, and refuses unless it is exactly the archive it staged. The
 //! archive inside the section is a standard ZIP whose offsets are relative to
 //! its own start; the executable around it is not.
+mod coff;
 
 use wire::{Digest, Domain};
 
@@ -40,13 +41,14 @@ const SHT_STRTAB: u32 = 3;
 const SHT_NOBITS: u32 = 8;
 const SHF_ALLOC: u64 = 2;
 
-/// An executable target the canvas object is written for.
+/// An executable target the app ZIP object is written for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ObjectTarget {
     MacAarch64,
     MacX86_64,
     LinuxAarch64,
     LinuxX86_64,
+    WindowsX86_64,
 }
 
 impl ObjectTarget {
@@ -58,6 +60,7 @@ impl ObjectTarget {
             ("macos", "x86_64") => Some(Self::MacX86_64),
             ("linux", "aarch64") => Some(Self::LinuxAarch64),
             ("linux", "x86_64") => Some(Self::LinuxX86_64),
+            ("windows", "x86_64") => Some(Self::WindowsX86_64),
             _ => None,
         }
     }
@@ -70,6 +73,16 @@ impl ObjectTarget {
             Self::MacX86_64 => "macos-x86_64",
             Self::LinuxAarch64 => "linux-aarch64",
             Self::LinuxX86_64 => "linux-x86_64",
+            Self::WindowsX86_64 => "windows-x86_64",
+        }
+    }
+
+    /// The object-file extension this target's linker expects.
+    #[must_use]
+    pub const fn object_extension(self) -> &'static str {
+        match self {
+            Self::WindowsX86_64 => "obj",
+            _ => "o",
         }
     }
 }
@@ -90,6 +103,7 @@ pub fn canvas_object(archive: &[u8], target: ObjectTarget) -> Vec<u8> {
         ObjectTarget::MacX86_64 => macho_object(archive, 0x0100_0007, 3, 0x000a_0c00),
         ObjectTarget::LinuxAarch64 => elf_object(archive, 183),
         ObjectTarget::LinuxX86_64 => elf_object(archive, 62),
+        ObjectTarget::WindowsX86_64 => coff::object(archive),
     }
 }
 
@@ -320,8 +334,8 @@ impl Canvas {
     ///
     /// # Errors
     ///
-    /// Names an image that is not a 64-bit little-endian Mach-O or ELF, a
-    /// malformed header, an absent or repeated section, or different bytes.
+    /// Names an image that is not a supported 64-bit Mach-O, ELF, or PE image,
+    /// a malformed header, an absent or repeated section, or different bytes.
     pub fn verify_linked(&self, executable: &[u8]) -> Result<(), CanvasError> {
         let observed = Digest::compute(Domain::DistArtifact, linked_archive(executable)?);
         if observed == self.archive {
@@ -355,7 +369,7 @@ impl Canvas {
 /// Why a final executable's app ZIP section was refused.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum CanvasError {
-    #[error("executable is neither a 64-bit little-endian Mach-O nor ELF image")]
+    #[error("executable is neither a supported 64-bit Mach-O, ELF, nor PE image")]
     Format,
     #[error("executable {0} is malformed")]
     Malformed(&'static str),
@@ -376,12 +390,15 @@ pub enum CanvasError {
 /// Refuses as [`Canvas::verify_linked`] does, short of comparing bytes.
 pub fn linked_archive(executable: &[u8]) -> Result<&[u8], CanvasError> {
     if read_u32(executable, 0).ok() == Some(MACHO_MAGIC_64) {
-        macho(executable)
-    } else if executable.starts_with(ELF_MAGIC) {
-        elf(executable)
-    } else {
-        Err(CanvasError::Format)
+        return macho(executable);
     }
+    if executable.starts_with(ELF_MAGIC) {
+        return elf(executable);
+    }
+    if executable.starts_with(b"MZ") {
+        return coff::pe_archive(executable);
+    }
+    Err(CanvasError::Format)
 }
 
 fn macho(image: &[u8]) -> Result<&[u8], CanvasError> {
