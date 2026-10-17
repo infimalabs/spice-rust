@@ -332,13 +332,13 @@ fn every_authority_kind_resolves_with_recorded_authorship() {
         SourceQuote {
             identity: TextIdentity::Presented,
             text: "agent text".to_owned(),
-            author: QuoteAuthor::Agent {
+            attribution: authored_by(QuoteAuthor::Agent {
                 lane: uuid(1),
                 occupant: uuid(3),
-            },
+            }),
             disposition: None,
             media: Vec::new(),
-            packet: None,
+            body: None,
         },
     );
     let steering = steering_target("dTVLR0qL0", "operator text");
@@ -347,12 +347,12 @@ fn every_authority_kind_resolves_with_recorded_authorship() {
         SourceQuote {
             identity: TextIdentity::Presented,
             text: "operator text".to_owned(),
-            author: QuoteAuthor::Directive {
+            attribution: authored_by(QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
-            },
+            }),
             disposition: Some(wire::Disposition::Acked),
             media: Vec::new(),
-            packet: None,
+            body: None,
         },
     );
 
@@ -386,12 +386,12 @@ fn every_authority_kind_resolves_with_recorded_authorship() {
         SourceQuote {
             identity: TextIdentity::Presented,
             text: "room post".to_owned(),
-            author: QuoteAuthor::Directive {
+            attribution: authored_by(QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
-            },
+            }),
             disposition: None,
             media: Vec::new(),
-            packet: None,
+            body: None,
         },
     );
     let target = |text| QuoteTarget::Room {
@@ -429,13 +429,13 @@ fn agent_quote_presentation_carries_authenticated_directive_context() {
         SourceQuote {
             identity: TextIdentity::Authored(authored.to_owned()),
             text: presented.clone(),
-            author: QuoteAuthor::Agent {
+            attribution: authored_by(QuoteAuthor::Agent {
                 lane: uuid(1),
                 occupant: uuid(3),
-            },
+            }),
             disposition: None,
             media: Vec::new(),
-            packet: None,
+            body: None,
         },
     );
     store.steering.insert(
@@ -443,12 +443,12 @@ fn agent_quote_presentation_carries_authenticated_directive_context() {
         SourceQuote {
             identity: TextIdentity::Presented,
             text: operator.to_owned(),
-            author: QuoteAuthor::Directive {
+            attribution: authored_by(QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
-            },
+            }),
             disposition: Some(wire::Disposition::Acked),
             media: Vec::new(),
-            packet: None,
+            body: None,
         },
     );
 
@@ -465,8 +465,11 @@ fn agent_quote_presentation_carries_authenticated_directive_context() {
     assert!(matches!(
         quotes.as_slice(),
         [QuotePresentation::Resolved {
-            author: QuoteAuthor::Directive {
-                actor: wire::Actor::Operator,
+            attribution: wire::QuoteAttribution {
+                author: QuoteAuthor::Directive {
+                    actor: wire::Actor::Operator,
+                },
+                ..
             },
             disposition: Some(wire::Disposition::Acked),
             ..
@@ -492,12 +495,12 @@ fn nested_quote_presentation_inlines_each_sources_own_media() {
             SourceQuote {
                 identity: TextIdentity::Presented,
                 text: text.clone(),
-                author: QuoteAuthor::Directive {
+                attribution: authored_by(QuoteAuthor::Directive {
                     actor: wire::Actor::Operator,
-                },
+                }),
                 disposition: Some(wire::Disposition::Acked),
                 media,
-                packet: None,
+                body: None,
             },
         );
     }
@@ -533,12 +536,12 @@ fn media_targets_select_one_authenticated_ordinal_and_present_it_as_media() {
         SourceQuote {
             identity: TextIdentity::Presented,
             text: "source prose is not selected".to_owned(),
-            author: QuoteAuthor::Directive {
+            attribution: authored_by(QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
-            },
+            }),
             disposition: Some(wire::Disposition::Acked),
             media: vec![first, second.clone()],
-            packet: None,
+            body: None,
         },
     );
     let target = QuoteTarget::SteeringMedia {
@@ -592,13 +595,13 @@ fn a_media_only_tape_source_answers_only_its_media_targets() {
         SourceQuote {
             identity: TextIdentity::Absent,
             text: String::new(),
-            author: QuoteAuthor::Agent {
+            attribution: authored_by(QuoteAuthor::Agent {
                 lane: uuid(1),
                 occupant: uuid(3),
-            },
+            }),
             disposition: None,
             media: vec![image.clone()],
-            packet: None,
+            body: None,
         },
     );
 
@@ -676,12 +679,12 @@ fn refusals_name_the_original_target_without_synthesized_values() {
         SourceQuote {
             identity: TextIdentity::Presented,
             text: "forged".to_owned(),
-            author: QuoteAuthor::Directive {
+            attribution: authored_by(QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
-            },
+            }),
             disposition: Some(wire::Disposition::Live),
             media: Vec::new(),
-            packet: None,
+            body: None,
         },
     );
     assert_eq!(
@@ -703,16 +706,16 @@ fn presentation_expands_nested_quotes_and_preserves_the_depth_boundary_target() 
             SourceQuote {
                 identity: TextIdentity::Presented,
                 text: returned_text,
-                author: QuoteAuthor::Directive {
+                attribution: authored_by(QuoteAuthor::Directive {
                     actor: wire::Actor::Operator,
-                },
+                }),
                 disposition: Some(if index == 4 {
                     wire::Disposition::Acked
                 } else {
                     wire::Disposition::Live
                 }),
                 media: Vec::new(),
-                packet: None,
+                body: None,
             },
         );
         returned_text = target.markdown();
@@ -737,7 +740,7 @@ fn presentation_expands_nested_quotes_and_preserves_the_depth_boundary_target() 
     for depth in 0..usize::from(QUOTE_DEPTH_LIMIT) {
         let QuotePresentation::Resolved {
             target,
-            author,
+            attribution,
             disposition,
             quotes,
             ..
@@ -748,7 +751,7 @@ fn presentation_expands_nested_quotes_and_preserves_the_depth_boundary_target() 
         let source_index = 8 - depth;
         assert_eq!(target, &targets[source_index].to_string());
         assert_eq!(
-            author,
+            &attribution.author,
             &QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
             }
@@ -791,12 +794,12 @@ fn presentation_reloads_current_directive_disposition() {
         SourceQuote {
             identity: TextIdentity::Presented,
             text: text.to_owned(),
-            author: QuoteAuthor::Directive {
+            attribution: authored_by(QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
-            },
+            }),
             disposition: Some(wire::Disposition::Live),
             media: Vec::new(),
-            packet: None,
+            body: None,
         },
     );
     let message = target.markdown();
@@ -834,12 +837,12 @@ fn delivery_expands_nested_quotes_and_names_unavailable_sources() {
         SourceQuote {
             identity: TextIdentity::Presented,
             text: inner_text.to_owned(),
-            author: QuoteAuthor::Directive {
+            attribution: authored_by(QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
-            },
+            }),
             disposition: Some(wire::Disposition::Live),
             media: Vec::new(),
-            packet: None,
+            body: None,
         },
     );
     let outer_text = format!("before {} after", inner.markdown());
@@ -849,12 +852,12 @@ fn delivery_expands_nested_quotes_and_names_unavailable_sources() {
         SourceQuote {
             identity: TextIdentity::Presented,
             text: outer_text,
-            author: QuoteAuthor::Directive {
+            attribution: authored_by(QuoteAuthor::Directive {
                 actor: wire::Actor::Operator,
-            },
+            }),
             disposition: Some(wire::Disposition::Live),
             media: Vec::new(),
-            packet: None,
+            body: None,
         },
     );
     let missing = steering_target("dTVLR0qL2", "missing");
@@ -883,12 +886,12 @@ fn delivery_depth_limit_leaves_one_explicit_source_stub() {
             SourceQuote {
                 identity: TextIdentity::Presented,
                 text: returned_text,
-                author: QuoteAuthor::Directive {
+                attribution: authored_by(QuoteAuthor::Directive {
                     actor: wire::Actor::Operator,
-                },
+                }),
                 disposition: Some(wire::Disposition::Live),
                 media: Vec::new(),
-                packet: None,
+                body: None,
             },
         );
         returned_text = target.markdown();

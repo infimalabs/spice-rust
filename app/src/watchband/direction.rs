@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use wire::{AgentActivityKind, AgentMessage, CanonicalUuid, MessageDestination, MessageDirective};
+use wire::{AgentActivityKind, AgentMessage, CanonicalUuid, MessageDirective, QuoteRecipient};
 
 /// The operator's direction cards one team shows: one per send, however many
 /// of its members and deliveries recorded it.
@@ -19,7 +19,7 @@ pub(crate) fn direction_cards<'m>(
     messages: impl IntoIterator<Item = &'m AgentMessage>,
     members: &[CanonicalUuid],
 ) -> Vec<AgentMessage> {
-    let mut sends = BTreeMap::<String, (AgentMessage, Vec<MessageDestination>)>::new();
+    let mut sends = BTreeMap::<String, (AgentMessage, Vec<QuoteRecipient>)>::new();
     for message in messages.into_iter().filter(|message| {
         message.activity == AgentActivityKind::Direction && members.contains(&message.lane)
     }) {
@@ -34,34 +34,30 @@ pub(crate) fn direction_cards<'m>(
                 || context.quote_target.to_string(),
                 |fanout| fanout.to_string(),
             );
-            let (earliest, receivers) = sends
+            let (earliest, recipients) = sends
                 .entry(send)
                 .or_insert_with(|| (card.clone(), Vec::new()));
             if card.chronology_key() < earliest.chronology_key() {
                 *earliest = card;
             }
-            for receiver in &delivery.receivers {
-                if members.contains(&receiver.lane) && !receivers.contains(receiver) {
-                    receivers.push(*receiver);
+            for recipient in &context.attribution.recipients {
+                if members.contains(&recipient.lane) && !recipients.contains(recipient) {
+                    recipients.push(*recipient);
                 }
             }
         }
     }
     sends
         .into_values()
-        .map(|(mut card, mut receivers)| {
-            receivers
-                .sort_by_key(|receiver| members.iter().position(|lane| *lane == receiver.lane));
+        .map(|(mut card, mut recipients)| {
+            recipients
+                .sort_by_key(|recipient| members.iter().position(|lane| *lane == recipient.lane));
             let authored = card.directive_contexts[0].authored;
             card.authored = authored;
             card.authored_synthetic = false;
             card.observed = None;
-            if let Some(delivery) = card
-                .directive_contexts
-                .first_mut()
-                .and_then(|context| context.delivery.as_mut())
-            {
-                delivery.receivers = receivers;
+            if let Some(context) = card.directive_contexts.first_mut() {
+                context.attribution.recipients = recipients;
             }
             card
         })
@@ -118,17 +114,17 @@ mod tests {
                 digest: wire::QuoteTarget::text_digest(text),
             },
             media_quotes: Vec::new(),
-            actor: wire::Actor::Operator,
+            attribution: wire::QuoteAttribution {
+                author: wire::QuoteAuthor::Directive {
+                    actor: wire::Actor::Operator,
+                },
+                recipients: Vec::new(),
+                packet: None,
+                result: None,
+            },
             authored: "2030-04-12T18:44:08.000Z".parse().expect("fixture instant"),
             badge: None,
-            sender: None,
-            recipient: None,
-            packet: None,
-            result: None,
-            delivery: Some(wire::MessageDelivery {
-                fanout,
-                receivers: Vec::new(),
-            }),
+            delivery: Some(wire::MessageDelivery { fanout }),
         }
     }
 
@@ -150,12 +146,10 @@ mod tests {
             let mut context = context(key, quote, *fanout);
             context.start = start;
             context.end = u32::try_from(text.len()).expect("fixture length");
-            context
-                .delivery
-                .as_mut()
-                .expect("fixture delivery")
-                .receivers
-                .push(MessageDestination { lane, occupant });
+            context.attribution.recipients.push(QuoteRecipient {
+                lane,
+                occupant: None,
+            });
             contexts.push(context);
         }
         AgentMessage {
@@ -196,12 +190,10 @@ mod tests {
 
     fn receivers(card: &AgentMessage) -> Vec<CanonicalUuid> {
         card.directive_contexts[0]
-            .delivery
-            .as_ref()
-            .expect("card delivery")
-            .receivers
+            .attribution
+            .recipients
             .iter()
-            .map(|receiver| receiver.lane)
+            .map(|recipient| recipient.lane)
             .collect()
     }
 

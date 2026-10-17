@@ -656,6 +656,18 @@ fn a_located_history_cursor_keeps_paging_across_live_publication() {
     bus.shutdown().expect("bus shuts down");
 }
 
+/// An operator direction quoted without recipients or a packet.
+fn operator_attribution() -> wire::QuoteAttribution {
+    wire::QuoteAttribution {
+        author: wire::QuoteAuthor::Directive {
+            actor: wire::Actor::Operator,
+        },
+        recipients: Vec::new(),
+        packet: None,
+        result: None,
+    }
+}
+
 #[test]
 fn quote_presentations_are_complete_on_bootstrap_and_history_and_refresh_from_authority() {
     let bus = fixture(1);
@@ -673,15 +685,10 @@ fn quote_presentations_are_complete_on_bootstrap_and_history_and_refresh_from_au
             vec![wire::QuotePresentation::Resolved {
                 target: target_spelling.clone(),
                 text: quoted_text.to_owned(),
-                author: wire::QuoteAuthor::Directive {
-                    actor: wire::Actor::Operator,
-                },
+                attribution: operator_attribution(),
                 disposition: Some(*disposition.lock().expect("disposition lock")),
                 quotes: Vec::new(),
                 media_quotes: Vec::new(),
-                packet: None,
-                result: None,
-                addressee: None,
             }]
         }
     });

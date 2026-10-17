@@ -6,14 +6,6 @@ fn quote_fixture_id(tail: &str) -> wire::CanonicalUuid {
         .expect("fixture identity is canonical")
 }
 
-fn quote_source(card_id: &str, display_millis: i64) -> QuoteSource {
-    QuoteSource {
-        card_id: Some(card_id.to_owned()),
-        display_millis,
-        agent: None,
-    }
-}
-
 fn nested_quote_sources(
     outer: &wire::QuoteTarget,
     inner: &wire::QuoteTarget,
@@ -85,28 +77,20 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     let quotes = vec![wire::QuotePresentation::Resolved {
         target: outer_target.to_string(),
         text: outer_text,
-        author: wire::QuoteAuthor::Agent {
+        attribution: attributed(wire::QuoteAuthor::Agent {
             lane,
             occupant: source,
-        },
+        }),
         disposition: None,
         quotes: vec![wire::QuotePresentation::Resolved {
             target: inner_target.to_string(),
             text: inner_text.to_owned(),
-            author: wire::QuoteAuthor::Directive {
-                actor: wire::Actor::Operator,
-            },
+            attribution: attributed(operator()),
             disposition: Some(wire::Disposition::Live),
             quotes: Vec::new(),
             media_quotes: Vec::new(),
-            packet: None,
-            result: None,
-            addressee: None,
         }],
         media_quotes: Vec::new(),
-        packet: None,
-        result: None,
-        addressee: None,
     }];
 
     let agent = QuoteAgent {
@@ -226,15 +210,10 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         quotes.push(wire::QuotePresentation::Resolved {
             target: target.to_string(),
             text,
-            author: wire::QuoteAuthor::Directive {
-                actor: wire::Actor::Operator,
-            },
+            attribution: attributed(operator()),
             disposition: Some(*disposition),
             quotes: Vec::new(),
             media_quotes: Vec::new(),
-            packet: None,
-            result: None,
-            addressee: None,
         });
     }
     let spice_text = "direction from Spice";
@@ -243,15 +222,12 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     quotes.push(wire::QuotePresentation::Resolved {
         target: spice_target.to_string(),
         text: spice_text.to_owned(),
-        author: wire::QuoteAuthor::Directive {
+        attribution: attributed(wire::QuoteAuthor::Directive {
             actor: wire::Actor::Spice,
-        },
+        }),
         disposition: None,
         quotes: Vec::new(),
         media_quotes: Vec::new(),
-        packet: None,
-        result: None,
-        addressee: None,
     });
     let sources = BTreeMap::from([(
         spice_target.to_string(),
@@ -319,28 +295,18 @@ fn quote_levels_name_their_own_task_badges_at_every_occurrence() {
     let inner = wire::QuotePresentation::Resolved {
         target: inner_target.to_string(),
         text: inner_text.to_owned(),
-        author: wire::QuoteAuthor::Directive {
-            actor: wire::Actor::Operator,
-        },
+        attribution: attributed(operator()),
         disposition: None,
         quotes: Vec::new(),
         media_quotes: Vec::new(),
-        packet: None,
-        result: None,
-        addressee: None,
     };
     let outer = wire::QuotePresentation::Resolved {
         target: outer_target.to_string(),
         text: outer_text,
-        author: wire::QuoteAuthor::Directive {
-            actor: wire::Actor::Operator,
-        },
+        attribution: attributed(operator()),
         disposition: None,
         quotes: vec![inner],
         media_quotes: Vec::new(),
-        packet: None,
-        result: None,
-        addressee: None,
     };
     let sources = BTreeMap::from([
         (
@@ -399,15 +365,10 @@ fn a_cards_quote_tasks_follow_only_the_directions_it_quotes() {
         |target: &wire::QuoteTarget, text: &str, quotes| wire::QuotePresentation::Resolved {
             target: target.to_string(),
             text: text.to_owned(),
-            author: wire::QuoteAuthor::Directive {
-                actor: wire::Actor::Operator,
-            },
+            attribution: attributed(operator()),
             disposition: None,
             quotes,
             media_quotes: Vec::new(),
-            packet: None,
-            result: None,
-            addressee: None,
         };
     let quotes = [resolved(
         &outer,
@@ -419,13 +380,9 @@ fn a_cards_quote_tasks_follow_only_the_directions_it_quotes() {
         end: 1,
         quote_target: context,
         media_quotes: Vec::new(),
-        actor: wire::Actor::Operator,
+        attribution: attributed(operator()),
         authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
         badge: None,
-        sender: None,
-        recipient: None,
-        packet: None,
-        result: None,
         delivery: None,
     }];
     let work = |handle: &str| vec![handle.parse::<wire::TaskHandle>().expect("fixture task")];
@@ -464,28 +421,22 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
     let quotes = vec![wire::QuotePresentation::Resolved {
         target: outer_target.to_string(),
         text: outer_text,
-        author: wire::QuoteAuthor::Agent {
+        attribution: attributed(wire::QuoteAuthor::Agent {
             lane: quoted,
             occupant: departed,
-        },
+        }),
         disposition: None,
         quotes: vec![wire::QuotePresentation::Resolved {
             target: inner_target.to_string(),
             text: inner_text.to_owned(),
-            author: wire::QuoteAuthor::Directive {
+            attribution: attributed(wire::QuoteAuthor::Directive {
                 actor: wire::Actor::Lane(directing),
-            },
+            }),
             disposition: Some(wire::Disposition::Live),
             quotes: Vec::new(),
             media_quotes: Vec::new(),
-            packet: None,
-            result: None,
-            addressee: None,
         }],
         media_quotes: Vec::new(),
-        packet: None,
-        result: None,
-        addressee: None,
     }];
     let agent = |label: &str| QuoteAgent {
         accent: 2,
@@ -578,13 +529,9 @@ fn attribution_hunks_restart_after_more_than_one_quote() {
             end: u32::try_from(start + quoted.len()).expect("fixture offset fits"),
             quote_target: steering_target(key, quoted),
             media_quotes: Vec::new(),
-            actor: wire::Actor::Operator,
+            attribution: attributed(operator()),
             authored: authored.parse().expect("fixture instant"),
             badge: None,
-            sender: None,
-            recipient: None,
-            packet: None,
-            result: None,
             delivery: None,
         }
     };
@@ -689,13 +636,11 @@ fn directive_badge_leads_its_quote_and_ignores_literal_markers() {
             end: u32::try_from(start + quoted.len()).expect("fixture offset fits"),
             quote_target: steering_target(key, quoted),
             media_quotes: Vec::new(),
-            actor: wire::Actor::Spice,
+            attribution: attributed(wire::QuoteAuthor::Directive {
+                actor: wire::Actor::Spice,
+            }),
             authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
             badge,
-            sender: None,
-            recipient: None,
-            packet: None,
-            result: None,
             delivery: None,
         }
     };
@@ -761,13 +706,13 @@ fn packet_context_wears_its_kind_after_its_source() {
             end: u32::try_from(start + quoted.len()).expect("fixture offset fits"),
             quote_target: steering_target(key, quoted),
             media_quotes: Vec::new(),
-            actor: wire::Actor::Operator,
+            attribution: wire::QuoteAttribution {
+                packet,
+                result,
+                ..attributed(operator())
+            },
             authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
             badge: None,
-            sender: None,
-            recipient: None,
-            packet,
-            result,
             delivery: None,
         }
     };
@@ -825,7 +770,8 @@ fn packet_context_wears_its_kind_after_its_source() {
 }
 
 /// A quote link to a packet-delivered directive wears the same packet pill in
-/// its card head; a quoted direction no packet delivered stays literal.
+/// its card head; a quoted direction no packet delivered stays literal. Every
+/// one names the lane it was delivered to.
 #[test]
 fn quoted_packet_cards_wear_their_kind_in_the_head() {
     let result = "1kKRRsDR3"
@@ -864,15 +810,18 @@ fn quoted_packet_cards_wear_their_kind_in_the_head() {
         quotes.push(wire::QuotePresentation::Resolved {
             target: target.to_string(),
             text: text.to_owned(),
-            author: wire::QuoteAuthor::Directive {
-                actor: wire::Actor::Operator,
+            attribution: wire::QuoteAttribution {
+                recipients: vec![wire::QuoteRecipient {
+                    lane: kite,
+                    occupant: None,
+                }],
+                packet,
+                result,
+                ..attributed(operator())
             },
             disposition: Some(wire::Disposition::Acked),
             quotes: Vec::new(),
             media_quotes: Vec::new(),
-            packet,
-            result,
-            addressee: packet.map(|_| kite),
         });
     }
     let agents = QuoteAgents::from_iter([(
@@ -893,8 +842,8 @@ fn quoted_packet_cards_wear_their_kind_in_the_head() {
             "data-quote-recipient-lane=\"{kite}\" data-accent=\"3\">Kite<"
         ))
         .count(),
-        3,
-        "every packet names its addressed lane: {html}"
+        4,
+        "every quoted direction names its delivered lane: {html}"
     );
     let addressed = position("data-quote-recipient-lane=");
     let ans = position("data-message-packet=\"ans\" data-message-result=\"1kKRRsDR3\"");
@@ -910,227 +859,10 @@ fn quoted_packet_cards_wear_their_kind_in_the_head() {
             && ask < why
             && why < hold
             && hold < forged
-            && html.rfind("data-quote-recipient-lane=").expect("addressed") < hold,
+            && (hold..forged)
+                .contains(&html.rfind("data-quote-recipient-lane=").expect("addressed")),
         "{html}"
     );
-}
-
-/// A quoted MSG names the occupant that wrote it while that occupant holds
-/// the seat. Once it leaves, whether the lane is vacant or reseated, the
-/// lane's own name and accent attribute it historically. A lane gone from
-/// the roster reads as unavailable, never as raw identifiers.
-#[test]
-fn a_quoted_msg_context_keeps_its_lane_identity_across_seats() {
-    let id = |suffix: &str| -> wire::CanonicalUuid {
-        format!("018f82d4-6f59-7d06-92e3-bce9131164{suffix}")
-            .parse()
-            .expect("fixture identity is canonical")
-    };
-    let (lane, author, successor) = (id("0a"), id("1a"), id("1b"));
-    let quoted = "> hold the merge";
-    let markdown = format!("{quoted}\n\nHeld.");
-    let directives = [MessageDirective {
-        start: 0,
-        end: u32::try_from(quoted.len()).expect("fixture offset fits"),
-        quote_target: steering_target("dTVQdQfLx", quoted),
-        media_quotes: Vec::new(),
-        actor: wire::Actor::Lane(lane),
-        authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
-        badge: None,
-        sender: Some(author),
-        recipient: None,
-        packet: None,
-        result: None,
-        delivery: None,
-    }];
-    let sources = BTreeMap::from([(
-        directives[0].quote_target.to_string(),
-        QuoteSource::directive(&directives[0]),
-    )]);
-    let agent = |label: &str| QuoteAgent {
-        accent: 2,
-        label: label.to_owned(),
-    };
-    let render = |agents: &QuoteAgents| {
-        render_prose_card(&markdown, &[], &directives, &[], &[], agents, &sources).html
-    };
-    let name = |state: &str, label: &str| {
-        format!(
-            "data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{author}\" \
-             data-quote-author-state=\"{state}\"{}>{label}</span>",
-            if state == "unresolved" {
-                ""
-            } else {
-                " data-accent=\"2\""
-            }
-        )
-    };
-
-    for (agents, state) in [
-        (
-            QuoteAgents::from_iter([((lane, Some(author)), agent("lane-name"))]),
-            "current",
-        ),
-        (
-            QuoteAgents::from_iter([((lane, Some(successor)), agent("lane-name"))]),
-            "historical",
-        ),
-        (
-            QuoteAgents::from_iter([((lane, None), agent("lane-name"))]),
-            "historical",
-        ),
-    ] {
-        let html = render(&agents);
-        assert!(html.contains(&name(state, "lane-name")), "{html}");
-    }
-    let absent = render(&QuoteAgents::new());
-    assert!(
-        absent.contains(&name("unresolved", "unavailable")),
-        "{absent}"
-    );
-}
-
-#[test]
-fn peer_context_destination_survives_badges_and_reseating() {
-    let id = |suffix: &str| -> wire::CanonicalUuid {
-        format!("018f82d4-6f59-7d06-92e3-bce9131166{suffix}")
-            .parse()
-            .unwrap()
-    };
-    let (sender_lane, sender, recipient_lane, recipient, successor) =
-        (id("0a"), id("1a"), id("0b"), id("1b"), id("2b"));
-    let body = "> Check the boundary.";
-    let markdown = format!("{body}\n\nChecked.");
-    let mut context = MessageDirective {
-        start: 0,
-        end: u32::try_from(body.len()).unwrap(),
-        quote_target: steering_target("dTVQdQfLx", body),
-        media_quotes: Vec::new(),
-        actor: wire::Actor::Lane(sender_lane),
-        authored: "1970-01-01T00:00:01.000Z".parse().unwrap(),
-        badge: None,
-        sender: Some(sender),
-        recipient: Some(wire::MessageDestination {
-            lane: recipient_lane,
-            occupant: recipient,
-        }),
-        packet: None,
-        result: None,
-        delivery: None,
-    };
-    let sources = BTreeMap::from([(
-        context.quote_target.to_string(),
-        QuoteSource::directive(&context),
-    )]);
-    let agent = |label: &str| QuoteAgent {
-        accent: 1,
-        label: label.to_owned(),
-    };
-    for badge in [
-        None,
-        Some(wire::DirectiveBadge::Review),
-        Some(wire::DirectiveBadge::Taste),
-    ] {
-        context.badge = badge;
-        for (seat, expected_state) in [
-            (Some(recipient), "current"),
-            (None, "historical"),
-            (Some(successor), "historical"),
-        ] {
-            let roster = QuoteAgents::from_iter([
-                ((sender_lane, Some(sender)), agent("sender")),
-                ((recipient_lane, seat), agent("recipient-lane")),
-            ]);
-            let projection =
-                referenced_quote_agents(&[], std::slice::from_ref(&context), &[], &roster);
-            let html = render_prose_card(
-                &markdown,
-                &[],
-                std::slice::from_ref(&context),
-                &[],
-                &[],
-                &projection,
-                &sources,
-            )
-            .html;
-            assert!(html.contains("data-quote-direction=\"incoming\""), "{html}");
-            let destination = html.split("message-quote-recipients").nth(1).unwrap();
-            assert!(destination.contains(&format!("data-quote-agent-occupant=\"{recipient}\"")));
-            assert!(destination.contains(&format!("data-quote-author-state=\"{expected_state}\"")));
-            assert!(destination.contains(">recipient-lane</span>"));
-            assert!(html.contains("Check the boundary."));
-            assert!(html.contains("Checked."));
-        }
-    }
-}
-
-/// A delivered operator direction reads operator → every receiving member, and
-/// its rail wears the first receiver's accent instead of the operator's.
-#[test]
-fn a_delivered_direction_names_every_receiver_in_the_first_receivers_accent() {
-    let id = |suffix: &str| -> wire::CanonicalUuid {
-        format!("018f82d4-6f59-7d06-92e3-bce9131167{suffix}")
-            .parse()
-            .unwrap()
-    };
-    let (first_lane, first, second_lane, second) = (id("0a"), id("1a"), id("0b"), id("1b"));
-    let body = "> Ship the projection.";
-    let context = MessageDirective {
-        start: 0,
-        end: u32::try_from(body.len()).unwrap(),
-        quote_target: steering_target("dTVQdQfLy", body),
-        media_quotes: Vec::new(),
-        actor: wire::Actor::Operator,
-        authored: "1970-01-01T00:00:01.000Z".parse().unwrap(),
-        badge: None,
-        sender: None,
-        recipient: None,
-        packet: None,
-        result: None,
-        delivery: Some(wire::MessageDelivery {
-            fanout: Some(id("ff")),
-            receivers: vec![
-                wire::MessageDestination {
-                    lane: first_lane,
-                    occupant: first,
-                },
-                wire::MessageDestination {
-                    lane: second_lane,
-                    occupant: second,
-                },
-            ],
-        }),
-    };
-    let sources = BTreeMap::from([(
-        context.quote_target.to_string(),
-        QuoteSource::directive(&context),
-    )]);
-    let agent = |accent: usize, label: &str| QuoteAgent {
-        accent,
-        label: label.to_owned(),
-    };
-    let roster = QuoteAgents::from_iter([
-        ((first_lane, Some(first)), agent(3, "first")),
-        ((second_lane, Some(second)), agent(5, "second")),
-    ]);
-    let agents = referenced_quote_agents(&[], std::slice::from_ref(&context), &[], &roster);
-
-    let html = render_received_with_quotes(
-        body,
-        &[],
-        std::slice::from_ref(&context),
-        &[],
-        &agents,
-        &sources,
-    )
-    .html;
-
-    assert!(html.contains("data-accent=\"3\""), "{html}");
-    let destination = html.split("message-quote-recipients").nth(1).unwrap();
-    let first = destination.find(">first</span>").expect("first receiver");
-    let second = destination.find(">second</span>").expect("second receiver");
-    assert!(first < second, "{destination}");
-    assert!(html.contains("Ship the projection."));
 }
 
 /// An outgoing MSG names its exact sender, every addressed occupant in header

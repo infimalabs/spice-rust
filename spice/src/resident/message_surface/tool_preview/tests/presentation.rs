@@ -42,6 +42,21 @@ fn lane() -> CanonicalUuid {
         .expect("fixture lane")
 }
 
+/// An operator directive delivered to the fixture lane.
+fn operator_attribution() -> wire::QuoteAttribution {
+    wire::QuoteAttribution {
+        author: wire::QuoteAuthor::Directive {
+            actor: wire::Actor::Operator,
+        },
+        recipients: vec![wire::QuoteRecipient {
+            lane: lane(),
+            occupant: None,
+        }],
+        packet: None,
+        result: None,
+    }
+}
+
 fn event() -> PresentationEvent {
     PresentationEvent {
         lane: lane(),

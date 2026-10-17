@@ -470,9 +470,17 @@ mod tests {
                 key.parse().expect("fixture steering key"),
                 PresentationDirective {
                     actor: wire::Actor::Operator,
-                    sender: None,
-                    recipient: None,
-                    packet: None,
+                    attribution: wire::QuoteAttribution {
+                        author: wire::QuoteAuthor::Directive {
+                            actor: wire::Actor::Operator,
+                        },
+                        recipients: vec![wire::QuoteRecipient {
+                            lane: lane(),
+                            occupant: None,
+                        }],
+                        packet: None,
+                        result: None,
+                    },
                     published: published(),
                     fanout: None,
                     lane: lane(),

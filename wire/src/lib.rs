@@ -120,8 +120,9 @@ pub use quota::{
     QuotaReport, QuotaResetCredit, QuotaResetCredits, QuotaScope, QuotaSnapshot, QuotaWindow,
 };
 pub use quote::{
-    MediaQuote, QUOTE_DEPTH_LIMIT, QuoteAuthor, QuotePresentation, QuoteResolution, QuoteTarget,
-    QuoteTargetError, QuoteUnavailable, ResolvedMediaQuote, ResolvedQuote, steering_key,
+    MediaQuote, QUOTE_DEPTH_LIMIT, QuoteAttribution, QuoteAuthor, QuotePresentation,
+    QuoteRecipient, QuoteResolution, QuoteTarget, QuoteTargetError, QuoteUnavailable,
+    ResolvedMediaQuote, ResolvedQuote, steering_key,
 };
 pub use reply::{
     AppOpen, DemoAnswer, FactRow, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,
@@ -134,9 +135,9 @@ pub use reply::{
 pub use stream::{
     AgentActivityKind, AgentMessage, AgentProviderError, AutomaticSpeech, AutomaticSpeechKind,
     DirectiveBadge, MESSAGE_FLOOR, MessageAcknowledgement, MessageBoundary, MessageClassification,
-    MessageClassificationKind, MessageDelivery, MessageDestination, MessageDirective,
-    MessageHistoryCursor, MessageLocus, MessageProseOrigin, MessageRecipient, MessageSend,
-    MessageSendKind, PACKET_WITHHELD_CONTROL_PREFIX, PEER_REPLY_CONTROL_PREFIX, PeerAnswer,
+    MessageClassificationKind, MessageDelivery, MessageDirective, MessageHistoryCursor,
+    MessageLocus, MessageProseOrigin, MessageRecipient, MessageSend, MessageSendKind,
+    PACKET_WITHHELD_CONTROL_PREFIX, PEER_REPLY_CONTROL_PREFIX, PeerAnswer,
     REVIEW_FEEDBACK_CONTROL_PREFIX, StreamAdmissionError, StreamCursor, StreamFact, StreamFrame,
     StreamLaneSeated, StreamRequest, TranscriptGeneration, TranscriptLaneFrontier,
     TranscriptLaneState, TrustView, ViewSubject, packet_withheld_control,

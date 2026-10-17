@@ -70,10 +70,10 @@ fn retained_send_annotations_decode_as_msg_without_a_kind_field() {
 }
 
 #[test]
-fn a_directive_destination_belongs_to_a_peer_sender_or_an_operator_packet() {
+fn a_directive_context_names_its_recipient_and_only_operator_direction_is_delivered() {
     let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163d8");
     let occupant = uuid("018f82d4-6f59-7d06-92e3-bce9131163d9");
-    let directive = |actor, sender, packet| wire::MessageDirective {
+    let directive = |author, recipients, packet| wire::MessageDirective {
         start: 0,
         end: 4,
         quote_target: wire::QuoteTarget::Steering {
@@ -81,63 +81,66 @@ fn a_directive_destination_belongs_to_a_peer_sender_or_an_operator_packet() {
             digest: wire::QuoteTarget::text_digest("ship"),
         },
         media_quotes: Vec::new(),
-        actor,
+        attribution: wire::QuoteAttribution {
+            author,
+            recipients,
+            packet,
+            result: None,
+        },
         authored: "2030-04-12T18:44:08.000Z".parse().expect("fixture instant"),
         badge: None,
-        sender,
-        recipient: Some(wire::MessageDestination { lane, occupant }),
-        packet,
-        result: None,
         delivery: None,
+    };
+    let operator = || wire::QuoteAuthor::Directive {
+        actor: Actor::Operator,
+    };
+    let lane_only = || {
+        vec![wire::QuoteRecipient {
+            lane,
+            occupant: None,
+        }]
     };
     let msg = Some(wire::MessageSendKind::Msg);
 
-    assert!(directive(Actor::Lane(lane), Some(occupant), msg).is_valid_for("> hi"));
-    assert!(directive(Actor::Operator, None, msg).is_valid_for("> hi"));
+    let peer = wire::QuoteAuthor::Agent { lane, occupant };
+    let seated = vec![wire::QuoteRecipient {
+        lane,
+        occupant: Some(occupant),
+    }];
+    assert!(directive(peer, seated, msg).is_valid_for("> hi"));
+    assert!(directive(operator(), lane_only(), msg).is_valid_for("> hi"));
+    assert!(directive(operator(), lane_only(), None).is_valid_for("> hi"));
     assert!(
-        !directive(Actor::Operator, None, None).is_valid_for("> hi"),
-        "plain operator direction names no destination"
+        !directive(operator(), Vec::new(), None).is_valid_for("> hi"),
+        "a steering directive always reached a lane"
     );
-    assert!(
-        !directive(Actor::Lane(lane), None, msg).is_valid_for("> hi"),
-        "a peer destination needs its exact sender"
-    );
-    assert!(
-        !directive(Actor::Spice, None, msg).is_valid_for("> hi"),
-        "only operator and peer packets have a destination"
-    );
-
-    let delivered = |actor, recipient| wire::MessageDirective {
-        recipient,
-        delivery: Some(wire::MessageDelivery {
-            fanout: None,
-            receivers: vec![wire::MessageDestination { lane, occupant }],
-        }),
-        ..directive(actor, None, None)
+    let answer = wire::MessageDirective {
+        attribution: wire::QuoteAttribution {
+            packet: Some(wire::MessageSendKind::Ans),
+            ..directive(operator(), lane_only(), None).attribution
+        },
+        ..directive(operator(), lane_only(), None)
     };
-    assert!(delivered(Actor::Operator, None).is_valid_for("> hi"));
+    assert!(!answer.is_valid_for("> hi"), "an ANS names its result");
+
+    let delivered = |author, packet| wire::MessageDirective {
+        delivery: Some(wire::MessageDelivery { fanout: None }),
+        ..directive(author, lane_only(), packet)
+    };
+    assert!(delivered(operator(), None).is_valid_for("> hi"));
     assert!(
-        !delivered(Actor::Spice, None).is_valid_for("> hi"),
+        !delivered(
+            wire::QuoteAuthor::Directive {
+                actor: Actor::Spice
+            },
+            None
+        )
+        .is_valid_for("> hi"),
         "only the operator's own direction is delivered as its card"
     );
     assert!(
-        !delivered(
-            Actor::Operator,
-            Some(wire::MessageDestination { lane, occupant })
-        )
-        .is_valid_for("> hi"),
-        "a delivery names its receivers, not one answering recipient"
-    );
-    let unreceived = wire::MessageDirective {
-        delivery: Some(wire::MessageDelivery {
-            fanout: None,
-            receivers: Vec::new(),
-        }),
-        ..delivered(Actor::Operator, None)
-    };
-    assert!(
-        !unreceived.is_valid_for("> hi"),
-        "a delivery has a receiver"
+        !delivered(operator(), msg).is_valid_for("> hi"),
+        "a packet is answered, not delivered as a direction card"
     );
 }
 

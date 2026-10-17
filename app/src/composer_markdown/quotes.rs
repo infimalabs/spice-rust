@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::fmt::Write as _;
 
 use pulldown_cmark::{Event as MarkdownEvent, Tag, TagEnd};
-use wire::{Disposition, QuoteAuthor, QuotePresentation, QuoteTarget};
+use wire::{Disposition, QuoteAttribution, QuoteAuthor, QuotePresentation, QuoteTarget};
 
 /// The name an agent wears when its lane is absent from the roster.
 const UNAVAILABLE: &str = "unavailable";
@@ -64,47 +64,23 @@ pub(crate) fn referenced_quote_agents(
 ) -> super::QuoteAgents {
     let mut lanes = directives
         .iter()
-        .filter_map(|directive| match directive.actor {
-            wire::Actor::Lane(lane) => Some(lane),
-            wire::Actor::Operator | wire::Actor::Spice | wire::Actor::Human(_) => None,
-        })
-        .chain(directives.iter().flat_map(|directive| {
-            directive
-                .recipient
-                .map(|recipient| recipient.lane)
-                .into_iter()
-                .chain(
-                    directive.delivery.iter().flat_map(|delivery| {
-                        delivery.receivers.iter().map(|receiver| receiver.lane)
-                    }),
-                )
-        }))
+        .flat_map(|directive| attribution_lanes(&directive.attribution))
         .chain(sends.iter().flat_map(|send| {
             std::iter::once(send.from).chain(send.recipients.iter().map(|recipient| recipient.lane))
         }))
         .collect::<std::collections::BTreeSet<_>>();
     let mut pending = presentations.iter().collect::<Vec<_>>();
     while let Some(presentation) = pending.pop() {
-        let (author, quotes, addressee) = match presentation {
+        let (attribution, quotes) = match presentation {
             QuotePresentation::Resolved {
-                author,
+                attribution,
                 quotes,
-                addressee,
                 ..
-            } => (author, quotes.as_slice(), *addressee),
-            QuotePresentation::Media { author, .. } => (author, &[][..], None),
+            } => (attribution, quotes.as_slice()),
+            QuotePresentation::Media { attribution, .. } => (attribution, &[][..]),
             QuotePresentation::Unavailable { .. } => continue,
         };
-        match author {
-            QuoteAuthor::Agent { lane, .. }
-            | QuoteAuthor::Directive {
-                actor: wire::Actor::Lane(lane),
-            } => {
-                lanes.insert(*lane);
-            }
-            QuoteAuthor::Directive { .. } => {}
-        }
-        lanes.extend(addressee);
+        lanes.extend(attribution_lanes(attribution));
         pending.extend(quotes);
     }
     super::QuoteAgents {
@@ -181,67 +157,67 @@ pub(crate) fn referenced_quote_tasks(
     referenced
 }
 
-/// The lead of each hunk of quoted words: source age, author name, then the
-/// lane a quoted packet addressed.
-pub(super) fn signoff_html(
-    author: &QuoteAuthor,
-    addressee: Option<wire::CanonicalUuid>,
-    target: &str,
-    agents: &super::QuoteAgents,
-    sources: &super::QuoteSources,
-) -> String {
-    let Some(source) = sources.get(target) else {
-        return String::new();
+/// Every lane one attribution names: its author's, then each recipient's.
+fn attribution_lanes(
+    attribution: &QuoteAttribution,
+) -> impl Iterator<Item = wire::CanonicalUuid> + '_ {
+    let author = match attribution.author {
+        QuoteAuthor::Agent { lane, .. }
+        | QuoteAuthor::Directive {
+            actor: wire::Actor::Lane(lane),
+        } => Some(lane),
+        QuoteAuthor::Directive { .. } => None,
     };
-    let age = quote_age_slot_html(author, agents, source);
-    let name = quote_author_name_html(author, agents, source);
-    let destination =
-        addressee.map_or_else(String::new, |lane| lane_participant_html(lane, agents));
-    packet_signoff_html(&age, &name, &destination, "incoming")
+    author.into_iter().chain(
+        attribution
+            .recipients
+            .iter()
+            .map(|recipient| recipient.lane),
+    )
 }
 
-/// Source attribution is independent of the answer's badge. A peer context
-/// carries the immutable destination proved by its creating message fact; a
-/// delivered direction names every member whose transcript recorded it.
-fn directive_signoff_html(
-    context: &wire::MessageDirective,
+/// The lead of each hunk of quoted words, the same wherever the source
+/// appears: source age, author name, then every recipient its record proves.
+pub(super) fn signoff_html(
+    attribution: &QuoteAttribution,
     target: &str,
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
 ) -> String {
-    let author = super::context_author(context);
     let Some(source) = sources.get(target) else {
         return String::new();
     };
-    let age = quote_age_slot_html(&author, agents, source);
-    let name = quote_author_name_html(&author, agents, source);
+    let age = quote_age_slot_html(&attribution.author, agents, source);
+    let name = quote_author_name_html(&attribution.author, agents, source);
     let mut destination = String::new();
-    let receivers = context.recipient.iter().chain(
-        context
-            .delivery
-            .iter()
-            .flat_map(|delivery| &delivery.receivers),
-    );
-    for receiver in receivers {
+    for recipient in &attribution.recipients {
         push_recipient_separator(&mut destination);
-        destination.push_str(&participant_html(
-            receiver.lane,
-            receiver.occupant,
-            None,
-            agents,
-        ));
+        destination.push_str(&recipient_html(recipient, agents));
     }
     packet_signoff_html(&age, &name, &destination, "incoming")
 }
 
+/// One recipient: the exact occupant its record proves, else its lane.
+fn recipient_html(recipient: &wire::QuoteRecipient, agents: &super::QuoteAgents) -> String {
+    recipient.occupant.map_or_else(
+        || lane_participant_html(recipient.lane, agents),
+        |occupant| participant_html(recipient.lane, occupant, None, agents),
+    )
+}
+
 /// The accent slot a delivered direction's quote wears: its first
-/// receiver's, as that member's own cards wear it.
-pub(super) fn delivery_accent(
-    delivery: &wire::MessageDelivery,
+/// recipient's, as that member's own cards wear it.
+pub(super) fn recipient_accent(
+    attribution: &QuoteAttribution,
     agents: &super::QuoteAgents,
 ) -> Option<usize> {
-    let receiver = delivery.receivers.first()?;
-    occupant_agent(agents, receiver.lane, receiver.occupant).map(|(agent, _)| agent.accent)
+    let recipient = attribution.recipients.first()?;
+    match recipient.occupant {
+        Some(occupant) => {
+            occupant_agent(agents, recipient.lane, occupant).map(|(agent, _)| agent.accent)
+        }
+        None => lane_member_agent(agents, recipient.lane).map(|agent| agent.accent),
+    }
 }
 
 fn packet_signoff_html(age: &str, sender: &str, recipients: &str, direction: &str) -> String {
@@ -285,14 +261,12 @@ fn participant_html(
 }
 
 /// A lane addressed as a whole, named by its team member, seated or vacant.
+/// A lane gone from the roster reads as unavailable, never as raw identifiers.
 fn lane_participant_html(lane: wire::CanonicalUuid, agents: &super::QuoteAgents) -> String {
     let member = lane_member_agent(agents, lane);
-    let label = member.map_or_else(
-        || Cow::Owned(format!("lane {}", crate::watchband::short(lane))),
-        |agent| Cow::Borrowed(agent.label.as_str()),
-    );
+    let label = member.map_or(UNAVAILABLE, |agent| agent.label.as_str());
     quote_name_html(
-        &label,
+        label,
         &format!(" data-quote-recipient-lane=\"{lane}\""),
         member.map(|agent| agent.accent),
     )
@@ -486,7 +460,7 @@ pub(super) fn directive_attribution(
     let target = context.quote_target.to_string();
     super::image_flow::Attribution {
         controls_target: target.clone(),
-        signoff: directive_signoff_html(context, &target, agents, sources),
+        signoff: signoff_html(&context.attribution, &target, agents, sources),
         disposition: String::new(),
         badge: directive_badges_html(context),
         task_tail: task_tail_html(&target),
@@ -497,17 +471,16 @@ pub(super) fn directive_attribution(
 /// ANS packet that delivered it, in the card head's own pill group.
 fn directive_badges_html(context: &wire::MessageDirective) -> String {
     let mut badges = context.badge.map_or_else(String::new, directive_badge_html);
-    badges.push_str(&packet_group_html(context.packet, context.result.as_ref()));
+    badges.push_str(&packet_group_html(&context.attribution));
     badges
 }
 
 /// The pill group naming the MSG, ASK, or ANS packet that delivered a quoted
 /// directive; empty when no packet delivered it or an MSG wears none.
-fn packet_group_html(
-    packet: Option<wire::MessageSendKind>,
-    result: Option<&wire::rooms::QuestionResultRef>,
-) -> String {
-    let pill = packet.map_or_else(String::new, |kind| packet_kind_html(kind, result));
+fn packet_group_html(attribution: &QuoteAttribution) -> String {
+    let pill = attribution.packet.map_or_else(String::new, |kind| {
+        packet_kind_html(kind, attribution.result.as_ref())
+    });
     if pill.is_empty() {
         return pill;
     }
@@ -599,16 +572,13 @@ fn render(
         QuotePresentation::Resolved {
             target,
             text,
-            author,
+            attribution,
             disposition,
             quotes,
             media_quotes,
-            packet,
-            result,
-            addressee,
         } => {
             let disposition = disposition.map(disposition_html).unwrap_or_default();
-            let signoff = signoff_html(author, *addressee, target, agents, sources);
+            let signoff = signoff_html(attribution, target, agents, sources);
             let task_tail = task_tail_html(target);
             let body = super::render_quote_card_body(
                 text,
@@ -620,12 +590,12 @@ fn render(
                     controls_target: target.clone(),
                     signoff,
                     disposition,
-                    badge: packet_group_html(*packet, result.as_ref()),
+                    badge: packet_group_html(attribution),
                     task_tail,
                 },
                 quote_depth,
             );
-            let accent = speaker_accent(author, target, agents, sources)
+            let accent = speaker_accent(&attribution.author, target, agents, sources)
                 .map_or_else(String::new, |accent| format!(" data-accent=\"{accent}\""));
             format!(
                 "<div class=\"message-quote-card\" data-quote-state=\"resolved\" \
@@ -637,11 +607,11 @@ fn render(
         QuotePresentation::Media {
             target,
             media,
-            author,
+            attribution,
             disposition,
         } => {
             let disposition = disposition.map(disposition_html).unwrap_or_default();
-            let signoff = signoff_html(author, None, target, agents, sources);
+            let signoff = signoff_html(attribution, target, agents, sources);
             let task_tail = task_tail_html(target);
             let own_quote = target.parse().ok().map(|target| wire::MediaQuote {
                 target,
@@ -660,12 +630,12 @@ fn render(
                     controls_target: target.clone(),
                     signoff,
                     disposition,
-                    badge: String::new(),
+                    badge: packet_group_html(attribution),
                     task_tail,
                 },
                 quote_depth,
             );
-            let accent = speaker_accent(author, target, agents, sources)
+            let accent = speaker_accent(&attribution.author, target, agents, sources)
                 .map_or_else(String::new, |accent| format!(" data-accent=\"{accent}\""));
             format!(
                 "<div class=\"message-quote-card message-quote-card--media\" \

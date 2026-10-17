@@ -40,8 +40,8 @@ impl MessageClassification {
 ///
 /// The range identifies the exact rendered context the quote action belongs to;
 /// the target authenticates the original journal text independently of marker
-/// presentation, and the actor attributes it exactly as a quote of that target
-/// would.
+/// presentation, and the attribution is exactly the one a quote of that target
+/// carries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageDirective {
@@ -54,31 +54,14 @@ pub struct MessageDirective {
     /// Images retained by this directive, each with its exact quote target.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media_quotes: Vec<crate::MediaQuote>,
-    /// Actor on the directive's creating fact.
-    pub actor: crate::Actor,
+    /// Who said the directive and whom it reached.
+    pub attribution: crate::QuoteAttribution,
     /// Journal instant at which the quoted directive was published.
     pub authored: Instant,
     /// Kind of resident-generated directive this context quotes, from its
     /// typed provenance. The absent wire spelling means ordinary direction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub badge: Option<DirectiveBadge>,
-    /// Exact occupant that authored the directive as an MSG packet, which the
-    /// context names instead of whoever now represents the sending lane.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sender: Option<crate::CanonicalUuid>,
-    /// Exact destination of an authored peer message, or the occupant whose
-    /// acknowledgment this card presents for an operator MSG, ASK, or ANS.
-    /// Classification badges do not change this provenance.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recipient: Option<MessageDestination>,
-    /// Protocol kind of the room publication whose write opened this
-    /// directive, when an MSG, ASK, or ANS delivered it. The context then
-    /// renders that packet's body without its header.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub packet: Option<MessageSendKind>,
-    /// Result an ANS packet context answers. Other packet kinds carry none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<crate::rooms::QuestionResultRef>,
     /// The delivery a top-level operator direction card presents. Only a
     /// plain operator direction, delivered rather than answered, carries one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -93,18 +76,6 @@ pub struct MessageDelivery {
     /// send fanned out to; a consumer presents one card per send.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fanout: Option<crate::CanonicalUuid>,
-    /// Every occupant whose transcript recorded the delivery, in display order.
-    pub receivers: Vec<MessageDestination>,
-}
-
-/// A peer message's immutable destination, independent of current seating.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MessageDestination {
-    /// Lane the published message addressed.
-    pub lane: crate::CanonicalUuid,
-    /// Occupant seated there when the message was published.
-    pub occupant: crate::CanonicalUuid,
 }
 
 impl MessageDirective {
@@ -120,7 +91,12 @@ impl MessageDirective {
         }) else {
             return false;
         };
-        let human = crate::principal::ActingPrincipal::of(&self.actor).is_some();
+        let attribution = &self.attribution;
+        let human = matches!(
+            &attribution.author,
+            crate::QuoteAuthor::Directive { actor }
+                if crate::principal::ActingPrincipal::of(actor).is_some()
+        );
         start < end
             && text.get(start..end).is_some()
             && self.media_quotes.iter().all(|media| {
@@ -133,17 +109,12 @@ impl MessageDirective {
                         } if media_key == key
                     )
             })
-            && (self.recipient.is_none()
-                || (self.sender.is_some() && matches!(self.actor, crate::Actor::Lane(_)))
-                || (self.packet.is_some() && human))
-            && (self.result.is_some() == (self.packet == Some(MessageSendKind::Ans)))
-            && self.delivery.as_ref().is_none_or(|delivery| {
-                !delivery.receivers.is_empty()
-                    && human
-                    && self.sender.is_none()
-                    && self.recipient.is_none()
-                    && self.packet.is_none()
-            })
+            && attribution.is_valid()
+            && !attribution.recipients.is_empty()
+            && self
+                .delivery
+                .as_ref()
+                .is_none_or(|_| human && attribution.packet.is_none())
     }
 }
 /// Whether directive contexts are exact, ordered, and non-overlapping.

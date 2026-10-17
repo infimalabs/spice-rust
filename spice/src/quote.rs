@@ -2,7 +2,6 @@
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Parser, Tag, TagEnd};
 
@@ -170,33 +169,25 @@ fn present_with(store: &impl QuoteStore, text: &str, depth: u8) -> Vec<QuotePres
         .map(|quote| {
             let presented = admitted_target(&quote.target, depth).and_then(|target| {
                 if target.is_media() {
-                    let resolved = resolve_media_source(store, &target)?;
+                    let (source, media) = media_source(store, &target)?;
                     return Ok(QuotePresentation::Media {
                         target: quote.target.clone(),
-                        media: resolved.media,
-                        author: resolved.author,
-                        disposition: resolved.disposition,
+                        media,
+                        attribution: source.attribution,
+                        disposition: source.disposition,
                     });
                 }
                 let source = resolve_text_source(store, &target)?;
                 let media_quotes = media_quotes(&target, &source.media)?;
                 let SourceQuote {
                     text,
-                    author,
+                    attribution,
                     disposition,
                     media,
-                    packet,
+                    body,
                     ..
                 } = source;
-                let (text, packet, result, addressee) = match packet {
-                    Some(packet) => (
-                        packet.body().map_or(text, str::to_owned),
-                        Some(packet.kind),
-                        packet.result,
-                        packet.addressee,
-                    ),
-                    None => (text, None, None, None),
-                };
+                let text = body.unwrap_or(text);
                 let quotes = present_with(
                     store,
                     &text,
@@ -207,13 +198,10 @@ fn present_with(store: &impl QuoteStore, text: &str, depth: u8) -> Vec<QuotePres
                 Ok(QuotePresentation::Resolved {
                     target: quote.target.clone(),
                     text: inlined.into_owned(),
-                    author,
+                    attribution,
                     disposition,
                     quotes,
                     media_quotes,
-                    packet,
-                    result,
-                    addressee,
                 })
             });
             presented.unwrap_or_else(|reason| QuotePresentation::Unavailable {
@@ -272,74 +260,81 @@ pub fn media_quotes(
         .collect()
 }
 
-/// The MSG, ASK, or ANS packet a quoted source or directive was published as.
+/// One steering directive as every presentation of it reads.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SteeringPacket {
-    /// Protocol kind of the publication.
-    pub kind: wire::MessageSendKind,
-    /// Result an ANS answers.
-    pub result: Option<wire::rooms::QuestionResultRef>,
-    /// Lane the packet's directive was delivered to; a room post addresses
-    /// its room and names none.
-    pub addressee: Option<CanonicalUuid>,
-    /// The opening publication every directive of one fanout shares.
-    publication: Option<Arc<bus::SteeringPublication>>,
+pub struct SteeringSource {
+    /// Who said the directive and whom it reached.
+    pub attribution: wire::QuoteAttribution,
+    /// Authenticated body of the MSG, ASK, or ANS publication that opened the
+    /// directive, shown without the header its recipient read.
+    pub body: Option<String>,
 }
 
-impl SteeringPacket {
-    /// An operator post's authenticated body, without the header its
-    /// recipient's directive spells.
-    #[must_use]
-    pub fn body(&self) -> Option<&str> {
-        self.publication
-            .as_deref()
-            .and_then(bus::SteeringPublication::text)
+/// Derive `row`'s attribution once from its own record.
+///
+/// A peer message names the exact occupant that wrote it, so a later occupant
+/// of the sending lane never inherits its authorship; any other directive
+/// names the principal on its creating fact. The recipient is the lane the
+/// directive was delivered to, with the occupant a peer message's route
+/// proves was seated there. An opening room publication's typed operation
+/// proves the packet kind, and a peer directive no publication opened is an
+/// MSG. Any other directive is no packet, whatever its words spell.
+#[must_use]
+pub fn steering_source(
+    row: &bus::SteeringPresentation,
+    roles: &wire::principal::PrincipalRoles,
+) -> SteeringSource {
+    let created = &row.created().fact;
+    let messaged = created.read::<wire::body::SteerMessaged>();
+    let peer = messaged
+        .as_ref()
+        .map(|message| (message.from, message.sender))
+        .or_else(|| {
+            created
+                .read::<wire::body::SteerQueued>()
+                .map(|message| (message.from, message.sender))
+        });
+    let author = peer.map_or_else(
+        || QuoteAuthor::Directive {
+            actor: roles.author(&row.created().actor),
+        },
+        |(lane, occupant)| QuoteAuthor::Agent { lane, occupant },
+    );
+    let recipient = wire::QuoteRecipient {
+        lane: row.head().body().lane,
+        occupant: messaged.map(|message| message.occupant),
+    };
+    let (packet, body) = match row.publication() {
+        Some(publication) => (
+            Some(packet_kind(publication.operation())),
+            publication.text().map(str::to_owned),
+        ),
+        None => (peer.map(|_| (wire::MessageSendKind::Msg, None)), None),
+    };
+    let (packet, result) = packet.unzip();
+    SteeringSource {
+        attribution: wire::QuoteAttribution {
+            author,
+            recipients: vec![recipient],
+            packet,
+            result: result.flatten(),
+        },
+        body,
     }
 }
 
-/// The packet whose room publication opened `row`'s directive.
-///
-/// The publication's typed operation proves the kind; a peer directive no
-/// room publication opened is an MSG. Any other directive is no packet,
-/// whatever its words spell.
-#[must_use]
-pub fn steering_packet(row: &bus::SteeringPresentation) -> Option<SteeringPacket> {
-    let addressee = Some(row.head().body().lane);
-    let Some(publication) = row.publication() else {
-        let created = &row.created().fact;
-        let peer = created.kind() == wire::FactKind::SteerMessaged
-            || created.kind() == wire::FactKind::SteerQueued;
-        return peer.then_some(SteeringPacket {
-            kind: wire::MessageSendKind::Msg,
-            result: None,
-            addressee,
-            publication: None,
-        });
-    };
-    Some(room_packet(
-        publication.operation(),
-        addressee,
-        Some(Arc::clone(publication)),
-    ))
-}
-
-fn room_packet(
+fn packet_kind(
     operation: &wire::rooms::RoomPublicationKind,
-    addressee: Option<CanonicalUuid>,
-    publication: Option<Arc<bus::SteeringPublication>>,
-) -> SteeringPacket {
-    let (kind, result) = match operation {
+) -> (
+    wire::MessageSendKind,
+    Option<wire::rooms::QuestionResultRef>,
+) {
+    match operation {
         wire::rooms::RoomPublicationKind::Msg {} => (wire::MessageSendKind::Msg, None),
         wire::rooms::RoomPublicationKind::Ask { .. } => (wire::MessageSendKind::Ask, None),
         wire::rooms::RoomPublicationKind::Ans { result, .. } => {
             (wire::MessageSendKind::Ans, Some(result.clone()))
         }
-    };
-    SteeringPacket {
-        kind,
-        result,
-        addressee,
-        publication,
     }
 }
 
@@ -449,14 +444,25 @@ enum TextIdentity {
 struct SourceQuote {
     identity: TextIdentity,
     text: String,
-    author: QuoteAuthor,
+    attribution: wire::QuoteAttribution,
     disposition: Option<wire::Disposition>,
     /// Admitted media the source carries, which its text may reference by
     /// `attachment:` identity.
     media: Vec<wire::Media>,
-    /// The packet the source was published as, presented in place of `text`
-    /// once `text` authenticates the target.
-    packet: Option<SteeringPacket>,
+    /// A packet's authenticated body, presented in place of `text` once
+    /// `text` authenticates the target.
+    body: Option<String>,
+}
+
+/// Attribution of words that reached no recorded lane: transcript prose and
+/// room publications.
+fn authored_by(author: QuoteAuthor) -> wire::QuoteAttribution {
+    wire::QuoteAttribution {
+        author,
+        recipients: Vec::new(),
+        packet: None,
+        result: None,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -529,37 +535,18 @@ impl QuoteStore for ResidentStore<'_> {
         if head.key != key {
             return Err(SourceError::Unknown);
         }
-        // A peer message names the exact occupant that wrote it, so a later
-        // occupant of the sending lane never inherits its authorship.
-        let peer = presentation
-            .created()
-            .fact
-            .read::<wire::body::SteerMessaged>()
-            .map(|message| (message.from, message.sender))
-            .or_else(|| {
-                presentation
-                    .created()
-                    .fact
-                    .read::<wire::body::SteerQueued>()
-                    .map(|message| (message.from, message.sender))
-            });
-        let author = match peer {
-            Some((lane, occupant)) => QuoteAuthor::Agent { lane, occupant },
-            None => QuoteAuthor::Directive {
-                actor: self
-                    .bus
-                    .principal_roles()
-                    .map_err(|_| SourceError::Unreadable)?
-                    .author(&presentation.created().actor),
-            },
-        };
+        let roles = self
+            .bus
+            .principal_roles()
+            .map_err(|_| SourceError::Unreadable)?;
+        let SteeringSource { attribution, body } = steering_source(&presentation, &roles);
         Ok(SourceQuote {
             identity: TextIdentity::Presented,
             text: head.text.clone(),
-            author,
+            attribution,
             disposition: Some(head.disposition),
             media: head.attachments.clone(),
-            packet: steering_packet(&presentation),
+            body,
         })
     }
 
@@ -581,18 +568,25 @@ impl QuoteStore for ResidentStore<'_> {
             .principal_roles()
             .map_err(|_| SourceError::Unreadable)?
             .author(&envelope.actor);
-        let authored = |text, packet| SourceQuote {
-            identity: TextIdentity::Presented,
-            text,
-            author: QuoteAuthor::Directive {
-                actor: actor.clone(),
-            },
-            disposition: None,
-            media: Vec::new(),
-            packet,
+        let authored = |text, packet: Option<_>| {
+            let (packet, result) = packet.unzip();
+            SourceQuote {
+                identity: TextIdentity::Presented,
+                text,
+                attribution: wire::QuoteAttribution {
+                    packet,
+                    result: result.flatten(),
+                    ..authored_by(QuoteAuthor::Directive {
+                        actor: actor.clone(),
+                    })
+                },
+                disposition: None,
+                media: Vec::new(),
+                body: None,
+            }
         };
         if let Some(posted) = envelope.fact.read::<wire::rooms::RoomPosted>() {
-            let packet = room_packet(&posted.operation, None, None);
+            let packet = packet_kind(&posted.operation);
             return Ok(authored(posted.text, Some(packet)));
         }
         if let Some(published) = envelope.fact.read::<wire::rooms::RoomPublished>()
@@ -612,13 +606,13 @@ impl QuoteStore for ResidentStore<'_> {
         Ok(SourceQuote {
             identity: TextIdentity::Presented,
             text,
-            author: QuoteAuthor::Agent {
+            attribution: authored_by(QuoteAuthor::Agent {
                 lane: messaged.hunk.head.lane,
                 occupant: messaged.author,
-            },
+            }),
             disposition: None,
             media: Vec::new(),
-            packet: None,
+            body: None,
         })
     }
 }
@@ -629,15 +623,19 @@ fn resolve_with(store: &impl QuoteStore, target: &str, depth: u8) -> QuoteResolu
         Err(reason) => return unavailable(target, reason),
     };
     if parsed.is_media() {
-        return match resolve_media_source(store, &parsed) {
-            Ok(resolved) => QuoteResolution::Media(resolved),
+        return match media_source(store, &parsed) {
+            Ok((source, media)) => QuoteResolution::Media(ResolvedMediaQuote {
+                media,
+                author: source.attribution.author,
+                disposition: source.disposition,
+            }),
             Err(reason) => unavailable(target, reason),
         };
     }
     match resolve_text_source(store, &parsed) {
         Ok(source) => QuoteResolution::Resolved(ResolvedQuote {
             text: source.text,
-            author: source.author,
+            author: source.attribution.author,
             disposition: source.disposition,
         }),
         Err(reason) => unavailable(target, reason),
@@ -705,10 +703,11 @@ fn resolve_text_source(
     Ok(resolved)
 }
 
-fn resolve_media_source(
+/// The source owning a media target and the exact image it selects.
+fn media_source(
     store: &impl QuoteStore,
     target: &QuoteTarget,
-) -> Result<ResolvedMediaQuote, QuoteUnavailable> {
+) -> Result<(SourceQuote, wire::Media), QuoteUnavailable> {
     let ordinal = match target {
         QuoteTarget::TapeMedia { ordinal, .. } | QuoteTarget::SteeringMedia { ordinal, .. } => {
             usize::from(*ordinal)
@@ -725,11 +724,7 @@ fn resolve_media_source(
     if identity != *target.digest() {
         return Err(QuoteUnavailable::DigestMismatch);
     }
-    Ok(ResolvedMediaQuote {
-        media,
-        author: source.author,
-        disposition: source.disposition,
-    })
+    Ok((source, media))
 }
 
 fn expand_with(store: &impl QuoteStore, source: &str, depth: u8) -> String {
@@ -949,10 +944,10 @@ fn resolve_tape(
     Ok(SourceQuote {
         identity,
         text,
-        author: QuoteAuthor::Agent { lane, occupant },
+        attribution: authored_by(QuoteAuthor::Agent { lane, occupant }),
         disposition: None,
         media,
-        packet: None,
+        body: None,
     })
 }
 

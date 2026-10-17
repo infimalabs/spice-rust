@@ -666,17 +666,16 @@ fn parse_events<'m>(
                 if quote_depth == 0 {
                     let quote = if let Some(context) = contexts.remove(&source.start) {
                         OuterQuote {
-                            accent: context.delivery.as_ref().map_or_else(
-                                || {
-                                    quotes::speaker_accent(
-                                        &context_author(&context),
-                                        &context.quote_target.to_string(),
-                                        quote_agents,
-                                        quote_sources,
-                                    )
-                                },
-                                |delivery| quotes::delivery_accent(delivery, quote_agents),
-                            ),
+                            accent: if context.delivery.is_some() {
+                                quotes::recipient_accent(&context.attribution, quote_agents)
+                            } else {
+                                quotes::speaker_accent(
+                                    &context.attribution.author,
+                                    &context.quote_target.to_string(),
+                                    quote_agents,
+                                    quote_sources,
+                                )
+                            },
                             attribution: Some(quotes::directive_attribution(
                                 &context,
                                 quote_agents,
@@ -749,20 +748,6 @@ fn accent_directive_contexts(events: &mut [MarkdownEvent<'_>], outer_quotes: &[O
 
 /// Where a prose card's own attribution mounts (`browser::mermaid`).
 const SIGNOFF_SLOT: &str = "<span class=\"message-signoff-slot\" data-signoff-slot=\"\"></span>";
-
-/// The recorded author a directive context names: the exact occupant that
-/// wrote an MSG, otherwise the actor on the directive's creating fact.
-fn context_author(context: &MessageDirective) -> wire::QuoteAuthor {
-    match (&context.actor, context.sender) {
-        (wire::Actor::Lane(lane), Some(occupant)) => wire::QuoteAuthor::Agent {
-            lane: *lane,
-            occupant,
-        },
-        (actor, _) => wire::QuoteAuthor::Directive {
-            actor: actor.clone(),
-        },
-    }
-}
 
 fn coalesce_text_events(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>> {
     let mut coalesced = Vec::with_capacity(events.len());

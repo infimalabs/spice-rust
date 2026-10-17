@@ -667,7 +667,7 @@ fn present_steering_acknowledgements(
     let broadcasts = answered_broadcasts(text, steering, event);
     let classifications = hydrate_message_classifications(&presented, broadcasts)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
-    let directive_contexts = hydrate_directive_contexts(&presented, steering, event)
+    let directive_contexts = hydrate_directive_contexts(&presented, steering)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
     let sends = hydrate_sends(&presented, event)
         .map_err(|detail| store_fault("serve::message-steering-presentation-invalid", &detail))?;
@@ -757,14 +757,11 @@ struct PresentationDirective {
     quote_target: wire::QuoteTarget,
     /// Images retained by this directive, each with its exact quote target.
     media_quotes: Vec<wire::MediaQuote>,
-    /// Actor on the creating fact, which a quote of this directive names.
+    /// Actor on the creating fact, whose principal roles grant authority.
     actor: wire::Actor,
-    /// Exact occupant that authored the directive as an MSG packet.
-    sender: Option<CanonicalUuid>,
-    recipient: Option<wire::MessageDestination>,
-    /// The packet whose room publication opened this directive; its body
-    /// already stands in `text`.
-    packet: Option<spice::quote::SteeringPacket>,
+    /// Who said the directive and whom it reached, exactly as a quote of it
+    /// names them. A packet's body already stands in `text`.
+    attribution: wire::QuoteAttribution,
     /// Journal instant at which the directive's creating fact was committed.
     published: wire::Instant,
     /// Operator submit action this directive's send shares with its siblings.
@@ -840,11 +837,9 @@ impl PresentationDirectives {
             };
             let media_quotes = spice::quote::media_quotes(&quote_target, &head.attachments)
                 .map_err(|error| format!("{error:?}"))?;
-            let packet = spice::quote::steering_packet(row);
-            let text = packet
-                .as_ref()
-                .and_then(spice::quote::SteeringPacket::body)
-                .unwrap_or(&head.text);
+            let spice::quote::SteeringSource { attribution, body } =
+                spice::quote::steering_source(row, &roles);
+            let text = body.as_deref().unwrap_or(&head.text);
             directives.insert(
                 key,
                 PresentationDirective {
@@ -860,24 +855,7 @@ impl PresentationDirectives {
                     quote_target,
                     media_quotes,
                     actor: row.created().actor.clone(),
-                    sender: row
-                        .created()
-                        .fact
-                        .read::<wire::body::SteerMessaged>()
-                        .map(|message| message.sender)
-                        .or_else(|| {
-                            row.created()
-                                .fact
-                                .read::<wire::body::SteerQueued>()
-                                .map(|message| message.sender)
-                        }),
-                    recipient: row.created().fact.read::<wire::body::SteerMessaged>().map(
-                        |message| wire::MessageDestination {
-                            lane: message.lane,
-                            occupant: message.occupant,
-                        },
-                    ),
-                    packet,
+                    attribution,
                     published: row.created().at,
                     fanout: head.fanout,
                 },
@@ -1053,13 +1031,11 @@ fn hydrate_message_classifications(
     }
     Ok(classifications)
 }
-/// An operator MSG, ASK, or ANS names no occupant of its own, so the context
-/// addresses the occupant whose transcript acknowledges it in this card, when
-/// that occupant sits on the lane the directive addressed.
+/// Each context carries its directive's own attribution, exactly as a quote
+/// of that directive names it; the card presenting it adds nothing.
 fn hydrate_directive_contexts(
     presented: &Presentation,
     directives: &PresentationDirectives,
-    event: PresentationEvent,
 ) -> Result<Vec<wire::MessageDirective>, String> {
     presented
         .contexts
@@ -1078,26 +1054,9 @@ fn hydrate_directive_contexts(
                     .map_err(|_| "directive context end exceeds the wire range".to_owned())?,
                 quote_target: directive.quote_target.clone(),
                 media_quotes: directive.media_quotes.clone(),
-                actor: directives.roles.author(&directive.actor),
+                attribution: directive.attribution.clone(),
                 authored: directive.published,
                 badge: directive.badge(),
-                sender: directive.sender,
-                recipient: directive.recipient.or_else(|| {
-                    let operator_packet = directive.packet.is_some()
-                        && directives.operator_sent(directive)
-                        && directive.lane == event.lane;
-                    event.author.filter(|_| operator_packet).map(|occupant| {
-                        wire::MessageDestination {
-                            lane: directive.lane,
-                            occupant,
-                        }
-                    })
-                }),
-                packet: directive.packet.as_ref().map(|packet| packet.kind),
-                result: directive
-                    .packet
-                    .as_ref()
-                    .and_then(|packet| packet.result.clone()),
                 delivery: None,
             })
         })

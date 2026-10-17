@@ -880,7 +880,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
                 },
                 digest: wire::QuoteTarget::text_digest("[BROADCAST] settled"),
             }),
-            directive_contexts: vec![directive_sample()],
+            directive_contexts: vec![directive_sample(first_id)],
             sends: vec![send_sample(first_id, second_id)],
             quotes: Vec::new(),
             automatic_speech: None,
@@ -968,8 +968,8 @@ fn compaction_message_sample(first_id: CanonicalUuid) -> AgentMessage {
     }
 }
 
-/// An operator directive context the first sample answers.
-fn directive_sample() -> wire::MessageDirective {
+/// An operator directive context the first sample answers, delivered to its lane.
+fn directive_sample(lane: CanonicalUuid) -> wire::MessageDirective {
     wire::MessageDirective {
         start: 0,
         end: 5,
@@ -978,13 +978,19 @@ fn directive_sample() -> wire::MessageDirective {
             digest: wire::QuoteTarget::text_digest("settled directive"),
         },
         media_quotes: Vec::new(),
-        actor: wire::Actor::Operator,
+        attribution: wire::QuoteAttribution {
+            author: wire::QuoteAuthor::Directive {
+                actor: wire::Actor::Operator,
+            },
+            recipients: vec![wire::QuoteRecipient {
+                lane,
+                occupant: None,
+            }],
+            packet: None,
+            result: None,
+        },
         authored: at("2030-04-12T18:44:08.000Z"),
         badge: Some(DirectiveBadge::Taste),
-        sender: None,
-        recipient: None,
-        packet: None,
-        result: None,
         delivery: None,
     }
 }

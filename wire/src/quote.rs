@@ -107,6 +107,48 @@ pub enum QuoteAuthor {
     },
 }
 
+/// Who said a quoted message and whom it reached, as the source's own durable
+/// record proves. Every structural appearance of one source carries the same
+/// value: a directive context, a top-level quote, and a nested quote.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuoteAttribution {
+    /// Durable recorded authorship.
+    pub author: QuoteAuthor,
+    /// Lanes the source was delivered to, in display order. Room posts and
+    /// transcript prose name none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recipients: Vec<QuoteRecipient>,
+    /// Protocol kind of the room publication that opened a quoted source,
+    /// when an MSG, ASK, or ANS delivered it. The presented text is then that
+    /// packet's authenticated body, without the header its recipient read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packet: Option<crate::MessageSendKind>,
+    /// Result an ANS packet answers. Other packet kinds carry none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<crate::rooms::QuestionResultRef>,
+}
+
+impl QuoteAttribution {
+    /// Whether the packet and its answered result agree.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.result.is_some() == (self.packet == Some(crate::MessageSendKind::Ans))
+    }
+}
+
+/// One lane a quoted source reached.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuoteRecipient {
+    /// Lane the source was delivered to.
+    pub lane: CanonicalUuid,
+    /// Occupant the source's record proves was seated there when it was
+    /// published; absent when the record names only the lane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occupant: Option<CanonicalUuid>,
+}
+
 /// Browser presentation metadata for one image carrying its own quote action.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -197,8 +239,8 @@ pub enum QuotePresentation {
         target: String,
         /// Exact authenticated UTF-8 text.
         text: String,
-        /// Durable recorded authorship.
-        author: QuoteAuthor,
+        /// Who said this source and whom it reached.
+        attribution: QuoteAttribution,
         /// Current directive disposition; absent for tape prose.
         #[serde(
             default,
@@ -212,19 +254,6 @@ pub enum QuotePresentation {
         /// Images retained by this source, each with its exact quote target.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         media_quotes: Vec<MediaQuote>,
-        /// Protocol kind of the room publication that opened a quoted
-        /// directive, when an MSG, ASK, or ANS delivered it. `text` is then
-        /// that packet's authenticated body, without the header its recipient
-        /// read.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        packet: Option<crate::MessageSendKind>,
-        /// Result an ANS packet answers. Other packet kinds carry none.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        result: Option<crate::rooms::QuestionResultRef>,
-        /// Lane a quoted packet's directive was delivered to, attributed as
-        /// its addressee. A room post addresses its room and names none.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        addressee: Option<CanonicalUuid>,
     },
     /// Durable authority authenticated one selected image.
     Media {
@@ -232,8 +261,8 @@ pub enum QuotePresentation {
         target: String,
         /// Exact admitted image bytes and metadata.
         media: crate::Media,
-        /// Durable recorded authorship of the owning source.
-        author: QuoteAuthor,
+        /// Attribution of the owning source.
+        attribution: QuoteAttribution,
         /// Current directive disposition; absent for tape media.
         #[serde(
             default,
