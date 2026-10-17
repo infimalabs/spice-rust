@@ -716,6 +716,7 @@ fn complete_claimed_task(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &Ta
         &TaskDone {
             task: task.clone(),
             validation: "claim steering fixture complete".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     ));

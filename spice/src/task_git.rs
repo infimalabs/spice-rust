@@ -234,6 +234,37 @@ pub fn capture(repository: &Repository) -> Result<Capture, Error> {
     })
 }
 
+/// Resolve `revision` to the full id of a commit reachable from the lane's
+/// HEAD, so a Plan's disposition cites only history that already landed.
+pub fn resolve_landed_commit(repository: &Repository, revision: &str) -> Result<String, Error> {
+    let root = repository.worktree_root();
+    let commit = try_read(
+        root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--end-of-options",
+            &format!("{revision}^{{commit}}"),
+        ],
+    )?
+    .ok_or_else(|| {
+        Error::refusal(
+            "git::commit-unknown",
+            revision,
+            "name an existing task handle or a commit this lane can resolve",
+        )
+    })?;
+    if !is_ancestor(root, &commit, "HEAD")? {
+        return Err(Error::refusal(
+            "git::commit-unlanded",
+            commit,
+            "name a commit reachable from this lane's HEAD",
+        ));
+    }
+    Ok(commit)
+}
+
 /// Whether the lane has tracked, staged, or non-ignored untracked changes.
 pub fn has_dirty_work(repository: &Repository) -> Result<bool, Error> {
     let root = repository.worktree_root();

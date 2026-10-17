@@ -155,6 +155,7 @@ impl Lanes {
                 wire::body::TaskDone {
                     task: task.clone(),
                     validation,
+                    disposition: None,
                     terminal: Some(wire::body::TaskCompletionTerminal {
                         operation,
                         status: wire::body::TaskCompletionStatus::Completed,

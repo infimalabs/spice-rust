@@ -333,6 +333,7 @@ fn complete_and_delete_delta_heads(
         &TaskDone {
             task: task.clone(),
             validation: "delta frontier completion fixture".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     ));
@@ -404,6 +405,7 @@ fn next_read_offers_an_advanced_task_in_its_next_phase() {
         &TaskDone {
             task: task.clone(),
             validation: "phase advance fixture".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     ));

@@ -28,6 +28,10 @@ pub(super) fn client_done(
         .get_one::<String>("validation")
         .cloned()
         .unwrap_or_else(|| "completed by the authenticated lane".to_owned());
+    let disposition = match requested_disposition(repository, matches) {
+        Ok(disposition) => disposition,
+        Err(outcome) => return outcome,
+    };
     let board = match current_board(repository, read.clone()) {
         Ok(board) => board,
         Err(outcome) => return outcome,
@@ -37,6 +41,7 @@ pub(super) fn client_done(
         requested_task.as_ref(),
         operation.clone(),
         validation.clone(),
+        disposition.as_ref(),
     ) {
         Ok(plan) => plan,
         Err(outcome) => return outcome,
@@ -58,7 +63,13 @@ pub(super) fn client_done(
         Ok(board) => board,
         Err(_) => return outcome,
     };
-    let retry = match completion_plan(&refreshed, requested_task.as_ref(), operation, validation) {
+    let retry = match completion_plan(
+        &refreshed,
+        requested_task.as_ref(),
+        operation,
+        validation,
+        disposition.as_ref(),
+    ) {
         Ok(plan) => plan,
         Err(_) => return outcome,
     };
@@ -85,11 +96,54 @@ struct CompletionPlan {
     holder_acknowledged: bool,
 }
 
+/// A disposition as written, its commit cover already resolved to a landed id.
+struct DispositionRequest {
+    kind: String,
+    cover: Option<CoverRequest>,
+}
+
+enum CoverRequest {
+    Task(TaskHandle),
+    Commit(String),
+}
+
+fn requested_disposition(
+    repository: &Repository,
+    matches: &ArgMatches,
+) -> Result<Option<DispositionRequest>, Outcome<CommandAnswer>> {
+    let cover = matches.get_one::<String>("cover");
+    let Some(kind) = matches.get_one::<String>("disposition") else {
+        return match cover {
+            Some(cover) => Err(refusal(
+                "task::disposition-cover-unbound",
+                Some(cover.clone()),
+                "name --disposition duplicate|covered|deferred with its --cover",
+            )),
+            None => Ok(None),
+        };
+    };
+    let cover = match cover {
+        None => None,
+        Some(written) => Some(match written.parse::<TaskHandle>() {
+            Ok(task) => CoverRequest::Task(task),
+            Err(_) => CoverRequest::Commit(
+                spice::task_git::resolve_landed_commit(repository, written)
+                    .map_err(task_git_outcome)?,
+            ),
+        }),
+    };
+    Ok(Some(DispositionRequest {
+        kind: kind.clone(),
+        cover,
+    }))
+}
+
 fn completion_plan(
     board: &BoardAnswer,
     requested_task: Option<&TaskHandle>,
     operation: Option<wire::CanonicalUuid>,
     validation: String,
+    disposition: Option<&DispositionRequest>,
 ) -> Result<CompletionPlan, Outcome<CommandAnswer>> {
     let implicit = requested_task.is_none();
     let (task, heads) = match requested_task {
@@ -112,7 +166,10 @@ fn completion_plan(
         ));
     }
     let (lane, occupant) = actor_seat(board)?;
-    let expected = progress_witnesses(board, heads, lane, occupant, false)?;
+    let mut expected = progress_witnesses(board, heads, lane, occupant, false)?;
+    let disposition = disposition
+        .map(|requested| plan_disposition(board, requested, &mut expected))
+        .transpose()?;
     let operation = match (operation, claim) {
         (Some(operation), _) => operation,
         (None, Some(claim)) => TaskDone::operation_for_claim(claim.body.claimed),
@@ -136,8 +193,48 @@ fn completion_plan(
             task,
             validation,
             operation: Some(operation),
+            disposition,
         },
         holder_acknowledged,
+    })
+}
+
+/// The typed disposition, witnessing a covering task's current statement.
+fn plan_disposition(
+    board: &BoardAnswer,
+    requested: &DispositionRequest,
+    expected: &mut Vec<Witness>,
+) -> Result<body::PlanDisposition, Outcome<CommandAnswer>> {
+    let cover = match &requested.cover {
+        None => None,
+        Some(CoverRequest::Commit(commit)) => Some(body::DispositionCover::Commit(commit.clone())),
+        Some(CoverRequest::Task(task)) => {
+            let heads = named_task_heads(board, task)?;
+            if heads.workflow.body.status.is_deleted() {
+                return Err(refusal(
+                    "task::disposition-cover-invalid",
+                    Some(task.to_string()),
+                    "a withdrawn task covers nothing; name the task or commit that answers the need",
+                ));
+            }
+            let witness = Witness::Task {
+                task: heads.statement.body.born.clone(),
+                head: heads.statement.position,
+            };
+            if !expected.contains(&witness) {
+                expected.push(witness);
+            }
+            Some(body::DispositionCover::Task(
+                heads.statement.body.born.clone(),
+            ))
+        }
+    };
+    body::PlanDisposition::from_parts(&requested.kind, cover).map_err(|remedy| {
+        refusal(
+            "task::disposition-invalid",
+            Some(requested.kind.clone()),
+            remedy,
+        )
     })
 }
 

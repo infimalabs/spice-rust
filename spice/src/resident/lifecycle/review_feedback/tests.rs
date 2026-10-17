@@ -304,6 +304,7 @@ fn complete_author_phase(bus: &Bus, task: &TaskStamp) {
             wire::body::TaskDone {
                 task: task.clone(),
                 validation: "author validation".to_owned(),
+                disposition: None,
                 terminal: None,
                 git: None,
                 source: wire::body::SourceBoundary::Proven { heads: Vec::new() },

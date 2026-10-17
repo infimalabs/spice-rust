@@ -575,6 +575,7 @@ fn task_show_keeps_git_provenance_compact_and_prints_its_exact_lookup() {
             body::TaskDone {
                 task: task_stamp,
                 validation: "Git context fixture".to_owned(),
+                disposition: None,
                 terminal: None,
                 git: Some(body::GitBoundary {
                     head: "agent-head".to_owned(),

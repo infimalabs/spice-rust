@@ -76,6 +76,7 @@ fn complete(
         &TaskDone {
             task: task.clone(),
             validation: "Planning evidence retained".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     )
@@ -655,6 +656,168 @@ fn plan_review_cannot_replace_required_child_construction_with_own_acceptance() 
     assert_eq!(refusal.reason(), "task::plan-incomplete");
     let view = board(&bus, epoch, Actor::Operator);
     assert_eq!(at(&view, &task).workflow.body.phase.as_str(), "plan");
+    clean(&root, bus);
+}
+
+/// Complete `plan`'s plan phase with `disposition`, witnessing `cover` when a
+/// task answers the need.
+fn dispose(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    plan: &TaskHandle,
+    disposition: wire::body::PlanDisposition,
+    cover: Option<&TaskHandle>,
+) -> Outcome<CommandAnswer> {
+    let lane = Actor::Lane(seat.lane);
+    let held = board(bus, epoch, lane.clone());
+    let mut expected = progress_witnesses(&held, at(&held, plan), seat.lane, seat.occupant, false)
+        .expect("disposition witnesses");
+    expected.extend(cover.map(|cover| statement_witness(at(&held, cover))));
+    issue(
+        bus,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        expected,
+        &TaskDone {
+            task: plan.clone(),
+            validation: "The landed contract already answers this need".to_owned(),
+            disposition: Some(disposition),
+            operation: Some(completion_operation()),
+        },
+    )
+}
+
+#[test]
+fn a_disposed_plan_settles_on_clean_review_without_constructing_or_authorizing_work() {
+    let (root, bus, epoch, seats) = fixture("planning-disposition", 1);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    let cover = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "COVER-landed",
+        "Answer the reported need",
+        "board.test",
+        Some("todo"),
+        &["The reported need is answered"],
+    );
+    claim_and_complete_task(&bus, epoch, seat, &lane, &cover);
+    let covering = || wire::body::DispositionCover::Task(cover.born().expect("cover stamp"));
+    let commit = || wire::body::DispositionCover::Commit("a".repeat(40));
+    for (name, disposition, witness) in [
+        (
+            "Dispose no work",
+            wire::body::PlanDisposition::NoWork {},
+            None,
+        ),
+        (
+            "Dispose duplicate",
+            wire::body::PlanDisposition::Duplicate { cover: covering() },
+            Some(&cover),
+        ),
+        (
+            "Dispose covered",
+            wire::body::PlanDisposition::Covered { cover: commit() },
+            None,
+        ),
+        (
+            "Dispose deferred",
+            wire::body::PlanDisposition::Deferred { cover: covering() },
+            Some(&cover),
+        ),
+    ] {
+        let plan = add_planning(
+            &bus,
+            epoch,
+            name,
+            wire::TaskIntent::Plan,
+            Some("plan,review"),
+        );
+        let before = board(&bus, epoch, Actor::Operator);
+        claim_task(&bus, epoch, seat, &lane, &plan);
+        assert_committed(dispose(&bus, epoch, seat, &plan, disposition, witness));
+        let disposed = board(&bus, epoch, Actor::Operator);
+        assert_eq!(at(&disposed, &plan).workflow.body.phase.as_str(), "review");
+        assert!(at(&disposed, &plan).workflow.body.status.is_pending());
+
+        claim_task(&bus, epoch, seat, &lane, &plan);
+        assert_committed(super::preparation::review_clean(&bus, epoch, seat, &plan));
+        let settled = board(&bus, epoch, Actor::Operator);
+        assert!(at(&settled, &plan).workflow.body.status.is_completed());
+        // Nothing was constructed, released, or moved beside the Plan itself.
+        assert_eq!(settled.tasks.len(), before.tasks.len(), "{name}");
+        assert_eq!(
+            at(&settled, &cover).workflow.position,
+            at(&before, &cover).workflow.position,
+            "{name}"
+        );
+    }
+    clean(&root, bus);
+}
+
+#[test]
+fn a_plan_disposition_refuses_beside_a_live_output_or_an_unwitnessed_cover() {
+    let (root, bus, epoch, seats) = fixture("planning-disposition-refusals", 1);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    let plan = add_planning(
+        &bus,
+        epoch,
+        "Dispose refused",
+        wire::TaskIntent::Plan,
+        Some("plan,review"),
+    );
+    claim_task(&bus, epoch, seat, &lane, &plan);
+    let cover = add_associated(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "Unwitnessed cover",
+        None,
+        None,
+    );
+    let unwitnessed = dispose(
+        &bus,
+        epoch,
+        seat,
+        &plan,
+        wire::body::PlanDisposition::Duplicate {
+            cover: wire::body::DispositionCover::Task(cover.born().expect("cover stamp")),
+        },
+        None,
+    );
+    assert!(
+        matches!(&unwitnessed, Outcome::Refusal(refusal)
+            if refusal.reason() == "task::disposition-cover-invalid"),
+        "{unwitnessed:?}"
+    );
+
+    add_associated(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "Constructed output",
+        Some(&plan),
+        None,
+    );
+    let beside = dispose(
+        &bus,
+        epoch,
+        seat,
+        &plan,
+        wire::body::PlanDisposition::NoWork {},
+        None,
+    );
+    assert!(
+        matches!(&beside, Outcome::Refusal(refusal)
+            if refusal.reason() == "task::disposition-beside-output"),
+        "{beside:?}"
+    );
+    let view = board(&bus, epoch, Actor::Operator);
+    assert_eq!(at(&view, &plan).workflow.body.phase.as_str(), "plan");
     clean(&root, bus);
 }
 

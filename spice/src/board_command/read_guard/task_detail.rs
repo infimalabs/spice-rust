@@ -51,6 +51,7 @@ pub(in crate::board_command) fn read_task_detail(
     };
     let mut record = task_record(observed.facts(), &selected, &roles);
     let closure = record.closures.remove(&detail.task);
+    let disposition = record.dispositions.remove(&detail.task);
     let origin_request = match &task.statement.body.provenance {
         wire::TaskProvenance::Steering(key) => {
             match super::task_relations::steering_requests(bus, vec![key.clone()]) {
@@ -66,6 +67,7 @@ pub(in crate::board_command) fn read_task_detail(
             task,
             media,
             closure,
+            disposition,
             origin_request,
         })),
     )
@@ -82,6 +84,9 @@ pub(super) struct TaskRecord {
     /// The operator's closure of each closed task; a settled task closes once.
     pub(super) closures:
         std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskDetailClosure>,
+    /// The no-construction disposition each task's latest completion recorded.
+    pub(super) dispositions:
+        std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskDetailDisposition>,
     /// Every done, phase advance, and review verdict.
     pub(super) steps:
         std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskDetailStep>>,
@@ -138,6 +143,27 @@ pub(super) fn task_record(
                     claimed: closed.claimed,
                 },
             );
+        }
+        if let Some(done) = envelope.fact.read::<body::TaskDone>()
+            && tasks.contains(&done.task)
+        {
+            match done.disposition {
+                Some(disposition) => {
+                    record.dispositions.insert(
+                        done.task,
+                        wire::intent::TaskDetailDisposition {
+                            position: envelope.seq,
+                            at: envelope.at,
+                            author: roles.author(&envelope.actor),
+                            disposition,
+                            validation: done.validation,
+                        },
+                    );
+                }
+                None => {
+                    record.dispositions.remove(&done.task);
+                }
+            }
         }
         let Some(key) = envelope
             .origin
@@ -196,6 +222,7 @@ fn task_step(
                 wire::intent::TaskStep::Done {
                     phase,
                     validation: done.validation,
+                    disposition: done.disposition,
                 },
             ))
         }

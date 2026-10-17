@@ -543,6 +543,7 @@ fn wk_plan_phase_requires_acceptance_before_it_advances() {
         &TaskDone {
             task: task.clone(),
             validation: "plan is not accepted".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     );
@@ -587,6 +588,7 @@ fn wk_plan_phase_requires_acceptance_before_it_advances() {
         &TaskDone {
             task: task.clone(),
             validation: "acceptance exists on the task".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     ));
@@ -635,6 +637,7 @@ fn wk_plan_phase_uses_connected_child_acceptance_with_atomic_witnesses() {
         &TaskDone {
             task: parent.clone(),
             validation: "child proof was not guarded".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     );
@@ -657,6 +660,7 @@ fn wk_plan_phase_uses_connected_child_acceptance_with_atomic_witnesses() {
         &TaskDone {
             task: parent.clone(),
             validation: "accepted child is connected".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     ));
@@ -695,6 +699,7 @@ fn wk_plan_only_flow_completes_only_with_connected_accepted_child() {
         &TaskDone {
             task: own_acceptance.clone(),
             validation: "own acceptance does not create implementation work".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     );
@@ -748,6 +753,7 @@ fn wk_plan_only_flow_completes_only_with_connected_accepted_child() {
         &TaskDone {
             task: parent.clone(),
             validation: "accepted child is connected".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     ));

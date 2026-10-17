@@ -106,6 +106,7 @@ fn every_lifecycle_fact_refuses_an_absent_or_unproven_boundary() {
     refuses_unproven_sources(&body::TaskDone {
         task: won.task.clone(),
         validation: "fixture validation".to_owned(),
+        disposition: None,
         terminal: None,
         git: None,
         source: proven(),

@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 mod allocation;
+mod disposition;
 mod persistent_index;
 mod selection;
 
@@ -245,6 +246,9 @@ struct Indexes {
     /// The reason each Design's collapse recorded, shared until a commit
     /// records another conclusion.
     collapse_reasons: Arc<HashMap<journal::crossing::TaskStamp, String>>,
+    /// Each task's latest completion disposition; see [`disposition`].
+    plan_dispositions:
+        Arc<HashMap<journal::crossing::TaskStamp, journal::crossing::body::PlanDisposition>>,
     /// Candidate-version precedence classifying outputs for selection waiting.
     candidate_selection: CandidateSelection,
     /// Pass-cycle evidence for every Design, shared until a commit records a
@@ -458,8 +462,10 @@ impl Indexes {
             task,
             mut validation,
             terminal,
+            disposition,
             ..
         } = done;
+        self.observe_disposition(&task, disposition);
         if let (journal::crossing::Actor::Lane(lane), Some(terminal)) = (&row.actor, &terminal)
             && let Some(occupant) = self.lane_occupants.get(lane).copied()
         {

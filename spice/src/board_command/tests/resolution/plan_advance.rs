@@ -313,6 +313,7 @@ fn complete_plan_phase(
     let done = TaskDone {
         task: plan.clone(),
         validation: "plan acceptance is explicit".to_owned(),
+        disposition: None,
         operation: Some(completion_operation()),
     };
     let CommandAnswer::Task(answer) = assert_committed(issue(
@@ -451,6 +452,7 @@ fn selected_plan_reads_gate_completion_with_current_reverse_child_heads() {
     let done = TaskDone {
         task: plan.clone(),
         validation: "the accepted child is gated behind the plan".to_owned(),
+        disposition: None,
         operation: Some(completion_operation()),
     };
     let refused = issue(
@@ -552,6 +554,7 @@ fn plan_only_completion_rejects_reverse_children_without_pending_acceptance() {
         &TaskDone {
             task: plan,
             validation: "ineligible children do not satisfy planning".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     );

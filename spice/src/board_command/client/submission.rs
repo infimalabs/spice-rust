@@ -867,10 +867,25 @@ pub(in crate::board_command) fn mutation_read(
             dependencies |= graph;
         }
     }
+    let claims = tasks.is_empty();
+    // A disposition's covering task joins the read so its statement can be
+    // witnessed; a cover that is not a handle names a commit instead.
+    if let Some(cover) = matches
+        .try_get_one::<String>("cover")
+        .ok()
+        .flatten()
+        .and_then(|written| written.parse::<TaskHandle>().ok())
+    {
+        tasks.push(
+            cover
+                .born()
+                .expect("a parsed handle carries a canonical task stamp"),
+        );
+    }
     Ok((
         task,
         BoardRead::Tasks {
-            claims: tasks.is_empty(),
+            claims,
             tasks,
             dependencies,
             history: false,

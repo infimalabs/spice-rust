@@ -159,6 +159,7 @@ pub(super) fn advance_task_to_review(
         &TaskDone {
             task: task.clone(),
             validation: "fixture completion".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     ));
@@ -195,6 +196,7 @@ pub(super) fn claim_and_complete_task(
         &TaskDone {
             task: task.clone(),
             validation: "implementation and focused checks complete".to_owned(),
+            disposition: None,
             operation: Some(completion_operation()),
         },
     ));

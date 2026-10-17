@@ -383,6 +383,13 @@ pub struct TaskDone {
         deserialize_with = "crate::optional::present"
     )]
     pub operation: Option<CanonicalUuid>,
+    /// Why a Plan's plan phase completes without constructing work.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub disposition: Option<crate::body::PlanDisposition>,
 }
 
 impl TaskDone {

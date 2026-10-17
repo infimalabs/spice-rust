@@ -65,6 +65,31 @@ pub(super) fn step_followups(
     })
 }
 
+/// The no-construction disposition a completion recorded, its covering task
+/// spelled by `name`.
+pub(super) fn step_disposition(
+    step: &TaskDetailStep,
+    name: impl Fn(&TaskStamp) -> String,
+) -> Option<String> {
+    let TaskStep::Done {
+        disposition: Some(disposition),
+        ..
+    } = &step.step
+    else {
+        return None;
+    };
+    let kind = disposition.kind();
+    Some(match disposition.cover() {
+        None => format!("disposition {kind}"),
+        Some(wire::body::DispositionCover::Task(task)) => {
+            format!("disposition {kind} by {}", name(task))
+        }
+        Some(wire::body::DispositionCover::Commit(commit)) => {
+            format!("disposition {kind} by commit {commit}")
+        }
+    })
+}
+
 /// The step as one document annotation: its heading, text, and corrections.
 ///
 /// Exporting and applying a ledger both spell steps here, so applying an
@@ -78,6 +103,10 @@ pub(super) fn step_annotation(
     if let Some(text) = step_text(step) {
         annotation.push_str("\n\n");
         annotation.push_str(text);
+    }
+    if let Some(disposition) = step_disposition(step, &name) {
+        annotation.push_str("\n\n");
+        annotation.push_str(&disposition);
     }
     if let Some(followups) = step_followups(step, name) {
         annotation.push_str("\n\n");
