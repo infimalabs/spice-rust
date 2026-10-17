@@ -9,12 +9,14 @@ use std::time::Duration;
 use super::*;
 
 mod history;
+mod profile_warm;
 mod progress;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 use history::retain_covered;
 use history::{HistorySources, history_newest, history_tail, history_tail_error};
+pub(in crate::resident) use profile_warm::advance as advance_profile_warming;
 use progress::{FlightKey, HistoryProgress};
 
 /// Fixed newest-record window for reconstructing live projection state.
@@ -183,17 +185,14 @@ fn restore_agent_messages_with(
             reader.startup_work.add(work);
         }
     }
-    if let Some(bus) = bus
-        && let Err(error) = warm_task_profiles(bus, reader)
-    {
-        reader
-            .state
-            .profiles
-            .warm_all_failed(format!("task history: {error:?}"));
-        let _ = writeln!(
-            diagnostic,
-            "session profile task history unavailable: {error:?}"
-        );
+    if let Some(bus) = bus {
+        let sessions = profile_warm::sessions(&reader.state.profiles);
+        match profile_warm::read_task_page(bus, None, &sessions) {
+            Ok(page) => profile_warm::fold_task_page(&mut reader.state.profiles, page),
+            Err(error) => {
+                profile_warm::fail_task_history(&mut reader.state.profiles, &error, diagnostic);
+            }
+        }
     }
     let current = residency
         .lanes
@@ -258,101 +257,6 @@ fn seed_session_profiles(residency: &wire::ResidencyHead, reader: &mut BacklogRe
         reader.state.profiles.bind(session.occupant, key.clone());
         reader.state.profiles.begin_warming(&key);
     }
-}
-
-fn warm_task_profiles(bus: &bus::BusReader, reader: &mut BacklogReader) -> CommandResult<()> {
-    const TASK_WARM_ROWS: usize = 256;
-    const TASK_WARM_BYTES: usize = 1024 * 1024;
-
-    let page = bus
-        .recent_fact_page(
-            wire::FactKind::TaskDone,
-            None,
-            journal::FactReadBudget::new(TASK_WARM_ROWS, TASK_WARM_BYTES).map_err(|error| {
-                store_fault(
-                    "room::profile-task-history-budget-invalid",
-                    &error.to_string(),
-                )
-            })?,
-        )
-        .map_err(|error| {
-            store_fault("room::profile-task-history-unreadable", &error.to_string())
-        })?;
-    let continuation = page.continuation;
-    let through = page.rows.last().map(|envelope| envelope.seq);
-    let snapshot = bus
-        .task_snapshot()
-        .map_err(|error| store_fault("room::profile-task-heads-unreadable", &error.to_string()))?;
-    for envelope in page.rows.into_iter().rev() {
-        let completion = envelope.seq;
-        let Some(done) = envelope.fact.read::<wire::body::TaskDone>() else {
-            continue;
-        };
-        let Some(statement) = snapshot
-            .task_heads(&done.task)
-            .map(|heads| heads.statement().body())
-        else {
-            continue;
-        };
-        if statement.revision > completion {
-            continue;
-        }
-        let wire::body::SourceBoundary::Proven { heads } = &done.source;
-        let mut owner = None;
-        for head in heads.iter().rev() {
-            if head.next.offset == 0 {
-                continue;
-            }
-            let session = bus
-                .transcript_session(
-                    head.lane,
-                    head.source,
-                    head.next.member,
-                    head.next.offset - 1,
-                )
-                .map_err(|error| {
-                    store_fault("room::profile-session-unreadable", &error.to_string())
-                })?;
-            let Some(session) = session else {
-                continue;
-            };
-            let key = spice::rooms::profile::SessionKey::new(
-                head.lane,
-                head.vendor.clone(),
-                session.identity,
-            );
-            if reader.state.profiles.profile(&key).is_some() {
-                owner = Some((head.lane, session.occupant, key));
-                break;
-            }
-        }
-        let Some((lane, occupant, key)) = owner else {
-            continue;
-        };
-        let task = done.task;
-        let validation = done.validation;
-        reader.state.profiles.bind(occupant, key);
-        reader.state.profiles.insert(
-            lane,
-            occupant,
-            spice::rooms::evidence::Evidence::task(
-                spice::rooms::profile::EvidenceKey::Task {
-                    task,
-                    statement: statement.revision,
-                    completion,
-                },
-                &statement.title,
-                statement.description.as_deref(),
-                &statement.acceptance,
-                &validation,
-            ),
-        );
-    }
-    reader
-        .state
-        .profiles
-        .warmed_facts(through, continuation.is_none());
-    Ok(())
 }
 
 /// Read every admitted lane's newest durable card page before app readiness.
@@ -931,13 +835,20 @@ fn restore_lane(
     if let Some(bus) = bus {
         hydrate_observations(bus, row.lane, &scan, reader)?;
         hydrate_steering_presentations(bus, &scan, &mut reader.steering)?;
-        if let Err(error) = warm_conversation_profile(bus, row, &scan, &source_start, reader) {
-            fail_session_warm(row, reader, format!("{error:?}"));
-            let _ = writeln!(
-                diagnostic,
-                "session profile transcript unavailable for lane {}: {error:?}",
-                row.lane
-            );
+        if let Some(key) = session_key(row) {
+            match profile_warm::read_transcript_window(bus, &key, &scan, &source_start) {
+                Ok(window) => {
+                    profile_warm::fold_transcript_window(&mut reader.state.profiles, window);
+                }
+                Err(error) => {
+                    fail_session_warm(row, reader, format!("{error:?}"));
+                    let _ = writeln!(
+                        diagnostic,
+                        "session profile transcript unavailable for lane {}: {error:?}",
+                        row.lane
+                    );
+                }
+            }
         }
     }
     publish_scan(
@@ -970,78 +881,6 @@ fn fail_session_warm(
     if let Some(key) = session_key(row) {
         reader.state.profiles.warm_failed(&key, detail);
     }
-}
-
-fn warm_conversation_profile(
-    bus: &bus::BusReader,
-    row: &wire::LaneResidency,
-    scan: &listen::Scan,
-    start: &listen::Checkpoint,
-    reader: &mut BacklogReader,
-) -> CommandResult<()> {
-    let Some(key) = session_key(row) else {
-        return Ok(());
-    };
-    let source = scan_source(scan)?;
-    for record in &scan.records {
-        let listen::RecordPayload::Events(events) = &record.payload else {
-            continue;
-        };
-        for sourced in events {
-            let listen::Event::Prose(prose) = &sourced.event else {
-                continue;
-            };
-            if prose.role != listen::ProseRole::Assistant {
-                continue;
-            }
-            let Some(session) = bus
-                .transcript_session(row.lane, source, prose.locus.member, prose.locus.offset)
-                .map_err(|error| {
-                    store_fault("room::profile-session-unreadable", &error.to_string())
-                })?
-            else {
-                continue;
-            };
-            if session.vendor != key.vendor.as_str() || session.identity != key.identity {
-                continue;
-            }
-            if reader.state.profiles.session(row.lane, session.occupant) != Some(&key) {
-                reader.state.profiles.bind(session.occupant, key.clone());
-            }
-            let Some(conversation) = spice::rooms::evidence::Conversation::read(&prose.text) else {
-                continue;
-            };
-            reader.state.profiles.insert(
-                row.lane,
-                session.occupant,
-                spice::rooms::evidence::Evidence::conversation(
-                    spice::rooms::profile::EvidenceKey::Conversation {
-                        source,
-                        member: prose.locus.member,
-                        offset: prose.locus.offset,
-                        length: prose.locus.length,
-                    },
-                    &conversation,
-                ),
-            );
-        }
-    }
-    let mut cursor = reader
-        .state
-        .profiles
-        .profile(&key)
-        .map(|profile| profile.warm_state().cursor())
-        .unwrap_or_default();
-    cursor.transcript = Some(spice::rooms::profile::TranscriptCursor {
-        source,
-        member: start.next.member,
-        offset: start.next.offset,
-    });
-    reader
-        .state
-        .profiles
-        .warmed(&key, cursor, start.next == listen::Position::start());
-    Ok(())
 }
 
 fn hydrate_observations(

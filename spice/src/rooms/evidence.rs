@@ -58,6 +58,7 @@ pub enum View {
     /// One paragraph or list item of a message, by retained position.
     Passage(u8),
 }
+
 /// Retention class of one evidence card.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -65,6 +66,17 @@ pub enum Kind {
     Task,
     /// One settled assistant-authored message.
     Conversation,
+}
+
+impl Kind {
+    /// Most distinct cards of this class one profile retains.
+    #[must_use]
+    pub const fn limit(self) -> usize {
+        match self {
+            Self::Task => TASK_CARDS,
+            Self::Conversation => CONVERSATION_CARDS,
+        }
+    }
 }
 
 /// Content identity of one card; equal digests are exact repeats.
@@ -285,11 +297,7 @@ impl<K> EvidenceProfile<K> {
     ///
     /// Returns the refused card when its digest is already retained.
     pub fn insert(&mut self, evidence: Evidence<K>) -> Result<(), Evidence<K>> {
-        if self
-            .cards
-            .iter()
-            .any(|card| card.evidence.digest == evidence.digest)
-        {
+        if self.retains(evidence.digest) {
             return Err(evidence);
         }
         let kind = evidence.kind;
@@ -297,17 +305,7 @@ impl<K> EvidenceProfile<K> {
             evidence,
             prepared: None,
         });
-        let limit = match kind {
-            Kind::Task => TASK_CARDS,
-            Kind::Conversation => CONVERSATION_CARDS,
-        };
-        if self
-            .cards
-            .iter()
-            .filter(|card| card.evidence.kind == kind)
-            .count()
-            > limit
-        {
+        if self.count(kind) > kind.limit() {
             let oldest = self
                 .cards
                 .iter()
@@ -316,6 +314,45 @@ impl<K> EvidenceProfile<K> {
             self.cards.remove(oldest);
         }
         Ok(())
+    }
+
+    /// Retain `evidence` as older than every retained card of its kind, as a
+    /// newest-first history walk finds it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the refused card when its digest is already retained or its kind
+    /// is [full](Self::is_full): older history can no longer displace any
+    /// retained card.
+    pub fn insert_older(&mut self, evidence: Evidence<K>) -> Result<(), Evidence<K>> {
+        if self.is_full(evidence.kind) || self.retains(evidence.digest) {
+            return Err(evidence);
+        }
+        self.cards.insert(
+            0,
+            Card {
+                evidence,
+                prepared: None,
+            },
+        );
+        Ok(())
+    }
+
+    /// Whether this profile already retains its limit of `kind` cards.
+    #[must_use]
+    pub fn is_full(&self, kind: Kind) -> bool {
+        self.count(kind) >= kind.limit()
+    }
+
+    fn retains(&self, digest: Digest) -> bool {
+        self.cards.iter().any(|card| card.evidence.digest == digest)
+    }
+
+    fn count(&self, kind: Kind) -> usize {
+        self.cards
+            .iter()
+            .filter(|card| card.evidence.kind == kind)
+            .count()
     }
 
     /// Retained cards, newest first.
