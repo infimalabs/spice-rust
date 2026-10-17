@@ -920,3 +920,125 @@ fn an_unknown_context_refuses_every_route() {
     assert!(lanes.pending(SECOND).is_empty());
     lanes.finish();
 }
+
+/// Awareness pages a Design's notices over their exact population, though
+/// every record's envelope outweighs the row it renders: each first page
+/// reports the whole population at any `--limit`, admits whole rows, and its
+/// continuations visit every notice once in journal order.
+#[test]
+fn design_awareness_pages_heavy_notices_over_their_exact_population() {
+    const NOTICES: usize = 34;
+    let lanes = Lanes::new("design-awareness-paging");
+    let prior = lanes.held_room("dVrD245Kc", FIRST);
+    let design = lanes.seed_task(
+        "dVrD245Kd",
+        "Design",
+        Some("Decide how awareness pages."),
+        Some(wire::TaskIntent::Design),
+        None,
+    );
+    let design_stamp = design.born().expect("fixture Design has a birth");
+    let statement = lanes
+        .bus
+        .read({
+            let design = design_stamp.clone();
+            move |read| read.task_head(&design)
+        })
+        .expect("Design statement reads")
+        .expect("Design statement exists")
+        .body()
+        .revision;
+    // Rows show six distinct terms; the six long ones the record also keeps
+    // make each envelope several times its row.
+    let terms = ('a'..='f')
+        .map(|letter| format!("a{letter}"))
+        .chain(('a'..='f').map(|letter| format!("b{letter}{}", "x".repeat(400))))
+        .collect::<Vec<_>>();
+    let mut noticed = Vec::with_capacity(NOTICES);
+    for claim in 1..=NOTICES {
+        let mut request = write(Actor::Spice, lanes.epoch, Producer::ResidentRecognition)
+            .expect("notice write starts");
+        request
+            .fact(
+                wire::rooms::DesignNoticed {
+                    design: design_stamp.clone(),
+                    statement,
+                    lane: test_uuid(FIRST),
+                    occupant: test_uuid(FIRST + 1),
+                    task: prior.born().expect("fixture prior task has a birth"),
+                    claim: wire::SequenceCode::new(claim as u64),
+                    terms: terms.clone(),
+                },
+                FactCause::Root,
+            )
+            .expect("notice is valid");
+        noticed.push(serde_json::json!(
+            commit(&lanes.bus, request).expect("notice commits").first()
+        ));
+    }
+    let read = |words: &[&str]| {
+        lanes.room_read(
+            &["awareness", design.as_str()]
+                .into_iter()
+                .chain(words.iter().copied())
+                .collect::<Vec<_>>(),
+        )
+    };
+    let rows = |page: &serde_json::Value| {
+        page["page"]["rows"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|row| row["seq"].clone())
+            .collect::<Vec<_>>()
+    };
+
+    for limit in [
+        &[][..],
+        &["--limit", "1"],
+        &["--limit", "5"],
+        &["--limit", "50"],
+    ] {
+        let first = read(limit);
+        let shown = rows(&first);
+        assert!(!shown.is_empty(), "{limit:?} admits whole rows");
+        assert_eq!(shown[..], noticed[..shown.len()], "{limit:?}");
+        let omission = &first["page"]["omission"];
+        if omission.is_null() {
+            assert_eq!(shown.len(), NOTICES, "{limit:?} shows every notice");
+        } else {
+            assert_eq!(omission["population"], NOTICES, "{limit:?}");
+            assert_eq!(omission["withheld"], NOTICES - shown.len(), "{limit:?}");
+        }
+    }
+
+    let mut page = read(&["--limit", "5"]);
+    let mut seen = rows(&page);
+    while !page["page"]["omission"].is_null() {
+        let resume =
+            serde_json::from_value::<Vec<String>>(page["page"]["omission"]["continuation"].clone())
+                .expect("a withheld notice names its continuation")
+                .split_off(2);
+        page = lanes.room_read(
+            &["awareness"]
+                .into_iter()
+                .chain(resume.iter().map(String::as_str))
+                .collect::<Vec<_>>(),
+        );
+        let next = rows(&page);
+        assert!(!next.is_empty(), "each continuation admits a whole row");
+        assert_eq!(
+            page["page"]["omission"]["population"]
+                .as_u64()
+                .unwrap_or(next.len() as u64),
+            (NOTICES - seen.len()) as u64,
+            "a continuation counts exactly the notices from its cursor"
+        );
+        seen.extend(next);
+    }
+    assert_eq!(
+        seen, noticed,
+        "continuations visit every notice once in order"
+    );
+    lanes.finish();
+}

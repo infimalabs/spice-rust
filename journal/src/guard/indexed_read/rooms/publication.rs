@@ -195,6 +195,37 @@ impl JournalRead<'_> {
         })
     }
 
+    /// How many of a Design's notice records lie strictly after `after`, or
+    /// in all without it, through this read transaction's cursor.
+    pub fn design_notice_count(
+        &self,
+        design: &wire::TaskStamp,
+        after: Option<wire::Seq>,
+    ) -> Result<usize, GuardError> {
+        let Some(horizon) = self.cursor else {
+            return Ok(0);
+        };
+        let after = after.map_or(Ok(0), |seq| i64::try_from(seq.get()));
+        let horizon = i64::try_from(horizon.get());
+        let (Ok(after), Ok(horizon)) = (after, horizon) else {
+            return Err(GuardError::Invalid(
+                "Design notice cursor exceeds SQLite".to_owned(),
+            ));
+        };
+        read_metrics::observe_query();
+        let count = self
+            .connection
+            .query_row(
+                "SELECT count(*) FROM design_notices \
+                 WHERE design = ?1 AND seq > ?2 AND seq <= ?3",
+                params![design.as_str(), after, horizon],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(GuardError::Store)?;
+        usize::try_from(count)
+            .map_err(|_| GuardError::Invalid(format!("Design notice count {count} is negative")))
+    }
+
     /// [`Self::room_publications`] or [`Self::room_publications_newest`],
     /// restricted to facts of kind `only`.
     fn publication_page(
