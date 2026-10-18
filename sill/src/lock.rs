@@ -224,6 +224,13 @@ impl Possession {
             });
         }
     }
+
+    /// Keep the parent-held Windows file lock while the command runs.
+    ///
+    /// Windows handles are non-inheritable here; the waiting parent remains
+    /// the lock owner for the complete child lifetime.
+    #[cfg(windows)]
+    pub fn retain_through_child(&mut self, _command: &mut std::process::Command) {}
 }
 
 /// One record covering every byte the file already spans, ready to be written whole.

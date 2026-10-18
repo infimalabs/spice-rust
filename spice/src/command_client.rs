@@ -74,7 +74,7 @@ pub(crate) enum SelectedCommand<'a> {
         release: &'a crate::release_command::AdmittedRelease,
         state: crate::release_command::PublicationState,
     },
-    /// Recognize one exact post-proof two-target manifest.
+    /// Recognize one exact post-proof all-target manifest.
     ProofRecognize {
         manifest: &'a proof::PublishedManifest,
         head: wire::Seq,

@@ -20,9 +20,10 @@ const MANIFEST_PATH: &str = "release/manifest.json";
 const NOTES_PATH: &str = "release/notes.md";
 const PACKAGE_PATH: &str = "release/package.json";
 pub const PACKAGE_DOCUMENT_LIMIT: u64 = 8 * 1024 * 1024;
-const TARGETS: [ReleaseTarget; 2] = [
+const TARGETS: [ReleaseTarget; 3] = [
     ReleaseTarget::Aarch64AppleDarwin,
     ReleaseTarget::X86_64UnknownLinuxMusl,
+    ReleaseTarget::X86_64PcWindowsMsvc,
 ];
 
 /// Exact bytes supplied for one supported target package entry.
@@ -1076,7 +1077,7 @@ mod tests {
         let admitted = admit_package_tree(tree.members()).expect("package tree re-admits");
         assert_eq!(admitted, *tree.package());
         assert_eq!(admitted.document().product_version.as_str(), "1.2.3");
-        assert_eq!(admitted.document().targets.len(), 2);
+        assert_eq!(admitted.document().targets.len(), 3);
         let fixture = fixture();
         let body = fixture.executables[0].clone();
         let path = std::env::temp_dir().join(format!(

@@ -21,7 +21,7 @@ const USAGE: &str = concat!(
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "report <acquire UPPER PRIVATE BOARD-ORACLE|analyze PRIVATE|",
     "render PRIVATE PUBLIC FONTS LPPL>|",
-    "stage-target TARGET|windows-msvc>"
+    "stage-target TARGET|windows-msvc|windows-hosted -- PROGRAM [ARG...]>"
 );
 
 fn help() -> String {
@@ -84,10 +84,14 @@ fn main() -> ExitCode {
             return run_proof_image(arguments.collect());
         }
         Some(value) if is_exact_command(value, "stage-target", arguments.len(), 1) => {
-            run_stage_target(arguments.next(), &mut output)
+            run_stage_target(arguments.next(), &mut output, &mut io::stderr().lock())
         }
         Some(value) if is_exact_command(value, "windows-msvc", arguments.len(), 0) => {
             run_windows_msvc(&mut output)
+        }
+        Some(value) if value == OsStr::new("windows-hosted") => {
+            drop(output);
+            return run_windows_hosted(arguments.collect());
         }
         _ => {
             eprintln!("{}", help());
@@ -217,14 +221,31 @@ fn run_build_cache(arguments: Vec<OsString>, output: &mut impl io::Write) -> Com
         .map_err(Into::into)
 }
 
-fn run_stage_target(argument: Option<OsString>, output: &mut impl io::Write) -> CommandResult {
+fn run_stage_target(
+    argument: Option<OsString>,
+    output: &mut impl io::Write,
+    error_output: &mut impl io::Write,
+) -> CommandResult {
     let target = argument.expect("one release target was admitted");
     let Some(target) = target.to_str() else {
         eprintln!("{}", help());
         return Err(usage_error().into());
     };
+    let environment = release_environment();
+    if target == "x86_64-pc-windows-msvc" && !environment.is_hosted_guest() {
+        return xtask::windows_hosted_stage(output, error_output)
+            .and_then(|execution| {
+                (execution.exit_code() == 0).then_some(()).ok_or_else(|| {
+                    xtask::WindowsHostedError::ProviderResponse(format!(
+                        "hosted Windows staging exited {}",
+                        execution.exit_code()
+                    ))
+                })
+            })
+            .map_err(Into::into);
+    }
     preflight_native_release(target).and_then(|()| {
-        xtask::stage_target(target, release_environment(), output)
+        xtask::stage_target(target, environment, output)
             .map(|_| ())
             .map_err(Into::into)
     })
@@ -394,6 +415,23 @@ fn run_proof_image(arguments: Vec<OsString>) -> ExitCode {
     }
 }
 
+fn run_windows_hosted(mut arguments: Vec<OsString>) -> ExitCode {
+    if arguments.first().is_some_and(|argument| argument == "--") {
+        arguments.remove(0);
+    }
+    let mut stdout = io::stdout().lock();
+    let mut stderr = io::stderr().lock();
+    match xtask::windows_hosted(arguments, &mut stdout, &mut stderr) {
+        Ok(execution) => {
+            u8::try_from(execution.exit_code()).map_or_else(|_| ExitCode::FAILURE, ExitCode::from)
+        }
+        Err(error) => {
+            let _ = writeln!(stderr, "{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn preflight_native_release(target: &str) -> Result<(), Box<dyn std::error::Error>> {
     if target != "aarch64-apple-darwin" {
         return Ok(());
@@ -520,6 +558,7 @@ fn release_environment() -> xtask::ReleaseEnvironment {
         bootstrap_environment("RUSTC"),
         bootstrap_environment("CARGO_BUILD_RUSTC"),
     )
+    .with_stage_root(bootstrap_environment("SPICE_HOSTED_STAGE")) // env-policy: allow
 }
 
 #[expect(

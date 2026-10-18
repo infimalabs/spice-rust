@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
+use hosted_windows::Command as HostedCommand;
 use wire::manifest::{
     PROOF_RECEIPT_VERSION, ProofEnvironment, ProofReceipt, ProofStanding, ReleaseTarget,
     TargetPayload,
@@ -351,10 +352,23 @@ impl ReplayVerdict {
 /// inside the one typed [`ReplayVerdict`].
 pub fn replay(environment: &SealedEnvironment) -> Result<ReplayVerdict, ReplayError> {
     let battery = Battery::current();
-    let executor = environment.battery().map_err(|source| ReplayError {
-        check: CheckKind::Gate,
-        source,
-    })?;
+    let commands = battery
+        .checks
+        .iter()
+        .map(|check| HostedCommand {
+            program: match check.program() {
+                "cargo" => "@cargo".to_owned(),
+                program => program.to_owned(),
+            },
+            arguments: check.arguments().to_vec(),
+        })
+        .collect::<Vec<_>>();
+    let executor = environment
+        .battery(&commands)
+        .map_err(|source| ReplayError {
+            check: CheckKind::Gate,
+            source,
+        })?;
     let replay = run_with(&executor, &battery);
     let cleanup = executor.close();
     match (replay, cleanup) {

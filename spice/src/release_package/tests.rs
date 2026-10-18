@@ -2,8 +2,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::manifest::{
-    BuildPins, MacSymbolMetadata, ProofEnvironment, ProofReceipt, ProofStanding,
-    RELEASE_MANIFEST_VERSION, ReleaseManifestTarget, TargetPayload,
+    BuildPins, HostedWindowsIdentity, HostedWindowsImage, HostedWindowsToolchain,
+    MacSymbolMetadata, ProofEnvironment, ProofReceipt, ProofStanding, RELEASE_MANIFEST_VERSION,
+    ReleaseManifestTarget, TargetPayload,
 };
 
 use super::*;
@@ -33,6 +34,7 @@ fn admitted_executables_are_read_from_their_admitted_generation() {
     for (target_index, target) in [
         ReleaseTarget::Aarch64AppleDarwin,
         ReleaseTarget::X86_64UnknownLinuxMusl,
+        ReleaseTarget::X86_64PcWindowsMsvc,
     ]
     .into_iter()
     .enumerate()
@@ -230,6 +232,7 @@ impl Fixture {
         let staged = [
             ReleaseTarget::Aarch64AppleDarwin,
             ReleaseTarget::X86_64UnknownLinuxMusl,
+            ReleaseTarget::X86_64PcWindowsMsvc,
         ]
         .map(|target| stage_target(&stage, target, &source, &app, &pins, &battery));
         let targets = staged
@@ -328,14 +331,7 @@ fn stage_target(
     let payload_path = stage.join(format!("objects/payload-{payload_identity}.json"));
     fs::write(&payload_path, &payload).expect("write payload object");
     let replay = Digest::compute(Domain::ProofReplayV3, target.as_str().as_bytes());
-    let environment = match target {
-        ReleaseTarget::Aarch64AppleDarwin => {
-            ProofEnvironment::native(Digest::compute(Domain::ProofNativeRunner, b"runner"))
-        }
-        ReleaseTarget::X86_64UnknownLinuxMusl => {
-            ProofEnvironment::oci(&pins.proof_container).expect("image is pinned")
-        }
-    };
+    let environment = proof_environment(target, pins);
     let proof = wire::encode(&ProofReceipt {
         version: wire::manifest::PROOF_RECEIPT_VERSION,
         target,
@@ -375,6 +371,55 @@ fn stage_target(
             environment,
             standing: ProofStanding::Clean,
         },
+    }
+}
+
+fn proof_environment(target: ReleaseTarget, pins: &BuildPins) -> ProofEnvironment {
+    match target {
+        ReleaseTarget::Aarch64AppleDarwin => {
+            ProofEnvironment::native(Digest::compute(Domain::ProofNativeRunner, b"runner"))
+        }
+        ReleaseTarget::X86_64UnknownLinuxMusl => {
+            ProofEnvironment::oci(&pins.proof_container).expect("image is pinned")
+        }
+        ReleaseTarget::X86_64PcWindowsMsvc => {
+            ProofEnvironment::hosted_windows(HostedWindowsIdentity {
+                provider: "github-actions".to_owned(),
+                repository: "infimalabs/spice-rust".to_owned(),
+                workflow: ".github/workflows/windows-hosted.yml".to_owned(),
+                run_id: 17,
+                run_attempt: 1,
+                image: HostedWindowsImage {
+                    label: "windows-2025".to_owned(),
+                    provider_os: "win25".to_owned(),
+                    version: "20261013.288.2".to_owned(),
+                    os_version: "10.0.26100.33438".to_owned(),
+                    architecture: "X64".to_owned(),
+                },
+                runner: Digest::compute(Domain::ProofNativeRunner, b"hosted runner"),
+                source: "1".repeat(64),
+                toolchain: HostedWindowsToolchain {
+                    rust: "rustc 1.97.1".to_owned(),
+                    cargo: "cargo 1.97.1".to_owned(),
+                    git: "git version 2.51.0.windows.2".to_owned(),
+                    trunk: "trunk 0.21.14".to_owned(),
+                    cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
+                    msvc: "19.44.35207".to_owned(),
+                    sdk: "10.0.26100.0".to_owned(),
+                    rustc_path: r"C:\rustc.exe".to_owned(),
+                    cargo_path: r"C:\cargo.exe".to_owned(),
+                    git_path: r"C:\git.exe".to_owned(),
+                    trunk_path: r"C:\trunk.exe".to_owned(),
+                    cargo_mutants_path: r"C:\cargo-mutants.exe".to_owned(),
+                    cl_path: r"C:\cl.exe".to_owned(),
+                    rc_path: r"C:\rc.exe".to_owned(),
+                    link_path: r"C:\link.exe".to_owned(),
+                    path: r"C:\tools".to_owned(),
+                    include: r"C:\include".to_owned(),
+                    lib: r"C:\lib".to_owned(),
+                },
+            })
+        }
     }
 }
 

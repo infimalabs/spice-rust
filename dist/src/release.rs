@@ -376,9 +376,10 @@ fn refuse_moved_ref(
 }
 
 fn validate_targets(targets: &[SealedTarget]) -> Result<(), PlanError> {
-    const EXPECTED: [ReleaseTarget; 2] = [
+    const EXPECTED: [ReleaseTarget; 3] = [
         ReleaseTarget::Aarch64AppleDarwin,
         ReleaseTarget::X86_64UnknownLinuxMusl,
+        ReleaseTarget::X86_64PcWindowsMsvc,
     ];
     if targets.len() != EXPECTED.len() {
         return Err(PlanError::TargetCount(targets.len()));
@@ -444,7 +445,7 @@ pub enum PlanError {
     RegistryEvidenceAbsent,
     #[error("registry-visible evidence does not name the exact release")]
     RegistryEvidenceMoved,
-    #[error("the release has {0} sealed targets instead of two")]
+    #[error("the release has {0} sealed targets instead of three")]
     TargetCount(usize),
     #[error("sealed target {index} is {observed}, expected {expected}")]
     TargetOrder {

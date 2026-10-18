@@ -242,10 +242,11 @@ fn linked(archive: &[u8], tag: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
+fn all_targets_use_the_fixed_commands_and_real_artifact_bytes() {
     for target in [
         ReleaseTarget::Aarch64AppleDarwin,
         ReleaseTarget::X86_64UnknownLinuxMusl,
+        ReleaseTarget::X86_64PcWindowsMsvc,
     ] {
         let fixture = Fixture::new();
         let programs = fixture.programs();
@@ -275,7 +276,13 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
         );
         assert_eq!(build_records[0].arguments, [OsString::from("app")]);
         assert_eq!(build_records[0].program, programs.xtask);
-        let staged = assert_native_build(build_records[1], &programs, target, &fixture.root);
+        let staged = assert_native_build(
+            build_records[1],
+            &programs,
+            target,
+            &fixture.root,
+            &fixture.archive,
+        );
         let rust_observations = build
             .commands
             .iter()
@@ -341,7 +348,10 @@ fn both_targets_use_the_fixed_commands_and_real_artifact_bytes() {
             build.staged.payload_bytes
         );
     }
+}
 
+#[test]
+fn a_substituted_dsym_member_refuses_before_target_publication() {
     let fixture = Fixture::new();
     let target = ReleaseTarget::Aarch64AppleDarwin;
     let executor = FakeExecutor::new(&fixture.root, target);
@@ -396,6 +406,7 @@ fn assert_native_build(
     programs: &Programs,
     target: ReleaseTarget,
     root: &Path,
+    archive: &[u8],
 ) -> crate::app::StagedCanvas {
     assert_eq!(record.program, programs.cargo);
     assert_eq!(
@@ -405,6 +416,26 @@ fn assert_native_build(
             .any(|argument| argument == "profile.release.debug=\"line-tables-only\""),
         target == ReleaseTarget::Aarch64AppleDarwin
     );
+    let binary = record
+        .arguments
+        .windows(2)
+        .find_map(|pair| (pair[0] == "--bin").then_some(pair[1].as_os_str()))
+        .expect("the native build selects one binary");
+    assert_eq!(
+        binary,
+        if target == ReleaseTarget::X86_64PcWindowsMsvc {
+            OsStr::new("spice-windows")
+        } else {
+            OsStr::new("spice")
+        }
+    );
+    assert_eq!(
+        record
+            .arguments
+            .iter()
+            .any(|argument| argument == "--no-default-features"),
+        target == ReleaseTarget::X86_64PcWindowsMsvc
+    );
     let link = record
         .arguments
         .last()
@@ -413,17 +444,19 @@ fn assert_native_build(
         .expect("the native build links the canvas object last");
     let object = fs::read(link).expect("the canvas object is written");
     let staged = crate::app::StagedCanvas::read(root).expect("fixture canvas is staged");
-    staged
-        .canvas()
-        .verify_linked(&object)
-        .expect("the linked object carries exactly the staged archive");
+    let object_target = match target {
+        ReleaseTarget::Aarch64AppleDarwin => dist::ObjectTarget::MacAarch64,
+        ReleaseTarget::X86_64UnknownLinuxMusl => dist::ObjectTarget::LinuxX86_64,
+        ReleaseTarget::X86_64PcWindowsMsvc => dist::ObjectTarget::WindowsX86_64,
+    };
+    assert_eq!(object, dist::canvas_object(archive, object_target));
     staged
 }
 
 fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBuild) {
     let target = build.target;
     let Some(symbols) = &build.symbols else {
-        assert_eq!(target, ReleaseTarget::X86_64UnknownLinuxMusl);
+        assert_ne!(target, ReleaseTarget::Aarch64AppleDarwin);
         assert!(build.staged.payload.symbols.is_none());
         return;
     };

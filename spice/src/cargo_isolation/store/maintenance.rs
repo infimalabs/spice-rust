@@ -1,3 +1,6 @@
+#[cfg(windows)]
+use super::super::platform::PermissionsExt as _;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt as _;
 use std::time::SystemTime;
 
@@ -240,7 +243,7 @@ fn count_normal_directories(path: &Path) -> Result<usize, IsolationError> {
         .filter(|entry| {
             !entry
                 .file_name()
-                .as_bytes()
+                .as_encoded_bytes()
                 .starts_with(TEMPORARY_PREFIX.as_bytes())
                 && entry.file_type().is_ok_and(|kind| kind.is_dir())
         })
@@ -255,12 +258,22 @@ fn measure_tree(path: &Path, inspection: &mut Inspection) -> Result<(), Isolatio
         inspection.logical_bytes = inspection.logical_bytes.saturating_add(metadata.len());
         inspection.physical_bytes = inspection
             .physical_bytes
-            .saturating_add(metadata.blocks().saturating_mul(512));
+            .saturating_add(physical_bytes(&metadata));
         if metadata.is_dir() && !metadata.file_type().is_symlink() {
             measure_tree(&entry.path(), inspection)?;
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn physical_bytes(metadata: &fs::Metadata) -> u64 {
+    metadata.blocks().saturating_mul(512)
+}
+
+#[cfg(windows)]
+fn physical_bytes(metadata: &fs::Metadata) -> u64 {
+    metadata.len()
 }
 
 pub(super) fn cleanup(host: &Host) -> Result<CleanupReport, IsolationError> {
@@ -304,7 +317,7 @@ fn reclaim_temporaries(
         for entry in read_directory(parent)? {
             if entry
                 .file_name()
-                .as_bytes()
+                .as_encoded_bytes()
                 .starts_with(TEMPORARY_PREFIX.as_bytes())
                 && old_enough(&entry.path(), grace)?
             {

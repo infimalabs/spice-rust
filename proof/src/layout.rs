@@ -262,7 +262,7 @@ mod tests {
     static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
     #[test]
-    fn both_targets_derive_only_their_exact_payload_and_receipt_paths() {
+    fn all_targets_derive_only_their_exact_payload_and_receipt_paths() {
         let scratch = Scratch::new();
         let worktree = scratch.join("worktree");
         let common = scratch.join("common");
@@ -271,6 +271,7 @@ mod tests {
         for target in [
             ReleaseTarget::Aarch64AppleDarwin,
             ReleaseTarget::X86_64UnknownLinuxMusl,
+            ReleaseTarget::X86_64PcWindowsMsvc,
         ] {
             let layout = Layout::new(&worktree, state.join("proof"), target);
             let payload = payload(target, target.as_str());

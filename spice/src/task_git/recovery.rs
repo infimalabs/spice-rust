@@ -10,6 +10,7 @@
 use super::*;
 
 use std::collections::BTreeSet;
+#[cfg(unix)]
 use std::fs::OpenOptions;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt as _;

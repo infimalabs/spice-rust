@@ -21,6 +21,8 @@ use sill::{
 use wire::manifest::{BuildPins, ReleaseTarget};
 use wire::{Digest, Domain};
 
+mod native;
+
 #[cfg(unix)]
 mod symbols;
 #[cfg(unix)]
@@ -108,6 +110,7 @@ pub struct ReleaseEnvironment {
     cargo_target_dir: Option<OsString>,
     rustc: Option<OsString>,
     build_rustc: Option<OsString>,
+    stage_root: Option<OsString>,
 }
 
 impl ReleaseEnvironment {
@@ -140,7 +143,27 @@ impl ReleaseEnvironment {
             cargo_target_dir,
             rustc,
             build_rustc,
+            stage_root: None,
         }
+    }
+
+    /// Select an external stage root for an isolated hosted build.
+    #[must_use]
+    pub fn with_stage_root(mut self, stage_root: Option<OsString>) -> Self {
+        self.stage_root = stage_root;
+        self
+    }
+
+    fn stage_root(&self, root: &Path) -> PathBuf {
+        self.stage_root
+            .as_ref()
+            .map_or_else(|| root.join("dist/stage"), PathBuf::from)
+    }
+
+    /// Whether this process is the isolated guest half of hosted staging.
+    #[must_use]
+    pub const fn is_hosted_guest(&self) -> bool {
+        self.stage_root.is_some()
     }
 
     /// Where every build this binary starts is allowed to write.
@@ -266,9 +289,10 @@ pub fn stage_target(
     let root = workspace_root()?;
     let programs = Programs::discover(&root, &environment, target)?;
     let executor = SystemExecutor::new(&root, &environment, &programs.rustc)?;
-    match stage_with(
+    match stage_with_roots(
         &root,
         &environment.build_root(&root),
+        &environment.stage_root(&root),
         target,
         &programs,
         &executor,
@@ -284,9 +308,28 @@ pub fn stage_target(
     }
 }
 
+#[cfg(test)]
 fn stage_with<E: Executor>(
     root: &Path,
     build_root: &Path,
+    target: ReleaseTarget,
+    programs: &Programs,
+    executor: &E,
+) -> Result<TargetBuild, TargetBuildError> {
+    stage_with_roots(
+        root,
+        build_root,
+        &root.join("dist/stage"),
+        target,
+        programs,
+        executor,
+    )
+}
+
+fn stage_with_roots<E: Executor>(
+    root: &Path,
+    build_root: &Path,
+    stage_root: &Path,
     target: ReleaseTarget,
     programs: &Programs,
     executor: &E,
@@ -313,7 +356,7 @@ fn stage_with<E: Executor>(
         executable: None,
     };
     let mut publisher = GuardedPublisher {
-        inner: FilePublisher::new(root.join("dist/stage")),
+        inner: FilePublisher::new(stage_root),
         source: &source,
         required: &required,
         programs,
@@ -347,6 +390,7 @@ fn parse_target(spelling: &str) -> Result<ReleaseTarget, TargetBuildError> {
     match spelling {
         "aarch64-apple-darwin" => Ok(ReleaseTarget::Aarch64AppleDarwin),
         "x86_64-unknown-linux-musl" => Ok(ReleaseTarget::X86_64UnknownLinuxMusl),
+        "x86_64-pc-windows-msvc" => Ok(ReleaseTarget::X86_64PcWindowsMsvc),
         _ => Err(TargetBuildError::UnsupportedTarget(spelling.to_owned())),
     }
 }
@@ -483,7 +527,7 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
         let native = self.run(CommandSpec::new(
             "native-build",
             &self.programs.cargo,
-            native_cargo_arguments(target, self.target_dir, staged).map_err(build_error)?,
+            native::cargo_arguments(target, self.target_dir, staged).map_err(build_error)?,
         ))?;
         let executable = cargo_executable(&native.stdout)?;
         #[cfg(unix)]
@@ -523,46 +567,6 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
     fn take_symbol_artifact(&mut self) -> Option<Vec<u8>> {
         self.symbol_artifact.take()
     }
-}
-
-/// Ask Cargo for the exact linked binary carrying `canvas`, and retain line
-/// tables only for the macOS build whose dSYM consumes them. Keeping the
-/// profile override on this target-specific command leaves the Linux
-/// executable bytes unchanged. `cargo rustc` hands the link argument to the
-/// final executable alone, so no dependency rebuilds when the archive changes.
-fn native_cargo_arguments(
-    target: ReleaseTarget,
-    target_dir: &Path,
-    canvas: &crate::app::StagedCanvas,
-) -> Result<Vec<OsString>, crate::app::AppBuildError> {
-    let object = match target {
-        ReleaseTarget::Aarch64AppleDarwin => dist::ObjectTarget::MacAarch64,
-        ReleaseTarget::X86_64UnknownLinuxMusl => dist::ObjectTarget::LinuxX86_64,
-    };
-    let mut arguments: Vec<OsString> = [
-        "rustc",
-        "--locked",
-        "--release",
-        "-p",
-        "spice",
-        "--bin",
-        "spice",
-        "--target",
-        target.as_str(),
-        "--target-dir",
-    ]
-    .map(OsString::from)
-    .into();
-    arguments.push(target_dir.as_os_str().to_owned());
-    arguments.push(OsString::from("--message-format=json-render-diagnostics"));
-    if target == ReleaseTarget::Aarch64AppleDarwin {
-        arguments.extend([
-            OsString::from("--config"),
-            OsString::from("profile.release.debug=\"line-tables-only\""),
-        ]);
-    }
-    arguments.extend(canvas.link_arguments(target_dir, object)?);
-    Ok(arguments)
 }
 
 impl<E: Executor> CommandBuilder<'_, E> {
@@ -1032,8 +1036,12 @@ fn unquoted(segment: &str) -> &str {
 }
 
 fn find_program(path: &OsStr, name: &'static str) -> Result<PathBuf, TargetBuildError> {
+    #[cfg(windows)]
+    let file_name = format!("{name}.exe");
+    #[cfg(not(windows))]
+    let file_name = name;
     for directory in env::split_paths(path) {
-        let candidate = directory.join(name);
+        let candidate = directory.join(&file_name);
         if executable(&candidate) {
             let directory = if directory.as_os_str().is_empty() {
                 Path::new(".")
@@ -1041,7 +1049,7 @@ fn find_program(path: &OsStr, name: &'static str) -> Result<PathBuf, TargetBuild
                 &directory
             };
             return fs::canonicalize(directory)
-                .map(|directory| directory.join(name))
+                .map(|directory| directory.join(&file_name))
                 .map_err(|source| TargetBuildError::Io {
                     path: directory.to_path_buf(),
                     source,

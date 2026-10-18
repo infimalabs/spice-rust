@@ -228,14 +228,71 @@ impl<'de> Deserialize<'de> for ProofImage {
     }
 }
 
+/// Exact immutable image selected for one hosted Windows execution.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostedWindowsImage {
+    pub label: String,
+    pub provider_os: String,
+    pub version: String,
+    pub os_version: String,
+    pub architecture: String,
+}
+
+/// Exact boundary toolchain selected inside one hosted Windows image.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostedWindowsToolchain {
+    pub rust: String,
+    pub cargo: String,
+    pub git: String,
+    pub trunk: String,
+    pub cargo_mutants: String,
+    pub msvc: String,
+    pub sdk: String,
+    pub rustc_path: String,
+    pub cargo_path: String,
+    pub git_path: String,
+    pub trunk_path: String,
+    pub cargo_mutants_path: String,
+    pub cl_path: String,
+    pub rc_path: String,
+    pub link_path: String,
+    pub path: String,
+    pub include: String,
+    pub lib: String,
+}
+
+/// Provider-authenticated identity of one ephemeral Windows environment.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostedWindowsIdentity {
+    pub provider: String,
+    pub repository: String,
+    pub workflow: String,
+    pub run_id: u64,
+    pub run_attempt: u32,
+    pub image: HostedWindowsImage,
+    pub runner: Digest,
+    pub source: String,
+    pub toolchain: HostedWindowsToolchain,
+}
+
 /// The one sealed execution identity carried by replay evidence.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase", deny_unknown_fields)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "proof receipts keep every environment inline; boxing adds an allocation to every hosted replay"
+)]
 pub enum ProofEnvironment {
     /// A digest-pinned OCI image executed through the sealed container route.
     Oci { image: ProofImage },
     /// The domain-separated digest of one admitted native runner executable.
     Native { runner: Digest },
+    /// One provider-authenticated ephemeral native Windows execution.
+    #[serde(rename = "hosted-windows")]
+    HostedWindows { identity: HostedWindowsIdentity },
 }
 
 impl ProofEnvironment {
@@ -256,12 +313,18 @@ impl ProofEnvironment {
         Self::Native { runner }
     }
 
+    /// Construct an ephemeral hosted Windows identity.
+    #[must_use]
+    pub const fn hosted_windows(identity: HostedWindowsIdentity) -> Self {
+        Self::HostedWindows { identity }
+    }
+
     /// OCI identity, when this is the container variant.
     #[must_use]
     pub const fn oci_image(&self) -> Option<&ProofImage> {
         match self {
             Self::Oci { image } => Some(image),
-            Self::Native { .. } => None,
+            Self::Native { .. } | Self::HostedWindows { .. } => None,
         }
     }
 
@@ -270,7 +333,16 @@ impl ProofEnvironment {
     pub const fn native_runner(&self) -> Option<&Digest> {
         match self {
             Self::Native { runner } => Some(runner),
-            Self::Oci { .. } => None,
+            Self::Oci { .. } | Self::HostedWindows { .. } => None,
+        }
+    }
+
+    /// Hosted Windows identity, when this is the ephemeral provider variant.
+    #[must_use]
+    pub const fn hosted_windows_identity(&self) -> Option<&HostedWindowsIdentity> {
+        match self {
+            Self::HostedWindows { identity } => Some(identity),
+            Self::Oci { .. } | Self::Native { .. } => None,
         }
     }
 }
@@ -282,6 +354,8 @@ pub enum ReleaseTarget {
     Aarch64AppleDarwin,
     #[serde(rename = "x86_64-unknown-linux-musl")]
     X86_64UnknownLinuxMusl,
+    #[serde(rename = "x86_64-pc-windows-msvc")]
+    X86_64PcWindowsMsvc,
 }
 
 impl ReleaseTarget {
@@ -291,6 +365,7 @@ impl ReleaseTarget {
         match self {
             Self::Aarch64AppleDarwin => "aarch64-apple-darwin",
             Self::X86_64UnknownLinuxMusl => "x86_64-unknown-linux-musl",
+            Self::X86_64PcWindowsMsvc => "x86_64-pc-windows-msvc",
         }
     }
 }
@@ -680,9 +755,9 @@ pub struct ReleasePackage {
     pub package: String,
     /// Canonical semantic product version without a tag prefix.
     pub product_version: ProductVersion,
-    /// Immutable source commit identity shared by both target payloads.
+    /// Immutable source commit identity shared by every target payload.
     pub source: Digest,
-    /// Canonical sealed two-target manifest identity.
+    /// Canonical sealed all-target manifest identity.
     pub manifest: Digest,
     /// Identity of the exact release-note evidence document.
     pub notes: Digest,

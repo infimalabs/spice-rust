@@ -111,7 +111,7 @@ pub fn verify(
 ///
 /// This is the durable half of [`verify`]: the proof leaf already derived and
 /// published the canonical receipt from its complete replay, while the later
-/// two-target manifest seal no longer has that process-local replay value. The
+/// all-target manifest seal no longer has that process-local replay value. The
 /// stored receipt must still bind the exact payload, current battery, selected
 /// target environment, and clean standing before it can enter a release.
 pub fn verify_stored(
@@ -134,7 +134,8 @@ pub fn verify_stored(
         (ProofEnvironment::Oci { image }, ReleaseTarget::X86_64UnknownLinuxMusl) => {
             image.as_str() == payload.pins.proof_container
         }
-        (ProofEnvironment::Native { .. }, ReleaseTarget::Aarch64AppleDarwin) => true,
+        (ProofEnvironment::Native { .. }, ReleaseTarget::Aarch64AppleDarwin)
+        | (ProofEnvironment::HostedWindows { .. }, ReleaseTarget::X86_64PcWindowsMsvc) => true,
         _ => false,
     };
     if !environment_matches {
@@ -206,9 +207,9 @@ pub(crate) fn verify_admitted(
         (ProofEnvironment::Oci { image }, ReleaseTarget::X86_64UnknownLinuxMusl) => {
             image.as_str() == payload.pins.proof_container
         }
-        (ProofEnvironment::Native { .. }, ReleaseTarget::Aarch64AppleDarwin) => true,
-        (ProofEnvironment::Native { .. }, ReleaseTarget::X86_64UnknownLinuxMusl)
-        | (ProofEnvironment::Oci { .. }, ReleaseTarget::Aarch64AppleDarwin) => false,
+        (ProofEnvironment::Native { .. }, ReleaseTarget::Aarch64AppleDarwin)
+        | (ProofEnvironment::HostedWindows { .. }, ReleaseTarget::X86_64PcWindowsMsvc) => true,
+        _ => false,
     };
     if !target_environment_matches || receipt.environment != *replay.environment() {
         return Err(EvidenceError::Environment {

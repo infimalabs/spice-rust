@@ -434,9 +434,10 @@ mod tests {
     }
 
     fn complete_package() -> proof::PackageTree {
-        const TARGETS: [ReleaseTarget; 2] = [
+        const TARGETS: [ReleaseTarget; 3] = [
             ReleaseTarget::Aarch64AppleDarwin,
             ReleaseTarget::X86_64UnknownLinuxMusl,
+            ReleaseTarget::X86_64PcWindowsMsvc,
         ];
         let source = Digest::compute(Domain::DistSourceCommit, b"source");
         let app_identity = Digest::compute(Domain::DistArtifact, b"app generation");

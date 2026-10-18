@@ -84,9 +84,16 @@ fn verify_symbol_metadata(payload: &TargetPayload) -> Result<(), PayloadError> {
         (wire::manifest::ReleaseTarget::Aarch64AppleDarwin, None) => {
             return Err(PayloadError::SymbolMetadata("missing for Darwin"));
         }
-        (wire::manifest::ReleaseTarget::X86_64UnknownLinuxMusl, None) => return Ok(()),
+        (
+            wire::manifest::ReleaseTarget::X86_64UnknownLinuxMusl
+            | wire::manifest::ReleaseTarget::X86_64PcWindowsMsvc,
+            None,
+        ) => return Ok(()),
         (wire::manifest::ReleaseTarget::X86_64UnknownLinuxMusl, Some(_)) => {
             return Err(PayloadError::SymbolMetadata("present for Linux"));
+        }
+        (wire::manifest::ReleaseTarget::X86_64PcWindowsMsvc, Some(_)) => {
+            return Err(PayloadError::SymbolMetadata("present for Windows"));
         }
     };
     let entry = payload

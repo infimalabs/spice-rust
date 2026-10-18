@@ -5,12 +5,28 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+autobins = false
 
 [features]
+default = ["native-appliance"]
+# The Unix appliance command, resident, and installation surfaces.
+native-appliance = []
+# The hosted Windows release identity surface.
+windows-appliance = []
 # Resolves the canvas archive the linked object defines; only the release
 # target build and `spice dev xtask -- install` enable it and link that object.
 canvas = ["dep:canvas"]
 test-short-horizons = []
+
+[[bin]]
+name = "spice"
+path = "src/main.rs"
+required-features = ["native-appliance"]
+
+[[bin]]
+name = "spice-windows"
+path = "src/windows_main.rs"
+required-features = ["windows-appliance"]
 
 [dependencies]
 artifact = { path = "../artifact" }

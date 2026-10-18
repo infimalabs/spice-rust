@@ -10,7 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+#[cfg(unix)]
 use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
+#[cfg(unix)]
 use signal_hook::iterator::Signals;
 use wire::{DemoAnswer, Digest, Fault, Outcome, Refusal};
 
@@ -162,6 +164,7 @@ fn run_demo(
 ) -> Result<(), AppDemoError> {
     // The child owns graceful shutdown. Catch the same terminal signals in this
     // waiting parent so its disposable root is removed after the child exits.
+    #[cfg(unix)]
     let _signals = Signals::new([SIGHUP, SIGINT, SIGTERM])
         .map_err(|error| fail(format!("app-demo signal handling unavailable: {error}")))?;
     let discovery = demo_discovery(root)?;

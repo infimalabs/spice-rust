@@ -253,9 +253,14 @@ fn build_artifacts<B: Builder>(
                 "macOS build produced no symbol artifact",
             ));
         }
-        (ReleaseTarget::X86_64UnknownLinuxMusl, None) => None,
+        (ReleaseTarget::X86_64UnknownLinuxMusl | ReleaseTarget::X86_64PcWindowsMsvc, None) => None,
         (ReleaseTarget::X86_64UnknownLinuxMusl, Some(_)) => {
             return Err(native_build_error("Linux build produced a symbol artifact"));
+        }
+        (ReleaseTarget::X86_64PcWindowsMsvc, Some(_)) => {
+            return Err(native_build_error(
+                "Windows build produced a symbol artifact",
+            ));
         }
     };
     artifacts.push(native);

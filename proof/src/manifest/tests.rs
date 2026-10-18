@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::manifest::{
-    BuildPins, InventoryEntry, ProofEnvironment, ProofReceipt, ReleaseManifest, ReleaseTarget,
-    TargetPayload,
+    BuildPins, HostedWindowsIdentity, HostedWindowsImage, HostedWindowsToolchain, InventoryEntry,
+    ProofEnvironment, ProofReceipt, ReleaseManifest, ReleaseTarget, TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -54,22 +54,28 @@ impl ManifestPublisher for MemoryPublisher {
 }
 
 #[test]
-fn both_verified_targets_form_one_stable_manifest_and_pointer_last() {
+fn all_verified_targets_form_one_stable_manifest_and_pointer_last() {
     let source = digest(Domain::DistArtifact, b"source");
     let darwin = prepared(ReleaseTarget::Aarch64AppleDarwin, source.clone(), true);
     let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source.clone(), true);
+    let windows = prepared(ReleaseTarget::X86_64PcWindowsMsvc, source.clone(), true);
     let mut first = MemoryPublisher::default();
-    let published =
-        publish_manifest(inputs(&darwin, &linux), &mut first).expect("both clean proofs publish");
+    let published = publish_manifest(inputs(&darwin, &linux, &windows), &mut first)
+        .expect("all clean proofs publish");
     let mut second = MemoryPublisher::default();
-    let repeated = publish_manifest(inputs(&darwin, &linux), &mut second)
+    let repeated = publish_manifest(inputs(&darwin, &linux, &windows), &mut second)
         .expect("the same proofs publish identically");
 
     assert_eq!(published, repeated);
     assert_eq!(first.files, second.files);
     assert_eq!(published.manifest.source, source);
-    assert_eq!(published.manifest.targets.len(), 2);
-    for (target, prepared) in published.manifest.targets.iter().zip([&darwin, &linux]) {
+    assert_eq!(published.manifest.targets.len(), 3);
+    for (target, prepared) in published
+        .manifest
+        .targets
+        .iter()
+        .zip([&darwin, &linux, &windows])
+    {
         let payload: TargetPayload =
             wire::decode(&prepared.payload).expect("fixture payload decodes");
         assert_eq!(target.payload_bytes, prepared.payload.len() as u64);
@@ -87,6 +93,7 @@ fn both_verified_targets_form_one_stable_manifest_and_pointer_last() {
         [
             ReleaseTarget::Aarch64AppleDarwin,
             ReleaseTarget::X86_64UnknownLinuxMusl,
+            ReleaseTarget::X86_64PcWindowsMsvc,
         ]
     );
     assert_eq!(
@@ -110,26 +117,32 @@ fn both_verified_targets_form_one_stable_manifest_and_pointer_last() {
 fn missing_extra_duplicate_and_reordered_targets_refuse_before_publication() {
     let source = digest(Domain::DistArtifact, b"source");
     let darwin = prepared(ReleaseTarget::Aarch64AppleDarwin, source.clone(), true);
-    let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source, true);
+    let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source.clone(), true);
+    let windows = prepared(ReleaseTarget::X86_64PcWindowsMsvc, source, true);
 
     let cases = [
         (
-            vec![input(&darwin)],
+            vec![input(&darwin), input(&linux)],
             "missing",
             matches_error as fn(&ManifestError) -> bool,
         ),
         (
-            vec![input(&darwin), input(&linux), input(&darwin)],
+            vec![
+                input(&darwin),
+                input(&linux),
+                input(&windows),
+                input(&darwin),
+            ],
             "extra",
             matches_error,
         ),
         (
-            vec![input(&darwin), input(&darwin)],
+            vec![input(&darwin), input(&linux), input(&linux)],
             "duplicate",
             duplicate_error,
         ),
         (
-            vec![input(&linux), input(&darwin)],
+            vec![input(&darwin), input(&windows), input(&linux)],
             "reordered",
             order_error,
         ),
@@ -165,36 +178,41 @@ fn mixed_sources_mismatched_evidence_and_non_clean_proofs_refuse_without_writes(
         first_source.clone(),
         true,
     );
-    let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, first_source, true);
+    let linux = prepared(
+        ReleaseTarget::X86_64UnknownLinuxMusl,
+        first_source.clone(),
+        true,
+    );
+    let windows = prepared(
+        ReleaseTarget::X86_64PcWindowsMsvc,
+        first_source.clone(),
+        true,
+    );
     let other_linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, other_source, true);
     let drifted_linux = drift_toolchain(&linux);
-    let refused_linux = prepared(
-        ReleaseTarget::X86_64UnknownLinuxMusl,
-        digest(Domain::DistArtifact, b"first source"),
-        false,
-    );
+    let refused_linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, first_source, false);
 
     let mut publisher = MemoryPublisher::default();
-    let mixed = publish_manifest(inputs(&darwin, &other_linux), &mut publisher)
+    let mixed = publish_manifest(inputs(&darwin, &other_linux, &windows), &mut publisher)
         .expect_err("mixed sources refuse");
     assert!(matches!(mixed, ManifestError::SourceMismatch { .. }));
     assert!(publisher.writes.is_empty());
 
     let mut publisher = MemoryPublisher::default();
-    let mixed = publish_manifest(inputs(&darwin, &drifted_linux), &mut publisher)
+    let mixed = publish_manifest(inputs(&darwin, &drifted_linux, &windows), &mut publisher)
         .expect_err("mixed toolchain pins refuse");
     assert!(matches!(mixed, ManifestError::Mixed { .. }));
     assert!(publisher.writes.is_empty());
 
     let mismatched = ManifestInput::new(&darwin.payload, &linux.receipt);
     let mut publisher = MemoryPublisher::default();
-    let mismatch = publish_manifest([mismatched, input(&linux)], &mut publisher)
+    let mismatch = publish_manifest([mismatched, input(&linux), input(&windows)], &mut publisher)
         .expect_err("cross-target evidence refuses");
     assert!(matches!(mismatch, ManifestError::Evidence { .. }));
     assert!(publisher.writes.is_empty());
 
     let mut publisher = MemoryPublisher::default();
-    let refused = publish_manifest(inputs(&darwin, &refused_linux), &mut publisher)
+    let refused = publish_manifest(inputs(&darwin, &refused_linux, &windows), &mut publisher)
         .expect_err("non-clean proof refuses");
     assert!(matches!(
         refused,
@@ -210,8 +228,8 @@ fn mixed_sources_mismatched_evidence_and_non_clean_proofs_refuse_without_writes(
 fn every_receipt_binding_is_rechecked_before_the_first_write() {
     let source = digest(Domain::DistArtifact, b"source");
     let darwin = prepared(ReleaseTarget::Aarch64AppleDarwin, source.clone(), true);
-    let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source, true);
-
+    let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source.clone(), true);
+    let windows = prepared(ReleaseTarget::X86_64PcWindowsMsvc, source, true);
     for field in 0..4 {
         let mut receipt: ProofReceipt =
             wire::decode(&linux.receipt).expect("fixture receipt decodes");
@@ -231,7 +249,7 @@ fn every_receipt_binding_is_rechecked_before_the_first_write() {
         let tampered = ManifestInput::new(&linux.payload, &receipt);
         let mut publisher = MemoryPublisher::default();
 
-        let error = publish_manifest([input(&darwin), tampered], &mut publisher)
+        let error = publish_manifest([input(&darwin), tampered, input(&windows)], &mut publisher)
             .expect_err("every receipt binding is load-bearing");
 
         assert!(matches!(error, ManifestError::Evidence { .. }));
@@ -246,7 +264,8 @@ fn every_receipt_binding_is_rechecked_before_the_first_write() {
 fn interrupted_object_publication_preserves_the_previous_pointer() {
     let source = digest(Domain::DistArtifact, b"source");
     let darwin = prepared(ReleaseTarget::Aarch64AppleDarwin, source.clone(), true);
-    let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source, true);
+    let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source.clone(), true);
+    let windows = prepared(ReleaseTarget::X86_64PcWindowsMsvc, source, true);
     let pointer = PathBuf::from(MANIFEST_POINTER);
     let mut publisher = MemoryPublisher {
         files: BTreeMap::from([(pointer.clone(), (0o644, OLD_POINTER.to_vec()))]),
@@ -254,7 +273,7 @@ fn interrupted_object_publication_preserves_the_previous_pointer() {
         fail_at: Some(2),
     };
 
-    let error = publish_manifest(inputs(&darwin, &linux), &mut publisher)
+    let error = publish_manifest(inputs(&darwin, &linux, &windows), &mut publisher)
         .expect_err("interrupted object write fails");
 
     assert!(matches!(error, ManifestError::Publish { .. }));
@@ -267,10 +286,11 @@ fn filesystem_publication_commits_exact_objects_and_pointer() {
     let scratch = Scratch::new();
     let source = digest(Domain::DistArtifact, b"source");
     let darwin = prepared(ReleaseTarget::Aarch64AppleDarwin, source.clone(), true);
-    let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source, true);
+    let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source.clone(), true);
+    let windows = prepared(ReleaseTarget::X86_64PcWindowsMsvc, source, true);
     let mut publisher = FileManifestPublisher::new(&scratch.root);
 
-    let published = publish_manifest(inputs(&darwin, &linux), &mut publisher)
+    let published = publish_manifest(inputs(&darwin, &linux, &windows), &mut publisher)
         .expect("filesystem publication succeeds");
     let darwin_payload: TargetPayload =
         wire::decode(&darwin.payload).expect("Darwin payload decodes");
@@ -307,7 +327,11 @@ fn filesystem_publication_commits_exact_objects_and_pointer() {
         .expect("objects directory is readable")
         .collect::<Result<Vec<_>, _>>()
         .expect("every object entry is readable");
-    assert_eq!(objects.len(), 5, "two payloads, two receipts, one manifest");
+    assert_eq!(
+        objects.len(),
+        7,
+        "three payloads, three receipts, one manifest"
+    );
     assert!(
         objects
             .iter()
@@ -333,13 +357,14 @@ fn filesystem_publication_commits_exact_objects_and_pointer() {
 fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
     let source = digest(Domain::DistArtifact, b"source");
     let darwin = prepared(ReleaseTarget::Aarch64AppleDarwin, source.clone(), true);
-    let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source, true);
+    let linux = prepared(ReleaseTarget::X86_64UnknownLinuxMusl, source.clone(), true);
+    let windows = prepared(ReleaseTarget::X86_64PcWindowsMsvc, source, true);
     let expected: TargetPayload = wire::decode(&darwin.payload).expect("payload decodes");
 
     let missing = Scratch::new();
     let mut publisher = FileManifestPublisher::new(&missing.root);
-    let published =
-        publish_manifest(inputs(&darwin, &linux), &mut publisher).expect("fixture publishes");
+    let published = publish_manifest(inputs(&darwin, &linux, &windows), &mut publisher)
+        .expect("fixture publishes");
     fs::remove_file(missing.root.join(object_path(
         "receipt",
         &published.manifest.targets[1].receipt,
@@ -357,7 +382,7 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
 
     let stale = Scratch::new();
     let mut publisher = FileManifestPublisher::new(&stale.root);
-    publish_manifest(inputs(&darwin, &linux), &mut publisher).expect("fixture publishes");
+    publish_manifest(inputs(&darwin, &linux, &windows), &mut publisher).expect("fixture publishes");
     let mut pointer: ReleaseManifest =
         wire::decode(&fs::read(stale.root.join(MANIFEST_POINTER)).expect("read pointer"))
             .expect("pointer decodes");
@@ -379,8 +404,8 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
 
     let divergent = Scratch::new();
     let mut publisher = FileManifestPublisher::new(&divergent.root);
-    let published =
-        publish_manifest(inputs(&darwin, &linux), &mut publisher).expect("fixture publishes");
+    let published = publish_manifest(inputs(&darwin, &linux, &windows), &mut publisher)
+        .expect("fixture publishes");
     let mut manifest = published.manifest;
     manifest.targets[0].inventory[0].bytes += 1;
     let bytes = wire::encode(&manifest).expect("divergent manifest encodes");
@@ -407,8 +432,8 @@ fn manifest_admission_refuses_missing_stale_and_mixed_objects() {
 
     let mixed = Scratch::new();
     let mut publisher = FileManifestPublisher::new(&mixed.root);
-    let published =
-        publish_manifest(inputs(&darwin, &linux), &mut publisher).expect("fixture publishes");
+    let published = publish_manifest(inputs(&darwin, &linux, &windows), &mut publisher)
+        .expect("fixture publishes");
     fs::write(
         mixed.root.join(object_path(
             "payload",
@@ -470,8 +495,12 @@ impl Drop for Scratch {
     }
 }
 
-fn inputs<'a>(darwin: &'a Prepared, linux: &'a Prepared) -> [ManifestInput<'a>; 2] {
-    [input(darwin), input(linux)]
+fn inputs<'a>(
+    darwin: &'a Prepared,
+    linux: &'a Prepared,
+    windows: &'a Prepared,
+) -> [ManifestInput<'a>; 3] {
+    [input(darwin), input(linux), input(windows)]
 }
 
 fn input(prepared: &Prepared) -> ManifestInput<'_> {
@@ -521,6 +550,44 @@ fn prepared(target: ReleaseTarget, source: Digest, clean: bool) -> Prepared {
         ReleaseTarget::X86_64UnknownLinuxMusl => {
             ProofEnvironment::oci(&payload.pins.proof_container)
                 .expect("fixture OCI image is pinned")
+        }
+        ReleaseTarget::X86_64PcWindowsMsvc => {
+            ProofEnvironment::hosted_windows(HostedWindowsIdentity {
+                provider: "github-actions".to_owned(),
+                repository: "infimalabs/spice-rust".to_owned(),
+                workflow: ".github/workflows/windows-hosted.yml".to_owned(),
+                run_id: 17,
+                run_attempt: 1,
+                image: HostedWindowsImage {
+                    label: "windows-2025".to_owned(),
+                    provider_os: "win25".to_owned(),
+                    version: "20261013.288.2".to_owned(),
+                    os_version: "10.0.26100.33438".to_owned(),
+                    architecture: "X64".to_owned(),
+                },
+                runner: digest(Domain::ProofNativeRunner, b"hosted runner"),
+                source: "1".repeat(64),
+                toolchain: HostedWindowsToolchain {
+                    rust: "rustc 1.97.1".to_owned(),
+                    cargo: "cargo 1.97.1".to_owned(),
+                    git: "git version 2.51.0.windows.2".to_owned(),
+                    trunk: "trunk 0.21.14".to_owned(),
+                    cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
+                    msvc: "19.44.35207".to_owned(),
+                    sdk: "10.0.26100.0".to_owned(),
+                    rustc_path: r"C:\rustc.exe".to_owned(),
+                    cargo_path: r"C:\cargo.exe".to_owned(),
+                    git_path: r"C:\git.exe".to_owned(),
+                    trunk_path: r"C:\trunk.exe".to_owned(),
+                    cargo_mutants_path: r"C:\cargo-mutants.exe".to_owned(),
+                    cl_path: r"C:\cl.exe".to_owned(),
+                    rc_path: r"C:\rc.exe".to_owned(),
+                    link_path: r"C:\link.exe".to_owned(),
+                    path: r"C:\tools".to_owned(),
+                    include: r"C:\include".to_owned(),
+                    lib: r"C:\lib".to_owned(),
+                },
+            })
         }
     };
     let battery = Battery::current().digest().clone();

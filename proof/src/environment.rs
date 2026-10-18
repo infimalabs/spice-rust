@@ -1,14 +1,17 @@
 //! Closed compiled-host selection for the two sealed proof environments.
 
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
+use hosted_windows::{Command as HostedCommand, Completion as HostedCompletion};
 use wire::manifest::{ProofEnvironment, ReleaseTarget};
 
 use crate::config::{Config, ExecutablePath};
 use crate::container::{
-    Container, ContainerBattery, ContainerError, Execution, Limits, OciRuntime,
+    Container, ContainerBattery, ContainerError, Execution, ExecutionCompletion, Limits, OciRuntime,
 };
 use crate::native::{NativeError, NativeRunner};
 use crate::payload::AdmittedPayload;
@@ -24,6 +27,7 @@ pub struct SealedEnvironment {
 enum EnvironmentKind {
     Oci(Container),
     Native(NativeRunner),
+    HostedWindows,
 }
 
 impl SealedEnvironment {
@@ -43,7 +47,11 @@ impl SealedEnvironment {
         workspace: impl AsRef<Path>,
         limits: Limits,
     ) -> Result<Self, EnvironmentError> {
-        let target = compiled_target().map_err(EnvironmentError::UnsupportedHost)?;
+        let target = if payload.value().target == ReleaseTarget::X86_64PcWindowsMsvc {
+            ReleaseTarget::X86_64PcWindowsMsvc
+        } else {
+            compiled_target().map_err(EnvironmentError::UnsupportedHost)?
+        };
         validate_payload_environment(
             target,
             payload.value().target,
@@ -59,19 +67,21 @@ impl SealedEnvironment {
         workspace: &Path,
         limits: Limits,
     ) -> Result<Self, EnvironmentError> {
-        let binary = configured_binary(target, config)?;
         let kind = match target {
             ReleaseTarget::X86_64UnknownLinuxMusl => {
+                let binary = configured_binary(target, config)?;
                 let runtime = OciRuntime::attest(binary, limits).map_err(EnvironmentError::Oci)?;
                 let container = Container::new(runtime, config.image().as_str(), workspace, limits)
                     .map_err(EnvironmentError::Oci)?;
                 EnvironmentKind::Oci(container)
             }
             ReleaseTarget::Aarch64AppleDarwin => {
+                let binary = configured_binary(target, config)?;
                 let runner = NativeRunner::attest(binary, workspace, limits)
                     .map_err(EnvironmentError::Native)?;
                 EnvironmentKind::Native(runner)
             }
+            ReleaseTarget::X86_64PcWindowsMsvc => EnvironmentKind::HostedWindows,
         };
         Ok(Self { target, kind })
     }
@@ -82,28 +92,64 @@ impl SealedEnvironment {
         self.target
     }
 
-    /// Typed identity observed for the selected environment.
-    #[must_use]
-    pub fn identity(&self) -> ProofEnvironment {
-        match &self.kind {
-            EnvironmentKind::Oci(container) => ProofEnvironment::Oci {
-                image: container.proof_image().clone(),
-            },
-            EnvironmentKind::Native(runner) => ProofEnvironment::native(runner.identity().clone()),
-        }
-    }
-
-    pub(crate) fn battery(&self) -> Result<BatteryEnvironment<'_>, String> {
-        match &self.kind {
-            EnvironmentKind::Oci(container) => container
-                .battery()
-                .map(BatteryEnvironmentKind::Oci)
-                .map_err(|source| source.to_string()),
-            EnvironmentKind::Native(runner) => Ok(BatteryEnvironmentKind::Native(runner)),
-        }
-        .map(|kind| BatteryEnvironment {
+    pub(crate) fn battery(
+        &self,
+        commands: &[HostedCommand],
+    ) -> Result<BatteryEnvironment<'_>, String> {
+        let (identity, kind) = match &self.kind {
+            EnvironmentKind::Oci(container) => (
+                ProofEnvironment::Oci {
+                    image: container.proof_image().clone(),
+                },
+                container
+                    .battery()
+                    .map(BatteryEnvironmentKind::Oci)
+                    .map_err(|source| source.to_string())?,
+            ),
+            EnvironmentKind::Native(runner) => (
+                ProofEnvironment::native(runner.identity().clone()),
+                BatteryEnvironmentKind::Native(runner),
+            ),
+            EnvironmentKind::HostedWindows => {
+                let execution = hosted_windows::client::windows_hosted_commands(commands.to_vec())
+                    .map_err(|source| source.to_string())?;
+                let identity = ProofEnvironment::hosted_windows(execution.result.identity.clone());
+                let protocol_outputs = &execution.result.outputs;
+                let outputs = execution
+                    .outputs
+                    .into_iter()
+                    .zip(protocol_outputs)
+                    .map(|(output, protocol)| Execution {
+                        completion: match output.completion {
+                            HostedCompletion::Exited { code } => ExecutionCompletion::Exited {
+                                success: code == 0,
+                                code: Some(code),
+                            },
+                            HostedCompletion::TimedOut => {
+                                ExecutionCompletion::TimedOut { code: Some(124) }
+                            }
+                        },
+                        stdout: crate::container::Captured {
+                            bytes: output.stdout,
+                            truncated: protocol.stdout.truncated,
+                            complete: true,
+                        },
+                        stderr: crate::container::Captured {
+                            bytes: output.stderr,
+                            truncated: protocol.stderr.truncated,
+                            complete: true,
+                        },
+                    })
+                    .collect();
+                (
+                    identity,
+                    BatteryEnvironmentKind::HostedWindows(RefCell::new(outputs)),
+                )
+            }
+        };
+        Ok(BatteryEnvironment {
             target: self.target,
-            identity: self.identity(),
+            identity,
             kind,
         })
     }
@@ -136,6 +182,9 @@ fn configured_binary(
         ReleaseTarget::Aarch64AppleDarwin => {
             config.runner().ok_or(EnvironmentError::MissingRunnerPath)
         }
+        ReleaseTarget::X86_64PcWindowsMsvc => {
+            unreachable!("hosted Windows does not use a machine-local executable path")
+        }
     }
 }
 
@@ -149,6 +198,7 @@ pub(crate) struct BatteryEnvironment<'a> {
 enum BatteryEnvironmentKind<'a> {
     Oci(ContainerBattery<'a>),
     Native(&'a NativeRunner),
+    HostedWindows(RefCell<VecDeque<Execution>>),
 }
 
 impl BatteryEnvironment<'_> {
@@ -168,6 +218,10 @@ impl BatteryEnvironment<'_> {
             BatteryEnvironmentKind::Native(runner) => runner
                 .execute(program, arguments)
                 .map_err(|source| source.to_string()),
+            BatteryEnvironmentKind::HostedWindows(outputs) => outputs
+                .borrow_mut()
+                .pop_front()
+                .ok_or_else(|| "hosted result has no output for this proof member".to_owned()),
         }
     }
 
@@ -177,6 +231,13 @@ impl BatteryEnvironment<'_> {
                 battery.close().map_err(|source| source.to_string())
             }
             BatteryEnvironmentKind::Native(_) => Ok(()),
+            BatteryEnvironmentKind::HostedWindows(outputs) => {
+                if outputs.into_inner().is_empty() {
+                    Ok(())
+                } else {
+                    Err("hosted result carries unconsumed proof members".to_owned())
+                }
+            }
         }
     }
 }

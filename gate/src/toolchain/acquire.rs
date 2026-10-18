@@ -34,9 +34,13 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+#[cfg(unix)]
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 
 use crate::measure::spawn;
@@ -451,6 +455,7 @@ pub(crate) fn toolchain_executable_authority(
 
 type ExecutableAuthorityRecord<'a> = (&'a str, &'a str, Option<(String, Digest, bool)>);
 
+#[cfg(unix)]
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct ExecutableStamp {
     device: u64,
@@ -463,10 +468,22 @@ struct ExecutableStamp {
     changed_nanoseconds: i64,
 }
 
+#[cfg(windows)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct ExecutableStamp {
+    length: u64,
+    attributes: u32,
+    created: u64,
+    modified: u64,
+}
+
+#[cfg(unix)]
 type ExecutableDigestCache = BTreeMap<PathBuf, (ExecutableStamp, Digest, bool)>;
 // Metadata is only a process-local rehash trigger; canonical authority remains
 // the exact byte digest and executable bit returned below.
-static EXECUTABLE_DIGEST_CACHE: OnceLock<Mutex<ExecutableDigestCache>> = OnceLock::new();
+#[cfg(unix)]
+static EXECUTABLE_DIGEST_CACHE: LazyLock<Mutex<ExecutableDigestCache>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 fn executable_authority_record<'a>(
     source: &ToolchainSource<'_>,
@@ -483,7 +500,8 @@ fn executable_authority_record<'a>(
     let metadata = fs::metadata(&resolved)
         .map_err(|error| format!("inspect proof tool {}: {error}", resolved.display()))?;
     let stamp = executable_stamp(&metadata);
-    if let Some((_, digest, executable)) = executable_digest_cache()
+    #[cfg(unix)]
+    if let Some((_, digest, executable)) = EXECUTABLE_DIGEST_CACHE
         .lock()
         .expect("executable digest cache is not poisoned")
         .get(&resolved)
@@ -510,9 +528,10 @@ fn executable_authority_record<'a>(
             resolved.display(),
         ));
     }
-    let executable = observed.permissions().mode() & 0o111 != 0;
+    let executable = is_executable(&resolved, &observed);
     let digest = Digest::compute(Domain::GateTool, &bytes);
-    executable_digest_cache()
+    #[cfg(unix)]
+    EXECUTABLE_DIGEST_CACHE
         .lock()
         .expect("executable digest cache is not poisoned")
         .insert(resolved.clone(), (stamp, digest.clone(), executable));
@@ -523,10 +542,7 @@ fn executable_authority_record<'a>(
     ))
 }
 
-fn executable_digest_cache() -> &'static Mutex<ExecutableDigestCache> {
-    EXECUTABLE_DIGEST_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
-}
-
+#[cfg(unix)]
 fn executable_stamp(metadata: &fs::Metadata) -> ExecutableStamp {
     ExecutableStamp {
         device: metadata.dev(),
@@ -538,6 +554,31 @@ fn executable_stamp(metadata: &fs::Metadata) -> ExecutableStamp {
         changed_seconds: metadata.ctime(),
         changed_nanoseconds: metadata.ctime_nsec(),
     }
+}
+
+#[cfg(windows)]
+fn executable_stamp(metadata: &fs::Metadata) -> ExecutableStamp {
+    ExecutableStamp {
+        length: metadata.len(),
+        attributes: metadata.file_attributes(),
+        created: metadata.creation_time(),
+        modified: metadata.last_write_time(),
+    }
+}
+
+#[cfg(unix)]
+fn is_executable(_: &Path, metadata: &fs::Metadata) -> bool {
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(windows)]
+fn is_executable(path: &Path, metadata: &fs::Metadata) -> bool {
+    metadata.is_file()
+        && path.extension().is_some_and(|extension| {
+            ["exe", "com", "bat", "cmd"]
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
 }
 
 fn scoped_declaration(
@@ -967,7 +1008,7 @@ fn probe_with(
         return unprobed(ProbeFailure::Unreadable);
     };
     let launchable =
-        fs::metadata(&resolved).is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0);
+        fs::metadata(&resolved).is_ok_and(|metadata| is_executable(&resolved, &metadata));
     if !launchable {
         return unprobed(ProbeFailure::NotStarted);
     }
@@ -993,10 +1034,28 @@ fn probe_with(
 /// entry would name one file to this process, which reads and hashes it from
 /// wherever it was started, and another to the probe, which runs in the
 /// selected tree: two different programs behind one recorded identity.
+#[cfg(unix)]
 fn resolve(program: &str, rim: &Path, search_path: Option<&OsStr>) -> Option<PathBuf> {
     std::env::split_paths(search_path?)
         .map(|directory| rim.join(directory).join(program))
         .find(|candidate| candidate.is_file())
+}
+
+#[cfg(windows)]
+fn resolve(program: &str, rim: &Path, search_path: Option<&OsStr>) -> Option<PathBuf> {
+    let extension = Path::new(program).extension();
+    std::env::split_paths(search_path?).find_map(|directory| {
+        let candidate = rim.join(directory).join(program);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        extension.is_none().then(|| {
+            ["exe", "com", "bat", "cmd"]
+                .into_iter()
+                .map(|suffix| candidate.with_extension(suffix))
+                .find(|path| path.is_file())
+        })?
+    })
 }
 
 /// Run the declared version probe and retain exactly what it printed.

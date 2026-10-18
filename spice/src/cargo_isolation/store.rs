@@ -1,8 +1,10 @@
+#[cfg(windows)]
+use super::platform::{DirBuilderExt as _, PermissionsExt as _};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
-use std::os::unix::ffi::OsStrExt as _;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -853,7 +855,7 @@ fn path_text(path: &Path) -> Result<String, IsolationError> {
 
 pub(super) fn encoded_path(path: &Path) -> String {
     path.as_os_str()
-        .as_bytes()
+        .as_encoded_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
@@ -913,6 +915,7 @@ impl Drop for TemporaryDirectory {
     }
 }
 
+#[cfg(unix)]
 fn rename_noreplace(source: &Path, destination: &Path) -> Result<(), IsolationError> {
     rustix::fs::renameat_with(
         rustix::fs::CWD,
@@ -922,6 +925,16 @@ fn rename_noreplace(source: &Path, destination: &Path) -> Result<(), IsolationEr
         rustix::fs::RenameFlags::NOREPLACE,
     )
     .map_err(|error| {
+        IsolationError::new(
+            "cargo-isolation::atomic-publication-failed",
+            format!("{source:?} -> {destination:?}: {error}"),
+        )
+    })
+}
+
+#[cfg(windows)]
+fn rename_noreplace(source: &Path, destination: &Path) -> Result<(), IsolationError> {
+    fs::rename(source, destination).map_err(|error| {
         IsolationError::new(
             "cargo-isolation::atomic-publication-failed",
             format!("{source:?} -> {destination:?}: {error}"),

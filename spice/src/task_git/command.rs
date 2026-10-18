@@ -277,6 +277,13 @@ pub(super) struct GitProcess {
 pub(super) enum GroupPresence {
     Present,
     Absent,
+    #[cfg_attr(
+        windows,
+        expect(
+            dead_code,
+            reason = "Windows process probes are always determinate but share the evidence rule"
+        )
+    )]
     Indeterminate,
 }
 

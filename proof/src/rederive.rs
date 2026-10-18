@@ -419,6 +419,9 @@ mod tests {
                     Domain::ProofNativeRunner,
                     b"fixture native runner",
                 )),
+                ReleaseTarget::X86_64PcWindowsMsvc => {
+                    unreachable!("this fixture does not construct hosted Windows payloads")
+                }
             }
         }
     }

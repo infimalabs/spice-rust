@@ -2036,6 +2036,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 
 [[package]]
+name = "hosted-windows"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "getrandom 0.3.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml",
+ "windows-sys 0.61.2",
+ "wire",
+]
+
+[[package]]
 name = "http"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2728,6 +2742,7 @@ version = "0.0.0"
 dependencies = [
  "atomic",
  "gate",
+ "hosted-windows",
  "serde",
  "sill",
  "toml",
@@ -3181,6 +3196,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4097,6 +4113,7 @@ dependencies = [
  "atomic",
  "dist",
  "gate",
+ "hosted-windows",
  "jiff",
  "libc",
  "proof",

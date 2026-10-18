@@ -110,7 +110,7 @@ pub enum Domain {
     DistInventory,
     /// The immutable Git commit selected as one release build source.
     DistSourceCommit,
-    /// The complete two-target release manifest admitted after proof.
+    /// The complete all-target release manifest admitted after proof.
     DistReleaseManifest,
     /// The complete deterministic release-note input document.
     DistReleaseNotes,

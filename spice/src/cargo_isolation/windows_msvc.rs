@@ -1,9 +1,11 @@
 //! Pinned Windows MSVC C toolchain materialization and target-scoped admission.
 
+#[cfg(windows)]
+use super::platform::PermissionsExt as _;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read as _;
-use std::os::unix::ffi::OsStrExt as _;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -726,7 +728,12 @@ fn host_closure_digest(closure: &HostClosurePin) -> Result<String, IsolationErro
             let relative = path
                 .strip_prefix(root)
                 .expect("collected host path is beneath its root");
-            hash_host_file(&mut hasher, root.as_os_str().as_bytes(), relative, &path)?;
+            hash_host_file(
+                &mut hasher,
+                root.as_os_str().as_encoded_bytes(),
+                relative,
+                &path,
+            )?;
         }
     }
     Ok(format!("{:x}", hasher.finalize()))
@@ -740,7 +747,7 @@ fn hash_host_file(
 ) -> Result<(), IsolationError> {
     hasher.update(category);
     hasher.update(b"\0");
-    hasher.update(identity.as_os_str().as_bytes());
+    hasher.update(identity.as_os_str().as_encoded_bytes());
     hasher.update(b"\0");
     let mut file = fs::File::open(path).map_err(host_closure_error(path))?;
     let length = file.metadata().map_err(host_closure_error(path))?.len();
@@ -860,7 +867,7 @@ fn tree_digest(root: &Path) -> Result<String, IsolationError> {
         let relative = path
             .strip_prefix(root)
             .expect("collected path is beneath root");
-        hasher.update(relative.as_os_str().as_bytes());
+        hasher.update(relative.as_os_str().as_encoded_bytes());
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
             IsolationError::io(
                 "cargo-isolation::windows-msvc-toolchain-unavailable",
@@ -877,7 +884,7 @@ fn tree_digest(root: &Path) -> Result<String, IsolationError> {
                     error,
                 )
             })?;
-            hasher.update(target.as_os_str().as_bytes());
+            hasher.update(target.as_os_str().as_encoded_bytes());
         } else if metadata.is_file() {
             hasher.update(b"\0file\0");
             hasher.update(metadata.permissions().mode().to_le_bytes());

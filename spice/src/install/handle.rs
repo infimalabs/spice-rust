@@ -1,14 +1,19 @@
-use std::ffi::OsString;
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-
+#[cfg(unix)]
+use super::DIRECTORY_MODE;
+#[cfg(unix)]
 use super::path::validate_relative;
 use super::{
-    DIRECTORY_MODE, FileImage, Generation, InstallError, ObservedFile, ParentObservation,
-    ReceiptGeneration,
+    FileImage, Generation, InstallError, ObservedFile, ParentObservation, ReceiptGeneration,
 };
+use std::ffi::OsString;
+#[cfg(unix)]
+use std::fs;
+use std::fs::File;
+#[cfg(unix)]
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(all(unix, any(target_vendor = "apple", target_os = "linux")))]
 use rustix::fs::RenameFlags;
@@ -17,11 +22,14 @@ use rustix::fs::{self as unix_fs, AtFlags, Mode, OFlags};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+#[cfg(unix)]
 static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 mod support;
 
-pub(super) use support::{retirement_temporary_name, temporary_name};
+pub(super) use support::retirement_temporary_name;
+#[cfg(unix)]
+pub(super) use support::temporary_name;
 
 #[cfg(unix)]
 struct OpenedParents {
@@ -32,12 +40,23 @@ struct OpenedParents {
 
 /// One destination whose parent is held open from its admitted root.
 pub(super) struct AdmittedPath {
+    #[cfg(unix)]
     canonical_root: PathBuf,
     display: PathBuf,
+    #[cfg_attr(
+        windows,
+        expect(
+            dead_code,
+            reason = "non-Unix construction refuses before a destination name is admitted"
+        )
+    )]
     file_name: OsString,
+    #[cfg(unix)]
     components: Vec<OsString>,
+    #[cfg(unix)]
     directories: Vec<File>,
     ready: bool,
+    #[cfg(unix)]
     introduced: usize,
     preexisting_introduced: bool,
 }
@@ -293,7 +312,10 @@ impl AdmittedPath {
             result
         }
         #[cfg(not(unix))]
-        unreachable!("construction refuses non-Unix filesystems")
+        {
+            let _ = (image, before_mutation, before_admission, require_displaced);
+            unreachable!("construction refuses non-Unix filesystems")
+        }
     }
 
     /// Put the staged name in the destination's place, or leave neither moved.
@@ -409,7 +431,10 @@ impl AdmittedPath {
             self.finish_retirement(expected, temporary)
         }
         #[cfg(not(unix))]
-        unreachable!("construction refuses non-Unix filesystems")
+        {
+            let _ = temporary;
+            unreachable!("construction refuses non-Unix filesystems")
+        }
     }
 
     pub(super) fn resume_retirement(
@@ -493,7 +518,10 @@ impl AdmittedPath {
             Ok(())
         }
         #[cfg(not(unix))]
-        unreachable!("construction refuses non-Unix filesystems")
+        {
+            let _ = before_mutation;
+            unreachable!("construction refuses non-Unix filesystems")
+        }
     }
 
     /// Whether every bound parent directory exists.
@@ -581,6 +609,28 @@ impl AdmittedPath {
         } else {
             Err(InstallError::ParentChanged(self.display.clone()))
         }
+    }
+
+    #[cfg(not(unix))]
+    fn require_named_receipt_generation(
+        &self,
+        _name: &OsString,
+        _expected: &ReceiptGeneration,
+    ) -> Result<(), InstallError> {
+        Err(InstallError::InvalidRecord(
+            "handle-bound installation requires a Unix filesystem".to_owned(),
+        ))
+    }
+
+    #[cfg(not(unix))]
+    fn require_named_generation(
+        &self,
+        _name: &OsString,
+        _expected: Generation,
+    ) -> Result<(), InstallError> {
+        Err(InstallError::InvalidRecord(
+            "handle-bound installation requires a Unix filesystem".to_owned(),
+        ))
     }
 
     #[cfg(unix)]
@@ -743,13 +793,20 @@ impl AdmittedPath {
         unreachable!("construction refuses non-Unix filesystems")
     }
 
+    #[cfg(unix)]
     fn parent(&self) -> &File {
         self.directories
             .last()
             .expect("an admitted path retains its root directory")
     }
+
+    #[cfg(not(unix))]
+    fn parent(&self) -> &File {
+        unreachable!("construction refuses non-Unix filesystems")
+    }
 }
 
+#[cfg(unix)]
 fn joined_parent(observation: &ParentObservation) -> Result<PathBuf, InstallError> {
     let mut parent = PathBuf::new();
     if !observation.ancestor.is_empty() {
@@ -761,6 +818,7 @@ fn joined_parent(observation: &ParentObservation) -> Result<PathBuf, InstallErro
     Ok(parent)
 }
 
+#[cfg(unix)]
 fn path_components(path: &Path) -> Result<Vec<OsString>, InstallError> {
     if path.as_os_str().is_empty() {
         return Ok(Vec::new());
@@ -771,6 +829,7 @@ fn path_components(path: &Path) -> Result<Vec<OsString>, InstallError> {
         .collect())
 }
 
+#[cfg(unix)]
 fn components_path(components: &[OsString]) -> PathBuf {
     components.iter().collect()
 }

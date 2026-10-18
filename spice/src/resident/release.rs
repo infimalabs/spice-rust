@@ -233,7 +233,7 @@ fn release_refusal(reason: &str, observed: &str) -> Outcome<CommandAnswer> {
     Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
         reason.to_owned(),
         Some("sealed-release".to_owned()),
-        Some("one current complete two-target proof and manifest chain".to_owned()),
+        Some("one current complete all-target proof and manifest chain".to_owned()),
         Some(observed.to_owned()),
     )))
 }

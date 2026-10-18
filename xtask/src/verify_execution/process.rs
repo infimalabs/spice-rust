@@ -326,13 +326,13 @@ fn captured(
     Ok(output.bytes().to_vec())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(unix)]
 pub(super) struct SignalGuard {
     handle: signal_hook::iterator::Handle,
     join: Option<thread::JoinHandle<()>>,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(unix)]
 impl SignalGuard {
     pub(super) fn install(
         cancellation: CancellationToken,
@@ -359,7 +359,7 @@ impl SignalGuard {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(unix)]
 impl Drop for SignalGuard {
     fn drop(&mut self) {
         self.handle.close();
@@ -369,10 +369,10 @@ impl Drop for SignalGuard {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(unix))]
 pub(super) struct SignalGuard;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(unix))]
 impl SignalGuard {
     pub(super) fn install(
         _cancellation: CancellationToken,

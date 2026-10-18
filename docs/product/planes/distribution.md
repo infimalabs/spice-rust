@@ -69,31 +69,36 @@ artifact digest, and a plan-keyed executable copy of it must succeed at
 
 ### Proof is sealed per target and composed last
 
-**Invariant —** A release has exactly two target payloads, in canonical order:
-`aarch64-apple-darwin` and `x86_64-unknown-linux-musl`. Each receipt-free payload
-binds its target, source identity, app generation G, the digest of the app ZIP
-its executable links, native executable, build pins, and artifact inventory,
-and both bind the source digest of the already-versioned release commit. Both
-targets bind the same G and archive digest. The inventory carries no app files:
-the executable is the app's only carrier.
+**Invariant —** A release has exactly three target payloads, in canonical
+order: `aarch64-apple-darwin`, `x86_64-unknown-linux-musl`, and
+`x86_64-pc-windows-msvc`. Each receipt-free payload binds its target, source
+identity, app generation G, the digest of the app ZIP its executable links,
+native executable, build pins, and artifact inventory, and all three bind the
+source digest of the already-versioned release commit. Every target binds the
+same G and archive digest. The inventory carries no app files: the executable
+is the app's only carrier.
 
 **Invariant —** Every appliance executable produced by a current build path
-links its app ZIP. The `aarch64-apple-darwin` and
-`x86_64-unknown-linux-musl` release builds, and `spice dev xtask -- install` on
-supported macOS and Linux hosts, read the staged `generations/G.zip` once and
-admit it as G. They link it as one retained read-only section:
-`__TEXT,__spice_app_zip` on Mach-O and `spice_app_zip` on ELF. Each follows its
-platform's naming convention: Mach-O sections are lowercase after two
-underscores, and the System V gABI reserves dot-prefixed ELF section names for
-the system.
+links its app ZIP. The Darwin, Linux, and Windows release builds, and
+`spice dev xtask -- install` on supported macOS and Linux hosts, read the
+staged `generations/G.zip` once and admit it as G. They link it as one retained
+read-only section: `__TEXT,__spice_app_zip` on Mach-O, `spice_app_zip` on ELF,
+and `spiceapp` on PE32+. Mach-O and ELF follow their platform naming
+conventions: Mach-O sections are lowercase after two underscores, and the
+System V gABI reserves dot-prefixed ELF section names for the system.
 
-`dist` additionally owns format-level x86-64 Windows support: its COFF object
-defines `spice_app_zip` and `spice_app_zip_len`, and its PE32+ final-image reader
-locates exactly one `spiceapp` section using the header's virtual and raw
-lengths. The section name fits PE's eight-byte limit. This is not a Windows
-appliance build. The release pipeline has no Windows target, install has no
-Windows build path, and no current build links that COFF object into a Spice PE
-executable.
+The Windows release build's COFF object defines `spice_app_zip` and
+`spice_app_zip_len`; its PE32+ final-image reader locates exactly one
+`spiceapp` section using the header's virtual and raw lengths. The section name
+fits PE's eight-byte limit. Windows installation remains outside the current
+installer's supported-host contract.
+
+The Windows release executable exposes `--version` and `--json version`, the
+identity surface exercised by sealed proof. Unix process supervision,
+resident, and handle-bound installation commands are not silently emulated:
+they remain absent until they have native Windows contracts. Disposable
+repository commands run through `hosted-windows`, not through this release
+entry point.
 
 The current Mach-O and ELF builds then derive symbols, strip, and sign where
 applicable. No step appends bytes after signing. The final image's section
@@ -108,19 +113,107 @@ executable carries no archive refuses installed serving at startup.
 
 **Invariant —** Proof replays the complete current battery against the
 candidate checkout: Linux mounts it read-only in the pinned OCI environment,
-Darwin passes it to the attested native runner. Replay is bound to payload,
-environment, and battery, but does not prove that the checkout equals the
-payload's source digest. Unsupported hosts, drift, infrastructure failure, or a
-non-clean replay publish no receipt; a refused replay is a typed refusal.
+Darwin passes it to the attested native runner, and Windows dispatches the
+batch to one attested ephemeral GitHub-hosted runner. Replay is bound to
+payload, environment, and battery, but does not prove that the checkout equals
+the payload's source digest. Unsupported hosts, drift, infrastructure failure,
+or a non-clean replay publish no receipt; a refused replay is a typed refusal.
 
 **Invariant —** A proof receipt is detached and canonical. Admission requires
 target, payload digest, environment, battery digest, replay digest, and clean
 standing to form one identity chain.
 
-**Invariant —** The release manifest is post-proof: both targets with clean,
-mutually consistent receipts, or no release. Content-addressed objects publish
-before the sole manifest pointer, so a reader sees the prior or the new complete
-seal, never a pointer to missing proof.
+**Invariant —** The release manifest is post-proof: every supported target
+with a clean, mutually consistent receipt, or no release. Content-addressed
+objects publish before the sole manifest pointer, so a reader sees the prior or
+the new complete seal, never a pointer to missing proof.
+
+### Ephemeral native Windows execution
+
+The repository's Windows execution boundary is a fresh GitHub-hosted
+`windows-2025` x86-64 machine running Windows Server 2025 Datacenter. No
+dedicated Windows host is owned, kept running, or administered. Wine, the
+Darwin-to-MSVC cross-toolchain, Linux containers, and synthetic PE fixtures
+remain useful format/build checks but never substitute for this native
+execution.
+
+Run one argv, with no shell joining or reinterpretation, from a selected
+worktree:
+
+```sh
+spice dev xtask -- windows-hosted -- PROGRAM ARG...
+```
+
+Stage the Windows release target through the same boundary:
+
+```sh
+spice dev xtask -- stage-target x86_64-pc-windows-msvc
+```
+
+`PROGRAM` is either a path beneath the selected worktree or one admitted tool
+token: `@runner`, `@cargo`, `@rustc`, `@git`, `@cl`, or `@rc`. Proof replay
+sends its five commands as one bounded batch, so one signed provider run
+identity covers the complete battery. The client materializes the selected
+worktree in a temporary Git index, creates a one-use commit, computes the exact
+source archive's SHA-256 identity, and pushes only a temporary
+`refs/tags/spice-hosted-*` ref. It never pushes or moves a branch. It deletes
+that ref and the result artifact after the run.
+
+GitHub registers `workflow_dispatch` only from the default branch. The
+repository command therefore becomes live only after
+`.github/workflows/windows-hosted.yml` has landed there; a checkout that has
+the client but predates that landing refuses at dispatch rather than selecting
+another workflow.
+
+The supported provider repository is `github.com/infimalabs/spice-rust`.
+Authenticate the machine-local `gh` client and Git transport separately.
+The Git credential needs Contents write permission to create and delete tags.
+The GitHub CLI credential needs Actions read/write, Contents read,
+Attestations read, and Metadata read for this repository; the workflow's own
+short-lived `GITHUB_TOKEN` gets only Contents read, OIDC identity-token write,
+and Attestations write. Tokens, mutable endpoints, and provider account
+configuration are never tracked policy. Rotate or revoke GitHub credentials in
+the provider, then run `gh auth logout --hostname github.com`; delete or rotate
+the corresponding SSH key through GitHub and the local keychain.
+
+`dist/windows-hosted.toml` is the tracked trust policy. Its `provider`,
+`repository`, and `workflow` keys bind dispatch; `[image]` pins the
+`windows-2025` label, image version, OS build, and `X64` architecture; and
+`[toolchain]` pins Rust, Cargo, Git, MSVC, Windows SDK, Trunk and
+`cargo-mutants`, plus every executable, `PATH`, include, and library location.
+The workflow pins every third-party action by full commit. Updating the image
+means reviewing the matching `actions/runner-images` release manifest,
+changing every affected tool/path pin together, and proving the runner smoke
+before landing.
+
+The sealing step builds the guest from the selected source, signs that exact
+`hosted-windows.exe` with GitHub's workload identity, and signs its result
+separately. Verification rejects self-hosted attestations and binds both
+subjects to the one-use source ref and commit. The guest hashes itself under
+`spice.proof.native-runner.v1`; the client verifies both attestations, hashes
+the downloaded runner, and refuses unless that independent identity equals the
+one in the result. Runner or pin changes require the same native smoke before
+landing.
+
+Every dispatch has a fresh 256-bit challenge. The signed result must name that
+challenge, this repository and workflow, the provider run and attempt, the
+exact source archive, image, toolchain, runner digest, and every returned
+staging artifact's path, length, and digest. The client verifies GitHub's
+Sigstore/OIDC attestations before it reads the result as evidence. Changed
+source, image, tools, runner, repository, workflow, run identity, challenge, or
+artifact bytes refuse. A successful Windows stage copies content-addressed
+objects first and the mutable target payload pointer last.
+
+The guest gives the command batch a read-only source tree, one fresh Cargo home
+and target directory, bounded output per member, bounded member runtimes, a
+Windows Job Object that kills descendants, and a machine-wide guest-firewall
+rule covering every non-loopback IPv4 and IPv6 destination. It passes each argv
+directly through `CreateProcess`, clears ambient environment, and names every
+executable by an admitted path. Result publication happens only after the rule
+is removed and scratch teardown succeeds. Provider cancellation or the
+75-minute workflow limit destroys the ephemeral VM. GitHub-hosted concurrency
+and billing limits are the account's cost boundary; the repository requests
+one machine per dispatch and defines no persistent or autoscaling fleet.
 
 ### Notes are read out of the ledger
 
