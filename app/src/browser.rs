@@ -723,6 +723,7 @@ fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
         remaining,
     ));
     let unload = use_unload_guard(state);
+    use_deferred_app_reload(state, &unload);
     use_surface_connection(
         state.sender.clone(),
         SurfaceHandles {
@@ -919,6 +920,30 @@ fn use_unsafe_intent(
         ComposerDrafts::is_unsafe(drafts) || SubmissionStatus::is_unsafe(submissions);
     use_unsafe_intent_guard(unsafe_intent);
     unsafe_intent
+}
+
+/// Retry a generation handoff once the submission that made it unsafe settles.
+///
+/// Bootstrap attempts the same handoff before opening a session. When an
+/// unknown result blocks it, the compatible stale session stays online long
+/// enough to learn that result; this effect closes the loop without waiting
+/// for another connection failure.
+#[hook]
+fn use_deferred_app_reload(state: &AppState, unload: &UnloadGuard) {
+    let served = (*state.app_update)
+        .as_ref()
+        .filter(|update| update.generation != update.loaded_generation)
+        .map(|update| update.generation.clone());
+    let unsafe_submission = state.submissions.status.is_unsafe();
+    let unload = unload.clone();
+    use_effect_with(
+        (served, unsafe_submission),
+        move |(served, unsafe_submission)| {
+            if !unsafe_submission && let Some(served) = served {
+                connection::reload_into_served_app(served, &unload);
+            }
+        },
+    );
 }
 
 #[hook]
