@@ -43,6 +43,8 @@ pub mod compose;
 #[cfg(any(target_arch = "wasm32", test))]
 mod composer_drafts;
 #[cfg(any(target_arch = "wasm32", test))]
+mod composer_history;
+#[cfg(any(target_arch = "wasm32", test))]
 mod composer_markdown;
 #[cfg(any(target_arch = "wasm32", test))]
 mod composer_reading_order;

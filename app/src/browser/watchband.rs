@@ -1151,6 +1151,7 @@ fn submit_draft(
     let Ok(id) = random_uuid() else {
         return false;
     };
+    let typed = crate::browser::input_history::typed_texts(&prepared.snapshot);
     let authored_millis = js_sys::Date::now() as i64;
     let submission = match target {
         Some(SubmissionTarget::Resident { occupant, epoch }) => Submission::new(
@@ -1176,6 +1177,7 @@ fn submit_draft(
     if !queue_submission(sender, submissions, submission) {
         return false;
     }
+    crate::browser::input_history::record(lane_key, &typed);
     clear_composer(lane_key, drafts);
     true
 }
@@ -1197,6 +1199,7 @@ fn submit_broadcast(
         return false;
     };
     let message = crate::composer_markdown::mark_broadcast(&prepared.message);
+    let typed = crate::browser::input_history::typed_texts(&prepared.snapshot);
     let Ok(fanout) = random_uuid() else {
         return false;
     };
@@ -1228,6 +1231,7 @@ fn submit_broadcast(
     if !queue_submissions(sender, submissions, batch) {
         return false;
     }
+    crate::browser::input_history::record(source_key, &typed);
     clear_primary_composer(source_key);
     drafts.dispatch(ComposerAction::ClearPrimary {
         lane: source_key.to_owned(),
