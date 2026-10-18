@@ -301,13 +301,8 @@ fn plan_profile_requests(
             .iter()
             .filter(|(design, _)| {
                 opportunity_design_matches(&opportunity.kind, design)
-                    && !facts.design_was_noticed(lane, &session, compaction, design.born())
-                    && !facts.published_in_room_for_context(
-                        lane,
-                        &session,
-                        compaction,
-                        design.born(),
-                    )
+                    && !facts.design_was_noticed_in_session(lane, &session, design.born())
+                    && !facts.published_in_room_for_session(lane, &session, design.born())
             })
             .map(|(design, vector)| DesignCandidate::new(design.born(), *design, vector));
         let selected = {
@@ -687,9 +682,9 @@ fn design_request(design: &board::Entry, notice: &DesignNoticed) -> DesignReques
 /// Refuse an invitation whose target session, supporting source, Design, room
 /// standing, or competing request moved.
 fn still_owed(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
-    let context_boundary = current_context(read, request)?;
+    let session_declared = current_context(read, request)?;
     supporting_source(read, request)?;
-    passive_design(read, request, context_boundary)?;
+    passive_design(read, request, session_declared)?;
     unseen_request(read, request)
 }
 
@@ -758,10 +753,7 @@ fn current_context(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<S
     if compaction != request.compaction {
         return Err(stale("the target session context was compacted"));
     }
-    request
-        .compaction
-        .or(session_declared)
-        .ok_or_else(|| stale("the target vendor session has no declaration"))
+    session_declared.ok_or_else(|| stale("the target vendor session has no declaration"))
 }
 
 fn evidence_source_is_current(

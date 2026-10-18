@@ -225,7 +225,6 @@ struct Indexes {
             (
                 journal::crossing::CanonicalUuid,
                 journal::crossing::rooms::DesignSession,
-                Option<journal::crossing::Seq>,
             ),
             Arc<HashSet<journal::crossing::TaskStamp>>,
         >,
@@ -492,9 +491,8 @@ impl Indexes {
             self.replace_partition(arranged.partition);
         } else if let Some(noticed) = row.fact.read::<journal::crossing::rooms::DesignNoticed>() {
             let session_key = (noticed.lane, noticed.session.clone());
-            let context_key = (noticed.lane, noticed.session.clone(), noticed.compaction);
             let designs = Arc::make_mut(&mut self.noticed_designs)
-                .entry(context_key)
+                .entry(session_key.clone())
                 .or_default();
             Arc::make_mut(designs).insert(noticed.design.clone());
             self.design_notices.insert(session_key, (row.seq, noticed));
@@ -800,19 +798,17 @@ impl TaskFacts {
             .map(|(at, notice)| (*at, notice))
     }
 
-    /// Whether this continuing session was already invited to this Design in
-    /// the exact context generation.
+    /// Whether this continuing session was already invited to this Design.
     #[must_use]
-    pub fn design_was_noticed(
+    pub fn design_was_noticed_in_session(
         &self,
         lane: journal::crossing::CanonicalUuid,
         session: &journal::crossing::rooms::DesignSession,
-        compaction: Option<journal::crossing::Seq>,
         design: &journal::crossing::TaskStamp,
     ) -> bool {
         self.indexes
             .noticed_designs
-            .get(&(lane, session.clone(), compaction))
+            .get(&(lane, session.clone()))
             .is_some_and(|designs| designs.contains(design))
     }
 
@@ -829,29 +825,25 @@ impl TaskFacts {
             .is_some_and(|rooms| rooms.contains(room))
     }
 
-    /// Whether this lane published in the room after the current context began.
-    /// A compaction makes earlier participation eligible to decay; without one,
-    /// the session's first declaration is the boundary.
+    /// Whether this lane published in the room during this continuing session.
     #[must_use]
-    pub fn published_in_room_for_context(
+    pub fn published_in_room_for_session(
         &self,
         lane: journal::crossing::CanonicalUuid,
         session: &journal::crossing::rooms::DesignSession,
-        compaction: Option<journal::crossing::Seq>,
         room: &journal::crossing::TaskStamp,
     ) -> bool {
-        let boundary = compaction.or_else(|| {
-            self.indexes
-                .session_declarations
-                .get(&(lane, session.clone()))
-                .copied()
-        });
+        let declared = self
+            .indexes
+            .session_declarations
+            .get(&(lane, session.clone()))
+            .copied();
         let actor = journal::crossing::Actor::Lane(lane);
         self.indexes
             .room_publication_positions
             .get(&(actor, room.clone()))
-            .zip(boundary)
-            .is_some_and(|(published, boundary)| *published > boundary)
+            .zip(declared)
+            .is_some_and(|(published, declared)| *published > declared)
     }
 
     /// Whether this lane published in the room after one exact notice.

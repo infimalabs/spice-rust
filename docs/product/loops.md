@@ -539,40 +539,32 @@ owns each rule summarized here.
   and failed acquisition from an empty ready profile.
   Declaration, newly stored evidence, readiness, and Design-statement changes
   expose bounded cursor-addressed selection opportunities.
-- **Design awareness.** A continuing vendor session retains bounded task and
-  authored-conversation evidence. A successful completion, settled
-  conversation message, newly filed or revised passive Design, completed
-  profile warm, or resumed session is an opportunity to compare that profile
-  with current open passive Designs before allocation. Matching uses the same
-  256-statement document-frequency profile, logarithmic term frequency, smooth
+- **Design awareness.** Before allocation, a completion, settled assistant
+  message, passive Design filing or revision, completed profile warm, or
+  session resume compares one continuing session's bounded evidence with open
+  passive Designs. Retained task statement/completion and message/passage
+  views use the same 256-statement corpus, logarithmic term frequency, smooth
   inverse document frequency, L2 normalization, 0.15 floor, and durable
-  Design-identity tie break for every retained task-statement,
-  task-completion, whole-message, and passage view. One opportunity selects at
-  most one Design, and one session carries at most one unanswered request. Each
-  `room::noticed` record names the exact Design statement, continuing session,
-  latest compaction boundary, opportunity, retained evidence card and its
-  immutable identity, and at most six strongest weighted overlaps in ascending
-  order. The same Design is requested at most once in each
-  compaction-delimited context generation. An occupant change or resident
-  restart that resumes the same un-compacted vendor identity preserves that
-  suppression. Compaction weakens it but creates no selection opportunity by
-  itself; only a later completion, settled message, Design change,
-  profile-ready event, or resume may offer the Design again. Renewal creates a
-  fresh vendor identity and only a later ordinary opportunity may offer it
-  again, without deleting the lane.
-  The request quotes the first substantive description sentence and an
-  in-order bounded prefix of whole open questions. One contribution or
-  `spice room leave --clause` in that room answers the request. Selection,
-  `task next`, and room catch-up share one owed-request check. A changed or
-  closed Design, replaced target session, lost or replaced supporting
+  Design-identity tie break. One opportunity selects one Design at most; one
+  session has one unanswered request at most.
+  A `room::noticed` record names the exact Design statement, session,
+  compaction race witness, opportunity, evidence and immutable identity, plus
+  at most six strongest weighted overlaps. A Design is requested once per
+  continuing session. Contribution or leave stays settled across occupants,
+  restarts, and compaction. Prior contribution retains bounded room context
+  while optional activity prominence ages; it never becomes recruitment.
+  Compaction neither resets history nor creates an opportunity. A fresh vendor
+  identity may receive a later ordinary offer without deleting the lane.
+  The request quotes the first substantive description sentence and a bounded
+  prefix of whole open questions. Contribution or `spice room leave --clause`
+  answers it. Selection, `task next`, and room catch-up share one owed-request
+  check. A changed or closed Design, replaced session, lost or replaced
   transcript source, lost task statement, completion, or claim evidence, or
-  standing change away from open passive releases it for all three surfaces;
-  a compaction does not, though one landing between selection and recording
-  refuses the recording. Unrelated journal writes do not release it. The
-  request grants no claim, starts no
-  work, and adds no workflow state; `spice room awareness HANDLE` shows its
-  exact opportunity, evidence, statement, recipient session, context boundary,
-  and matched terms.
+  non-passive standing releases it on all three surfaces. Compaction does not,
+  but one landing between selection and recording refuses the recording;
+  unrelated writes do not release it. The request grants no claim, work,
+  workflow state, or wake. `spice room awareness HANDLE` shows its exact
+  opportunity, evidence, statement, session, compaction, and matched terms.
 - **Design maturity.** One bounded projection per Design folds admitted
   requests and typed contributions in journal order. It reports contribution
   counts by kind, distinct contributing lanes, requested reach, and
