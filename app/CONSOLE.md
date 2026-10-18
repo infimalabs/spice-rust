@@ -399,14 +399,14 @@ document is bounded by the newest 200 entries per lane and 256 KiB across all
 lanes, trimming the oldest entries of the least recently used lanes first; a
 corrupt or oversized document is replaced by what fits.
 
-An unmodified ArrowUp with a collapsed caret on a composer's first line
-recalls the previous entry with the caret at its start, and ArrowDown on the
-last line moves forward with the caret at its end, finally restoring the
-unsent draft. Anywhere else in multiline text, with a selection, with a
-modifier, or while an input method is composing, the arrows move the caret as
-usual. Text edited in a recalled entry stays with that entry while walking, and
-stored history changes only when something is sent: the lane's next send ends
-every walk, and a sent edit is a new entry.
+An unmodified ArrowUp with a collapsed caret on a composer's first rendered
+line recalls the previous entry with the caret at its start, and ArrowDown on
+the last rendered line moves forward with the caret at its end, finally
+restoring the unsent draft. Anywhere else in multiline or soft-wrapped text,
+with a selection, with a modifier, or while an input method is composing, the
+arrows move the caret as usual. Text edited in a recalled entry stays with
+that entry while walking, and stored history changes only when something is
+sent: the lane's next send ends every walk, and a sent edit is a new entry.
 
 ## Image runs
 

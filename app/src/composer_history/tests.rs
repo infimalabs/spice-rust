@@ -107,3 +107,13 @@ fn only_a_collapsed_caret_on_the_outer_line_leaves_the_text() {
     assert!(leaves_text(wide, 2, 2, true));
     assert!(!leaves_text(wide, 3, 3, true));
 }
+
+#[test]
+fn a_utf16_caret_splits_on_character_boundaries() {
+    assert_eq!(split_utf16("ab\ncd", 3), ("ab\n", "cd"));
+    assert_eq!(split_utf16("😀x", 2), ("😀", "x"));
+    assert_eq!(split_utf16("😀x", 1), ("", "😀x"));
+    assert_eq!(split_utf16("éx", 1), ("é", "x"));
+    assert_eq!(split_utf16("ab", 9), ("ab", ""));
+    assert_eq!(split_utf16("", 0), ("", ""));
+}

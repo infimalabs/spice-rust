@@ -198,9 +198,10 @@ impl Recall {
     }
 }
 
-/// Whether an unmodified vertical arrow at this caret leaves the text: the
-/// caret is collapsed on the first line for `up`, or on the last for down.
-/// `start` and `end` are the textarea's UTF-16 selection offsets.
+/// Whether an unmodified vertical arrow at this caret can leave the text by
+/// its logical lines: the caret is collapsed on the first line for `up`, or on
+/// the last for down. Soft wrapping can still hold it inside; the browser seam
+/// decides that by rendered lines. `start` and `end` are UTF-16 offsets.
 pub(crate) fn leaves_text(value: &str, start: u32, end: u32, up: bool) -> bool {
     if start != end {
         return false;
@@ -219,6 +220,19 @@ pub(crate) fn leaves_text(value: &str, start: u32, end: u32, up: bool) -> bool {
         offset += u32::try_from(character.len_utf16()).unwrap_or(2);
     }
     if up { !before } else { !after }
+}
+
+/// `value` split at UTF-16 `offset`, moved back to a character boundary when
+/// it falls inside a surrogate pair and clamped to the end.
+pub(crate) fn split_utf16(value: &str, offset: u32) -> (&str, &str) {
+    let mut units = 0;
+    for (index, character) in value.char_indices() {
+        units += u32::try_from(character.len_utf16()).unwrap_or(2);
+        if units > offset {
+            return value.split_at(index);
+        }
+    }
+    (value, "")
 }
 
 #[cfg(test)]
