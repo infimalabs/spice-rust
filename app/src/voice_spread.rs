@@ -1,17 +1,19 @@
-//! Spread agents across a device's premium voices when no voice list is
+//! Spread desktop agents across premium voices when no voice list is
 //! configured.
 //!
-//! The assignment reads only the roster and the device's voice list, so every
-//! page with the same roster and voices hears the same agent in the same voice.
-//! Only voices carrying macOS premium evidence enter the pool; a device
+//! Apple mobile browsers instead use the device default: iOS and iPadOS do not
+//! publish the macOS premium metadata this pool requires. The assignment reads
+//! only the roster and the device's voice list, so every desktop page with the
+//! same roster and voices hears the same agent in the same voice. Only voices
+//! carrying macOS premium evidence enter the desktop pool; a desktop device
 //! without one in the chosen language refuses rather than speaking through
 //! another tier. Teams and their members are visited in identity order, so
 //! reordering a team or the roster changes nothing. Teammates are what must
-//! sound different: within one team no voice repeats until the team
-//! outnumbers the pool. An agent keeps the voice its identity hashes to unless
-//! a teammate holds it, even when another team holds it too; only an agent a
-//! teammate displaced prefers, among the voices its team leaves free, one no
-//! other team holds.
+//! sound different: within one team no voice repeats until the team outnumbers
+//! the pool. An agent keeps the voice its identity hashes to unless a teammate
+//! holds it, even when another team holds it too; only an agent a teammate
+//! displaced prefers, among the voices its team leaves free, one no other team
+//! holds.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -37,6 +39,45 @@ pub struct OfferedVoice<'a> {
     pub local: bool,
     /// The device marks this voice as its default.
     pub default: bool,
+}
+
+/// Browser-level policy for one system-speech request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoicePolicy {
+    /// Use the first explicitly configured voice the browser publishes.
+    Listed,
+    /// Let the browser select its device default voice.
+    DeviceDefault,
+    /// Spread a roster member over the desktop premium pool.
+    PremiumSpread,
+}
+
+/// Choose the voice policy before inspecting the browser's published voices.
+///
+/// Explicit configuration always wins. An unconfigured speaker outside the
+/// roster uses the device default everywhere. A roster member spreads only on
+/// desktop; Apple mobile browsers use their device default because their voice
+/// records do not carry macOS premium markers.
+#[must_use]
+pub fn policy(configured: bool, roster_member: bool, user_agent: &str) -> VoicePolicy {
+    if configured {
+        VoicePolicy::Listed
+    } else if !roster_member || apple_mobile(user_agent) {
+        VoicePolicy::DeviceDefault
+    } else {
+        VoicePolicy::PremiumSpread
+    }
+}
+
+/// Whether this user agent is an Apple mobile browser.
+///
+/// iPadOS desktop-mode user agents identify as Macintosh but retain the
+/// `Mobile/` product token.
+fn apple_mobile(user_agent: &str) -> bool {
+    user_agent.contains("iPhone")
+        || user_agent.contains("iPad")
+        || user_agent.contains("iPod")
+        || (user_agent.contains("Macintosh") && user_agent.contains("Mobile/"))
 }
 
 /// Why a published voice list offers no voice to spread.
@@ -208,7 +249,9 @@ fn preferred_slot(member: CanonicalUuid, size: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{OfferedVoice, SpreadRefusal, pool, preferred_slot, voice_slot};
+    use super::{
+        OfferedVoice, SpreadRefusal, VoicePolicy, policy, pool, preferred_slot, voice_slot,
+    };
     use wire::CanonicalUuid;
 
     fn id(suffix: u16) -> CanonicalUuid {
@@ -233,6 +276,41 @@ mod tests {
         seen.sort_unstable();
         seen.dedup();
         seen.len() == slots.len()
+    }
+
+    #[test]
+    fn apple_mobile_automatic_voice_uses_default_without_changing_other_boundaries() {
+        let mobile_agents = [
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+            "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+            "Mozilla/5.0 (iPod touch; CPU iPhone OS 17_0 like Mac OS X)",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 \
+             Version/18.0 Mobile/15E148 Safari/604.1",
+        ];
+        for user_agent in mobile_agents {
+            assert_eq!(
+                policy(false, true, user_agent),
+                VoicePolicy::DeviceDefault,
+                "{user_agent}"
+            );
+            assert_eq!(
+                policy(true, true, user_agent),
+                VoicePolicy::Listed,
+                "explicit voices still win on {user_agent}"
+            );
+        }
+        assert_eq!(
+            policy(
+                false,
+                true,
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 Safari/605.1.15",
+            ),
+            VoicePolicy::PremiumSpread
+        );
+        assert_eq!(
+            policy(false, false, "Mozilla/5.0 (X11; Linux x86_64) Chrome/140"),
+            VoicePolicy::DeviceDefault
+        );
     }
 
     #[test]

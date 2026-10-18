@@ -20,6 +20,7 @@ use crate::speech_queue::{
     Advance, AutomaticChange, Enqueue, LaneSpeech, NarrationCursorRow, NarrationCursors,
     NarrationMessage, SpeechEntry, SpeechMode, SpeechOwner, SpeechQueue, SpeechRequest,
 };
+use crate::voice_spread::{self, VoicePolicy};
 use wire::CanonicalUuid;
 
 const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
@@ -127,16 +128,23 @@ impl SpeechRuntime {
         let resumed = entry.clone();
         let result = {
             let roster = self.roster.borrow();
-            let request = if !voices.is_empty() {
-                VoiceRequest::Listed(&voices)
-            } else if let Some(member) = roster.members.get(entry.worktree()) {
-                VoiceRequest::Spread {
-                    teams: &roster.teams,
-                    member: *member,
-                }
+            let member = roster.members.get(entry.worktree()).copied();
+            let user_agent = if voices.is_empty() && member.is_some() {
+                web_sys::window()
+                    .and_then(|window| window.navigator().user_agent().ok())
+                    .unwrap_or_default()
             } else {
-                VoiceRequest::Default
+                String::new()
             };
+            let request =
+                match voice_spread::policy(!voices.is_empty(), member.is_some(), &user_agent) {
+                    VoicePolicy::Listed => VoiceRequest::Listed(&voices),
+                    VoicePolicy::DeviceDefault => VoiceRequest::Default,
+                    VoicePolicy::PremiumSpread => VoiceRequest::Spread {
+                        teams: &roster.teams,
+                        member: member.expect("premium spreading requires a roster member"),
+                    },
+                };
             self.controller.borrow_mut().start_system(
                 generation,
                 entry.worktree(),
