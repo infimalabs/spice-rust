@@ -153,6 +153,14 @@ impl Lanes {
         added: journal::PendingFact,
         lane: CanonicalUuid,
     ) {
+        let occupant = current_residency(&self.bus, self.epoch)
+            .expect("residency reads")
+            .body()
+            .lanes
+            .iter()
+            .find(|row| row.lane == lane)
+            .and_then(|row| row.occupant)
+            .expect("claimed lane is occupied");
         let cell = wire::ClaimCell {
             project: "serve.rooms".to_owned(),
             phase: "todo".parse().expect("fixture phase"),
@@ -166,7 +174,7 @@ impl Lanes {
                     task: task.clone(),
                     actor: Actor::Lane(lane),
                     lane,
-                    occupant: lane,
+                    occupant,
                     epoch: self.epoch,
                     cell: cell.clone(),
                     until,
@@ -184,7 +192,7 @@ impl Lanes {
             claimed: fact,
             cell,
             lane,
-            occupant: lane,
+            occupant,
             epoch,
             recovery: None,
             disposition: wire::ClaimDisposition::Active,
@@ -583,6 +591,7 @@ fn a_design_request_commit_reconciles_its_room_for_the_asked_lane() {
                     vendor: "omp".parse().expect("vendor"),
                     identity: "fixture-session".to_owned(),
                 },
+                compaction: None,
                 opportunity: wire::rooms::DesignNoticeOpportunity::TaskCompletion {
                     task: prior.clone(),
                     completed: statement,
@@ -993,6 +1002,7 @@ fn design_awareness_pages_heavy_notices_over_their_exact_population() {
                         vendor: "omp".parse().expect("vendor"),
                         identity: "fixture-session".to_owned(),
                     },
+                    compaction: None,
                     opportunity: wire::rooms::DesignNoticeOpportunity::TaskCompletion {
                         task: prior.clone(),
                         completed: statement,

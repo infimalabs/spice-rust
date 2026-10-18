@@ -179,6 +179,32 @@ impl Lanes {
         });
         commit(&self.bus, completion).expect("completion commits");
     }
+    fn compact(&self, lane: u8) -> Seq {
+        let mut write = write(Actor::Spice, self.epoch, Producer::ResidentRecognition)
+            .expect("compaction write starts");
+        write
+            .fact(
+                wire::body::LaneCompacted {
+                    lane: test_uuid(lane),
+                    occupant: current_residency(&self.bus, self.epoch)
+                        .expect("residency reads")
+                        .body()
+                        .lanes
+                        .iter()
+                        .find(|row| row.lane == test_uuid(lane))
+                        .and_then(|row| row.occupant)
+                        .expect("the lane has an occupant"),
+                    stream: "stdout".to_owned(),
+                    member: 0,
+                    offset: 0,
+                    length: 1,
+                },
+                FactCause::Root,
+            )
+            .expect("compaction fact is valid");
+        let landed = commit(&self.bus, write).expect("compaction commits");
+        Seq::new(landed.first()).expect("compaction has a position")
+    }
 
     fn command(
         &self,
@@ -639,6 +665,169 @@ fn contribution_discharges_the_request_and_suppresses_that_design_forever() {
     assert!(
         lanes.request(&config, FIRST).is_none(),
         "a lane is never asked about a Design it published in"
+    );
+    seated.release_all();
+    lanes.finish();
+}
+
+#[test]
+fn compaction_decays_a_settled_offer_only_on_a_later_profile_opportunity() {
+    let lanes = Lanes::new("design-request-compaction-decay");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let first = lanes.claimed("dVrD245Kc", FIRST);
+    let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+
+    lanes.complete(&first, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    assert_eq!(lanes.noticed().len(), 1);
+    lanes.leave(50, &config, FIRST, &design);
+
+    let compacted = lanes.compact(FIRST);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    let snapshot = lanes.bus.task_snapshot().expect("task snapshot reads");
+    let context = snapshot.facts();
+    let first_notice = lanes.noticed().into_iter().next().expect("first notice");
+    assert_eq!(
+        context.session_compaction(test_uuid(FIRST), &first_notice.session),
+        Some(compacted)
+    );
+    assert!(!context.design_was_noticed(
+        test_uuid(FIRST),
+        &first_notice.session,
+        Some(compacted),
+        &stamp(&design),
+    ));
+    assert!(!context.published_in_room_for_context(
+        test_uuid(FIRST),
+        &first_notice.session,
+        Some(compacted),
+        &stamp(&design),
+    ));
+    assert_eq!(
+        lanes.noticed().len(),
+        1,
+        "a compaction boundary is not itself an invitation opportunity"
+    );
+
+    let after = lanes.seed_task(
+        "dVrD245Kp",
+        "Bound another room cursor",
+        Some("Retain another cursor over room publications."),
+        None,
+        Some(test_uuid(FIRST)),
+    );
+    lanes.complete(&after, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    let notices = lanes.noticed();
+    assert_eq!(notices.len(), 2);
+    assert_eq!(notices[1].compaction, Some(compacted));
+
+    lanes.leave(51, &config, FIRST, &design);
+    let same_context = lanes.seed_task(
+        "dVrD245Kq",
+        "Bound a third room cursor",
+        Some("Retain a third cursor over room publications."),
+        None,
+        Some(test_uuid(FIRST)),
+    );
+    lanes.complete(&same_context, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    assert_eq!(
+        lanes.noticed().len(),
+        2,
+        "another opportunity in the same compacted context stays suppressed"
+    );
+    seated.release_all();
+    lanes.finish();
+}
+
+#[test]
+fn renewal_with_a_fresh_vendor_identity_can_reoffer_a_settled_design() {
+    let lanes = Lanes::new("design-request-renewal-decay");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let first = lanes.claimed("dVrD245Kc", FIRST);
+    let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+    let mut seated = claimant_seats();
+
+    lanes.complete(&first, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.leave(60, &config, FIRST, &design);
+    assert_eq!(lanes.noticed().len(), 1);
+
+    seated.release_all();
+    let successor = test_uuid(FIRST.saturating_add(40));
+    lanes.vacate(FIRST);
+    lanes.renew(FIRST, successor);
+    lanes.declare_identity(FIRST, "renewed-session".to_owned());
+    seated = seats(&[(FIRST, successor)]);
+    let after = lanes.seed_task(
+        "dVrD245Kp",
+        "Bound a renewed room cursor",
+        Some("Retain a renewed cursor over room publications."),
+        None,
+        Some(test_uuid(FIRST)),
+    );
+    lanes.complete(&after, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+
+    let notices = lanes.noticed();
+    assert_eq!(notices.len(), 2);
+    assert_eq!(notices[1].session.identity, "renewed-session");
+    assert_eq!(notices[1].compaction, None);
+    seated.release_all();
+    lanes.finish();
+}
+
+#[test]
+fn occupant_replacement_and_restart_preserve_same_context_suppression() {
+    let lanes = Lanes::new("design-request-resume-suppression");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let first = lanes.claimed("dVrD245Kc", FIRST);
+    let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+    let mut seated = claimant_seats();
+
+    lanes.complete(&first, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    lanes.leave(70, &config, FIRST, &design);
+    assert_eq!(lanes.noticed().len(), 1);
+
+    seated.release_all();
+    let successor = test_uuid(FIRST.saturating_add(41));
+    lanes.vacate(FIRST);
+    lanes.renew(FIRST, successor);
+    lanes.declare_identity(FIRST, test_uuid(FIRST.saturating_add(20)).to_string());
+    seated = seats(&[(FIRST, successor)]);
+
+    let mut restarted = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("restarted completion cursor starts");
+    let restarted_profiles =
+        std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+    let after = lanes.seed_task(
+        "dVrD245Kp",
+        "Bound a resumed room cursor",
+        Some("Retain a resumed cursor over room publications."),
+        None,
+        Some(test_uuid(FIRST)),
+    );
+    lanes.complete(&after, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut restarted, &restarted_profiles);
+    assert_eq!(
+        lanes.noticed().len(),
+        1,
+        "the same vendor identity and compaction generation remain suppressed"
     );
     seated.release_all();
     lanes.finish();

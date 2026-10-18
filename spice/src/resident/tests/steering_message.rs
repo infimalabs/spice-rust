@@ -427,7 +427,10 @@ impl Lanes {
 
     /// Declare the lane's seated occupant's session at the tape's current end.
     fn declare(&self, lane: u8) -> listen::Locus {
-        let identity = test_uuid(lane.saturating_add(20)).to_string();
+        self.declare_identity(lane, test_uuid(lane.saturating_add(20)).to_string())
+    }
+
+    fn declare_identity(&self, lane: u8, identity: String) -> listen::Locus {
         let declaration = self
             .tape(lane)
             .tee(

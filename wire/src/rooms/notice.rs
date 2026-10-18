@@ -105,6 +105,9 @@ pub struct DesignNoticed {
     pub occupant: CanonicalUuid,
     /// Continuing vendor session that owns the invitation.
     pub session: DesignSession,
+    /// Newest compaction boundary of this session before selection. `None`
+    /// names the original un-compacted context.
+    pub compaction: Option<Seq>,
     /// Event that gave the resident an opportunity to evaluate the profile.
     pub opportunity: DesignNoticeOpportunity,
     /// Retained card whose view selected the Design.

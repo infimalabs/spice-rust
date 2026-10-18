@@ -225,6 +225,7 @@ struct Indexes {
             (
                 journal::crossing::CanonicalUuid,
                 journal::crossing::rooms::DesignSession,
+                Option<journal::crossing::Seq>,
             ),
             Arc<HashSet<journal::crossing::TaskStamp>>,
         >,
@@ -259,6 +260,13 @@ struct Indexes {
         journal::crossing::Seq,
     >,
     session_declarations: HashMap<
+        (
+            journal::crossing::CanonicalUuid,
+            journal::crossing::rooms::DesignSession,
+        ),
+        journal::crossing::Seq,
+    >,
+    session_compactions: HashMap<
         (
             journal::crossing::CanonicalUuid,
             journal::crossing::rooms::DesignSession,
@@ -349,6 +357,12 @@ impl Indexes {
             | FactKind::TaskConcluded
             | FactKind::ClaimWon
             | FactKind::ClaimFreed => self.observe_task_authority(row),
+            FactKind::LaneCompacted => {
+                self.observe_compaction(row);
+                if let Some(opened) = context_opening(&row.fact) {
+                    self.context_anchors.insert(opened, row.seq);
+                }
+            }
             _ => {
                 if let Some(opened) = context_opening(&row.fact) {
                     self.context_anchors.insert(opened, row.seq);
@@ -388,6 +402,24 @@ impl Indexes {
             row.seq,
         );
         births.insert(started.occupant, record);
+    }
+
+    fn observe_compaction(
+        &mut self,
+        row: &journal::crossing::Envelope<journal::crossing::AnyFact>,
+    ) {
+        let Some(compacted) = row.fact.read::<journal::crossing::body::LaneCompacted>() else {
+            return;
+        };
+        let Some(session) = self
+            .lane_sessions
+            .get(&(compacted.lane, compacted.occupant))
+            .cloned()
+        else {
+            return;
+        };
+        self.session_compactions
+            .insert((compacted.lane, session), row.seq);
     }
 
     fn observe_task_added(
@@ -459,12 +491,13 @@ impl Indexes {
         {
             self.replace_partition(arranged.partition);
         } else if let Some(noticed) = row.fact.read::<journal::crossing::rooms::DesignNoticed>() {
-            let key = (noticed.lane, noticed.session.clone());
+            let session_key = (noticed.lane, noticed.session.clone());
+            let context_key = (noticed.lane, noticed.session.clone(), noticed.compaction);
             let designs = Arc::make_mut(&mut self.noticed_designs)
-                .entry(key.clone())
+                .entry(context_key)
                 .or_default();
             Arc::make_mut(designs).insert(noticed.design.clone());
-            self.design_notices.insert(key, (row.seq, noticed));
+            self.design_notices.insert(session_key, (row.seq, noticed));
         }
     }
 
@@ -767,17 +800,19 @@ impl TaskFacts {
             .map(|(at, notice)| (*at, notice))
     }
 
-    /// Whether this continuing session was already invited to this Design.
+    /// Whether this continuing session was already invited to this Design in
+    /// the exact context generation.
     #[must_use]
     pub fn design_was_noticed(
         &self,
         lane: journal::crossing::CanonicalUuid,
         session: &journal::crossing::rooms::DesignSession,
+        compaction: Option<journal::crossing::Seq>,
         design: &journal::crossing::TaskStamp,
     ) -> bool {
         self.indexes
             .noticed_designs
-            .get(&(lane, session.clone()))
+            .get(&(lane, session.clone(), compaction))
             .is_some_and(|designs| designs.contains(design))
     }
 
@@ -794,26 +829,29 @@ impl TaskFacts {
             .is_some_and(|rooms| rooms.contains(room))
     }
 
-    /// Whether this lane published in the room after the continuing session
-    /// was declared. Publications by a predecessor session do not settle or
-    /// suppress this session's invitation.
+    /// Whether this lane published in the room after the current context began.
+    /// A compaction makes earlier participation eligible to decay; without one,
+    /// the session's first declaration is the boundary.
     #[must_use]
-    pub fn published_in_room_for_session(
+    pub fn published_in_room_for_context(
         &self,
         lane: journal::crossing::CanonicalUuid,
         session: &journal::crossing::rooms::DesignSession,
+        compaction: Option<journal::crossing::Seq>,
         room: &journal::crossing::TaskStamp,
     ) -> bool {
+        let boundary = compaction.or_else(|| {
+            self.indexes
+                .session_declarations
+                .get(&(lane, session.clone()))
+                .copied()
+        });
         let actor = journal::crossing::Actor::Lane(lane);
         self.indexes
             .room_publication_positions
             .get(&(actor, room.clone()))
-            .zip(
-                self.indexes
-                    .session_declarations
-                    .get(&(lane, session.clone())),
-            )
-            .is_some_and(|(published, declared)| published > declared)
+            .zip(boundary)
+            .is_some_and(|(published, boundary)| *published > boundary)
     }
 
     /// Whether this lane published in the room after one exact notice.
@@ -866,6 +904,19 @@ impl TaskFacts {
         lane: journal::crossing::CanonicalUuid,
     ) -> Option<journal::crossing::CanonicalUuid> {
         self.indexes.lane_occupants.get(&lane).copied()
+    }
+
+    /// Newest compaction recorded for one continuing vendor session.
+    #[must_use]
+    pub fn session_compaction(
+        &self,
+        lane: journal::crossing::CanonicalUuid,
+        session: &journal::crossing::rooms::DesignSession,
+    ) -> Option<journal::crossing::Seq> {
+        self.indexes
+            .session_compactions
+            .get(&(lane, session.clone()))
+            .copied()
     }
 
     /// Vendor session declared for one lane occupant, if any.

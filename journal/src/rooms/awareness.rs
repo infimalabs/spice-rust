@@ -101,6 +101,14 @@ fn notice(
             body.design
         ));
     }
+    if let Some(compaction) = body.compaction
+        && compaction >= seq
+    {
+        return unsound(format!(
+            "design awareness for {} names compaction {compaction} at or after its own position {seq}",
+            body.design
+        ));
+    }
     let referenced_tasks = [
         match &body.opportunity {
             DesignNoticeOpportunity::TaskCompletion { task, .. } => Some(task),

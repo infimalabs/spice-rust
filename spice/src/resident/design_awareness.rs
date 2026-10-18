@@ -38,6 +38,7 @@ struct PlannedRequest {
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     session: DesignSession,
+    compaction: Option<Seq>,
     opportunity: DesignNoticeOpportunity,
     evidence: DesignNoticeEvidence,
     design: TaskStamp,
@@ -275,6 +276,7 @@ fn plan_profile_requests(
             vendor: opportunity.session.vendor.clone(),
             identity: opportunity.session.identity.clone(),
         };
+        let compaction = facts.session_compaction(lane, &session);
         let session_identity = (lane, session.clone());
         if planned_sessions.contains(&session_identity)
             || session_has_outstanding(facts, entries, lane, &session)
@@ -288,8 +290,13 @@ fn plan_profile_requests(
             .iter()
             .filter(|(design, _)| {
                 opportunity_design_matches(&opportunity.kind, design)
-                    && !facts.design_was_noticed(lane, &session, design.born())
-                    && !facts.published_in_room_for_session(lane, &session, design.born())
+                    && !facts.design_was_noticed(lane, &session, compaction, design.born())
+                    && !facts.published_in_room_for_context(
+                        lane,
+                        &session,
+                        compaction,
+                        design.born(),
+                    )
             })
             .map(|(design, vector)| DesignCandidate::new(design.born(), *design, vector));
         let selected = {
@@ -323,6 +330,7 @@ fn plan_profile_requests(
             lane,
             occupant,
             session,
+            compaction,
             opportunity: durable_opportunity,
             evidence: durable_evidence(&evidence, digest),
             design,
@@ -634,13 +642,13 @@ fn design_request(
 /// Refuse an invitation whose target session, supporting source, Design, room
 /// standing, or competing request moved.
 fn still_owed(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
-    let declared = current_recipient(read, request)?;
+    let context_boundary = current_context(read, request)?;
     supporting_source(read, request)?;
-    passive_design(read, request, declared)?;
+    passive_design(read, request, context_boundary)?;
     unseen_request(read, request)
 }
 
-fn current_recipient(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<Seq, GuardError> {
+fn current_context(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<Seq, GuardError> {
     let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
     let occupant = read
         .residency_head()?
@@ -653,28 +661,45 @@ fn current_recipient(read: &JournalRead<'_>, request: &PlannedRequest) -> Result
         })
         .ok_or_else(|| stale("the target lane is no longer occupied"))?;
     let mut after = None;
-    let mut current = None;
+    let mut occupant_sessions = BTreeMap::new();
+    let mut current_session = None;
+    let mut session_declared = None;
+    let mut compaction = None;
     loop {
         let page = read.selected_fact_page(
-            &[wire::FactKind::LaneSessionDeclared],
+            &[
+                wire::FactKind::LaneSessionDeclared,
+                wire::FactKind::LaneCompacted,
+            ],
             after,
             None,
             journal::FactReadBudget::RETAINED,
         )?;
         for envelope in &page.rows {
-            let Some(declared) = envelope.fact.read::<wire::body::LaneSessionDeclared>() else {
+            if let Some(declared) = envelope.fact.read::<wire::body::LaneSessionDeclared>() {
+                let session = DesignSession {
+                    vendor: declared.vendor,
+                    identity: declared.identity,
+                };
+                occupant_sessions.insert((declared.lane, declared.occupant), session.clone());
+                if declared.lane == request.lane && session == request.session {
+                    session_declared.get_or_insert(envelope.seq);
+                }
+                if declared.lane == request.lane && declared.occupant == occupant {
+                    current_session = Some(session);
+                }
+                continue;
+            }
+            let Some(compacted) = envelope.fact.read::<wire::body::LaneCompacted>() else {
                 return Err(GuardError::Invalid(
-                    "a selected session declaration did not decode".to_owned(),
+                    "a selected context fact did not decode".to_owned(),
                 ));
             };
-            if declared.lane == request.lane && declared.occupant == occupant {
-                current = Some((
-                    DesignSession {
-                        vendor: declared.vendor,
-                        identity: declared.identity,
-                    },
-                    envelope.seq,
-                ));
+            if compacted.lane == request.lane
+                && occupant_sessions.get(&(compacted.lane, compacted.occupant))
+                    == Some(&request.session)
+            {
+                compaction = Some(envelope.seq);
             }
         }
         let Some(continuation) = page.continuation else {
@@ -682,10 +707,16 @@ fn current_recipient(read: &JournalRead<'_>, request: &PlannedRequest) -> Result
         };
         after = Some(continuation);
     }
-    match current {
-        Some((session, declared)) if session == request.session => Ok(declared),
-        _ => Err(stale("the target vendor session was replaced")),
+    if current_session.as_ref() != Some(&request.session) {
+        return Err(stale("the target vendor session was replaced"));
     }
+    if compaction != request.compaction {
+        return Err(stale("the target session context was compacted"));
+    }
+    request
+        .compaction
+        .or(session_declared)
+        .ok_or_else(|| stale("the target vendor session has no declaration"))
 }
 
 fn supporting_source(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
@@ -823,6 +854,7 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> 
                 lane: request.lane,
                 occupant: request.occupant,
                 session: request.session.clone(),
+                compaction: request.compaction,
                 opportunity: request.opportunity.clone(),
                 evidence: request.evidence.clone(),
                 terms: request.terms.clone(),
