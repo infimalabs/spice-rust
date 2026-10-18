@@ -26,9 +26,9 @@ const BASE_WEIGHT: f64 = 0.35;
 /// Weighted activities per minute at which a kind's curve reaches the top.
 const FULL_RATE_PER_MINUTE: f64 = 3.0;
 
-/// Kernel half-width in sample spacings: wide enough that neighbouring
-/// samples share each activity and the curve stays smooth.
-const KERNEL_SPACINGS: f64 = 1.5;
+/// Kernel half-width as a fraction of the ten-minute window. It is fixed in
+/// wall time so the same activity has the same height at every pip width.
+const KERNEL_HALF_WINDOW: f64 = 1.5 / 8.0;
 
 /// Level below which a kind draws no curve.
 const VISIBLE_LEVEL: f64 = 0.02;
@@ -140,21 +140,66 @@ const fn placement(kind: AgentActivityKind) -> Placement {
     }
 }
 
-/// Trace one lane's activities, given in any order, through the window ending
-/// at `now`, sampling each curve at `samples` instants (at least two).
+/// Map one Design-room event onto the same activity vocabulary as a team pip.
 ///
-/// A sample's level is its kind's weighted rate near that instant: each
-/// activity spreads through a triangular kernel, and where the window's edge
-/// cuts the kernel short the rate is taken from the part inside, so the
-/// level at now reports the current rate rather than half of it.
+/// Publication authorship matters: a lane's publication is agent prose, while
+/// operator and human publications are direction. Resident-authored
+/// bookkeeping carries neither kind of authored activity.
+#[must_use]
+pub fn room_activity(event: &crate::runtime::RoomEventKind) -> Option<(AgentActivityKind, usize)> {
+    use crate::runtime::RoomEventKind;
+
+    match event {
+        RoomEventKind::Messaged { source, .. } => {
+            Some((AgentActivityKind::Prose, hunk_bytes(source)))
+        }
+        RoomEventKind::Contributed { text, .. } => Some((AgentActivityKind::Tool, text.len())),
+        RoomEventKind::Published { author, content } => match author {
+            wire::Actor::Lane(_) => Some((AgentActivityKind::Prose, publication_bytes(content))),
+            wire::Actor::Operator | wire::Actor::Human(_) => {
+                Some((AgentActivityKind::Direction, 0))
+            }
+            wire::Actor::Spice => None,
+        },
+        RoomEventKind::Posted { .. } => Some((AgentActivityKind::Direction, 0)),
+        RoomEventKind::Coordination { .. } => Some((AgentActivityKind::Turn, 0)),
+        RoomEventKind::Left { .. } => Some((AgentActivityKind::Compaction, 0)),
+        RoomEventKind::PutAside { .. } => None,
+    }
+}
+
+fn publication_bytes(content: &wire::rooms::RoomPublicationContent) -> usize {
+    match content {
+        wire::rooms::RoomPublicationContent::Authored { text } => text.len(),
+        wire::rooms::RoomPublicationContent::Linked {
+            link: wire::rooms::RoomSource::Transcript(source),
+        } => hunk_bytes(source),
+        wire::rooms::RoomPublicationContent::Linked { .. } => 0,
+    }
+}
+
+fn hunk_bytes(source: &wire::rooms::TranscriptHunk) -> usize {
+    usize::try_from(source.text.end.saturating_sub(source.text.start)).unwrap_or(usize::MAX)
+}
+
+/// Trace one lane's activities, given in any order, through the window ending
+/// at `now`, sampling each curve at no fewer than `samples` instants.
+///
+/// The grid is always odd so the window start, midpoint, and now are shared
+/// samples at every browser-selected density. A sample's level is its kind's
+/// weighted rate near that instant: each activity spreads through a triangular
+/// kernel of fixed wall-time width, and where the window's edge cuts the kernel
+/// short the rate is taken from the part inside, so the level at now reports
+/// the current rate rather than half of it.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn trace(activities: &[TraceActivity], now: i64, samples: usize) -> Trace {
     let samples = samples.max(2);
+    let samples = samples + usize::from(samples.is_multiple_of(2));
     let since = now - TRACE_WINDOW_MILLIS;
     let window = TRACE_WINDOW_MILLIS as f64;
     let x_of = |millis: i64| ((millis - since) as f64 / window).clamp(0.0, 1.0);
-    let half_width = KERNEL_SPACINGS / (samples - 1) as f64;
+    let half_width = KERNEL_HALF_WINDOW;
     let mut sums = [(); 3].map(|()| vec![0.0_f64; samples]);
     let mut markers = Vec::new();
     for activity in activities
@@ -265,6 +310,57 @@ mod tests {
     }
 
     #[test]
+    fn one_fixed_rate_scale_is_shared_by_every_browser_sample_count() {
+        let mut midpoint = None;
+        let mut edge = None;
+        for samples in 5..=9 {
+            let middle = trace(&[at(AgentActivityKind::Tool, 300)], NOW, samples);
+            let middle = levels(&middle, TraceKind::Tool);
+            let current = trace(&[at(AgentActivityKind::Tool, 0)], NOW, samples);
+            let current = levels(&current, TraceKind::Tool);
+            let observed = (middle[middle.len() / 2], current[current.len() - 1]);
+            let expected = (
+                *midpoint.get_or_insert(observed.0),
+                *edge.get_or_insert(observed.1),
+            );
+            assert!((observed.0 - expected.0).abs() < 1e-9, "{samples}");
+            assert!((observed.1 - expected.1).abs() < 1e-9, "{samples}");
+        }
+    }
+
+    #[test]
+    fn room_publication_authorship_preserves_prose_and_direction_semantics() {
+        let lane = "018f82d4-6f59-7d06-92e3-bce9131163e5"
+            .parse()
+            .expect("lane");
+        let human = "018f82d4-6f59-7d06-92e3-bce9131163e6"
+            .parse()
+            .expect("human");
+        let lane_text = "A lane-authored room observation.".to_owned();
+        let lane_publication = crate::runtime::RoomEventKind::Published {
+            author: wire::Actor::Lane(lane),
+            content: wire::rooms::RoomPublicationContent::Authored {
+                text: lane_text.clone(),
+            },
+        };
+        let human_publication = crate::runtime::RoomEventKind::Published {
+            author: wire::Actor::Human(human),
+            content: wire::rooms::RoomPublicationContent::Authored {
+                text: "Operator observation.".to_owned(),
+            },
+        };
+
+        assert_eq!(
+            room_activity(&lane_publication),
+            Some((AgentActivityKind::Prose, lane_text.len())),
+        );
+        assert_eq!(
+            room_activity(&human_publication),
+            Some((AgentActivityKind::Direction, 0)),
+        );
+    }
+
+    #[test]
     fn a_curve_peaks_at_its_activity_and_stays_inside_the_scale() {
         let placed = trace(&[at(AgentActivityKind::Tool, 300)], NOW, SAMPLES);
         let tool = levels(&placed, TraceKind::Tool);
@@ -273,30 +369,38 @@ mod tests {
             .enumerate()
             .max_by(|a, b| a.1.total_cmp(b.1))
             .map(|(index, _)| index);
-        assert_eq!(peak, Some(SAMPLES / 2));
-        assert!(tool[0].abs() < f64::EPSILON && tool[SAMPLES - 1].abs() < f64::EPSILON);
+        assert_eq!(peak, Some(tool.len() / 2));
+        assert!(tool[0].abs() < f64::EPSILON && tool[tool.len() - 1].abs() < f64::EPSILON);
 
         let flood = (0..600)
             .map(|second| at(AgentActivityKind::Tool, second))
             .collect::<Vec<_>>();
-        let flooded = trace(&flood, NOW, SAMPLES);
-        assert!(
-            levels(&flooded, TraceKind::Tool)
-                .iter()
-                .all(|level| (level - 1.0).abs() < f64::EPSILON)
-        );
+        for samples in 5..=9 {
+            let flooded = trace(&flood, NOW, samples);
+            assert!(
+                levels(&flooded, TraceKind::Tool)
+                    .iter()
+                    .all(|level| (level - 1.0).abs() < f64::EPSILON),
+                "{samples}",
+            );
+        }
     }
 
     #[test]
-    fn a_steady_rate_reads_the_same_at_now_as_mid_window() {
+    fn a_steady_rate_reads_the_same_at_now_as_mid_window_at_every_density() {
         // One reasoning step every twenty seconds: three a minute.
         let steady = (0..30)
             .map(|step| at(AgentActivityKind::Reasoning, step * 20 + 5))
             .collect::<Vec<_>>();
-        let placed = trace(&steady, NOW, SAMPLES);
-        let reasoning = levels(&placed, TraceKind::Reasoning);
-        let middle = reasoning[SAMPLES / 2];
-        assert!(middle > 0.0 && middle < 1.0);
-        assert!((reasoning[SAMPLES - 1] - middle).abs() / middle < 0.2);
+        for samples in 5..=9 {
+            let placed = trace(&steady, NOW, samples);
+            let reasoning = levels(&placed, TraceKind::Reasoning);
+            let middle = reasoning[reasoning.len() / 2];
+            assert!(middle > 0.0 && middle < 1.0);
+            assert!(
+                (reasoning[reasoning.len() - 1] - middle).abs() / middle < 0.2,
+                "{samples}",
+            );
+        }
     }
 }

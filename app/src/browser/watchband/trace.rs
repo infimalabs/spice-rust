@@ -13,7 +13,8 @@ use yew::prelude::*;
 
 use super::super::clock::now_millis;
 use crate::watchband::{
-    TRACE_STEP_MILLIS, TRACE_WINDOW_MILLIS, TraceActivity, TraceMarker, TraceMarkerKind, trace,
+    TRACE_STEP_MILLIS, TRACE_WINDOW_MILLIS, TraceActivity, TraceMarker, TraceMarkerKind,
+    room_activity, trace,
 };
 
 #[derive(Properties, PartialEq)]
@@ -52,7 +53,7 @@ pub(super) fn lane_activities(
         .map(|activity| TraceActivity {
             kind: activity.kind(),
             millis: activity.display_millis(),
-            bytes: activity.detail().len(),
+            bytes: activity.text_bytes(),
         })
         .chain(directions)
         .collect()
@@ -66,9 +67,6 @@ pub(crate) fn design_activities(
     runtime: &crate::AppRuntime,
     design: &wire::TaskStamp,
 ) -> Rc<[TraceActivity]> {
-    use crate::runtime::RoomEventKind;
-    use wire::AgentActivityKind;
-
     let since = now_millis() - TRACE_WINDOW_MILLIS;
     let Some(room) = runtime.room_projection().room(design) else {
         return Rc::from([]);
@@ -77,20 +75,7 @@ pub(crate) fn design_activities(
         .iter()
         .filter_map(|(publication, event)| {
             let millis = publication.micros() / 1_000;
-            let (kind, bytes) = match &event.kind {
-                RoomEventKind::Messaged { source, .. } => (
-                    AgentActivityKind::Prose,
-                    usize::try_from(source.text.end.saturating_sub(source.text.start))
-                        .unwrap_or(usize::MAX),
-                ),
-                RoomEventKind::Contributed { text, .. } => (AgentActivityKind::Tool, text.len()),
-                RoomEventKind::Published { .. } | RoomEventKind::Posted { .. } => {
-                    (AgentActivityKind::Direction, 0)
-                }
-                RoomEventKind::Coordination { .. } => (AgentActivityKind::Turn, 0),
-                RoomEventKind::Left { .. } => (AgentActivityKind::Compaction, 0),
-                RoomEventKind::PutAside { .. } => return None,
-            };
+            let (kind, bytes) = room_activity(&event.kind)?;
             (millis >= since).then_some(TraceActivity {
                 kind,
                 millis,
