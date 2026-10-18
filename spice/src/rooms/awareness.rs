@@ -474,13 +474,23 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
     let design = &request.design;
     let opportunity = match &request.opportunity {
         Opportunity::TaskCompletion { task, .. } => format!("completion of task {task}"),
+        Opportunity::TaskClaim {
+            task,
+            claim,
+            terminal,
+        } => terminal.map_or_else(
+            || format!("retained task {task} claim {claim}"),
+            |terminal| format!("terminal operation {terminal} under task {task} claim {claim}"),
+        ),
         Opportunity::Conversation { .. } => "a settled conversation message".to_owned(),
         Opportunity::DesignStatement => "this Design statement".to_owned(),
         Opportunity::ProfileReady { .. } => "the completed session profile".to_owned(),
         Opportunity::SessionResumed { .. } => "this resumed session".to_owned(),
     };
     let evidence = match &request.evidence {
-        Evidence::Task { task, .. } => format!("task {task}"),
+        Evidence::Task { task, .. } | Evidence::TaskClaim { task, .. } => {
+            format!("task {task}")
+        }
         Evidence::Conversation { source } => format!(
             "conversation member {} at byte {}",
             source.locus.member, source.locus.offset

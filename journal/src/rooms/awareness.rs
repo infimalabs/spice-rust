@@ -111,14 +111,16 @@ fn notice(
     }
     let referenced_tasks = [
         match &body.opportunity {
-            DesignNoticeOpportunity::TaskCompletion { task, .. } => Some(task),
+            DesignNoticeOpportunity::TaskCompletion { task, .. }
+            | DesignNoticeOpportunity::TaskClaim { task, .. } => Some(task),
             DesignNoticeOpportunity::Conversation { .. }
             | DesignNoticeOpportunity::DesignStatement
             | DesignNoticeOpportunity::ProfileReady { .. }
             | DesignNoticeOpportunity::SessionResumed { .. } => None,
         },
         match &body.evidence {
-            DesignNoticeEvidence::Task { task, .. } => Some(task),
+            DesignNoticeEvidence::Task { task, .. }
+            | DesignNoticeEvidence::TaskClaim { task, .. } => Some(task),
             DesignNoticeEvidence::Conversation { .. } => None,
         },
     ];

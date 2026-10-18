@@ -753,6 +753,54 @@ fn supporting_source(read: &JournalRead<'_>, request: &PlannedRequest) -> Result
                 return Err(stale("the supporting task evidence was lost or replaced"));
             }
         }
+        DesignNoticeEvidence::TaskClaim {
+            task,
+            statement,
+            claim,
+            terminal,
+        } => {
+            let statement_exists = read
+                .causal_page(*statement, journal::FactReadBudget::RETAINED)?
+                .is_some_and(|page| {
+                    page.rows.iter().any(|row| {
+                        row.seq == *statement
+                            && row.fact.revised_tasks().any(|revised| revised == task)
+                    })
+                });
+            let claim_exists = match Seq::new(claim.get()) {
+                Some(claim) => read
+                    .causal_page(claim, journal::FactReadBudget::RETAINED)?
+                    .is_some_and(|page| {
+                        page.rows.iter().any(|row| {
+                            row.seq == claim
+                                && row.fact.task_subject() == Some(task)
+                                && matches!(
+                                    row.fact.kind(),
+                                    wire::FactKind::ClaimWon
+                                        | wire::FactKind::ClaimCarried
+                                        | wire::FactKind::ClaimRebound
+                                )
+                        })
+                    }),
+                None => false,
+            };
+            let terminal_exists = match terminal {
+                Some(terminal) => read
+                    .causal_page(*terminal, journal::FactReadBudget::RETAINED)?
+                    .is_some_and(|page| {
+                        page.rows.iter().any(|row| {
+                            row.seq == *terminal
+                                && row.fact.read::<wire::body::TaskDone>().is_some_and(|done| {
+                                    done.task == *task && done.terminal.is_some()
+                                })
+                        })
+                    }),
+                None => true,
+            };
+            if !statement_exists || !claim_exists || !terminal_exists {
+                return Err(stale("the supporting task evidence was lost or replaced"));
+            }
+        }
         DesignNoticeEvidence::Conversation { source } => {
             let source_exists = read
                 .transcript_source_heads(&request.lane)?
