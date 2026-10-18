@@ -690,6 +690,50 @@
   opacity: .52;
 }
 
+.app-fact-grid dd.task-deferral {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.task-deferral > .task-deferral-time { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.task-deferral button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 0;
+  margin-block: -3px;
+  padding: 1px 7px;
+  font: inherit;
+  line-height: inherit;
+}
+.task-deferral-calendar { position: relative; display: inline-flex; flex: 0 0 auto; }
+.task-deferral-calendar svg {
+  width: 1em;
+  height: 1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+.task-deferral-calendar input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.task-deferral > .task-deferral-notice {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+
 .room-notice { margin: 0; color: var(--muted); font-size: var(--app-type-detail); }
 .room-pane-notice { flex: 0 0 auto; padding: 6px 8px; overflow-wrap: anywhere; }
 

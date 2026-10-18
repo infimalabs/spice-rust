@@ -42,6 +42,7 @@ mod card_target;
 mod clipboard;
 mod clock;
 mod connection;
+mod deferral;
 mod diagnostics;
 mod draft_handoff;
 mod drafts;

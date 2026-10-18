@@ -269,6 +269,7 @@ impl PendingKind {
             | Self::PrincipalWrite { .. }
             | Self::Draft { .. }
             | Self::Conclude { .. }
+            | Self::Deferral { .. }
             | Self::TaskRelations { .. }
             | Self::ConsentRuling { .. }
             | Self::TrustGrant { .. }
@@ -514,6 +515,17 @@ impl ClientAction {
                     .as_str()
                     .len()
                     .saturating_add(reason)
+                    .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>())
+            }
+            Self::Deferral {
+                request, expected, ..
+            } => {
+                let task = match request {
+                    crate::client_action::DeferralRequest::Wake(wake) => &wake.task,
+                    crate::client_action::DeferralRequest::Defer(defer) => &defer.task,
+                };
+                task.as_str()
+                    .len()
                     .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>())
             }
             Self::Steer {
