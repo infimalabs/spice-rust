@@ -254,12 +254,14 @@ a Design decision.
 The same read view lists every immutable proposal version. An operator uses
 native radios and text fields to accept or reject every output, optionally
 comment on each verdict and the version overall, then preview and submit one
-exact decision; Collapse remains the reason-bearing alternative. Every work
-output starts visibly **Rejected**, the conservative default that grants no
-authorization until the operator selects **Accept**. The decision and
-accepted-output authorization are one command, while every rejected output
-stays gated. A decided version is read-only. While a command is pending the
-version cannot submit again, and only committed room and board authority
+exact decision; Collapse remains the reason-bearing alternative. Output cards
+identify declared Plans and Designs by intent, and undeclared work as a task
+with its authored flow. Every work output starts visibly **Rejected**, the
+conservative default that grants no authorization until the operator selects
+**Accept**. The decision and accepted-output authorization are one command,
+while every rejected output stays gated. A decided version is read-only. While
+a command is pending, the version cannot submit again, and only committed room
+and board authority
 changes its standing. A version its author withdrew leaves the open list and
 the open count for a separate **Withdrawn versions** history that names its
 author, age, reason, and withdrawal fact and offers no decision control, so the
