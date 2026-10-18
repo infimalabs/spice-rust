@@ -332,6 +332,59 @@ fn a_command_keeps_the_multiplicity_its_canonical_bytes_keep() {
         "equality must keep the multiplicity the bytes keep",
     );
 }
+/// Parsing does not repair another valid timestamp spelling into WIRE's one spelling.
+#[test]
+fn an_instant_admits_only_utc_millisecond_text() {
+    let canonical = "2030-04-12T18:44:09.271Z";
+    assert_eq!(
+        canonical
+            .parse::<Instant>()
+            .expect("canonical instant")
+            .to_string(),
+        canonical,
+    );
+
+    for text in [
+        "2030-04-12T18:44:09.271+00:00",
+        "2030-04-12T18:44:09Z",
+        "2030-04-12T18:44:09.271828Z",
+        "2030-04-12T18:44:09.271z",
+        "2030-04-12 18:44:09.271Z",
+        "2030-04-12T18:44:09.271Z ",
+    ] {
+        assert_eq!(
+            text.parse::<Instant>(),
+            Err(wire::IdentError::Instant(text.to_owned())),
+            "{text:?} must be refused rather than repaired",
+        );
+    }
+}
+
+/// Construction narrows clock precision before the generic identity law sees a value.
+#[test]
+fn instant_construction_floors_to_the_wire_millisecond() {
+    for (reading, spelling) in [
+        ("2030-04-12T18:44:09.271828Z", "2030-04-12T18:44:09.271Z"),
+        ("1969-12-31T23:59:59.999999Z", "1969-12-31T23:59:59.999Z"),
+    ] {
+        let timestamp = reading.parse::<jiff::Timestamp>().expect("timestamp");
+        let narrowed = Instant::new(timestamp).expect("timestamp is in the wire year range");
+
+        assert_eq!(narrowed.to_string(), spelling);
+        assert!(
+            narrowed.get() <= timestamp,
+            "flooring must not move {reading} forward",
+        );
+    }
+
+    assert!(
+        matches!(
+            Instant::new(jiff::Timestamp::MIN),
+            Err(wire::IdentError::Instant(spelling)) if spelling.starts_with('-')
+        ),
+        "an extended negative year has no admitted wire spelling",
+    );
+}
 
 /// Parse a timestamp fixture and narrow it the way the wire admits one.
 fn instant(text: &str) -> Instant {
