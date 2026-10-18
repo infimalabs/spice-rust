@@ -430,28 +430,30 @@ A card's linked relative age is its permalink. Arriving through it outlines
 the card briefly, then fades the outline (cleared at once without motion), and
 focuses the card without a visible focus ring.
 
-## Team activity traces
+## Team and group activity traces
 
-Each team pip is a hairline glass pane whose 1px physical-left rail carries the
-lane's status; the pip keeps its accessible status label and the trace inside
-is decorative. The trace spans the ten minutes ending now: prose, tool, and
-reasoning notes in three rows at their display instants, joined in time order
-by one faint step thread, with full-height markers for turn, operator
-direction, provider failure, compaction, fresh session, and sign-out. A note's
-length grows with its text, and it stops a pixel short of the next note in its
-row. Neighbouring notes in a row stand at least two pixels apart and never leave
-the pane: a closer burst keeps its newest note at its instant, steps older ones
-back, and packs against the pane's left edge. A row holding more notes than its
-width fits at that pitch folds the oldest into one wider overflow note fading in
-from the left edge, so its newest calls stay countable even in a six-agent team.
-The trace draws only retained lane activity and direction cards, issues no
-requests, and redraws on new activity and every few seconds, so old activity
-leaves without a new frame.
+Each team or working-group pip is an etched well: a darkened pane with a soft
+lip under its top edge and a light catch along its bottom, its status on a
+quote-rail-wide physical-left rail rounded by its own width. The pip keeps its
+accessible status label and the trace inside is decorative. The trace spans the
+ten minutes ending now. Each kind of work with recent activity, reasoning,
+tool, and prose, draws one smoothed curve over a fill fading toward the floor,
+ending in a dot at now; in the dark theme the curves glow. A curve's height is
+that kind's recent rate on one fixed scale shared by every pip, each activity
+weighted by its text, through a kernel that slides with time so redraws move
+the curve smoothly. Turn, operator direction, provider failure, compaction,
+fresh session, and sign-out draw as markers over the curves. The trace draws
+only state the browser already holds, issues no requests, and redraws on new
+activity and every few seconds, so old activity leaves without a new frame.
 
-The app's `style-src 'self'` policy refuses inline style attributes, so trace
-positions reach CSS as custom properties written through the CSSOM. A
-Playwright check of the trace must keep that policy enforced: a context with
-`bypassCSP` hides a trace that would draw nothing in production.
+The app's `style-src 'self'` policy refuses inline style attributes, so the
+trace is SVG geometry in the pane's measured CSS pixels and every colour and
+glow comes from the stylesheet. A Playwright check of the trace must keep that
+policy enforced: a context with `bypassCSP` would hide a trace that draws
+nothing in production.
 
-Working-group Design pips do not trace; they keep their filled cells and the
-passive Design's inset ring.
+A working group's pips are the same traced wells, one per Design, with the
+Design's standing on the rail. A Design's trace reads its room's events as a
+lane's activity: an agent's words are prose, a lane's contribution is work, a
+human's words are direction, a coordination opens a turn, and a lane's
+departure divides the room as a compaction divides a lane.
