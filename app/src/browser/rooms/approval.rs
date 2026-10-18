@@ -4,6 +4,7 @@
 //! A version its author withdrew stays in history, apart from the open
 //! versions, and offers no decision.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
@@ -592,12 +593,14 @@ fn render_output(
         };
     };
     let statement = &task.statement.body;
+    let kind = output_kind(task);
     let standing = output_standing(task, context.design);
     html! {
         <li data-approval-output={output.to_string()}>
             <div class="room-approval-output-title">
                 <strong>{task.presentation_title.clone()}</strong>
                 <code>{statement.handle.to_string()}</code>
+                <span data-approval-output-kind="">{kind}</span>
                 <span>{standing}</span>
             </div>
             if let Some(description) = statement.description.as_deref() {
@@ -612,6 +615,23 @@ fn render_output(
                 <p class="room-approval-acceptance">{"No acceptance criteria recorded."}</p>
             }
         </li>
+    }
+}
+
+fn output_kind(task: &BoardTask) -> Cow<'static, str> {
+    match task.statement.body.intent {
+        Some(wire::TaskIntent::Plan) => Cow::Borrowed("Plan"),
+        Some(wire::TaskIntent::Design | wire::TaskIntent::OpportunisticDesign) => {
+            Cow::Borrowed("Design")
+        }
+        None => {
+            let mut label = String::from("Task");
+            for (index, phase) in task.workflow.body.flow.iter().enumerate() {
+                label.push_str(if index == 0 { " · " } else { " → " });
+                label.push_str(phase.as_str());
+            }
+            Cow::Owned(label)
+        }
     }
 }
 
