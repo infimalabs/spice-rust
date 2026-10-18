@@ -487,6 +487,8 @@ path.image-annotation-hit { fill: none; }
   grid-column: 2; inline-size: var(--team-control-inline-size); min-width: 0; margin: 0; padding: 0;
 }
 .team-lights > .app-presence-pip--status { width: auto; height: auto; min-width: 0; min-height: 0; border-radius: 0; }
+/* Filled cells paint only inside the lights box; a passive Design keeps its inset ring. */
+.team-lights > .app-presence-pip--status:not(.group-design-pip.passive) { box-shadow: none; }
 /* Preserve bottom-to-top order; center the shorter row for three and five. */
 .team-lights > :nth-child(odd of .app-presence-pip) { grid-row: 2; }
 .team-lights > :nth-child(even of .app-presence-pip) { grid-row: 1; }
