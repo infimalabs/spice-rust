@@ -228,6 +228,14 @@ composed selections remain browser-local and release a Work URL before opening.
 The complete route grammar and overview behavior live in
 [`app/OVERVIEW.md`](../../app/OVERVIEW.md#task-overview).
 
+The command bar presents execution work from the left and Design planning from
+the right. The mirrored Design rail retains each named stem's leading
+open-task count, uses RTL container order with LTR tab contents to keep its
+right-hand edge initially visible through overflow, and fuses its stem tabs
+with the aggregate total. Only the strip's two outside edges carry rails and
+rounded corners. Counts, danger marks, titles, and navigation retain the exact
+scope each tab names.
+
 ## Kept jobs
 
 The occupant's `job` tool reads the same contract. Its default `list` is every
