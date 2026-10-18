@@ -27,10 +27,7 @@ use tools::{
     TASK_DONE_TOOLS, TASK_GIT_TOOLS, UP_TOOLS,
 };
 #[cfg(test)]
-use tools::{
-    ToolBounds, ToolCancellation, ToolMode, ToolNetwork, ToolRequirement, ToolSource,
-    posture_violations,
-};
+use tools::{ToolBounds, ToolCancellation, ToolNetwork, posture_violations};
 
 /// The renderer flag, spelled once so its registration and its reader cannot
 /// drift into naming two different arguments that merely agree today.

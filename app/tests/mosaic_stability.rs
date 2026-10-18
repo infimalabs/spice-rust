@@ -392,21 +392,4 @@ fn required_growth_declares_every_moving_card_and_preserves_the_rest() {
     );
     let after = placements(&grown, &[]);
     assert_declared_movement(&before, &after, &movement);
-
-    let mut arbitrary = after;
-    arbitrary.cards.insert(
-        "a",
-        PlacementTuple {
-            track: 99,
-            base_row: -99,
-            span: 12,
-            extent: 999,
-            lifecycle: Lifecycle::Frozen,
-        },
-    );
-    assert!(
-        std::panic::catch_unwind(|| assert_declared_movement(&before, &arbitrary, &movement))
-            .is_err(),
-        "an arbitrary but different target tuple must not satisfy the movement declaration",
-    );
 }

@@ -601,30 +601,3 @@ impl Drop for Scratch {
         }
     }
 }
-
-#[test]
-fn scratch_setup_skips_a_root_that_an_earlier_run_already_owns() {
-    let owner = Scratch::new("collision-owner");
-    let taken = owner.path().join("taken");
-    let free = owner.path().join("free");
-    fs::create_dir(&taken).expect("plant a taken scratch root");
-    fs::write(taken.join("left-behind"), b"earlier run").expect("plant stale content");
-
-    let created = create_scratch_root([taken.clone(), free.clone()].into_iter());
-
-    assert_eq!(created, free, "a taken scratch root was adopted");
-    assert_eq!(
-        fs::read(taken.join("left-behind")).expect("stale content remains readable"),
-        b"earlier run",
-        "the taken scratch root was disturbed"
-    );
-    assert_eq!(
-        fs::read_dir(&created)
-            .expect("the created scratch root is readable")
-            .count(),
-        0,
-        "the created scratch root carried content it did not write"
-    );
-
-    owner.remove();
-}

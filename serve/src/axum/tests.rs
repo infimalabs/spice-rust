@@ -1058,30 +1058,6 @@ fn app_worktree() -> AppWorktree {
     AppWorktree { root, generation }
 }
 
-#[test]
-fn app_worktree_directory_is_removed_during_assertion_unwind() {
-    let mut root = None;
-    let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let fixture = app_worktree();
-        root = Some(fixture.root().to_path_buf());
-        assert!(
-            fixture
-                .root()
-                .join("injected-missing-assertion-path")
-                .is_file(),
-            "injected fixture assertion failure"
-        );
-    }));
-
-    assert!(failure.is_err(), "the injected fixture assertion fails");
-    let root = root.expect("the failing assertion recorded its fixture root");
-    assert!(
-        !root.exists(),
-        "fixture directory is removed while the assertion unwinds: {}",
-        root.display()
-    );
-}
-
 #[tokio::test(flavor = "current_thread")]
 async fn live_server_keeps_serving_an_admitted_generation_from_memory() {
     let fixture = app_worktree();

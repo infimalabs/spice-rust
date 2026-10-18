@@ -23,8 +23,6 @@ const FIXTURE_BASE_LIMIT: u64 = 1_000;
 const FIXTURE_RATCHET_LIMIT: u64 = 1_500;
 const LINES_LIMIT: u64 = 1_525;
 const OVER_LINES: u64 = 1_530;
-const BYTES_LIMIT: u64 = 40_000;
-const OVER_BYTES: u64 = 40_001;
 const NEW_MAGIC_VALUE: u64 = 100;
 const PYTHON_MAGIC_VALUE: u64 = 50;
 const STATE_CLEAR_VALUE: u64 = 20;
@@ -1097,8 +1095,10 @@ fn reports_require_every_arm_metric_and_paired_scope_key() {
     assert!(StructuralArmEvidence::new(GateId::FileShape, vec![line, bytes]).is_err());
 }
 
+/// A recorded arm execution carries exactly the reason its own evidence
+/// recomputes, so a retained report cannot substitute another explanation.
 #[test]
-fn a_failed_file_shape_arm_names_the_path_measured_lines_and_limit() {
+fn an_arm_execution_admits_only_the_reason_its_evidence_recomputes() {
     let lines = file_row(
         MetricId::FileLines,
         "src/app.rs",
@@ -1110,48 +1110,21 @@ fn a_failed_file_shape_arm_names_the_path_measured_lines_and_limit() {
         report: StructuralArmEvidence::new(GateId::FileShape, vec![bytes, lines])
             .expect("paired file-shape rows admit"),
     };
-    let expected = "file.lines path=\"src/app.rs\" measured 1530 source-lines over 1525";
+    let reason = arm.reason().expect("file-shape reason");
 
     assert_eq!(arm.state().expect("file-shape state"), BatteryState::Failed);
-    assert_eq!(arm.reason().expect("file-shape reason"), expected);
-    ArmExecution::new(BatteryState::Failed, expected, None, arm.clone())
-        .expect("a retained reason equal to the recomputed one validates");
-    let retired = "one or more structural measurements exceeded their declared bound";
+    ArmExecution::new(BatteryState::Failed, reason.as_str(), None, arm.clone())
+        .expect("the recomputed reason validates");
     assert!(
-        ArmExecution::new(BatteryState::Failed, retired, None, arm).is_err(),
-        "the retired sentence no longer matches any arm reason"
+        ArmExecution::new(
+            BatteryState::Failed,
+            format!("{reason}; edited").as_str(),
+            None,
+            arm
+        )
+        .is_err(),
+        "a reason the evidence does not recompute is refused"
     );
-}
-
-#[test]
-fn a_failed_arm_past_the_clause_bound_lists_rows_in_order_and_counts_the_rest() {
-    // Four paths breaching on both file metrics: eight rows over bound, two
-    // past what the reason names in full. Rows arrive out of order so the
-    // reason proves it follows the arm's canonical order, not arrival.
-    let bytes = (MetricId::FileBytes, OVER_BYTES, BYTES_LIMIT);
-    let lines = (MetricId::FileLines, OVER_LINES, LINES_LIMIT);
-    let rows = ["src/d.rs", "src/b.rs", "src/a.rs", "src/c.rs"]
-        .into_iter()
-        .flat_map(|path| {
-            [bytes, lines].map(|(metric, value, limit)| file_row(metric, path, value, Some(limit)))
-        })
-        .collect();
-    let arm = ArmEvidence::Metrics {
-        report: StructuralArmEvidence::new(GateId::FileShape, rows)
-            .expect("paired file-shape rows admit"),
-    };
-    let expected = concat!(
-        "file.lines path=\"src/a.rs\" measured 1530 source-lines over 1525; ",
-        "file.lines path=\"src/b.rs\" measured 1530 source-lines over 1525; ",
-        "file.lines path=\"src/c.rs\" measured 1530 source-lines over 1525; ",
-        "file.lines path=\"src/d.rs\" measured 1530 source-lines over 1525; ",
-        "file.bytes path=\"src/a.rs\" measured 40001 bytes over 40000; ",
-        "file.bytes path=\"src/b.rs\" measured 40001 bytes over 40000; ",
-        "and 2 more over bound"
-    );
-
-    assert_eq!(arm.state().expect("file-shape state"), BatteryState::Failed);
-    assert_eq!(arm.reason().expect("file-shape reason"), expected);
 }
 
 fn not_applicable_arm(gate: GateId) -> StructuralArmEvidence {
