@@ -1282,16 +1282,15 @@ fn accept_commit_turn(
             diagnostic,
         )?,
     }
-    if changes.as_ref().is_none_or(|changes| changes.authority) {
-        design_input::reconcile(
-            bus,
-            command_surface.paths,
-            command_surface.config,
-            seats,
-            design_completions,
-            diagnostic,
-        )?;
-    }
+    design_input::reconcile(
+        bus,
+        command_surface.paths,
+        command_surface.config,
+        seats,
+        design_completions,
+        message_state,
+        diagnostic,
+    )?;
     room_relevance::reconcile(bus, command_surface.epoch(), diagnostic)?;
     room_automation::reconcile(
         bus,

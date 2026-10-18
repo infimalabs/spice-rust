@@ -194,6 +194,53 @@ fn relevance_is_the_best_view_unchanged_by_unrelated_or_repeated_evidence() {
 }
 
 #[test]
+fn each_evidence_class_keeps_its_newest_distinct_cards() {
+    let mut profile = EvidenceProfile::default();
+    for key in 0..=TASK_CARDS {
+        profile
+            .insert(Evidence::task(
+                key,
+                &format!("task evidence number {key}"),
+                None,
+                &[],
+                "checked",
+            ))
+            .unwrap();
+    }
+    for key in 0..=CONVERSATION_CARDS {
+        let prose = format!(
+            "{} distinct{key}",
+            words(key * 20..key * 20 + MESSAGE_TERMS)
+        );
+        profile
+            .insert(Evidence::conversation(
+                1_000 + key,
+                &Conversation::read(&prose).unwrap(),
+            ))
+            .unwrap();
+    }
+
+    let tasks = profile
+        .evidence()
+        .filter(|evidence| evidence.kind() == Kind::Task)
+        .map(|evidence| *evidence.key())
+        .collect::<Vec<_>>();
+    let conversations = profile
+        .evidence()
+        .filter(|evidence| evidence.kind() == Kind::Conversation)
+        .map(|evidence| *evidence.key())
+        .collect::<Vec<_>>();
+    assert_eq!(tasks, (1..=TASK_CARDS).rev().collect::<Vec<_>>());
+    assert_eq!(
+        conversations,
+        (1..=CONVERSATION_CARDS)
+            .rev()
+            .map(|key| 1_000 + key)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ties_prefer_the_lower_design_then_the_newer_card_then_the_earlier_view() {
     let subject = "snapshot cursor publication boundary retention paging";
     let frequency = FrequencyProfile::of([TermCounts::from_texts([subject])]);

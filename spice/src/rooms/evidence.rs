@@ -33,6 +33,10 @@ pub const CONVERSATION_BYTES: usize = 4 * 1024;
 pub const PASSAGE_TERMS: usize = 12;
 /// Most passage views one conversation card keeps, in document order.
 pub const MESSAGE_PASSAGES: usize = 4;
+/// Most distinct successful task cards one session profile retains.
+pub const TASK_CARDS: usize = 32;
+/// Most distinct conversation cards one session profile retains.
+pub const CONVERSATION_CARDS: usize = 64;
 /// Fewest distinct terms cleaned prose needs before it is evidence at all.
 ///
 /// A short substantive note can be the only place a session explained a
@@ -40,9 +44,6 @@ pub const MESSAGE_PASSAGES: usize = 4;
 /// so admission uses the same bound as a passage: a message that could not be
 /// one coherent passage carries too little to match on. Acknowledgement-only
 /// replies fall below it once their headers are cut.
-///
-/// TODO(design-invitations): validate this admission bound against fresh
-/// labeled short notes; the audit left it as an explicit open decision.
 pub const MESSAGE_TERMS: usize = PASSAGE_TERMS;
 
 /// Which rendering of one card a score was computed against.
@@ -57,10 +58,33 @@ pub enum View {
     /// One paragraph or list item of a message, by retained position.
     Passage(u8),
 }
+/// Retention class of one evidence card.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A successful task completion.
+    Task,
+    /// One settled assistant-authored message.
+    Conversation,
+}
 
 /// Content identity of one card; equal digests are exact repeats.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Digest([u8; 32]);
+
+impl Digest {
+    /// Lowercase hexadecimal spelling suitable for a durable source witness.
+    #[must_use]
+    pub fn to_hex(self) -> String {
+        blake3::Hash::from_bytes(self.0).to_hex().to_string()
+    }
+
+    /// Raw BLAKE3 output for binding this process-local digest into a durable
+    /// domain-separated identity.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
 
 /// Settled authored prose reduced to what its author wrote, within
 /// [`CONVERSATION_BYTES`].
@@ -127,6 +151,7 @@ impl Conversation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Evidence<K> {
     key: K,
+    kind: Kind,
     digest: Digest,
     views: Vec<(View, TermCounts)>,
 }
@@ -153,6 +178,7 @@ impl<K> Evidence<K> {
         digest_field(&mut hasher, validation.as_bytes());
         Self {
             key,
+            kind: Kind::Task,
             digest: Digest(*hasher.finalize().as_bytes()),
             views: vec![
                 (
@@ -180,6 +206,7 @@ impl<K> Evidence<K> {
             .collect();
         Self {
             key,
+            kind: Kind::Conversation,
             digest: Digest(*hasher.finalize().as_bytes()),
             views,
         }
@@ -196,8 +223,13 @@ impl<K> Evidence<K> {
     pub fn digest(&self) -> Digest {
         self.digest
     }
-}
 
+    /// The retention class of this card.
+    #[must_use]
+    pub const fn kind(&self) -> Kind {
+        self.kind
+    }
+}
 /// One passive Design, weighted under the fit the profile is scored against.
 pub struct DesignCandidate<'a, T> {
     identity: &'a TaskStamp,
@@ -225,14 +257,16 @@ pub struct ProfileMatch<'p, 'a, K, T> {
     pub evidence: &'p K,
     /// The winning view of that card.
     pub view: View,
+    /// Content identity of the winning card.
+    pub digest: Digest,
     /// The winning cosine, at least [`MATCH_SCORE_FLOOR`].
     pub score: f64,
     /// The strongest shared terms, sorted.
     pub terms: Vec<String>,
 }
 
-/// One session's retained evidence, oldest first, with derived vectors cached
-/// per frequency generation.
+/// One session's retained evidence, stored oldest first, with derived vectors
+/// cached per frequency generation.
 #[derive(Debug)]
 pub struct EvidenceProfile<K> {
     cards: Vec<Card<K>>,
@@ -265,16 +299,35 @@ impl<K> EvidenceProfile<K> {
         {
             return Err(evidence);
         }
+        let kind = evidence.kind;
         self.cards.push(Card {
             evidence,
             prepared: None,
         });
+        let limit = match kind {
+            Kind::Task => TASK_CARDS,
+            Kind::Conversation => CONVERSATION_CARDS,
+        };
+        if self
+            .cards
+            .iter()
+            .filter(|card| card.evidence.kind == kind)
+            .count()
+            > limit
+        {
+            let oldest = self
+                .cards
+                .iter()
+                .position(|card| card.evidence.kind == kind)
+                .expect("the overfull evidence class has an oldest card");
+            self.cards.remove(oldest);
+        }
         Ok(())
     }
 
-    /// Retained cards, oldest first.
-    pub fn evidence(&self) -> impl Iterator<Item = &Evidence<K>> {
-        self.cards.iter().map(|card| &card.evidence)
+    /// Retained cards, newest first.
+    pub fn evidence(&self) -> impl DoubleEndedIterator<Item = &Evidence<K>> {
+        self.cards.iter().rev().map(|card| &card.evidence)
     }
 
     /// The Design this profile is most relevant to under `frequency`.
@@ -346,6 +399,7 @@ impl<K> EvidenceProfile<K> {
             design: best.design,
             evidence: &card.evidence.key,
             view: card.evidence.views[best.view].0,
+            digest: card.evidence.digest,
             score: best.score,
             terms: best.vector.explanation(vector),
         }))

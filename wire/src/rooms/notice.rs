@@ -65,8 +65,9 @@ pub enum DesignNoticeOpportunity {
     Conversation { source: DesignConversationEvidence },
     /// The selected Design was filed or revised.
     DesignStatement,
-    /// A bounded profile warm finished through this journal position.
-    ProfileReady { horizon: Seq },
+    /// A bounded profile warm finished, optionally through its newest journal
+    /// fact when the profile has task history.
+    ProfileReady { horizon: Option<Seq> },
     /// The same continuing session resumed at this declaration.
     SessionResumed { declaration: Seq },
 }

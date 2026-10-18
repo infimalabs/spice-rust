@@ -1,10 +1,10 @@
-//! `spice room awareness HANDLE`: completion requests recorded for one Design.
+//! `spice room awareness HANDLE`: session-profile requests for one Design.
 //!
-//! Each row is one admitted `room::noticed` record, oldest first: the lane and
-//! occupant requested, the completed task and claim it served, the exact Design
-//! statement evaluated, and the matched terms as every surface shows them,
-//! distinct and capped. Rows page whole in journal order; a page that
-//! withholds any continues at the first withheld one. Reading changes nothing.
+//! Each row is one admitted `room::noticed` record, oldest first: the requested
+//! lane and continuing vendor session, the exact opportunity, supporting task
+//! or conversation evidence, Design statement, and matched terms as every
+//! surface shows them. Rows page whole in journal order; a page that withholds
+//! any continues at the first withheld one. Reading changes nothing.
 
 use std::fmt;
 

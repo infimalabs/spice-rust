@@ -251,6 +251,13 @@ struct Indexes {
         ),
         journal::crossing::rooms::DesignSession,
     >,
+    occupant_session_declarations: HashMap<
+        (
+            journal::crossing::CanonicalUuid,
+            journal::crossing::CanonicalUuid,
+        ),
+        journal::crossing::Seq,
+    >,
     session_declarations: HashMap<
         (
             journal::crossing::CanonicalUuid,
@@ -361,6 +368,8 @@ impl Indexes {
             };
             self.lane_sessions
                 .insert((declared.lane, declared.occupant), session.clone());
+            self.occupant_session_declarations
+                .insert((declared.lane, declared.occupant), row.seq);
             self.session_declarations
                 .entry((declared.lane, session))
                 .or_insert(row.seq);
@@ -867,6 +876,19 @@ impl TaskFacts {
         occupant: journal::crossing::CanonicalUuid,
     ) -> Option<&journal::crossing::rooms::DesignSession> {
         self.indexes.lane_sessions.get(&(lane, occupant))
+    }
+
+    /// Exact declaration that bound this lane occupant to its vendor session.
+    #[must_use]
+    pub fn lane_session_declaration(
+        &self,
+        lane: journal::crossing::CanonicalUuid,
+        occupant: journal::crossing::CanonicalUuid,
+    ) -> Option<journal::crossing::Seq> {
+        self.indexes
+            .occupant_session_declarations
+            .get(&(lane, occupant))
+            .copied()
     }
 
     /// Exact vendor session identity declared for one lane occupant, if any.

@@ -16,6 +16,8 @@ pub struct TranscriptSession {
     pub occupant: CanonicalUuid,
     /// Vendor whose dialect decodes this session.
     pub vendor: String,
+    /// Exact resumable vendor-session identity.
+    pub identity: String,
     /// Worktree bound to this session.
     pub worktree: PathBuf,
 }
@@ -53,6 +55,7 @@ impl TranscriptSessions {
                 TranscriptSession {
                     occupant: session.occupant,
                     vendor: session.vendor.to_string(),
+                    identity: session.identity,
                     worktree: session.worktree.into(),
                 },
             );

@@ -1,5 +1,5 @@
-//! Completion-bound Design requests are durable, singular, and released by
-//! either substantive room publication or a Design standing change.
+//! Session-profile Design requests are durable, singular, and released by
+//! substantive room publication, source replacement, or a Design standing change.
 
 use wire::rooms::DesignNoticed;
 
@@ -417,15 +417,28 @@ impl Lanes {
         seats: &Seats,
         completions: &mut crate::resident::design_awareness::CompletionCursor,
     ) {
+        let profiles =
+            std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+        self.reconcile_profiles(config, seats, completions, &profiles);
+    }
+
+    fn reconcile_profiles(
+        &self,
+        config: &SurfaceConfig,
+        seats: &Seats,
+        completions: &mut crate::resident::design_awareness::CompletionCursor,
+        profiles: &std::sync::Mutex<crate::resident::message_surface::MessageState>,
+    ) {
         let mut diagnostics = Vec::new();
         crate::resident::design_awareness::reconcile(
             &self.bus,
             config,
             seats,
             completions,
+            profiles,
             &mut diagnostics,
         )
-        .expect("completion awareness reconciles");
+        .expect("Design awareness reconciles");
         assert!(
             diagnostics.is_empty(),
             "{}",
@@ -453,27 +466,10 @@ impl Lanes {
             _ => None,
         }
     }
-
-    /// `task next` admitted from a snapshot taken before later commits.
-    fn next_from(
-        &self,
-        config: &SurfaceConfig,
-        observed: &bus::TaskSnapshot,
-        lane: u8,
-    ) -> Result<Option<wire::intent::NextWorkState>, Outcome<wire::intent::CommandAnswer>> {
-        crate::board_command::read_next_work(
-            &self.bus,
-            observed,
-            Actor::Lane(test_uuid(lane)),
-            &config.projects,
-            &config.allocation,
-        )
-        .map(|answer| answer.next)
-    }
 }
 
 #[test]
-fn only_a_completion_owes_the_best_single_design_request() {
+fn a_completion_profile_opportunity_selects_the_best_single_design() {
     let lanes = Lanes::new("design-request-completion");
     align_completion_lane(&lanes);
     let config = surface(&lanes);
@@ -492,6 +488,9 @@ fn only_a_completion_owes_the_best_single_design_request() {
         "Page cursor proposal",
         "Retained cursor notes for one lane.",
     );
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
 
     assert!(
         lanes.noticed().is_empty(),
@@ -506,6 +505,7 @@ fn only_a_completion_owes_the_best_single_design_request() {
     );
 
     lanes.complete(&task, MATCHING);
+    lanes.reconcile_completions(&config, &seated, &mut completions);
     let request = lanes
         .request(&config, FIRST)
         .expect("completion returns its owed Design");
@@ -536,121 +536,84 @@ fn only_a_completion_owes_the_best_single_design_request() {
         1,
         "one completion records at most one request"
     );
+    seated.release_all();
     lanes.finish();
 }
 
 #[test]
-fn resident_and_next_use_the_same_tfidf_statement_window() {
-    let mut selected = None;
-    for (tag, next_first) in [
-        ("design-request-common-next-first", true),
-        ("design-request-common-resident-first", false),
-    ] {
-        let lanes = Lanes::new(tag);
-        align_completion_lane(&lanes);
-        let config = surface(&lanes);
-        for index in 0..8 {
-            let stamp = wire::TaskStamp::for_micros(20_000 + index)
-                .expect("fixture stamp")
-                .to_string();
-            let task = lanes.seed_task(
-                &stamp,
-                "Lane room cursor retained publication bounded",
-                None,
-                None,
-                Some(test_uuid(FIRST)),
-            );
-            lanes.complete(&task, "fixture completion");
-        }
+fn profile_selection_uses_the_shared_tfidf_statement_window() {
+    let lanes = Lanes::new("design-request-common-profile");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    for index in 0..8 {
+        let stamp = wire::TaskStamp::for_micros(20_000 + index)
+            .expect("fixture stamp")
+            .to_string();
         let task = lanes.seed_task(
-            "dVrD245Kc",
+            &stamp,
             "Lane room cursor retained publication bounded",
-            Some("Catchup pagination snapshot."),
+            None,
             None,
             Some(test_uuid(FIRST)),
         );
-        let _generic = lanes.design(
-            "dVrD245Kd",
-            "Lane notes",
-            "A lane retains ordinary room notes.",
-        );
-        let distinctive = lanes.design(
-            "dVrD245Km",
-            "Catchup pagination snapshot",
-            "Catchup pagination snapshot.",
-        );
-        let mut completions =
-            crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
-                .expect("completion cursor starts");
-        let mut seated = claimant_seats();
-
-        lanes.complete(&task, "Catchup pagination snapshot.");
-        let request = if next_first {
-            let request = lanes
-                .request(&config, FIRST)
-                .expect("task next chooses the distinctive Design");
-            lanes.reconcile_completions(&config, &seated, &mut completions);
-            request
-        } else {
-            lanes.reconcile_completions(&config, &seated, &mut completions);
-            lanes
-                .request(&config, FIRST)
-                .expect("resident choice is returned by task next")
-        };
-
-        assert_eq!(request.design, distinctive);
-        assert_eq!(request.terms, ["catchup", "pagination", "snapshot"]);
-        let notices = lanes.noticed();
-        assert_eq!(notices.len(), 1);
-        assert_eq!(notices[0].design, stamp(&distinctive));
-        assert_eq!(notices[0].terms, request.terms);
-        if let Some(previous) = &selected {
-            assert_eq!(
-                previous, &request.terms,
-                "both execution orders choose the same matched terms"
-            );
-        } else {
-            selected = Some(request.terms);
-        }
-        seated.release_all();
-        lanes.finish();
+        lanes.complete(&task, "fixture completion");
     }
+    let task = lanes.seed_task(
+        "dVrD245Kc",
+        "Lane room cursor retained publication bounded",
+        Some("Catchup pagination snapshot."),
+        None,
+        Some(test_uuid(FIRST)),
+    );
+    let _generic = lanes.design(
+        "dVrD245Kd",
+        "Lane notes",
+        "A lane retains ordinary room notes.",
+    );
+    let distinctive = lanes.design(
+        "dVrD245Km",
+        "Catchup pagination snapshot",
+        "Catchup pagination snapshot.",
+    );
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+
+    lanes.complete(&task, "Catchup pagination snapshot.");
+    lanes.reconcile_completions(&config, &seated, &mut completions);
+    let request = lanes
+        .request(&config, FIRST)
+        .expect("resident choice is returned by task next");
+
+    assert_eq!(request.design, distinctive);
+    assert_eq!(request.terms, ["catchup", "pagination", "snapshot"]);
+    let notices = lanes.noticed();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].design, stamp(&distinctive));
+    assert_eq!(notices[0].terms, request.terms);
+    seated.release_all();
+    lanes.finish();
 }
 
 #[test]
-fn resident_and_next_orders_record_one_request() {
-    for (tag, next_first) in [
-        ("design-request-next-first", true),
-        ("design-request-resident-first", false),
-    ] {
-        let lanes = Lanes::new(tag);
-        align_completion_lane(&lanes);
-        let config = surface(&lanes);
-        let task = lanes.claimed("dVrD245Kc", FIRST);
-        let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
-        let mut completions =
-            crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
-                .expect("completion cursor starts");
-        let mut seated = claimant_seats();
-        lanes.complete(&task, MATCHING);
-        let request = if next_first {
-            assert!(lanes.noticed().is_empty());
-            let request = lanes
-                .request(&config, FIRST)
-                .expect("task next records and returns the request");
-            lanes.reconcile_completions(&config, &seated, &mut completions);
-            request
-        } else {
-            lanes.reconcile_completions(&config, &seated, &mut completions);
-            lanes
-                .request(&config, FIRST)
-                .expect("task next returns the resident's request")
-        };
-        assert_eq!(request.design, design);
-        assert_eq!(lanes.noticed().len(), 1);
-        seated.release_all();
-        lanes.finish();
-    }
+fn resident_records_one_request_before_task_next_reads_it() {
+    let lanes = Lanes::new("design-request-resident-first");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let task = lanes.claimed("dVrD245Kc", FIRST);
+    let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+    lanes.complete(&task, MATCHING);
+    lanes.reconcile_completions(&config, &seated, &mut completions);
+    let request = lanes
+        .request(&config, FIRST)
+        .expect("task next returns the resident's request");
+    assert_eq!(request.design, design);
+    assert_eq!(lanes.noticed().len(), 1);
+    seated.release_all();
+    lanes.finish();
 }
 
 #[test]
@@ -660,17 +623,24 @@ fn contribution_discharges_the_request_and_suppresses_that_design_forever() {
     let config = surface(&lanes);
     let task = lanes.claimed("dVrD245Kc", FIRST);
     let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
     lanes.complete(&task, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert!(lanes.request(&config, FIRST).is_some());
 
     lanes.contribute(50, &config, FIRST, &design);
     assert!(lanes.request(&config, FIRST).is_none());
     let later = lanes.claimed("dVrD245Kp", FIRST);
     lanes.complete(&later, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert!(
         lanes.request(&config, FIRST).is_none(),
         "a lane is never asked about a Design it published in"
     );
+    seated.release_all();
     lanes.finish();
 }
 
@@ -681,9 +651,14 @@ fn an_asked_lane_hears_later_posts_until_it_leaves_and_is_never_asked_again() {
     let config = surface(&lanes);
     let task = lanes.claimed("dVrD245Kc", FIRST);
     let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
     assert!(lanes.post_listeners(70, &config, &design).is_empty());
 
     lanes.complete(&task, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert!(lanes.request(&config, FIRST).is_some());
     assert_eq!(
         lanes.post_listeners(71, &config, &design),
@@ -694,8 +669,10 @@ fn an_asked_lane_hears_later_posts_until_it_leaves_and_is_never_asked_again() {
     assert!(lanes.post_listeners(73, &config, &design).is_empty());
     let later = lanes.claimed("dVrD245Kp", FIRST);
     lanes.complete(&later, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert!(lanes.request(&config, FIRST).is_none());
     assert!(lanes.post_listeners(74, &config, &design).is_empty());
+    seated.release_all();
     lanes.finish();
 }
 
@@ -713,7 +690,11 @@ fn active_standing_releases_an_unanswered_request() {
         &design,
         wire::rooms::WorkingGroupStance::Passive,
     );
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
     lanes.complete(&task, MATCHING);
+    lanes.reconcile_completions(&config, &seated, &mut completions);
     assert_eq!(
         lanes
             .request(&config, FIRST)
@@ -727,6 +708,7 @@ fn active_standing_releases_an_unanswered_request() {
         lanes.request(&config, FIRST).is_none(),
         "an active Design no longer owes the passive request"
     );
+    seated.release_all();
     lanes.finish();
 }
 
@@ -737,13 +719,19 @@ fn a_design_edit_releases_the_request_without_reopening_it() {
     let config = surface(&lanes);
     let task = lanes.claimed("dVrD245Kc", FIRST);
     let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
     lanes.complete(&task, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert!(
         lanes.request(&config, FIRST).is_some(),
         "the completion owes its Design"
     );
 
     lanes.retitle(&design, "Page room catch-up by cursor");
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert!(
         lanes.request(&config, FIRST).is_none(),
         "a replaced Design statement releases the exact request"
@@ -753,79 +741,122 @@ fn a_design_edit_releases_the_request_without_reopening_it() {
         1,
         "the same session and Design never reopen after an edit"
     );
+    seated.release_all();
     lanes.finish();
 }
 
-/// One relevant authority moving after `task next` planned its request.
-type Race = fn(&Lanes, &SurfaceConfig, &wire::TaskHandle);
-
 #[test]
-fn request_admission_refuses_each_relevant_race() {
-    let races: [(&str, Race); 5] = [
-        ("session", |lanes, _, _| {
-            lanes.vacate(FIRST);
-            lanes.renew(FIRST, test_uuid(90));
-        }),
-        ("statement", |lanes, _, design| {
-            lanes.retitle(design, "Page room catch-up by cursor")
-        }),
-        ("workflow", |lanes, _, design| lanes.close_room(design)),
-        ("stance", |lanes, config, design| {
-            lanes.group(70, config, design, wire::rooms::WorkingGroupStance::Explore);
-        }),
-        ("publication", |lanes, config, design| {
-            lanes.contribute(50, config, FIRST, design)
-        }),
-    ];
-    for (tag, race) in races {
-        let lanes = Lanes::new(&format!("design-request-race-{tag}"));
-        align_completion_lane(&lanes);
-        let config = surface(&lanes);
-        let task = lanes.claimed("dVrD245Kc", FIRST);
-        let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
-        lanes.complete(&task, MATCHING);
-
-        let stale = lanes.bus.task_snapshot().expect("task snapshot reads");
-        race(&lanes, &config, &design);
-        let Err(Outcome::Refusal(refusal)) = lanes.next_from(&config, &stale, FIRST) else {
-            panic!("{tag}: a race after selection must refuse the stale admission");
-        };
-        assert_eq!(refusal.reason(), "board::witness-moved", "{tag}");
-        assert!(
-            lanes.noticed().is_empty(),
-            "{tag}: a stale plan records nothing"
-        );
-        lanes.finish();
-    }
-}
-
-#[test]
-fn request_admission_ignores_unrelated_writes_and_records_once() {
-    let lanes = Lanes::new("design-request-admission");
+fn conversation_evidence_predating_a_design_is_selected_when_the_design_is_filed() {
+    let lanes = Lanes::new("design-request-conversation-before-design");
     align_completion_lane(&lanes);
     let config = surface(&lanes);
-    let task = lanes.claimed("dVrD245Kc", FIRST);
-    let design = lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
-    lanes.complete(&task, MATCHING);
+    let mut cursor = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("awareness cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
 
-    let planned = lanes.bus.task_snapshot().expect("task snapshot reads");
-    let _unrelated = lanes.claimed("dVrD245Kp", SECOND);
-    let Ok(Some(wire::intent::NextWorkState::DesignRequest { request })) =
-        lanes.next_from(&config, &planned, FIRST)
-    else {
-        panic!("unrelated work committed after selection must not refuse admission");
-    };
-    assert_eq!(request.design, design);
-    assert_eq!(lanes.noticed().len(), 1);
+    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.account(FIRST);
+    let source = lanes
+        .bus
+        .read(|read| read.transcript_source_heads(&test_uuid(FIRST)))
+        .expect("transcript sources read")
+        .into_iter()
+        .next()
+        .expect("declared lane has a transcript source")
+        .into_body()
+        .source;
+    let prose = "Windows native runner validates archive compression headers libraries toolchain \
+                 manifests receipts deployment replay smoke";
+    let conversation = spice::rooms::evidence::Conversation::read(prose)
+        .expect("fixture prose is substantive evidence");
+    {
+        let mut state =
+            crate::resident::message_surface::lock_state(&profiles).expect("profile state locks");
+        assert_eq!(
+            state.profiles.insert(
+                test_uuid(FIRST),
+                test_uuid(FIRST),
+                spice::rooms::evidence::Evidence::conversation(
+                    spice::rooms::profile::EvidenceKey::Conversation {
+                        source,
+                        member: 0,
+                        offset: 0,
+                        length: 1,
+                    },
+                    &conversation,
+                ),
+            ),
+            spice::rooms::profile::Inserted::Stored
+        );
+    }
+    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
 
-    let Err(Outcome::Refusal(refusal)) = lanes.next_from(&config, &planned, FIRST) else {
-        panic!("replaying the recorded plan must refuse rather than record twice");
-    };
-    assert_eq!(refusal.reason(), "board::witness-moved");
-    assert_eq!(
-        lanes.noticed().len(),
-        1,
-        "one completion records one request"
+    let design = lanes.design(
+        "dVrD245Kd",
+        "Validate Windows native runner archives",
+        "Compression headers libraries toolchain manifests receipts deployment replay smoke.",
     );
+    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+
+    let request = lanes
+        .request(&config, FIRST)
+        .expect("Design filing evaluates retained conversation evidence");
+    assert_eq!(request.design, design);
+    assert!(matches!(
+        request.opportunity,
+        wire::rooms::DesignNoticeOpportunity::DesignStatement
+    ));
+    assert!(matches!(
+        request.evidence,
+        wire::rooms::DesignNoticeEvidence::Conversation { .. }
+    ));
+    lanes.contribute(80, &config, FIRST, &design);
+    let message_design = lanes.design(
+        "dVrD245Km",
+        "Repair database migration replay",
+        "Indexes transactions snapshots rollback consistency schema storage locks recovery checks.",
+    );
+    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    let message = spice::rooms::evidence::Conversation::read(
+        "Database migration replay indexes transactions snapshots rollback consistency schema \
+         storage locks recovery checks",
+    )
+    .expect("second fixture prose is substantive evidence");
+    {
+        let mut state =
+            crate::resident::message_surface::lock_state(&profiles).expect("profile state locks");
+        assert_eq!(
+            state.profiles.insert(
+                test_uuid(FIRST),
+                test_uuid(FIRST),
+                spice::rooms::evidence::Evidence::conversation(
+                    spice::rooms::profile::EvidenceKey::Conversation {
+                        source,
+                        member: 0,
+                        offset: 1,
+                        length: 1,
+                    },
+                    &message,
+                ),
+            ),
+            spice::rooms::profile::Inserted::Stored
+        );
+    }
+    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    let request = lanes
+        .request(&config, FIRST)
+        .expect("settled conversation evaluates the session profile");
+    assert_eq!(request.design, message_design);
+    assert!(matches!(
+        request.opportunity,
+        wire::rooms::DesignNoticeOpportunity::Conversation { .. }
+    ));
+    assert!(matches!(
+        request.evidence,
+        wire::rooms::DesignNoticeEvidence::Conversation { .. }
+    ));
+    assert_eq!(lanes.noticed().len(), 2);
+    seated.release_all();
     lanes.finish();
 }
