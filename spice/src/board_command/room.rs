@@ -320,18 +320,34 @@ fn room_asks(bus: &Bus, room: &wire::TaskStamp) -> Result<Vec<RoomDuty>, Outcome
         if let Some(noticed) = envelope.fact.read::<wire::rooms::DesignNoticed>()
             && noticed.design == *room
         {
-            newest.insert(noticed.lane, (noticed.task, envelope.at));
+            newest.insert(
+                noticed.lane,
+                (notice_source(&noticed.evidence), envelope.at),
+            );
         }
     }
     Ok(newest
         .into_iter()
-        .map(|(lane, (task, at))| RoomDuty {
+        .map(|(lane, (source, at))| RoomDuty {
             room: room.clone(),
             lane,
-            kind: RoomDutyKind::Asked { task, at },
+            kind: RoomDutyKind::Asked { source, at },
             standing: RoomDutyStanding::Owed,
         })
         .collect())
+}
+
+fn notice_source(evidence: &wire::rooms::DesignNoticeEvidence) -> String {
+    match evidence {
+        wire::rooms::DesignNoticeEvidence::Task { task, .. } => format!("task {task}"),
+        wire::rooms::DesignNoticeEvidence::Conversation { source } => {
+            let locus = &source.locus;
+            format!(
+                "conversation {}:{}:{}",
+                locus.member, locus.offset, locus.event
+            )
+        }
+    }
 }
 
 /// Every native duty bound to `room` that no leave can end: each live route

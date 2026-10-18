@@ -89,6 +89,13 @@ impl Digest {
     pub fn to_hex(self) -> String {
         blake3::Hash::from_bytes(self.0).to_hex().to_string()
     }
+
+    /// Raw BLAKE3 output for binding this process-local digest into a durable
+    /// domain-separated identity.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
 }
 
 /// Settled authored prose reduced to what its author wrote, within

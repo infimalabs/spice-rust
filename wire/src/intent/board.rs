@@ -998,19 +998,18 @@ pub struct NextWorkTask {
     pub lease: Option<Positioned<crate::LeaseHead>>,
 }
 
-/// One passive Design request owed at a lane's post-completion break.
+/// One passive Design invitation owed to a continuing vendor session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignRequest {
     /// Design whose room accepts the answer.
     pub design: crate::TaskHandle,
-    /// Completed task whose terms selected the Design; `spice task show TASK
-    /// --history` keeps it readable after the asked session compacts.
-    pub task: crate::TaskHandle,
-    /// What the completed phase of `task` did.
-    pub support: DesignSupport,
-    /// Bounded one-line excerpt of the completion's validation.
-    pub excerpt: String,
+    /// Continuing session that owns the invitation.
+    pub session: crate::rooms::DesignSession,
+    /// Event at which the session profile was evaluated.
+    pub opportunity: crate::rooms::DesignNoticeOpportunity,
+    /// Exact retained card that supported the match.
+    pub evidence: crate::rooms::DesignNoticeEvidence,
     /// Current Design title.
     pub title: String,
     /// Current Design statement revision.

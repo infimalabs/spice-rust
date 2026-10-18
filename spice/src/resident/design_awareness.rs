@@ -1,21 +1,23 @@
-//! Completion-bound requests for one contribution to a matching passive Design.
+//! Session-profile requests for one contribution to a matching passive Design.
 //!
-//! A completed claim can owe one request at the lane's natural break. The
-//! durable notice records that choice, while `task next` can project the same
-//! choice directly when it races the resident recognition pass. Room catch-up
-//! carries the owed request to the occupant's next ordinary input.
+//! Each retained-profile opportunity can owe one request at a session's
+//! allocation boundary. The durable notice records that choice so command
+//! reads never rescore or invent evidence.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use journal::{GuardError, JournalRead};
-use spice::rooms::awareness::{
-    FrequencyProfile, MatchCandidate, TermCounts, excerpt, pitch, request_questions,
-};
+use spice::rooms::awareness::{FrequencyProfile, TermCounts, pitch, request_questions};
+use spice::rooms::evidence::{DesignCandidate, Digest as ProfileDigest};
+use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityKind};
 use wire::body::TaskDone as CompletedTask;
-use wire::rooms::DesignNoticed;
+use wire::rooms::{
+    DesignConversationEvidence, DesignNoticeEvidence, DesignNoticeOpportunity, DesignNoticed,
+    DesignSession,
+};
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, Producer, Seq, SequenceCode, TaskStamp,
-    intent::{DesignRequest, DesignSupport, TaskDone as TaskDoneIntent},
+    Actor, CanonicalUuid, ClaimDisposition, Domain, Producer, Seq, SequenceCode, TaskStamp,
+    intent::{DesignRequest, TaskDone as TaskDoneIntent},
 };
 
 use super::room_catch_up::Planning;
@@ -27,17 +29,17 @@ const STALE: &str = "room::awareness-stale";
 const COMPLETION_PAGE_ROWS: usize = 64;
 /// Aggregate completion envelope bytes decoded in one reconciliation pass.
 const COMPLETION_PAGE_BYTES: usize = 256 * 1024;
+/// Profile opportunities admitted to one in-memory page.
+const PROFILE_OPPORTUNITY_PAGE: usize = 64;
 
 /// One Design request and the journal position its planning read covered.
 #[derive(Clone)]
 struct PlannedRequest {
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-    task: TaskStamp,
-    task_statement: Seq,
-    claim: Seq,
-    /// Exact `TaskDone` that owes the request.
-    completed: Seq,
+    session: DesignSession,
+    opportunity: DesignNoticeOpportunity,
+    evidence: DesignNoticeEvidence,
     design: TaskStamp,
     statement: Seq,
     terms: Vec<String>,
@@ -52,14 +54,15 @@ pub(in crate::resident) struct Completion {
     validation: String,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-    claim: Seq,
     statement: wire::TaskHead,
 }
 
-/// Process-local completion horizon. `task next` independently projects an
-/// unrecorded latest completion, so command ordering cannot lose the request.
+/// Process-local horizons for task evidence acquisition, profile opportunities,
+/// and Design statements already offered to the profile store.
 pub(in crate::resident) struct CompletionCursor {
     after: Option<Seq>,
+    opportunities: Option<u64>,
+    designs: BTreeMap<TaskStamp, Seq>,
 }
 
 impl CompletionCursor {
@@ -67,7 +70,11 @@ impl CompletionCursor {
         let after = bus.cursor().map_err(|error| {
             store_fault("room::awareness-cursor-unreadable", &error.to_string())
         })?;
-        Ok(Self { after })
+        Ok(Self {
+            after,
+            opportunities: None,
+            designs: BTreeMap::new(),
+        })
     }
 
     /// Consume at most one bounded page, advancing only after a successful
@@ -112,7 +119,6 @@ impl CompletionCursor {
                         validation: done.validation,
                         lane,
                         occupant: claim.occupant,
-                        claim: claim.claimed,
                         statement,
                     });
                 }
@@ -126,35 +132,66 @@ impl CompletionCursor {
     }
 }
 
-/// Record one best matching passive Design for every newly completed claim.
-/// Room catch-up delivers the owed request with the occupant's next ordinary
-/// input; `task next` shows the same request.
+/// Record one best matching passive Design for every retained-profile
+/// opportunity. Nothing is delivered in the background: the lane reads the
+/// owed request from its next `task next`.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     config: &SurfaceConfig,
     seats: &Seats,
-    completions: &mut CompletionCursor,
+    cursor: &mut CompletionCursor,
     profiles: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    let completed = completions.take(bus)?;
-    retain_completed_evidence(&completed, profiles)?;
-    if completed.is_empty() {
-        return Ok(());
-    }
+    let completed = cursor.take(bus)?;
     let occupied = occupied(seats);
     if occupied.is_empty() {
         return Ok(());
     }
     let planning = Planning::load(bus, config)?;
-    for request in plan(&planning, &occupied, &completed) {
-        if let Err(error) = record(bus, &request) {
-            let _ = writeln!(
-                diagnostic,
-                "lane {} request for Design {} was not recorded: {error:?}",
-                request.lane, request.design
-            );
+    bind_current_sessions(planning.snapshot.facts(), &occupied, profiles)?;
+    retain_completed_evidence(&completed, profiles)?;
+    let requests = plan_profile_requests(&planning, &occupied, cursor, profiles)?;
+    for request in requests {
+        match record(bus, &request) {
+            Ok(None) => {}
+            Ok(Some(stale)) => {
+                let _ = writeln!(
+                    diagnostic,
+                    "lane {} request for Design {} became stale: {stale}",
+                    request.lane, request.design
+                );
+            }
+            Err(error) => {
+                let _ = writeln!(
+                    diagnostic,
+                    "lane {} request for Design {} was not recorded: {error:?}",
+                    request.lane, request.design
+                );
+            }
         }
+    }
+    Ok(())
+}
+
+fn bind_current_sessions(
+    facts: &bus::TaskFacts,
+    occupied: &BTreeMap<CanonicalUuid, CanonicalUuid>,
+    profiles: &std::sync::Mutex<message_surface::MessageState>,
+) -> CommandResult<()> {
+    let mut state = message_surface::lock_state(profiles)?;
+    for (&lane, &occupant) in occupied {
+        let Some(session) = facts.lane_session(lane, occupant) else {
+            continue;
+        };
+        state.profiles.bind(
+            occupant,
+            spice::rooms::profile::SessionKey::new(
+                lane,
+                session.vendor.clone(),
+                session.identity.clone(),
+            ),
+        );
     }
     Ok(())
 }
@@ -169,7 +206,7 @@ fn retain_completed_evidence(
             completed.lane,
             completed.occupant,
             spice::rooms::evidence::Evidence::task(
-                spice::rooms::profile::EvidenceKey::Task {
+                EvidenceKey::Task {
                     task: completed.task.clone(),
                     statement: completed.statement.revision,
                     completion: completed.at,
@@ -197,97 +234,249 @@ pub(super) fn occupied(seats: &Seats) -> BTreeMap<CanonicalUuid, CanonicalUuid> 
         .collect()
 }
 
-/// At most one best Design for each completion, in completion order.
-fn plan(
+fn plan_profile_requests(
     planning: &Planning,
     occupied: &BTreeMap<CanonicalUuid, CanonicalUuid>,
-    completions: &[Completion],
-) -> Vec<PlannedRequest> {
-    if completions.is_empty() {
-        return Vec::new();
-    }
+    cursor: &mut CompletionCursor,
+    profiles: &std::sync::Mutex<message_surface::MessageState>,
+) -> CommandResult<Vec<PlannedRequest>> {
     let entries = &planning.entries;
-    let frequency = FrequencyProfile::recent(entries.iter().map(board::Entry::statement));
     let facts = planning.snapshot.facts();
-    let mut requested: BTreeMap<CanonicalUuid, BTreeSet<TaskStamp>> = BTreeMap::new();
-    let mut owed = Vec::new();
-    for completed in completions {
-        let already_requested = facts
-            .latest_design_notice(completed.lane, completed.occupant)
-            .is_some_and(|(at, notice)| {
-                at > completed.at
-                    && notice.task == completed.task
-                    && notice.claim.get() == completed.claim.get()
-            });
-        if occupied.get(&completed.lane) != Some(&completed.occupant) || already_requested {
-            continue;
-        }
-        let completion = TermCounts::completion(
-            &completed.statement.title,
-            completed.statement.description.as_deref(),
-            &completed.statement.acceptance,
-            &completed.validation,
-        );
-        let actor = Actor::Lane(completed.lane);
-        let candidates = entries
-            .iter()
-            .filter(|entry| {
-                passive(entry)
-                    && entry.is_filed()
-                    && entry.born() != &completed.task
-                    && !facts.design_was_noticed(completed.occupant, entry.born())
-                    && !requested
-                        .get(&completed.occupant)
-                        .is_some_and(|designs| designs.contains(entry.born()))
-                    && !facts.published_in_room(&actor, entry.born())
-            })
-            .map(|design| {
-                let statement = design.statement();
-                MatchCandidate::new(
-                    design.born(),
-                    design,
-                    TermCounts::statement(
-                        &statement.title,
-                        statement.description.as_deref(),
-                        &statement.acceptance,
-                    ),
-                )
-            });
-        let Some((design, matched)) = frequency.select(&completion, candidates) else {
+    let frequency = FrequencyProfile::recent(entries.iter().map(board::Entry::statement));
+    let prepared = entries
+        .iter()
+        .filter(|entry| passive(entry) && entry.is_filed())
+        .filter_map(|entry| {
+            let statement = entry.statement();
+            frequency
+                .prepare(&TermCounts::statement(
+                    &statement.title,
+                    statement.description.as_deref(),
+                    &statement.acceptance,
+                ))
+                .map(|vector| (entry, vector))
+        })
+        .collect::<Vec<_>>();
+
+    let mut state = message_surface::lock_state(profiles)?;
+    record_design_changes(entries, cursor, &mut state.profiles);
+    let opportunities = take_profile_opportunities(&state.profiles, occupied, cursor);
+    let mut planned_sessions = BTreeSet::new();
+    let mut planned = Vec::new();
+    for opportunity in opportunities {
+        let lane = opportunity.session.lane;
+        let Some(&occupant) = occupied.get(&lane) else {
             continue;
         };
-        requested
-            .entry(completed.occupant)
-            .or_default()
-            .insert(design.born().clone());
-        owed.push(planned_request(
-            completed,
+        if state.profiles.session(lane, occupant) != Some(&opportunity.session) {
+            continue;
+        }
+        let session = DesignSession {
+            vendor: opportunity.session.vendor.clone(),
+            identity: opportunity.session.identity.clone(),
+        };
+        let session_identity = (lane, session.clone());
+        if planned_sessions.contains(&session_identity)
+            || session_has_outstanding(facts, entries, lane, &session)
+        {
+            continue;
+        }
+        let Some(durable_opportunity) = durable_opportunity(&opportunity, facts, occupant) else {
+            continue;
+        };
+        let candidates = prepared
+            .iter()
+            .filter(|(design, _)| {
+                opportunity_design_matches(&opportunity.kind, design)
+                    && !facts.design_was_noticed(lane, &session, design.born())
+                    && !facts.published_in_room_for_session(lane, &session, design.born())
+            })
+            .map(|(design, vector)| DesignCandidate::new(design.born(), *design, vector));
+        let selected = {
+            let Some(profile) = state.profiles.profile_mut(&opportunity.session) else {
+                continue;
+            };
+            profile
+                .evidence_mut()
+                .select(&frequency, candidates)
+                .map_err(|error| {
+                    store_fault(
+                        "room::awareness-profile-generation-mismatch",
+                        &error.to_string(),
+                    )
+                })?
+                .map(|matched| {
+                    (
+                        matched.design.born().clone(),
+                        matched.design.statement().revision,
+                        matched.evidence.clone(),
+                        matched.digest,
+                        matched.terms,
+                    )
+                })
+        };
+        let Some((design, statement, evidence, digest, terms)) = selected else {
+            continue;
+        };
+        planned_sessions.insert(session_identity);
+        planned.push(PlannedRequest {
+            lane,
+            occupant,
+            session,
+            opportunity: durable_opportunity,
+            evidence: durable_evidence(&evidence, digest),
             design,
-            matched,
-            planning.horizon,
-        ));
+            statement,
+            terms,
+            horizon: planning.horizon,
+        });
     }
-    owed
+    Ok(planned)
 }
 
-fn planned_request(
-    completed: &Completion,
-    design: &board::Entry,
-    terms: Vec<String>,
-    horizon: Option<Seq>,
-) -> PlannedRequest {
-    PlannedRequest {
-        lane: completed.lane,
-        occupant: completed.occupant,
-        task: completed.task.clone(),
-        task_statement: completed.statement.revision,
-        claim: completed.claim,
-        completed: completed.at,
-        design: design.born().clone(),
-        statement: design.statement().revision,
-        terms,
-        horizon,
+fn record_design_changes(
+    entries: &[board::Entry],
+    cursor: &mut CompletionCursor,
+    profiles: &mut spice::rooms::profile::SessionProfiles,
+) {
+    let current = entries
+        .iter()
+        .filter(|entry| {
+            entry
+                .statement()
+                .intent
+                .is_some_and(wire::TaskIntent::is_design)
+        })
+        .map(|entry| (entry.born().clone(), entry.statement().revision))
+        .collect::<BTreeMap<_, _>>();
+    for (design, statement) in &current {
+        if cursor.designs.get(design) != Some(statement) {
+            profiles.design_changed(*statement);
+        }
     }
+    cursor.designs = current;
+}
+
+fn take_profile_opportunities(
+    profiles: &spice::rooms::profile::SessionProfiles,
+    occupied: &BTreeMap<CanonicalUuid, CanonicalUuid>,
+    cursor: &mut CompletionCursor,
+) -> Vec<ProfileOpportunity> {
+    let mut page = profiles.opportunities(cursor.opportunities, PROFILE_OPPORTUNITY_PAGE);
+    let mut rows = Vec::new();
+    if page.missed {
+        rows.extend(profiles.iter().filter_map(|(session, _)| {
+            let occupant = occupied.get(&session.lane)?;
+            (profiles.session(session.lane, *occupant) == Some(session)).then(|| {
+                ProfileOpportunity {
+                    cursor: 0,
+                    session: session.clone(),
+                    kind: ProfileOpportunityKind::Declared {
+                        occupant: *occupant,
+                    },
+                }
+            })
+        }));
+    }
+    loop {
+        rows.append(&mut page.rows);
+        cursor.opportunities = page.next;
+        if !page.more {
+            break;
+        }
+        page = profiles.opportunities(cursor.opportunities, PROFILE_OPPORTUNITY_PAGE);
+    }
+    rows
+}
+
+fn opportunity_design_matches(kind: &ProfileOpportunityKind, design: &board::Entry) -> bool {
+    match kind {
+        ProfileOpportunityKind::DesignChanged { statement } => {
+            design.statement().revision == *statement
+        }
+        ProfileOpportunityKind::Declared { .. }
+        | ProfileOpportunityKind::Stored { .. }
+        | ProfileOpportunityKind::Ready { .. } => true,
+    }
+}
+
+fn durable_opportunity(
+    opportunity: &ProfileOpportunity,
+    facts: &bus::TaskFacts,
+    current_occupant: CanonicalUuid,
+) -> Option<DesignNoticeOpportunity> {
+    match &opportunity.kind {
+        ProfileOpportunityKind::Declared { occupant } => {
+            if *occupant != current_occupant {
+                return None;
+            }
+            facts
+                .lane_session_declaration(opportunity.session.lane, *occupant)
+                .map(|declaration| DesignNoticeOpportunity::SessionResumed { declaration })
+        }
+        ProfileOpportunityKind::Stored { key, digest } => match key {
+            EvidenceKey::Task {
+                task, completion, ..
+            } => Some(DesignNoticeOpportunity::TaskCompletion {
+                task: task.clone(),
+                completed: *completion,
+            }),
+            EvidenceKey::Conversation { .. } => Some(DesignNoticeOpportunity::Conversation {
+                source: durable_conversation(key, *digest)?,
+            }),
+        },
+        ProfileOpportunityKind::Ready { through } => Some(DesignNoticeOpportunity::ProfileReady {
+            horizon: through.facts,
+        }),
+        ProfileOpportunityKind::DesignChanged { .. } => {
+            Some(DesignNoticeOpportunity::DesignStatement)
+        }
+    }
+}
+
+fn durable_evidence(key: &EvidenceKey, digest: ProfileDigest) -> DesignNoticeEvidence {
+    match key {
+        EvidenceKey::Task {
+            task,
+            statement,
+            completion,
+        } => DesignNoticeEvidence::Task {
+            task: task.clone(),
+            statement: *statement,
+            completed: *completion,
+        },
+        EvidenceKey::Conversation { .. } => DesignNoticeEvidence::Conversation {
+            source: durable_conversation(key, digest)
+                .expect("a conversation evidence key always has a durable locus"),
+        },
+    }
+}
+
+fn durable_conversation(
+    key: &EvidenceKey,
+    digest: ProfileDigest,
+) -> Option<DesignConversationEvidence> {
+    let EvidenceKey::Conversation {
+        source,
+        member,
+        offset,
+        length,
+    } = key
+    else {
+        return None;
+    };
+    Some(DesignConversationEvidence {
+        locus: wire::body::TranscriptLocus {
+            source: Some(*source),
+            member: *member,
+            offset: *offset,
+            length: *length,
+            event: 0,
+            line: 1,
+            column: 1,
+        },
+        digest: wire::Digest::compute(Domain::RoomProfileEvidence, digest.as_bytes()),
+    })
 }
 
 /// Whether `entry` is an open Design inactive under its group stance.
@@ -295,45 +484,7 @@ fn passive(entry: &board::Entry) -> bool {
     board::passive_design(entry)
 }
 
-struct CurrentCompletion {
-    completed: bus::LaneCompletion,
-    claim: Seq,
-    support: DesignSupport,
-    statement: wire::TaskHead,
-}
-
-fn current_completion(
-    bus: &Bus,
-    observed: &bus::TaskSnapshot,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-) -> Result<Option<CurrentCompletion>, Outcome<wire::intent::CommandAnswer>> {
-    let facts = observed.facts();
-    let actor = Actor::Lane(lane);
-    let Some(completed) = facts.latest_lane_completion(lane).cloned() else {
-        return Ok(None);
-    };
-    if completed.occupant != occupant {
-        return Ok(None);
-    }
-    let Some((claim, cell)) = facts.latest_claim(&actor) else {
-        return Ok(None);
-    };
-    if completed.operation != TaskDoneIntent::operation_for_claim(claim) {
-        return Ok(None);
-    }
-    let Some(statement) = current_task_statement(bus, observed, &completed.task)? else {
-        return Ok(None);
-    };
-    Ok(Some(CurrentCompletion {
-        completed,
-        claim,
-        support: DesignSupport::for_phase(&cell.phase),
-        statement,
-    }))
-}
-
-/// One request owed to a lane occupant.
+/// One request owed to a continuing session.
 pub(crate) struct OwedRequest {
     /// Position of the notice that chose it.
     pub(crate) at: Seq,
@@ -342,7 +493,7 @@ pub(crate) struct OwedRequest {
     pub(crate) request: DesignRequest,
 }
 
-/// Read the durable request currently owed to this lane occupant.
+/// Read the durable invitation currently owed to this continuing session.
 pub(crate) fn owed_request(
     bus: &Bus,
     observed: &bus::TaskSnapshot,
@@ -350,23 +501,20 @@ pub(crate) fn owed_request(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> Result<Option<OwedRequest>, Outcome<wire::intent::CommandAnswer>> {
-    let Some(current) = current_completion(bus, observed, lane, occupant)? else {
-        return Ok(None);
-    };
     let facts = observed.facts();
-    let Some((noticed_at, notice)) = facts.latest_design_notice(lane, occupant) else {
+    let Some(session) = facts.lane_session(lane, occupant) else {
         return Ok(None);
     };
-    if noticed_at <= current.completed.at
-        || notice.task != current.completed.task
-        || notice.claim.get() != current.claim.get()
-    {
+    let Some((noticed_at, notice)) = facts.latest_design_notice(lane, session) else {
+        return Ok(None);
+    };
+    if !supporting_evidence_is_current(bus, lane, session, &notice.evidence)? {
         return Ok(None);
     }
     let Some(design) = entries.iter().find(|entry| entry.born() == &notice.design) else {
         return Ok(None);
     };
-    if !request_is_current(facts, design, lane) {
+    if !request_is_current(facts, design, lane, notice.statement, noticed_at) {
         return Ok(None);
     }
     Ok(Some(OwedRequest {
@@ -374,7 +522,9 @@ pub(crate) fn owed_request(
         design: notice.design.clone(),
         request: design_request(
             design,
-            &current,
+            notice.session.clone(),
+            notice.opportunity.clone(),
+            notice.evidence.clone(),
             wire::rooms::shown_notice_terms(&notice.terms)
                 .into_iter()
                 .map(str::to_owned)
@@ -383,151 +533,31 @@ pub(crate) fn owed_request(
     }))
 }
 
-/// Select and record one deterministic request for the latest completion.
-pub(crate) fn project_request(
+fn supporting_evidence_is_current(
     bus: &Bus,
-    observed: &bus::TaskSnapshot,
-    entries: &[board::Entry],
     lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-) -> Result<Option<DesignRequest>, Outcome<wire::intent::CommandAnswer>> {
-    let Some(current) = current_completion(bus, observed, lane, occupant)? else {
-        return Ok(None);
+    session: &DesignSession,
+    evidence: &DesignNoticeEvidence,
+) -> Result<bool, Outcome<wire::intent::CommandAnswer>> {
+    let DesignNoticeEvidence::Conversation { source } = evidence else {
+        return Ok(true);
     };
-    let facts = observed.facts();
-    let actor = Actor::Lane(lane);
-    let completed = &current.completed;
-    let claim = current.claim;
-
-    if let Some(owed) = owed_request(bus, observed, entries, lane, occupant)? {
-        return Ok(Some(owed.request));
-    }
-    if facts
-        .latest_design_notice(lane, occupant)
-        .is_some_and(|(at, notice)| {
-            at > completed.at && notice.task == completed.task && notice.claim.get() == claim.get()
-        })
-    {
-        // A standing or publication change released this completion's chosen
-        // request. It must not retarget the same completion to another Design.
-        return Ok(None);
-    }
-
-    let frequency = FrequencyProfile::recent(
-        observed
-            .tasks()
-            .iter()
-            .map(|heads| heads.statement().body()),
-    );
-    let task_statement = &current.statement;
-    let completion = TermCounts::completion(
-        &task_statement.title,
-        task_statement.description.as_deref(),
-        &task_statement.acceptance,
-        &completed.validation,
-    );
-    let candidates = entries
-        .iter()
-        .filter(|entry| {
-            passive(entry)
-                && entry.is_filed()
-                && entry.born() != &completed.task
-                && !facts.design_was_noticed(occupant, entry.born())
-                && !facts.published_in_room(&actor, entry.born())
-        })
-        .map(|design| {
-            let statement = design.statement();
-            MatchCandidate::new(
-                design.born(),
-                design,
-                TermCounts::statement(
-                    &statement.title,
-                    statement.description.as_deref(),
-                    &statement.acceptance,
-                ),
-            )
-        });
-    let Some((design, terms)) = frequency.select(&completion, candidates) else {
-        return Ok(None);
+    let Some(source_identity) = source.locus.source else {
+        return Ok(false);
     };
-    let request = PlannedRequest {
-        lane,
-        occupant,
-        task: completed.task.clone(),
-        task_statement: task_statement.revision,
-        claim,
-        completed: completed.at,
-        design: design.born().clone(),
-        statement: design.statement().revision,
-        terms: terms.clone(),
-        horizon: observed.cursor(),
-    };
-    match record(bus, &request) {
-        Ok(None) => Ok(Some(design_request(
-            design,
-            &current,
-            wire::rooms::shown_notice_terms(&terms)
+    let vendor = session.vendor.clone();
+    bus.read(move |read| read.transcript_source_heads(&lane))
+        .map(|heads| {
+            heads
                 .into_iter()
-                .map(str::to_owned)
-                .collect(),
-        ))),
-        Ok(Some(stale)) => Err(Outcome::Refusal(wire::Refusal::bare(
-            wire::RefusalDiagnostic::new(
-                "board::witness-moved",
-                Some(stale),
-                None,
-                Some("board::witness-moved: Design request projection changed".to_owned()),
-            ),
-        ))),
-        Err(outcome) => Err(command_answer_outcome(outcome)),
-    }
-}
-
-fn current_task_statement(
-    bus: &Bus,
-    observed: &bus::TaskSnapshot,
-    task: &TaskStamp,
-) -> Result<Option<wire::TaskHead>, Outcome<wire::intent::CommandAnswer>> {
-    if let Some(heads) = observed.task_heads(task) {
-        return Ok(Some(heads.statement().body().clone()));
-    }
-    let task = task.clone();
-    bus.read(move |read| read.task_head(&task))
-        .map(|head| head.map(|head| head.into_body()))
+                .any(|head| head.body().vendor == vendor && head.body().source == source_identity)
+        })
         .map_err(|error| {
             command_answer_outcome(store_fault(
-                "board::design-request-task-unreadable",
+                "board::design-request-source-unreadable",
                 &error.to_string(),
             ))
         })
-}
-
-/// Whether a recorded request is still owed. Only the Design's standing or the
-/// lane's own room publication releases it; a statement edit does not.
-fn request_is_current(facts: &bus::TaskFacts, design: &board::Entry, lane: CanonicalUuid) -> bool {
-    design.is_filed()
-        && passive(design)
-        && !facts.published_in_room(&Actor::Lane(lane), design.born())
-}
-
-fn design_request(
-    design: &board::Entry,
-    current: &CurrentCompletion,
-    terms: Vec<String>,
-) -> DesignRequest {
-    let statement = design.statement();
-    let task = &current.statement;
-    DesignRequest {
-        design: wire::TaskHandle::for_filing(&statement.project, &statement.born, statement.filing),
-        task: wire::TaskHandle::for_filing(&task.project, &task.born, task.filing),
-        support: current.support,
-        excerpt: excerpt(&current.completed.validation),
-        title: statement.title.clone(),
-        statement: SequenceCode::new(statement.revision.get()),
-        pitch: pitch(&statement.title, statement.description.as_deref()),
-        questions: request_questions(&statement.acceptance),
-        terms,
-    }
 }
 
 fn command_answer_outcome(outcome: Outcome<()>) -> Outcome<wire::intent::CommandAnswer> {
@@ -538,82 +568,183 @@ fn command_answer_outcome(outcome: Outcome<()>) -> Outcome<wire::intent::Command
     }
 }
 
-/// Refuse a request whose completion, occupant, statement, standing,
-/// publication, newer lane work, or competing request moved.
+/// Return only a request the resident already selected from the retained
+/// session profile. Command reads never rescore one incidental completion.
+pub(crate) fn project_request(
+    bus: &Bus,
+    observed: &bus::TaskSnapshot,
+    entries: &[board::Entry],
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> Result<Option<DesignRequest>, Outcome<wire::intent::CommandAnswer>> {
+    Ok(owed_request(bus, observed, entries, lane, occupant)?.map(|owed| owed.request))
+}
+
+fn session_has_outstanding(
+    facts: &bus::TaskFacts,
+    entries: &[board::Entry],
+    lane: CanonicalUuid,
+    session: &DesignSession,
+) -> bool {
+    let Some((noticed_at, notice)) = facts.latest_design_notice(lane, session) else {
+        return false;
+    };
+    entries
+        .iter()
+        .find(|entry| entry.born() == &notice.design)
+        .is_some_and(|design| request_is_current(facts, design, lane, notice.statement, noticed_at))
+}
+
+/// Whether a recorded invitation is still owed. Design closure, statement
+/// replacement, standing, or a room publication releases it.
+fn request_is_current(
+    facts: &bus::TaskFacts,
+    design: &board::Entry,
+    lane: CanonicalUuid,
+    statement: Seq,
+    noticed_at: Seq,
+) -> bool {
+    design.is_filed()
+        && passive(design)
+        && design.statement().revision == statement
+        && !facts.published_in_room_after(lane, design.born(), noticed_at)
+}
+
+fn design_request(
+    design: &board::Entry,
+    session: DesignSession,
+    opportunity: DesignNoticeOpportunity,
+    evidence: DesignNoticeEvidence,
+    terms: Vec<String>,
+) -> DesignRequest {
+    let statement = design.statement();
+    DesignRequest {
+        design: wire::TaskHandle::for_filing(&statement.project, &statement.born, statement.filing),
+        session,
+        opportunity,
+        evidence,
+        title: statement.title.clone(),
+        statement: SequenceCode::new(statement.revision.get()),
+        pitch: pitch(&statement.title, statement.description.as_deref()),
+        questions: request_questions(&statement.acceptance),
+        terms,
+    }
+}
+
+/// Refuse an invitation whose target session, supporting source, Design, room
+/// standing, or competing request moved.
 fn still_owed(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
-    current_recipient(read, request)?;
-    idle_since_completion(read, request)?;
-    passive_design(read, request)?;
+    let declared = current_recipient(read, request)?;
+    supporting_source(read, request)?;
+    passive_design(read, request, declared)?;
     unseen_request(read, request)
 }
 
-fn current_recipient(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
+fn current_recipient(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<Seq, GuardError> {
     let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
-    let occupied = read.residency_head()?.is_some_and(|head| {
-        head.body().lanes.iter().any(|row| {
-            row.lane == request.lane
-                && row.occupant == Some(request.occupant)
-                && row.disposition == "occupied"
+    let occupant = read
+        .residency_head()?
+        .and_then(|head| {
+            head.body()
+                .lanes
+                .iter()
+                .find(|row| row.lane == request.lane && row.disposition == "occupied")
+                .and_then(|row| row.occupant)
         })
-    });
-    if !occupied {
-        return Err(stale("the occupant moved"));
-    }
-    let recipient_current = read.claim_head(&request.task)?.is_some_and(|head| {
-        let claim = head.body();
-        claim.disposition == ClaimDisposition::Freed
-            && claim.lane == request.lane
-            && claim.occupant == request.occupant
-            && claim.claimed == request.claim
-    });
-    if !recipient_current {
-        return Err(stale("the completed claim moved"));
-    }
-    if !read
-        .task_head(&request.task)?
-        .is_some_and(|head| head.body().revision == request.task_statement)
-    {
-        return Err(stale("the task statement moved"));
-    }
-    Ok(())
-}
-
-/// Refuse once the lane won any claim after the owing completion: its natural
-/// break ended whether that newer work is still active or already completed.
-/// Only claim wins are read, so other lanes' and unrelated traffic stay
-/// admissible.
-fn idle_since_completion(
-    read: &JournalRead<'_>,
-    request: &PlannedRequest,
-) -> Result<(), GuardError> {
-    let mut after = Some(request.completed);
+        .ok_or_else(|| stale("the target lane is no longer occupied"))?;
+    let mut after = None;
+    let mut current = None;
     loop {
         let page = read.selected_fact_page(
-            &[wire::FactKind::ClaimWon],
+            &[wire::FactKind::LaneSessionDeclared],
             after,
             None,
             journal::FactReadBudget::RETAINED,
         )?;
         for envelope in &page.rows {
-            let Some(won) = envelope.fact.read::<wire::body::ClaimWon>() else {
+            let Some(declared) = envelope.fact.read::<wire::body::LaneSessionDeclared>() else {
                 return Err(GuardError::Invalid(
-                    "a selected claim win did not decode".to_owned(),
+                    "a selected session declaration did not decode".to_owned(),
                 ));
             };
-            if won.lane == request.lane {
-                return Err(GuardError::refused(format!(
-                    "{STALE}: the lane claimed newer work"
-                )));
+            if declared.lane == request.lane && declared.occupant == occupant {
+                current = Some((
+                    DesignSession {
+                        vendor: declared.vendor,
+                        identity: declared.identity,
+                    },
+                    envelope.seq,
+                ));
             }
         }
         let Some(continuation) = page.continuation else {
-            return Ok(());
+            break;
         };
         after = Some(continuation);
     }
+    match current {
+        Some((session, declared)) if session == request.session => Ok(declared),
+        _ => Err(stale("the target vendor session was replaced")),
+    }
 }
 
-fn passive_design(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
+fn supporting_source(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
+    let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
+    match &request.evidence {
+        DesignNoticeEvidence::Task {
+            task,
+            statement,
+            completed,
+        } => {
+            let statement_exists = read
+                .causal_page(*statement, journal::FactReadBudget::RETAINED)?
+                .is_some_and(|page| {
+                    page.rows.iter().any(|row| {
+                        row.seq == *statement
+                            && row.fact.revised_tasks().any(|revised| revised == task)
+                    })
+                });
+            let completion_exists = read
+                .causal_page(*completed, journal::FactReadBudget::RETAINED)?
+                .is_some_and(|page| {
+                    page.rows.iter().any(|row| {
+                        row.seq == *completed
+                            && row.fact.read::<wire::body::TaskDone>().is_some_and(|done| {
+                                done.task == *task
+                                    && done.terminal.as_ref().is_some_and(|terminal| {
+                                        terminal.status
+                                            == wire::body::TaskCompletionStatus::Completed
+                                    })
+                            })
+                    })
+                });
+            if !statement_exists || !completion_exists {
+                return Err(stale("the supporting task evidence was lost or replaced"));
+            }
+        }
+        DesignNoticeEvidence::Conversation { source } => {
+            let source_exists = read
+                .transcript_source_heads(&request.lane)?
+                .iter()
+                .any(|head| {
+                    head.body().vendor == request.session.vendor
+                        && Some(head.body().source) == source.locus.source
+                });
+            if !source_exists {
+                return Err(stale(
+                    "the supporting conversation source was lost or replaced",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn passive_design(
+    read: &JournalRead<'_>,
+    request: &PlannedRequest,
+    session_declared: Seq,
+) -> Result<(), GuardError> {
     let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
     let Some(statement) = read.task_head(&request.design)? else {
         return Err(stale("the Design disappeared"));
@@ -637,17 +768,16 @@ fn passive_design(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<()
     }
     if read
         .latest_room_publication(&request.design, &Actor::Lane(request.lane))?
-        .is_some()
+        .is_some_and(|head| head.seq > session_declared)
     {
-        return Err(stale("the lane published in the room"));
+        return Err(stale("the session published in the room"));
     }
     Ok(())
 }
 
-/// Refuse when another request for this occupant's Design or completion was
-/// recorded after the planning horizon. Only Design notices are read: every
-/// other authority that can change the chosen request is checked at its
-/// current head, so unrelated journal traffic never makes the plan stale.
+/// Refuse when another invitation for this continuing session was recorded
+/// after the planning horizon. Other authority is checked at its exact head,
+/// so unrelated journal traffic never makes the plan stale.
 fn unseen_request(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
     let mut after = request.horizon;
     loop {
@@ -663,12 +793,9 @@ fn unseen_request(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<()
                     "a selected Design notice did not decode".to_owned(),
                 ));
             };
-            if body.occupant == request.occupant
-                && (body.design == request.design
-                    || (body.task == request.task && body.claim.get() == request.claim.get()))
-            {
+            if body.lane == request.lane && body.session == request.session {
                 return Err(GuardError::refused(format!(
-                    "{STALE}: the occupant already has this request"
+                    "{STALE}: the session already has an invitation"
                 )));
             }
         }
@@ -695,8 +822,9 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> 
                 design: request.design.clone(),
                 lane: request.lane,
                 occupant: request.occupant,
-                task: request.task.clone(),
-                claim: SequenceCode::new(request.claim.get()),
+                session: request.session.clone(),
+                opportunity: request.opportunity.clone(),
+                evidence: request.evidence.clone(),
                 terms: request.terms.clone(),
             },
             FactCause::Root,

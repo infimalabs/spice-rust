@@ -3,7 +3,8 @@
 
 use rusqlite::{Connection, OptionalExtension};
 use wire::rooms::{
-    DESIGN_NOTICE_TERMS, DesignNoticed, DesignReturnDelivered, PreparationDecision, ProposalRef,
+    DESIGN_NOTICE_TERMS, DesignNoticeEvidence, DesignNoticeOpportunity, DesignNoticed,
+    DesignReturnDelivered, PreparationDecision, ProposalRef,
 };
 use wire::{Actor, AnyFact, ClaimDisposition, ClaimHead, Seq};
 
@@ -100,14 +101,33 @@ fn notice(
             body.design
         ));
     }
-    if body.design == body.task {
+    let referenced_tasks = [
+        match &body.opportunity {
+            DesignNoticeOpportunity::TaskCompletion { task, .. } => Some(task),
+            DesignNoticeOpportunity::Conversation { .. }
+            | DesignNoticeOpportunity::DesignStatement
+            | DesignNoticeOpportunity::ProfileReady { .. }
+            | DesignNoticeOpportunity::SessionResumed { .. } => None,
+        },
+        match &body.evidence {
+            DesignNoticeEvidence::Task { task, .. } => Some(task),
+            DesignNoticeEvidence::Conversation { .. } => None,
+        },
+    ];
+    if referenced_tasks
+        .into_iter()
+        .flatten()
+        .any(|task| task == &body.design)
+    {
         return unsound(format!(
-            "design awareness names {} as both the Design and the claimed task",
+            "design awareness names {} as both the Design and invitation evidence",
             body.design
         ));
     }
     require_task(authority, &body.design, "noticed design")?;
-    require_task(authority, &body.task, "noticed claim task")?;
+    for task in referenced_tasks.into_iter().flatten() {
+        require_task(authority, task, "invitation evidence task")?;
+    }
     let current = authority.task_statement(&body.design)?.ok_or_else(|| {
         Refusal::Unsound(format!("noticed Design {} has no statement", body.design))
     })?;
@@ -115,6 +135,32 @@ fn notice(
         return unsound(format!(
             "design awareness for {} names statement {} while its current head is {current}",
             body.design, body.statement
+        ));
+    }
+    if body.session.identity.trim().is_empty() {
+        return unsound(format!(
+            "design awareness for {} names an empty vendor session identity",
+            body.design
+        ));
+    }
+    let conversation_sources = [
+        match &body.opportunity {
+            DesignNoticeOpportunity::Conversation { source } => Some(source),
+            _ => None,
+        },
+        match &body.evidence {
+            DesignNoticeEvidence::Conversation { source } => Some(source),
+            _ => None,
+        },
+    ];
+    if conversation_sources
+        .into_iter()
+        .flatten()
+        .any(|source| source.locus.source.is_none())
+    {
+        return unsound(format!(
+            "design awareness for {} names conversation evidence without a tape generation",
+            body.design
         ));
     }
     let terms_valid = !body.terms.is_empty() && body.terms.len() <= DESIGN_NOTICE_TERMS;

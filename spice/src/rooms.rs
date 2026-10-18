@@ -122,9 +122,9 @@ pub enum RoomDutyKind {
     /// An explicit request for involvement told at `at`; it is not a
     /// contribution, and a later leave ends it.
     Invitation { key: String, at: Instant },
-    /// A recorded Design request asked the lane about this room at `at`,
-    /// after it completed `task`; only a later leave ends it.
-    Asked { task: TaskStamp, at: Instant },
+    /// A recorded Design request asked the lane about this room at `at`;
+    /// `source` names the retained task or conversation that supported it.
+    Asked { source: String, at: Instant },
     /// A directed delivery awaiting disposition.
     Delivery { key: String },
     /// A correlated substantive result awaiting the named lane.
@@ -268,9 +268,9 @@ pub enum AttentionReason {
     },
     /// An explicit invitation remains owed; it does not make a participant.
     Invitation { key: String },
-    /// A recorded Design request asked the lane after it completed `task`; it
-    /// does not make a participant, and only a leave ends it.
-    Asked { task: TaskStamp },
+    /// A recorded Design request asked the lane using `source`; it does not
+    /// make a participant, and only a leave ends it.
+    Asked { source: String },
     /// A directed delivery remains owed.
     Delivery { key: String },
     /// A correlated substantive result remains owed.
@@ -648,11 +648,13 @@ fn fold_attention(
                 }
                 AttentionReason::Invitation { key: key.clone() }
             }
-            RoomDutyKind::Asked { task, at } => {
+            RoomDutyKind::Asked { source, at } => {
                 if !restores(folded, *at) {
                     continue;
                 }
-                AttentionReason::Asked { task: task.clone() }
+                AttentionReason::Asked {
+                    source: source.clone(),
+                }
             }
             RoomDutyKind::Delivery { key } => AttentionReason::Delivery { key: key.clone() },
             RoomDutyKind::Result { key } => AttentionReason::Result { key: key.clone() },

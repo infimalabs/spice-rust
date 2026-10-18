@@ -1,6 +1,6 @@
-//! Private Design input due after authority changes: completion requests are
-//! recorded for `task next`, then the newest return of a lane's own active
-//! Design is delivered and durably consumed.
+//! Private Design input due after authority or session-evidence changes:
+//! profile-selected invitations are recorded before allocation, then the newest
+//! return of a lane's own active Design is delivered and durably consumed.
 
 use serde::{Deserialize, Serialize};
 use wire::CanonicalUuid;
@@ -37,10 +37,10 @@ impl BackgroundNotice {
     }
 }
 
-/// Record completion-bound Design requests, then tell every occupied claimant
+/// Record session-profile Design requests, then tell every occupied claimant
 /// the newest return of an active Design it holds. Return delivery is confirmed
 /// before its durable consumption record; either failure is retried on the
-/// next authority change.
+/// next reconciliation pass.
 pub(in crate::resident) fn reconcile(
     bus: &Bus,
     paths: &RuntimePaths,
