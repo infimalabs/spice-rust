@@ -130,8 +130,8 @@ flowchart LR
   mismatched generation refuses without deleting quarantine.
 - Every unowned-path or loose-commit refusal names the same two choices:
   `task capture HANDLE` for an existing ready execution task or `task capture
-  --title TITLE --project PROJECT` for new execution work. Planning, Design,
-  and gather claims refuse implementation adoption before quarantine or claim.
+  --title TITLE --project PROJECT` for new execution work. Planning and Design
+  claims refuse implementation adoption before quarantine or claim.
 - Every phase transition is a journal fact visible on the board, including one
   that changes no tree. A landing commit carries the task's key, project, phase,
   and session trailers; first-parent history records mutating landings, not
@@ -686,7 +686,7 @@ owns each rule summarized here.
   closure for retained terminal, deleted, or absent parents, so no read-time
   stranded classification or repair path remains.
 
-  A Plan is an ordinary reviewed task constructor. Every non-gather task it
+  A Plan is an ordinary reviewed task constructor. Every task it
   constructs, including a sub-Plan, waits on an ordinary dependency to that
   Plan until positive review, along with its other ordinary dependencies. No
   Design proposal, selection, or execution authorization is involved. A
@@ -699,18 +699,6 @@ owns each rule summarized here.
   An output a pass constructed without proposing it awaits no decision; it
   stays gated, and its Design follows the pass cycle.
 
-  A [gather task](invariants/identity.md#work-a-gather-task-collects-evidence-for-an-active-design)
-  tries an idea for an open, active Design without the operator authorizing
-  the experiment. It is an ordinary task walking the one `gather` phase,
-  created directly under that Design: `spice task add TITLE --flow gather`
-  while holding the Design, or with `--preparation DESIGN`. It runs under
-  ordinary routing with no execution authorization while its Design stays
-  open and its group stays in Explore or Converge. Like a planning claim it
-  holds no commit authority, so it lands nothing; its deliverable is
-  observations in its room and retained artifacts that a Design pass proposal
-  cites by exact source. A
-  gather task is never a proposed Plan output, so turning a finding into work
-  still takes a work proposal whose output the operator accepts.
 - **Organization and foreground.** The
   [working-group partition](invariants/identity.md#identity-working-groups-are-one-guarded-partition-of-designs)
   is shared repository organization and stance authority read by `spice group
@@ -720,8 +708,8 @@ owns each rule summarized here.
   foreground and are never shared.
 - **Design standing.** An open Design in an Explore or Converge group is
   [active](invariants/identity.md#work-working-group-standing-makes-a-design-active-or-passive):
-  the allocator offers it and capture, steal, gather creation, and room
-  coordination may reach it. A Design in Passive or outside every group is
+  the allocator offers it, and capture, steal, and room coordination may reach
+  it. A Design in Passive or outside every group is
   passive, and those possession paths refuse (`claim::design-passive`,
   `room::design-passive`). A fresh group starts in Passive. The operator groups a
   Design with `spice group move DESIGN --to GROUP` or `--new`, then chooses its

@@ -14,7 +14,6 @@ use wire::rooms::{
 mod automation;
 mod conversation;
 mod design_standing;
-mod gather;
 
 fn room_projects() -> ProjectPolicy {
     ProjectPolicy::new(

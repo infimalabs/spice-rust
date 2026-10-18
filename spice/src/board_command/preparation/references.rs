@@ -1,8 +1,8 @@
 //! Candidate references resolved and scope-checked at the command barrier.
 //!
 //! A candidate's authority closure is its controlling Design, its governed
-//! inputs, its outputs, the tasks whose current preparation names that
-//! Design (its gather work), and the Design's own room. A journal-backed
+//! inputs, its prepared outputs, the tasks whose current preparation names that
+//! Design, and the Design's own room. A journal-backed
 //! reference must resolve to a fact inside that closure: a contribution or
 //! other room record of the controlling room, or a task or preparation fact
 //! or authored observation of one closure task. Transcript and artifact links

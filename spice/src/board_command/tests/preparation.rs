@@ -1044,7 +1044,17 @@ fn controller_settlement_refuses_a_held_descendant_until_forced_then_closes_the_
 
 /// Add an output under `controller` through explicit preparation.
 fn add_output(bus: &Bus, epoch: CanonicalUuid, controller: &TaskHandle, name: &str) -> TaskHandle {
-    add_prepared(bus, epoch, controller, name, None)
+    add_prepared(bus, epoch, controller, name, None, None)
+}
+
+fn add_output_with_flow(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    controller: &TaskHandle,
+    name: &str,
+    flow: &str,
+) -> TaskHandle {
+    add_prepared(bus, epoch, controller, name, None, Some(flow))
 }
 
 /// Add a reviewed Plan under `controller` through explicit preparation.
@@ -1054,7 +1064,14 @@ pub(super) fn add_plan_output(
     controller: &TaskHandle,
     name: &str,
 ) -> TaskHandle {
-    add_prepared(bus, epoch, controller, name, Some(wire::TaskIntent::Plan))
+    add_prepared(
+        bus,
+        epoch,
+        controller,
+        name,
+        Some(wire::TaskIntent::Plan),
+        None,
+    )
 }
 
 fn add_prepared(
@@ -1063,6 +1080,7 @@ fn add_prepared(
     controller: &TaskHandle,
     name: &str,
     intent: Option<wire::TaskIntent>,
+    flow: Option<&str>,
 ) -> TaskHandle {
     let born = stamp(name);
     let current = board(bus, epoch, Actor::Operator);
@@ -1086,7 +1104,9 @@ fn add_prepared(
             acceptance: vec!["The output is delivered".to_owned()],
             requirements: wire::EnvironmentRequirements::default(),
             origin: Some(fixture_origin()),
-            flow: intent.map(|_| "review".to_owned()),
+            flow: flow
+                .map(str::to_owned)
+                .or_else(|| intent.map(|_| "review".to_owned())),
             depends: Vec::new(),
             claim: false,
             draft: false,

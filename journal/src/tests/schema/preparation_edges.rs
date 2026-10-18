@@ -180,6 +180,48 @@ fn settle(journal: &mut Journal, task: &TaskStamp, settlement: Settlement) {
     journal.apply(write).expect("settlement commits");
 }
 
+fn claim(journal: &mut Journal, task: &TaskStamp) {
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163d1");
+    let occupant = uuid("018f82d4-6f59-7d06-92e3-bce9131163d2");
+    let epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163d3");
+    let actor = Actor::Operator;
+    let cell = wire::ClaimCell {
+        project: "preparation.edges".to_owned(),
+        phase: phase("gather"),
+    };
+    let mut write = write();
+    let won = write
+        .fact(
+            wire::body::ClaimWon {
+                task: task.clone(),
+                actor: actor.clone(),
+                lane,
+                occupant,
+                epoch,
+                cell: cell.clone(),
+                until: instant(),
+                git: None,
+                recovery: None,
+                source: wire::body::SourceBoundary::Proven { heads: Vec::new() },
+            },
+            crate::FactCause::Root,
+        )
+        .expect("claim fact builds");
+    write.claim_head(task.clone(), won, move |fact| wire::ClaimHead {
+        actor,
+        fact,
+        claimed: fact,
+        cell,
+        lane,
+        occupant,
+        epoch,
+        recovery: None,
+        disposition: wire::ClaimDisposition::Active,
+        acknowledged: 0,
+    });
+    journal.apply(write).expect("claim commits");
+}
+
 fn select_in_retained_statement(journal: &Journal, output: &TaskStamp, controller: &TaskStamp) {
     let authorization = serde_json::to_string(&wire::rooms::DecisionRef {
         controller: controller.clone(),
@@ -377,13 +419,9 @@ fn schema_seventy_seven_crosses_live_gates_and_closes_unreleasable_branches() {
     );
     let crossed_gather = statement(&journal, &gather);
     assert!(
-        crossed_gather.dependencies.is_empty(),
-        "a gather route stays edge-free under its open Design"
+        crossed_gather.dependencies.contains(&open_design),
+        "every direct output waits on its open Design"
     );
-    assert!(wire::gather_task(
-        &crossed_gather,
-        &workflow(&journal, &gather)
-    ));
     assert!(workflow(&journal, &gather).status.is_pending());
     let candidate = retain_crossed_output(&mut journal, &open_design, &open_output);
     reject_crossed_output(&mut journal, candidate, &open_output);
@@ -409,4 +447,98 @@ fn schema_seventy_seven_crosses_live_gates_and_closes_unreleasable_branches() {
     journal
         .verify()
         .expect("crossed preparation authority verifies");
+}
+
+#[test]
+fn schema_eighty_four_gates_live_gather_routes_and_closes_the_rest() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("retired-gather.sqlite3");
+    let mut journal = Journal::open(&path).expect("journal creates");
+
+    let open_design = add(&mut journal, 20, Some(wire::TaskIntent::Design), None);
+    let held = add_routed(
+        &mut journal,
+        21,
+        None,
+        Some((&open_design, &open_design)),
+        phase("gather"),
+    );
+    claim(&mut journal, &held);
+
+    let settled = add_routed(
+        &mut journal,
+        22,
+        None,
+        Some((&open_design, &open_design)),
+        phase("gather"),
+    );
+    settle(&mut journal, &settled, Settlement::Closed);
+
+    let concluded_design = add(&mut journal, 23, Some(wire::TaskIntent::Design), None);
+    let concluded = add_routed(
+        &mut journal,
+        24,
+        None,
+        Some((&concluded_design, &concluded_design)),
+        phase("gather"),
+    );
+    settle(&mut journal, &concluded_design, Settlement::DesignDone);
+
+    let absent_design = add(&mut journal, 25, Some(wire::TaskIntent::Design), None);
+    let absent = add_routed(
+        &mut journal,
+        26,
+        None,
+        Some((&absent_design, &absent_design)),
+        phase("gather"),
+    );
+    journal
+        .connection
+        .execute(
+            "DELETE FROM workflow_heads WHERE stamp = ?1",
+            [absent_design.as_str()],
+        )
+        .expect("remove retained Design workflow");
+
+    restore_predecessor(&journal, 84);
+    drop(journal);
+
+    let journal = Journal::open(&path).expect("schema-84 gather routes cross");
+    assert_eq!(
+        journal.migration().map(|migration| migration.from()),
+        Some(84)
+    );
+    assert!(
+        statement(&journal, &held)
+            .dependencies
+            .contains(&open_design),
+        "a live route becomes an ordinary gated output"
+    );
+    assert!(workflow(&journal, &held).status.is_pending());
+    assert!(
+        journal
+            .read(|read| read.claim_head(&held))
+            .expect("claim reads")
+            .expect("claim remains")
+            .into_body()
+            .is_active(),
+        "the live output keeps its holder"
+    );
+    assert!(
+        !workflow(&journal, &settled).status.is_pending(),
+        "settled history remains readable"
+    );
+    for task in [concluded, absent] {
+        assert!(
+            matches!(
+                workflow(&journal, &task).status,
+                wire::WorkflowStatus::Settled {
+                    conclusion: wire::WorkflowConclusion::Negative(wire::WorkflowNegative::Closed),
+                    ..
+                }
+            ),
+            "{task} closes"
+        );
+    }
+    journal.verify().expect("retired gather crossing verifies");
 }

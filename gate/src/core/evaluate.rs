@@ -147,13 +147,13 @@ fn evaluate_merge(evidence: &MergeIntegrityEvidence) -> (CoreStanding, String) {
 
 /// Whether an active claim in `phase` forbids task-owned implementation history.
 ///
-/// This is the one commit-authority deny-list. Only `plan`, `design`, and
-/// `gather` refuse commits, captures, and completions that would publish
-/// repository work; every other phase, named or not, keeps its native
-/// permission, so the board's phase vocabulary stays open.
+/// This is the one commit-authority deny-list. Only `plan` and `design` refuse
+/// commits, captures, and completions that would publish repository work; every
+/// other phase, named or not, keeps its native permission, so the board's phase
+/// vocabulary stays open.
 #[must_use]
 pub fn lacks_commit_authority(phase: &str) -> bool {
-    matches!(phase, "plan" | "design" | "gather")
+    matches!(phase, "plan" | "design")
 }
 
 fn evaluate_planning_phase(evidence: &PlanningPhaseEvidence) -> (CoreStanding, String) {
@@ -291,7 +291,7 @@ mod tests {
     fn only_active_planning_claims_refuse_commits() {
         let task: wire::TaskHandle = "PHASE-1kRKw9Qj".parse().expect("fixture task handle");
 
-        for phase in ["plan", "design", "gather"] {
+        for phase in ["plan", "design"] {
             let phase: wire::Phase = phase.parse().expect("fixture planning phase");
             let (standing, diagnostic) = evaluate_planning_phase(&PlanningPhaseEvidence::Active {
                 task: task.clone(),
