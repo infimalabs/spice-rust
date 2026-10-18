@@ -427,7 +427,8 @@ path.image-annotation-hit { fill: none; }
   --inactive-lane-opacity: .72;
   --mosaic-card: color-mix(in srgb, var(--panel) 95%, var(--accent));
   --message-stream-surface: color-mix(in srgb, var(--page) 50%, var(--control));
-  --team-pip-gap: 1px;
+  --team-pip-gap: .5px;
+  --team-pip-etch: color-mix(in srgb, var(--ink) 22%, var(--panel));
   --team-toolbar-inline-inset: 8px;
   --team-control-inline-size: var(--app-team-control-inline-size);
   --team-control-submit-block-size: calc(2 * var(--app-status-line-band));
@@ -484,7 +485,8 @@ path.image-annotation-hit { fill: none; }
   --team-pip-columns: 3; --team-pip-rows: 2; display: grid;
   grid-template-columns: repeat(var(--team-pip-columns), minmax(0, 1fr)); grid-template-rows: repeat(var(--team-pip-rows), minmax(0, 1fr));
   grid-auto-flow: column dense; direction: rtl; place-content: stretch; gap: var(--team-pip-gap);
-  grid-column: 2; inline-size: var(--team-control-inline-size); min-width: 0; margin: 0; padding: 0;
+  grid-column: 2; box-sizing: border-box; inline-size: var(--team-control-inline-size); min-width: 0; margin: 0; padding: var(--team-pip-gap);
+  background: var(--team-pip-etch);
 }
 .team-lights > .app-presence-pip--status { width: auto; height: auto; min-width: 0; min-height: 0; }
 /* Preserve bottom-to-top order; center the shorter row for three and five. */
