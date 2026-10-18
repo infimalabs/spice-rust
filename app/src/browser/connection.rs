@@ -141,7 +141,7 @@ struct Ended {
 /// only work no handoff can carry keeps the tab where it is behind the explicit
 /// reload control. One reload per served generation keeps a document that still
 /// loads stale from cycling.
-fn reload_into_served_app(served: &wire::Digest, unload: &UnloadGuard) -> bool {
+pub(super) fn reload_into_served_app(served: &wire::Digest, unload: &UnloadGuard) -> bool {
     let Some(window) = web_sys::window() else {
         return false;
     };
