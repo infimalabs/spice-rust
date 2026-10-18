@@ -57,27 +57,31 @@ pub enum VoicePolicy {
 /// Explicit configuration always wins. An unconfigured speaker outside the
 /// roster uses the device default everywhere. A roster member spreads only on
 /// desktop; Apple mobile browsers use their device default because their voice
-/// records do not carry macOS premium markers.
+/// records do not carry macOS premium markers. Desktop-mode iPadOS presents a
+/// Macintosh user agent, so its touch capability distinguishes it from a Mac.
 #[must_use]
-pub fn policy(configured: bool, roster_member: bool, user_agent: &str) -> VoicePolicy {
+pub fn policy(
+    configured: bool,
+    roster_member: bool,
+    user_agent: &str,
+    max_touch_points: i32,
+) -> VoicePolicy {
     if configured {
         VoicePolicy::Listed
-    } else if !roster_member || apple_mobile(user_agent) {
+    } else if !roster_member || apple_mobile(user_agent, max_touch_points) {
         VoicePolicy::DeviceDefault
     } else {
         VoicePolicy::PremiumSpread
     }
 }
 
-/// Whether this user agent is an Apple mobile browser.
-///
-/// iPadOS desktop-mode user agents identify as Macintosh but retain the
-/// `Mobile/` product token.
-fn apple_mobile(user_agent: &str) -> bool {
+/// Whether this browser runs on an Apple mobile device.
+fn apple_mobile(user_agent: &str, max_touch_points: i32) -> bool {
     user_agent.contains("iPhone")
         || user_agent.contains("iPad")
         || user_agent.contains("iPod")
-        || (user_agent.contains("Macintosh") && user_agent.contains("Mobile/"))
+        || (user_agent.contains("Macintosh")
+            && (user_agent.contains("Mobile/") || max_touch_points > 1))
 }
 
 /// Why a published voice list offers no voice to spread.
@@ -281,34 +285,55 @@ mod tests {
     #[test]
     fn apple_mobile_automatic_voice_uses_default_without_changing_other_boundaries() {
         let mobile_agents = [
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
-            "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
-            "Mozilla/5.0 (iPod touch; CPU iPhone OS 17_0 like Mac OS X)",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 \
-             Version/18.0 Mobile/15E148 Safari/604.1",
+            (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+                0,
+            ),
+            (
+                "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+                0,
+            ),
+            (
+                "Mozilla/5.0 (iPod touch; CPU iPhone OS 17_0 like Mac OS X)",
+                0,
+            ),
+            (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 \
+                 Version/18.0 Mobile/15E148 Safari/604.1",
+                0,
+            ),
+            (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
+                 (KHTML, like Gecko) Version/16.0 Safari/605.1.15",
+                5,
+            ),
         ];
-        for user_agent in mobile_agents {
+        for (user_agent, max_touch_points) in mobile_agents {
             assert_eq!(
-                policy(false, true, user_agent),
+                policy(false, true, user_agent, max_touch_points),
                 VoicePolicy::DeviceDefault,
                 "{user_agent}"
             );
             assert_eq!(
-                policy(true, true, user_agent),
+                policy(true, true, user_agent, max_touch_points),
                 VoicePolicy::Listed,
                 "explicit voices still win on {user_agent}"
             );
         }
+        let macintosh = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
+             (KHTML, like Gecko) Version/16.0 Safari/605.1.15";
+        assert_eq!(
+            policy(false, true, macintosh, 0),
+            VoicePolicy::PremiumSpread
+        );
+        assert_eq!(policy(true, true, macintosh, 0), VoicePolicy::Listed);
         assert_eq!(
             policy(
                 false,
-                true,
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 Safari/605.1.15",
+                false,
+                "Mozilla/5.0 (X11; Linux x86_64) Chrome/140",
+                0
             ),
-            VoicePolicy::PremiumSpread
-        );
-        assert_eq!(
-            policy(false, false, "Mozilla/5.0 (X11; Linux x86_64) Chrome/140"),
             VoicePolicy::DeviceDefault
         );
     }

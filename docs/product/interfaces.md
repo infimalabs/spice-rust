@@ -365,8 +365,10 @@ remains the record. `say.voices` is an ordered list of voice names, scoped to
 the agent's worktree: each device speaks an agent's messages with the first
 listed name it publishes, and the agent keeps that voice for the page. With an
 empty list, an Apple mobile browser—iPhone, iPad, iPod, or iPadOS presenting
-its desktop-mode Macintosh user agent—uses the device default voice because
-its published voices do not carry macOS premium metadata. Other browsers
+its desktop-mode Macintosh user agent, recognized by a `Mobile/` token or by
+`navigator.maxTouchPoints` above one, which a Mac reports as zero—uses the
+device default voice because its published voices do not carry macOS premium
+metadata. Other browsers
 spread roster agents across published macOS premium voices only: Safari's
 `com.apple.voice.premium.` identifier or Chromium's exact ` (Premium)` name
 suffix, served locally. Enhanced, standard, novelty, remote, and unmarked

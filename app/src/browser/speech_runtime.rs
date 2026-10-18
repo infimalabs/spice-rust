@@ -129,22 +129,30 @@ impl SpeechRuntime {
         let result = {
             let roster = self.roster.borrow();
             let member = roster.members.get(entry.worktree()).copied();
-            let user_agent = if voices.is_empty() && member.is_some() {
-                web_sys::window()
-                    .and_then(|window| window.navigator().user_agent().ok())
-                    .unwrap_or_default()
+            let (user_agent, max_touch_points) = if voices.is_empty() && member.is_some() {
+                web_sys::window().map_or_else(Default::default, |window| {
+                    let navigator = window.navigator();
+                    (
+                        navigator.user_agent().unwrap_or_default(),
+                        navigator.max_touch_points(),
+                    )
+                })
             } else {
-                String::new()
+                Default::default()
             };
-            let request =
-                match voice_spread::policy(!voices.is_empty(), member.is_some(), &user_agent) {
-                    VoicePolicy::Listed => VoiceRequest::Listed(&voices),
-                    VoicePolicy::DeviceDefault => VoiceRequest::Default,
-                    VoicePolicy::PremiumSpread => VoiceRequest::Spread {
-                        teams: &roster.teams,
-                        member: member.expect("premium spreading requires a roster member"),
-                    },
-                };
+            let request = match voice_spread::policy(
+                !voices.is_empty(),
+                member.is_some(),
+                &user_agent,
+                max_touch_points,
+            ) {
+                VoicePolicy::Listed => VoiceRequest::Listed(&voices),
+                VoicePolicy::DeviceDefault => VoiceRequest::Default,
+                VoicePolicy::PremiumSpread => VoiceRequest::Spread {
+                    teams: &roster.teams,
+                    member: member.expect("premium spreading requires a roster member"),
+                },
+            };
             self.controller.borrow_mut().start_system(
                 generation,
                 entry.worktree(),
