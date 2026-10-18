@@ -92,14 +92,14 @@ name continuations.
   session cannot replay itself: use conversation, briefing, and task state;
   never bypass `session::context-live-session-self`. Update, split, or release
   stale scope rather than force it.
-- Plan/Design purpose survives phases; done cannot replace review. A Design
-  plans Plans. Ambient creation binds unless another `--origin`;
+- Plan/Design purpose survives phases; done cannot replace review. Ambient
+  creation binds unless another `--origin`;
   `--preparation` binds explicitly. A Plan creates an acceptance-bearing
   executable task, else `task done --disposition KIND [--cover REF]`; positive
   review releases outputs to dependencies without selection/authorization.
-  Design follow-up creates acceptance-bearing Plans and retains candidate JSON
-  naming them; no-follow-up is explicit. Keep Designs open: checkpoint/free;
-  only the
+  Design follow-up creates acceptance-bearing outputs of any intent and retains
+  candidate JSON naming them; no-follow-up is explicit. Keep Designs open:
+  checkpoint/free; only the
   operator concludes. Outputs await exact `preparation decide`; dependencies,
   origin, closure, deletion, findings, and group movement never bypass it. No
   reciprocal controller/output edge. Stop means checkpoint/free. `--flow

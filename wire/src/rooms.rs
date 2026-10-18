@@ -493,7 +493,7 @@ pub struct CandidateReference {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DesignPassRecommendation {
-    /// Authorize one or more directly controlled Plan outputs.
+    /// Authorize one or more acceptance-bearing outputs the Design gates.
     Work,
     /// Conclude the Design done without fabricating an output.
     Conclude,
@@ -521,7 +521,7 @@ pub struct DesignPassProposal {
     pub recommendation: DesignPassRecommendation,
     /// Governed input tasks whose current composition a work proposal assumes.
     pub governed_inputs: Vec<TaskStamp>,
-    /// Gated Plan outputs named by a work proposal.
+    /// Acceptance-bearing outputs of any intent named by a work proposal.
     pub outputs: Vec<TaskStamp>,
     /// Nonempty, trimmed explanation for the recommendation.
     pub justification: String,
