@@ -949,15 +949,29 @@ fn an_asked_lane_stands_asked_until_it_leaves() {
                 statement: wire::Seq::new(1).expect("fixture statement"),
                 lane: uuid(THIRD_LANE),
                 occupant: uuid(REQUEST),
-                task: room(),
-                claim: wire::SequenceCode::new(9),
+                session: wire::rooms::DesignSession {
+                    vendor: "omp".parse().expect("fixture vendor"),
+                    identity: "fixture-session".to_owned(),
+                },
+                opportunity: wire::rooms::DesignNoticeOpportunity::DesignStatement,
+                evidence: wire::rooms::DesignNoticeEvidence::Task {
+                    task: room(),
+                    statement: wire::Seq::new(1).expect("fixture evidence statement"),
+                    completed: wire::Seq::new(8).expect("fixture completion"),
+                },
                 terms: vec!["rooms".to_owned()],
             },
         ),
     );
     assert_eq!(
         reasons(&runtime),
-        Some(vec![app::ParticipantReason::Asked(room())])
+        Some(vec![app::ParticipantReason::Asked(
+            wire::rooms::DesignNoticeEvidence::Task {
+                task: room(),
+                statement: wire::Seq::new(1).expect("fixture evidence statement"),
+                completed: wire::Seq::new(8).expect("fixture completion"),
+            }
+        )])
     );
 
     let left = later_publication(1);

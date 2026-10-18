@@ -372,8 +372,16 @@ fn noticed_at(
             statement: wire::Seq::new(statement).expect("fixture statement"),
             lane: uuid(lane),
             occupant: uuid(REQUEST),
-            task: room(),
-            claim: wire::SequenceCode::new(position),
+            session: wire::rooms::DesignSession {
+                vendor: "omp".parse().expect("fixture vendor"),
+                identity: "fixture-session".to_owned(),
+            },
+            opportunity: wire::rooms::DesignNoticeOpportunity::DesignStatement,
+            evidence: wire::rooms::DesignNoticeEvidence::Task {
+                task: room(),
+                statement: wire::Seq::new(statement).expect("fixture evidence statement"),
+                completed: wire::Seq::new(position).expect("fixture completion"),
+            },
             terms: vec!["rooms".to_owned()],
         },
     )

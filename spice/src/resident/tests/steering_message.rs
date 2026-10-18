@@ -427,10 +427,16 @@ impl Lanes {
 
     /// Declare the lane's seated occupant's session at the tape's current end.
     fn declare(&self, lane: u8) -> listen::Locus {
+        let identity = test_uuid(lane.saturating_add(20)).to_string();
         let declaration = self
             .tape(lane)
-            .tee(br#"{"type":"session","id":"session-1","version":3,"timestamp":"2030-04-12T18:44:09.271Z","cwd":"/"}
-"#)
+            .tee(
+                format!(
+                    "{{\"type\":\"session\",\"id\":\"{identity}\",\"version\":3,\
+                     \"timestamp\":\"2030-04-12T18:44:09.271Z\",\"cwd\":\"/\"}}\n"
+                )
+                .as_bytes(),
+            )
             .expect("the declaration is durable");
         let observed = current_residency(&self.bus, self.epoch).expect("residency reads");
         let mut declared = observed.body().clone();
@@ -447,7 +453,7 @@ impl Lanes {
             launch: wire::body::LaneLaunchIdentity::new("sonnet", "high"),
             epoch: self.epoch,
             stream: "stdout".to_owned(),
-            identity: "session-1".to_owned(),
+            identity,
             locus: wire::TapeLocus {
                 member: declaration.member,
                 offset: declaration.offset,

@@ -539,25 +539,28 @@ owns each rule summarized here.
   and failed acquisition from an empty ready profile.
   Declaration, newly stored evidence, readiness, and Design-statement changes
   expose bounded cursor-addressed selection opportunities.
-- **Design awareness.** At a natural break after `task done`, a lane whose
-  completed work has at least 0.15 recent-window TF-IDF cosine similarity to
-  an open passive Design owes one private
-  [request](invariants/identity.md#identity-a-completed-lane-owes-one-passive-design-request)
-  before its next allocation. Both the resident pass and `task next` use the
-  same 256-statement document-frequency profile, logarithmic term frequency,
-  smooth inverse document frequency, L2 normalization, eligibility predicates,
-  ranking, and durable-identity tie break. They compare the completed task's
-  statement and bounded validation prefix with each Design's title,
-  description, and every open question. Each record names the exact Design
-  statement, completed task and claim, and at most six strongest weighted
-  overlaps, stored in ascending term order so the request shows all of them;
-  an occupant is never requested for a Design twice. The request quotes the
-  first substantive description sentence and an in-order, bounded prefix of
-  whole open questions. One contribution or `spice room leave --clause` in
-  that room answers the request. A standing change away from open passive
-  releases it. The request grants no claim, starts no work, and adds no
-  workflow state; `spice room awareness HANDLE` shows its statement,
-  recipient, completed task, and matched terms.
+- **Design awareness.** A continuing vendor session retains bounded task and
+  authored-conversation evidence. A successful completion, settled
+  conversation message, newly filed or revised passive Design, completed
+  profile warm, or resumed session is an opportunity to compare that profile
+  with current open passive Designs before allocation. Matching uses the same
+  256-statement document-frequency profile, logarithmic term frequency, smooth
+  inverse document frequency, L2 normalization, 0.15 floor, and durable
+  Design-identity tie break for every retained task-statement,
+  task-completion, whole-message, and passage view. One opportunity selects at
+  most one Design, and one session carries at most one unanswered request. Each
+  `room::noticed` record names the exact Design statement, continuing session,
+  opportunity, retained evidence card and its immutable identity, and at most
+  six strongest weighted overlaps in ascending order. A session is never
+  requested for the same Design twice, including after an occupant change or
+  resident restart. The request quotes the first substantive description
+  sentence and an in-order bounded prefix of whole open questions. One
+  contribution or `spice room leave --clause` in that room answers the request.
+  A changed or closed Design, replaced target session, lost supporting source,
+  or standing change away from open passive releases it; unrelated journal
+  writes do not. The request grants no claim, starts no work, and adds no
+  workflow state; `spice room awareness HANDLE` shows its exact opportunity,
+  evidence, statement, recipient session, and matched terms.
 - **Design maturity.** One bounded projection per Design folds admitted
   requests and typed contributions in journal order. It reports contribution
   counts by kind, distinct contributing lanes, requested reach, and

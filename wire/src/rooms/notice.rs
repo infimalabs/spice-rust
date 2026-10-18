@@ -1,4 +1,4 @@
-//! Resident records of completion-bound requests for open passive Designs.
+//! Resident records of session-targeted requests for open passive Designs.
 //!
 //! Each record durably chooses one request. It is not a room publication; it
 //! keeps the asked lane listening to the Design's room until that lane leaves,
@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::DecisionRef;
-use crate::{CanonicalUuid, Seq, SequenceCode, TaskStamp};
+use crate::{CanonicalUuid, Digest, Name, Seq, SequenceCode, TaskStamp};
 
 /// Most bytes of completion validation retained for Design request matching.
 pub const COMPLETION_VALIDATION_BYTES: usize = 4 * 1024;
@@ -35,12 +35,63 @@ pub fn shown_notice_terms(terms: &[String]) -> Vec<&str> {
     shown
 }
 
-/// One completed claim requested one lane occupant's input on a passive Design.
+/// One exact continuing vendor session invited to a passive Design.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignSession {
+    /// Vendor whose declaration admitted the identity.
+    pub vendor: Name,
+    /// Exact resumable vendor session identity.
+    pub identity: String,
+}
+
+/// Exact settled conversation source used by an opportunity or as support.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesignConversationEvidence {
+    /// Durable transcript record containing the assistant-authored prose.
+    pub locus: crate::body::TranscriptLocus,
+    /// Identity of the exact cleaned prose retained by the session profile.
+    pub digest: Digest,
+}
+
+/// Event at which one session profile was evaluated.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum DesignNoticeOpportunity {
+    /// A successful task completion settled.
+    TaskCompletion { task: TaskStamp, completed: Seq },
+    /// One assistant-authored conversation message settled.
+    Conversation { source: DesignConversationEvidence },
+    /// The selected Design was filed or revised.
+    DesignStatement,
+    /// A bounded profile warm finished, optionally through its newest journal
+    /// fact when the profile has task history.
+    ProfileReady { horizon: Option<Seq> },
+    /// The same continuing session resumed at this declaration.
+    SessionResumed { declaration: Seq },
+}
+
+/// Exact retained card that supported one Design match.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum DesignNoticeEvidence {
+    /// Successful task evidence at the statement observed with its completion.
+    Task {
+        task: TaskStamp,
+        statement: Seq,
+        completed: Seq,
+    },
+    /// Assistant-authored conversation evidence.
+    Conversation { source: DesignConversationEvidence },
+}
+
+/// One continuing session was invited to contribute to a passive Design.
 ///
-/// The exact statement and matched terms record the deterministic relevance
-/// choice. The record is request state only: it is no room publication, keeps
-/// the asked lane listening to the Design's room until it leaves, and grants
-/// no participation, steering, claim, assignment, or wake.
+/// The opportunity and supporting evidence are independent: a new completion
+/// can select a Design because of an older task or conversation card. The
+/// record is request state only. It grants no participation, steering, claim,
+/// assignment, permission to work, or wake.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DesignNoticed {
@@ -48,14 +99,16 @@ pub struct DesignNoticed {
     pub design: TaskStamp,
     /// Exact Design statement head evaluated for this request.
     pub statement: Seq,
-    /// Logical lane that completed the matching task.
+    /// Logical lane carrying the continuing session when selected.
     pub lane: CanonicalUuid,
-    /// Occupant that completed the matching task.
+    /// Occupant carrying the continuing session when selected.
     pub occupant: CanonicalUuid,
-    /// Task that completed.
-    pub task: TaskStamp,
-    /// Fact that won the completed claim.
-    pub claim: SequenceCode,
+    /// Continuing vendor session that owns the invitation.
+    pub session: DesignSession,
+    /// Event that gave the resident an opportunity to evaluate the profile.
+    pub opportunity: DesignNoticeOpportunity,
+    /// Retained card whose view selected the Design.
+    pub evidence: DesignNoticeEvidence,
     /// Matched terms in ascending order.
     pub terms: Vec<String>,
 }

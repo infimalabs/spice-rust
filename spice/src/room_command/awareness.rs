@@ -1,10 +1,10 @@
-//! `spice room awareness HANDLE`: completion requests recorded for one Design.
+//! `spice room awareness HANDLE`: session-profile requests for one Design.
 //!
-//! Each row is one admitted `room::noticed` record, oldest first: the lane and
-//! occupant requested, the completed task and claim it served, the exact Design
-//! statement evaluated, and the matched terms as every surface shows them,
-//! distinct and capped. Rows page whole in journal order; a page that
-//! withholds any continues at the first withheld one. Reading changes nothing.
+//! Each row is one admitted `room::noticed` record, oldest first: the requested
+//! lane and continuing vendor session, the exact opportunity, supporting task
+//! or conversation evidence, Design statement, and matched terms as every
+//! surface shows them. Rows page whole in journal order; a page that withholds
+//! any continues at the first withheld one. Reading changes nothing.
 
 use std::fmt;
 
@@ -37,8 +37,9 @@ pub(crate) struct Noticed {
     seq: Seq,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
-    task: TaskHandle,
-    claim: Seq,
+    session: wire::rooms::DesignSession,
+    opportunity: wire::rooms::DesignNoticeOpportunity,
+    evidence: wire::rooms::DesignNoticeEvidence,
     statement: Seq,
     terms: Vec<String>,
 }
@@ -186,8 +187,8 @@ fn awareness(
 
 /// The row one indexed notice envelope reads as.
 fn noticed(
-    read: &journal::JournalRead<'_>,
-    projects: &board::ProjectPolicy,
+    _read: &journal::JournalRead<'_>,
+    _projects: &board::ProjectPolicy,
     envelope: wire::Envelope<wire::AnyFact>,
 ) -> Result<Noticed, Failure> {
     let Some(body) = envelope.fact.read::<DesignNoticed>() else {
@@ -201,14 +202,9 @@ fn noticed(
         seq: envelope.seq,
         lane: body.lane,
         occupant: body.occupant,
-        task: current_handle(read, &body.task, projects)?,
-        claim: Seq::new(body.claim.get()).ok_or_else(|| {
-            fault(
-                FaultClass::Store,
-                "room::awareness-claim-invalid",
-                "an awareness record names claim position zero",
-            )
-        })?,
+        session: body.session,
+        opportunity: body.opportunity,
+        evidence: body.evidence,
         statement: body.statement,
         terms: wire::rooms::shown_notice_terms(&body.terms)
             .into_iter()
@@ -293,8 +289,15 @@ impl fmt::Display for Noticed {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "{} lane {} occupant {} task {} claim {} statement {}",
-            self.seq, self.lane, self.occupant, self.task, self.claim, self.statement,
+            "{} lane {} occupant {} session {}/{} opportunity {:?} evidence {:?} statement {}",
+            self.seq,
+            self.lane,
+            self.occupant,
+            self.session.vendor,
+            self.session.identity,
+            self.opportunity,
+            self.evidence,
+            self.statement,
         )?;
         if self.terms.is_empty() {
             Ok(())

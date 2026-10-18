@@ -2,8 +2,8 @@
 
 use wire::body::{SteerCanceled, SteerSent, SteeringStage};
 use wire::rooms::{
-    CoordinationControl, RoomAutomatedResume, RoomCoordinationStarted, RoomPutAside,
-    RoomResumeRule, RoomStopRequest,
+    CoordinationControl, DesignNoticeEvidence, DesignNoticeOpportunity, DesignSession,
+    RoomAutomatedResume, RoomCoordinationStarted, RoomPutAside, RoomResumeRule, RoomStopRequest,
 };
 use wire::{Disposition, SteeringHead};
 
@@ -481,8 +481,19 @@ fn room_authority_pages_every_design_notice() {
                 statement: wire::Seq::new(1).expect("fixture statement"),
                 lane: uuid(HOLDER),
                 occupant: uuid(HOLDER),
-                task: claimed,
-                claim: wire::SequenceCode::new(2),
+                session: DesignSession {
+                    vendor: "omp".parse().expect("vendor"),
+                    identity: "fixture-session".to_owned(),
+                },
+                opportunity: DesignNoticeOpportunity::TaskCompletion {
+                    task: claimed.clone(),
+                    completed: wire::Seq::new(3).expect("completion"),
+                },
+                evidence: DesignNoticeEvidence::Task {
+                    task: claimed,
+                    statement: wire::Seq::new(2).expect("task statement"),
+                    completed: wire::Seq::new(3).expect("completion"),
+                },
                 terms: vec!["rooms".to_owned()],
             },
             crate::FactCause::Root,
