@@ -75,7 +75,58 @@ fn next_read_classifies_peer_only_parked_work_without_board_rows() {
             workflow_waiting: 1,
             designs: Default::default(),
             deferred: 1,
-        }
+            boarded_elsewhere: Vec::new(),
+        },
+        "a peer's claim on work this session did not board names no owner"
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn a_dry_lane_hears_who_holds_the_work_its_session_boarded() {
+    let (root, bus, epoch, seats) = fixture("next-read-boarded", 3);
+    declare_session(&bus, epoch, &seats[0], uuid(9_201), 201);
+    seed_creation_transcript(&bus, seats[0].lane);
+    let creator = Actor::Lane(seats[0].lane);
+    let boarded = add(
+        &bus,
+        epoch,
+        creator.clone(),
+        "DRAIN-board001",
+        "Boarded",
+        Some("todo"),
+    );
+    let holder = Actor::Lane(seats[1].lane);
+    claim_task(&bus, epoch, &seats[1], &holder, &boarded);
+    let foreign = todo_task(&bus, epoch, "DRAIN-board003", "Boarded by the operator");
+    claim_task(
+        &bus,
+        epoch,
+        &seats[2],
+        &Actor::Lane(seats[2].lane),
+        &foreign,
+    );
+    let unclaimed = add(
+        &bus,
+        epoch,
+        creator.clone(),
+        "DRAIN-board002",
+        "Waiting",
+        Some("todo"),
+    );
+    subscription::configure_subscription(&bus, epoch, &seats[0], TeamLife::Steer);
+
+    let answer = next_board(&bus, epoch, creator);
+    let Some(NextWorkState::Dry { board: counts, .. }) = answer.next else {
+        panic!("a steered lane stays dry")
+    };
+    assert_eq!(
+        counts.boarded_elsewhere,
+        [wire::intent::BoardedElsewhere {
+            task: boarded,
+            holder,
+        }],
+        "only claimed work this session boarded names its owner, not {unclaimed} or {foreign}"
     );
     clean(&root, bus);
 }
@@ -169,6 +220,7 @@ fn next_read_keeps_speculative_design_work_out_of_its_board_summary() {
                 ..Default::default()
             },
             deferred: 0,
+            boarded_elsewhere: Vec::new(),
         },
         "the Design counts once by its cycle while dependency edges classify both ordinary and \
          speculative waits"
@@ -458,6 +510,7 @@ fn next_read_returns_each_authoritative_team_policy() {
                 workflow_waiting: 0,
                 designs: Default::default(),
                 deferred: 0,
+                boarded_elsewhere: Vec::new(),
             }
         );
     }

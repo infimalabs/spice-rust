@@ -374,7 +374,7 @@ fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
             } => {
                 drain = Some(Reply {
                     position: ReplyPosition::Snapshot(board.cursor),
-                    body: DrainReadout::from_next(*counts, *team),
+                    body: DrainReadout::from_next(counts, *team, &board.residency.body.lanes),
                 });
                 return refusal(
                     "board::allocator-empty",
@@ -459,7 +459,7 @@ fn next_drain_readout(board: &BoardAnswer) -> Option<Reply<DrainReadout>> {
     };
     Some(Reply {
         position: ReplyPosition::Snapshot(board.cursor),
-        body: DrainReadout::from_next(*counts, *team),
+        body: DrainReadout::from_next(counts, *team, &board.residency.body.lanes),
     })
 }
 

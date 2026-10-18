@@ -553,7 +553,7 @@ pub struct NextWorkTask {
 
 /// Exact pending execution-board classification when the allocator has no
 /// candidate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NextWorkCounts {
     /// Current claims.
@@ -568,6 +568,19 @@ pub struct NextWorkCounts {
     pub designs: crate::rooms::DesignCycleCounts,
     /// Explicitly deferred work.
     pub deferred: usize,
+    /// Pending work the principal's current session boarded that another
+    /// actor now holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boarded_elsewhere: Vec<BoardedElsewhere>,
+}
+
+/// One task the principal boarded and another actor holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardedElsewhere {
+    pub task: crate::TaskHandle,
+    /// Actor holding the task's active claim.
+    pub holder: crate::Actor,
 }
 
 /// One closed allocator decision captured at the board snapshot barrier.
