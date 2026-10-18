@@ -354,6 +354,40 @@ fn authorization_releases_its_output_and_leaves_its_controller_open() {
     journal.verify().expect("settled authorization verifies");
 }
 
+/// A lease renewal extends the claim a Design pass names without moving it, so
+/// replay admits the pass the live commit admitted.
+#[test]
+fn a_design_pass_names_its_claim_across_lease_renewals() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let preparation = Preparation::new(&mut journal);
+    let mut renewal = JournalWrite::new(
+        Actor::Spice,
+        "task:rooms".parse().expect("room origin"),
+        instant(),
+        Producer::BusTimer,
+    );
+    renewal
+        .fact(
+            wire::body::ClaimRenewed {
+                task: preparation.controller.clone(),
+                epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163d3"),
+                until: instant(),
+                maximum: instant(),
+            },
+            FactCause::Root,
+        )
+        .expect("renewal builds");
+    journal.apply(renewal).expect("renewal commits");
+    commit(
+        &mut journal,
+        preparation.retained(1, vec![preparation.output.clone()]),
+    )
+    .expect("the pass names the renewed claim");
+    journal
+        .verify()
+        .expect("replay admits the pass across the renewal");
+}
+
 #[test]
 fn an_associated_task_keeps_the_intent_it_was_created_with() {
     let mut journal = Journal::in_memory().expect("journal");

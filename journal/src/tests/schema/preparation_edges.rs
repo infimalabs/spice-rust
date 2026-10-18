@@ -325,8 +325,8 @@ fn schema_seventy_seven_crosses_live_gates_and_closes_unreleasable_branches() {
     );
     depend(&mut journal, &deleted_descendant, &deleted_output);
     settle(&mut journal, &deleted_design, Settlement::Deleted);
-
     let open_plan = add(&mut journal, 9, Some(wire::TaskIntent::Plan), None);
+    depend(&mut journal, &open_output, &open_plan);
     let open_plan_output = add(&mut journal, 10, None, Some((&open_plan, &open_plan)));
     let open_subplan = add(
         &mut journal,

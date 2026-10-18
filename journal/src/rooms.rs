@@ -18,10 +18,9 @@ use std::collections::BTreeMap;
 use wire::principal::ActingPrincipal;
 use wire::rooms::{
     CandidateCoverage, CandidateCovered, CandidateCritiqued, CandidateWithdrawn, CoverageAuthority,
-    DesignProposed, ExecutionAuthorized, PreparationDecided, PreparationDecision, ProposalRef,
-    RoomAnchor, RoomAuthorityStamp, RoomContributed, RoomDelivered, RoomHorizon, RoomLeft,
-    RoomMessaged, RoomPublicationContent, RoomPublished, RoomSource, TranscriptHunk,
-    WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
+    DesignProposed, ExecutionAuthorized, PreparationDecided, ProposalRef, RoomAuthorityStamp,
+    RoomContributed, RoomDelivered, RoomHorizon, RoomLeft, RoomMessaged, RoomPublicationContent,
+    RoomPublished, RoomSource, WorkingGroupMoved, WorkingGroupPartition, WorkingGroupsArranged,
 };
 use wire::{
     Actor, AnyFact, CanonicalUuid, Instant, Seq, TaskPreparation, TaskStamp, TranscriptSourceHead,
@@ -30,8 +29,13 @@ use wire::{
 mod awareness;
 mod conversation;
 mod coordination;
+mod dependencies;
 mod evidence;
+mod history;
+mod hunk;
+mod packets;
 mod preparation;
+mod projection;
 mod relevance;
 mod retained_note;
 mod sql;
@@ -46,8 +50,12 @@ pub(crate) use coordination::{
     require_writes as require_coordination_writes,
 };
 pub(crate) use evidence::{SCHEMA_SQL as EVIDENCE_SCHEMA_SQL, fold as fold_evidence};
+pub(crate) use history::History;
+use hunk::require_hunk;
+pub(crate) use packets::require_packet_routes;
 pub(crate) use relevance::SCHEMA_SQL as RELEVANCE_SCHEMA_SQL;
 pub(crate) use retained_note::{AUDIT_PREFIX, presented};
+
 pub(crate) const MATURITY_SCHEMA_SQL: &str = r#"
 CREATE TABLE design_notices (
     design TEXT NOT NULL,
@@ -237,6 +245,12 @@ pub(crate) trait Authority {
     fn set_task_birth_dependencies(&mut self, added: &wire::body::TaskAdded) {
         self.set_task_dependencies(&added.task, added.depends.clone());
     }
+    /// Record a dependency edit. Replay keeps a predecessor gate restored at
+    /// birth when an edit written before that gate was an edge omits it; live
+    /// commits retain the fact's exact dependency list.
+    fn set_task_edit_dependencies(&mut self, task: &TaskStamp, dependencies: Vec<TaskStamp>) {
+        self.set_task_dependencies(task, dependencies);
+    }
     /// Current statement head position of one task, when it exists.
     fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal>;
     /// Record one task statement mutation.
@@ -367,395 +381,6 @@ pub(crate) enum Change {
     MaturityLeave(RoomLeft),
 }
 
-impl Projection {
-    fn apply(&mut self, change: Change) -> Result<(), Refusal> {
-        match change {
-            Change::Publication {
-                room,
-                publication,
-                seq,
-            } => {
-                self.publications.insert((room, publication), seq);
-            }
-            Change::GroupPartition { seq, body } => {
-                self.partition = Some((seq, body));
-            }
-            Change::OopsGeneration { seq, body } => {
-                self.oops_generation = Some((seq, body));
-            }
-            Change::Proposal { subject, row } => {
-                self.proposals.insert(subject, row);
-            }
-            Change::Authorization { outputs, row } => {
-                for output in outputs {
-                    self.authorizations
-                        .insert((output, row.decision.clone()), row.clone());
-                }
-            }
-            Change::Cursor { lane, seq, body } => {
-                self.cursors.insert(lane, (seq, body));
-            }
-            Change::Horizon { lane, seq, body } => {
-                self.horizons.insert(lane, (seq, body));
-            }
-            Change::Coordination {
-                record,
-                room,
-                seq,
-                body,
-            } => {
-                let heads = match record {
-                    CoordinationRecord::Directed => &mut self.directed,
-                    CoordinationRecord::Shelved => &mut self.shelved,
-                };
-                heads.insert(room, (seq, body));
-            }
-            Change::Conversation(edit) => self.conversation.apply(edit),
-            Change::Evidence {
-                task,
-                released,
-                required,
-            } => {
-                if let Some(result) = released {
-                    self.evidence.remove(&(task.clone(), result));
-                }
-                if let Some((result, seq)) = required {
-                    self.evidence.insert((task, result), seq);
-                }
-            }
-            Change::Relevance(edit) => self.relevance.apply(edit),
-            Change::MaturityNotice { seq, notice } => {
-                self.notices.insert((notice.design.to_string(), seq), ());
-                self.update_maturity(&notice.design, |maturity| {
-                    maturity.observe_request(&notice);
-                })?;
-            }
-            Change::MaturityContribution(contribution) => {
-                self.update_maturity(&contribution.room, |maturity| {
-                    maturity.observe_contribution(&contribution);
-                })?;
-            }
-            Change::MaturityLeave(leave) => {
-                if self.maturity.contains_key(leave.room.as_str()) {
-                    self.update_maturity(&leave.room, |maturity| maturity.observe_leave(&leave))?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn update_maturity(
-        &mut self,
-        design: &TaskStamp,
-        update: impl FnOnce(&mut wire::rooms::DesignMaturity),
-    ) -> Result<(), Refusal> {
-        let mut maturity = self
-            .maturity
-            .get(design.as_str())
-            .map(|body| wire::decode(body))
-            .transpose()?
-            .unwrap_or_default();
-        update(&mut maturity);
-        self.maturity
-            .insert(design.to_string(), wire::encode(&maturity)?);
-        Ok(())
-    }
-}
-
-/// Every task, transcript generation, proposal author, and room-coordination
-/// direction the history has introduced, beside the projection it derives.
-#[derive(Default)]
-pub(crate) struct History {
-    projection: Projection,
-    tasks: BTreeMap<String, Option<TaskPreparation>>,
-    task_intents: BTreeMap<String, Option<wire::TaskIntent>>,
-    task_dependencies: BTreeMap<String, Vec<TaskStamp>>,
-    task_statements: BTreeMap<String, Seq>,
-    active_claims: BTreeMap<String, Seq>,
-    transcripts: BTreeMap<String, TranscriptSourceHead>,
-    /// Proposal head position to the actor that recorded it.
-    authors: BTreeMap<u64, Actor>,
-    /// Steering key to the room-coordination direction it names.
-    directions: BTreeMap<String, Direction>,
-    /// Operator direction key to the lane it addresses.
-    operator_directions: BTreeMap<String, CanonicalUuid>,
-}
-
-impl History {
-    /// Fold the complete canonical history, collecting every refusal by
-    /// position instead of stopping at the first.
-    pub(crate) fn rebuild<'a>(
-        facts: impl IntoIterator<Item = (Seq, &'a Actor, Instant, &'a AnyFact)>,
-    ) -> (Projection, Vec<(Seq, Refusal)>) {
-        let mut history = Self::default();
-        let mut refusals = Vec::new();
-        for (seq, actor, at, fact) in facts {
-            // A proposal's author decides whether later coverage is
-            // independent of it.
-            if fact.read::<DesignProposed>().is_some() {
-                history.authors.insert(seq.get(), actor.clone());
-            }
-            if let Err(refusal) = evidence::fold(&mut history, seq, actor, fact) {
-                refusals.push((seq, refusal));
-                continue;
-            }
-            if let Err(refusal) = fold(&mut history, seq, at, actor, fact) {
-                refusals.push((seq, refusal));
-            }
-        }
-        (history.projection, refusals)
-    }
-}
-
-impl Authority for History {
-    fn task(&self, task: &TaskStamp) -> Result<Option<Option<TaskPreparation>>, Refusal> {
-        Ok(self.tasks.get(task.as_str()).cloned())
-    }
-
-    fn set_task(&mut self, task: &TaskStamp, preparation: Option<TaskPreparation>) {
-        self.tasks.insert(task.as_str().to_owned(), preparation);
-    }
-    fn task_intent(&self, task: &TaskStamp) -> Result<Option<Option<wire::TaskIntent>>, Refusal> {
-        Ok(self.task_intents.get(task.as_str()).cloned())
-    }
-
-    fn set_task_intent(&mut self, task: &TaskStamp, intent: Option<wire::TaskIntent>) {
-        self.task_intents.insert(task.to_string(), intent);
-    }
-    fn task_dependencies(&self, task: &TaskStamp) -> Result<Option<Vec<TaskStamp>>, Refusal> {
-        Ok(self.task_dependencies.get(task.as_str()).cloned())
-    }
-
-    fn set_task_dependencies(&mut self, task: &TaskStamp, dependencies: Vec<TaskStamp>) {
-        self.task_dependencies
-            .insert(task.to_string(), dependencies);
-    }
-    fn set_task_birth_dependencies(&mut self, added: &wire::body::TaskAdded) {
-        let mut dependencies = added.depends.clone();
-        let held = added
-            .taste
-            .as_ref()
-            .is_some_and(|hold| hold.plan == wire::TastePlan::Prepended);
-        let route = match added.flow.as_slice() {
-            [first, authored @ ..] if held && first.as_str() == "plan" => authored,
-            authored => authored,
-        };
-        if let Some(preparation) = &added.preparation
-            && preparation.construction == added.task
-            && !wire::gather_route(added.intent, route)
-            && !dependencies.contains(&preparation.parent)
-        {
-            dependencies.push(preparation.parent.clone());
-        }
-        self.set_task_dependencies(&added.task, dependencies);
-    }
-    fn task_statement(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal> {
-        Ok(self.task_statements.get(task.as_str()).copied())
-    }
-
-    fn set_task_statement(&mut self, task: &TaskStamp, statement: Seq) {
-        self.task_statements
-            .insert(task.as_str().to_owned(), statement);
-    }
-
-    fn active_claim(&self, task: &TaskStamp) -> Result<Option<Seq>, Refusal> {
-        Ok(self.active_claims.get(task.as_str()).copied())
-    }
-
-    fn set_active_claim(&mut self, task: &TaskStamp, claim: Option<Seq>) {
-        match claim {
-            Some(claim) => {
-                self.active_claims.insert(task.to_string(), claim);
-            }
-            None => {
-                self.active_claims.remove(task.as_str());
-            }
-        }
-    }
-
-    fn account(&mut self, head: &TranscriptSourceHead) {
-        self.transcripts
-            .insert(head.key().into_string(), head.clone());
-    }
-
-    fn transcript(
-        &self,
-        head: &TranscriptSourceHead,
-    ) -> Result<Option<TranscriptSourceHead>, Refusal> {
-        Ok(self.transcripts.get(head.key().as_str()).cloned())
-    }
-
-    fn published(&self, room: &str, publication: &str) -> Result<bool, Refusal> {
-        Ok(self
-            .projection
-            .publications
-            .contains_key(&(room.to_owned(), publication.to_owned())))
-    }
-    fn publication_at(&self, seq: u64) -> Result<bool, Refusal> {
-        Ok(self
-            .projection
-            .publications
-            .values()
-            .any(|published| *published == seq))
-    }
-    fn request_at(&self, seq: u64) -> Result<bool, Refusal> {
-        Ok(self
-            .projection
-            .notices
-            .keys()
-            .any(|(_, noticed)| *noticed == seq))
-    }
-
-    fn cursor(&self, lane: &str) -> Result<Option<Vec<u8>>, Refusal> {
-        Ok(self
-            .projection
-            .cursors
-            .get(lane)
-            .map(|(_, body)| body.clone()))
-    }
-
-    fn horizon(&self, lane: &str) -> Result<bool, Refusal> {
-        Ok(self.projection.horizons.contains_key(lane))
-    }
-
-    fn group_partition(&self) -> Result<Option<Vec<u8>>, Refusal> {
-        Ok(self
-            .projection
-            .partition
-            .as_ref()
-            .map(|(_, body)| body.clone()))
-    }
-    fn oops_generation(&self) -> Result<Option<Vec<u8>>, Refusal> {
-        Ok(self
-            .projection
-            .oops_generation
-            .as_ref()
-            .map(|(_, body)| body.clone()))
-    }
-
-    fn proposal(&self, subject: &str) -> Result<Option<Vec<u8>>, Refusal> {
-        Ok(self
-            .projection
-            .proposals
-            .get(subject)
-            .map(|row| row.body.clone()))
-    }
-
-    fn proposal_author(&self, subject: &str) -> Result<Option<Actor>, Refusal> {
-        Ok(self
-            .projection
-            .proposals
-            .get(subject)
-            .and_then(|row| self.authors.get(&row.seq))
-            .cloned())
-    }
-
-    fn candidate_decided(&self, candidate: &wire::rooms::CandidateRef) -> Result<bool, Refusal> {
-        for row in self.projection.proposals.values() {
-            if let Ok(decision) = wire::decode::<PreparationDecision>(&row.body)
-                && decision.outcome.candidate() == candidate
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    fn decision_authorized(&self, decision: &str) -> Result<bool, Refusal> {
-        Ok(self
-            .projection
-            .authorizations
-            .values()
-            .any(|row| row.decision == decision))
-    }
-
-    fn direction(&self, key: &str) -> Result<Option<Direction>, Refusal> {
-        Ok(self.directions.get(key).cloned())
-    }
-
-    fn set_direction(&mut self, key: &str, direction: Direction) {
-        self.directions.insert(key.to_owned(), direction);
-    }
-
-    fn operator_direction(&self, key: &str) -> Result<Option<CanonicalUuid>, Refusal> {
-        Ok(self.operator_directions.get(key).copied())
-    }
-
-    fn set_operator_direction(&mut self, key: &str, lane: CanonicalUuid) {
-        self.operator_directions.insert(key.to_owned(), lane);
-    }
-
-    fn coordination(
-        &self,
-        record: CoordinationRecord,
-        room: &str,
-    ) -> Result<Option<(u64, Vec<u8>)>, Refusal> {
-        let heads = match record {
-            CoordinationRecord::Directed => &self.projection.directed,
-            CoordinationRecord::Shelved => &self.projection.shelved,
-        };
-        Ok(heads.get(room).cloned())
-    }
-
-    fn conversation(&self, publication: &str) -> Result<Option<Vec<u8>>, Refusal> {
-        Ok(self
-            .projection
-            .conversation
-            .publications
-            .get(publication)
-            .map(|(_, body)| body.clone()))
-    }
-
-    fn room_item(&self, item: &str) -> Result<Option<conversation::ItemRow>, Refusal> {
-        Ok(self.projection.conversation.items.get(item).cloned())
-    }
-
-    fn question_result(&self, result: &str) -> Result<Option<conversation::ResultRow>, Refusal> {
-        Ok(self.projection.conversation.results.get(result).cloned())
-    }
-
-    fn evidence(&self, task: &TaskStamp) -> Result<Vec<wire::rooms::QuestionResultRef>, Refusal> {
-        evidence::parse(
-            self.projection
-                .evidence
-                .keys()
-                .filter(|(owner, _)| owner == task.as_str())
-                .map(|(_, result)| result.clone()),
-        )
-    }
-
-    fn pending_results(&self, requester: &str) -> Result<usize, Refusal> {
-        Ok(self.projection.conversation.pending_results(requester))
-    }
-    fn relevance_observation(
-        &self,
-        observation: &str,
-    ) -> Result<Option<relevance::ObservationRow>, Refusal> {
-        Ok(self
-            .projection
-            .relevance
-            .observations
-            .get(observation)
-            .cloned())
-    }
-
-    fn relevance_assessment(
-        &self,
-        observation: &str,
-    ) -> Result<Option<relevance::AssessmentRow>, Refusal> {
-        Ok(self
-            .projection
-            .relevance
-            .assessments
-            .get(observation)
-            .cloned())
-    }
-
-    fn change(&mut self, change: Change) -> Result<(), Refusal> {
-        self.projection.apply(change)
-    }
-}
-
 /// Canonical key of one proposal subject.
 pub(crate) fn subject(proposal: &ProposalRef) -> Result<String, Refusal> {
     String::from_utf8(wire::encode(proposal)?)
@@ -774,19 +399,21 @@ pub(crate) fn fold(
     if let Some(body) = fact.read::<wire::body::OopsGenerationAdvanced>() {
         return advance_oops_generation(authority, seq, &body);
     }
-    track_task_dependencies(authority, fact);
+    dependencies::track(authority, fact);
     for task in fact.revised_tasks() {
         authority.set_task_statement(task, seq);
     }
     if let Some(task) = fact.task_subject() {
         match fact.kind() {
+            // A Design pass names the claim position that winning, carrying,
+            // or rebinding established; a renewal only extends that lease.
             wire::FactKind::ClaimWon
             | wire::FactKind::ClaimCarried
-            | wire::FactKind::ClaimRebound
-            | wire::FactKind::ClaimRenewed => {
+            | wire::FactKind::ClaimRebound => {
                 authority.set_active_claim(task, Some(seq));
                 return Ok(());
             }
+            wire::FactKind::ClaimRenewed => return Ok(()),
             wire::FactKind::ClaimFreed | wire::FactKind::ClaimLapsed => {
                 authority.set_active_claim(task, None);
                 return Ok(());
@@ -1016,89 +643,6 @@ fn fold_traffic(
         .map(|body| begin(authority, seq, actor, &body))
 }
 
-struct OpenedPacketRoute {
-    directive: CanonicalUuid,
-    room: Option<RoomAnchor>,
-    from: CanonicalUuid,
-    sender: CanonicalUuid,
-    locus: wire::body::TranscriptLocus,
-}
-
-impl OpenedPacketRoute {
-    fn read(fact: &AnyFact) -> Option<Self> {
-        if let Some(message) = fact.read::<wire::body::SteerMessaged>() {
-            return Some(Self {
-                directive: message.directive,
-                room: message.room,
-                from: message.from,
-                sender: message.sender,
-                locus: message.locus,
-            });
-        }
-        fact.read::<wire::body::SteerQueued>().map(|message| Self {
-            directive: message.directive,
-            room: message.room,
-            from: message.from,
-            sender: message.sender,
-            locus: message.locus,
-        })
-    }
-}
-
-/// Each room record of a packet names exactly the directives the same write's
-/// peer messages opened into that room, in write order, and each of those
-/// messages was sent from the packet's lane by its author at its hunk's tape
-/// record. A write publishes at most one packet, so these are its routes.
-pub(crate) fn require_packet_routes<'a>(
-    facts: impl IntoIterator<Item = &'a AnyFact>,
-) -> Result<(), Refusal> {
-    let mut messages = Vec::new();
-    let mut packets = Vec::new();
-    for fact in facts {
-        if let Some(message) = OpenedPacketRoute::read(fact) {
-            messages.push(message);
-        } else if let Some(packet) = fact.read::<RoomMessaged>() {
-            packets.push(packet);
-        }
-    }
-    for packet in &packets {
-        let opened = messages
-            .iter()
-            .filter(|message| message.room.as_ref() == Some(&packet.room))
-            .collect::<Vec<_>>();
-        if !opened
-            .iter()
-            .map(|message| message.directive)
-            .eq(packet.directed.iter().copied())
-        {
-            return unsound(format!(
-                "room packet in {} names directed routes other than those its write opened there",
-                packet.room
-            ));
-        }
-        let hunk = &packet.hunk;
-        if let Some(message) = opened.into_iter().find(|message| {
-            let locus = &message.locus;
-            message.from != hunk.head.lane
-                || message.sender != packet.author
-                || locus.source != Some(hunk.head.source)
-                || (locus.member, locus.offset, locus.length, locus.event)
-                    != (
-                        hunk.locus.member,
-                        hunk.locus.offset,
-                        hunk.locus.length,
-                        hunk.locus.event,
-                    )
-        }) {
-            return unsound(format!(
-                "directive {} in room {} was not sent from this packet's lane by its author at its record",
-                message.directive, packet.room
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Whether `actor` acts as a born principal. The fold replays immutable
 /// history, so authorship asks only the actor's principal resolution, never a
 /// role a later fact could change; the command door decides current roles.
@@ -1250,18 +794,6 @@ fn cover(
         coverage: coverage.coverage.clone(),
     };
     record(authority, seq, &proposal, controller, &coverage)
-}
-
-fn track_task_dependencies(authority: &mut impl Authority, fact: &AnyFact) {
-    if let Some(added) = fact.read::<wire::body::TaskAdded>() {
-        authority.set_task_birth_dependencies(&added);
-        return;
-    }
-    if let Some(edited) = fact.read::<wire::body::TaskEdited>()
-        && let Some(dependencies) = edited.dependencies
-    {
-        authority.set_task_dependencies(&edited.task, dependencies);
-    }
 }
 
 fn control(
@@ -1429,73 +961,4 @@ pub(super) fn require_source(
         }
     }
     Ok(())
-}
-
-/// A hunk must name a nonempty text range of one decoded event inside the
-/// accounted extent of its transcript generation.
-fn require_hunk(authority: &impl Authority, hunk: &TranscriptHunk) -> Result<(), Refusal> {
-    let TranscriptHunk { head, locus, text } = hunk;
-    let Some(accounted) = authority.transcript(head)? else {
-        return unsound(format!(
-            "source transcript {} generation {} is not accounted",
-            head.key().as_str(),
-            head.source
-        ));
-    };
-    if accounted.source != head.source {
-        return unsound(format!(
-            "source transcript {} generation {} is not accounted",
-            head.key().as_str(),
-            head.source
-        ));
-    }
-    if !position_at_or_before(head.next, accounted.next) {
-        return unsound(format!(
-            "source transcript {} boundary {}/{} exceeds accounted boundary {}/{}",
-            head.key().as_str(),
-            head.next.member,
-            head.next.offset,
-            accounted.next.member,
-            accounted.next.offset,
-        ));
-    }
-    if !locus_within(*locus, head.next) {
-        return unsound(format!(
-            "source transcript {} locus {}/{}/{} exceeds linked boundary {}/{}",
-            head.key().as_str(),
-            locus.member,
-            locus.offset,
-            locus.length,
-            head.next.member,
-            head.next.offset,
-        ));
-    }
-    if locus.event == u32::MAX || text.start >= text.end {
-        return unsound(format!(
-            "source transcript {} hunk {}..{} of event {} is not decoded event text",
-            head.key().as_str(),
-            text.start,
-            text.end,
-            locus.event,
-        ));
-    }
-    Ok(())
-}
-
-fn position_at_or_before(
-    position: wire::body::TranscriptPosition,
-    boundary: wire::body::TranscriptPosition,
-) -> bool {
-    position.member < boundary.member
-        || (position.member == boundary.member && position.offset <= boundary.offset)
-}
-
-fn locus_within(locus: wire::MessageLocus, boundary: wire::body::TranscriptPosition) -> bool {
-    if locus.length == 0 {
-        return false;
-    }
-    let Some(end) = locus.offset.checked_add(locus.length) else {
-        return false;
-    };
-    locus.member < boundary.member || (locus.member == boundary.member && end <= boundary.offset)
 }
