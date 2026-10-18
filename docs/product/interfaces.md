@@ -229,11 +229,13 @@ The complete route grammar and overview behavior live in
 [`app/OVERVIEW.md`](../../app/OVERVIEW.md#task-overview).
 
 The command bar presents execution work from the left and Design planning from
-the right. The mirrored Design rail retains each named stem's leading
-open-task count, uses RTL container order with LTR tab contents to keep its
-right-hand edge initially visible through overflow, and fuses its stem tabs
-with the aggregate total. Only the strip's two outside edges carry rails and
-rounded corners. Counts, danger marks, titles, and navigation retain the exact
+the right as gapless mirrored strips. Each aggregate total occupies its strip's
+outside end; only the two outside edges carry rails and rounded corners. The
+execution rail remains LTR with label then count, while the Design rail uses
+RTL container order with LTR tabs and count then label. Labels therefore meet
+the outside totals while each named count faces inward instead of colliding
+with another badge. Each rail keeps its anchored edge initially visible
+through overflow. Counts, danger marks, titles, and navigation retain the exact
 scope each tab names.
 
 ## Kept jobs
