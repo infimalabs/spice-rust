@@ -393,10 +393,10 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .group-surface .ticker-age.awaiting-decision { color: var(--warning); }
 .group-surface .ticker-age:is(.done, .collapsed, .deleted, .unavailable) { color: var(--app-anchor-muted); opacity: .7; }
 
-/* A team or group cell is one pane in a shared microscopic etched surface.
-   The grid overlay owns the one-device-pixel outer and inter-cell etch; cells
-   add no rails, rounded edges, or individual frames. Tools wear the accent,
-   prose lifts toward ink, and reasoning sinks toward the page. */
+/* A team or group cell is one pane in a shared microscopic surface. The grid
+   leaves a one-device-pixel transparent outer and inter-cell gap; cells add no
+   rails, rounded edges, or individual frames. Tools wear the accent, prose
+   lifts toward ink, and reasoning sinks toward the page. */
 .team-lights > .app-presence-pip--trace {
   --trace-tool: var(--accent-slot);
   --trace-prose: color-mix(in srgb, var(--accent-slot) 45%, var(--ink));
