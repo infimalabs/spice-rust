@@ -209,7 +209,7 @@ fn store(views: &RoomViews) {
     else {
         return;
     };
-    if views.groups().is_empty() {
+    if *views == RoomViews::default() {
         let _ = storage.remove_item(STORAGE);
     } else if let Some(document) = views.document() {
         let _ = storage.set_item(STORAGE, &document);

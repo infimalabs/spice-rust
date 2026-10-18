@@ -65,6 +65,10 @@ team toolbar read from the group's designs (see [Group toolbar](#group-toolbar))
 Everything the toolbar shows is derived from the board, room projection, and
 lane topology on every read; the group stores and grants none of it, and
 reading it changes nothing.
+A group opens its console when a completed room snapshot first holds a group
+this browser has not seen, so a new group shows itself beside the other teams
+and groups; the first snapshot a browser reads only records the groups it
+holds, and a group the browser closed stays closed.
 
 A design composer's cue states that posts are recorded in the room for its
 listeners and ask no lane for anything: a post never wakes, obligates, or
