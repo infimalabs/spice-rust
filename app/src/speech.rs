@@ -111,16 +111,16 @@ impl Controller {
     /// browser publishes, which stays the agent's voice for the rest of the
     /// page. A [`VoiceRequest::Spread`] request speaks with the member's slot
     /// among the published macOS premium voices sharing the chosen language,
-    /// so teammates sound different. [`VoiceRequest::Default`] speaks with the
-    /// device's default voice.
+    /// so desktop teammates sound different. Apple mobile callers and
+    /// [`VoiceRequest::Default`] speak with the device's default voice.
     ///
     /// A browser publishes its voice list asynchronously: on a fresh page
     /// `get_voices` answers an empty list until the engine has enumerated the
     /// installed voices and fired `voiceschanged`. An empty list is therefore
     /// no verdict on the candidates; it installs the observer that resumes this
     /// request and reports [`SystemStart::AwaitingVoices`]. Only a published
-    /// list carrying no listed candidate, or no premium voice to spread, is
-    /// refused.
+    /// list carrying no listed candidate, or a desktop automatic list carrying
+    /// no premium voice to spread, is refused.
     pub fn start_system<Voices, Ended, Failed>(
         &mut self,
         generation: u64,
@@ -220,9 +220,9 @@ impl Drop for Controller {
     }
 }
 
-/// The member's slot among the published premium voices sharing the chosen
-/// language. A list without one refuses, naming the violated assumption; it
-/// never speaks through another tier or the device default.
+/// The member's slot among the published desktop premium voices sharing the
+/// chosen language. A list without one refuses, naming the violated
+/// assumption; it never speaks through another tier or the device default.
 fn spread_voice(
     offered: &[SpeechSynthesisVoice],
     teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
