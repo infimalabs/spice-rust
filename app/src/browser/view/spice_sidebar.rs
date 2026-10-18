@@ -12,6 +12,7 @@ const TEAM_WORDING: Wording = Wording {
     ungrouped_title: "Unassigned Agents",
     ungrouped_hint: "drop to unassign",
     full: "Teams are limited to six agents",
+    drop_base: None,
 };
 
 pub(super) struct Context<'a> {

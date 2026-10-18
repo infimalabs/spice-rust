@@ -233,6 +233,7 @@ const GROUP_WORDING: Wording = Wording {
     ungrouped_title: "Designs",
     ungrouped_hint: "drop to ungroup",
     full: "Working groups are limited to six designs",
+    drop_base: Some(crate::watchband::DESIGN_BASE),
 };
 
 pub(super) fn render_catalog(
