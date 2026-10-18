@@ -299,6 +299,7 @@ impl Source {
                         generation: (*generation).clone(),
                     }
                 }
+                ViewSubject::Facts if operator => self.occupancy(*id, horizon)?,
                 ViewSubject::Facts | ViewSubject::Trust | ViewSubject::Rooms => {
                     subscription.page(self, subject, None, *id)?
                 }
@@ -423,6 +424,26 @@ impl Source {
                     detail: error.to_string(),
                 })
             })
+    }
+
+    /// An operator's live cursor starts at the horizon rather than replaying
+    /// the journal, so its first fact page carries the newest lane occupancy
+    /// instead: the running and not-running intervals a freshly loaded page
+    /// draws would otherwise begin only at its load.
+    fn occupancy(&self, id: wire::CanonicalUuid, horizon: Seq) -> Result<StreamFrame, Failure> {
+        let packed = self.bus.app_occupancy(horizon).map_err(|error| {
+            Failure::Fault(Fault {
+                class: FaultClass::Store,
+                reason: "stream::occupancy-read-failed".to_owned(),
+                detail: error.to_string(),
+            })
+        })?;
+        Ok(StreamFrame::Facts {
+            v: WireVersion::CURRENT,
+            id,
+            epoch: self.epoch,
+            packed: present_facts(packed),
+        })
     }
 
     fn rooms(

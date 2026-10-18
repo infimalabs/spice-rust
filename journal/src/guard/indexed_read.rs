@@ -14,6 +14,7 @@ mod bounds;
 mod decisions;
 mod head_page;
 mod hold;
+mod occupancy;
 mod origin;
 mod principal;
 mod rooms;

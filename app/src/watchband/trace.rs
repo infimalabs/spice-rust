@@ -301,12 +301,18 @@ pub enum Occupancy {
 /// lane off and an occupant's start or renewal turns it on. Before its first
 /// retained transition a lane counts as on, so no gap is drawn that the record
 /// cannot date, unless that transition is a start: the seat was vacant until
-/// then.
-pub fn off_intervals(transitions: impl IntoIterator<Item = (i64, Occupancy)>) -> Vec<TraceOff> {
+/// then. A lane with no retained transition has kept its seat as it is now
+/// since the record began, so it is off throughout exactly when `seated_now`
+/// is false.
+pub fn off_intervals(
+    transitions: impl IntoIterator<Item = (i64, Occupancy)>,
+    seated_now: bool,
+) -> Vec<TraceOff> {
     let mut intervals = Vec::new();
     let mut transitions = transitions.into_iter().peekable();
     let mut open = match transitions.peek() {
         Some((_, Occupancy::Started)) => Some(None),
+        None if !seated_now => Some(None),
         _ => None,
     };
     for (millis, occupancy) in transitions {
@@ -517,14 +523,17 @@ mod tests {
     #[test]
     fn occupancy_transitions_pair_each_vacancy_with_the_next_occupant() {
         use Occupancy::{Renewed, Started, Vacant};
-        let intervals = off_intervals([
-            (10, Renewed),
-            (20, Vacant),
-            (25, Vacant),
-            (30, Started),
-            (40, Renewed),
-            (50, Vacant),
-        ]);
+        let intervals = off_intervals(
+            [
+                (10, Renewed),
+                (20, Vacant),
+                (25, Vacant),
+                (30, Started),
+                (40, Renewed),
+                (50, Vacant),
+            ],
+            false,
+        );
         assert_eq!(
             intervals,
             [
@@ -544,7 +553,7 @@ mod tests {
     fn a_lane_is_off_before_its_first_retained_transition_only_when_that_is_a_start() {
         use Occupancy::{Renewed, Started, Vacant};
         assert_eq!(
-            off_intervals([(30, Started), (50, Vacant)]),
+            off_intervals([(30, Started), (50, Vacant)], false),
             [
                 TraceOff {
                     from: None,
@@ -556,19 +565,34 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(off_intervals([(30, Renewed)]), []);
+        assert_eq!(off_intervals([(30, Renewed)], true), []);
         assert_eq!(
-            off_intervals([(30, Vacant)]),
+            off_intervals([(30, Vacant)], false),
             [TraceOff {
                 from: Some(30),
                 until: None
             }]
         );
         // A start before the window leaves only the time since it drawn.
-        let started = off_intervals([(NOW - 200_000, Started)]);
+        let started = off_intervals([(NOW - 200_000, Started)], true);
         let spans = drawn_spans(&started, NOW, SAMPLES);
         assert_eq!(spans.len(), 1);
         assert!((spans[0].from * 600.0 - 400.0).abs() < 1e-6 && spans[0].to == 1.0);
+    }
+
+    #[test]
+    fn a_lane_without_a_retained_transition_is_off_throughout_only_when_vacant_now() {
+        let none = std::iter::empty::<(i64, Occupancy)>;
+        assert_eq!(off_intervals(none(), true), []);
+        let vacant = off_intervals(none(), false);
+        assert_eq!(
+            vacant,
+            [TraceOff {
+                from: None,
+                until: None
+            }]
+        );
+        assert_eq!(drawn_spans(&vacant, NOW, SAMPLES), []);
     }
 
     #[test]
@@ -591,13 +615,16 @@ mod tests {
     fn three_runs_in_the_window_draw_three_areas_split_by_two_gaps() {
         use Occupancy::{Started, Vacant};
         let ago = |seconds: i64| NOW - seconds * 1_000;
-        let off = off_intervals([
-            (ago(600), Started),
-            (ago(480), Vacant),
-            (ago(360), Started),
-            (ago(240), Vacant),
-            (ago(120), Started),
-        ]);
+        let off = off_intervals(
+            [
+                (ago(600), Started),
+                (ago(480), Vacant),
+                (ago(360), Started),
+                (ago(240), Vacant),
+                (ago(120), Started),
+            ],
+            true,
+        );
         let spans = drawn_spans(&off, NOW, SAMPLES)
             .iter()
             .map(|span| ((span.from * 600.0).round(), (span.to * 600.0).round()))

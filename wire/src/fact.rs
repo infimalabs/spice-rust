@@ -604,6 +604,23 @@ impl FactKind {
         Self::STEERING_AUTHORITY.contains(&self)
     }
 
+    /// Fact kinds that seat an occupant in a lane or leave its seat empty:
+    /// what a lane's running and not-running intervals are folded from. An
+    /// app stream reads this inventory to carry recent occupancy that its
+    /// live cursor would otherwise begin after.
+    pub const LANE_OCCUPANCY: &[Self] = &[
+        Self::LaneSeated,
+        Self::LaneStarted,
+        Self::LaneRenewed,
+        Self::LaneExited,
+        Self::LaneTimedOut,
+        Self::LaneCancelled,
+        Self::LaneSignalled,
+        Self::LaneDrained,
+        Self::LaneKilled,
+        Self::LaneDegraded,
+    ];
+
     /// Relationship projections whose visible content this fact kind can change.
     ///
     /// This classification lives on the closed fact vocabulary so adding a
