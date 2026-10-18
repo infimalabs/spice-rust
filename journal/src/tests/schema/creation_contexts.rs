@@ -2,8 +2,13 @@
 
 use super::*;
 
-/// A spelling no current unavailable reason decodes.
-const RETIRED_REASON: &str = "pre-context-evidence";
+/// The pre-context evidence reason, last stamped by the schema-74 OOPS crossing.
+const PRE_CONTEXT: &str = "legacy-evidence-missing";
+/// The unregistered-stream reason, last written by the context crossings
+/// 9fdb23fc1 retired.
+const UNREGISTERED: &str = "legacy-stream-unregistered";
+/// A spelling no release wrote.
+const UNKNOWN: &str = "pre-context-evidence";
 
 fn unavailable(reason: &str) -> String {
     json!({"kind": "unavailable", "reason": reason}).to_string()
@@ -24,9 +29,13 @@ fn transcript(stream: &str) -> String {
     .to_string()
 }
 
+fn lane() -> Actor {
+    Actor::Lane(uuid("01234567-89ab-cdef-0123-456789abcdef"))
+}
+
 /// A schema-predecessor fixture whose creating fact (seq 1, written by
 /// `actor`) and statement head hold the given raw creation contexts.
-fn predecessor(actor: Actor, fact: &str, head: &str) -> Journal {
+fn predecessor(actor: &Actor, fact: &str, head: &str) -> Journal {
     let journal = authority_fixture();
     journal
         .connection
@@ -63,72 +72,117 @@ fn rows(journal: &Journal) -> Vec<(i64, String, Vec<u8>)> {
 }
 
 #[test]
-fn a_retired_reason_on_a_spice_created_task_crosses_to_spice_authorship() {
-    let retired = unavailable(RETIRED_REASON);
-    let mut journal = predecessor(Actor::Spice, &retired, &retired);
-    let before = rows(&journal);
+fn a_retired_reason_crosses_to_the_reason_its_creating_actor_proves_on_both_copies() {
+    let spice = wire::body::TaskCreationUnavailable::SpiceActor;
+    let operator = wire::body::TaskCreationUnavailable::OperatorActor;
+    for (actor, fact, head, reason) in [
+        (
+            Actor::Spice,
+            unavailable(PRE_CONTEXT),
+            unavailable(PRE_CONTEXT),
+            spice,
+        ),
+        (
+            Actor::Spice,
+            unavailable(spice.as_str()),
+            unavailable(PRE_CONTEXT),
+            spice,
+        ),
+        (
+            Actor::Operator,
+            unavailable(UNKNOWN),
+            unavailable(operator.as_str()),
+            operator,
+        ),
+    ] {
+        let mut journal = predecessor(&actor, &fact, &head);
+        let before = rows(&journal);
 
-    let migration = crate::migrate::admit(&mut journal.connection)
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        (migration.from(), migration.to()),
-        (SCHEMA_VERSION - 1, SCHEMA_VERSION)
-    );
-    let spice = wire::body::TaskCreationContext::unavailable(
-        wire::body::TaskCreationUnavailable::SpiceActor,
-    );
-    let bytes: Vec<u8> = journal
-        .connection
-        .query_row(
-            "SELECT envelope FROM fact_envelopes WHERE seq = 1",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    let envelope: Envelope<AnyFact> = wire::decode(&bytes).unwrap();
-    assert_eq!(
-        wire::encode(&envelope).unwrap(),
-        bytes,
-        "the fact is canonical"
-    );
-    assert_eq!(envelope.seq, Seq::new(1).unwrap());
-    assert_eq!(envelope.actor, Actor::Spice);
-    let added: wire::body::TaskAdded = envelope.fact.read().expect("seq 1 stays the creating fact");
-    assert_eq!(added.creation, spice);
-    let bytes: Vec<u8> = journal
-        .connection
-        .query_row(
-            "SELECT body FROM task_heads WHERE stamp = '1kKRRsDP'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    let head: TaskHead = wire::decode(&bytes).unwrap();
-    assert_eq!(head.creation, spice);
-    assert_eq!(
-        rows(&journal).len(),
-        before.len(),
-        "the crossing rewrites in place"
-    );
-    journal.verify().expect("the crossed creation replays");
-    let crossed = rows(&journal);
-    assert_eq!(
-        crate::migrate::admit(&mut journal.connection).unwrap(),
-        None
-    );
-    assert_eq!(rows(&journal), crossed);
+        let migration = crate::migrate::admit(&mut journal.connection)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (migration.from(), migration.to()),
+            (SCHEMA_VERSION - 1, SCHEMA_VERSION)
+        );
+        let current = wire::body::TaskCreationContext::unavailable(reason);
+        let bytes: Vec<u8> = journal
+            .connection
+            .query_row(
+                "SELECT envelope FROM fact_envelopes WHERE seq = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let envelope: Envelope<AnyFact> = wire::decode(&bytes).unwrap();
+        assert_eq!(
+            wire::encode(&envelope).unwrap(),
+            bytes,
+            "{fact} / {head}: the fact is canonical"
+        );
+        assert_eq!(envelope.seq, Seq::new(1).unwrap());
+        assert_eq!(envelope.actor, actor);
+        let added: wire::body::TaskAdded =
+            envelope.fact.read().expect("seq 1 stays the creating fact");
+        assert_eq!(added.creation, current, "{fact} / {head}");
+        let bytes: Vec<u8> = journal
+            .connection
+            .query_row(
+                "SELECT body FROM task_heads WHERE stamp = '1kKRRsDP'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let statement: TaskHead = wire::decode(&bytes).unwrap();
+        assert_eq!(statement.creation, current, "{fact} / {head}");
+        assert_eq!(
+            rows(&journal).len(),
+            before.len(),
+            "{fact} / {head}: the crossing rewrites in place"
+        );
+        journal.verify().expect("the crossed creation replays");
+        let crossed = rows(&journal);
+        assert_eq!(
+            crate::migrate::admit(&mut journal.connection).unwrap(),
+            None
+        );
+        assert_eq!(rows(&journal), crossed);
+    }
 }
 
 #[test]
-fn an_underivable_creation_context_rolls_back_the_entire_crossing() {
-    let retired = unavailable(RETIRED_REASON);
-    let current = unavailable("spice-actor");
+fn an_unproved_or_contradictory_creation_context_rolls_back_the_entire_crossing() {
+    let spice = unavailable("spice-actor");
+    let operator = unavailable("operator-actor");
     for (actor, fact, head, table, row, release) in [
         (
-            Actor::Operator,
-            retired.clone(),
-            retired.clone(),
+            lane(),
+            unavailable(PRE_CONTEXT),
+            unavailable(PRE_CONTEXT),
+            "fact_envelopes",
+            "1",
+            "1aa1fcf3f",
+        ),
+        (
+            Actor::Spice,
+            unavailable(PRE_CONTEXT),
+            operator.clone(),
+            "fact_envelopes",
+            "1",
+            "1aa1fcf3f",
+        ),
+        (
+            Actor::Spice,
+            transcript("session"),
+            unavailable(UNREGISTERED),
+            "task_heads",
+            "1kKRRsDP",
+            "f55963cab",
+        ),
+        (
+            lane(),
+            unavailable(UNKNOWN),
+            unavailable(UNKNOWN),
             "fact_envelopes",
             "1",
             "6ad57c713",
@@ -136,47 +190,68 @@ fn an_underivable_creation_context_rolls_back_the_entire_crossing() {
         (
             Actor::Spice,
             transcript("stdout"),
-            current.clone(),
+            spice.clone(),
             "fact_envelopes",
             "1",
             "f8be0f9bb",
         ),
         (
             Actor::Spice,
-            current.clone(),
+            spice.clone(),
             transcript("stdout"),
             "task_heads",
             "1kKRRsDP",
             "f8be0f9bb",
-        ),
-        (
-            Actor::Spice,
-            current.clone(),
-            retired.clone(),
-            "task_heads",
-            "1kKRRsDP",
-            "6ad57c713",
         ),
     ] {
-        let mut journal = predecessor(actor, &fact, &head);
-        let before = rows(&journal);
-        let error = crate::migrate::admit(&mut journal.connection).unwrap_err();
-        assert!(
-            matches!(
-                &error,
-                OpenError::Migration(MigrationError::RetainedRow {
-                    table: refused,
-                    row: refused_row,
-                    release: refused_release,
-                    ..
-                }) if *refused == table && refused_row == row && *refused_release == release
-            ),
-            "{fact} / {head}: {error}"
-        );
-        assert_eq!(rows(&journal), before, "{fact} / {head}");
-        assert_eq!(
-            crate::migrate::inspect_stored_version(&journal.connection).unwrap(),
-            SCHEMA_VERSION - 1
+        let mut journal = predecessor(&actor, &fact, &head);
+        assert_refused(
+            &mut journal,
+            table,
+            row,
+            release,
+            &format!("{fact} / {head}"),
         );
     }
+
+    let mut journal = predecessor(&Actor::Spice, &spice, &unavailable(PRE_CONTEXT));
+    journal
+        .connection
+        .execute(
+            "UPDATE fact_envelopes SET envelope = CAST(json_set(CAST(envelope AS TEXT), \
+             '$.fact.task', '1kKRRsDQ') AS BLOB) WHERE seq = 1",
+            [],
+        )
+        .unwrap();
+    assert_refused(
+        &mut journal,
+        "task_heads",
+        "1kKRRsDP",
+        "1aa1fcf3f",
+        "a retired head with no creating fact",
+    );
+}
+
+/// The crossing refuses on `table` row `row`, naming `release`, and leaves
+/// the predecessor untouched.
+fn assert_refused(journal: &mut Journal, table: &str, row: &str, release: &str, case: &str) {
+    let before = rows(journal);
+    let error = crate::migrate::admit(&mut journal.connection).unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            OpenError::Migration(MigrationError::RetainedRow {
+                table: refused,
+                row: refused_row,
+                release: refused_release,
+                ..
+            }) if *refused == table && refused_row == row && *refused_release == release
+        ),
+        "{case}: {error}"
+    );
+    assert_eq!(rows(journal), before, "{case}");
+    assert_eq!(
+        crate::migrate::inspect_stored_version(&journal.connection).unwrap(),
+        SCHEMA_VERSION - 1
+    );
 }
