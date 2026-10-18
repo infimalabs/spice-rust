@@ -53,6 +53,8 @@ pub(super) struct Wording {
     pub(super) ungrouped_hint: &'static str,
     /// Why a full group's card accepts no member.
     pub(super) full: &'static str,
+    /// The base the New target and ungrouped list wear; `None` keeps the page's.
+    pub(super) drop_base: Option<usize>,
 }
 /// Optional whole-card action for one formed group.
 #[derive(Clone)]
@@ -197,6 +199,8 @@ where
     let wording = view.wording;
     let enabled = view.enabled.to_string();
     let ungrouped = view.roster.ungrouped();
+    let drop_flavor = wording.drop_base.map(|_| "roster");
+    let drop_accent = wording.drop_base.map(|base| base.to_string());
     html! {
         <div
             class="app-roster"
@@ -210,6 +214,8 @@ where
             </div>
             <section
                 class="app-sheet-section app-roster-new"
+                data-base-flavor={drop_flavor}
+                data-base-accent={drop_accent.clone()}
                 data-roster-drop={gesture.drop_value("new")}
                 data-drop-enabled={enabled.clone()}
             >
@@ -218,6 +224,8 @@ where
             </section>
             <section
                 class="app-sheet-section app-roster-ungrouped"
+                data-base-flavor={drop_flavor}
+                data-base-accent={drop_accent}
                 data-roster-drop={gesture.drop_value("ungrouped")}
                 data-drop-enabled={enabled}
             >
