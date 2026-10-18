@@ -171,9 +171,11 @@ rule, a hairline half the width of the app's ordinary edge, so its top rule
 turns down its end edge into that faint rule, while the later band's rounded
 top rule tapers away against it. A corner at the browser
 edge stays square. Pips follow canonical member order and distinguish active,
-queued, waiting, bound, and unbound states without encoding agent identity. The
-ticker keeps relative age, status, prefix, accent, accessible label, and
-live-region semantics. A running command's line opens with the short prefix
+queued, waiting, bound, and unbound states without encoding agent identity.
+Their one-to-six matrix keeps its existing rows, columns, order, and stagger,
+but each pip fills its grid cell; a one-pixel status-band seam separates
+adjacent cells. The ticker keeps relative age, status, prefix, accent,
+accessible label, and live-region semantics. A running command's line opens
 naming its tool, such as `job:`; its latest nonblank output row follows that
 prefix and leads the intent and operation context, so a narrow ticker cuts
 context before the result; the complete bounded line remains available on
