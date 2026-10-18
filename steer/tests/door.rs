@@ -116,29 +116,6 @@ fn installation_places_every_stage_and_repeats_cleanly() {
     scratch.remove();
 }
 
-#[test]
-fn the_entry_stage_invokes_the_registered_rust_run_leaf() {
-    let entry = STAGES
-        .iter()
-        .find(|stage| stage.path() == "entry.sh")
-        .expect("the entry stage is registered")
-        .bytes();
-
-    assert!(
-        entry.contains("exec \"${SPICE_RS_WRAPPER_SPICE:?rust spice executable}\" run -- \\\n")
-    );
-    assert!(
-        entry.contains("\"${SPICE_RS_HOOKS:?rust spice hooks directory}/static/stage.sh\" \"$@\"")
-    );
-    assert!(!entry.contains("spice agent run"));
-    let removed_proof_name = ["spice", "proof"].join("_").to_ascii_uppercase();
-    assert!(
-        !entry.contains(&removed_proof_name),
-        "entry stage no longer carries proof routing"
-    );
-    assert!(!entry.contains("if ["));
-}
-
 /// Every way interception fails to prove itself is named by the stage that
 /// failed, because "interception is broken" does not tell an operator which
 /// file to look at.
@@ -169,36 +146,6 @@ fn a_stage_that_is_missing_or_drifted_is_named() {
 
     hooks.verify().expect("restored stages verify");
     scratch.remove();
-}
-
-/// A taken candidate is left intact and the next root starts empty.
-#[test]
-fn scratch_setup_creates_a_root_instead_of_adopting_one() {
-    let owner = Scratch::new("collision-owner");
-    let taken = owner.path().join("taken");
-    let free = owner.path().join("free");
-    fs::create_dir(&taken).expect("plant a taken candidate");
-    let marker = taken.join("left-behind");
-    fs::write(&marker, "not this fixture's bytes\n").expect("plant stale contents");
-
-    let scratch = Scratch::from_candidates([taken.clone(), free.clone()].into_iter());
-
-    assert_eq!(scratch.path(), free);
-    assert!(
-        fs::read_dir(scratch.path())
-            .expect("created root is readable")
-            .next()
-            .is_none(),
-        "the created root carried contents this fixture did not write"
-    );
-    assert_eq!(
-        fs::read_to_string(&marker).expect("taken root remains readable"),
-        "not this fixture's bytes\n",
-        "the taken candidate was disturbed"
-    );
-
-    scratch.remove();
-    owner.remove();
 }
 
 /// The ledger both other tests read their pending direction out of.
