@@ -193,7 +193,7 @@ pub(crate) struct DrainReadout {
 }
 
 impl DrainReadout {
-    fn new(board: ParkedCounts, team: TeamLife) -> Self {
+    fn new(board: ParkedCounts, team: TeamLife, boarded_elsewhere: Option<String>) -> Self {
         let text = [
             "no available tasks".to_owned(),
             board.board_line(),
@@ -202,6 +202,10 @@ impl DrainReadout {
                 team.as_str(),
                 team_policy_gloss(team)
             ),
+        ]
+        .into_iter()
+        .chain(boarded_elsewhere)
+        .chain([
             concat!(
                 "allocator scope: no allocator-selected task is available to this lane. ",
                 "Parked rows are expected, not missed work. This result does not decide ",
@@ -220,12 +224,17 @@ impl DrainReadout {
                 "that operator work is complete."
             )
             .to_owned(),
-        ]
+        ])
+        .collect::<Vec<_>>()
         .join("\n");
         Self { text, board, team }
     }
 
-    pub(super) fn from_next(board: NextWorkCounts, team: TeamLife) -> Self {
+    pub(super) fn from_next(
+        board: &NextWorkCounts,
+        team: TeamLife,
+        lanes: &[wire::LaneResidency],
+    ) -> Self {
         Self::new(
             ParkedCounts {
                 active: board.active,
@@ -236,8 +245,38 @@ impl DrainReadout {
                 deferred: board.deferred,
             },
             team,
+            boarded_elsewhere_line(&board.boarded_elsewhere, lanes),
         )
     }
+}
+
+/// Names who owns the work this session boarded, so the lane leaves it to
+/// them instead of coordinating.
+fn boarded_elsewhere_line(
+    boarded: &[wire::intent::BoardedElsewhere],
+    lanes: &[wire::LaneResidency],
+) -> Option<String> {
+    if boarded.is_empty() {
+        return None;
+    }
+    let owners = boarded
+        .iter()
+        .map(|row| {
+            let holder = match &row.holder {
+                wire::Actor::Lane(lane) => lanes
+                    .iter()
+                    .find(|seat| seat.lane == *lane)
+                    .and_then(|seat| seat.name.clone())
+                    .unwrap_or_else(|| row.holder.to_string()),
+                other => other.to_string(),
+            };
+            format!("{} held by {holder}", row.task)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "boarded work: {owners}. No action required; the owning and review lanes carry it."
+    ))
 }
 
 /// One `task next` result: the allocator outcome, plus the readout prepared

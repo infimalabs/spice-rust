@@ -77,6 +77,7 @@ pub(crate) fn read_next_work(
                 &entries,
                 &satisfied,
                 &origin_threads,
+                &principal,
                 &actor_route(&principal, residency.body())?,
                 &environment,
             ),
@@ -313,14 +314,10 @@ fn dry_counts(
     entries: &[Entry],
     satisfied: &board::ResolvedTasks,
     origin_threads: &[String],
+    principal: &wire::Actor,
     route: &wire::intent::BoardActorRoute,
     environment: &wire::Environment,
 ) -> NextWorkCounts {
-    let visible = entries
-        .iter()
-        .zip(origin_threads)
-        .filter(|(entry, origin)| actor_route_matches_entry(entry, origin, route))
-        .map(|(entry, _)| entry);
     let mut counts = NextWorkCounts {
         active: 0,
         stale: 0,
@@ -328,9 +325,15 @@ fn dry_counts(
         workflow_waiting: 0,
         designs: wire::rooms::DesignCycleCounts::default(),
         deferred: 0,
+        boarded_elsewhere: Vec::new(),
     };
     let waits = board::work_waits(entries, environment);
-    for entry in visible.filter(|entry| entry.is_filed() && entry.workflow().status.is_pending()) {
+    let pending = entries
+        .iter()
+        .zip(origin_threads)
+        .filter(|(entry, origin)| actor_route_matches_entry(entry, origin, route))
+        .filter(|(entry, _)| entry.is_filed() && entry.workflow().status.is_pending());
+    for (entry, origin) in pending {
         if let Some(cycle) = board::design_cycle(entry, satisfied) {
             counts.designs.observe(cycle);
         } else {
@@ -343,9 +346,19 @@ fn dry_counts(
         if satisfied.speculative_design_work(entry.statement(), entry.workflow()) {
             continue;
         }
-        match entry.claim().map(|claim| claim.disposition) {
-            Some(ClaimDisposition::Active) => counts.active += 1,
-            Some(ClaimDisposition::Lapsed) => counts.stale += 1,
+        match entry.claim() {
+            Some(claim) if claim.disposition == ClaimDisposition::Active => {
+                counts.active += 1;
+                if *origin == route.origin_thread && claim.actor != *principal {
+                    counts
+                        .boarded_elsewhere
+                        .push(wire::intent::BoardedElsewhere {
+                            task: entry.handle().clone(),
+                            holder: claim.actor.clone(),
+                        });
+                }
+            }
+            Some(claim) if claim.disposition == ClaimDisposition::Lapsed => counts.stale += 1,
             _ => {}
         }
         if entry.workflow().deferral.is_some() {

@@ -22,8 +22,7 @@ lapse means stop that task, treat unpublished commits as loose, and show it
 before allocation. An owed Design request selected from the continuing
 session's retained evidence precedes allocation. Answer once with `spice room
 contribute` or `spice room leave --clause`; it grants no claim or work. A
-generation reminder requires `spice task reclaim`. Current operator direction
-alone creates no task.
+generation reminder requires `spice task reclaim`.
 
 ## Steering and rooms
 
@@ -69,12 +68,15 @@ name continuations.
   normally: its wrapper selects the appliance. `spice run -- CMD` is recovery
   only.
 - Handle operator direction/keys before allocation. Steering ACKed while
-  claimed joins that task unless another uses `--origin`; fold changed scope or
-  acceptance into `task modify` before done. Add tasks only when asked or a
-  distinct deliverable warrants it: `spice task add TITLE --project PROJECT
-  --origin ack:KEY`. `--claim` is only for an unclaimed lane that must own it
-  now; otherwise add neither claims nor switches. Bare add is work nested under
-  the sole claim. Synthesized hints/reminders/amendments authorize no task.
+  claimed joins that task unless another uses `--origin`. Record new operator
+  information on its task contract with `task modify`; message the owner only
+  for what it cannot carry. Add tasks only when asked or a distinct deliverable
+  warrants it: `spice task add TITLE --project PROJECT --origin ack:KEY`;
+  `--claim` only when an unclaimed lane must own it now. Bare add is work
+  nested under the sole claim. Synthesized hints/reminders/amendments authorize
+  no task.
+- Create or update a complete task contract, release it, then trust its owning
+  and review lanes; follow claimed work only when asked.
 - Statements/findings state durable need, reason, and invariants, not incidents.
   Acceptance is claimant-driven and checkable, never awaited activity. A Design
   opens with a plain problem sentence and itemizes each open question. Update
@@ -84,23 +86,21 @@ name continuations.
   process, incident, source-text, plumbing, wording, incidental-default, or
   retired-behavior tests. Delete inadmissible tests unless a valuable contract
   needs a narrow real seam; process/slow proof is disposable smoke.
-- Drain `spice task next` until empty or truly blocked. Empty ends only that
-  pass, not operator duties. Work only the assigned phase; never hunt parked
+- Drain `spice task next` until empty or truly blocked; then answer new steering
+  or stay idle. Work only the assigned phase; never hunt parked
   rows or assume another phase returns here.
 - Review only when allocated; inspect even your own work. Never seek or claim
   your own review, or free/defer it because you authored the implementation.
 - Rehydrate assignment context from another session before editing. A live
-  session cannot replay itself: use conversation, briefing, and task state;
-  never bypass `session::context-live-session-self`. Update, split, or release
-  stale scope rather than force it.
+  session cannot replay itself: use conversation, briefing, and task state.
+  Update, split, or release stale scope rather than force it.
 - Plan/Design purpose survives phases; done cannot replace review. Ambient
-  creation binds unless another `--origin`;
-  `--preparation` binds explicitly. A Plan creates an acceptance-bearing
-  executable task, else `task done --disposition KIND [--cover REF]`; positive
-  review releases outputs to dependencies without selection/authorization.
-  Design follow-up creates acceptance-bearing outputs of any intent and retains
-  candidate JSON naming them; no-follow-up is explicit. Keep Designs open:
-  checkpoint/free; only the
+  creation binds unless another `--origin`; `--preparation` binds explicitly.
+  A Plan creates an acceptance-bearing executable task, else `task done
+  --disposition KIND [--cover REF]`; positive review releases outputs to
+  dependencies without selection/authorization. Design follow-up creates
+  acceptance-bearing outputs of any intent and retains candidate JSON naming
+  them; no-follow-up is explicit. Keep Designs open: checkpoint/free; only the
   operator concludes. Outputs await exact `preparation decide`; dependencies,
   origin, closure, deletion, findings, and group movement never bypass it. No
   reciprocal controller/output edge. Stop means checkpoint/free.
@@ -116,8 +116,8 @@ name continuations.
 - Finish via `task done --validation TEXT`. Clean review uses `task review
   HANDLE --finding clean --note NOTE` after inspecting integrated diff and
   proportionate acceptance/steering evidence from `task show --context
-  --history`. Fix directly only tiny deterministic mechanical low-risk issues
-  within ownership and requiring no decision; commit separately, then clean.
+  --history`. Fix directly only tiny mechanical issues within ownership
+  needing no decision; commit separately, then clean.
   Otherwise record a finding and all corrections via `--then "title=... |
   project=..."` (no `flow=`: each is a todo-only attempt the reviewed task's
   re-review checks) or `--followup`. Findings release review pending later
