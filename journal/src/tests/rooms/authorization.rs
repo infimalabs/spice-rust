@@ -388,6 +388,112 @@ fn a_design_pass_names_its_claim_across_lease_renewals() {
         .expect("replay admits the pass across the renewal");
 }
 
+/// An explicit reclaim of a claim that trailed its task's generation rewrites
+/// the claim head at its renewal, so the next Design pass names that renewal,
+/// while a reclaim of a current claim only extends the lease; replay admits the
+/// pass exactly as the live commit did.
+#[test]
+fn a_design_pass_names_the_claim_head_a_stale_reclaim_rewrote() {
+    let mut journal = Journal::in_memory().expect("journal");
+    let mut preparation = Preparation::new(&mut journal);
+    let controller = preparation.controller.clone();
+    let at = |text: &str| -> Instant { text.parse().expect("fixture instant") };
+
+    reclaim(
+        &mut journal,
+        &controller,
+        at("2030-04-12T18:45:00.000Z"),
+        false,
+    );
+    let head = statement(&journal, &controller);
+    let mut edit = JournalWrite::new(
+        Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163d9")),
+        "task:rooms".parse().expect("room origin"),
+        at("2030-04-12T18:46:00.000Z"),
+        Producer::CommandDoor,
+    );
+    let edited = edit
+        .fact(
+            wire::body::TaskEdited {
+                task: controller.clone(),
+                revision: u32::try_from(head.revision.get() + 1).expect("fixture revision fits"),
+                dependencies: None,
+                intent: None,
+                evidence: None,
+            },
+            FactCause::Root,
+        )
+        .expect("peer edit builds");
+    edit.task_head(edited, move |revision| TaskHead {
+        project: "elsewhere".to_owned(),
+        revision,
+        ..head
+    });
+    preparation.statement = journal.apply(edit).expect("peer edit commits").first();
+    preparation.claim = reclaim(
+        &mut journal,
+        &controller,
+        at("2030-04-12T18:47:00.000Z"),
+        true,
+    );
+    reclaim(
+        &mut journal,
+        &controller,
+        at("2030-04-12T18:48:00.000Z"),
+        false,
+    );
+
+    commit(
+        &mut journal,
+        preparation.retained(1, vec![preparation.output.clone()]),
+    )
+    .expect("live admits the pass naming the reclaimed claim head");
+    journal
+        .verify()
+        .expect("replay admits the pass the live commit admitted");
+}
+
+/// Renew `task`'s claim as its holder at `at`; an `acknowledge`d reclaim
+/// rewrites the claim head at the renewal, as reclaiming a stale claim does.
+fn reclaim(journal: &mut Journal, task: &TaskStamp, at: Instant, acknowledge: bool) -> Seq {
+    let claim = journal
+        .read(|read| read.claim_head(task))
+        .expect("claim reads")
+        .expect("claim exists")
+        .into_body();
+    let generation = journal
+        .read(|read| read.workflow_head(task))
+        .expect("workflow reads")
+        .expect("workflow exists")
+        .into_body()
+        .generation;
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "task:rooms".parse().expect("room origin"),
+        at,
+        Producer::BusTimer,
+    );
+    let renewed = write
+        .fact(
+            wire::body::ClaimRenewed {
+                task: task.clone(),
+                epoch: claim.epoch,
+                until: at,
+                maximum: at,
+            },
+            FactCause::Root,
+        )
+        .expect("renewal builds");
+    if acknowledge {
+        write.claim_head(task.clone(), renewed, move |fact| wire::ClaimHead {
+            fact,
+            acknowledged: generation,
+            ..claim
+        });
+    }
+    journal.apply(write).expect("reclaim commits").first()
+}
+
 #[test]
 fn an_associated_task_keeps_the_intent_it_was_created_with() {
     let mut journal = Journal::in_memory().expect("journal");

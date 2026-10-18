@@ -27,6 +27,7 @@ use wire::{
 };
 
 mod awareness;
+mod claims;
 mod conversation;
 mod coordination;
 mod dependencies;
@@ -406,7 +407,8 @@ pub(crate) fn fold(
     if let Some(task) = fact.task_subject() {
         match fact.kind() {
             // A Design pass names the claim position that winning, carrying,
-            // or rebinding established; a renewal only extends that lease.
+            // or rebinding established; a lease renewal only extends that
+            // lease, and replay moves the claim an explicit reclaim rewrote.
             wire::FactKind::ClaimWon
             | wire::FactKind::ClaimCarried
             | wire::FactKind::ClaimRebound => {
