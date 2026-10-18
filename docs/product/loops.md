@@ -795,11 +795,12 @@ distinctive quality.
 ## The spice surface hierarchy
 
 - **The console is the unit of tiling.** Consoles sit side by side as peer
-  tiles: one per live team, and one per explicitly opened working group.
+  tiles: one per live team, and one per open working group.
   Membership widens a console but never adds another peer console. A working
-  group's console mounts no lane topology, and only an explicit view action
-  mounts, reorders, or closes one; shared group edits, room traffic, and
-  automation never do.
+  group's console mounts no lane topology. A newly created group opens its
+  console once, beside the other teams and groups, as a new team shows its
+  own; after that only an explicit view action mounts, reorders, or closes
+  one, and shared group edits, room traffic, and automation never do.
 - **The mosaic is the evidence layer.** Every agent and compaction card names its
   author lane and worktree explicitly; accent is redundant continuity, never the
   sole identity.

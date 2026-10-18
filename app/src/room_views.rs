@@ -3,9 +3,9 @@
 //! Working-group facts own saved organization, including which designs a group
 //! holds and their order. This state owns presentation only: which group
 //! consoles this browser opened, their order, each design composer's draft,
-//! and the design composer holding focus. The one way shared organization
-//! reaches it is a group ending: a completed snapshot that no longer holds a
-//! group closes that group's console.
+//! and the design composer holding focus. Shared organization reaches it two
+//! ways, both through completed snapshots: a group this browser has not seen
+//! before opens its console, and a group ending closes its console.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,11 +13,16 @@ use serde::{Deserialize, Serialize};
 use wire::TaskStamp;
 use wire::rooms::RoomAuthorityStamp;
 
-/// Browser-local presentation for all explicitly opened group consoles.
+/// Browser-local presentation for all mounted group consoles, and the groups
+/// this browser has already seen.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RoomViews {
     groups: Vec<GroupView>,
+    /// The groups of the last completed snapshot, absent until this browser
+    /// reads its first one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    seen: Option<BTreeSet<RoomAuthorityStamp>>,
 }
 
 /// One explicitly mounted group console.
@@ -76,14 +81,24 @@ impl RoomViews {
         self.groups.retain(|view| &view.group != group);
     }
 
-    /// Close every console whose group `standing` no longer holds. `standing`
-    /// is the group set of a completed room snapshot; `None`, while room
-    /// authority loads or reconnects, closes nothing, so a transient gap keeps
-    /// every console in place.
-    pub(crate) fn close_ended(&mut self, standing: Option<&BTreeSet<RoomAuthorityStamp>>) {
-        if let Some(standing) = standing {
-            self.groups.retain(|view| standing.contains(&view.group));
+    /// Read the group set `standing` of a completed room snapshot: close every
+    /// console whose group ended, and open, in creation order, every group
+    /// this browser has not seen before. The first snapshot a browser reads
+    /// only records what it saw, so a group it already knew, including one it
+    /// closed, never reopens. `None`, while room authority loads or
+    /// reconnects, changes nothing, so a transient gap keeps every console in
+    /// place.
+    pub(crate) fn read_snapshot(&mut self, standing: Option<BTreeSet<RoomAuthorityStamp>>) {
+        let Some(standing) = standing else {
+            return;
+        };
+        self.groups.retain(|view| standing.contains(&view.group));
+        if let Some(seen) = self.seen.take() {
+            for group in standing.difference(&seen) {
+                self.open_group(group.clone(), None);
+            }
         }
+        self.seen = Some(standing);
     }
 
     pub(crate) fn move_group(&mut self, group: &RoomAuthorityStamp, delta: isize) {
@@ -138,7 +153,7 @@ impl RoomViews {
         match action {
             RoomViewAction::Open { group, design } => self.open_group(group, design),
             RoomViewAction::CloseGroup { group } => self.close_group(&group),
-            RoomViewAction::Snapshot { standing } => self.close_ended(standing.as_ref()),
+            RoomViewAction::Snapshot { standing } => self.read_snapshot(standing),
             RoomViewAction::MoveGroup { group, delta } => self.move_group(&group, delta),
             RoomViewAction::Draft {
                 group,
@@ -230,8 +245,9 @@ mod tests {
         views.set_draft(&first, &a, "unfinished".into());
         views.move_group(&second, -1);
 
-        // No membership or order change enters this presentation model; only
-        // the explicit local actions below mount, move, or close a console.
+        // No design membership or group order change enters this presentation
+        // model; only the explicit local actions below mount, move, or close a
+        // known group's console.
         let restored = RoomViews::restore(&views.document().unwrap()).unwrap();
         assert_eq!(restored, views);
         assert_eq!(restored.groups()[0].group, second);
@@ -277,6 +293,48 @@ mod tests {
             standing: Some(BTreeSet::new()),
         });
         assert!(views.groups().is_empty());
+    }
+
+    #[test]
+    fn a_group_opens_its_console_once_when_first_created() {
+        let known = group("dVsYdDj7d");
+        let closed = group("dVsZzx5S8");
+        let created = group("dVsZzx5S9");
+        let later = group("dVrD5vxwx");
+        let snapshot = |groups: &[&RoomAuthorityStamp]| RoomViewAction::Snapshot {
+            standing: Some(groups.iter().map(|group| (*group).clone()).collect()),
+        };
+        let mut views = RoomViews::default();
+        views.apply(snapshot(&[&known, &closed]));
+        assert!(
+            views.groups().is_empty(),
+            "the first snapshot this browser reads opens nothing"
+        );
+        views.apply(RoomViewAction::Snapshot { standing: None });
+
+        views.apply(snapshot(&[&known, &closed, &created]));
+        assert_eq!(views.groups().len(), 1);
+        assert_eq!(views.groups()[0].group, created, "a new group shows itself");
+        let mut views = RoomViews::restore(&views.document().unwrap()).unwrap();
+        views.apply(snapshot(&[&known, &closed, &created]));
+        assert_eq!(views.groups().len(), 1, "a reload opens nothing it saw");
+
+        views.close_group(&created);
+        views.apply(snapshot(&[&known, &closed, &created]));
+        assert!(views.groups().is_empty(), "a closed group stays closed");
+
+        views.apply(snapshot(&[&known, &later]));
+        assert_eq!(views.groups().len(), 1, "groups that ended stay closed");
+        assert_eq!(views.groups()[0].group, later, "beside the new group");
+
+        let mut fresh = RoomViews::default();
+        fresh.apply(snapshot(&[]));
+        fresh.apply(snapshot(&[&created]));
+        assert_eq!(
+            fresh.groups()[0].group,
+            created,
+            "the first group after an empty baseline shows itself"
+        );
     }
 
     #[test]
