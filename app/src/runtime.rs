@@ -240,6 +240,7 @@ pub struct LaneActivity {
     kind: AgentActivityKind,
     title: String,
     detail: String,
+    text_bytes: usize,
     source: ActivitySource,
 }
 
@@ -343,6 +344,7 @@ impl LaneActivity {
             kind: message.activity,
             title: title.to_owned(),
             detail,
+            text_bytes: message.text.len(),
             source: ActivitySource {
                 lane: message.lane,
                 locus: message.locus,
@@ -401,6 +403,12 @@ impl LaneActivity {
     #[must_use]
     pub fn detail(&self) -> &str {
         &self.detail
+    }
+
+    /// Full retained message length used to weight the activity trace.
+    #[must_use]
+    pub const fn text_bytes(&self) -> usize {
+        self.text_bytes
     }
 }
 

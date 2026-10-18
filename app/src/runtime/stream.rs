@@ -735,6 +735,22 @@ mod message_retention_tests {
     }
 
     #[test]
+    fn prose_activity_keeps_full_text_weight_beside_its_ticker_preview() {
+        let lane = "018f82d4-6f59-7d06-92e3-bce9131163e5"
+            .parse()
+            .expect("lane");
+        let mut message = message(lane, 7);
+        message.activity = AgentActivityKind::Prose;
+        message.text =
+            "Short ticker line.\nA much longer second line belongs to the same reply.".to_owned();
+
+        let activity = LaneActivity::from_message(&message);
+
+        assert_eq!(activity.detail(), "Short ticker line.");
+        assert_eq!(activity.text_bytes(), message.text.len());
+    }
+
+    #[test]
     fn browser_retention_uses_the_same_compaction_floor_as_the_snapshot() {
         let busy_lane = "018f82d4-6f59-7d06-92e3-bce9131163e5"
             .parse()
