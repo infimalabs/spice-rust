@@ -39,7 +39,7 @@ pub(super) fn dispatch_preparation(
     })
 }
 
-/// Admit the exact claimed Design and every Plan output named by one pass.
+/// Admit the exact claimed Design and every gated output named by one pass.
 fn require_design_proposal(
     snapshot: &bus::TaskSnapshot,
     command: &wire::AdmittedCommand,
@@ -90,14 +90,13 @@ fn require_design_proposal(
         let output_heads = task_heads(snapshot, output)?;
         require_statement_workflow_witnesses(command, output_heads)?;
         let statement = output_heads.statement().body();
-        let controlled_plan = statement.intent == Some(wire::TaskIntent::Plan)
-            && !statement.acceptance.is_empty()
-            && statement.dependencies.contains(controller);
-        if !controlled_plan {
+        let gated_output =
+            !statement.acceptance.is_empty() && statement.dependencies.contains(controller);
+        if !gated_output {
             return Err(refusal(
                 "preparation::proposal-output-invalid",
                 Some(output.to_string()),
-                "name only acceptance-bearing Plan outputs gated by this Design",
+                "name only acceptance-bearing outputs gated by this Design",
             ));
         }
     }

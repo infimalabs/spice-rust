@@ -1130,6 +1130,7 @@ mod conclude;
 pub(super) use conclude::{conclude, done_conclusion};
 mod contribution;
 mod decision_wait;
+mod ordinary_output;
 mod returned;
 mod selected_plan;
 mod withdrawal;

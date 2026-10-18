@@ -87,8 +87,8 @@ task handles instead, and `preparation nudge` one open Design's handle.
   exact Design, statement head, and active claim completed by this pass.
   `recommendation` is `work`, `conclude`, or `collapse`; work names one or more
   unique `outputs` plus any `governed_inputs`, while conclude and collapse name
-  neither. Every work output must be an acceptance-bearing Plan directly
-  controlled by the Design. `justification` is nonblank and `references`
+  neither. Every work output must carry acceptance and still depend on the
+  Design; any intent qualifies. `justification` is nonblank and `references`
   contains at least one `{"relation": NAME, "source": SOURCE}`; optional
   `evidence` retains question results. Inputs and outputs are unique and
   disjoint. Every reference must lie in the controlling Design's scope: a

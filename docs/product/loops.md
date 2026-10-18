@@ -602,7 +602,8 @@ owns each rule summarized here.
   The proposal witnesses the exact Design statement and active claim, records
   the completed pass horizon, and releases that claim in the same guarded
   transaction. A work recommendation names one or more acceptance-bearing
-  output Plans the Design constructed directly, with source-backed
+  outputs of any intent still gated by the Design, such as ordinary tasks or
+  Plans it constructed directly, with source-backed
   justification. A conclude or collapse recommendation names no output or
   governed input and carries the same source-backed justification. A mistaken
   undecided proposal can be retracted by its author with `preparation withdraw
@@ -637,7 +638,7 @@ owns each rule summarized here.
      the claim. Freeing or lapsing instead abandons the pass, and the cycle
      shows that the last pass ended without a proposal.
   3. **Awaiting decision**: the operator acts on the cited proposal with
-     `preparation decide`. Accepting work releases its Plans; accepting an
+     `preparation decide`. Accepting work releases its outputs; accepting an
      outputless conclude or collapse recommendation concludes the Design;
      returning it or rejecting any output is counted input, so the Design is
      ready for its next pass at once.
