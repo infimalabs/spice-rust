@@ -25,6 +25,7 @@ mod provider_emblem;
 mod reading_focus;
 mod state;
 mod team_drag;
+mod trace;
 
 pub(super) use command_preview::use_command_modifier_preview;
 use composer::{

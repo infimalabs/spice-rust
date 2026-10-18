@@ -31,6 +31,9 @@ mod provider;
 mod renewal;
 mod submission;
 mod task_links;
+#[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
+#[cfg_attr(test, allow(dead_code))]
+mod trace;
 
 #[cfg(any(target_arch = "wasm32", test))]
 pub use attention::{
@@ -49,6 +52,8 @@ pub use provider::{
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
 pub use submission::{SubmissionAuthority, SubmissionTarget};
 pub use task_links::{reported_tasks, task_mentions};
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
+pub use trace::{TRACE_STEP_MILLIS, TRACE_WINDOW_MILLIS, Trace, TraceActivity, trace};
 
 /// Accent slots the band cycles through.
 ///
