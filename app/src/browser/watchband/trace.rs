@@ -138,15 +138,17 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
             if drawn {
                 <svg viewBox={format!("0 0 {width:.2} {height:.2}")}>
                     <defs>
+                        // A literal tag is normalised to lowercase, and SVG knows
+                        // no `lineargradient`; the dynamic form keeps its case.
                         {for placed.curves.iter().map(|curve| html! {
-                            <linearGradient
+                            <@{"linearGradient"}
                                 id={gradient(curve.kind.key())}
                                 data-trace-kind={curve.kind.key()}
                                 x1="0" y1="0" x2="0" y2="1"
                             >
                                 <stop offset="0" stop-opacity=".42" />
                                 <stop offset="1" stop-opacity="0" />
-                            </linearGradient>
+                            </@>
                         })}
                     </defs>
                     {for placed.curves.iter().map(|curve| {
