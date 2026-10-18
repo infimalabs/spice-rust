@@ -393,40 +393,32 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 .group-surface .ticker-age.awaiting-decision { color: var(--warning); }
 .group-surface .ticker-age:is(.done, .collapsed, .deleted, .unavailable) { color: var(--app-anchor-muted); opacity: .7; }
 
-/* A team or group cell is an etched well carrying its lane's or Design's
-   activity trace: a darkened pane, a soft lip under the top edge, and a catch
-   along the bottom. Its status rides a quote rail on the physical left, since
-   the lights run right to left, rounded by its own width like message cards.
-   Tools wear the accent, prose lifts toward ink, and reasoning sinks toward
-   the page. */
+/* A team or group cell is one pane in a shared microscopic etched surface.
+   The grid owns the half-pixel outer and inter-cell seam; cells add no rails,
+   rounded edges, or individual frames. Tools wear the accent, prose lifts
+   toward ink, and reasoning sinks toward the page. */
 .team-lights > .app-presence-pip--trace {
   --trace-tool: var(--accent-slot);
   --trace-prose: color-mix(in srgb, var(--accent-slot) 45%, var(--ink));
   --trace-reasoning: color-mix(in srgb, var(--accent-slot) 45%, var(--page));
   --well-top: color-mix(in srgb, var(--app-shadow-source) 6%, transparent);
   --well-floor: color-mix(in srgb, var(--app-shadow-source) 2%, transparent);
-  --well-lip: color-mix(in srgb, var(--app-shadow-source) 18%, transparent);
-  --well-catch: color-mix(in srgb, var(--app-highlight-source) 85%, transparent);
   position: relative;
   overflow: hidden;
   opacity: 1;
   box-sizing: border-box;
-  border-left: var(--quote-rail) solid color-mix(in srgb, var(--app-presence-color) calc(var(--app-presence-opacity) * 100%), transparent);
-  border-radius: var(--quote-rail);
-  background:
-    linear-gradient(to bottom, color-mix(in srgb, var(--app-highlight-source) 7%, transparent), transparent 50%),
-    linear-gradient(var(--well-top), var(--well-floor));
-  box-shadow:
-    inset 0 2px 1px -1px var(--well-lip),
-    inset 0 -2px 1px -1px var(--well-catch);
+  border: 0;
+  border-radius: 0;
+  background: linear-gradient(var(--well-top), var(--well-floor));
+  box-shadow: none;
 }
 :root[data-app-effective-theme="dark"] .team-lights > .app-presence-pip--trace {
   --well-top: color-mix(in srgb, var(--app-shadow-source) 26%, transparent);
   --well-floor: color-mix(in srgb, var(--app-shadow-source) 12%, transparent);
-  --well-lip: color-mix(in srgb, var(--app-shadow-source) 45%, transparent);
-  --well-catch: color-mix(in srgb, var(--app-highlight-source) 18%, transparent);
 }
-.activity-trace { position: absolute; inset: 1px; }
+/* Half a CSS pixel rasterizes to one device pixel at 2x and a single
+   antialiased device pixel at 1x, returning the rest to the curve. */
+.activity-trace { position: absolute; inset: .5px; }
 .app-presence-pip--trace:is(.bound, .unbound, .passive, .done, .collapsed, .deleted, .unavailable) > .activity-trace { opacity: .55; }
 .activity-trace > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .activity-trace [data-trace-kind="tool"] { --trace-color: var(--trace-tool); }
