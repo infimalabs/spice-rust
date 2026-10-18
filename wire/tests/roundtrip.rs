@@ -927,16 +927,3 @@ fn a_task_fact_without_creation_context_refuses() {
         body::TaskCreationContext::unavailable(body::TaskCreationUnavailable::OperatorActor)
     );
 }
-
-#[test]
-fn an_unregistered_legacy_task_stream_has_one_stable_unavailable_spelling() {
-    let reason = body::TaskCreationUnavailable::LegacyStreamUnregistered;
-    let encoded = wire::encode(&reason).expect("unavailable reason encodes");
-    assert_eq!(encoded, br#""legacy-stream-unregistered""#);
-    assert_eq!(
-        wire::decode::<body::TaskCreationUnavailable>(&encoded)
-            .expect("unavailable reason decodes"),
-        reason,
-    );
-    assert_eq!(reason.as_str(), "legacy-stream-unregistered");
-}

@@ -23,7 +23,7 @@ impl CreatorContextTarget {
         let wire::body::TaskCreationContext::Transcript { boundary, .. } = context else {
             return None;
         };
-        (boundary.stream == wire::body::TASK_CREATION_CONTEXT_STREAM).then_some(Self {
+        Some(Self {
             lane: boundary.lane,
             source: boundary.source,
             before: boundary.next,

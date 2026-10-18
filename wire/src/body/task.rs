@@ -17,10 +17,6 @@ pub enum TaskCreationUnavailable {
     OperatorActor,
     /// Spice created the task without a lane-authored command.
     SpiceActor,
-    /// The task predates creation-context authority and immutable history proves no boundary.
-    LegacyEvidenceMissing,
-    /// Legacy evidence names only a stream the current context command cannot rehydrate.
-    LegacyStreamUnregistered,
 }
 
 impl TaskCreationUnavailable {
@@ -30,8 +26,6 @@ impl TaskCreationUnavailable {
         match self {
             Self::OperatorActor => "operator-actor",
             Self::SpiceActor => "spice-actor",
-            Self::LegacyEvidenceMissing => "legacy-evidence-missing",
-            Self::LegacyStreamUnregistered => "legacy-stream-unregistered",
         }
     }
 }
