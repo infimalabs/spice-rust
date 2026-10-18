@@ -299,13 +299,14 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
 /* Local task and worker tabs fuse to their fixed total as one strip. The
    reversed scroller puts its last child at the physical left edge; every
    interior edge stays borderless while that child and the total retain the
-   two outside rails and corners. */
+   two outside rails and corners. Only widths change here, so the shared horn
+   rail color and its hover step still paint the outside ends. */
 .team-task-rail > .team-tasks > .app-horn-tab {
-  border-inline: 0;
+  border-inline-width: 0;
   border-radius: 0;
 }
 .team-task-rail > .team-tasks > .app-horn-tab:last-child {
-  border-inline-start: var(--message-rail) solid var(--app-base-line);
+  border-inline-start-width: var(--message-rail);
   border-start-start-radius: var(--app-radius-card);
 }
 .team-task-rail > :is([data-work-scope="team"], [data-work-scope="group"]) {
