@@ -116,9 +116,11 @@ pub(in crate::resident::supervisor) fn run(lane: &OsString, projection: &Path) -
             media::Projected::new()
         }
     };
+    let now = wire::Instant::new(jiff::Timestamp::now()).map_err(io::Error::other)?;
     let rendered = steer::inbox::render_pending(
         &steer::Key::for_identity(lane),
         &pending.pending,
+        now,
         |directive, ordinal| projected.get(&(directive, ordinal)).cloned(),
     );
     let mut stdout = io::stdout().lock();

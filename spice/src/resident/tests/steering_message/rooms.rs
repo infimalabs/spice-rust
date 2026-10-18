@@ -357,7 +357,8 @@ fn room_routes_record_each_source_once_and_deliver_directed_routes() {
         .expect("one message is pending");
     assert_eq!(pending.room.as_ref(), Some(&room));
     let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
-    let rendered = steer::inbox::render_pending(&seal, &[pending], |_, _| None);
+    let now = pending.authored;
+    let rendered = steer::inbox::render_pending(&seal, &[pending], now, |_, _| None);
     assert!(
         rendered.contains(&format!(
             "[PEER sender {} lane {} room {room}]",
