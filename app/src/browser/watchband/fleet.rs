@@ -222,6 +222,7 @@ fn render_team_toolbar(
             let status = member.status(standing.waking);
             let label = format!("{}: {}", standing.label, status.label());
             let activities = super::trace::lane_activities(render.runtime, member.lane);
+            let off = super::trace::lane_off(render.runtime, member.lane);
             Some(html! {
                 <span
                     class={classes!("app-presence-pip", "app-presence-pip--status", "app-presence-pip--trace", status.key())}
@@ -232,7 +233,7 @@ fn render_team_toolbar(
                     aria-label={label.clone()}
                     title={label}
                 >
-                    <super::trace::ActivityTrace id={member.lane.to_string()} {activities} />
+                    <super::trace::ActivityTrace id={member.lane.to_string()} {activities} {off} />
                 </span>
             })
         };

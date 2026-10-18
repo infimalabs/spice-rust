@@ -7,6 +7,8 @@
 //! curves are sampled at evenly spaced instants through a kernel that slides
 //! with time, so a redraw moves them smoothly instead of jumping between
 //! buckets. Positions and levels are fractions; the browser owns every pixel.
+//! Intervals the lane was off become gaps the curves do not cross, once they
+//! last at least the spacing between two samples.
 
 use wire::AgentActivityKind;
 
@@ -194,8 +196,7 @@ fn hunk_bytes(source: &wire::rooms::TranscriptHunk) -> usize {
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub fn trace(activities: &[TraceActivity], now: i64, samples: usize) -> Trace {
-    let samples = samples.max(2);
-    let samples = samples + usize::from(samples.is_multiple_of(2));
+    let samples = grid(samples);
     let since = now - TRACE_WINDOW_MILLIS;
     let window = TRACE_WINDOW_MILLIS as f64;
     let x_of = |millis: i64| ((millis - since) as f64 / window).clamp(0.0, 1.0);
@@ -259,6 +260,98 @@ fn inside(at: f64, half: f64) -> f64 {
 #[allow(clippy::cast_precision_loss)]
 fn text_weight(bytes: usize) -> f64 {
     (bytes.min(FULL_WEIGHT_BYTES) as f64 / FULL_WEIGHT_BYTES as f64).sqrt()
+}
+
+/// The odd sample count at or above `samples`, so the window start, midpoint,
+/// and now are shared samples at every density.
+fn grid(samples: usize) -> usize {
+    let samples = samples.max(2);
+    samples + usize::from(samples.is_multiple_of(2))
+}
+
+/// One interval through which a lane had no occupant, in epoch milliseconds;
+/// an interval still running has no end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TraceOff {
+    pub from: i64,
+    pub until: Option<i64>,
+}
+
+/// Part of the window, as fractions from its start at 0 to now at 1, through
+/// which the curves draw.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TraceSpan {
+    pub from: f64,
+    pub to: f64,
+}
+
+/// The intervals a lane was off, from its occupancy transitions in journal
+/// order, each its instant and whether an occupant then sat in the lane. An
+/// ending or a vacant seat turns the lane off and an occupant's start turns it
+/// on. Before its first retained transition a lane counts as on, so no gap is
+/// drawn that the record cannot date.
+pub fn off_intervals(transitions: impl IntoIterator<Item = (i64, bool)>) -> Vec<TraceOff> {
+    let mut intervals = Vec::new();
+    let mut open = None;
+    for (millis, occupied) in transitions {
+        match (occupied, open) {
+            (false, None) => open = Some(millis),
+            (true, Some(from)) => {
+                intervals.push(TraceOff {
+                    from,
+                    until: Some(millis),
+                });
+                open = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(from) = open {
+        intervals.push(TraceOff { from, until: None });
+    }
+    intervals
+}
+
+/// The spans of the window ending at `now` through which a lane's curves draw,
+/// in time order, given the intervals it was `off` and the `samples` the
+/// curves are drawn at as [`trace`] draws them. An off interval shorter than
+/// the spacing between two samples would vanish at that density and leaves the
+/// curves whole; a longer one is a gap, clipped to the window, and one still
+/// running ends the curves where the lane went off.
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn drawn_spans(off: &[TraceOff], now: i64, samples: usize) -> Vec<TraceSpan> {
+    let since = now - TRACE_WINDOW_MILLIS;
+    let window = TRACE_WINDOW_MILLIS as f64;
+    let spacing = window / (grid(samples) - 1) as f64;
+    let x_of = |millis: i64| ((millis - since) as f64 / window).clamp(0.0, 1.0);
+    let mut gaps = off
+        .iter()
+        .filter_map(|off| {
+            let until = off.until.unwrap_or(now).min(now);
+            ((until - off.from) as f64 >= spacing && until > since)
+                .then(|| (x_of(off.from), x_of(until)))
+        })
+        .collect::<Vec<_>>();
+    gaps.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut spans = Vec::with_capacity(gaps.len() + 1);
+    let mut start = 0.0;
+    for (from, to) in gaps {
+        if from > start {
+            spans.push(TraceSpan {
+                from: start,
+                to: from,
+            });
+        }
+        start = f64::max(start, to);
+    }
+    if start < 1.0 {
+        spans.push(TraceSpan {
+            from: start,
+            to: 1.0,
+        });
+    }
+    spans
 }
 
 #[cfg(test)]
@@ -402,5 +495,57 @@ mod tests {
                 "{samples}",
             );
         }
+    }
+
+    #[test]
+    fn occupancy_transitions_pair_each_ending_with_the_next_start() {
+        let intervals = off_intervals([
+            (10, true),
+            (20, false),
+            (25, false),
+            (30, true),
+            (40, true),
+            (50, false),
+        ]);
+        assert_eq!(
+            intervals,
+            [
+                TraceOff {
+                    from: 20,
+                    until: Some(30)
+                },
+                TraceOff {
+                    from: 50,
+                    until: None
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn only_off_intervals_spanning_a_sample_spacing_break_the_curves() {
+        let off = |from_ago: i64, until_ago: Option<i64>| TraceOff {
+            from: NOW - from_ago * 1_000,
+            until: until_ago.map(|seconds| NOW - seconds * 1_000),
+        };
+        // Seconds into the window through which the curves draw.
+        let seconds = |off: &[TraceOff]| {
+            drawn_spans(off, NOW, SAMPLES)
+                .iter()
+                .map(|span| ((span.from * 600.0).round(), (span.to * 600.0).round()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(seconds(&[]), [(0.0, 600.0)]);
+        // Nine samples space the ten-minute window every seventy-five seconds.
+        assert_eq!(
+            seconds(&[
+                off(900, Some(650)),
+                off(700, Some(540)),
+                off(400, Some(325)),
+                off(200, Some(126)),
+                off(100, None),
+            ]),
+            [(60.0, 200.0), (275.0, 500.0)]
+        );
     }
 }

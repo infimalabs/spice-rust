@@ -442,15 +442,25 @@ ending in a dot at now; in the dark theme the curves glow. A curve's height is
 that kind's recent rate on one fixed scale shared by every pip, each activity
 weighted by its text, through a kernel that slides with time so redraws move
 the curve smoothly. Turn, operator direction, provider failure, compaction,
-fresh session, and sign-out draw as markers over the curves. The trace draws
-only state the browser already holds, issues no requests, and redraws on new
-activity and every few seconds, so old activity leaves without a new frame.
+fresh session, and sign-out draw as markers over the curves. Where the lane
+was off, from an occupant's end or a vacant seat to the next occupant's start,
+every curve leaves a gap with no line or fill, and a lane off now ends its
+curves where it went off; an interruption shorter than the spacing between two
+of the pane's curve samples is too brief to see and leaves the curves whole.
+Quiet is not off: a running lane with no activity still draws its low line.
+The trace draws only state the browser already holds, issues no requests, and
+redraws on new activity and every few seconds, so old activity leaves without
+a new frame.
 
 The app's `style-src 'self'` policy refuses inline style attributes, so the
 trace is SVG geometry in the pane's measured CSS pixels and every colour and
 glow comes from the stylesheet. A Playwright check of the trace must keep that
 policy enforced: a context with `bypassCSP` would hide a trace that draws
 nothing in production.
+
+Yew's `html!` lowercases literal element names, and SVG recognises
+camel-case elements such as `clipPath` only by their exact case, so the trace
+writes those as dynamic tags (`<@{"clipPath"}>`).
 
 A working group's pips are the same traced wells, one per Design, with the
 Design's standing on the rail. A Design's trace reads its room's events as a
