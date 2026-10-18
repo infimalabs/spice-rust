@@ -61,6 +61,15 @@ pub struct DesignConversationEvidence {
 pub enum DesignNoticeOpportunity {
     /// A successful task completion settled.
     TaskCompletion { task: TaskStamp, completed: Seq },
+    /// A retained task selection under this exact claim. `terminal` names the
+    /// terminal task operation when one preceded the selection record; its
+    /// absence does not pretend that the task completed.
+    TaskClaim {
+        task: TaskStamp,
+        claim: SequenceCode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        terminal: Option<Seq>,
+    },
     /// One assistant-authored conversation message settled.
     Conversation { source: DesignConversationEvidence },
     /// The selected Design was filed or revised.
@@ -81,6 +90,16 @@ pub enum DesignNoticeEvidence {
         task: TaskStamp,
         statement: Seq,
         completed: Seq,
+    },
+    /// Task evidence retained under an exact claim. `terminal` is present only
+    /// when a terminal task operation preceded the selection record; the claim
+    /// remains the witness when no completion did.
+    TaskClaim {
+        task: TaskStamp,
+        statement: Seq,
+        claim: SequenceCode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        terminal: Option<Seq>,
     },
     /// Assistant-authored conversation evidence.
     Conversation { source: DesignConversationEvidence },

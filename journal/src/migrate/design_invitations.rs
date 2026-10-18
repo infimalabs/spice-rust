@@ -2,187 +2,418 @@
 
 use std::collections::BTreeMap;
 
-use rusqlite::Transaction;
-use serde_json::{Map, Value, json};
-use wire::{AnyFact, Envelope, FactKind, Seq, TaskStamp};
+use rusqlite::{Transaction, params};
+use serde_json::{Map, Value};
+use wire::{
+    AnyFact, CanonicalUuid, Envelope, FactKind, Seq, SequenceCode, TaskStamp,
+    rooms::{DesignNoticeEvidence, DesignNoticeOpportunity, DesignSession},
+};
 
 use super::{MigrationError, OpenError};
 
-/// Release that separated invitation opportunity and evidence.
+/// Release that made exact Design statement evidence the notice authority.
+const NOTICE_STATEMENT_RELEASE: &str = "ROOMS-dW6GpYK65";
+/// Release that separated the invitation opportunity from its supporting card.
 const DESIGN_INVITATION_RELEASE: &str = "ROOMS-dWKcWx0xN";
 /// Release that bound an invitation to its compaction-delimited context.
 const CONTEXT_RELEASE: &str = "ROOMS-dWKwb7jw9";
+/// Retained envelopes decoded in one bounded crossing step.
+const FACT_PAGE_ROWS: i64 = 256;
 
 #[derive(Clone)]
-pub(super) struct Crossing {
-    session: Value,
-    opportunity: Value,
-    evidence: Value,
-    compaction: Option<Seq>,
+struct Claim {
+    task: TaskStamp,
+    lane: CanonicalUuid,
 }
 
-/// Rewrite every retained notice to the session-targeted context shape.
+#[derive(Clone, Copy)]
+struct Terminal {
+    at: Seq,
+    completed: bool,
+}
+
+#[derive(Default)]
+struct Witnesses {
+    statements: BTreeMap<TaskStamp, Seq>,
+    claims: BTreeMap<Seq, Claim>,
+    terminals: BTreeMap<TaskStamp, Terminal>,
+    sessions: BTreeMap<(CanonicalUuid, CanonicalUuid), DesignSession>,
+    compactions: BTreeMap<(CanonicalUuid, DesignSession), Seq>,
+}
+
+struct Crossing {
+    session: DesignSession,
+    opportunity: DesignNoticeOpportunity,
+    evidence: DesignNoticeEvidence,
+}
+
+/// Rewrite every retained notice to the session-targeted, context-bound shape.
 pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
-    let crossings = derive(transaction)?;
-    super::residual::rewrite_facts(
-        transaction,
-        FactKind::DesignNoticed,
-        "json_type(CAST(envelope AS TEXT), '$.fact.compaction') IS NULL",
-        CONTEXT_RELEASE,
-        |seq, fact| cross_notice(seq, fact, &crossings),
-    )
-}
-
-fn current_crossing(
-    fact: &serde_json::Map<String, Value>,
-    seq: i64,
-    compactions: &BTreeMap<(wire::CanonicalUuid, wire::rooms::DesignSession), Seq>,
-) -> Result<Option<Crossing>, OpenError> {
-    let Some(session_value) = fact.get("session") else {
-        return Ok(None);
-    };
-    let lane = required_string(fact, "lane", seq)?
-        .parse::<wire::CanonicalUuid>()
-        .map_err(|error| refusal(seq, &format!("the retained lane is invalid: {error}")))?;
-    let session = serde_json::from_value::<wire::rooms::DesignSession>(session_value.clone())
-        .map_err(|error| refusal(seq, &format!("the retained session is invalid: {error}")))?;
-    Ok(Some(Crossing {
-        session: session_value.clone(),
-        opportunity: fact
-            .get("opportunity")
-            .cloned()
-            .ok_or_else(|| refusal(seq, "the retained notice names no opportunity"))?,
-        evidence: fact
-            .get("evidence")
-            .cloned()
-            .ok_or_else(|| refusal(seq, "the retained notice names no evidence"))?,
-        compaction: compactions.get(&(lane, session)).copied(),
-    }))
-}
-
-pub(super) fn derive(transaction: &Transaction<'_>) -> Result<BTreeMap<i64, Crossing>, OpenError> {
-    let rows = fact_rows(transaction)?;
-    let mut statements = BTreeMap::<TaskStamp, Seq>::new();
-    let mut completions = BTreeMap::<TaskStamp, Seq>::new();
-    let mut sessions =
-        BTreeMap::<(wire::CanonicalUuid, wire::CanonicalUuid), wire::rooms::DesignSession>::new();
-    let mut compactions = BTreeMap::<(wire::CanonicalUuid, wire::rooms::DesignSession), Seq>::new();
-    let mut crossings = BTreeMap::new();
-
-    for (seq, kind, bytes) in rows {
-        if kind == FactKind::DesignNoticed.as_str() {
-            let fact = fact_object(&bytes, seq)?;
-            if let Some(crossing) = current_crossing(&fact, seq, &compactions)? {
-                crossings.insert(seq, crossing);
-                continue;
+    let mut witnesses = Witnesses::default();
+    let mut after = 0_i64;
+    loop {
+        let page = fact_page(transaction, after)?;
+        let Some((last, ..)) = page.last() else {
+            return Ok(());
+        };
+        after = *last;
+        for (seq, kind, bytes) in page {
+            if kind == FactKind::DesignNoticed.as_str() {
+                cross_notice(transaction, seq, &bytes, &witnesses)?;
+            } else {
+                observe(seq, &bytes, &mut witnesses)?;
             }
-            let task = required_string(&fact, "task", seq)?
-                .parse::<TaskStamp>()
-                .map_err(|error| refusal(seq, &format!("the retained task is invalid: {error}")))?;
-            let lane = required_string(&fact, "lane", seq)?
-                .parse::<wire::CanonicalUuid>()
-                .map_err(|error| refusal(seq, &format!("the retained lane is invalid: {error}")))?;
-            let occupant = required_string(&fact, "occupant", seq)?
-                .parse::<wire::CanonicalUuid>()
-                .map_err(|error| {
-                    refusal(seq, &format!("the retained occupant is invalid: {error}"))
-                })?;
-            fact.get("claim")
-                .ok_or_else(|| refusal(seq, "the retained notice names no claim"))?;
-            let statement = statements.get(&task).copied().ok_or_else(|| {
-                refusal(seq, "the retained notice task has no provable statement")
-            })?;
-            let completed = completions.get(&task).copied().ok_or_else(|| {
-                refusal(seq, "the retained notice task has no successful completion")
-            })?;
-            let session = sessions.get(&(lane, occupant)).cloned().ok_or_else(|| {
-                refusal(
-                    seq,
-                    "the retained notice recipient has no declared vendor session",
-                )
-            })?;
-            crossings.insert(
-                seq,
-                Crossing {
-                    session: serde_json::to_value(&session).map_err(|error| {
-                        refusal(
-                            seq,
-                            &format!("the retained session identity cannot encode: {error}"),
-                        )
-                    })?,
-                    opportunity: json!({
-                        "kind": "task-completion",
-                        "task": task,
-                        "completed": completed,
-                    }),
-                    evidence: json!({
-                        "kind": "task",
-                        "task": task,
-                        "statement": statement,
-                        "completed": completed,
-                    }),
-                    compaction: compactions.get(&(lane, session)).copied(),
-                },
-            );
-            continue;
-        }
-
-        let envelope: Envelope<AnyFact> = wire::decode(&bytes).map_err(|error| {
-            refusal(
-                seq,
-                &format!("a retained invitation witness does not decode: {error}"),
-            )
-        })?;
-        for task in envelope.fact.revised_tasks() {
-            statements.insert(task.clone(), envelope.seq);
-        }
-        if let Some(done) = envelope.fact.read::<wire::body::TaskDone>()
-            && done.terminal.as_ref().is_some_and(|terminal| {
-                terminal.status == wire::body::TaskCompletionStatus::Completed
-            })
-        {
-            completions.insert(done.task, envelope.seq);
-        }
-        if let Some(declared) = envelope.fact.read::<wire::body::LaneSessionDeclared>() {
-            sessions.insert(
-                (declared.lane, declared.occupant),
-                wire::rooms::DesignSession {
-                    vendor: declared.vendor,
-                    identity: declared.identity,
-                },
-            );
-        } else if let Some(compacted) = envelope.fact.read::<wire::body::LaneCompacted>()
-            && let Some(session) = sessions.get(&(compacted.lane, compacted.occupant)).cloned()
-        {
-            compactions.insert((compacted.lane, session), envelope.seq);
         }
     }
-    Ok(crossings)
 }
 
-fn fact_rows(transaction: &Transaction<'_>) -> Result<Vec<(i64, String, Vec<u8>)>, OpenError> {
+fn observe(seq: i64, bytes: &[u8], witnesses: &mut Witnesses) -> Result<(), OpenError> {
+    let envelope: Envelope<AnyFact> = wire::decode(bytes).map_err(|error| {
+        refusal(
+            seq,
+            &format!("a retained invitation witness does not decode: {error}"),
+        )
+    })?;
+    for task in envelope.fact.revised_tasks() {
+        witnesses.statements.insert(task.clone(), envelope.seq);
+    }
+    if let Some(claim) = envelope.fact.read::<wire::body::ClaimWon>() {
+        witnesses.claims.insert(
+            envelope.seq,
+            Claim {
+                task: claim.task.clone(),
+                lane: claim.lane,
+            },
+        );
+    } else if let Some(claim) = envelope.fact.read::<wire::body::ClaimCarried>() {
+        witnesses.claims.insert(
+            envelope.seq,
+            Claim {
+                task: claim.task.clone(),
+                lane: claim.lane,
+            },
+        );
+    } else if let Some(claim) = envelope.fact.read::<wire::body::ClaimRebound>() {
+        witnesses.claims.insert(
+            envelope.seq,
+            Claim {
+                task: claim.task.clone(),
+                lane: claim.lane,
+            },
+        );
+    }
+    if let Some(done) = envelope.fact.read::<wire::body::TaskDone>()
+        && let Some(terminal) = &done.terminal
+    {
+        witnesses.terminals.insert(
+            done.task.clone(),
+            Terminal {
+                at: envelope.seq,
+                completed: terminal.status == wire::body::TaskCompletionStatus::Completed,
+            },
+        );
+    }
+    if let Some(declared) = envelope.fact.read::<wire::body::LaneSessionDeclared>() {
+        witnesses.sessions.insert(
+            (declared.lane, declared.occupant),
+            DesignSession {
+                vendor: declared.vendor.clone(),
+                identity: declared.identity.clone(),
+            },
+        );
+    } else if let Some(compacted) = envelope.fact.read::<wire::body::LaneCompacted>()
+        && let Some(session) = witnesses
+            .sessions
+            .get(&(compacted.lane, compacted.occupant))
+            .cloned()
+    {
+        witnesses
+            .compactions
+            .insert((compacted.lane, session), envelope.seq);
+    }
+    Ok(())
+}
+
+fn cross_notice(
+    transaction: &Transaction<'_>,
+    seq: i64,
+    bytes: &[u8],
+    witnesses: &Witnesses,
+) -> Result<(), OpenError> {
+    let mut envelope: Value = serde_json::from_slice(bytes).map_err(|error| {
+        refusal(
+            seq,
+            &format!("the retained envelope does not decode: {error}"),
+        )
+    })?;
+    let changed = {
+        let fact = envelope
+            .get_mut("fact")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| refusal(seq, "the retained envelope carries no fact object"))?;
+        let mut changed = false;
+        if !fact.contains_key("session") {
+            recover_design_statement(seq, fact, witnesses)?;
+            let crossing = derive_crossing(seq, fact, witnesses)?;
+            apply_crossing(seq, fact, crossing)?;
+            changed = true;
+        }
+        if !fact.contains_key("compaction") {
+            bind_compaction(seq, fact, witnesses)?;
+            changed = true;
+        }
+        changed
+    };
+    if changed {
+        store_crossed_notice(transaction, seq, envelope)
+    } else {
+        Ok(())
+    }
+}
+
+fn bind_compaction(
+    seq: i64,
+    fact: &mut Map<String, Value>,
+    witnesses: &Witnesses,
+) -> Result<(), OpenError> {
+    let lane = fact
+        .get("lane")
+        .and_then(Value::as_str)
+        .ok_or_else(|| context_refusal(seq, "the retained notice names no lane"))?
+        .parse::<CanonicalUuid>()
+        .map_err(|error| context_refusal(seq, &format!("the retained lane is invalid: {error}")))?;
+    let session = fact
+        .get("session")
+        .cloned()
+        .ok_or_else(|| context_refusal(seq, "the retained notice names no session"))
+        .and_then(|value| {
+            serde_json::from_value::<DesignSession>(value).map_err(|error| {
+                context_refusal(seq, &format!("the retained session is invalid: {error}"))
+            })
+        })?;
+    let compaction = witnesses.compactions.get(&(lane, session)).copied();
+    fact.insert(
+        "compaction".to_owned(),
+        compaction.map_or(Value::Null, |compaction| Value::from(compaction.get())),
+    );
+    Ok(())
+}
+
+fn recover_design_statement(
+    seq: i64,
+    fact: &mut Map<String, Value>,
+    witnesses: &Witnesses,
+) -> Result<(), OpenError> {
+    if !fact.contains_key("statement") {
+        let design = required_string(fact, "design", seq)?
+            .parse::<TaskStamp>()
+            .map_err(|error| {
+                statement_refusal(seq, &format!("the retained Design is invalid: {error}"))
+            })?;
+        let statement = witnesses.statements.get(&design).copied().ok_or_else(|| {
+            statement_refusal(
+                seq,
+                "the retained notice predates any provable Design statement",
+            )
+        })?;
+        fact.insert("statement".to_owned(), Value::from(statement.get()));
+    }
+    fact.remove("provenance");
+    Ok(())
+}
+
+fn derive_crossing(
+    seq: i64,
+    fact: &Map<String, Value>,
+    witnesses: &Witnesses,
+) -> Result<Crossing, OpenError> {
+    let task = required_string(fact, "task", seq)?
+        .parse::<TaskStamp>()
+        .map_err(|error| refusal(seq, &format!("the retained task is invalid: {error}")))?;
+    let lane = required_string(fact, "lane", seq)?
+        .parse::<CanonicalUuid>()
+        .map_err(|error| refusal(seq, &format!("the retained lane is invalid: {error}")))?;
+    let occupant = required_string(fact, "occupant", seq)?
+        .parse::<CanonicalUuid>()
+        .map_err(|error| refusal(seq, &format!("the retained occupant is invalid: {error}")))?;
+    let claim = required_string(fact, "claim", seq)?
+        .parse::<SequenceCode>()
+        .map_err(|error| refusal(seq, &format!("the retained claim is invalid: {error}")))?;
+    let claim_seq = validate_claim(seq, witnesses, &task, lane, claim)?;
+    let statement = witnesses
+        .statements
+        .get(&task)
+        .copied()
+        .ok_or_else(|| refusal(seq, "the retained notice task has no provable statement"))?;
+    let session = witnesses
+        .sessions
+        .get(&(lane, occupant))
+        .cloned()
+        .ok_or_else(|| {
+            refusal(
+                seq,
+                "the retained notice recipient has no declared vendor session",
+            )
+        })?;
+    let terminal = witnesses
+        .terminals
+        .get(&task)
+        .copied()
+        .filter(|terminal| terminal.at > claim_seq);
+    let (opportunity, evidence) = task_witnesses(task, statement, claim, terminal);
+    Ok(Crossing {
+        session,
+        opportunity,
+        evidence,
+    })
+}
+
+fn validate_claim(
+    seq: i64,
+    witnesses: &Witnesses,
+    task: &TaskStamp,
+    lane: CanonicalUuid,
+    claim: SequenceCode,
+) -> Result<Seq, OpenError> {
+    let claim_seq = Seq::new(claim.get())
+        .ok_or_else(|| refusal(seq, "the retained notice names claim zero"))?;
+    let claimed = witnesses
+        .claims
+        .get(&claim_seq)
+        .ok_or_else(|| refusal(seq, &format!("the retained claim {claim} does not exist")))?;
+    if claimed.task != *task || claimed.lane != lane {
+        return Err(refusal(
+            seq,
+            &format!("the retained claim {claim} does not bind task {task} to lane {lane}"),
+        ));
+    }
+    Ok(claim_seq)
+}
+
+fn task_witnesses(
+    task: TaskStamp,
+    statement: Seq,
+    claim: SequenceCode,
+    terminal: Option<Terminal>,
+) -> (DesignNoticeOpportunity, DesignNoticeEvidence) {
+    match terminal {
+        Some(terminal) if terminal.completed => (
+            DesignNoticeOpportunity::TaskCompletion {
+                task: task.clone(),
+                completed: terminal.at,
+            },
+            DesignNoticeEvidence::Task {
+                task,
+                statement,
+                completed: terminal.at,
+            },
+        ),
+        terminal => {
+            let terminal = terminal.map(|terminal| terminal.at);
+            (
+                DesignNoticeOpportunity::TaskClaim {
+                    task: task.clone(),
+                    claim,
+                    terminal,
+                },
+                DesignNoticeEvidence::TaskClaim {
+                    task,
+                    statement,
+                    claim,
+                    terminal,
+                },
+            )
+        }
+    }
+}
+
+fn apply_crossing(
+    seq: i64,
+    fact: &mut Map<String, Value>,
+    crossing: Crossing,
+) -> Result<(), OpenError> {
+    for (field, value) in [
+        (
+            "session",
+            serde_json::to_value(crossing.session).map_err(|error| {
+                refusal(
+                    seq,
+                    &format!("the retained session identity cannot encode: {error}"),
+                )
+            })?,
+        ),
+        (
+            "opportunity",
+            serde_json::to_value(crossing.opportunity).map_err(|error| {
+                refusal(
+                    seq,
+                    &format!("the retained opportunity witness cannot encode: {error}"),
+                )
+            })?,
+        ),
+        (
+            "evidence",
+            serde_json::to_value(crossing.evidence).map_err(|error| {
+                refusal(
+                    seq,
+                    &format!("the retained evidence witness cannot encode: {error}"),
+                )
+            })?,
+        ),
+    ] {
+        fact.insert(field.to_owned(), value);
+    }
+    fact.remove("task");
+    fact.remove("claim");
+    Ok(())
+}
+
+fn store_crossed_notice(
+    transaction: &Transaction<'_>,
+    seq: i64,
+    envelope: Value,
+) -> Result<(), OpenError> {
+    let current: Envelope<AnyFact> = serde_json::from_value(envelope).map_err(|error| {
+        context_refusal(
+            seq,
+            &format!("the crossed envelope is not current: {error}"),
+        )
+    })?;
+    let bytes = wire::encode(&current).map_err(|error| {
+        context_refusal(seq, &format!("the crossed envelope cannot encode: {error}"))
+    })?;
+    let changed = transaction
+        .execute(
+            "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = ?2 AND kind = ?3",
+            params![bytes, seq, FactKind::DesignNoticed.as_str()],
+        )
+        .map_err(OpenError::Sqlite)?;
+    if changed != 1 {
+        return Err(refusal(
+            seq,
+            "the retained notice changed under the exclusive crossing",
+        ));
+    }
+    Ok(())
+}
+
+fn fact_page(
+    transaction: &Transaction<'_>,
+    after: i64,
+) -> Result<Vec<(i64, String, Vec<u8>)>, OpenError> {
     let mut statement = transaction
-        .prepare("SELECT seq, kind, envelope FROM fact_envelopes ORDER BY seq")
+        .prepare(
+            "SELECT seq, kind, envelope FROM fact_envelopes WHERE seq > ?1 \
+             ORDER BY seq LIMIT ?2",
+        )
         .map_err(OpenError::Sqlite)?;
     let rows = statement
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .query_map(params![after, FACT_PAGE_ROWS], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
         .map_err(OpenError::Sqlite)?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(OpenError::Sqlite)
-}
-
-fn fact_object(bytes: &[u8], seq: i64) -> Result<Map<String, Value>, OpenError> {
-    serde_json::from_slice::<Value>(bytes)
-        .map_err(|error| {
-            refusal(
-                seq,
-                &format!("the retained envelope does not decode: {error}"),
-            )
-        })?
-        .get_mut("fact")
-        .and_then(Value::as_object_mut)
-        .cloned()
-        .ok_or_else(|| refusal(seq, "the retained envelope carries no fact object"))
 }
 
 fn required_string<'a>(
@@ -195,31 +426,31 @@ fn required_string<'a>(
         .ok_or_else(|| refusal(seq, &format!("the retained notice names no {field}")))
 }
 
-pub(super) fn cross_notice(
-    seq: i64,
-    fact: &mut Map<String, Value>,
-    crossings: &BTreeMap<i64, Crossing>,
-) -> Result<(), String> {
-    let crossed = crossings
-        .get(&seq)
-        .ok_or_else(|| "the retained notice has no derived invitation witnesses".to_owned())?;
-    fact.insert("session".to_owned(), crossed.session.clone());
-    fact.insert("opportunity".to_owned(), crossed.opportunity.clone());
-    fact.insert("evidence".to_owned(), crossed.evidence.clone());
-    fact.insert(
-        "compaction".to_owned(),
-        crossed.compaction.map_or(Value::Null, |seq| json!(seq)),
-    );
-    fact.remove("task");
-    fact.remove("claim");
-    Ok(())
-}
-
 fn refusal(seq: i64, detail: &str) -> OpenError {
     MigrationError::RetainedRow {
         table: "fact_envelopes",
         row: seq.to_string(),
         release: DESIGN_INVITATION_RELEASE,
+        detail: detail.to_owned(),
+    }
+    .into()
+}
+
+fn context_refusal(seq: i64, detail: &str) -> OpenError {
+    MigrationError::RetainedRow {
+        table: "fact_envelopes",
+        row: seq.to_string(),
+        release: CONTEXT_RELEASE,
+        detail: detail.to_owned(),
+    }
+    .into()
+}
+
+fn statement_refusal(seq: i64, detail: &str) -> OpenError {
+    MigrationError::RetainedRow {
+        table: "fact_envelopes",
+        row: seq.to_string(),
+        release: NOTICE_STATEMENT_RELEASE,
         detail: detail.to_owned(),
     }
     .into()
