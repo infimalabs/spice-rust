@@ -206,6 +206,7 @@ mod tests {
         let rendered = steer::inbox::render_pending(
             &steer::Key::for_identity(fixture.lane),
             &inbox.pending,
+            "2026-08-30T09:00:00.000Z".parse().expect("fixture now"),
             |directive, ordinal| projected.get(&(directive, ordinal)).cloned(),
         );
 

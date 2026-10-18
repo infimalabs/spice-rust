@@ -1,18 +1,57 @@
 //! In-memory rendering and delivery state for pending direction.
 
+use wire::Instant;
 use wire::intent::PendingDirective;
 
 use crate::ack::keys::Key;
 use crate::directives::Directive;
 
-/// Renders the direction a lane must hear, sealed under the lane's own key.
+/// Age at which delivered direction carries a staleness caution. Direction
+/// reminded, re-delivered, or relayed this long after it was written may
+/// address task, room, or steering state that has since moved on.
+pub const STALE_AFTER_MILLIS: i64 = 5 * 60 * 1_000;
+
+const STALE_PREFIX: &str = "[STALE] ";
+
+/// The caution line a directive written at `authored` carries when it is
+/// rendered at `now`, if it is that old; younger direction carries nothing.
+fn caution(authored: Instant, now: Instant) -> Option<String> {
+    let age = now.get().as_millisecond() - authored.get().as_millisecond();
+    (age >= STALE_AFTER_MILLIS).then(|| {
+        format!(
+            "{STALE_PREFIX}This direction is {}. It may be obsolete or superseded; check \
+             current task and steering state before acting on it.\n",
+            graduated_age(age)
+        )
+    })
+}
+
+/// A stale age on a coarse graduated scale: five-minute steps within the
+/// first hour, then whole hours, then whole days.
+fn graduated_age(millis: i64) -> String {
+    const MINUTE: i64 = 60 * 1_000;
+    const HOUR: i64 = 60 * MINUTE;
+    const DAY: i64 = 24 * HOUR;
+    let over = |count: i64, unit: &str| {
+        let plural = if count == 1 { "" } else { "s" };
+        format!("over {count} {unit}{plural} old")
+    };
+    match millis {
+        ..HOUR => format!("{} minutes old", millis / (5 * MINUTE) * 5),
+        ..DAY => over(millis / HOUR, "hour"),
+        _ => over(millis / DAY, "day"),
+    }
+}
+
+/// Renders the direction a lane must hear at `now`, sealed under the lane's
+/// own key.
 ///
 /// The seal wraps the whole rendering so a lane can tell direction spice
 /// delivered from text that merely resembles it. Prose arriving any other way
 /// is not steering, however much it looks the part, and a rendering with
 /// nothing pending is empty rather than an empty seal.
 #[must_use]
-pub fn render(seal: &Key, pending: &[&Directive]) -> String {
+pub fn render(seal: &Key, pending: &[&Directive], now: Instant) -> String {
     if pending.is_empty() {
         return String::new();
     }
@@ -25,6 +64,9 @@ pub fn render(seal: &Key, pending: &[&Directive]) -> String {
             directive.stage(),
             directive.expires()
         ));
+        let stale = directive
+            .published()
+            .and_then(|authored| caution(authored, now));
         if let Some(control) = directive.control() {
             rendered.push_str(&format!(" control={control}"));
         }
@@ -34,6 +76,7 @@ pub fn render(seal: &Key, pending: &[&Directive]) -> String {
             None,
             None,
             directive.control(),
+            stale.as_deref(),
         );
         rendered.push_str(&render_directive_body(directive));
         rendered.push('\n');
@@ -41,7 +84,8 @@ pub fn render(seal: &Key, pending: &[&Directive]) -> String {
     rendered.push_str(&format!("</{seal}>\n"));
     rendered
 }
-/// Renders a journal-backed inbox answer for one lane.
+
+/// Renders a journal-backed inbox answer for one lane at `now`.
 ///
 /// `projection` names, per directive and attachment ordinal, the encoded
 /// local projection that makes the referenced bytes readable to the lane; it
@@ -50,6 +94,7 @@ pub fn render(seal: &Key, pending: &[&Directive]) -> String {
 pub fn render_pending(
     seal: &Key,
     pending: &[PendingDirective],
+    now: Instant,
     projection: impl Fn(wire::CanonicalUuid, u8) -> Option<String>,
 ) -> String {
     if pending.is_empty() {
@@ -61,6 +106,7 @@ pub fn render_pending(
             "directive={} key={} stage={} expires={}",
             directive.directive, directive.key, directive.stage, directive.expires
         ));
+        let stale = caution(directive.authored, now);
         if let Some(control) = &directive.control {
             rendered.push_str(&format!(" control={control}"));
         }
@@ -70,6 +116,7 @@ pub fn render_pending(
             directive.sender.as_ref(),
             directive.room.as_ref(),
             directive.control.as_deref(),
+            stale.as_deref(),
         );
         rendered.push_str(&render_body(
             directive.directive,
@@ -85,9 +132,11 @@ pub fn render_pending(
 
 /// End one directive header, framing a peer message as its sender's.
 ///
-/// Sealed direction without a sender is the operator's or the resident's. A
-/// peer message names the address of the exact occupant that sent it, or says
-/// the journal proves none, beside its lane, and says before its text that it
+/// A stale directive's `caution` follows the header line directly, so a
+/// condensed resend keeps it beside the header it qualifies. Sealed direction
+/// without a sender is the operator's or the resident's. A peer message names
+/// the address of the exact occupant that sent it, or says the journal proves
+/// none, beside its lane, and says before its text that it
 /// is information and not authority, so it can never pass for either. It
 /// teaches the one peer protocol: answer with ACK or NAK, whose clause goes
 /// back automatically, and send anything new as an MSG. A reply names the key
@@ -98,15 +147,18 @@ fn push_peer(
     sender: Option<&wire::intent::PeerSender>,
     room: Option<&wire::TaskHandle>,
     control: Option<&str>,
+    caution: Option<&str>,
 ) {
     let Some(lane) = from else {
         rendered.push('\n');
+        rendered.push_str(caution.unwrap_or_default());
         return;
     };
     let sender = sender
         .and_then(|sender| sender.address)
         .map_or_else(|| "unproved".to_owned(), |address| address.to_string());
     rendered.push_str(&format!(" from=lane:{lane} sender={sender}\n"));
+    rendered.push_str(caution.unwrap_or_default());
     if let Some((key, answer)) = control.and_then(wire::parse_peer_reply_control) {
         rendered.push_str(&format!(
             "[PEER REPLY sender {sender} lane {lane}] Its {} to your {key}. ACK to close; \
@@ -278,6 +330,9 @@ pub fn nudge(rendered: &str, told: impl Fn(&str) -> Option<Told>) -> String {
             body.clear();
             held = told(key).map(|state| (state, key));
             condensed.push_str(line);
+        } else if body.is_empty() && line.starts_with(STALE_PREFIX) {
+            // The caution qualifies the header, not the telling it follows.
+            condensed.push_str(line);
         } else {
             body.push_str(line);
         }
@@ -388,7 +443,86 @@ fn render_body(
 
 #[cfg(test)]
 mod tests {
-    use super::{Told, keys, nudge, post_compaction, retain};
+    use super::{Told, keys, nudge, post_compaction, render_pending, retain};
+    use wire::intent::PendingDirective;
+
+    const AUTHORED: &str = "2026-10-18T20:00:00.000Z";
+
+    /// One reminded operator directive written at [`AUTHORED`], rendered at
+    /// `now`.
+    fn rendered_at(now: &str, text: &str) -> String {
+        let pending = PendingDirective {
+            directive: "1bea6ea6-a894-4899-923e-16df120968b3"
+                .parse()
+                .expect("fixture directive"),
+            key: "dSvXD9bv3".to_owned(),
+            fanout: None,
+            text: text.to_owned(),
+            from: None,
+            sender: None,
+            room: None,
+            wakes: false,
+            preview: None,
+            control: None,
+            attachments: Vec::new(),
+            authored: AUTHORED.parse().expect("fixture authored instant"),
+            stage: wire::body::SteeringStage::Reminded,
+            escalations: Vec::new(),
+            expires: "2026-10-19T20:00:00.000Z".parse().expect("fixture expiry"),
+        };
+        let seal = "1kQnrzNZ".parse().expect("fixture seal");
+        let now = now.parse().expect("fixture now");
+        render_pending(&seal, &[pending], now, |_, _| None)
+    }
+
+    #[test]
+    fn only_direction_five_minutes_old_carries_a_caution_and_its_header_never_changes() {
+        let fresh = rendered_at("2026-10-18T20:04:59.999Z", "ship it");
+        let fresh = fresh.lines().collect::<Vec<_>>();
+        assert_eq!(fresh[2], "ship it", "fresh direction says nothing more");
+
+        let stale = rendered_at("2026-10-18T20:05:00.000Z", "ship it");
+        let lines = stale.lines().collect::<Vec<_>>();
+        assert_eq!(lines[1], fresh[1], "the header is the same at any age");
+        assert!(
+            lines[2].starts_with("[STALE] This direction is 5 minutes old."),
+            "{stale}"
+        );
+        assert_eq!(lines[3], "ship it");
+    }
+
+    #[test]
+    fn a_stale_age_reads_in_coarse_graduated_steps() {
+        for (now, age) in [
+            ("2026-10-18T20:14:59.999Z", "10 minutes old"),
+            ("2026-10-18T20:15:00.000Z", "15 minutes old"),
+            ("2026-10-18T20:59:59.999Z", "55 minutes old"),
+            ("2026-10-18T21:00:00.000Z", "over 1 hour old"),
+            ("2026-10-19T19:59:59.999Z", "over 23 hours old"),
+            ("2026-10-21T20:00:00.000Z", "over 3 days old"),
+        ] {
+            let rendered = rendered_at(now, "ship it");
+            assert!(
+                rendered.contains(&format!("[STALE] This direction is {age}.")),
+                "{now}: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_condensed_resend_keeps_the_caution_beside_its_header() {
+        let telling = "measure the cost before changing it. ".repeat(20);
+        let stale = rendered_at("2026-10-18T20:15:00.000Z", &telling);
+        let resent = nudge(&stale, |_| Some(Told::Silent));
+        let lines = resent.lines().collect::<Vec<_>>();
+        assert!(lines[1].starts_with("directive="), "{resent}");
+        assert!(
+            lines[2].starts_with("[STALE] This direction is 15 minutes old."),
+            "{resent}"
+        );
+        assert!(lines[3].starts_with("[NUDGE] key=dSvXD9bv3"), "{resent}");
+        assert!(!resent.contains("measure the cost"), "{resent}");
+    }
 
     #[test]
     fn selecting_direction_preserves_its_body_media_and_seal() {

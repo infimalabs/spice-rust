@@ -21,13 +21,18 @@ const OTHER: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
 /// The key a rendering is sealed under.
 const SEAL: &str = "1kJK6N3R";
 
+/// The instant renderings are made at.
+fn now() -> wire::Instant {
+    "2026-08-01T07:00:00.000Z".parse().expect("fixture now")
+}
+
 /// A lane's rendering carries its own pending direction, sealed, and nobody
 /// else's.
 #[test]
 fn a_rendering_carries_one_lane_sealed() {
     let ledger = ledger();
     let lane = lane(LANE);
-    let rendered = inbox::render(&seal(), &ledger.pending(lane));
+    let rendered = inbox::render(&seal(), &ledger.pending(lane), now());
     assert_eq!(
         rendered,
         format!(
@@ -79,7 +84,7 @@ fn typed_media_reaches_the_lane_once_with_its_directive_identity() {
             .absorb(Steering::Sent(&body))
             .expect("typed attachment enters standing");
 
-        let rendered = inbox::render(&seal(), &ledger.pending(lane(LANE)));
+        let rendered = inbox::render(&seal(), &ledger.pending(lane(LANE)), now());
         assert!(
             rendered.contains(&format!("directive={}", body.directive)),
             "lane rendering lost the durable directive identity: {rendered}",

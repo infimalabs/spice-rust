@@ -33,7 +33,8 @@ with the same header as fallback. It retires the key on landing: no command or
 confirmation. Never stop unfinished work just to ACK. Evidence is verbatim
 visible assistant text or tool intent, not reasoning, arguments, quotes,
 buried/described headers. A post-ACK reminder only warrants an inbox check; an
-empty inbox is valid.
+empty inbox is valid. `[STALE]` marks possibly obsolete direction: check current
+task and steering state first.
 
 Use peer addresses from briefing/`spice lane list`, never UUID/name;
 `unavailable:REASON` means vacant. `MSG SELECTOR...: BODY` sends only from
