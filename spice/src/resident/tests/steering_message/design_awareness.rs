@@ -642,7 +642,7 @@ fn resident_records_one_request_before_task_next_reads_it() {
 }
 
 #[test]
-fn contribution_discharges_the_request_and_suppresses_that_design_forever() {
+fn contribution_discharges_the_request_for_the_continuing_session() {
     let lanes = Lanes::new("design-request-contribution");
     align_completion_lane(&lanes);
     let config = surface(&lanes);
@@ -663,15 +663,15 @@ fn contribution_discharges_the_request_and_suppresses_that_design_forever() {
     lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert!(
         lanes.request(&config, FIRST).is_none(),
-        "a lane is never asked about a Design it published in"
+        "a continuing session is not asked again about a Design it published in"
     );
     seated.release_all();
     lanes.finish();
 }
 
 #[test]
-fn compaction_decays_a_settled_offer_only_on_a_later_profile_opportunity() {
-    let lanes = Lanes::new("design-request-compaction-decay");
+fn compaction_preserves_participation_and_settled_request_history() {
+    let lanes = Lanes::new("design-request-compaction-participation");
     align_completion_lane(&lanes);
     let config = surface(&lanes);
     let first = lanes.claimed("dVrD245Kc", FIRST);
@@ -684,7 +684,8 @@ fn compaction_decays_a_settled_offer_only_on_a_later_profile_opportunity() {
     lanes.complete(&first, MATCHING);
     lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert_eq!(lanes.noticed().len(), 1);
-    lanes.leave(50, &config, FIRST, &design);
+    lanes.contribute(50, &config, FIRST, &design);
+    assert!(lanes.request(&config, FIRST).is_none());
 
     let compacted = lanes.compact(FIRST);
     lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
@@ -695,51 +696,79 @@ fn compaction_decays_a_settled_offer_only_on_a_later_profile_opportunity() {
         context.session_compaction(test_uuid(FIRST), &first_notice.session),
         Some(compacted)
     );
-    assert!(!context.design_was_noticed(
+    assert!(context.design_was_noticed_in_session(
         test_uuid(FIRST),
         &first_notice.session,
-        Some(compacted),
         &stamp(&design),
     ));
-    assert!(!context.published_in_room_for_context(
+    assert!(context.published_in_room_for_session(
         test_uuid(FIRST),
         &first_notice.session,
-        Some(compacted),
         &stamp(&design),
     ));
+    assert_eq!(
+        lanes.post_listeners(51, &config, &design),
+        vec![test_uuid(FIRST)],
+        "the durable contribution keeps ordinary room context available"
+    );
+
+    let after = lanes.claimed("dVrD245Kp", FIRST);
+    lanes.complete(&after, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert_eq!(
         lanes.noticed().len(),
         1,
-        "a compaction boundary is not itself an invitation opportunity"
+        "a later opportunity cannot turn participation back into recruitment"
     );
+    assert!(lanes.request(&config, FIRST).is_none());
 
-    let after = lanes.seed_task(
-        "dVrD245Kp",
-        "Bound another room cursor",
-        Some("Retain another cursor over room publications."),
-        None,
-        Some(test_uuid(FIRST)),
-    );
-    lanes.complete(&after, MATCHING);
-    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
-    let notices = lanes.noticed();
-    assert_eq!(notices.len(), 2);
-    assert_eq!(notices[1].compaction, Some(compacted));
-
-    lanes.leave(51, &config, FIRST, &design);
-    let same_context = lanes.seed_task(
-        "dVrD245Kq",
-        "Bound a third room cursor",
-        Some("Retain a third cursor over room publications."),
-        None,
-        Some(test_uuid(FIRST)),
-    );
-    lanes.complete(&same_context, MATCHING);
+    lanes.leave(52, &config, FIRST, &design);
+    assert!(lanes.post_listeners(53, &config, &design).is_empty());
+    let later = lanes.claimed("dVrD245Kq", FIRST);
+    lanes.complete(&later, MATCHING);
     lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
     assert_eq!(
         lanes.noticed().len(),
-        2,
-        "another opportunity in the same compacted context stays suppressed"
+        1,
+        "an explicit leave does not reopen a settled request"
+    );
+    assert!(lanes.request(&config, FIRST).is_none());
+    seated.release_all();
+    lanes.finish();
+}
+
+#[test]
+fn compaction_preserves_one_unanswered_request() {
+    let lanes = Lanes::new("design-request-compaction-outstanding");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let first = lanes.claimed("dVrD245Kc", FIRST);
+    lanes.design("dVrD245Kd", "Page room catch-up", PITCH);
+    let mut completions = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("completion cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+
+    lanes.complete(&first, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    let expected = lanes
+        .request(&config, FIRST)
+        .map(|request| spice::rooms::awareness::request_text(&request))
+        .expect("the first opportunity records one request");
+
+    lanes.compact(FIRST);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+    let after = lanes.claimed("dVrD245Kp", FIRST);
+    lanes.complete(&after, MATCHING);
+    lanes.reconcile_profiles(&config, &seated, &mut completions, &profiles);
+
+    assert_eq!(lanes.noticed().len(), 1);
+    assert_eq!(
+        lanes
+            .request(&config, FIRST)
+            .map(|request| spice::rooms::awareness::request_text(&request)),
+        Some(expected),
+        "compaction and later opportunities preserve the exact unanswered request"
     );
     seated.release_all();
     lanes.finish();
