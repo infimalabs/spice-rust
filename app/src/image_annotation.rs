@@ -2,6 +2,11 @@
 
 use std::rc::Rc;
 
+#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+mod gesture;
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
+pub(crate) use gesture::{Edit, Held};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Point {
     pub(crate) x: i32,
@@ -16,6 +21,14 @@ pub(crate) enum Kind {
     Text,
 }
 
+#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+impl Kind {
+    /// Lines and arrows run between their endpoints along a route.
+    pub(crate) const fn routed(self) -> bool {
+        matches!(self, Self::Line | Self::Arrow)
+    }
+}
+
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 impl Kind {
     pub(crate) const fn label(self) -> &'static str {
@@ -26,11 +39,6 @@ impl Kind {
             Self::Text => "Text",
         }
     }
-
-    /// Lines and arrows run between their endpoints along a route.
-    pub(crate) const fn routed(self) -> bool {
-        matches!(self, Self::Line | Self::Arrow)
-    }
 }
 
 /// How a line or arrow travels from its start to its end.
@@ -38,10 +46,20 @@ impl Kind {
 pub(crate) enum Route {
     #[default]
     Straight,
-    /// Axis-aligned segments turning at the midpoint of the longer axis.
+    /// Axis-aligned segments turning at the midpoint of the longer axis, or of
+    /// the shorter axis when mirrored.
     Elbow,
-    /// One quadratic bend bowing a quarter of the span off the chord.
+    /// One quadratic bend bowing a quarter of the span off the chord, to its
+    /// other side when mirrored.
     Curve,
+}
+
+#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+impl Route {
+    /// Whether this route bends, so that mirroring it changes its course.
+    pub(crate) const fn bends(self) -> bool {
+        !matches!(self, Self::Straight)
+    }
 }
 
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
@@ -172,10 +190,12 @@ impl Color {
 /// One mark. Rectangles span their two corners and routed marks run between
 /// their endpoints; a text label is anchored at `start`, and `end` is the
 /// opposite corner of its measured box so it moves and clamps like any mark.
+/// A mirrored mark bends to the other side of its route.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Shape {
     pub(crate) kind: Kind,
     pub(crate) route: Route,
+    pub(crate) mirrored: bool,
     pub(crate) color: Color,
     pub(crate) start: Point,
     pub(crate) end: Point,
@@ -187,6 +207,7 @@ impl Shape {
         Self {
             kind,
             route,
+            mirrored: false,
             color,
             start,
             end,
@@ -255,7 +276,7 @@ impl Shape {
         let (dx, dy) = (end.0 - start.0, end.1 - start.1);
         match self.route {
             Route::Straight => Course::Polyline(vec![start, end]),
-            Route::Elbow if dx.abs() >= dy.abs() => {
+            Route::Elbow if (dx.abs() >= dy.abs()) != self.mirrored => {
                 let middle = start.0 + dx / 2.0;
                 Course::Polyline(vec![start, (middle, start.1), (middle, end.1), end])
             }
@@ -263,11 +284,17 @@ impl Shape {
                 let middle = start.1 + dy / 2.0;
                 Course::Polyline(vec![start, (start.0, middle), (end.0, middle), end])
             }
-            Route::Curve => Course::Quadratic {
-                start,
-                control: (start.0 + dx / 2.0 - dy / 4.0, start.1 + dy / 2.0 + dx / 4.0),
-                end,
-            },
+            Route::Curve => {
+                let side = if self.mirrored { -1.0 } else { 1.0 };
+                Course::Quadratic {
+                    start,
+                    control: (
+                        start.0 + dx / 2.0 - side * dy / 4.0,
+                        start.1 + dy / 2.0 + side * dx / 4.0,
+                    ),
+                    end,
+                }
+            }
         }
     }
 
