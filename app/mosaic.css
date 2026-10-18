@@ -495,10 +495,9 @@ path.image-annotation-hit { fill: none; }
 .team-lights[data-team-size="2"] { --team-pip-columns: 1; }
 .team-lights:is([data-team-size="3"], [data-team-size="4"]) { --team-pip-columns: 2; }
 .team-lights:is([data-team-size="3"], [data-team-size="5"]) > :nth-child(even of .app-presence-pip) { transform: translateX(calc(-50% - var(--team-pip-gap) / 2)); }
-/* The trailing total holds the right edge; tasks flow leftward from it between symmetric fades. */
+/* The trailing total holds the right edge; tasks flow leftward from it, fading in at the rail's left edge and sliding under the total. */
 .team-toolbar > .team-task-rail {
   --team-task-fade: var(--mosaic-gap);
-  --team-task-screen: var(--team-task-fade);
   position: relative;
   display: grid;
   grid-area: tasks;
@@ -514,23 +513,22 @@ path.image-annotation-hit { fill: none; }
   flex-direction: row-reverse; gap: 0;
   grid-area: 1 / 1;
   z-index: 1;
-  width: calc(100% + 2 * var(--team-task-fade));
+  width: calc(100% + var(--team-task-fade));
   max-width: none;
-  margin-inline-start: calc(-1 * var(--team-task-fade));
-  padding-inline: var(--team-task-screen);
-  scroll-padding-inline: var(--team-task-screen);
+  padding-inline: var(--team-task-fade);
+  scroll-padding-inline: var(--team-task-fade);
   -webkit-mask-image: linear-gradient(
     to right,
     transparent,
-    #000 var(--team-task-screen),
-    #000 calc(100% - var(--team-task-screen)),
+    #000 var(--team-task-fade),
+    #000 calc(100% - var(--team-task-fade)),
     transparent
   );
   mask-image: linear-gradient(
     to right,
     transparent,
-    #000 var(--team-task-screen),
-    #000 calc(100% - var(--team-task-screen)),
+    #000 var(--team-task-fade),
+    #000 calc(100% - var(--team-task-fade)),
     transparent
   );
 }
