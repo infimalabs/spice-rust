@@ -149,7 +149,9 @@ fn current_notice(design: &str) -> serde_json::Value {
             "task": "1kKRRsDP",
             "statement": 1,
             "completed": 5,
+            "support": "reviewed",
         },
+        "excerpt": "fixture",
         "terms": ["rooms", "state", "tasks"],
     })
 }
@@ -184,7 +186,8 @@ fn writable_open_binds_retained_design_notices_and_retires_provenance() {
                  '$.fact.session',
                  '$.fact.opportunity',
                  '$.fact.evidence',
-                 '$.fact.compaction'
+                 '$.fact.compaction',
+                 '$.fact.excerpt'
              ) AS BLOB) WHERE seq = 6;
              INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
                  (3, 'task:1kKRRsDP', 2, 1, 2),
@@ -221,10 +224,12 @@ fn writable_open_binds_retained_design_notices_and_retires_provenance() {
             ref task,
             statement,
             completed,
+            support: wire::rooms::DesignSupport::Reviewed,
         } if task == &"1kKRRsDP".parse().expect("task")
             && statement == seq(1)
             && completed == seq(5)
     ));
+    assert_eq!(notice.excerpt, "fixture");
     assert_eq!(notice.terms, ["rooms", "state", "tasks"]);
 }
 
@@ -281,7 +286,8 @@ fn writable_open_preserves_claim_backed_notices_before_and_after_pending_handoff
                  '$.fact.session',
                  '$.fact.opportunity',
                  '$.fact.evidence',
-                 '$.fact.compaction'
+                 '$.fact.compaction',
+                 '$.fact.excerpt'
              ) AS BLOB) WHERE seq IN (5, 7);
              INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
                  (3, 'task:1kKRRsDP', 2, 1, 2),
@@ -297,7 +303,10 @@ fn writable_open_preserves_claim_backed_notices_before_and_after_pending_handoff
     drop(journal);
 
     let crossed = Journal::open(&path).expect("claim-backed retained notices cross");
-    for (notice_seq, terminal) in [(5, None), (7, Some(seq(6)))] {
+    for (notice_seq, terminal, excerpt) in [
+        (5, None, "Lay journal baseline"),
+        (7, Some(seq(6)), "handoff"),
+    ] {
         let envelope = crossed
             .connection
             .query_row(
@@ -330,11 +339,13 @@ fn writable_open_preserves_claim_backed_notices_before_and_after_pending_handoff
                 statement,
                 claim,
                 terminal: found,
+                support: wire::rooms::DesignSupport::Reviewed,
             } if task == &"1kKRRsDP".parse().expect("task")
                 && statement == seq(1)
                 && claim == wire::SequenceCode::new(3)
                 && found == terminal
         ));
+        assert_eq!(notice.excerpt, excerpt);
     }
 }
 
@@ -373,7 +384,10 @@ fn writable_open_binds_a_retained_notice_to_its_latest_compaction() {
         .connection
         .execute_batch(
             "UPDATE fact_envelopes SET envelope = CAST(json_remove(
-                 CAST(envelope AS TEXT), '$.fact.compaction'
+                 CAST(envelope AS TEXT),
+                 '$.fact.compaction',
+                 '$.fact.excerpt',
+                 '$.fact.evidence.support'
              ) AS BLOB) WHERE seq = 7;
              INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
                  (3, 'task:1kKRRsDP', 2, 1, 2),
@@ -403,6 +417,14 @@ fn writable_open_binds_a_retained_notice_to_its_latest_compaction() {
         .read::<wire::rooms::DesignNoticed>()
         .expect("crossed fact remains a notice");
     assert_eq!(notice.compaction, Some(seq(6)));
+    assert!(matches!(
+        notice.evidence,
+        wire::rooms::DesignNoticeEvidence::Task {
+            support: wire::rooms::DesignSupport::Reviewed,
+            ..
+        }
+    ));
+    assert_eq!(notice.excerpt, "fixture");
 }
 
 #[test]

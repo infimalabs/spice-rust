@@ -153,6 +153,12 @@ fn notice(
             body.design
         ));
     }
+    if body.excerpt.is_empty() || wire::rooms::design_excerpt(&body.excerpt) != body.excerpt {
+        return unsound(format!(
+            "design awareness for {} carries an empty or unbounded excerpt",
+            body.design
+        ));
+    }
     let conversation_sources = [
         match &body.opportunity {
             DesignNoticeOpportunity::Conversation { source } => Some(source),

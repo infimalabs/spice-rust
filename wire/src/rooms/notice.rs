@@ -19,6 +19,73 @@ pub const DESIGN_NOTICE_TERMS: usize = 12;
 /// record keeps.
 pub const DESIGN_NOTICE_SHOWN_TERMS: usize = 6;
 
+/// Most characters of a Design request's supporting-work excerpt.
+pub const DESIGN_EXCERPT_CHARS: usize = 240;
+
+/// Supporting-work `text` as one line of at most [`DESIGN_EXCERPT_CHARS`]
+/// characters. An admitted excerpt is non-empty and its own excerpt.
+#[must_use]
+pub fn design_excerpt(text: &str) -> String {
+    one_line(text, DESIGN_EXCERPT_CHARS)
+}
+
+/// `text` with whitespace runs collapsed, cut to `chars` characters with an
+/// ellipsis when longer.
+#[must_use]
+pub fn one_line(text: &str, chars: usize) -> String {
+    let mut line = String::with_capacity(text.len().min(chars));
+    for word in text.split_whitespace() {
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if line.chars().count() <= chars {
+        return line;
+    }
+    let mut cut = line
+        .chars()
+        .take(chars.saturating_sub(1))
+        .collect::<String>();
+    cut.push('…');
+    cut
+}
+
+/// What the task work supporting a Design request did, named from the phase
+/// its claim held so the request does not overstate it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DesignSupport {
+    /// An implementing phase changed the product.
+    Implemented,
+    /// A plan or Design phase diagnosed or planned the work.
+    Planned,
+    /// A review phase inspected another lane's work.
+    Reviewed,
+}
+
+impl DesignSupport {
+    /// The kind of the supporting work, from the phase its claim held.
+    #[must_use]
+    pub fn for_phase(phase: &crate::Phase) -> Self {
+        match phase.as_str() {
+            "review" => Self::Reviewed,
+            "plan" | "design" => Self::Planned,
+            _ => Self::Implemented,
+        }
+    }
+
+    /// The past-tense clause a request uses for this work.
+    #[must_use]
+    pub const fn verb(self) -> &'static str {
+        match self {
+            Self::Implemented => "implemented",
+            Self::Planned => "diagnosed or planned",
+            Self::Reviewed => "reviewed",
+        }
+    }
+}
+
 /// The matched terms a surface shows: each distinct term once, in record
 /// order, at most [`DESIGN_NOTICE_SHOWN_TERMS`].
 #[must_use]
@@ -85,21 +152,25 @@ pub enum DesignNoticeOpportunity {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DesignNoticeEvidence {
-    /// Successful task evidence at the statement observed with its completion.
+    /// Successful task evidence at the statement observed with its completion,
+    /// classified by the phase the completed claim held.
     Task {
         task: TaskStamp,
         statement: Seq,
         completed: Seq,
+        support: DesignSupport,
     },
-    /// Task evidence retained under an exact claim. `terminal` is present only
-    /// when a terminal task operation preceded the selection record; the claim
-    /// remains the witness when no completion did.
+    /// Task evidence retained under an exact claim, classified by the phase
+    /// that claim held. `terminal` is present only when a terminal task
+    /// operation preceded the selection record; the claim remains the witness
+    /// when no completion did.
     TaskClaim {
         task: TaskStamp,
         statement: Seq,
         claim: SequenceCode,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         terminal: Option<Seq>,
+        support: DesignSupport,
     },
     /// Assistant-authored conversation evidence.
     Conversation { source: DesignConversationEvidence },
@@ -131,6 +202,10 @@ pub struct DesignNoticed {
     pub opportunity: DesignNoticeOpportunity,
     /// Retained card whose view selected the Design.
     pub evidence: DesignNoticeEvidence,
+    /// The card's authored text as a [`design_excerpt`]: the completion
+    /// validation, the cleaned assistant prose, or the task title when the
+    /// supporting claim reached no terminal operation.
+    pub excerpt: String,
     /// Matched terms in ascending order.
     pub terms: Vec<String>,
 }

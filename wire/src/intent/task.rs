@@ -393,13 +393,26 @@ pub struct TaskDone {
 }
 
 impl TaskDone {
+    /// High bits naming an operation [`Self::operation_for_claim`] derived.
+    const CLAIM_OPERATION_PREFIX: u128 = 0x7370_6963_652d_0000_0000_0000_0000_0000;
+
     /// Derive the one default completion operation owned by a claim.
     #[must_use]
     pub fn operation_for_claim(claim: Seq) -> CanonicalUuid {
-        const CLAIM_OPERATION_PREFIX: u128 = 0x7370_6963_652d_0000_0000_0000_0000_0000;
         CanonicalUuid::new(uuid::Uuid::from_u128(
-            CLAIM_OPERATION_PREFIX | u128::from(claim.get()),
+            Self::CLAIM_OPERATION_PREFIX | u128::from(claim.get()),
         ))
+    }
+
+    /// The claim whose default completion operation `operation` is, when
+    /// [`Self::operation_for_claim`] derived it.
+    #[must_use]
+    pub fn claim_for_operation(operation: CanonicalUuid) -> Option<Seq> {
+        let value = operation.get().as_u128();
+        if value & !u128::from(u64::MAX) != Self::CLAIM_OPERATION_PREFIX {
+            return None;
+        }
+        Seq::new(u64::try_from(value & u128::from(u64::MAX)).ok()?)
     }
 }
 

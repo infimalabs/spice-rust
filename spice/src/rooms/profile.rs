@@ -47,11 +47,13 @@ impl SessionKey {
 /// Inspectable source of one retained evidence card.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum EvidenceKey {
-    /// Exact statement revision and successful completion observed together.
+    /// Exact statement revision and successful completion observed together,
+    /// classified by the phase the completed claim held.
     Task {
         task: TaskStamp,
         statement: Seq,
         completion: Seq,
+        support: wire::rooms::DesignSupport,
     },
     /// Exact admitted transcript bytes carrying settled assistant prose.
     Conversation {
