@@ -93,6 +93,13 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
         let task = &work.tasks()[index];
         let born = &task.row().statement.body.born;
         let wall = match task.availability() {
+            // A claim on work whose environment only the operator can satisfy
+            // does not move it.
+            WorkAvailability::InFlight | WorkAvailability::Blocked
+                if task.environment_blocked() =>
+            {
+                DependencyWall::Environment(born)
+            }
             WorkAvailability::InFlight
             | WorkAvailability::Ready
             | WorkAvailability::Review
@@ -104,9 +111,6 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
             WorkAvailability::Deferred => DependencyWall::Deferred(born),
             WorkAvailability::Parked | WorkAvailability::Draft => DependencyWall::Parked(born),
             WorkAvailability::Terminal => DependencyWall::Unreachable(born),
-            WorkAvailability::Blocked if task.environment_blocked() => {
-                DependencyWall::Environment(born)
-            }
             WorkAvailability::Blocked => {
                 self.on_path[index] = true;
                 let wall = task
