@@ -959,7 +959,9 @@ fn an_asked_lane_stands_asked_until_it_leaves() {
                     task: room(),
                     statement: wire::Seq::new(1).expect("fixture evidence statement"),
                     completed: wire::Seq::new(8).expect("fixture completion"),
+                    support: wire::rooms::DesignSupport::Implemented,
                 },
+                excerpt: "fixture rooms".to_owned(),
                 terms: vec!["rooms".to_owned()],
             },
         ),
@@ -971,6 +973,7 @@ fn an_asked_lane_stands_asked_until_it_leaves() {
                 task: room(),
                 statement: wire::Seq::new(1).expect("fixture evidence statement"),
                 completed: wire::Seq::new(8).expect("fixture completion"),
+                support: wire::rooms::DesignSupport::Implemented,
             }
         )])
     );

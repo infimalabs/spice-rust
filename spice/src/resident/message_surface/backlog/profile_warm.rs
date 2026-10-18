@@ -103,7 +103,10 @@ pub(super) fn fail_task_history(
 /// each completion to the newest known session its source boundary names.
 ///
 /// A task whose statement was revised after it completed is skipped: its card
-/// must carry the statement it was observed with, not a later edit.
+/// must carry the statement it was observed with, not a later edit. So is a
+/// completion whose terminal operation names no won claim, exactly as live
+/// retention admits only claim-owned completions: the card's support is the
+/// phase that claim held.
 pub(super) fn read_task_page(
     bus: &bus::BusReader,
     before: Option<wire::Seq>,
@@ -141,6 +144,16 @@ pub(super) fn read_task_page(
         let Some(key) = completion_session(bus, &done.source, sessions)? else {
             continue;
         };
+        let Some(support) = done
+            .terminal
+            .as_ref()
+            .and_then(|terminal| wire::intent::TaskDone::claim_for_operation(terminal.operation))
+            .and_then(|claim| snapshot.facts().at(claim))
+            .and_then(|claimed| claimed.fact.read::<wire::body::ClaimWon>())
+            .map(|won| wire::rooms::DesignSupport::for_phase(&won.cell.phase))
+        else {
+            continue;
+        };
         cards.push((
             key,
             Evidence::task(
@@ -148,6 +161,7 @@ pub(super) fn read_task_page(
                     task: done.task,
                     statement: statement.revision,
                     completion,
+                    support,
                 },
                 &statement.title,
                 statement.description.as_deref(),

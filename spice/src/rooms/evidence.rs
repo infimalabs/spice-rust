@@ -165,11 +165,13 @@ pub struct Evidence<K> {
     key: K,
     kind: Kind,
     digest: Digest,
+    excerpt: String,
     views: Vec<(View, TermCounts)>,
 }
 
 impl<K> Evidence<K> {
-    /// A finished task's statement and statement-plus-validation views.
+    /// A finished task's statement and statement-plus-validation views,
+    /// excerpting its validation, or its title when the validation is blank.
     #[must_use]
     pub fn task(
         key: K,
@@ -188,10 +190,15 @@ impl<K> Evidence<K> {
             digest_field(&mut hasher, item.as_bytes());
         }
         digest_field(&mut hasher, validation.as_bytes());
+        let excerpt = match wire::rooms::design_excerpt(validation) {
+            excerpt if excerpt.is_empty() => wire::rooms::design_excerpt(title),
+            excerpt => excerpt,
+        };
         Self {
             key,
             kind: Kind::Task,
             digest: Digest(*hasher.finalize().as_bytes()),
+            excerpt,
             views: vec![
                 (
                     View::Statement,
@@ -220,6 +227,7 @@ impl<K> Evidence<K> {
             key,
             kind: Kind::Conversation,
             digest: Digest(*hasher.finalize().as_bytes()),
+            excerpt: wire::rooms::design_excerpt(conversation.text()),
             views,
         }
     }
@@ -234,6 +242,12 @@ impl<K> Evidence<K> {
     #[must_use]
     pub fn digest(&self) -> Digest {
         self.digest
+    }
+
+    /// The card's authored text as one bounded line.
+    #[must_use]
+    pub fn excerpt(&self) -> &str {
+        &self.excerpt
     }
 
     /// The retention class of this card.
@@ -271,6 +285,8 @@ pub struct ProfileMatch<'p, 'a, K, T> {
     pub view: View,
     /// Content identity of the winning card.
     pub digest: Digest,
+    /// The winning card's bounded authored excerpt.
+    pub excerpt: &'p str,
     /// The winning cosine, at least [`MATCH_SCORE_FLOOR`].
     pub score: f64,
     /// The strongest shared terms, sorted.
@@ -451,6 +467,7 @@ impl<K> EvidenceProfile<K> {
             evidence: &card.evidence.key,
             view: card.evidence.views[best.view].0,
             digest: card.evidence.digest,
+            excerpt: &card.evidence.excerpt,
             score: best.score,
             terms: best.vector.explanation(vector),
         }))

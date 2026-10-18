@@ -16,15 +16,13 @@ use std::collections::{BTreeMap, BinaryHeap};
 use std::fmt;
 
 pub use wire::rooms::COMPLETION_VALIDATION_BYTES;
-use wire::rooms::DESIGN_NOTICE_SHOWN_TERMS;
+use wire::rooms::{DESIGN_NOTICE_SHOWN_TERMS, one_line};
 use wire::{TaskHead, TaskStamp};
 
 /// Fewest letters a word needs to count as a term.
 pub const MIN_TERM_CHARS: usize = 4;
 /// Most characters of a Design's one-line pitch.
 pub const PITCH_CHARS: usize = 160;
-/// Most characters of a Design request's supporting-work excerpt.
-pub const EXCERPT_CHARS: usize = 240;
 /// Most rendered bytes of whole open questions one Design request carries.
 pub const DESIGN_REQUEST_QUESTIONS_BYTES: usize = 2 * 1024;
 /// Most recently revised task statements, open or completed, in the frequency
@@ -442,34 +440,82 @@ pub fn pitch(title: &str, description: Option<&str>) -> String {
     one_line(sentence, PITCH_CHARS)
 }
 
-/// Supporting-work `text` as one line of at most [`EXCERPT_CHARS`] characters.
-#[must_use]
-pub fn excerpt(text: &str) -> String {
-    one_line(text, EXCERPT_CHARS)
-}
+/// The exact source and authored excerpt of the work that supported one Design
+/// request, phrased from the supporting claim's phase or as conversation.
+fn supporting_work(request: &wire::intent::DesignRequest) -> String {
+    use wire::rooms::DesignNoticeEvidence as Evidence;
 
-/// `text` with whitespace runs collapsed, cut to `chars` characters with an
-/// ellipsis when longer.
-fn one_line(text: &str, chars: usize) -> String {
-    let mut line = String::with_capacity(text.len().min(chars));
-    for word in text.split_whitespace() {
-        if !line.is_empty() {
-            line.push(' ');
+    let code = |seq: wire::Seq| wire::SequenceCode::new(seq.get());
+    let excerpt = &request.excerpt;
+    match &request.evidence {
+        Evidence::Task {
+            task,
+            statement,
+            completed,
+            support,
+        } => format!(
+            "you {} task {task} (statement revision {}, completion {}): \"{excerpt}\". Read \
+             it with `spice task show {task} --history`.",
+            support.verb(),
+            code(*statement),
+            code(*completed),
+        ),
+        Evidence::TaskClaim {
+            task,
+            statement,
+            claim,
+            terminal,
+            support,
+        } => format!(
+            "you {} task {task} (statement revision {}, claim {claim}{}): \"{excerpt}\". Read \
+             it with `spice task show {task} --history`.",
+            support.verb(),
+            code(*statement),
+            terminal.map_or_else(String::new, |terminal| format!(
+                ", terminal operation {}",
+                code(terminal)
+            )),
+        ),
+        Evidence::Conversation { source } => {
+            let locus = &source.locus;
+            let Some(tape) = locus.source else {
+                return format!(
+                    "you explained this in conversation: \"{excerpt}\" (transcript member {} \
+                     byte {}).",
+                    locus.member, locus.offset
+                );
+            };
+            let command = shell_words::join([
+                "spice".to_owned(),
+                "session".to_owned(),
+                "context".to_owned(),
+                request.session.identity.clone(),
+                "--lane".to_owned(),
+                request.lane.to_string(),
+                "--vendor".to_owned(),
+                request.session.vendor.to_string(),
+                "--stream".to_owned(),
+                wire::body::TASK_CREATION_CONTEXT_STREAM.to_owned(),
+                "--source".to_owned(),
+                tape.to_string(),
+                "--member".to_owned(),
+                locus.member.to_string(),
+                "--offset".to_owned(),
+                locus.offset.to_string(),
+            ]);
+            format!(
+                "you explained this in conversation: \"{excerpt}\" (transcript {tape} member {} \
+                 byte {} length {}). Read it with `{command}`.",
+                locus.member, locus.offset, locus.length
+            )
         }
-        line.push_str(word);
     }
-    if line.chars().count() <= chars {
-        return line;
-    }
-    let mut cut = line.chars().take(chars - 1).collect::<String>();
-    cut.push('…');
-    cut
 }
 
 /// One Design invitation as every command and catch-up surface presents it.
 #[must_use]
 pub fn request_text(request: &wire::intent::DesignRequest) -> String {
-    use wire::rooms::{DesignNoticeEvidence as Evidence, DesignNoticeOpportunity as Opportunity};
+    use wire::rooms::DesignNoticeOpportunity as Opportunity;
 
     let design = &request.design;
     let opportunity = match &request.opportunity {
@@ -487,15 +533,7 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         Opportunity::ProfileReady { .. } => "the completed session profile".to_owned(),
         Opportunity::SessionResumed { .. } => "this resumed session".to_owned(),
     };
-    let evidence = match &request.evidence {
-        Evidence::Task { task, .. } | Evidence::TaskClaim { task, .. } => {
-            format!("task {task}")
-        }
-        Evidence::Conversation { source } => format!(
-            "conversation member {} at byte {}",
-            source.locus.member, source.locus.offset
-        ),
-    };
+    let support = supporting_work(request);
     let mut questions = String::new();
     for question in &request.questions {
         questions.push_str("\n- ");
@@ -505,8 +543,9 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         questions.push_str("\n- none recorded");
     }
     format!(
-        "Design request {design} \"{}\" at statement revision {} matched {evidence} on: {}. \
-         The profile was evaluated at {opportunity}.\nPitch: {}\nOpen questions:{questions}\n\
+        "Design request {design} \"{}\" at statement revision {} matched your work on: {}. \
+         The profile was evaluated at {opportunity}.\nSupporting work: {support}\nPitch: {}\n\
+         Open questions:{questions}\n\
          Read its room with `spice room history {design}` (`spice://task/{design}/room`). A \
          concrete observation, risk, or counterexample helps, and declining is equally fine: \
          answer exactly once with `spice room contribute {design} \

@@ -1,12 +1,15 @@
-//! Bind retained Design notices to exact sessions, sources, and context boundaries.
+//! Bind retained Design notices to exact sessions, sources, context
+//! boundaries, and supporting-work presentation.
 
 use std::collections::BTreeMap;
 
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Map, Value};
 use wire::{
-    AnyFact, CanonicalUuid, Envelope, FactKind, Seq, SequenceCode, TaskStamp,
-    rooms::{DesignNoticeEvidence, DesignNoticeOpportunity, DesignSession},
+    AnyFact, CanonicalUuid, Envelope, FactKind, Phase, Seq, SequenceCode, TaskStamp,
+    rooms::{
+        DesignNoticeEvidence, DesignNoticeOpportunity, DesignSession, DesignSupport, design_excerpt,
+    },
 };
 
 use super::{MigrationError, OpenError};
@@ -17,6 +20,8 @@ const NOTICE_STATEMENT_RELEASE: &str = "ROOMS-dW6GpYK65";
 const DESIGN_INVITATION_RELEASE: &str = "ROOMS-dWKcWx0xN";
 /// Release that bound an invitation to its compaction-delimited context.
 const CONTEXT_RELEASE: &str = "ROOMS-dWKwb7jw9";
+/// Release that recorded an invitation's supporting-work presentation.
+const PRESENTATION_RELEASE: &str = "ROOMS-dWL301SYq";
 /// Retained envelopes decoded in one bounded crossing step.
 const FACT_PAGE_ROWS: i64 = 256;
 
@@ -24,6 +29,7 @@ const FACT_PAGE_ROWS: i64 = 256;
 struct Claim {
     task: TaskStamp,
     lane: CanonicalUuid,
+    support: Option<DesignSupport>,
 }
 
 #[derive(Clone, Copy)]
@@ -32,11 +38,21 @@ struct Terminal {
     completed: bool,
 }
 
+/// One terminal task operation's presentation as supporting work.
+struct Completion {
+    excerpt: String,
+    support: Option<DesignSupport>,
+}
+
 #[derive(Default)]
 struct Witnesses {
     statements: BTreeMap<TaskStamp, Seq>,
     claims: BTreeMap<Seq, Claim>,
+    /// Phase of each task's newest won claim; carried and rebound claims keep
+    /// that lineage.
+    phases: BTreeMap<TaskStamp, Phase>,
     terminals: BTreeMap<TaskStamp, Terminal>,
+    completions: BTreeMap<Seq, Completion>,
     sessions: BTreeMap<(CanonicalUuid, CanonicalUuid), DesignSession>,
     compactions: BTreeMap<(CanonicalUuid, DesignSession), Seq>,
 }
@@ -78,29 +94,14 @@ fn observe(seq: i64, bytes: &[u8], witnesses: &mut Witnesses) -> Result<(), Open
         witnesses.statements.insert(task.clone(), envelope.seq);
     }
     if let Some(claim) = envelope.fact.read::<wire::body::ClaimWon>() {
-        witnesses.claims.insert(
-            envelope.seq,
-            Claim {
-                task: claim.task.clone(),
-                lane: claim.lane,
-            },
-        );
+        witnesses
+            .phases
+            .insert(claim.task.clone(), claim.cell.phase.clone());
+        observe_claim(envelope.seq, &claim.task, claim.lane, witnesses);
     } else if let Some(claim) = envelope.fact.read::<wire::body::ClaimCarried>() {
-        witnesses.claims.insert(
-            envelope.seq,
-            Claim {
-                task: claim.task.clone(),
-                lane: claim.lane,
-            },
-        );
+        observe_claim(envelope.seq, &claim.task, claim.lane, witnesses);
     } else if let Some(claim) = envelope.fact.read::<wire::body::ClaimRebound>() {
-        witnesses.claims.insert(
-            envelope.seq,
-            Claim {
-                task: claim.task.clone(),
-                lane: claim.lane,
-            },
-        );
+        observe_claim(envelope.seq, &claim.task, claim.lane, witnesses);
     }
     if let Some(done) = envelope.fact.read::<wire::body::TaskDone>()
         && let Some(terminal) = &done.terminal
@@ -110,6 +111,16 @@ fn observe(seq: i64, bytes: &[u8], witnesses: &mut Witnesses) -> Result<(), Open
             Terminal {
                 at: envelope.seq,
                 completed: terminal.status == wire::body::TaskCompletionStatus::Completed,
+            },
+        );
+        witnesses.completions.insert(
+            envelope.seq,
+            Completion {
+                excerpt: design_excerpt(&done.validation),
+                support: witnesses
+                    .phases
+                    .get(&done.task)
+                    .map(DesignSupport::for_phase),
             },
         );
     }
@@ -132,6 +143,17 @@ fn observe(seq: i64, bytes: &[u8], witnesses: &mut Witnesses) -> Result<(), Open
             .insert((compacted.lane, session), envelope.seq);
     }
     Ok(())
+}
+
+fn observe_claim(seq: Seq, task: &TaskStamp, lane: CanonicalUuid, witnesses: &mut Witnesses) {
+    witnesses.claims.insert(
+        seq,
+        Claim {
+            task: task.clone(),
+            lane,
+            support: witnesses.phases.get(task).map(DesignSupport::for_phase),
+        },
+    );
 }
 
 fn cross_notice(
@@ -162,6 +184,10 @@ fn cross_notice(
             bind_compaction(seq, fact, witnesses)?;
             changed = true;
         }
+        if !fact.contains_key("excerpt") {
+            bind_presentation(transaction, seq, fact, witnesses)?;
+            changed = true;
+        }
         changed
     };
     if changed {
@@ -169,6 +195,108 @@ fn cross_notice(
     } else {
         Ok(())
     }
+}
+
+/// Record the supporting work's classification and bounded excerpt from the
+/// claim and terminal operation the evidence names, or from the task's
+/// current title when its claim reached no terminal operation.
+fn bind_presentation(
+    transaction: &Transaction<'_>,
+    seq: i64,
+    fact: &mut Map<String, Value>,
+    witnesses: &Witnesses,
+) -> Result<(), OpenError> {
+    let evidence = fact
+        .get_mut("evidence")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| presentation_refusal(seq, "the retained notice names no evidence"))?;
+    let position = |field: &str| {
+        evidence
+            .get(field)
+            .and_then(Value::as_u64)
+            .and_then(Seq::new)
+    };
+    let (support, excerpt) = match evidence.get("kind").and_then(Value::as_str) {
+        Some("task") => {
+            let completion = position("completed")
+                .and_then(|completed| witnesses.completions.get(&completed))
+                .ok_or_else(|| {
+                    presentation_refusal(seq, "the retained task evidence names no completion")
+                })?;
+            (completion.support, completion.excerpt.clone())
+        }
+        Some("task-claim") => {
+            let claim = evidence
+                .get("claim")
+                .and_then(Value::as_str)
+                .and_then(|claim| claim.parse::<SequenceCode>().ok())
+                .and_then(|claim| Seq::new(claim.get()))
+                .and_then(|claim| witnesses.claims.get(&claim))
+                .ok_or_else(|| {
+                    presentation_refusal(seq, "the retained task evidence names no claim")
+                })?;
+            let excerpt = match position("terminal") {
+                Some(terminal) => witnesses
+                    .completions
+                    .get(&terminal)
+                    .ok_or_else(|| {
+                        presentation_refusal(
+                            seq,
+                            "the retained task evidence names no terminal operation",
+                        )
+                    })?
+                    .excerpt
+                    .clone(),
+                None => String::new(),
+            };
+            (claim.support, excerpt)
+        }
+        _ => {
+            return Err(presentation_refusal(
+                seq,
+                "retained conversation evidence keeps no authored prose to excerpt",
+            ));
+        }
+    };
+    let support = support.ok_or_else(|| {
+        presentation_refusal(seq, "the supporting task never won a claim with a phase")
+    })?;
+    let excerpt = if excerpt.is_empty() {
+        let task = evidence
+            .get("task")
+            .and_then(Value::as_str)
+            .ok_or_else(|| presentation_refusal(seq, "the retained task evidence names no task"))?;
+        design_excerpt(&current_title(transaction, seq, task)?)
+    } else {
+        excerpt
+    };
+    if excerpt.is_empty() {
+        return Err(presentation_refusal(
+            seq,
+            "the supporting task has no authored text to excerpt",
+        ));
+    }
+    if !evidence.contains_key("support") {
+        let support = serde_json::to_value(support).map_err(|error| {
+            presentation_refusal(seq, &format!("the support class cannot encode: {error}"))
+        })?;
+        evidence.insert("support".to_owned(), support);
+    }
+    fact.insert("excerpt".to_owned(), Value::from(excerpt));
+    Ok(())
+}
+
+fn current_title(transaction: &Transaction<'_>, seq: i64, task: &str) -> Result<String, OpenError> {
+    transaction
+        .query_row(
+            "SELECT json_extract(CAST(body AS TEXT), '$.title') FROM task_heads WHERE stamp = ?1",
+            [task],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(OpenError::Sqlite)?
+        .flatten()
+        .ok_or_else(|| presentation_refusal(seq, "the supporting task has no current statement"))
 }
 
 fn bind_compaction(
@@ -239,7 +367,7 @@ fn derive_crossing(
     let claim = required_string(fact, "claim", seq)?
         .parse::<SequenceCode>()
         .map_err(|error| refusal(seq, &format!("the retained claim is invalid: {error}")))?;
-    let claim_seq = validate_claim(seq, witnesses, &task, lane, claim)?;
+    let (claim_seq, support) = validate_claim(seq, witnesses, &task, lane, claim)?;
     let statement = witnesses
         .statements
         .get(&task)
@@ -260,7 +388,7 @@ fn derive_crossing(
         .get(&task)
         .copied()
         .filter(|terminal| terminal.at > claim_seq);
-    let (opportunity, evidence) = task_witnesses(task, statement, claim, terminal);
+    let (opportunity, evidence) = task_witnesses(task, statement, claim, terminal, support);
     Ok(Crossing {
         session,
         opportunity,
@@ -274,7 +402,7 @@ fn validate_claim(
     task: &TaskStamp,
     lane: CanonicalUuid,
     claim: SequenceCode,
-) -> Result<Seq, OpenError> {
+) -> Result<(Seq, DesignSupport), OpenError> {
     let claim_seq = Seq::new(claim.get())
         .ok_or_else(|| refusal(seq, "the retained notice names claim zero"))?;
     let claimed = witnesses
@@ -287,7 +415,10 @@ fn validate_claim(
             &format!("the retained claim {claim} does not bind task {task} to lane {lane}"),
         ));
     }
-    Ok(claim_seq)
+    let support = claimed.support.ok_or_else(|| {
+        presentation_refusal(seq, "the supporting task never won a claim with a phase")
+    })?;
+    Ok((claim_seq, support))
 }
 
 fn task_witnesses(
@@ -295,6 +426,7 @@ fn task_witnesses(
     statement: Seq,
     claim: SequenceCode,
     terminal: Option<Terminal>,
+    support: DesignSupport,
 ) -> (DesignNoticeOpportunity, DesignNoticeEvidence) {
     match terminal {
         Some(terminal) if terminal.completed => (
@@ -306,6 +438,7 @@ fn task_witnesses(
                 task,
                 statement,
                 completed: terminal.at,
+                support,
             },
         ),
         terminal => {
@@ -321,6 +454,7 @@ fn task_witnesses(
                     statement,
                     claim,
                     terminal,
+                    support,
                 },
             )
         }
@@ -451,6 +585,16 @@ fn statement_refusal(seq: i64, detail: &str) -> OpenError {
         table: "fact_envelopes",
         row: seq.to_string(),
         release: NOTICE_STATEMENT_RELEASE,
+        detail: detail.to_owned(),
+    }
+    .into()
+}
+
+fn presentation_refusal(seq: i64, detail: &str) -> OpenError {
+    MigrationError::RetainedRow {
+        table: "fact_envelopes",
+        row: seq.to_string(),
+        release: PRESENTATION_RELEASE,
         detail: detail.to_owned(),
     }
     .into()

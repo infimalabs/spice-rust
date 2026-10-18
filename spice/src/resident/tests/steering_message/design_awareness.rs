@@ -540,8 +540,7 @@ fn a_completion_profile_opportunity_selects_the_best_single_design() {
         request.evidence,
         wire::rooms::DesignNoticeEvidence::Task {
             task: ref evidence_task,
-            statement: _,
-            completed: _
+            ..
         } if evidence_task == &task.born().expect("fixture task has a birth")
     ));
     assert!(!request.terms.is_empty());
@@ -846,9 +845,10 @@ fn pending_catch_up(
 }
 
 /// The owed request reaches its seated occupant as the same text `task next`
-/// shows, naming its retained evidence. Once that delivery lands the cursor
-/// passes it, so catch-up never repeats it, while `task next` keeps it owed
-/// until the lane answers.
+/// shows, naming the supporting work by its claim phase, exact source, and
+/// authored excerpt. Once that delivery lands the cursor passes it, so
+/// catch-up never repeats it, while `task next` keeps it owed until the lane
+/// answers.
 #[test]
 fn room_catch_up_delivers_the_owed_request_once_while_task_next_keeps_it() {
     let lanes = Lanes::new("design-request-delivery");
@@ -870,23 +870,38 @@ fn room_catch_up_delivers_the_owed_request_once_while_task_next_keeps_it() {
     let request = lanes
         .request(&config, FIRST)
         .expect("task next shows the owed request");
-    assert!(matches!(
-        request.evidence,
-        wire::rooms::DesignNoticeEvidence::Task {
-            task: ref evidence_task,
-            ..
-        } if evidence_task == &task.born().expect("fixture task has a birth")
-    ));
+    let evidence_task = task.born().expect("fixture task has a birth");
+    let recorded = lanes.noticed();
+    let wire::rooms::DesignNoticeEvidence::Task {
+        task: ref recorded_task,
+        statement,
+        completed,
+        ..
+    } = recorded[0].evidence
+    else {
+        panic!("a completion records task evidence");
+    };
+    assert_eq!(recorded_task, &evidence_task);
     let notice = pending_catch_up(&lanes, &config, &seated, &mut diagnostics)
         .expect("the seated occupant is told");
     assert_eq!(notice.occupant, test_uuid(FIRST));
+    let shown = spice::rooms::awareness::request_text(&request);
     assert!(
-        notice
-            .text
-            .contains(&spice::rooms::awareness::request_text(&request)),
+        notice.text.contains(&shown),
         "catch-up carries the request task next shows: {}",
         notice.text
     );
+    for expected in [
+        format!(
+            "Supporting work: you implemented task {evidence_task} (statement revision {}, \
+             completion {}): \"{MATCHING}\".",
+            wire::SequenceCode::new(statement.get()),
+            wire::SequenceCode::new(completed.get()),
+        ),
+        format!("`spice task show {evidence_task} --history`"),
+    ] {
+        assert!(shown.contains(&expected), "{expected} is missing: {shown}");
+    }
 
     // The completion fixture reseated FIRST, so its capture names that occupant.
     let mut landed = lanes.operator(FIRST, &notice.text);
@@ -1199,12 +1214,9 @@ fn replaced_conversation_source_releases_delivery_and_selection() {
         .expect("declared lane has a transcript source")
         .into_body()
         .source;
-    retain_conversation(
-        &profiles,
-        source,
-        "Windows native runner validates archive compression headers libraries toolchain \
-         manifests receipts deployment replay smoke",
-    );
+    let prose = "Windows native runner validates archive compression headers libraries toolchain \
+                 manifests receipts deployment replay smoke";
+    retain_conversation(&profiles, source, prose);
     let first = lanes.design(
         "dVrD245Kd",
         "Validate Windows native runner archives",
@@ -1237,10 +1249,30 @@ fn replaced_conversation_source_releases_delivery_and_selection() {
         1,
         "the current request blocks another"
     );
-    assert!(
-        pending_catch_up(&lanes, &config, &seated, &mut diagnostics).is_some(),
-        "room catch-up delivers the request while its source is current"
+    let shown = spice::rooms::awareness::request_text(
+        &lanes
+            .request(&config, FIRST)
+            .expect("task next shows the conversation request"),
     );
+    let notice = pending_catch_up(&lanes, &config, &seated, &mut diagnostics)
+        .expect("room catch-up delivers the request while its source is current");
+    assert!(
+        notice.text.contains(&shown),
+        "catch-up carries the request task next shows: {}",
+        notice.text
+    );
+    for expected in [
+        format!(
+            "Supporting work: you explained this in conversation: \"{prose}\" (transcript \
+             {source} member 0 byte 0 length 1). Read it with `spice session context "
+        ),
+        format!(
+            "--lane {} --vendor omp --stream session --source {source} --member 0 --offset 0`",
+            test_uuid(FIRST)
+        ),
+    ] {
+        assert!(shown.contains(&expected), "{expected} is missing: {shown}");
+    }
 
     let replacement = lanes.replace_transcript_source(FIRST);
     assert!(

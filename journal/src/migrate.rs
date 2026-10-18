@@ -58,7 +58,9 @@ const PREPARED: &str = "prepared";
 /// open phase and drops its pending outputs' ordinary dependency on it,
 /// restates every live team's formation instant from immutable topology facts,
 /// binds retained Design notices to their exact statement while retiring
-/// superseded selection provenance, and creates the room-authority projection,
+/// superseded selection provenance, records each retained task-backed notice's
+/// claim-phase classification and bounded excerpt while refusing a retained
+/// conversation notice that kept no prose, and creates the room-authority projection,
 /// room catch-up cursors and horizons, room coordination heads, room
 /// conversation heads, operator items, required task evidence, relevance
 /// shadow records, the working-group partition, the empty principal head
@@ -78,10 +80,10 @@ const PREPARED: &str = "prepared";
 /// pending branch whose terminal or absent controller cannot release it.
 /// Before any current decoder sees a predecessor statement, the retired
 /// authorization field is lifted into transaction-local selection evidence.
-const PREDECESSOR_SCHEMAS: [u32; 50] = [
+const PREDECESSOR_SCHEMAS: [u32; 51] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
     57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,
-    81, 82,
+    81, 82, 83,
 ];
 /// Release that migrated task facts and heads to explicit creation context.
 const CREATION_CONTEXT_RELEASE: &str = "6ad57c713";
@@ -1368,8 +1370,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 83, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 84, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 83;
+PRAGMA user_version = 84;
 "#;

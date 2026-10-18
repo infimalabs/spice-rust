@@ -382,7 +382,9 @@ fn noticed_at(
                 task: room(),
                 statement: wire::Seq::new(statement).expect("fixture evidence statement"),
                 completed: wire::Seq::new(position).expect("fixture completion"),
+                support: wire::rooms::DesignSupport::Implemented,
             },
+            excerpt: "fixture rooms".to_owned(),
             terms: vec!["rooms".to_owned()],
         },
     )

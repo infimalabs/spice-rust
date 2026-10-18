@@ -13,7 +13,7 @@ use spice::rooms::profile::{EvidenceKey, ProfileOpportunity, ProfileOpportunityK
 use wire::body::TaskDone as CompletedTask;
 use wire::rooms::{
     DesignConversationEvidence, DesignNoticeEvidence, DesignNoticeOpportunity, DesignNoticed,
-    DesignSession,
+    DesignSession, DesignSupport,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Domain, Producer, Seq, SequenceCode, TaskStamp,
@@ -41,6 +41,7 @@ struct PlannedRequest {
     compaction: Option<Seq>,
     opportunity: DesignNoticeOpportunity,
     evidence: DesignNoticeEvidence,
+    excerpt: String,
     design: TaskStamp,
     statement: Seq,
     terms: Vec<String>,
@@ -53,6 +54,7 @@ pub(in crate::resident) struct Completion {
     at: Seq,
     task: TaskStamp,
     validation: String,
+    support: DesignSupport,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     statement: wire::TaskHead,
@@ -118,6 +120,7 @@ impl CompletionCursor {
                         at: envelope.seq,
                         task: done.task,
                         validation: done.validation,
+                        support: DesignSupport::for_phase(&claim.cell.phase),
                         lane,
                         occupant: claim.occupant,
                         statement,
@@ -211,6 +214,7 @@ fn retain_completed_evidence(
                     task: completed.task.clone(),
                     statement: completed.statement.revision,
                     completion: completed.at,
+                    support: completed.support,
                 },
                 &completed.statement.title,
                 completed.statement.description.as_deref(),
@@ -323,13 +327,13 @@ fn plan_profile_requests(
                     (
                         matched.design.born().clone(),
                         matched.design.statement().revision,
-                        matched.evidence.clone(),
-                        matched.digest,
+                        durable_evidence(matched.evidence, matched.digest),
+                        matched.excerpt.to_owned(),
                         matched.terms,
                     )
                 })
         };
-        let Some((design, statement, evidence, digest, terms)) = selected else {
+        let Some((design, statement, evidence, excerpt, terms)) = selected else {
             continue;
         };
         planned_sessions.insert(session_identity);
@@ -339,7 +343,8 @@ fn plan_profile_requests(
             session,
             compaction,
             opportunity: durable_opportunity,
-            evidence: durable_evidence(&evidence, digest),
+            evidence,
+            excerpt,
             design,
             statement,
             terms,
@@ -455,10 +460,12 @@ fn durable_evidence(key: &EvidenceKey, digest: ProfileDigest) -> DesignNoticeEvi
             task,
             statement,
             completion,
+            support,
         } => DesignNoticeEvidence::Task {
             task: task.clone(),
             statement: *statement,
             completed: *completion,
+            support: *support,
         },
         EvidenceKey::Conversation { .. } => DesignNoticeEvidence::Conversation {
             source: durable_conversation(key, digest)
@@ -569,16 +576,7 @@ pub(crate) fn owed_request(
     Ok(Some(OwedRequest {
         at: noticed_at,
         design: notice.design.clone(),
-        request: design_request(
-            design,
-            notice.session.clone(),
-            notice.opportunity.clone(),
-            notice.evidence.clone(),
-            wire::rooms::shown_notice_terms(&notice.terms)
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-        ),
+        request: design_request(design, notice),
     }))
 }
 
@@ -666,24 +664,23 @@ fn request_is_current(
         && !facts.published_in_room_after(lane, design.born(), noticed_at)
 }
 
-fn design_request(
-    design: &board::Entry,
-    session: DesignSession,
-    opportunity: DesignNoticeOpportunity,
-    evidence: DesignNoticeEvidence,
-    terms: Vec<String>,
-) -> DesignRequest {
+fn design_request(design: &board::Entry, notice: &DesignNoticed) -> DesignRequest {
     let statement = design.statement();
     DesignRequest {
         design: wire::TaskHandle::for_filing(&statement.project, &statement.born, statement.filing),
-        session,
-        opportunity,
-        evidence,
+        lane: notice.lane,
+        session: notice.session.clone(),
+        opportunity: notice.opportunity.clone(),
+        evidence: notice.evidence.clone(),
+        excerpt: notice.excerpt.clone(),
         title: statement.title.clone(),
         statement: SequenceCode::new(statement.revision.get()),
         pitch: pitch(&statement.title, statement.description.as_deref()),
         questions: request_questions(&statement.acceptance),
-        terms,
+        terms: wire::rooms::shown_notice_terms(&notice.terms)
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
     }
 }
 
@@ -778,6 +775,7 @@ fn evidence_source_is_current(
             task,
             statement,
             completed,
+            ..
         } => {
             let statement_exists = read
                 .causal_page(*statement, journal::FactReadBudget::RETAINED)?
@@ -808,6 +806,7 @@ fn evidence_source_is_current(
             statement,
             claim,
             terminal,
+            ..
         } => {
             let statement_exists = read
                 .causal_page(*statement, journal::FactReadBudget::RETAINED)?
@@ -958,6 +957,7 @@ fn record(bus: &Bus, request: &PlannedRequest) -> CommandResult<Option<String>> 
                 compaction: request.compaction,
                 opportunity: request.opportunity.clone(),
                 evidence: request.evidence.clone(),
+                excerpt: request.excerpt.clone(),
                 terms: request.terms.clone(),
             },
             FactCause::Root,

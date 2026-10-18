@@ -390,7 +390,8 @@ mod tests {
     use super::*;
     use crate::TaskStamp;
     use crate::rooms::{
-        DesignNoticeEvidence, DesignNoticeOpportunity, DesignSession, RoomAuthorityStamp,
+        DesignNoticeEvidence, DesignNoticeOpportunity, DesignSession, DesignSupport,
+        RoomAuthorityStamp,
     };
 
     fn lane(last: u8) -> CanonicalUuid {
@@ -424,7 +425,9 @@ mod tests {
                 task: evidence_task,
                 statement: Seq::new(statement.saturating_add(1)).expect("task statement"),
                 completed,
+                support: DesignSupport::Implemented,
             },
+            excerpt: "measured design maturity".to_owned(),
             terms: vec![
                 "design".to_owned(),
                 "maturity".to_owned(),

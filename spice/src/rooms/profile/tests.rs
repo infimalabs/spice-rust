@@ -34,6 +34,7 @@ fn task(key: u64, title: &str) -> Evidence<EvidenceKey> {
             task: TaskStamp::for_micros(i64::try_from(key).unwrap()).unwrap(),
             statement: Seq::new(key * 2 + 1).unwrap(),
             completion: Seq::new(key * 2 + 2).unwrap(),
+            support: wire::rooms::DesignSupport::Implemented,
         },
         title,
         None,

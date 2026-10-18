@@ -48,7 +48,9 @@ fn noticed(
             task: claimed.clone(),
             statement: current_statement(journal, claimed),
             completed,
+            support: wire::rooms::DesignSupport::Implemented,
         },
+        excerpt: "measured design maturity".to_owned(),
         terms: vec![
             "design".to_owned(),
             "maturity".to_owned(),
