@@ -486,6 +486,12 @@ fn apply_task_mutation_response(
             refresh: true,
             ..apply_callback_reply(session, bytes, "Conclusion failed", &respond)?
         },
+        // A landed wake or deferral re-reads the board so the task leaves or
+        // joins the deferred presentation.
+        PendingKind::Deferral { respond } => CommandApplication {
+            refresh: true,
+            ..apply_callback_reply(session, bytes, "Deferral change failed", &respond)?
+        },
         _ => unreachable!("read and mutation response partitions are closed"),
     })
 }

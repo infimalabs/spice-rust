@@ -123,6 +123,16 @@ and reads a task again after a change or reconnect only while it is selected.
 A command or detail read that settles after selection moved creates no hidden
 read; opening that task again reads its current detail.
 
+A pending Filed task's **Deferral** fact changes when it returns in place, on
+the fact's own line. **Clear**, shown only while the task is deferred, wakes it
+through `task::wake`; the calendar button opens the browser's date-time picker,
+and the chosen local time defers the task until then through `task::defer`.
+Each witnesses the workflow and deferral heads the fact was drawn from, so a
+change made against a stale view refuses. A landed change re-reads the board,
+so the fact shows the new time, or None once cleared, without a reload. The
+outcome, or the refusal, stays on the same line, in full on hover. Either
+button is disabled when the runtime does not offer its command.
+
 **Running jobs** closes the sheet, after every task's details, in a fixed
 footprint that scrolls beyond it.
 

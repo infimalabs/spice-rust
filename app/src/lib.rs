@@ -127,6 +127,9 @@ pub(crate) enum PendingKind {
     Conclude {
         respond: client_action::TaskResponse,
     },
+    Deferral {
+        respond: client_action::TaskResponse,
+    },
     Board,
     Lanes {
         rebases: Vec<wire::CanonicalUuid>,

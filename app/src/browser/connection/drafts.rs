@@ -1,5 +1,5 @@
 //! Typed task changes on the live socket: creation, statement revision,
-//! filing, and a Design's conclusion.
+//! filing, deferral, and a Design's conclusion.
 
 use super::*;
 
@@ -32,6 +32,41 @@ pub(super) async fn send_task_change(
                 request,
             )
             .await
+        }
+        ClientAction::Deferral {
+            request,
+            expected,
+            respond,
+        } => {
+            let pending = PendingKind::Deferral {
+                respond: respond.clone(),
+            };
+            match request {
+                crate::client_action::DeferralRequest::Wake(request) => {
+                    send_typed(
+                        principal,
+                        writer,
+                        actions,
+                        pending,
+                        CommandKind::TaskWake,
+                        expected.clone(),
+                        request,
+                    )
+                    .await
+                }
+                crate::client_action::DeferralRequest::Defer(request) => {
+                    send_typed(
+                        principal,
+                        writer,
+                        actions,
+                        pending,
+                        CommandKind::TaskDefer,
+                        expected.clone(),
+                        request,
+                    )
+                    .await
+                }
+            }
         }
         _ => unreachable!("only task changes route here"),
     }

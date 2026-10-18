@@ -113,6 +113,13 @@ pub(crate) enum DraftRequest {
     },
 }
 
+/// Wake one deferred filed task now, or set the instant its deferral wakes at.
+#[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
+pub(crate) enum DeferralRequest {
+    Wake(wire::intent::TaskWake),
+    Defer(wire::intent::TaskDefer),
+}
+
 /// What one working-group change asks the authority for.
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum GroupChange {
@@ -203,6 +210,13 @@ pub(crate) enum ClientAction {
     /// drawn from, so a claim or transition landing since refuses it.
     Conclude {
         request: wire::intent::TaskConclude,
+        expected: Vec<wire::Witness>,
+        respond: TaskResponse,
+    },
+    /// Wake or reschedule one pending filed task at the workflow and deferral
+    /// heads its view was drawn from.
+    Deferral {
+        request: DeferralRequest,
         expected: Vec<wire::Witness>,
         respond: TaskResponse,
     },

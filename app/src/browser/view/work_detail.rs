@@ -289,7 +289,7 @@ fn render_available(
                     {assignment_fact(workflow.status.reviewer(), render)}
                     {statement.priority.map_or_else(Html::default, |priority| fact("Priority", priority.to_string()))}
                     {statement.taste.as_ref().map_or_else(Html::default, |hold| fact("Taste review", taste_review_text(hold)))}
-                    {deadline_fact("Deferral", workflow.deferral.as_ref(), "None")}
+                    {super::super::deferral::fact(render.runtime, render.sender, row, deadline_value(workflow.deferral.as_ref(), "None"))}
                     {instant_fact("Completion", completion.as_ref(), "Open")}
                 </dl>
                 {render_possession(row, render)}
@@ -499,11 +499,14 @@ fn deadline_fact(
     instant: Option<&wire::Instant>,
     empty: &'static str,
 ) -> Html {
-    let value = instant.map_or_else(
+    html! { <div><dt>{label}</dt><dd>{deadline_value(instant, empty)}</dd></div> }
+}
+
+fn deadline_value(instant: Option<&wire::Instant>, empty: &'static str) -> Html {
+    instant.map_or_else(
         || html! { empty },
         |instant| task_time(instant, TaskTimePresentation::DetailedRemaining),
-    );
-    html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
+    )
 }
 
 fn assignment_fact(assignment: Option<&wire::Actor>, render: &WorkDetailRender<'_, '_>) -> Html {
