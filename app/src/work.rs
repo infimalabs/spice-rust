@@ -142,7 +142,7 @@ pub enum WorkScope {
     /// Work gated by an open Design uses [`Self::Planning`] even when it shares
     /// the same project stem.
     Stem(WorkStemIdentity),
-    /// Open Designs and tasks gated directly by at least one open Design.
+    /// Open Designs and every task transitively gated by an open Design.
     Planning { stem: Option<WorkStemIdentity> },
     /// Open execution tasks currently worked by one team's members.
     Team { team: wire::CanonicalUuid },
@@ -935,6 +935,7 @@ impl<'a> WorkProjection<'a> {
             .collect::<Vec<_>>();
 
         let dependent_indexes = dependent_indexes(board, &by_born, &availability);
+        let design_owned = design_owned_indexes(board, &dependent_indexes);
         let offer_ranks = offer_ranks(board, &by_born);
 
         let mut counts = WorkCounts::default();
@@ -990,7 +991,8 @@ impl<'a> WorkProjection<'a> {
             .enumerate()
             .map(|(index, row)| {
                 let dependencies = work_dependencies(row, board, &by_born);
-                let owner = accountable_owner(row, board, &by_born, teams.as_ref(), &member_teams);
+                let owner =
+                    accountable_owner(row, design_owned[index], teams.as_ref(), &member_teams);
                 let dependents = dependent_indexes[index]
                     .iter()
                     .copied()
@@ -1026,26 +1028,15 @@ impl<'a> WorkProjection<'a> {
 
 fn accountable_owner(
     task: &BoardTask,
-    board: &BoardView,
-    by_born: &BTreeMap<&TaskStamp, usize>,
+    design_owned: bool,
     teams: Option<&BTreeSet<wire::CanonicalUuid>>,
     member_teams: &BTreeMap<wire::CanonicalUuid, wire::CanonicalUuid>,
 ) -> Option<WorkOwner> {
-    // A Design-intent row in plan or review intake is ordinary claimed work
-    // until it enters its open design phase.
-    if task.design_standing().is_some() {
-        return Some(WorkOwner::Design);
-    }
-    // Dependency edges are the complete current Design gate. Preparation is
-    // immutable provenance and cannot decide where work is placed: adding an
-    // open Design edge docks the task here, and selection removes that edge.
-    if task.statement.body.dependencies.iter().any(|dependency| {
-        by_born.get(dependency).is_some_and(|&index| {
-            board.tasks[index]
-                .design_standing()
-                .is_some_and(|standing| standing.is_open())
-        })
-    }) {
+    // Dependency reachability is the complete current Design gate. Preparation
+    // is immutable provenance and cannot decide where work is placed: adding
+    // an open Design path docks its whole dependent subtree here, and selection
+    // of the final such path moves the subtree back to execution.
+    if design_owned {
         return Some(WorkOwner::Design);
     }
     home_team(task, teams, member_teams).map(WorkOwner::Team)
@@ -1200,6 +1191,33 @@ fn dependent_indexes(
         indexes.sort_by(|left, right| compare_tasks(&board.tasks, availability, *left, *right));
     }
     dependents
+}
+
+/// Mark every task reachable through dependency direction from an open Design.
+///
+/// The visited set both bounds the walk to one pass over the graph and makes
+/// manually assembled dependency cycles harmless.
+fn design_owned_indexes(board: &BoardView, dependents: &[Vec<usize>]) -> Vec<bool> {
+    let mut owned = vec![false; board.tasks.len()];
+    let mut frontier = Vec::with_capacity(board.tasks.len());
+    for (index, task) in board.tasks.iter().enumerate() {
+        if task
+            .design_standing()
+            .is_some_and(|standing| standing.is_open())
+        {
+            owned[index] = true;
+            frontier.push(index);
+        }
+    }
+    while let Some(index) = frontier.pop() {
+        for &dependent in &dependents[index] {
+            if !owned[dependent] {
+                owned[dependent] = true;
+                frontier.push(dependent);
+            }
+        }
+    }
+    owned
 }
 
 fn stem_key(task: &BoardTask) -> StemKey<'_> {

@@ -19,8 +19,8 @@ its offered order. Every selected root stays visible however large the set.
 Work-scope selections are durable overlay locations with one canonical grammar:
 `#/work` for all open execution work; `#/work/stem/public/{stem}` and
 `#/work/stem/hidden/{stem}` for one visibility-qualified execution stem;
-`#/work/planning` for open Designs and work with a direct dependency on at
-least one open Design; `#/work/planning/public/{stem}` and
+`#/work/planning` for open Designs and every open task transitively downstream
+of at least one open Design dependency; `#/work/planning/public/{stem}` and
 `#/work/planning/hidden/{stem}` for one planning stem;
 `#/work/team/{uuid}` for a team; and `#/work/group/{room-stamp}` for a working
 group. A stem is its admitted lowercase `[0-9a-z_]+` spelling and occupies one
