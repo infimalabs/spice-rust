@@ -237,7 +237,7 @@ pub struct LaneActivity {
     author: CanonicalUuid,
     lane: CanonicalUuid,
     display_millis: i64,
-    class: &'static str,
+    kind: AgentActivityKind,
     title: String,
     detail: String,
     source: ActivitySource,
@@ -318,16 +318,16 @@ impl LaneActivity {
     /// opens by quoting the operator must never surface as that quote. Every
     /// other activity kind keeps its text verbatim.
     fn from_message(message: &AgentMessage) -> Self {
-        let (class, title) = match message.activity {
-            AgentActivityKind::Prose => ("prose", "assistant"),
-            AgentActivityKind::Failure => ("failure", "provider failure"),
-            AgentActivityKind::Tool => ("tool", "tool"),
-            AgentActivityKind::Reasoning => ("reasoning", "thinking"),
-            AgentActivityKind::Turn => ("turn", "new turn"),
-            AgentActivityKind::Compaction => ("compaction", "compaction"),
-            AgentActivityKind::Session => ("session", "fresh session"),
-            AgentActivityKind::SignOut => ("sign-out", "signed out"),
-            AgentActivityKind::Direction => ("direction", "operator direction"),
+        let title = match message.activity {
+            AgentActivityKind::Prose => "assistant",
+            AgentActivityKind::Failure => "provider failure",
+            AgentActivityKind::Tool => "tool",
+            AgentActivityKind::Reasoning => "thinking",
+            AgentActivityKind::Turn => "new turn",
+            AgentActivityKind::Compaction => "compaction",
+            AgentActivityKind::Session => "fresh session",
+            AgentActivityKind::SignOut => "signed out",
+            AgentActivityKind::Direction => "operator direction",
         };
         let detail = match message.activity {
             AgentActivityKind::Prose => {
@@ -340,7 +340,7 @@ impl LaneActivity {
             author: message.author,
             lane: message.lane,
             display_millis: agent_message_display_millis(message),
-            class,
+            kind: message.activity,
             title: title.to_owned(),
             detail,
             source: ActivitySource {
@@ -374,8 +374,23 @@ impl LaneActivity {
     }
 
     #[must_use]
+    pub const fn kind(&self) -> AgentActivityKind {
+        self.kind
+    }
+
+    #[must_use]
     pub const fn class(&self) -> &'static str {
-        self.class
+        match self.kind {
+            AgentActivityKind::Prose => "prose",
+            AgentActivityKind::Failure => "failure",
+            AgentActivityKind::Tool => "tool",
+            AgentActivityKind::Reasoning => "reasoning",
+            AgentActivityKind::Turn => "turn",
+            AgentActivityKind::Compaction => "compaction",
+            AgentActivityKind::Session => "session",
+            AgentActivityKind::SignOut => "sign-out",
+            AgentActivityKind::Direction => "direction",
+        }
     }
 
     #[must_use]

@@ -221,15 +221,19 @@ fn render_team_toolbar(
             let member = team.member(standing.lane)?;
             let status = member.status(standing.waking);
             let label = format!("{}: {}", standing.label, status.label());
+            let activities = super::trace::lane_activities(render.runtime, member.lane);
             Some(html! {
                 <span
-                    class={classes!("app-presence-pip", "app-presence-pip--status", status.key())}
+                    class={classes!("app-presence-pip", "app-presence-pip--status", "app-presence-pip--trace", status.key())}
                     role="img"
                     data-lane-light-target-id={member.lane.to_string()}
                     data-lane-status={status.key()}
+                    data-accent={standing.accent.to_string()}
                     aria-label={label.clone()}
                     title={label}
-                ></span>
+                >
+                    <super::trace::ActivityTrace {activities} />
+                </span>
             })
         };
         let dragging = team_dragging(

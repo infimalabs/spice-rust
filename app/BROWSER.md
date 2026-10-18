@@ -429,3 +429,26 @@ unavailable quote keeps its warning rail.
 A card's linked relative age is its permalink. Arriving through it outlines
 the card briefly, then fades the outline (cleared at once without motion), and
 focuses the card without a visible focus ring.
+
+## Team activity traces
+
+Each team pip is a hairline glass pane whose 1px physical-left rail carries the
+lane's status; the pip keeps its accessible status label and the trace inside
+is decorative. The trace spans the ten minutes ending now: prose, tool, and
+reasoning notes in three rows at their display instants, joined in time order
+by one faint step thread, with full-height markers for turn, operator
+direction, provider failure, compaction, fresh session, and sign-out. A note's
+length grows with its text, and it stops a pixel short of the next note in its
+row. Neighbouring notes in a row stand at least two pixels apart: a closer
+burst keeps its newest note at its instant and steps older ones back, so every
+call stays countable even in a six-agent team. The trace draws only retained
+lane activity and direction cards, issues no requests, and redraws on new
+activity and every few seconds, so old activity leaves without a new frame.
+
+The app's `style-src 'self'` policy refuses inline style attributes, so trace
+positions reach CSS as custom properties written through the CSSOM. A
+Playwright check of the trace must keep that policy enforced: a context with
+`bypassCSP` hides a trace that would draw nothing in production.
+
+Working-group Design pips do not trace; they keep their filled cells and the
+passive Design's inset ring.
