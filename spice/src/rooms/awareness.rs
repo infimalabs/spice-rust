@@ -466,13 +466,26 @@ fn one_line(text: &str, chars: usize) -> String {
     cut
 }
 
-/// The invitation one Design request presents wherever it is delivered:
-/// what the asked work did, an excerpt and a compaction-proof source, the
-/// Design's pitch and bounded open questions, and how to contribute or decline.
+/// One Design invitation as every command and catch-up surface presents it.
 #[must_use]
 pub fn request_text(request: &wire::intent::DesignRequest) -> String {
+    use wire::rooms::{DesignNoticeEvidence as Evidence, DesignNoticeOpportunity as Opportunity};
+
     let design = &request.design;
-    let task = &request.task;
+    let opportunity = match &request.opportunity {
+        Opportunity::TaskCompletion { task, .. } => format!("completion of task {task}"),
+        Opportunity::Conversation { .. } => "a settled conversation message".to_owned(),
+        Opportunity::DesignStatement => "this Design statement".to_owned(),
+        Opportunity::ProfileReady { .. } => "the completed session profile".to_owned(),
+        Opportunity::SessionResumed { .. } => "this resumed session".to_owned(),
+    };
+    let evidence = match &request.evidence {
+        Evidence::Task { task, .. } => format!("task {task}"),
+        Evidence::Conversation { source } => format!(
+            "conversation member {} at byte {}",
+            source.locus.member, source.locus.offset
+        ),
+    };
     let mut questions = String::new();
     for question in &request.questions {
         questions.push_str("\n- ");
@@ -482,20 +495,18 @@ pub fn request_text(request: &wire::intent::DesignRequest) -> String {
         questions.push_str("\n- none recorded");
     }
     format!(
-        "Design request {design} \"{}\" at statement revision {}: you {} {task}, which shares: \
-         {}.\nExcerpt: {}\nSource: `spice task show {task} --history`\nPitch: {}\nOpen \
-         questions:{questions}\nRead its room with `spice room history {design}` \
-         (`spice://task/{design}/room`). A concrete observation, risk, or counterexample helps, \
-         and declining is equally fine: answer exactly once with `spice room contribute {design} \
+        "Design request {design} \"{}\" at statement revision {} matched {evidence} on: {}. \
+         The profile was evaluated at {opportunity}.\nPitch: {}\nOpen questions:{questions}\n\
+         Read its room with `spice room history {design}` (`spice://task/{design}/room`). A \
+         concrete observation, risk, or counterexample helps, and declining is equally fine: \
+         answer exactly once with `spice room contribute {design} \
          reason-for|reason-against|evidence|question TEXT` or decline with `spice room leave \
          {design} --clause TEXT`. Until either answer publishes, `spice task next` returns this \
          request instead of allocating. It grants no claim and starts no work; you hear this \
          room's later posts until you leave it.",
         request.title,
         request.statement,
-        request.support.verb(),
         request.terms.join(", "),
-        request.excerpt,
         request.pitch,
     )
 }

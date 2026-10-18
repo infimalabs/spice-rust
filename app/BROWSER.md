@@ -235,7 +235,7 @@ conversation. Each cited source's availability comes from the
 and the app issues once per cited contribution of a shown Design, at most
 eight in flight, and again after a reconnect; it resolves through the same
 resident path as `spice room history`. This read-only surface never creates or
-answers the completion-bound Design requests delivered through a lane's own
+answers the session-profile Design requests delivered through a lane's own
 session.
 
 The read view derives its **Design maturity** panel from the bounded per-Design

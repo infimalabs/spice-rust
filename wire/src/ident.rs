@@ -94,6 +94,8 @@ pub enum Domain {
     JournalRestorePlan,
     /// One canonical exact source link cited by a room contribution.
     RoomSource,
+    /// The canonical identity of one retained session-profile evidence card.
+    RoomProfileEvidence,
     /// The payload manifest of one release target.
     DistTargetPayload,
     /// The bytes of one staged artifact.
@@ -221,6 +223,7 @@ impl Domain {
             | Self::TaskArtifactStore
             | Self::JournalRestorePlan
             | Self::RoomSource
+            | Self::RoomProfileEvidence
             | Self::TasteProse
             | Self::TasteBag
             | Self::MediaContent
@@ -289,6 +292,7 @@ impl Domain {
             Self::TaskArtifactStore => "spice.task.artifact-store.v1",
             Self::JournalRestorePlan => "spice.journal.restore-plan.v1",
             Self::RoomSource => "spice.room.source.v1",
+            Self::RoomProfileEvidence => "spice.room.profile-evidence.v1",
             Self::TasteProse => "spice.taste.prose.v1",
             Self::TasteBag => "spice.taste.bag.v1",
             Self::MediaContent => "spice.media.content.v1",

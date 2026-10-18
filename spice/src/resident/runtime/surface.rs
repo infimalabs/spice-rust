@@ -1282,20 +1282,18 @@ fn accept_commit_turn(
             diagnostic,
         )?,
     }
-    if changes.as_ref().is_none_or(|changes| changes.authority) {
-        design_input::reconcile(
-            bus,
-            command_surface.paths,
-            command_surface.config,
-            seats,
-            design_completions,
-            message_state,
-            diagnostic,
-        )?;
-    }
     message_surface::advance_profile_warming(
         &bus.reader(),
         command_surface.paths,
+        message_state,
+        diagnostic,
+    )?;
+    design_input::reconcile(
+        bus,
+        command_surface.paths,
+        command_surface.config,
+        seats,
+        design_completions,
         message_state,
         diagnostic,
     )?;
