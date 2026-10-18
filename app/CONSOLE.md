@@ -194,15 +194,18 @@ active local docking does not remove a task from its global strip. A team total
 opens the overview with exactly the tasks its members are currently working,
 Design work included, without changing task authority or accountable ownership.
 Totals keep one footprint for every count. Tabs past a total scroll
-horizontally under edge fades and never enter the status row.
+horizontally under edge fades and never enter the status row. In each local
+team or working-group strip, every task or lane tab meets the next and the
+badge-only total without a gap, border, or rounded interior corner. Only the
+strip's two outside ends retain the thick rail and outer corner.
 
 A team-local task tab appears only while one of that team's lanes actively
 claims it, Design work included, and wears that lane's accent. A group-local
 tab appears only while a lane actively claims work associated with one of the
 group's Designs, names that lane, and wears its accent. An accented tab's text
 is always accent-tinted and its background carries a 5% accent tint, 10% on
-hover. Every horn tab's rails, global or local, keep the neutral line color and
-undim one neutral step on hover; no accent paints them. Totals stay neutral, and
+hover. Horn-tab rails keep the neutral line color and undim one neutral step on
+hover; no accent paints them. Totals stay neutral, and
 global strips own their other interaction feedback independently. Every count
 badge is one neutral open-task total; see
 [Task counts show one open total](../docs/product/loops.md#the-jitter-contract).

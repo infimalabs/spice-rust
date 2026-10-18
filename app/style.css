@@ -296,6 +296,22 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   padding-inline: 0;
 }
 .app-horn-tab:is([data-work-scope="team"], [data-work-scope="group"]) > button { flex: 1 1 auto; justify-content: center; padding-inline: 0; }
+/* Local task and worker tabs fuse to their fixed total as one strip. The
+   reversed scroller puts its last child at the physical left edge; every
+   interior edge stays borderless while that child and the total retain the
+   two outside rails and corners. */
+.team-task-rail > .team-tasks > .app-horn-tab {
+  border-inline: 0;
+  border-radius: 0;
+}
+.team-task-rail > .team-tasks > .app-horn-tab:last-child {
+  border-inline-start: var(--message-rail) solid var(--app-base-line);
+  border-start-start-radius: var(--app-radius-card);
+}
+.team-task-rail > :is([data-work-scope="team"], [data-work-scope="group"]) {
+  border-inline-start: 0;
+  border-start-start-radius: 0;
+}
 :is([data-work-scope="all"], [data-work-scope="design"], [data-work-scope="team"], [data-work-scope="group"]) .app-count-badge {
   display: inline-block;
   box-sizing: border-box;
