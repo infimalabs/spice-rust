@@ -13,8 +13,8 @@ use yew::prelude::*;
 
 use super::super::clock::now_millis;
 use crate::watchband::{
-    TRACE_STEP_MILLIS, TRACE_WINDOW_MILLIS, TraceActivity, TraceMarker, TraceMarkerKind,
-    room_activity, trace,
+    TRACE_STEP_MILLIS, TRACE_WINDOW_MILLIS, TraceActivity, TraceMarker, TraceMarkerKind, TraceOff,
+    TraceSpan, drawn_spans, off_intervals, room_activity, trace,
 };
 
 #[derive(Properties, PartialEq)]
@@ -23,6 +23,9 @@ pub(crate) struct ActivityTraceProps {
     pub(crate) id: AttrValue,
     /// The traced activities, in any order.
     pub(crate) activities: Rc<[TraceActivity]>,
+    /// Intervals the traced lane was off, which its curves leave undrawn.
+    #[prop_or_default]
+    pub(crate) off: Rc<[TraceOff]>,
 }
 
 /// One lane's retained activity within the trace window. Lane activity
@@ -57,6 +60,16 @@ pub(super) fn lane_activities(
         })
         .chain(directions)
         .collect()
+}
+
+/// The intervals one lane was off, from its retained occupancy transitions.
+pub(super) fn lane_off(runtime: &crate::AppRuntime, lane: wire::CanonicalUuid) -> Rc<[TraceOff]> {
+    off_intervals(
+        runtime
+            .lane_presence_transitions(lane)
+            .map(|transition| (transition.display_millis(), transition.occupant().is_some())),
+    )
+    .into()
 }
 
 /// One Design room's events within the trace window, read as a lane's
@@ -116,7 +129,9 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
         });
     }
     let (width, height) = *size;
-    let placed = trace(&props.activities, now_millis(), samples(width));
+    let now = now_millis();
+    let placed = trace(&props.activities, now, samples(width));
+    let spans = drawn_spans(&props.off, now, samples(width));
     {
         let tick = tick.clone();
         use_effect_with((!placed.is_empty(), *tick), move |&(shown, generation)| {
@@ -133,6 +148,8 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
     }
     let drawn = width > DOT_ROOM && height > DOT_ROOM;
     let gradient = |key: &str| format!("trace-{}-{key}", props.id);
+    let whole = matches!(spans.as_slice(), [only] if only.from <= 0.0 && only.to >= 1.0);
+    let clip = (!whole).then(|| format!("trace-{}-on", props.id));
     html! {
         <span ref={pane} class="activity-trace" aria-hidden="true">
             if drawn {
@@ -148,7 +165,17 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
                                 <stop offset="1" stop-opacity="0" />
                             </linearGradient>
                         })}
+                        if let Some(clip) = &clip {
+                            // `html!` lowercases a literal tag, which SVG does not
+                            // recognise as a clip; a dynamic tag keeps its case.
+                            <@{"clipPath"} id={clip.clone()}>
+                                {for on_rects(&spans, width, height).into_iter().map(|(x, y, w, h)| html! {
+                                    <rect x={format!("{x:.2}")} y={format!("{y:.2}")} width={format!("{w:.2}")} height={format!("{h:.2}")} />
+                                })}
+                            </@>
+                        }
                     </defs>
+                    <g clip-path={clip.as_ref().map(|clip| format!("url(#{clip})"))}>
                     {for placed.curves.iter().map(|curve| {
                         let points = points(&curve.levels, width, height);
                         let line = smooth(&points, height);
@@ -167,11 +194,38 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
                             </g>
                         }
                     })}
+                    </g>
                     {for placed.markers.iter().map(|marker| render_marker(*marker, width, height))}
                 </svg>
             }
         </span>
     }
+}
+
+/// Room the clip keeps beyond the pane's outer edges, so a line's stroke and
+/// glow there are not shaved; only a gap's own edges cut the curves.
+const CLIP_BLEED: f64 = 3.0;
+
+/// The drawn spans as rectangles in pane pixels: time maps to x as the curve
+/// points map it, and the span reaching now keeps the now-dot's room.
+fn on_rects(spans: &[TraceSpan], width: f64, height: f64) -> Vec<(f64, f64, f64, f64)> {
+    let span = width - DOT_ROOM;
+    spans
+        .iter()
+        .map(|&TraceSpan { from, to }| {
+            let left = if from <= 0.0 {
+                -CLIP_BLEED
+            } else {
+                from * span
+            };
+            let right = if to >= 1.0 {
+                width + CLIP_BLEED
+            } else {
+                to * span
+            };
+            (left, -CLIP_BLEED, right - left, height + 2.0 * CLIP_BLEED)
+        })
+        .collect()
 }
 
 /// Curve points in pane pixels: time runs across to the now-dot's room, level

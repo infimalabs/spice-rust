@@ -971,6 +971,16 @@ impl AppRuntime {
             .find(|transition| transition.lane == lane)
     }
 
+    /// Retained occupancy transitions of one lane in journal order.
+    pub fn lane_presence_transitions(
+        &self,
+        lane: CanonicalUuid,
+    ) -> impl Iterator<Item = &LanePresenceTransition> {
+        self.presence_transitions
+            .iter()
+            .filter(move |transition| transition.lane == lane)
+    }
+
     /// Newest retained agent-authored transcript messages in creation order.
     #[must_use]
     pub fn messages(&self) -> &[Rc<AgentMessage>] {
