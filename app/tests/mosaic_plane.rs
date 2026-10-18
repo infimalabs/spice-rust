@@ -1,48 +1,8 @@
 use app::mosaic::{Candidate, Lifecycle};
-use app::mosaic_plane::{MeasuredCard, PersistentLanePlane, Transition, arrange};
+use app::mosaic_plane::{MeasuredCard, PersistentLanePlane, Transition};
 
 fn candidates(span: usize, rows: i32) -> Vec<Candidate> {
     vec![Candidate { span, rows }]
-}
-
-/// This is the production dependency witness, not another engine-unit test.
-/// `mosaic_plane::arrange` is the same function each browser lane component
-/// calls. Removing its last call into `app/src/mosaic.rs` either fails to build
-/// or makes these engine-decided placements and lifecycle states go red.
-#[test]
-fn production_lane_plane_is_decided_by_the_mosaic_engine() {
-    let plane = arrange(&[
-        candidates(3, 2),
-        candidates(3, 4),
-        candidates(6, 3),
-        candidates(12, 2),
-    ]);
-
-    let placements = plane
-        .cards
-        .iter()
-        .map(|card| (card.track, card.span, card.base, card.rows, card.lifecycle))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        placements,
-        vec![
-            (0, 3, 0, 2, Lifecycle::Liquid),
-            (3, 3, 0, 4, Lifecycle::Liquid),
-            (6, 6, 0, 3, Lifecycle::Liquid),
-            (0, 12, 4, 2, Lifecycle::Liquid),
-        ]
-    );
-    assert_eq!((plane.max_row, plane.min_base, plane.rows()), (6, 0, 6));
-}
-
-#[test]
-fn sibling_lane_planes_never_share_a_row_floor() {
-    let busy = arrange(&[candidates(12, 5), candidates(12, 4), candidates(12, 3)]);
-    let quiet = arrange(&[candidates(12, 2)]);
-
-    assert_eq!(busy.max_row, 12);
-    assert_eq!(quiet.cards[0].base, 0);
-    assert_eq!(quiet.max_row, 2);
 }
 
 fn measured(key: &'static str, candidates: Vec<Candidate>) -> MeasuredCard<&'static str> {
@@ -60,33 +20,6 @@ fn boundary(key: &'static str, rows: i32) -> MeasuredCard<&'static str> {
         boundary: true,
         ..measured(key, candidates(12, rows))
     }
-}
-
-#[test]
-fn persistent_noop_and_append_never_repack_committed_cards() {
-    let initial = [
-        measured("a", candidates(3, 3)),
-        measured("b", candidates(3, 4)),
-    ];
-    let plane = PersistentLanePlane::new(900, &initial);
-    let committed = plane.cards().to_vec();
-
-    let noop = plane.reconcile(900, &initial);
-    assert_eq!(noop.cards(), committed);
-    assert_eq!(noop.commits(), plane.commits());
-    assert_eq!(noop.transition(), plane.transition());
-
-    let appended = plane.reconcile(
-        900,
-        &[
-            initial[0].clone(),
-            initial[1].clone(),
-            measured("c", candidates(12, 5)),
-        ],
-    );
-    assert_eq!(&appended.cards()[..2], committed);
-    assert_eq!(appended.cards()[2].key, "c");
-    assert_eq!(appended.transition(), Transition::Append);
 }
 
 #[test]

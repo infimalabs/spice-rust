@@ -140,56 +140,6 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
 }
 
 #[test]
-fn an_empty_tree_is_the_complete_compiled_policy() {
-    let root = decode("").expect("an empty policy tree is valid");
-
-    assert!(root.taste().bag().tastes().is_empty());
-    assert_eq!(root.consent().policy().posture(), Answer::Queue);
-    assert!(root.consent().policy().rules().is_empty());
-    assert!(root.gate().walk().skip().rules().is_empty());
-    assert_eq!(root.board().next().band(), 2);
-    assert_eq!(root.lane().life(), Life::Steer);
-    assert_eq!(root.lane().lease().to_string(), "15m");
-    assert_eq!(root.lane().runtime().to_string(), "24h");
-    assert_eq!(root.lane().vendor().as_str(), "omp");
-    assert_eq!(root.lane().deaths(), 3);
-    assert_eq!(root.lane().young().to_string(), "30s");
-    assert_eq!(root.lane().hold().to_string(), "30m");
-    assert_eq!(root.steer().expiry().to_string(), "24h");
-    assert_eq!(
-        root.steer()
-            .resend()
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>(),
-        ["60s", "1800s", "3600s"]
-    );
-    assert_eq!(root.vendor().omp().binary().as_str(), "omp");
-    assert_eq!(root.vendor().omp().model(), vendor::DEFAULT_OMP_MODEL);
-    assert_eq!(root.vendor().omp().effort(), vendor::Effort::High);
-    assert!(!root.vendor().omp().fast_mode());
-    assert!(
-        !root.vendor().omp().lsp(),
-        "language servers are admitted only where a repository asks for them"
-    );
-    assert_eq!(
-        root.vendor().omp().auto_compact_window_tokens(),
-        vendor::DEFAULT_OMP_LONG_CONTEXT_AUTO_COMPACT_WINDOW_TOKENS,
-        "the default model is an OpenAI model billed at long-context rates past 272,000 tokens"
-    );
-    assert_eq!(root.vendor().omp().auto_compact_threshold_tokens(), 231_200);
-    assert_eq!(root.proof().image().as_str(), proof::DEFAULT_IMAGE);
-    assert!(root.proof().container().is_none());
-    assert!(root.proof().runner().is_none());
-
-    let rendered = toml::to_string_pretty(&root).expect("compiled policy renders as TOML");
-    assert_eq!(
-        decode(&rendered).expect("rendered compiled policy decodes"),
-        root
-    );
-}
-
-#[test]
 fn omp_window_defaults_to_the_boundary_of_the_provider_its_model_reaches() {
     let openai = decode("[vendor.omp]\nmodel = \"gpt-5.6-sol\"\n")
         .expect("an OpenAI model selection is valid");

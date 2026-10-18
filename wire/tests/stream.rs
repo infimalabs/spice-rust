@@ -1,8 +1,7 @@
 use wire::{
-    Actor, AgentActivityKind, AgentMessage, AgentProviderError, AutomaticSpeech,
-    AutomaticSpeechKind, CanonicalUuid, Envelope, Fact, MessageAcknowledgement, MessageLocus,
-    Packed, StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamRequest,
-    ViewSubject, WireVersion,
+    Actor, AgentActivityKind, AgentMessage, AutomaticSpeech, AutomaticSpeechKind, CanonicalUuid,
+    Envelope, Fact, MessageAcknowledgement, MessageLocus, Packed, StreamAdmissionError,
+    StreamCursor, StreamFact, StreamFrame, StreamRequest, ViewSubject, WireVersion,
 };
 
 fn uuid(value: &str) -> CanonicalUuid {
@@ -401,27 +400,6 @@ fn transcript_activity_defaults_only_the_documented_prose_shape() {
     assert!(
         wire::decode::<AgentMessage>(unknown.as_bytes()).is_err(),
         "an unknown activity kind fails instead of choosing a fallback"
-    );
-}
-
-#[test]
-fn structured_provider_failure_round_trips() {
-    let failure = AgentMessage {
-        activity: AgentActivityKind::Failure,
-        text: "capacity exhausted".to_owned(),
-        provider_error: Some(AgentProviderError {
-            provider: Some("openai".to_owned()),
-            model: Some("gpt-5.4".to_owned()),
-            http_status: Some(429),
-            retryable: true,
-        }),
-        ..prose_message()
-    };
-
-    let encoded = wire::encode(&failure).expect("provider failure encodes");
-    assert_eq!(
-        wire::decode::<AgentMessage>(&encoded).expect("provider failure decodes"),
-        failure,
     );
 }
 

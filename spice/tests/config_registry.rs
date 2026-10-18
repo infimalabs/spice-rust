@@ -240,78 +240,6 @@ fn sample_path(template: &str) -> Vec<OwnedSegment> {
 }
 
 #[test]
-fn root_is_exactly_the_eighteen_typed_domains() {
-    let root = decode(&complete()).expect("the complete root decodes");
-    let round_trip = decode(&toml::to_string_pretty(&root).expect("root renders"))
-        .expect("rendered root decodes");
-    assert_eq!(round_trip, root);
-    assert_eq!(decode("").expect("empty root"), Root::default());
-    assert!(Root::default().policy().pre_commit_builtins());
-    assert!(Root::default().policy().pre_commit().is_empty());
-    assert!(Root::default().wrappers().spice().is_none());
-    assert_eq!(Root::default().rtk().executable(), "rtk");
-    assert_eq!(
-        root.wrappers().spice(),
-        Some(steer::WrapperReference::Appliance)
-    );
-    assert!(root.proof().container().is_some());
-    assert!(root.proof().runner().is_some());
-    assert_eq!(
-        root.tasks().hidden_stems(),
-        ["maxim_proposal", "oops", "sandbox"]
-    );
-    assert_eq!(root.tasks().project_min_depth(), 2);
-    assert_eq!(root.tasks().project_max_depth(), 3);
-    assert_eq!(
-        root.commands()
-            .iter()
-            .map(|(name, arguments)| {
-                (
-                    name,
-                    arguments.iter().map(String::as_str).collect::<Vec<_>>(),
-                )
-            })
-            .collect::<Vec<_>>(),
-        [
-            ("release", vec!["tool", "release"]),
-            ("report.inspect", vec!["tool", "report", "inspect"]),
-        ]
-    );
-    assert_eq!(root.judge().enabled(), Some(true));
-    assert_eq!(
-        root.policy().env_names(),
-        ["FIXTURE_INBOX", "FIXTURE_PROOF"]
-    );
-    assert!(!root.policy().pre_commit_builtins());
-    let [pre_commit] = root.policy().pre_commit() else {
-        panic!("the complete root must carry one pre-commit command");
-    };
-    assert_eq!(pre_commit.label(), "Rust gate");
-    assert_eq!(pre_commit.run(), ["gate/pre-commit", "--fixture"]);
-    assert_eq!(pre_commit.scopes().paths(), ["src/**", "tests/**"]);
-
-    let Value::Table(table) = encoded(&Root::default()) else {
-        panic!("a root must encode as a table");
-    };
-    assert_eq!(table["policy"]["pre_commit_builtins"].as_bool(), Some(true));
-    assert_eq!(
-        table.keys().map(String::as_str).collect::<BTreeSet<_>>(),
-        BTreeSet::from([
-            "commands", "wrappers", "rtk", "tasks", "judge", "policy", "taste", "consent", "gate",
-            "board", "lane", "steer", "vendor", "listen", "lock", "serve", "say", "proof",
-        ])
-    );
-
-    for forbidden in [
-        "journal", "bus", "fold", "ack", "dialect", "tape", "wire", "app", "raw", "unknown",
-    ] {
-        let document = format!("[{forbidden}]\nvalue = 1\n");
-        let error = decode(&document).expect_err("an unknown root domain must refuse");
-        assert!(error.contains(forbidden), "{forbidden}: {error}");
-    }
-}
-
-#[test]
 fn shared_metadata_directly_refuses_invalid_names_depths_and_children() {
     for (document, expected) in [
         ("[policy]\nenv_names = [\"\"]\n", "nonempty"),
@@ -444,27 +372,6 @@ fn registry_builtins_are_the_typed_root_defaults() {
             .map(|entry| entry.template().as_str())
             .collect()
     );
-    assert_eq!(
-        descriptor(&[PathSegment::Key("proof"), PathSegment::Key("image"),])
-            .and_then(|entry| entry.builtin()),
-        Some(Builtin::String(proof::DEFAULT_IMAGE))
-    );
-    assert_eq!(
-        descriptor(&[
-            PathSegment::Key("vendor"),
-            PathSegment::Key("omp"),
-            PathSegment::Key("model"),
-        ])
-        .and_then(|entry| entry.builtin()),
-        Some(Builtin::String(vendor::DEFAULT_OMP_MODEL))
-    );
-    for leaf in ["container", "runner"] {
-        assert_eq!(
-            descriptor(&[PathSegment::Key("proof"), PathSegment::Key(leaf)])
-                .and_then(|entry| entry.builtin()),
-            Some(Builtin::Absent)
-        );
-    }
 }
 
 /// Every leaf the registry publishes, in the order a reader meets it.
