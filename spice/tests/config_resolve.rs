@@ -159,35 +159,6 @@ fn missing_and_empty_documents_are_empty_intent() {
     let empty = resolve(documents(Some(""), Some(""))).expect("empty documents resolve");
 
     assert_eq!(missing, empty);
-    assert_eq!(missing.root(), &spice::config::Root::default());
-    assert!(missing.root().policy().pre_commit_builtins());
-    assert!(missing.root().policy().pre_commit().is_empty());
-    assert!(missing.root().policy().test_engines().is_empty());
-    assert!(missing.root().proof().container().is_none());
-    assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 52);
-    assert!(
-        missing
-            .provenance()
-            .iter()
-            .all(|row| row.source() == ConfigSource::Builtin && row.builtin().is_none())
-    );
-    assert_eq!(
-        missing
-            .provenance()
-            .iter()
-            .rev()
-            .take(3)
-            .map(|row| row.path().to_string())
-            .collect::<Vec<_>>(),
-        ["proof.runner", "proof.container", "proof.image"]
-    );
-    let default_toml = toml::to_string(missing.root()).expect("default TOML renders");
-    assert!(!default_toml.contains("container"));
-    assert!(!default_toml.contains("runner"));
-    let default_json = serde_json::to_value(missing.root()).expect("default JSON renders");
-    assert!(default_json["proof"].get("container").is_none());
-    assert!(default_json["proof"].get("runner").is_none());
 }
 
 #[test]

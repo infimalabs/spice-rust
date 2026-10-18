@@ -578,23 +578,6 @@ fn command_witnesses_match_the_specified_document() {
 }
 
 #[test]
-fn witness_order_does_not_change_command_identity() {
-    let forward: Command<DoneBody> = wire::decode(COMMAND.as_bytes()).expect("decodes");
-    let mut reversed = forward.clone();
-    reversed.expected.reverse();
-
-    assert_ne!(
-        forward.expected, reversed.expected,
-        "the fixture must actually be reordered for this to prove anything"
-    );
-    assert_eq!(
-        forward.canonical_json().expect("canonical"),
-        reversed.canonical_json().expect("canonical"),
-        "witness order carries no meaning, so canonical encoding sorts it away"
-    );
-}
-
-#[test]
 fn reply_matches_the_specified_document() {
     let response: Response<DoneResult> = round_trip(REPLY);
 

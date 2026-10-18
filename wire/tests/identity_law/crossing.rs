@@ -841,7 +841,7 @@ fn cover_stream_frames() {
     law("StreamFrame", &frames);
 }
 
-fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [AgentMessage; 3] {
+fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [AgentMessage; 4] {
     [
         AgentMessage {
             prose_origin: None,
@@ -889,6 +889,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             markdown_images: Vec::new(),
         },
         tool_message_sample(first_id, second_id),
+        provider_failure_message_sample(first_id, second_id),
         compaction_message_sample(first_id),
     ]
 }
@@ -929,6 +930,23 @@ fn tool_message_sample(first_id: CanonicalUuid, second_id: CanonicalUuid) -> Age
         media_quotes: Vec::new(),
         markdown_images: Vec::new(),
     }
+}
+
+/// A structured provider failure crossing with its report.
+fn provider_failure_message_sample(
+    first_id: CanonicalUuid,
+    second_id: CanonicalUuid,
+) -> AgentMessage {
+    let mut message = tool_message_sample(first_id, second_id);
+    message.activity = AgentActivityKind::Failure;
+    message.text = "capacity exhausted".to_owned();
+    message.provider_error = Some(AgentProviderError {
+        provider: Some("openai".to_owned()),
+        model: Some("gpt-5.4".to_owned()),
+        http_status: Some(429),
+        retryable: true,
+    });
+    message
 }
 
 /// A compaction row its own lane authored.

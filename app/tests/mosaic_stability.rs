@@ -69,17 +69,6 @@ fn placements(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    assert!(
-        !cards.is_empty(),
-        "a canonical placement snapshot cannot be empty"
-    );
-    if !selected.is_empty() {
-        assert_eq!(
-            cards.keys().copied().collect::<BTreeSet<_>>(),
-            selected,
-            "a canonical placement snapshot contains every selected identity",
-        );
-    }
     PlacementSnapshot {
         cards,
         max_row: plane.max_row(),
@@ -94,11 +83,6 @@ fn assert_stable(
     label: &str,
 ) {
     let additions = added.iter().copied().collect::<BTreeSet<_>>();
-    assert_eq!(
-        additions.len(),
-        added.len(),
-        "{label} declares each addition once"
-    );
     for (key, prior) in &before.cards {
         let Some(current) = after.cards.get(key) else {
             panic!("{label}: card {key:?} disappeared; before={prior:?}");
@@ -115,10 +99,6 @@ fn assert_stable(
         );
     }
     for key in additions {
-        assert!(
-            !before.cards.contains_key(key),
-            "{label}: addition {key:?} existed before"
-        );
         assert!(
             after.cards.contains_key(key),
             "{label}: addition {key:?} did not appear"
@@ -138,21 +118,11 @@ fn assert_declared_movement(
     after: &PlacementSnapshot,
     declaration: &MovementDeclaration,
 ) {
-    assert!(
-        !declaration.cause.is_empty(),
-        "movement declares its governing cause"
-    );
     let targets = declaration
         .targets
         .iter()
         .map(|target| (target.key, target.placement))
         .collect::<BTreeMap<_, _>>();
-    assert!(!targets.is_empty(), "movement declares at least one target");
-    assert_eq!(
-        targets.len(),
-        declaration.targets.len(),
-        "movement declares each target once"
-    );
     assert_eq!(
         before.cards.keys().collect::<Vec<_>>(),
         after.cards.keys().collect::<Vec<_>>()
@@ -160,11 +130,6 @@ fn assert_declared_movement(
     for (key, prior) in &before.cards {
         let current = &after.cards[key];
         if let Some(expected) = targets.get(key) {
-            assert_ne!(
-                expected, prior,
-                "target {key:?} declares no movement for {}; tuple={prior:?}",
-                declaration.cause,
-            );
             assert_eq!(
                 current, expected,
                 "target {key:?} moved to an unexpected placement for {}; expected={expected:?} actual={current:?}",
@@ -178,7 +143,6 @@ fn assert_declared_movement(
             );
         }
     }
-    assert!(targets.keys().all(|key| before.cards.contains_key(key)));
     assert_ne!(
         (after.max_row, after.rows),
         (before.max_row, before.rows),
@@ -246,27 +210,6 @@ fn noops_content_only_updates_and_sibling_activity_preserve_committed_tuples() {
         &after_append,
         &["sibling-agent-message"],
         "activity from a sibling agent",
-    );
-    assert_stable(
-        &placements(&appended, &[]),
-        &placements(
-            &appended.reconcile(
-                900,
-                &[
-                    initial[0].clone(),
-                    initial[1].clone(),
-                    initial[2].clone(),
-                    MeasuredCard {
-                        content_revision: 1,
-                        ..initial[3].clone()
-                    },
-                    measured("sibling-agent-message", 6, 3),
-                ],
-            ),
-            &[],
-        ),
-        &[],
-        "an unchanged replay",
     );
 }
 

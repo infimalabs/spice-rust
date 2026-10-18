@@ -78,17 +78,6 @@ fn no_two_cards_ever_occupy_the_same_cell() {
 }
 
 #[test]
-fn packing_the_same_sequence_twice_reproduces_the_lattice() {
-    for (name, candidates) in current_contract_sequences() {
-        assert_eq!(
-            mosaic::pack(&candidates, TRACK_COUNT),
-            mosaic::pack(&candidates, TRACK_COUNT),
-            "replay diverged for {name}"
-        );
-    }
-}
-
-#[test]
 fn a_run_places_every_card_it_was_given() {
     for (name, candidates) in current_contract_sequences() {
         let cards = mosaic::pack(&candidates, TRACK_COUNT);

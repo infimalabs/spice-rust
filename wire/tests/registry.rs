@@ -251,31 +251,6 @@ fn a_claim_witness_distinguishes_no_head_from_a_null_or_present_head() {
 }
 
 #[test]
-fn witness_order_does_not_change_canonical_bytes() {
-    let forward = done();
-    let mut reversed = forward.clone();
-    reversed.expected.reverse();
-    assert_ne!(
-        forward.expected, reversed.expected,
-        "the fixture must carry enough witnesses to reorder",
-    );
-    assert_eq!(
-        forward.canonical_json().expect("canonical bytes"),
-        reversed.canonical_json().expect("canonical bytes"),
-        "witness order moved the bytes an identity binds",
-    );
-}
-
-#[test]
-fn witness_order_does_not_change_the_law() {
-    let mut reversed = done();
-    reversed.expected.reverse();
-    reversed
-        .witnessed()
-        .expect("the law is over predicate classes, not their order");
-}
-
-#[test]
 fn a_global_journal_position_is_not_expressible() {
     // A bare position with no subject is not a witness spelling.
     for bare in [

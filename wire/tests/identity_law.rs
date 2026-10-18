@@ -46,13 +46,13 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 use wire::manifest::{ProductVersion, ReleaseTarget};
 use wire::{
-    Accepted, Actor, AgentActivityKind, AgentMediaReference, AgentMessage, Answer, AnyFact,
-    AutomaticSpeech, AutomaticSpeechKind, CanonicalUuid, ClaimDisposition, ClaimHead, Command,
-    CommandKind, CursorHead, DemoAnswer, Derived, Digest, DirectiveBadge, Disposition,
-    DoctorObservation, DoctorSubsystem, DoctorToolBounds, DoctorToolCancellation, DoctorToolMode,
-    DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, Domain, DurationWord, Envelope,
-    EnvironmentRequirement, EnvironmentRequirements, Fact, FactKind, Fault, FaultClass,
-    FindingHead, FindingState, FoldName, Hello, Instant, JournalReport, JournalRestore,
+    Accepted, Actor, AgentActivityKind, AgentMediaReference, AgentMessage, AgentProviderError,
+    Answer, AnyFact, AutomaticSpeech, AutomaticSpeechKind, CanonicalUuid, ClaimDisposition,
+    ClaimHead, Command, CommandKind, CursorHead, DemoAnswer, Derived, Digest, DirectiveBadge,
+    Disposition, DoctorObservation, DoctorSubsystem, DoctorToolBounds, DoctorToolCancellation,
+    DoctorToolMode, DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, Domain,
+    DurationWord, Envelope, EnvironmentRequirement, EnvironmentRequirements, Fact, FactKind, Fault,
+    FaultClass, FindingHead, FindingState, FoldName, Hello, Instant, JournalReport, JournalRestore,
     LaneResidency, LaneSession, LeaseHead, MessageAcknowledgement, MessageClassification,
     MessageClassificationKind, MessageHistoryCursor, MessageLocus, Name, Origin, Outcome, Overflow,
     Packed, Phase, Producer, ProofEvidence, Provenance, Refusal, ReleaseNotes, ReleaseNotesEntry,
