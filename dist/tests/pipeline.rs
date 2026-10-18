@@ -54,6 +54,7 @@ impl Builder for RecordingBuilder {
         let native = match target {
             ReleaseTarget::Aarch64AppleDarwin => macho(linked),
             ReleaseTarget::X86_64UnknownLinuxMusl => elf(linked),
+            ReleaseTarget::X86_64PcWindowsMsvc => pe(linked),
         };
         if target == ReleaseTarget::Aarch64AppleDarwin {
             self.symbols = Some(
@@ -143,6 +144,32 @@ fn elf(archive: &[u8]) -> Vec<u8> {
         header[32..40].copy_from_slice(&(bytes as u64).to_le_bytes());
         image.extend(header);
     }
+    image
+}
+
+/// A minimal PE32+ image whose `spiceapp` section holds `archive`.
+fn pe(archive: &[u8]) -> Vec<u8> {
+    const PE_HEADER: usize = 0x80;
+    const OPTIONAL_HEADER: usize = 0xf0;
+    const TABLE: usize = PE_HEADER + 4 + 20 + OPTIONAL_HEADER;
+    const RAW: usize = 0x200;
+
+    let mut image = vec![0_u8; RAW];
+    image[0..2].copy_from_slice(b"MZ");
+    image[0x3c..0x40].copy_from_slice(&(PE_HEADER as u32).to_le_bytes());
+    image[PE_HEADER..PE_HEADER + 4].copy_from_slice(b"PE\0\0");
+    let coff = PE_HEADER + 4;
+    image[coff..coff + 2].copy_from_slice(&0x8664_u16.to_le_bytes());
+    image[coff + 2..coff + 4].copy_from_slice(&1_u16.to_le_bytes());
+    image[coff + 16..coff + 18].copy_from_slice(&(OPTIONAL_HEADER as u16).to_le_bytes());
+    let optional = coff + 20;
+    image[optional..optional + 2].copy_from_slice(&0x20b_u16.to_le_bytes());
+    image[optional + 108..optional + 112].copy_from_slice(&16_u32.to_le_bytes());
+    image[TABLE..TABLE + 8].copy_from_slice(b"spiceapp");
+    image[TABLE + 8..TABLE + 12].copy_from_slice(&(archive.len() as u32).to_le_bytes());
+    image[TABLE + 16..TABLE + 20].copy_from_slice(&(archive.len() as u32).to_le_bytes());
+    image[TABLE + 20..TABLE + 24].copy_from_slice(&(RAW as u32).to_le_bytes());
+    image.extend_from_slice(archive);
     image
 }
 

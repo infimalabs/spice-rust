@@ -249,6 +249,7 @@ pub(super) fn immutable_file(path: &Path, mode: FileMode) -> Result<(), TreeErro
     });
     #[cfg(not(target_family = "unix"))]
     let permissions = {
+        let _ = mode;
         let mut permissions = fs::metadata(path)
             .map_err(|source| TreeError::io("inspecting a selected file", path, source))?
             .permissions();

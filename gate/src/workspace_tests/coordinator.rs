@@ -716,6 +716,7 @@ fn wait_after_shard_stop(
 ) -> Result<WaitOutcome, WorkspaceTestError> {
     #[cfg(not(unix))]
     {
+        let _ = policy;
         return running.wait().map_err(shard_wait_error);
     }
 

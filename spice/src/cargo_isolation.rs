@@ -9,7 +9,9 @@ use std::error::Error as StdError;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStringExt as _;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -20,6 +22,7 @@ use wire::CanonicalUuid;
 
 use crate::repository::Repository;
 
+mod platform;
 mod store;
 mod targets;
 mod windows_msvc;
@@ -676,7 +679,16 @@ fn rustup_which(
             ),
         ));
     }
-    Ok(PathBuf::from(OsString::from_vec(bytes)))
+    #[cfg(unix)]
+    let path = PathBuf::from(OsString::from_vec(bytes));
+    #[cfg(windows)]
+    let path = PathBuf::from(String::from_utf8(bytes).map_err(|error| {
+        IsolationError::new(
+            "cargo-isolation::tracked-toolchain-resolution-failed",
+            format!("{rustup:?} returned a non-UTF-8 {tool} path: {error}"),
+        )
+    })?);
+    Ok(path)
 }
 
 fn admit_native_executable(path: PathBuf, name: &str) -> Result<PathBuf, IsolationError> {
@@ -695,13 +707,24 @@ fn admit_native_executable(path: PathBuf, name: &str) -> Result<PathBuf, Isolati
             error,
         )
     })?;
-    if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+    if !metadata.is_file() || !is_executable(&resolved, &metadata) {
         return Err(IsolationError::new(
             "cargo-isolation::native-toolchain-invalid",
             format!("native {name} is not an executable file: {resolved:?}"),
         ));
     }
     Ok(resolved)
+}
+
+#[cfg(unix)]
+fn is_executable(_path: &Path, metadata: &fs::Metadata) -> bool {
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(windows)]
+fn is_executable(path: &Path, _metadata: &fs::Metadata) -> bool {
+    path.extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
 }
 
 fn require_absolute(path: &Path, label: &str) -> Result<(), IsolationError> {

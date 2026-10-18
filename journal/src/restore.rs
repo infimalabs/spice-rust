@@ -1,4 +1,5 @@
 use std::error::Error;
+#[cfg(unix)]
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs::{self, File, Metadata, OpenOptions};
@@ -16,6 +17,7 @@ use crate::{JournalReader, OpenError, VerifyError};
 
 const MANIFEST: &str = "manifest.json";
 const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
+#[cfg(unix)]
 const MAX_INVENTORY_ENTRIES: usize = JOURNAL_BACKUP_MAX_MEMBERS * 2 + 1;
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 static NEXT_CAPTURE: AtomicU64 = AtomicU64::new(0);
@@ -148,7 +150,10 @@ impl CapturedGeneration {
                 std::process::id(),
                 NEXT_CAPTURE.fetch_add(1, Ordering::Relaxed)
             ));
+            #[cfg(unix)]
             let mut builder = fs::DirBuilder::new();
+            #[cfg(not(unix))]
+            let builder = fs::DirBuilder::new();
             #[cfg(unix)]
             {
                 use std::os::unix::fs::DirBuilderExt;
@@ -866,6 +871,7 @@ fn open_file_at(parent: &File, component: &OsStr) -> io::Result<File> {
         .map_err(Into::into)
 }
 
+#[cfg(unix)]
 fn confined_error(path: &Path, source: io::Error) -> BackupVerifyError {
     if source.kind() == io::ErrorKind::NotFound {
         BackupVerifyError::Missing {
@@ -888,19 +894,12 @@ fn confined_error(path: &Path, source: io::Error) -> BackupVerifyError {
     }
 }
 
+#[cfg(unix)]
 fn is_unconfined(error: &io::Error) -> bool {
-    #[cfg(unix)]
-    {
-        error.raw_os_error().is_some_and(|code| {
-            code == rustix::io::Errno::LOOP.raw_os_error()
-                || code == rustix::io::Errno::NOTDIR.raw_os_error()
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = error;
-        false
-    }
+    error.raw_os_error().is_some_and(|code| {
+        code == rustix::io::Errno::LOOP.raw_os_error()
+            || code == rustix::io::Errno::NOTDIR.raw_os_error()
+    })
 }
 
 fn require_regular(path: &Path, metadata: &Metadata) -> Result<(), BackupVerifyError> {

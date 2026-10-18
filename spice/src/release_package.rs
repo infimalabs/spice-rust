@@ -752,9 +752,10 @@ fn package_bytes(
     manifest_identity: &Digest,
     manifest: &ReleaseManifest,
 ) -> Result<Vec<u8>, PackageFailure> {
-    const TARGETS: [ReleaseTarget; 2] = [
+    const TARGETS: [ReleaseTarget; 3] = [
         ReleaseTarget::Aarch64AppleDarwin,
         ReleaseTarget::X86_64UnknownLinuxMusl,
+        ReleaseTarget::X86_64PcWindowsMsvc,
     ];
     if manifest.version != RELEASE_MANIFEST_VERSION || manifest.targets.len() != TARGETS.len() {
         return Err(PackageFailure::Moved(

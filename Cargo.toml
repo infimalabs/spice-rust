@@ -11,6 +11,7 @@ members = [
     "dialect",
     "dist",
     "gate",
+    "hosted-windows",
     "journal",
     "lane",
     "listen",

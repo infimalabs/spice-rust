@@ -351,7 +351,10 @@ fn validate_workspace_parent(path: &Path, owner: u32) -> Result<(), TreeError> {
     #[cfg(target_family = "unix")]
     let valid = metadata.is_dir() && metadata.uid() == owner && metadata.mode() & 0o777 == 0o700;
     #[cfg(not(target_family = "unix"))]
-    let valid = metadata.is_dir();
+    let valid = {
+        let _ = owner;
+        metadata.is_dir()
+    };
     if valid {
         return Ok(());
     }

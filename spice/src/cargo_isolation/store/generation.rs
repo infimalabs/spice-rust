@@ -2,7 +2,10 @@
 
 use std::fs::File;
 use std::io::Read as _;
+#[cfg(unix)]
 use std::os::unix::fs::symlink;
+#[cfg(windows)]
+use std::os::windows::fs::symlink_dir as symlink;
 
 use super::*;
 
@@ -124,8 +127,8 @@ fn publish_packages(
     let mut directories = read_directory(vendor)?;
     directories.sort_by(|left, right| {
         left.file_name()
-            .as_bytes()
-            .cmp(right.file_name().as_bytes())
+            .as_encoded_bytes()
+            .cmp(right.file_name().as_encoded_bytes())
     });
     let mut records = Vec::with_capacity(directories.len());
     for directory in directories {
@@ -442,8 +445,8 @@ fn hash_directory(
     let mut entries = read_directory(&directory)?;
     entries.sort_by(|left, right| {
         left.file_name()
-            .as_bytes()
-            .cmp(right.file_name().as_bytes())
+            .as_encoded_bytes()
+            .cmp(right.file_name().as_encoded_bytes())
     });
     for entry in entries {
         let name = entry.file_name();
@@ -451,8 +454,8 @@ fn hash_directory(
         let metadata = fs::symlink_metadata(entry.path()).map_err(|error| {
             IsolationError::io("cargo-isolation::package-unreadable", &entry.path(), error)
         })?;
-        hasher.update(&(name.as_bytes().len() as u64).to_le_bytes());
-        hasher.update(name.as_bytes());
+        hasher.update(&(name.as_encoded_bytes().len() as u64).to_le_bytes());
+        hasher.update(name.as_encoded_bytes());
         if metadata.is_dir() {
             hasher.update(b"d");
             hash_directory(root, &child, hasher)?;

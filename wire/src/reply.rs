@@ -517,7 +517,7 @@ pub struct ProofEvidence {
     pub replay: Digest,
 }
 
-/// One post-proof two-target manifest recognized by the resident.
+/// One post-proof all-target manifest recognized by the resident.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SealedManifest {
@@ -601,9 +601,9 @@ pub struct ReleasePlan {
     pub source_commit: String,
     /// Exact release commit all external refs must name.
     pub release_commit: String,
-    /// Canonical identity of the sealed two-target manifest.
+    /// Canonical identity of the sealed all-target manifest.
     pub manifest: Digest,
-    /// Source identity shared by both target payloads.
+    /// Source identity shared by every target payload.
     pub source: Digest,
     /// Identity of the exact curated release-note bytes approved by this plan.
     pub notes: Digest,

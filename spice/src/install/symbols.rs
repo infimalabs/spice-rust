@@ -7,7 +7,10 @@
 
 use std::fs;
 use std::io::{self, Read};
-use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt as _;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -135,12 +138,20 @@ impl Source {
         let payload = admitted.value();
         let metadata = match (payload.target, payload.symbols.as_ref()) {
             (ReleaseTarget::Aarch64AppleDarwin, Some(metadata)) => metadata,
-            (ReleaseTarget::X86_64UnknownLinuxMusl, None) => return Ok(None),
+            (ReleaseTarget::X86_64UnknownLinuxMusl | ReleaseTarget::X86_64PcWindowsMsvc, None) => {
+                return Ok(None);
+            }
             (ReleaseTarget::Aarch64AppleDarwin, None) => {
                 return Err(refused(&payload_path, "names no macOS symbol artifact"));
             }
             (ReleaseTarget::X86_64UnknownLinuxMusl, Some(_)) => {
                 return Err(refused(&payload_path, "names a symbol artifact for Linux"));
+            }
+            (ReleaseTarget::X86_64PcWindowsMsvc, Some(_)) => {
+                return Err(refused(
+                    &payload_path,
+                    "names a symbol artifact for Windows",
+                ));
             }
         };
         let binary_bytes = super::read_binary(binary)?;
@@ -361,10 +372,20 @@ fn worktree_git_state(repository: &Repository) -> Option<(String, bool)> {
 
 /// Whether one regular file stayed bound to the path across the whole read.
 fn settled_in_place(planned: &fs::Metadata, opened: &fs::Metadata, settled: &fs::Metadata) -> bool {
-    let same = |left: &fs::Metadata, right: &fs::Metadata| {
-        left.dev() == right.dev() && left.ino() == right.ino() && left.len() == right.len()
-    };
-    same(planned, opened) && same(opened, settled) && settled.file_type().is_file()
+    same_file(planned, opened) && same_file(opened, settled) && settled.file_type().is_file()
+}
+
+#[cfg(unix)]
+fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.dev() == right.dev() && left.ino() == right.ino() && left.len() == right.len()
+}
+
+#[cfg(windows)]
+fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
+    left.creation_time() == right.creation_time()
+        && left.last_write_time() == right.last_write_time()
+        && left.file_size() == right.file_size()
+        && left.file_attributes() == right.file_attributes()
 }
 
 /// Read the artifact through one handle and prove it never moved beneath it.
@@ -401,13 +422,14 @@ fn read_artifact(
     if !settled_in_place(&planned, &opened, &settled) {
         return Err(refused(path, "moved while it was read"));
     }
-    if opened.mode() & 0o777 != DATA_MODE
+    if !has_data_mode(&opened)
         || metadata.mode != DATA_MODE
         || bytes.len() as u64 != metadata.bytes
         || Digest::compute(Domain::DistArtifact, &bytes) != metadata.digest
     {
         return Err(refused(path, "differs from the authenticated payload"));
     }
+
     let artifact: MacSymbolArtifact = wire::decode(&bytes)
         .map_err(|error| InstallError::InvalidRecord(format!("symbol artifact: {error}")))?;
     if artifact.version != MAC_SYMBOL_ARTIFACT_VERSION
@@ -419,6 +441,15 @@ fn read_artifact(
         return Err(refused(path, "is not a canonical current symbol artifact"));
     }
     Ok(artifact)
+}
+#[cfg(unix)]
+fn has_data_mode(metadata: &fs::Metadata) -> bool {
+    metadata.mode() & 0o777 == DATA_MODE
+}
+
+#[cfg(windows)]
+fn has_data_mode(metadata: &fs::Metadata) -> bool {
+    !metadata.permissions().readonly()
 }
 
 /// Load commands of a thin little-endian 64-bit Mach-O image, in order.

@@ -41,6 +41,11 @@ fn input(action: ReleaseAction) -> PlanInput {
                 artifact: digest(Domain::DistArtifact, b"linux native"),
                 receipt: digest(Domain::ProofReceiptV3, b"linux proof"),
             },
+            SealedTarget {
+                target: "x86_64-pc-windows-msvc".to_owned(),
+                artifact: digest(Domain::DistArtifact, b"windows native"),
+                receipt: digest(Domain::ProofReceiptV3, b"windows proof"),
+            },
         ],
         observations: ReleaseObservations {
             head: SOURCE.to_owned(),

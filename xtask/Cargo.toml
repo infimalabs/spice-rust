@@ -10,6 +10,7 @@ publish.workspace = true
 atomic = { path = "../atomic" }
 dist = { path = "../dist" }
 gate = { path = "../gate" }
+hosted-windows = { path = "../hosted-windows" }
 proof = { path = "../proof" }
 jiff = "0.2"
 serde = { version = "1.0.229", features = ["derive"] }

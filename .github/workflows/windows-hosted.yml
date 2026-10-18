@@ -1,0 +1,110 @@
+name: Spice hosted Windows execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      request:
+        description: Canonical Spice hosted-execution request JSON
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  execute:
+    name: Disposable x86-64 Windows execution
+    runs-on: windows-2025
+    timeout-minutes: 75
+    steps:
+      - name: Check out exact source ref
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Materialize request
+        id: request
+        shell: pwsh
+        env:
+          SPICE_HOSTED_REQUEST: ${{ inputs.request }}
+        run: |
+          $requestPath = Join-Path $env:RUNNER_TEMP 'request.json'
+          [IO.File]::WriteAllText(
+            $requestPath,
+            $env:SPICE_HOSTED_REQUEST,
+            [Text.UTF8Encoding]::new($false)
+          )
+          $request = Get-Content -Raw -LiteralPath $requestPath | ConvertFrom-Json
+          "challenge=$($request.challenge)" >> $env:GITHUB_OUTPUT
+
+      - name: Install exact Rust and release tools
+        shell: pwsh
+        run: |
+          $rustup = "$env:USERPROFILE\.cargo\bin\rustup.exe"
+          & $rustup toolchain install 1.97.1-x86_64-pc-windows-msvc --profile minimal --no-self-update
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $rustup target add --toolchain 1.97.1-x86_64-pc-windows-msvc wasm32-unknown-unknown
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cargo = "$env:USERPROFILE\.rustup\toolchains\1.97.1-x86_64-pc-windows-msvc\bin\cargo.exe"
+          $env:RUSTC = "$env:USERPROFILE\.rustup\toolchains\1.97.1-x86_64-pc-windows-msvc\bin\rustc.exe"
+          & $cargo install --locked --root C:\spice-hosted-tools --version 0.21.14 trunk
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $cargo install --locked --root C:\spice-hosted-tools --version 27.1.0 cargo-mutants
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build repository-owned guest
+        shell: pwsh
+        env:
+          CARGO_HOME: ${{ runner.temp }}\bootstrap-cargo
+          CARGO_TARGET_DIR: ${{ runner.temp }}\bootstrap-target
+        run: |
+          $cargo = "$env:USERPROFILE\.rustup\toolchains\1.97.1-x86_64-pc-windows-msvc\bin\cargo.exe"
+          & $cargo build --locked --release --package hosted-windows --bin hosted-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $cargo vendor --locked --versioned-dirs "$env:RUNNER_TEMP\vendor" | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Sign repository-owned runner
+        uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd
+        with:
+          subject-path: ${{ runner.temp }}\bootstrap-target\release\hosted-windows.exe
+
+      - name: Execute sealed request
+        shell: pwsh
+        env:
+          SPICE_HOSTED_VENDOR: ${{ runner.temp }}\vendor
+        run: |
+          $runner = Join-Path $env:RUNNER_TEMP 'bootstrap-target\release\hosted-windows.exe'
+          $request = Join-Path $env:RUNNER_TEMP 'request.json'
+          $result = Join-Path $env:RUNNER_TEMP 'result.json'
+          & $runner $request $result
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Sign result with GitHub OIDC identity
+        uses: actions/attest-build-provenance@62fc1d596301d0ab9914e1fec14dc5c8d93f65cd
+        with:
+          subject-path: ${{ runner.temp }}\result.json
+
+      - name: Publish immutable result, runner, and staged output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: spice-hosted-${{ steps.request.outputs.challenge }}
+          path: |
+            ${{ runner.temp }}\result.json
+            ${{ runner.temp }}\bootstrap-target\release\hosted-windows.exe
+            ${{ runner.temp }}\spice-hosted-stage-${{ steps.request.outputs.challenge }}
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Tear down disposable files
+        if: always()
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$env:RUNNER_TEMP\bootstrap-cargo"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$env:RUNNER_TEMP\bootstrap-target"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$env:RUNNER_TEMP\vendor"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$env:RUNNER_TEMP\spice-hosted-*"
+          Remove-Item -Force -ErrorAction SilentlyContinue "$env:RUNNER_TEMP\request.json"
+          Remove-Item -Force -ErrorAction SilentlyContinue "$env:RUNNER_TEMP\result.json"

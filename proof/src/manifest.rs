@@ -18,9 +18,10 @@ use crate::{Battery, EvidenceError, PayloadError, admit, verify_stored};
 
 const DATA_MODE: u32 = 0o644;
 const MANIFEST_POINTER: &str = "release/manifest.json";
-const TARGETS: [ReleaseTarget; 2] = [
+const TARGETS: [ReleaseTarget; 3] = [
     ReleaseTarget::Aarch64AppleDarwin,
     ReleaseTarget::X86_64UnknownLinuxMusl,
+    ReleaseTarget::X86_64PcWindowsMsvc,
 ];
 
 /// One exact payload and detached receipt submitted for release.
@@ -330,7 +331,8 @@ fn admit_target_receipt(
 
 fn target_environment_matches(entry: &ReleaseManifestTarget, payload: &TargetPayload) -> bool {
     match (&entry.environment, entry.target) {
-        (ProofEnvironment::Native { .. }, ReleaseTarget::Aarch64AppleDarwin) => true,
+        (ProofEnvironment::Native { .. }, ReleaseTarget::Aarch64AppleDarwin)
+        | (ProofEnvironment::HostedWindows { .. }, ReleaseTarget::X86_64PcWindowsMsvc) => true,
         (ProofEnvironment::Oci { image }, ReleaseTarget::X86_64UnknownLinuxMusl) => {
             image.as_str() == payload.pins.proof_container
         }
@@ -437,7 +439,7 @@ fn read_regular(
 ///
 /// # Errors
 ///
-/// Refuses any shape other than both supported targets in declaration order,
+/// Refuses any shape other than all supported targets in declaration order,
 /// any payload or proof defect, or source disagreement before publication.
 /// Immutable payload, receipt, and manifest objects are all attempted before
 /// the sole mutable pointer.
@@ -522,7 +524,7 @@ where
 
     let manifest = ReleaseManifest {
         version: RELEASE_MANIFEST_VERSION,
-        source: source.expect("two admitted entries establish a source"),
+        source: source.expect("three admitted entries establish a source"),
         targets,
     };
     let bytes =
@@ -620,7 +622,7 @@ impl fmt::Display for ManifestError {
         match self {
             Self::EntryCount(count) => write!(
                 formatter,
-                "release manifest requires exactly two target proofs, found {count}"
+                "release manifest requires exactly three target proofs, found {count}"
             ),
             Self::Payload { index, source } => {
                 write!(
@@ -796,7 +798,7 @@ impl fmt::Display for ManifestAdmissionError {
             }
             Self::EntryCount(count) => write!(
                 formatter,
-                "release manifest requires exactly two targets, found {count}"
+                "release manifest requires exactly three targets, found {count}"
             ),
             Self::TargetOrder {
                 index,

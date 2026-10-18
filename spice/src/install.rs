@@ -21,6 +21,10 @@ mod fold;
 mod git_hooks;
 mod handle;
 mod hook_activation;
+#[cfg(unix)]
+mod maintenance;
+#[cfg(windows)]
+#[path = "install/maintenance_windows.rs"]
 mod maintenance;
 mod model;
 mod path;
@@ -112,6 +116,7 @@ const RECORD_NAME: &str = "install.json";
 const RECORD_PATH: &str = ".spice-rs/install.json";
 const REVERSAL_PATH: &str = ".spice-rs/install-reversals";
 const RECORD_MODE: u32 = 0o600;
+#[cfg(unix)]
 const DIRECTORY_MODE: u32 = 0o700;
 const DATA_MODE: u32 = 0o644;
 const EXECUTABLE_MODE: u32 = 0o755;
