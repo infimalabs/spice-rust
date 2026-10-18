@@ -365,6 +365,17 @@ confirm before discarding, and undoing back to the opening set removes the
 confirmation. Clicking empty canvas only clears selection. Apply commits
 without a prompt, and dirty annotation work joins the page-unload warning.
 
+Annotation modifiers act live: pressing or releasing one mid-gesture updates
+the mark without moving the pointer. While drawing a line or arrow, or dragging
+one of its ends, Option or Alt routes it as an elbow and Command or Control as a
+curve; Shift snaps a straight mark to 45 degrees and mirrors a bent one, so a
+curve bows to the other side of its chord and an elbow turns along its other
+axis. M mirrors a selected curve or elbow as one undoable edit. The mirrored
+bend survives moves, undo, redo, and export. Shift draws or resizes a rectangle
+as a square, and Option or Alt draws one from its centre. Dragging a mark with
+Shift keeps it to horizontal or vertical travel, and Option or Alt drags a copy
+while the original stays in place.
+
 ## Message cards
 
 Every attributable prose run between nested quote blocks is one speaker-owned

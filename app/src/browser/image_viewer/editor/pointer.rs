@@ -41,16 +41,35 @@ pub(super) fn cancel(history: &mut History, gesture: &mut Option<Gesture>) {
     }
 }
 
-/// The route a line or arrow takes while these modifiers are held: Alt or
-/// Option turns elbows, Command or Control bends a curve, and otherwise the
-/// toolbar's route applies.
-fn route_for(event: &PointerEvent, chosen: Route) -> Route {
-    if event.alt_key() {
-        Route::Elbow
-    } else if event.meta_key() || event.ctrl_key() {
-        Route::Curve
-    } else {
-        chosen
+/// The modifier keys a mouse or pointer event reports held.
+fn held(event: &MouseEvent) -> Held {
+    Held {
+        shift: event.shift_key(),
+        option: event.alt_key(),
+        command: event.meta_key() || event.ctrl_key(),
+    }
+}
+
+/// Rebuild the marks for the gesture's current pointer and `held` keys.
+fn replay(history: &mut History, gesture: &Gesture, held: Held, dimensions: (u32, u32)) {
+    let size = (dimensions.0 as i32, dimensions.1 as i32);
+    let selected = gesture.edit.apply(
+        &gesture.before,
+        &mut history.shapes,
+        gesture.press,
+        gesture.point,
+        held,
+        size,
+    );
+    history.selected = Some(selected);
+}
+
+/// A modifier key went down or up: the gesture under way, if any, takes the
+/// keys now held without waiting for the pointer to move.
+pub(super) fn modifiers(session: &Session, held: Held, dimensions: (u32, u32)) {
+    if let Some(gesture) = session.gesture.borrow().as_ref() {
+        replay(&mut session.history.borrow_mut(), gesture, held, dimensions);
+        session.repaint.emit(());
     }
 }
 
@@ -73,22 +92,14 @@ fn hit(history: &History, event: &PointerEvent) -> (Option<usize>, Option<String
 /// What a press begins: an edit of the mark it hit when the Select tool is
 /// active or a handle was grabbed, otherwise a new mark of the drawing tool.
 /// A Select press on bare image only clears the selection and begins nothing.
-fn begin(
-    history: &mut History,
-    tool: Tool,
-    pen: Pen,
-    event: &PointerEvent,
-    point: Point,
-) -> Option<(Motion, Vec<Shape>)> {
+fn begin(history: &mut History, tool: Tool, pen: Pen, event: &PointerEvent) -> Option<Edit> {
     let (index, handle) = hit(history, event);
     if let Some(index) = index.filter(|_| tool == Tool::Select || handle.is_some()) {
-        history.selected = Some(index);
-        let motion = match handle.as_deref() {
-            Some("start") => Motion::Start(index),
-            Some("end") => Motion::End(index),
-            _ => Motion::Move(index, history.shapes[index].clone(), point),
-        };
-        return Some((motion, history.shapes.clone()));
+        return Some(match handle.as_deref() {
+            Some("start") => Edit::Start(index),
+            Some("end") => Edit::End(index),
+            _ => Edit::Move(index),
+        });
     }
     let kind = match tool {
         Tool::Select | Tool::Text => {
@@ -99,17 +110,11 @@ fn begin(
         Tool::Line => Kind::Line,
         Tool::Arrow => Kind::Arrow,
     };
-    let before = history.shapes.clone();
-    let index = history.shapes.len();
-    history.shapes.push(Shape::new(
+    Some(Edit::Draw {
         kind,
-        route_for(event, pen.route),
-        pen.color,
-        point,
-        point,
-    ));
-    history.selected = Some(index);
-    Some((Motion::Draw(index), before))
+        route: pen.route,
+        color: pen.color,
+    })
 }
 
 pub(super) fn down(
@@ -151,69 +156,47 @@ pub(super) fn down(
             return;
         }
     }
-    let begun = begin(&mut session.history.borrow_mut(), tool, pen, event, point);
-    if let Some((motion, before)) = begun {
+    let mut history = session.history.borrow_mut();
+    if let Some(edit) = begin(&mut history, tool, pen, event) {
         if let Some(element) = canvas.svg.cast::<web_sys::Element>() {
             let _ = element.set_pointer_capture(event.pointer_id());
         }
-        *session.gesture.borrow_mut() = Some(Gesture {
+        let gesture = Gesture {
             pointer: event.pointer_id(),
-            motion,
-            before,
-            route: pen.route,
-        });
+            edit,
+            before: history.shapes.clone(),
+            press: point,
+            point,
+        };
+        replay(&mut history, &gesture, held(event), canvas.dimensions);
+        *session.gesture.borrow_mut() = Some(gesture);
     }
+    drop(history);
     session.repaint.emit(());
 }
 
 pub(super) fn moved(event: &PointerEvent, canvas: &DrawingSurface, session: &Session) {
-    let gesture = session.gesture.borrow();
-    let Some(gesture) = gesture
-        .as_ref()
-        .filter(|gesture| gesture.pointer == event.pointer_id())
-    else {
-        return;
-    };
-    let Some(point) = position(canvas, event, true) else {
-        return;
-    };
-    event.prevent_default();
-    let mut history = session.history.borrow_mut();
-    match &gesture.motion {
-        Motion::Draw(index) => {
-            let shape = &mut history.shapes[*index];
-            if shape.kind.routed() {
-                shape.route = route_for(event, gesture.route);
-            }
-            shape.end = steered(event, shape, shape.start, point);
-        }
-        Motion::End(index) => {
-            let shape = &mut history.shapes[*index];
-            shape.end = steered(event, shape, shape.start, point);
-        }
-        Motion::Start(index) => {
-            let shape = &mut history.shapes[*index];
-            shape.start = steered(event, shape, shape.end, point);
-        }
-        Motion::Move(index, original, start) => {
-            history.shapes[*index] = original.translated(
-                point.x - start.x,
-                point.y - start.y,
-                canvas.dimensions.0 as i32,
-                canvas.dimensions.1 as i32,
-            )
-        }
+    {
+        let mut gesture = session.gesture.borrow_mut();
+        let Some(gesture) = gesture
+            .as_mut()
+            .filter(|gesture| gesture.pointer == event.pointer_id())
+        else {
+            return;
+        };
+        let Some(point) = position(canvas, event, true) else {
+            return;
+        };
+        event.prevent_default();
+        gesture.point = point;
+        replay(
+            &mut session.history.borrow_mut(),
+            gesture,
+            held(event),
+            canvas.dimensions,
+        );
     }
     session.repaint.emit(());
-}
-
-/// Shift holds a straight line or arrow to 45-degree steps from its fixed end.
-fn steered(event: &PointerEvent, shape: &Shape, anchor: Point, point: Point) -> Point {
-    if event.shift_key() && shape.kind.routed() && shape.route == Route::Straight {
-        snapped(anchor, point)
-    } else {
-        point
-    }
 }
 
 /// Release ends the gesture as one undoable edit; a mark too small to see is

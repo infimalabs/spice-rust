@@ -13,6 +13,10 @@ pub(super) fn handle(
         return;
     }
     let key = event.key();
+    if modifier(&key) {
+        pointer::modifiers(session, held(event), dimensions);
+        return;
+    }
     // One physical Escape or Enter performs one layer of work. Key repeat must
     // not clear a selection and then immediately cancel the whole editor, or
     // start more than one export.
@@ -53,6 +57,26 @@ pub(super) fn handle(
         event.prevent_default();
         event.stop_propagation();
         session.repaint.emit(());
+    }
+}
+
+/// A key released while the editor has focus: only a modifier matters, and only
+/// to the gesture under way.
+pub(super) fn released(event: &KeyboardEvent, session: &Session, dimensions: (u32, u32)) {
+    if modifier(&event.key()) {
+        pointer::modifiers(session, held(event), dimensions);
+    }
+}
+
+fn modifier(key: &str) -> bool {
+    matches!(key, "Shift" | "Alt" | "Control" | "Meta")
+}
+
+fn held(event: &KeyboardEvent) -> Held {
+    Held {
+        shift: event.shift_key(),
+        option: event.alt_key(),
+        command: event.meta_key() || event.ctrl_key(),
     }
 }
 
@@ -103,8 +127,9 @@ fn shortcut(key: &str, modified: bool, alt: bool) -> Option<Shortcut> {
 }
 
 /// Escape abandons the gesture or selection, Mod+Z / Mod+Shift+Z / Mod+Y walk
-/// history, Delete or Backspace removes the selection, and arrows nudge it by
-/// one pixel (ten with Shift). Returns whether the key was an editor command.
+/// history, Delete or Backspace removes the selection, M mirrors a selected
+/// bent line or arrow, and arrows nudge the selection by one pixel (ten with
+/// Shift). Returns whether the key was an editor command.
 fn command(
     event: &KeyboardEvent,
     history: &mut History,
@@ -129,6 +154,17 @@ fn command(
     } else if matches!(key.as_str(), "Delete" | "Backspace") && history.selected.is_some() {
         pointer::cancel(history, gesture);
         history.delete();
+    } else if gesture.is_none()
+        && !modified
+        && !event.alt_key()
+        && key.eq_ignore_ascii_case("m")
+        && let Some(index) = history
+            .selected
+            .filter(|index| history.shapes[*index].route.bends())
+    {
+        let before = history.shapes.clone();
+        history.shapes[index].mirrored = !history.shapes[index].mirrored;
+        history.commit(before);
     } else if gesture.is_none()
         && let Some(index) = history.selected
         && let Some((dx, dy)) = nudge(&key, if event.shift_key() { 10 } else { 1 })

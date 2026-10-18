@@ -1,6 +1,6 @@
 use super::*;
 use crate::composer_drafts::DraftImage;
-use crate::image_annotation::{Color, Editor as History, Kind, Point, Route, Shape, snapped};
+use crate::image_annotation::{Color, Edit, Editor as History, Held, Kind, Point, Route, Shape};
 use std::cell::{Cell, RefCell};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
@@ -28,21 +28,16 @@ struct Pen {
     color: Color,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-enum Motion {
-    Draw(usize),
-    Move(usize, Shape, Point),
-    Start(usize),
-    End(usize),
-}
-
+/// One pointer gesture, replayed from the marks `before` it whenever the
+/// pointer moves or a modifier key changes.
 #[derive(PartialEq, Eq)]
 struct Gesture {
     pointer: i32,
-    motion: Motion,
+    edit: Edit,
     before: Vec<Shape>,
-    /// The toolbar route when the press began; modifiers override it live.
-    route: Route,
+    /// Where the press began and where the pointer is now, in image pixels.
+    press: Point,
+    point: Point,
 }
 
 pub(super) struct Applied {
@@ -443,6 +438,12 @@ pub(super) fn editor(props: &EditorProps) -> Html {
             keys::handle(&event, session, *dimensions, *idle, commands);
         },
     );
+    let released = use_callback(
+        (session.clone(), dimensions),
+        |event: KeyboardEvent, (session, dimensions)| {
+            keys::released(&event, session, *dimensions);
+        },
+    );
     let actions = view::Actions {
         tool: tool_command,
         undo: undo_command,
@@ -460,9 +461,9 @@ pub(super) fn editor(props: &EditorProps) -> Html {
         use_effect_with(dirty, move |dirty| ondirty.emit(*dirty));
     }
     html! {
-        <div class="image-annotation-editor" onkeydown={keyboard}>
+        <div class="image-annotation-editor" onkeydown={keyboard} onkeyup={released}>
             {view::toolbar(*tool, *pen, *busy, ready, &history, actions)}
-            <div class="image-annotation-stage" ref={surface} tabindex="0" role="group" aria-label="Annotation canvas. V selects; R draws rectangles; L draws lines; A draws arrows; T places text; G cycles routing; 1 through 6 choose colours. Select marks to move; drag handles to adjust; arrow keys move the selected mark; Enter edits a selected label. While drawing a line or arrow, Shift snaps to 45 degrees, Alt turns elbows, and Command or Control curves.">
+            <div class="image-annotation-stage" ref={surface} tabindex="0" role="group" aria-label="Annotation canvas. V selects; R draws rectangles; L draws lines; A draws arrows; T places text; G cycles routing; M mirrors a selected curve or elbow; 1 through 6 choose colours. Select marks to move; drag handles to adjust; arrow keys move the selected mark; Enter edits a selected label. While drawing a line or arrow or dragging one of its ends, Alt or Option turns elbows, Command or Control curves, and Shift snaps a straight one to 45 degrees or mirrors a bent one. Shift draws or resizes a rectangle as a square, and Alt or Option draws it from its centre. While moving a mark, Shift keeps it to one axis and Alt or Option moves a copy.">
                 if ready {
                     <svg ref={svg} class={classes!("image-annotation-svg", (*tool != Tool::Select).then_some("image-annotation-svg--draw"))} viewBox={format!("0 0 {} {}", dimensions.0, dimensions.1)} preserveAspectRatio="xMidYMid meet"
                         onpointerdown={on.down} onpointermove={on.moved} onpointerup={on.up} onpointercancel={on.interrupted.clone()} onlostpointercapture={on.interrupted} onclick={on.backdrop} ondblclick={on.reopen} oncontextmenu={Callback::from(|event: MouseEvent| event.prevent_default())}>

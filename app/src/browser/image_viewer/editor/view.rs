@@ -47,11 +47,17 @@ pub(super) fn toolbar(
     html! {
         <div class="image-lightbox-actions image-annotation-controls" role="toolbar" aria-label="Image annotation tools">
             <span class="image-annotation-tools image-annotation-editing app-control-rail app-overlay-control">
-                {for [(Tool::Select, "Select", "V"), (Tool::Rectangle, "Rectangle", "R"), (Tool::Line, "Line", "L"), (Tool::Arrow, "Arrow", "A"), (Tool::Text, "Text", "T")].into_iter().map(|(value, label, shortcut)| {
+                {for [
+                    (Tool::Select, "Select", "V", "; Shift moves along one axis, Option or Alt moves a copy"),
+                    (Tool::Rectangle, "Rectangle", "R", "; Shift draws a square, Option or Alt draws from the centre"),
+                    (Tool::Line, "Line", "L", "; Option or Alt elbows, Command or Control curves, Shift snaps or mirrors"),
+                    (Tool::Arrow, "Arrow", "A", "; Option or Alt elbows, Command or Control curves, Shift snaps or mirrors"),
+                    (Tool::Text, "Text", "T", ""),
+                ].into_iter().map(|(value, label, shortcut, modifiers)| {
                     let choose = actions.tool.reform(move |_: MouseEvent| value);
-                    html! { <button type="button" aria-pressed={(tool == value).to_string()} aria-keyshortcuts={shortcut} title={format!("{label} ({shortcut})")} disabled={busy} onclick={choose}>{label}</button> }
+                    html! { <button type="button" aria-pressed={(tool == value).to_string()} aria-keyshortcuts={shortcut} title={format!("{label} ({shortcut}){modifiers}")} disabled={busy} onclick={choose}>{label}</button> }
                 })}
-                <button type="button" class="image-annotation-route" disabled={busy || !routing} aria-label={format!("Route: {}", shown.label())} aria-keyshortcuts="G" title="Cycle route (G): Straight, Elbow (Alt), or Curve (Command or Control); Shift snaps straight routes to 45 degrees" onclick={actions.route}>{shown.label()}</button>
+                <button type="button" class="image-annotation-route" disabled={busy || !routing} aria-label={format!("Route: {}", shown.label())} aria-keyshortcuts="G" title="Cycle route (G): Straight, Elbow (Option or Alt), or Curve (Command or Control); Shift snaps straight routes to 45 degrees and mirrors bent ones, and M mirrors a selected bent mark" onclick={actions.route}>{shown.label()}</button>
                 <span class="image-annotation-palette" role="group" aria-label="Mark colour">{for swatches}</span>
                 <button type="button" disabled={busy || !history.can_undo()} aria-keyshortcuts="Meta+Z Control+Z" title="Undo (Command or Control+Z)" onclick={actions.undo}>{"Undo"}</button>
                 <button type="button" disabled={busy || !history.can_redo()} aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Meta+Y Control+Y" title="Redo (Shift+Command or Control+Z; Command or Control+Y)" onclick={actions.redo}>{"Redo"}</button>
