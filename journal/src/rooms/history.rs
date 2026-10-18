@@ -8,7 +8,7 @@ use wire::{
 };
 
 use super::{
-    Authority, Change, CoordinationRecord, Direction, Projection, Refusal, conversation,
+    Authority, Change, CoordinationRecord, Direction, Projection, Refusal, claims, conversation,
     dependencies, evidence, fold, relevance,
 };
 
@@ -22,6 +22,7 @@ pub(crate) struct History {
     dependencies: dependencies::ReplayDependencies,
     task_statements: BTreeMap<String, Seq>,
     active_claims: BTreeMap<String, Seq>,
+    acknowledgements: claims::Acknowledgements,
     transcripts: BTreeMap<String, TranscriptSourceHead>,
     /// Proposal head position to the actor that recorded it.
     authors: BTreeMap<u64, Actor>,
@@ -40,6 +41,9 @@ impl History {
         let mut history = Self::default();
         let mut refusals = Vec::new();
         for (seq, actor, at, fact) in facts {
+            if let Some(task) = history.acknowledgements.observe(actor, at, fact) {
+                history.set_active_claim(&task, Some(seq));
+            }
             // A proposal's author decides whether later coverage is
             // independent of it.
             if fact.read::<DesignProposed>().is_some() {
