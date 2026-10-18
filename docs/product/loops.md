@@ -563,11 +563,13 @@ owns each rule summarized here.
   The request quotes the first substantive description sentence and an
   in-order bounded prefix of whole open questions. One contribution or
   `spice room leave --clause` in that room answers the request. A changed or
-  closed Design, replaced target session or context, lost supporting source,
-  or standing change away from open passive releases it; unrelated journal
-  writes do not. The request grants no claim, starts no work, and adds no
-  workflow state; `spice room awareness HANDLE` shows its exact opportunity,
-  evidence, statement, recipient session, context boundary, and matched terms.
+  closed Design, replaced target session, lost supporting source, or standing
+  change away from open passive releases it; a compaction does not, though one
+  landing between selection and recording refuses the recording. Unrelated
+  journal writes do not release it. The request grants no claim, starts no
+  work, and adds no workflow state; `spice room awareness HANDLE` shows its
+  exact opportunity, evidence, statement, recipient session, context boundary,
+  and matched terms.
 - **Design maturity.** One bounded projection per Design folds admitted
   requests and typed contributions in journal order. It reports contribution
   counts by kind, distinct contributing lanes, requested reach, and
