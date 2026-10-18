@@ -247,6 +247,47 @@ impl Lanes {
         commit(&self.bus, accounting).expect("accounting commits");
     }
 
+    /// Replace one lane's accounted transcript source without changing its
+    /// vendor session.
+    pub(super) fn replace_transcript_source(&self, lane: u8) -> CanonicalUuid {
+        let mut head = self
+            .bus
+            .read(move |read| read.transcript_source_heads(&test_uuid(lane)))
+            .expect("transcript sources read")
+            .into_iter()
+            .next()
+            .expect("declared lane has a transcript source")
+            .into_body();
+        let superseded = head.source;
+        let source = test_uuid(99);
+        head.source = source;
+        let mut accounting = write(Actor::Spice, self.epoch, Producer::ResidentRecognition)
+            .expect("replacement accounting write starts");
+        let ingested = accounting
+            .fact(
+                wire::body::JournalIngested {
+                    lane: head.lane,
+                    vendor: head.vendor.clone(),
+                    stream: head.stream.clone(),
+                    source,
+                    supersedes: Some(superseded),
+                    from: wire::body::TranscriptPosition {
+                        member: head.next.member,
+                        offset: 0,
+                    },
+                    to: head.next,
+                    usage: Vec::new(),
+                    non_usage_records: 0,
+                    residue_records: 0,
+                },
+                FactCause::Root,
+            )
+            .expect("replacement batch is valid");
+        accounting.transcript_source_head(ingested, move |_| head);
+        commit(&self.bus, accounting).expect("replacement accounting commits");
+        source
+    }
+
     pub(super) fn rooms(&self) -> Vec<wire::rooms::RoomMessaged> {
         self.bus
             .fact_snapshot()

@@ -152,7 +152,7 @@ pub(in crate::resident) fn reconcile(
     let planning = Planning::load(bus, config)?;
     bind_current_sessions(planning.snapshot.facts(), &occupied, profiles)?;
     retain_completed_evidence(&completed, profiles)?;
-    let requests = plan_profile_requests(&planning, &occupied, cursor, profiles)?;
+    let requests = plan_profile_requests(bus, &planning, &occupied, cursor, profiles)?;
     for request in requests {
         match record(bus, &request) {
             Ok(None) => {}
@@ -236,6 +236,7 @@ pub(super) fn occupied(seats: &Seats) -> BTreeMap<CanonicalUuid, CanonicalUuid> 
 }
 
 fn plan_profile_requests(
+    bus: &Bus,
     planning: &Planning,
     occupied: &BTreeMap<CanonicalUuid, CanonicalUuid>,
     cursor: &mut CompletionCursor,
@@ -279,13 +280,19 @@ fn plan_profile_requests(
         let compaction = facts.session_compaction(lane, &session);
         let session_identity = (lane, session.clone());
         if planned_sessions.contains(&session_identity)
-            || session_has_outstanding(facts, entries, lane, &session)
+            || session_has_outstanding(bus, facts, entries, lane, &session)?
         {
             continue;
         }
         let Some(durable_opportunity) = durable_opportunity(&opportunity, facts, occupant) else {
             continue;
         };
+        {
+            let Some(profile) = state.profiles.profile_mut(&opportunity.session) else {
+                continue;
+            };
+            remove_stale_profile_evidence(bus, lane, &session, profile)?;
+        }
         let candidates = prepared
             .iter()
             .filter(|(design, _)| {
@@ -460,6 +467,43 @@ fn durable_evidence(key: &EvidenceKey, digest: ProfileDigest) -> DesignNoticeEvi
     }
 }
 
+fn remove_stale_profile_evidence(
+    bus: &Bus,
+    lane: CanonicalUuid,
+    session: &DesignSession,
+    profile: &mut spice::rooms::profile::SessionProfile,
+) -> CommandResult<()> {
+    let evidence = profile
+        .evidence()
+        .evidence()
+        .map(|card| (card.digest(), durable_evidence(card.key(), card.digest())))
+        .collect::<Vec<_>>();
+    if evidence.is_empty() {
+        return Ok(());
+    }
+    let session = session.clone();
+    let stale = bus
+        .read(move |read| {
+            let mut stale = Vec::new();
+            for (digest, evidence) in evidence {
+                if !evidence_source_is_current(read, lane, &session, &evidence)? {
+                    stale.push(digest);
+                }
+            }
+            Ok(stale)
+        })
+        .map_err(|error| {
+            store_fault(
+                "room::awareness-profile-source-unreadable",
+                &error.to_string(),
+            )
+        })?;
+    for digest in stale {
+        profile.evidence_mut().remove(digest);
+    }
+    Ok(())
+}
+
 fn durable_conversation(
     key: &EvidenceKey,
     digest: ProfileDigest,
@@ -513,18 +557,15 @@ pub(crate) fn owed_request(
     let Some(session) = facts.lane_session(lane, occupant) else {
         return Ok(None);
     };
-    let Some((noticed_at, notice)) = facts.latest_design_notice(lane, session) else {
+    let Some((noticed_at, notice)) =
+        owed_notice(bus, facts, entries, lane, session).map_err(command_answer_outcome)?
+    else {
         return Ok(None);
     };
-    if !supporting_evidence_is_current(bus, lane, session, &notice.evidence)? {
-        return Ok(None);
-    }
-    let Some(design) = entries.iter().find(|entry| entry.born() == &notice.design) else {
-        return Ok(None);
-    };
-    if !request_is_current(facts, design, lane, notice.statement, noticed_at) {
-        return Ok(None);
-    }
+    let design = entries
+        .iter()
+        .find(|entry| entry.born() == &notice.design)
+        .expect("an owed notice has a current Design");
     Ok(Some(OwedRequest {
         at: noticed_at,
         design: notice.design.clone(),
@@ -541,30 +582,42 @@ pub(crate) fn owed_request(
     }))
 }
 
+/// The one owed-ness rule shared by selection and delivery.
+fn owed_notice<'a>(
+    bus: &Bus,
+    facts: &'a bus::TaskFacts,
+    entries: &[board::Entry],
+    lane: CanonicalUuid,
+    session: &DesignSession,
+) -> CommandResult<Option<(Seq, &'a DesignNoticed)>> {
+    let Some((noticed_at, notice)) = facts.latest_design_notice(lane, session) else {
+        return Ok(None);
+    };
+    let Some(design) = entries.iter().find(|entry| entry.born() == &notice.design) else {
+        return Ok(None);
+    };
+    if !request_is_current(facts, design, lane, notice.statement, noticed_at)
+        || !supporting_evidence_is_current(bus, lane, session, &notice.evidence)?
+    {
+        return Ok(None);
+    }
+    Ok(Some((noticed_at, notice)))
+}
+
 fn supporting_evidence_is_current(
     bus: &Bus,
     lane: CanonicalUuid,
     session: &DesignSession,
     evidence: &DesignNoticeEvidence,
-) -> Result<bool, Outcome<wire::intent::CommandAnswer>> {
-    let DesignNoticeEvidence::Conversation { source } = evidence else {
-        return Ok(true);
-    };
-    let Some(source_identity) = source.locus.source else {
-        return Ok(false);
-    };
-    let vendor = session.vendor.clone();
-    bus.read(move |read| read.transcript_source_heads(&lane))
-        .map(|heads| {
-            heads
-                .into_iter()
-                .any(|head| head.body().vendor == vendor && head.body().source == source_identity)
-        })
+) -> CommandResult<bool> {
+    let session = session.clone();
+    let evidence = evidence.clone();
+    bus.read(move |read| evidence_source_is_current(read, lane, &session, &evidence))
         .map_err(|error| {
-            command_answer_outcome(store_fault(
+            store_fault(
                 "board::design-request-source-unreadable",
                 &error.to_string(),
-            ))
+            )
         })
 }
 
@@ -589,18 +642,13 @@ pub(crate) fn project_request(
 }
 
 fn session_has_outstanding(
+    bus: &Bus,
     facts: &bus::TaskFacts,
     entries: &[board::Entry],
     lane: CanonicalUuid,
     session: &DesignSession,
-) -> bool {
-    let Some((noticed_at, notice)) = facts.latest_design_notice(lane, session) else {
-        return false;
-    };
-    entries
-        .iter()
-        .find(|entry| entry.born() == &notice.design)
-        .is_some_and(|design| request_is_current(facts, design, lane, notice.statement, noticed_at))
+) -> CommandResult<bool> {
+    owed_notice(bus, facts, entries, lane, session).map(|notice| notice.is_some())
 }
 
 /// Whether a recorded invitation is still owed. Design closure, statement
@@ -719,9 +767,13 @@ fn current_context(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<S
         .ok_or_else(|| stale("the target vendor session has no declaration"))
 }
 
-fn supporting_source(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
-    let stale = |why: &str| GuardError::refused(format!("{STALE}: {why}"));
-    match &request.evidence {
+fn evidence_source_is_current(
+    read: &JournalRead<'_>,
+    lane: CanonicalUuid,
+    session: &DesignSession,
+    evidence: &DesignNoticeEvidence,
+) -> Result<bool, GuardError> {
+    match evidence {
         DesignNoticeEvidence::Task {
             task,
             statement,
@@ -749,9 +801,7 @@ fn supporting_source(read: &JournalRead<'_>, request: &PlannedRequest) -> Result
                             })
                     })
                 });
-            if !statement_exists || !completion_exists {
-                return Err(stale("the supporting task evidence was lost or replaced"));
-            }
+            Ok(statement_exists && completion_exists)
         }
         DesignNoticeEvidence::TaskClaim {
             task,
@@ -797,26 +847,29 @@ fn supporting_source(read: &JournalRead<'_>, request: &PlannedRequest) -> Result
                     }),
                 None => true,
             };
-            if !statement_exists || !claim_exists || !terminal_exists {
-                return Err(stale("the supporting task evidence was lost or replaced"));
-            }
+            Ok(statement_exists && claim_exists && terminal_exists)
         }
         DesignNoticeEvidence::Conversation { source } => {
-            let source_exists = read
-                .transcript_source_heads(&request.lane)?
-                .iter()
-                .any(|head| {
-                    head.body().vendor == request.session.vendor
-                        && Some(head.body().source) == source.locus.source
-                });
-            if !source_exists {
-                return Err(stale(
-                    "the supporting conversation source was lost or replaced",
-                ));
-            }
+            let source_exists = read.transcript_source_heads(&lane)?.iter().any(|head| {
+                head.body().vendor == session.vendor
+                    && Some(head.body().source) == source.locus.source
+            });
+            Ok(source_exists)
         }
     }
-    Ok(())
+}
+
+fn supporting_source(read: &JournalRead<'_>, request: &PlannedRequest) -> Result<(), GuardError> {
+    if evidence_source_is_current(read, request.lane, &request.session, &request.evidence)? {
+        return Ok(());
+    }
+    let evidence = match request.evidence {
+        DesignNoticeEvidence::Conversation { .. } => "conversation",
+        DesignNoticeEvidence::Task { .. } | DesignNoticeEvidence::TaskClaim { .. } => "task",
+    };
+    Err(GuardError::refused(format!(
+        "{STALE}: the supporting {evidence} evidence was lost or replaced"
+    )))
 }
 
 fn passive_design(

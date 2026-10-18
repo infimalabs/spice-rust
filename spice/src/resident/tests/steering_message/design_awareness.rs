@@ -1146,3 +1146,131 @@ fn conversation_evidence_predating_a_design_is_selected_when_the_design_is_filed
     seated.release_all();
     lanes.finish();
 }
+
+fn retain_conversation(
+    profiles: &std::sync::Mutex<crate::resident::message_surface::MessageState>,
+    source: CanonicalUuid,
+    prose: &str,
+) {
+    let conversation = spice::rooms::evidence::Conversation::read(prose)
+        .expect("fixture prose is substantive evidence");
+    let mut state =
+        crate::resident::message_surface::lock_state(profiles).expect("profile state locks");
+    let evidence = spice::rooms::evidence::Evidence::conversation(
+        spice::rooms::profile::EvidenceKey::Conversation {
+            source,
+            member: 0,
+            offset: 0,
+            length: 1,
+        },
+        &conversation,
+    );
+    assert_eq!(
+        state
+            .profiles
+            .insert(test_uuid(FIRST), test_uuid(FIRST), evidence),
+        spice::rooms::profile::Inserted::Stored
+    );
+}
+
+#[test]
+fn replaced_conversation_source_releases_delivery_and_selection() {
+    let lanes = Lanes::new("design-request-conversation-source-replaced");
+    align_completion_lane(&lanes);
+    let config = surface(&lanes);
+    let mut cursor = crate::resident::design_awareness::CompletionCursor::start(&lanes.bus)
+        .expect("awareness cursor starts");
+    let mut seated = claimant_seats();
+    let profiles = std::sync::Mutex::new(crate::resident::message_surface::MessageState::default());
+    let mut diagnostics = Vec::new();
+    assert!(
+        pending_catch_up(&lanes, &config, &seated, &mut diagnostics).is_none(),
+        "nothing is owed before a Design is selected"
+    );
+
+    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    lanes.account(FIRST);
+    let source = lanes
+        .bus
+        .read(|read| read.transcript_source_heads(&test_uuid(FIRST)))
+        .expect("transcript sources read")
+        .into_iter()
+        .next()
+        .expect("declared lane has a transcript source")
+        .into_body()
+        .source;
+    retain_conversation(
+        &profiles,
+        source,
+        "Windows native runner validates archive compression headers libraries toolchain \
+         manifests receipts deployment replay smoke",
+    );
+    let first = lanes.design(
+        "dVrD245Kd",
+        "Validate Windows native runner archives",
+        "Compression headers libraries toolchain manifests receipts deployment replay smoke.",
+    );
+    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    assert_eq!(
+        lanes
+            .request(&config, FIRST)
+            .expect("the current conversation source owes its Design")
+            .design,
+        first
+    );
+
+    let second = lanes.design(
+        "dVrD245Km",
+        "Validate another Windows native runner",
+        "Compression headers libraries toolchain manifests receipts deployment replay smoke.",
+    );
+    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    assert_eq!(
+        lanes
+            .request(&config, FIRST)
+            .expect("an unrelated write leaves the current request owed")
+            .design,
+        first
+    );
+    assert_eq!(
+        lanes.noticed().len(),
+        1,
+        "the current request blocks another"
+    );
+    assert!(
+        pending_catch_up(&lanes, &config, &seated, &mut diagnostics).is_some(),
+        "room catch-up delivers the request while its source is current"
+    );
+
+    let replacement = lanes.replace_transcript_source(FIRST);
+    assert!(
+        lanes.request(&config, FIRST).is_none(),
+        "task next drops evidence from the replaced source"
+    );
+    assert!(
+        pending_catch_up(&lanes, &config, &seated, &mut diagnostics).is_none(),
+        "room catch-up drops evidence from the replaced source"
+    );
+    retain_conversation(
+        &profiles,
+        replacement,
+        "A second Windows native runner validates archive compression headers libraries \
+         toolchain manifests receipts deployment replay smoke",
+    );
+    lanes.reconcile_profiles(&config, &seated, &mut cursor, &profiles);
+    assert_eq!(
+        lanes
+            .request(&config, FIRST)
+            .expect("later evidence may select another matching Design")
+            .design,
+        second
+    );
+    assert_eq!(lanes.noticed().len(), 2);
+    seated.release_all();
+    assert!(
+        diagnostics.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&diagnostics)
+    );
+    lanes.finish();
+}
