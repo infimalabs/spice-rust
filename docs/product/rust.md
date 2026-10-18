@@ -217,20 +217,24 @@ generation the source does not hold answers 410 Gone, with
 [`serve/src/axum.rs`](../../serve/src/axum.rs).
 
 A resident restart keeps the app's last good surface on screen until the new
-session's scope is fully hydrated. A page whose generation the resident no
-longer serves reloads once into the served generation. That happens when its
-session against the new resident fails, or when a qualified fetch answers 410:
+session's scope is fully hydrated. Every app route answers `no-cache` with a
+content ETag, so an ordinary reload loads the served generation. A page whose
+generation the resident no longer serves reloads once into the served
+generation, whether or not the app protocol changed. That happens when its next
+connection's bootstrap names another generation, before any session opens, or
+when a qualified fetch answers 410:
 
 - the shell's module or wasm before the app starts, caught by the shell's
   inline loader guard;
 - a renderer document or member, probed when the renderer frame opens and
   after any renderer failure.
 
-A page with the same app protocol otherwise keeps running with an update
-offer. Unsent composer and observation drafts travel to the reloaded page
-through tab-scoped storage, with attachment annotations flattened into their
-image. Only a submission whose result is still unknown keeps the stale page in
-place behind the reload control. Owners:
+A staged `spice up` hot swap reaches an open page only at its next connection.
+Unsent composer and observation drafts travel to the reloaded page through
+tab-scoped storage, with attachment annotations flattened into their image.
+Only a submission whose result is still unknown keeps the stale page in place
+behind the update offer and its reload control; an incompatible app protocol
+then still requires that explicit update. Owners:
 [`app/index.html`](../../app/index.html),
 [`app/src/runtime/publication.rs`](../../app/src/runtime/publication.rs),
 [`app/src/browser/connection.rs`](../../app/src/browser/connection.rs),

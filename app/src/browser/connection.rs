@@ -38,12 +38,18 @@ pub(in crate::browser) async fn reload_if_retired(route: String) {
         return;
     };
     if loaded_app_generation().is_ok_and(|loaded| loaded != served) {
-        UNLOAD.with_borrow(|unload| {
-            if let Some(unload) = unload {
-                reload_into_served_app(&served, unload);
-            }
-        });
+        leave_for_served_app(&served);
     }
+}
+
+/// Leave for the generation the resident serves through the mounted surface's
+/// unload guard, returning whether the reload started.
+fn leave_for_served_app(served: &wire::Digest) -> bool {
+    UNLOAD.with_borrow(|unload| {
+        unload
+            .as_ref()
+            .is_some_and(|unload| reload_into_served_app(served, unload))
+    })
 }
 
 /// Capture the bearer token carried by a remote app opening before the
@@ -91,7 +97,7 @@ pub(super) async fn run_surface(
         }
         let result =
             run_connection(&active, &handles, &mut data, &actions, &mut action_wakes).await;
-        if !active.get() {
+        if !active.get() || super::draft_handoff::leaving() {
             break;
         }
         // `run_connection` returns `Ok` only where its own `while active.get()`
@@ -103,9 +109,6 @@ pub(super) async fn run_surface(
         handles.submissions.queue.borrow_mut().reconnect();
         handles.submissions.publish();
         actions.reconnect();
-        if let Some(served) = &ended.served_app {
-            reload_into_served_app(served, &handles.unload);
-        }
         // A stale document's session dies on the newer resident's DTOs, so its
         // admission proves nothing about the next attempt.
         let delay = backoff.settle(ended.admitted && ended.served_app.is_none());
@@ -129,20 +132,21 @@ struct Ended {
     served_app: Option<wire::Digest>,
 }
 
-/// Leave a superseded app generation once it has failed a session against the
-/// resident serving its replacement.
+/// Leave a superseded app generation for the one the resident serves,
+/// returning whether the reload started.
 ///
-/// The loaded generation's strict DTOs need not decode the newer resident's
-/// frames, so retrying in place can only cycle. Unsent drafts travel to the
-/// reloaded document; only work no handoff can carry keeps the tab where it is
-/// behind the explicit reload control. One reload per served generation keeps
-/// a document that still loads stale from cycling.
-fn reload_into_served_app(served: &wire::Digest, unload: &UnloadGuard) {
+/// Every app route revalidates, so an ordinary reload loads the served
+/// generation; a stale tab must not keep running old code merely because the
+/// app protocol still matches. Unsent drafts travel to the reloaded document;
+/// only work no handoff can carry keeps the tab where it is behind the explicit
+/// reload control. One reload per served generation keeps a document that still
+/// loads stale from cycling.
+fn reload_into_served_app(served: &wire::Digest, unload: &UnloadGuard) -> bool {
     let Some(window) = web_sys::window() else {
-        return;
+        return false;
     };
     let Some(storage) = window.session_storage().ok().flatten() else {
-        return;
+        return false;
     };
     let served = served.to_string();
     if storage
@@ -155,9 +159,10 @@ fn reload_into_served_app(served: &wire::Digest, unload: &UnloadGuard) {
             .set_item(APP_RELOAD_GENERATION_STORAGE, &served)
             .is_err()
     {
-        return;
+        return false;
     }
     super::draft_handoff::reload(&window);
+    true
 }
 
 async fn run_connection(
