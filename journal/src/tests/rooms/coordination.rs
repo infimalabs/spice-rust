@@ -485,6 +485,7 @@ fn room_authority_pages_every_design_notice() {
                     vendor: "omp".parse().expect("vendor"),
                     identity: "fixture-session".to_owned(),
                 },
+                compaction: None,
                 opportunity: DesignNoticeOpportunity::TaskCompletion {
                     task: claimed.clone(),
                     completed: wire::Seq::new(3).expect("completion"),

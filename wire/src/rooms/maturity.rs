@@ -415,6 +415,7 @@ mod tests {
                 vendor: "omp".parse().expect("vendor"),
                 identity: format!("session-{lane}"),
             },
+            compaction: None,
             opportunity: DesignNoticeOpportunity::TaskCompletion {
                 task: evidence_task.clone(),
                 completed,

@@ -1,4 +1,4 @@
-//! Bind retained completion-only Design notices to exact sessions and sources.
+//! Bind retained Design notices to exact sessions, sources, and context boundaries.
 
 use std::collections::BTreeMap;
 
@@ -8,39 +8,72 @@ use wire::{AnyFact, Envelope, FactKind, Seq, TaskStamp};
 
 use super::{MigrationError, OpenError};
 
-/// Release that separated the invitation opportunity from its supporting card.
+/// Release that separated invitation opportunity and evidence.
 const DESIGN_INVITATION_RELEASE: &str = "ROOMS-dWKcWx0xN";
+/// Release that bound an invitation to its compaction-delimited context.
+const CONTEXT_RELEASE: &str = "ROOMS-dWKwb7jw9";
 
 #[derive(Clone)]
 pub(super) struct Crossing {
     session: Value,
     opportunity: Value,
     evidence: Value,
+    compaction: Option<Seq>,
 }
 
-/// Rewrite every retained completion-only notice to the session-targeted shape.
+/// Rewrite every retained notice to the session-targeted context shape.
 pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
     let crossings = derive(transaction)?;
     super::residual::rewrite_facts(
         transaction,
         FactKind::DesignNoticed,
-        "json_type(CAST(envelope AS TEXT), '$.fact.session') IS NULL",
-        DESIGN_INVITATION_RELEASE,
+        "json_type(CAST(envelope AS TEXT), '$.fact.compaction') IS NULL",
+        CONTEXT_RELEASE,
         |seq, fact| cross_notice(seq, fact, &crossings),
     )
+}
+
+fn current_crossing(
+    fact: &serde_json::Map<String, Value>,
+    seq: i64,
+    compactions: &BTreeMap<(wire::CanonicalUuid, wire::rooms::DesignSession), Seq>,
+) -> Result<Option<Crossing>, OpenError> {
+    let Some(session_value) = fact.get("session") else {
+        return Ok(None);
+    };
+    let lane = required_string(fact, "lane", seq)?
+        .parse::<wire::CanonicalUuid>()
+        .map_err(|error| refusal(seq, &format!("the retained lane is invalid: {error}")))?;
+    let session = serde_json::from_value::<wire::rooms::DesignSession>(session_value.clone())
+        .map_err(|error| refusal(seq, &format!("the retained session is invalid: {error}")))?;
+    Ok(Some(Crossing {
+        session: session_value.clone(),
+        opportunity: fact
+            .get("opportunity")
+            .cloned()
+            .ok_or_else(|| refusal(seq, "the retained notice names no opportunity"))?,
+        evidence: fact
+            .get("evidence")
+            .cloned()
+            .ok_or_else(|| refusal(seq, "the retained notice names no evidence"))?,
+        compaction: compactions.get(&(lane, session)).copied(),
+    }))
 }
 
 pub(super) fn derive(transaction: &Transaction<'_>) -> Result<BTreeMap<i64, Crossing>, OpenError> {
     let rows = fact_rows(transaction)?;
     let mut statements = BTreeMap::<TaskStamp, Seq>::new();
     let mut completions = BTreeMap::<TaskStamp, Seq>::new();
-    let mut sessions = BTreeMap::<(wire::CanonicalUuid, wire::CanonicalUuid), Value>::new();
+    let mut sessions =
+        BTreeMap::<(wire::CanonicalUuid, wire::CanonicalUuid), wire::rooms::DesignSession>::new();
+    let mut compactions = BTreeMap::<(wire::CanonicalUuid, wire::rooms::DesignSession), Seq>::new();
     let mut crossings = BTreeMap::new();
 
     for (seq, kind, bytes) in rows {
         if kind == FactKind::DesignNoticed.as_str() {
             let fact = fact_object(&bytes, seq)?;
-            if fact.contains_key("session") {
+            if let Some(crossing) = current_crossing(&fact, seq, &compactions)? {
+                crossings.insert(seq, crossing);
                 continue;
             }
             let task = required_string(&fact, "task", seq)?
@@ -71,7 +104,12 @@ pub(super) fn derive(transaction: &Transaction<'_>) -> Result<BTreeMap<i64, Cros
             crossings.insert(
                 seq,
                 Crossing {
-                    session,
+                    session: serde_json::to_value(&session).map_err(|error| {
+                        refusal(
+                            seq,
+                            &format!("the retained session identity cannot encode: {error}"),
+                        )
+                    })?,
                     opportunity: json!({
                         "kind": "task-completion",
                         "task": task,
@@ -83,6 +121,7 @@ pub(super) fn derive(transaction: &Transaction<'_>) -> Result<BTreeMap<i64, Cros
                         "statement": statement,
                         "completed": completed,
                     }),
+                    compaction: compactions.get(&(lane, session)).copied(),
                 },
             );
             continue;
@@ -107,17 +146,15 @@ pub(super) fn derive(transaction: &Transaction<'_>) -> Result<BTreeMap<i64, Cros
         if let Some(declared) = envelope.fact.read::<wire::body::LaneSessionDeclared>() {
             sessions.insert(
                 (declared.lane, declared.occupant),
-                serde_json::to_value(wire::rooms::DesignSession {
+                wire::rooms::DesignSession {
                     vendor: declared.vendor,
                     identity: declared.identity,
-                })
-                .map_err(|error| {
-                    refusal(
-                        seq,
-                        &format!("the retained session identity cannot encode: {error}"),
-                    )
-                })?,
+                },
             );
+        } else if let Some(compacted) = envelope.fact.read::<wire::body::LaneCompacted>()
+            && let Some(session) = sessions.get(&(compacted.lane, compacted.occupant)).cloned()
+        {
+            compactions.insert((compacted.lane, session), envelope.seq);
         }
     }
     Ok(crossings)
@@ -169,6 +206,10 @@ pub(super) fn cross_notice(
     fact.insert("session".to_owned(), crossed.session.clone());
     fact.insert("opportunity".to_owned(), crossed.opportunity.clone());
     fact.insert("evidence".to_owned(), crossed.evidence.clone());
+    fact.insert(
+        "compaction".to_owned(),
+        crossed.compaction.map_or(Value::Null, |seq| json!(seq)),
+    );
     fact.remove("task");
     fact.remove("claim");
     Ok(())

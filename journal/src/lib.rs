@@ -42,8 +42,9 @@
 /// Schema 81 lets a lane's room catch-up cursor pass a delivered Design request.
 /// Schema 82 targets Design invitations at continuing vendor sessions and
 /// separates their triggering opportunity from the retained evidence that
-/// supported the match.
-pub const SCHEMA_VERSION: u32 = 82;
+/// supported the match. Schema 83 binds each invitation to its exact
+/// compaction-delimited context generation.
+pub const SCHEMA_VERSION: u32 = 83;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

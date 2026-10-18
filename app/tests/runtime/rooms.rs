@@ -953,6 +953,7 @@ fn an_asked_lane_stands_asked_until_it_leaves() {
                     vendor: "omp".parse().expect("fixture vendor"),
                     identity: "fixture-session".to_owned(),
                 },
+                compaction: None,
                 opportunity: wire::rooms::DesignNoticeOpportunity::DesignStatement,
                 evidence: wire::rooms::DesignNoticeEvidence::Task {
                     task: room(),

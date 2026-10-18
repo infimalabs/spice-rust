@@ -39,6 +39,7 @@ fn noticed(
             vendor: "omp".parse().expect("vendor"),
             identity: "fixture-session".to_owned(),
         },
+        compaction: None,
         opportunity: DesignNoticeOpportunity::TaskCompletion {
             task: claimed.clone(),
             completed,

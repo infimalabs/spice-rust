@@ -550,17 +550,24 @@ owns each rule summarized here.
   task-completion, whole-message, and passage view. One opportunity selects at
   most one Design, and one session carries at most one unanswered request. Each
   `room::noticed` record names the exact Design statement, continuing session,
-  opportunity, retained evidence card and its immutable identity, and at most
-  six strongest weighted overlaps in ascending order. A session is never
-  requested for the same Design twice, including after an occupant change or
-  resident restart. The request quotes the first substantive description
-  sentence and an in-order bounded prefix of whole open questions. One
-  contribution or `spice room leave --clause` in that room answers the request.
-  A changed or closed Design, replaced target session, lost supporting source,
+  latest compaction boundary, opportunity, retained evidence card and its
+  immutable identity, and at most six strongest weighted overlaps in ascending
+  order. The same Design is requested at most once in each
+  compaction-delimited context generation. An occupant change or resident
+  restart that resumes the same un-compacted vendor identity preserves that
+  suppression. Compaction weakens it but creates no selection opportunity by
+  itself; only a later completion, settled message, Design change,
+  profile-ready event, or resume may offer the Design again. Renewal creates a
+  fresh vendor identity and only a later ordinary opportunity may offer it
+  again, without deleting the lane.
+  The request quotes the first substantive description sentence and an
+  in-order bounded prefix of whole open questions. One contribution or
+  `spice room leave --clause` in that room answers the request. A changed or
+  closed Design, replaced target session or context, lost supporting source,
   or standing change away from open passive releases it; unrelated journal
   writes do not. The request grants no claim, starts no work, and adds no
   workflow state; `spice room awareness HANDLE` shows its exact opportunity,
-  evidence, statement, recipient session, and matched terms.
+  evidence, statement, recipient session, context boundary, and matched terms.
 - **Design maturity.** One bounded projection per Design folds admitted
   requests and typed contributions in journal order. It reports contribution
   counts by kind, distinct contributing lanes, requested reach, and

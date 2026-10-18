@@ -116,6 +116,7 @@ fn current_notice(design: &str) -> serde_json::Value {
         "lane": FIXTURE_LANE,
         "occupant": "018f82d4-6f59-7d06-92e3-bce913116304",
         "session": {"vendor": "omp", "identity": "fixture-session"},
+        "compaction": null,
         "opportunity": {
             "kind": "task-completion",
             "task": "1kKRRsDP",
@@ -160,7 +161,8 @@ fn writable_open_binds_retained_design_notices_and_retires_provenance() {
                  '$.fact.statement',
                  '$.fact.session',
                  '$.fact.opportunity',
-                 '$.fact.evidence'
+                 '$.fact.evidence',
+                 '$.fact.compaction'
              ) AS BLOB) WHERE seq = 5;
              INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
                  (3, 'task:1kKRRsDP', 2, 1, 2),
@@ -189,6 +191,7 @@ fn writable_open_binds_retained_design_notices_and_retires_provenance() {
         .expect("crossed fact remains a notice");
     assert_eq!(notice.statement, seq(1));
     assert_eq!(notice.session.identity, "fixture-session");
+    assert_eq!(notice.compaction, None);
     assert!(matches!(
         notice.evidence,
         wire::rooms::DesignNoticeEvidence::Task {
@@ -200,6 +203,72 @@ fn writable_open_binds_retained_design_notices_and_retires_provenance() {
             && completed == seq(4)
     ));
     assert_eq!(notice.terms, ["rooms", "state", "tasks"]);
+}
+
+#[test]
+fn writable_open_binds_a_retained_notice_to_its_latest_compaction() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("retained-design-context.sqlite3");
+    let journal = authority_file_fixture(&path);
+    plant_invitation_support(&journal);
+    insert_fact(
+        &journal,
+        fact(
+            5,
+            Some(4),
+            FactKind::LaneCompacted,
+            json!({
+                "lane": FIXTURE_LANE,
+                "occupant": "018f82d4-6f59-7d06-92e3-bce913116304",
+                "stream": "session",
+                "member": 1,
+                "offset": 30,
+                "length": 10,
+            }),
+        ),
+    );
+    insert_fact(
+        &journal,
+        fact(
+            6,
+            Some(5),
+            FactKind::DesignNoticed,
+            current_notice("1kKRRsDP"),
+        ),
+    );
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE fact_envelopes SET envelope = CAST(json_remove(
+                 CAST(envelope AS TEXT), '$.fact.compaction'
+             ) AS BLOB) WHERE seq = 6;
+             INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
+                 (3, 'task:1kKRRsDP', 2, 1, 2),
+                 (4, 'task:1kKRRsDP', 3, 1, 3),
+                 (5, 'task:1kKRRsDP', 4, 1, 4),
+                 (6, 'task:1kKRRsDP', 5, 1, 5);
+             UPDATE cursor_head SET seq = 6, wake = 6 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 6 WHERE singleton = 1;",
+        )
+        .expect("retained context cursor is planted");
+    restore_predecessor(&journal, 82);
+    drop(journal);
+
+    let crossed = Journal::open(&path).expect("retained context crosses");
+    let envelope = crossed
+        .connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = 6",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .expect("crossed notice reads");
+    let envelope: Envelope<AnyFact> = wire::decode(&envelope).expect("crossed notice decodes");
+    let notice = envelope
+        .fact
+        .read::<wire::rooms::DesignNoticed>()
+        .expect("crossed fact remains a notice");
+    assert_eq!(notice.compaction, Some(seq(5)));
 }
 
 #[test]
@@ -231,7 +300,8 @@ fn writable_open_refuses_a_retained_notice_without_a_provable_statement() {
                  '$.fact.statement',
                  '$.fact.session',
                  '$.fact.opportunity',
-                 '$.fact.evidence'
+                 '$.fact.evidence',
+                 '$.fact.compaction'
              ) AS BLOB) WHERE seq = 5",
             [],
         )
