@@ -367,6 +367,20 @@ impl<K> EvidenceProfile<K> {
         self.cards.iter().rev().map(|card| &card.evidence)
     }
 
+    /// Forget one exact retained card whose owning source is no longer
+    /// current. Returns whether the card was present.
+    pub fn remove(&mut self, digest: Digest) -> bool {
+        let Some(index) = self
+            .cards
+            .iter()
+            .position(|card| card.evidence.digest == digest)
+        else {
+            return false;
+        };
+        self.cards.remove(index);
+        true
+    }
+
     /// The Design this profile is most relevant to under `frequency`.
     ///
     /// A Design's relevance is the maximum cosine over every view of every
