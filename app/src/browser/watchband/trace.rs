@@ -14,7 +14,7 @@ use yew::prelude::*;
 use super::super::clock::now_millis;
 use crate::watchband::{
     Occupancy, TRACE_STEP_MILLIS, TraceActivity, TraceMarker, TraceMarkerKind, TraceOff, TraceSpan,
-    drawn_spans, off_intervals, retain_reachable, room_activity, trace, trace_end,
+    drawn_spans, off_intervals, room_activity, trace,
 };
 
 #[derive(Properties, PartialEq)]
@@ -28,7 +28,7 @@ pub(crate) struct ActivityTraceProps {
     pub(crate) off: Rc<[TraceOff]>,
 }
 
-/// One lane's retained activity that a trace window can reach. Lane activity
+/// One lane's retained activity, which its trace keeps to the window. Lane activity
 /// excludes operator direction, a card in the receiver's plane, so the trace
 /// marks direction from that card.
 pub(super) fn lane_activities(
@@ -46,7 +46,7 @@ pub(super) fn lane_activities(
             millis: message.display_millis(),
             bytes: 0,
         });
-    let mut activities = runtime
+    runtime
         .activities()
         .iter()
         .filter(|activity| activity.lane() == lane)
@@ -56,9 +56,7 @@ pub(super) fn lane_activities(
             bytes: activity.text_bytes(),
         })
         .chain(directions)
-        .collect();
-    retain_reachable(&mut activities);
-    activities.into()
+        .collect()
 }
 
 /// The intervals one lane was off, from its retained occupancy transitions.
@@ -74,7 +72,7 @@ pub(super) fn lane_off(runtime: &crate::AppRuntime, lane: wire::CanonicalUuid) -
     .into()
 }
 
-/// One Design room's events that a trace window can reach, read as a lane's
+/// One Design room's retained events, read as a lane's
 /// activity: an agent's words are prose, a lane's contribution is work landing
 /// in the Design, a human's words are direction, a coordination opens a turn,
 /// and a lane's departure divides the room as a compaction divides a lane.
@@ -85,8 +83,7 @@ pub(crate) fn design_activities(
     let Some(room) = runtime.room_projection().room(design) else {
         return Rc::from([]);
     };
-    let mut activities = room
-        .events()
+    room.events()
         .iter()
         .filter_map(|(publication, event)| {
             let (kind, bytes) = room_activity(&event.kind)?;
@@ -96,9 +93,7 @@ pub(crate) fn design_activities(
                 bytes,
             })
         })
-        .collect();
-    retain_reachable(&mut activities);
-    activities.into()
+        .collect()
 }
 
 /// Space the now-dot needs inside the pane's right edge, in CSS pixels.
@@ -113,9 +108,9 @@ fn samples(width: f64) -> usize {
     (columns.div_ceil(2) + 1).max(5)
 }
 
-/// Redraws on new activity and, while its window ends at now, once per trace
-/// step so the window slides with time; a held window stays still. The pane's
-/// size is measured after each draw.
+/// Redraws on new activity and, while anything is shown, once per trace step,
+/// so the window keeps sliding with time and old activity leaves without a new
+/// frame; the pane's size is measured after each draw.
 #[function_component(ActivityTrace)]
 pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
     let tick = use_state(|| 0_u64);
@@ -134,23 +129,18 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
     }
     let (width, height) = *size;
     let now = now_millis();
-    let end = trace_end(&props.activities, now);
-    let live = end == now;
-    let placed = trace(&props.activities, end, samples(width));
-    let spans = drawn_spans(&props.off, end, samples(width));
+    let placed = trace(&props.activities, now, samples(width));
+    let spans = drawn_spans(&props.off, now, samples(width));
     {
         let tick = tick.clone();
-        use_effect_with(
-            (!placed.is_empty() && live, *tick),
-            move |&(sliding, generation)| {
-                let timeout = sliding.then(|| {
-                    Timeout::new(TRACE_STEP_MILLIS, move || {
-                        tick.set(generation.wrapping_add(1));
-                    })
-                });
-                move || drop(timeout)
-            },
-        );
+        use_effect_with((!placed.is_empty(), *tick), move |&(shown, generation)| {
+            let timeout = shown.then(|| {
+                Timeout::new(TRACE_STEP_MILLIS, move || {
+                    tick.set(generation.wrapping_add(1));
+                })
+            });
+            move || drop(timeout)
+        });
     }
     if placed.is_empty() {
         return Html::default();
@@ -200,9 +190,7 @@ pub(crate) fn activity_trace(props: &ActivityTraceProps) -> Html {
                                 />
                                 <g class="trace-lit">
                                     <path class="trace-line" d={line} />
-                                    if live {
-                                        <circle class="trace-now" cx={format!("{x:.2}")} cy={format!("{y:.2}")} r="1.1" />
-                                    }
+                                    <circle class="trace-now" cx={format!("{x:.2}")} cy={format!("{y:.2}")} r="1.1" />
                                 </g>
                             </g>
                         }
