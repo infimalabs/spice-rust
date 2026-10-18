@@ -230,13 +230,13 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
 
     assert_eq!(
         borns(&WorkScope::planning()),
-        BTreeSet::from([stamp(1), stamp(2), stamp(3)]),
-        "a Design owns itself and every direct output, including one a team currently claims",
+        BTreeSet::from([stamp(1), stamp(2), stamp(3), stamp(4)]),
+        "a Design owns its complete dependent subtree, including work a team created",
     );
     assert_eq!(
         borns(&WorkScope::AllOpen),
-        BTreeSet::from([stamp(4), stamp(5), stamp(6)]),
-        "a Plan-controlled task and a Design in intake stay execution work, and no Design-owned row is duplicated",
+        BTreeSet::from([stamp(5), stamp(6)]),
+        "Design intake and unrelated work remain execution-side without duplicating the subtree",
     );
     let team = WorkScope::Team { team: executor };
     let strip = projection
@@ -268,40 +268,67 @@ fn accountable_owner_partitions_design_planning_from_team_execution() {
 }
 
 #[test]
-fn a_shared_plan_stays_on_the_planning_rail_until_its_last_design_edge_is_removed() {
+fn a_shared_subtree_stays_on_the_planning_rail_until_its_last_design_edge_is_removed() {
     let first = design(1, "rooms.first");
     let second = design(2, "rooms.second");
     let mut shared = task(3, "rooms.shared");
     shared.statement.body.intent = Some(wire::TaskIntent::Plan);
     shared.statement.body.dependencies = vec![stamp(1), stamp(2)];
+    let mut child = task(4, "app.child");
+    child.statement.body.dependencies = vec![stamp(3), stamp(6)];
+    let mut cycle = task(5, "app.cycle");
+    cycle.statement.body.dependencies = vec![stamp(4)];
+    let mut cycle_back = task(6, "app.cycle");
+    cycle_back.statement.body.dependencies = vec![stamp(5)];
 
-    let both_edges = board(vec![first.clone(), second.clone(), shared.clone()]);
+    let both_edges = board(vec![
+        first.clone(),
+        second.clone(),
+        shared.clone(),
+        child.clone(),
+        cycle.clone(),
+        cycle_back.clone(),
+    ]);
     let projection = WorkProjection::from_board(&both_edges);
     assert_eq!(
         projection
             .scope_tasks(&WorkScope::planning())
             .into_iter()
             .collect::<BTreeSet<_>>(),
-        BTreeSet::from([stamp(1), stamp(2), stamp(3)]),
+        [1, 2, 3, 4, 5, 6].map(stamp).into_iter().collect(),
+        "the Design rail contains the complete subtree and terminates across its cycle",
     );
 
     shared.statement.body.dependencies = vec![stamp(2)];
-    let one_edge = board(vec![first.clone(), second.clone(), shared.clone()]);
+    let one_edge = board(vec![
+        first.clone(),
+        second.clone(),
+        shared.clone(),
+        child.clone(),
+        cycle.clone(),
+        cycle_back.clone(),
+    ]);
     let projection = WorkProjection::from_board(&one_edge);
     assert!(
-        projection.tasks()[2].belongs_to_design(),
-        "selection by one Design leaves the other Design's edge and rail placement intact",
+        projection.tasks()[3..]
+            .iter()
+            .all(|task| task.belongs_to_design()),
+        "selection by one Design leaves the other Design's whole subtree docked",
     );
 
     shared.statement.body.dependencies.clear();
-    let no_edges = board(vec![first, second, shared]);
+    let no_edges = board(vec![first, second, shared, child, cycle, cycle_back]);
     let projection = WorkProjection::from_board(&no_edges);
-    assert!(!projection.tasks()[2].belongs_to_design());
-    assert!(projection.in_scope(&projection.tasks()[2], &WorkScope::AllOpen));
+    assert!(
+        projection.tasks()[2..]
+            .iter()
+            .all(|task| !task.belongs_to_design()),
+        "removing the final Design edge returns the whole subtree to execution",
+    );
 }
 
 #[test]
-fn opportunistic_design_owns_its_direct_outputs_but_not_their_plan_work() {
+fn opportunistic_design_owns_its_complete_plan_subtree() {
     let root_born = stamp(1);
     let preparation = |parent: wire::TaskStamp, construction| wire::TaskPreparation {
         parent,
@@ -330,18 +357,17 @@ fn opportunistic_design_owns_its_direct_outputs_but_not_their_plan_work() {
 
     assert_eq!(
         borns(&WorkScope::planning()),
-        BTreeSet::from([stamp(1), stamp(2)]),
-        "the opportunistic Design and its direct output share the Design-planning rail",
+        BTreeSet::from([stamp(1), stamp(2), stamp(3)]),
+        "the Design rail contains the opportunistic Design's complete dependency subtree",
     );
     let spice = WorkScope::Stem(WorkStemIdentity::new(
         WorkVisibility::Public,
         "spice".to_owned(),
     ));
     for scope in [WorkScope::AllOpen, spice] {
-        assert_eq!(
-            borns(&scope),
-            BTreeSet::from([stamp(3)]),
-            "{scope:?} counts only the Plan-produced execution work",
+        assert!(
+            borns(&scope).is_empty(),
+            "{scope:?} does not duplicate Design-gated execution work",
         );
     }
     assert_eq!(
