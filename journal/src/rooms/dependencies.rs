@@ -25,22 +25,12 @@ impl ReplayDependencies {
         self.edges.insert(task.to_string(), dependencies);
     }
 
-    /// Restore the preparation gate schema 77 crossed directly into a
-    /// predecessor birth's statement head.
+    /// Restore a preparation gate that a predecessor crossing wrote directly
+    /// into the statement head.
     pub(super) fn birth(&mut self, added: &wire::body::TaskAdded) {
         let mut dependencies = added.depends.clone();
-        let held = added
-            .taste
-            .as_ref()
-            .is_some_and(|hold| hold.plan == wire::TastePlan::Prepended);
-        let route = match added.flow.as_slice() {
-            [first, authored @ ..] if held && first.as_str() == "plan" => authored,
-            authored => authored,
-        };
         let gate = added.preparation.as_ref().filter(|preparation| {
-            preparation.construction == added.task
-                && !wire::gather_route(added.intent, route)
-                && !dependencies.contains(&preparation.parent)
+            preparation.construction == added.task && !dependencies.contains(&preparation.parent)
         });
         if let Some(preparation) = gate {
             dependencies.push(preparation.parent.clone());
