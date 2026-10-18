@@ -122,7 +122,7 @@ pub(super) fn activity_trace(props: &ActivityTraceProps) -> Html {
                 </svg>
             }
             {for placed.notes.iter().map(|note| html! {
-                <span data-trace-note={note.row.key()}></span>
+                <span data-trace-note={note.row.key()} data-trace-overflow={note.overflow.then_some("")}></span>
             })}
             {for placed.markers.iter().map(|marker| html! {
                 <span data-trace-marker={marker.kind.key()}></span>

@@ -6,8 +6,8 @@
 //! by one step thread whose final run shows what the lane did most recently.
 //! Lifecycle activity becomes full-height markers. Positions are fractions of
 //! the trace width; the browser supplies only the least pitch between
-//! neighbouring notes, so a burst stays countable at any width while every
-//! pixel minimum stays a stylesheet concern.
+//! neighbouring notes, so a burst stays countable as far as the width allows
+//! while every pixel minimum stays a stylesheet concern.
 
 use wire::AgentActivityKind;
 
@@ -74,6 +74,9 @@ pub struct TraceNote {
     /// Distance to the next note in the same row, or to the trace's right
     /// edge. A note stops short of it so a burst stays countable.
     pub room: f64,
+    /// Stands at the left bound for this note and the older notes in its row
+    /// that no longer fit there at the least pitch.
+    pub overflow: bool,
 }
 
 /// Lifecycle activity drawn as a full-height marker.
@@ -148,9 +151,12 @@ const fn placement(kind: AgentActivityKind) -> Placement {
 /// `now`. Activities at equal instants keep the order given.
 ///
 /// Neighbouring notes in a row stand at least `pitch` apart, a fraction of the
-/// trace width: the newest note of a closer run keeps its instant and each
-/// older one steps back from its successor, so the trace's recent edge stays
-/// true while every note in a burst stays separately visible.
+/// trace width, and never leave the trace: the newest note of a closer run
+/// keeps its instant, each older one steps back from its successor, and a run
+/// reaching the left bound packs against it. A row too dense for its width
+/// folds its oldest notes into one overflow note at the left bound, so the
+/// trace's recent edge stays true and every drawn note stays separately
+/// visible.
 #[must_use]
 pub fn trace(activities: &[TraceActivity], now: i64, pitch: f64) -> Trace {
     let since = now - TRACE_WINDOW_MILLIS;
@@ -172,19 +178,21 @@ pub fn trace(activities: &[TraceActivity], now: i64, pitch: f64) -> Trace {
                 x,
                 length: weight(activity.bytes) * NOTE_SPAN,
                 room: 1.0 - x,
+                overflow: false,
             }),
             Placement::Marker(kind) => markers.push(TraceMarker { kind, x }),
         }
     }
-    let mut following = [None::<f64>; 3];
-    for note in notes.iter_mut().rev() {
-        let next = &mut following[note.row.index()];
-        if let Some(next) = *next {
-            note.x = note.x.min(next - pitch);
-            note.room = next - note.x;
-        }
-        *next = Some(note.x);
+    let mut rows: [Vec<(usize, TraceNote)>; 3] = Default::default();
+    for (order, note) in notes.into_iter().enumerate() {
+        rows[note.row.index()].push((order, note));
     }
+    let mut packed = rows
+        .into_iter()
+        .flat_map(|row| pack(row, pitch))
+        .collect::<Vec<_>>();
+    packed.sort_by_key(|&(order, _)| order);
+    let notes = packed.into_iter().map(|(_, note)| note).collect::<Vec<_>>();
     let thread_end = notes.last().map_or(1.0, |last| {
         markers
             .iter()
@@ -197,6 +205,55 @@ pub fn trace(activities: &[TraceActivity], now: i64, pitch: f64) -> Trace {
         markers,
         thread_end,
     }
+}
+
+/// Space one row's notes, given in time order, at least `pitch` apart between
+/// the left bound and the newest note's instant. Each note's slot counts from
+/// the left bound, and an overflow note takes two so it reads wider than any
+/// note it stands for.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn pack(mut row: Vec<(usize, TraceNote)>, pitch: f64) -> Vec<(usize, TraceNote)> {
+    let Some(&(_, newest)) = row.last() else {
+        return row;
+    };
+    let slots = if pitch > 0.0 {
+        (newest.x / pitch).floor() as usize
+    } else {
+        usize::MAX
+    };
+    let overflow = row.len() > slots.saturating_add(1);
+    if overflow {
+        row.drain(..row.len() - slots.max(1));
+        row[0].1.overflow = true;
+    }
+    let mut following = None::<f64>;
+    for (_, note) in row.iter_mut().rev() {
+        if let Some(next) = following {
+            note.x = note.x.min(next - pitch);
+        }
+        following = Some(note.x);
+    }
+    let lead = usize::from(overflow);
+    for (slot, (_, note)) in row.iter_mut().enumerate() {
+        note.x = if note.overflow {
+            0.0
+        } else {
+            note.x.max((slot + lead) as f64 * pitch)
+        };
+    }
+    let mut following = 1.0;
+    for (_, note) in row.iter_mut().rev() {
+        note.room = following - note.x;
+        if note.overflow {
+            note.length = note.room;
+        }
+        following = note.x;
+    }
+    row
 }
 
 /// Weight grows with the square root of text length, so a terse call still
@@ -291,6 +348,74 @@ mod tests {
             .find(|note| note.row == TraceRow::Reasoning)
             .expect("the reasoning note is drawn");
         assert!((reasoning.x - (1.0 - 290.0 / 600.0)).abs() < 1e-9);
+    }
+
+    /// Tool notes a second apart, the newest `newest` seconds ago.
+    fn burst(count: i64, newest: i64) -> Vec<TraceActivity> {
+        (0..count)
+            .map(|step| at(AgentActivityKind::Tool, newest + count - 1 - step))
+            .collect()
+    }
+
+    /// Every note lies within the trace, stands at least `pitch` from the next
+    /// note in its row, and the row's newest note keeps its instant.
+    fn assert_bounded(placed: &Trace, pitch: f64, newest: f64) {
+        let tools = placed
+            .notes
+            .iter()
+            .filter(|note| note.row == TraceRow::Tool)
+            .collect::<Vec<_>>();
+        for note in &tools {
+            assert!(
+                note.x >= 0.0 && note.x + note.room <= 1.0 + 1e-9,
+                "{note:?}"
+            );
+        }
+        for pair in tools.windows(2) {
+            assert!(pair[1].x - pair[0].x >= pitch - 1e-9, "{pair:?}");
+            assert!((pair[0].room - (pair[1].x - pair[0].x)).abs() < 1e-9);
+        }
+        let last = tools.last().expect("the burst is drawn");
+        assert!((last.x - newest).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_burst_too_dense_for_its_width_folds_its_oldest_notes_at_the_left_bound() {
+        let activities = burst(25, 60);
+        let newest = 0.9;
+        // Two pixels across the panes of teams of six, four, two and one: the
+        // narrower two hold fewer than 25 notes before the newest's instant.
+        for (width, fits) in [(23.0, false), (40.0, false), (80.0, true), (160.0, true)] {
+            let pitch = 2.0 / width;
+            let placed = trace(&activities, NOW, pitch);
+            assert_bounded(&placed, pitch, newest);
+            let overflows = placed
+                .notes
+                .iter()
+                .filter(|note| note.overflow)
+                .collect::<Vec<_>>();
+            if fits {
+                assert!(overflows.is_empty(), "width {width}");
+                assert_eq!(placed.notes.len(), activities.len());
+            } else {
+                assert_eq!(overflows.len(), 1, "width {width}");
+                let overflow = overflows[0];
+                assert!(std::ptr::eq(overflow, &placed.notes[0]));
+                assert!(overflow.x == 0.0 && overflow.room >= 2.0 * pitch - 1e-9);
+                assert!(placed.notes.len() < activities.len());
+            }
+        }
+    }
+
+    #[test]
+    fn an_old_burst_at_the_window_edge_packs_against_the_left_bound() {
+        let mut activities = burst(6, 595);
+        activities.push(at(AgentActivityKind::Tool, 60));
+        let placed = trace(&activities, NOW, PITCH);
+        assert_bounded(&placed, PITCH, 0.9);
+        assert_eq!(placed.notes.len(), 7);
+        assert!(placed.notes.iter().all(|note| !note.overflow));
+        assert!(placed.notes[0].x == 0.0);
     }
 
     #[test]

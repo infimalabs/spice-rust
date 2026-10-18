@@ -424,10 +424,13 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   width: max(1px, min(var(--length) * 1%, var(--room) * 1% - 1px));
   height: var(--trace-note-height);
   border-radius: .5px;
+  background: var(--trace-note-color);
 }
-.activity-trace > [data-trace-note="prose"] { background: var(--trace-prose); }
-.activity-trace > [data-trace-note="tool"] { background: var(--trace-tool); }
-.activity-trace > [data-trace-note="reasoning"] { background: var(--trace-reasoning); }
+.activity-trace > [data-trace-note="prose"] { --trace-note-color: var(--trace-prose); }
+.activity-trace > [data-trace-note="tool"] { --trace-note-color: var(--trace-tool); }
+.activity-trace > [data-trace-note="reasoning"] { --trace-note-color: var(--trace-reasoning); }
+/* An overflow note stands for older notes too dense for the pane, so it fades in from the left bound they ran past. */
+.activity-trace > [data-trace-overflow] { background: linear-gradient(to right, transparent, var(--trace-note-color)); }
 /* Rules are half-pixel backgrounds: Chromium rounds thinner borders up to a whole pixel. */
 .activity-trace > [data-trace-marker] {
   --trace-rule: color-mix(in srgb, var(--ink) 40%, transparent);
