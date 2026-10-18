@@ -435,29 +435,27 @@ focuses the card without a visible focus ring.
 Each team or working-group pip is an etched well: a darkened pane with a soft
 lip under its top edge and a light catch along its bottom, its status on a
 quote-rail-wide physical-left rail rounded by its own width. The pip keeps its
-accessible status label and the trace inside is decorative. The trace spans ten
-minutes. While the traced lane or Design is active the window ends now; once
-its newest activity is two and a half minutes old, long enough for the last
-curve to fall to rest, the window holds there, so a quiet pip keeps its last
-stretch of work in view however long ago it was, including after a reload.
-Each kind of work with activity in the window, reasoning, tool, and prose,
-draws one smoothed curve over a fill fading toward the floor, ending in a dot
-at now while the window ends now and without one while it holds; in the dark
-theme the curves glow. A curve's height is that kind's rate on one fixed scale
-shared by every pip, each activity weighted by its text, through a kernel that
-slides with time so redraws move the curve smoothly. Turn, operator direction,
-provider failure, compaction, fresh session, and sign-out draw as markers over
-the curves. Where the lane was off, from an occupant's end or a vacant seat to
-the next occupant's start, every curve leaves a gap with no line or fill, and a
-lane off now ends its curves where it went off; an interruption shorter than
-the spacing between two of the pane's curve samples is too brief to see and
-leaves the curves whole. A reload retains no earlier occupancy, so before a
-lane's first retained transition it counts as on, except when that transition
-is an occupant's start: the seat was vacant until then, and the curves begin
-there. Quiet is not off: a running lane with no activity still draws its low
-line. The trace draws only state the browser already holds, issues no
-requests, and redraws on new activity and, while its window ends now, every
-few seconds, so old activity leaves without a new frame.
+accessible status label and the trace inside is decorative. The trace spans the
+ten minutes ending now, whether the lane is running, off, or signed out, so
+activity moves left as time passes and leaves once it is ten minutes old; a pip
+whose activity is all older draws nothing until new activity arrives. Each kind
+of work with activity in the window, reasoning, tool, and prose, draws one
+smoothed curve over a fill fading toward the floor, ending in a dot at now; in
+the dark theme the curves glow. A curve's height is that kind's rate on one
+fixed scale shared by every pip, each activity weighted by its text, through a
+kernel that slides with time so redraws move the curve smoothly. Turn, operator
+direction, provider failure, compaction, fresh session, and sign-out draw as
+markers over the curves. Where the lane was off, from an occupant's end or a
+vacant seat to the next occupant's start, every curve leaves a gap with no line
+or fill, and a lane off now ends its curves where it went off; an interruption
+shorter than the spacing between two of the pane's curve samples is too brief
+to see and leaves the curves whole. A reload retains no earlier occupancy, so
+before a lane's first retained transition it counts as on, except when that
+transition is an occupant's start: the seat was vacant until then, and the
+curves begin there. Quiet is not off: a running lane with no activity still
+draws its low line. The trace draws only state the browser already holds,
+issues no requests, and redraws on new activity and every few seconds while
+anything is drawn, so old activity leaves without a new frame.
 
 The app's `style-src 'self'` policy refuses inline style attributes, so the
 trace is SVG geometry in the pane's measured CSS pixels and every colour and

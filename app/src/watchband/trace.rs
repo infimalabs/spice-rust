@@ -1,30 +1,23 @@
 //! What one lane has been doing lately, as its team pip draws it.
 //!
-//! A trace is a fixed span of wall time, the same length for every lane so
-//! neighbouring pips compare honestly. It ends at the instant it is drawn while
-//! the lane is active; once the lane falls quiet the window holds a little past
-//! its newest activity, so a quiet lane keeps its last stretch of work in view
-//! instead of sliding it out. Work becomes one curve per kind, reasoning, tool,
-//! and prose, whose height is that kind's recent rate on one fixed scale;
-//! lifecycle activity becomes markers. The curves are sampled at evenly spaced
-//! instants through a kernel that slides with time, so a redraw moves them
-//! smoothly instead of jumping between buckets. Positions and levels are
-//! fractions; the browser owns every pixel. Intervals the lane was off become
-//! gaps the curves do not cross, once they last at least the spacing between
-//! two samples.
+//! A trace is a fixed window of wall time ending at the instant it is drawn,
+//! shared by every lane so neighbouring pips compare honestly; activity moves
+//! left as time passes and leaves once it is a whole window old. Work becomes
+//! one curve per kind, reasoning, tool, and prose, whose height is that kind's
+//! recent rate on one fixed scale; lifecycle activity becomes markers. The
+//! curves are sampled at evenly spaced instants through a kernel that slides
+//! with time, so a redraw moves them smoothly instead of jumping between
+//! buckets. Positions and levels are fractions; the browser owns every pixel.
+//! Intervals the lane was off become gaps the curves do not cross, once they
+//! last at least the spacing between two samples.
 
 use wire::AgentActivityKind;
 
-/// Wall time one trace spans.
+/// Wall time one trace spans, ending at the instant it is drawn.
 pub const TRACE_WINDOW_MILLIS: i64 = 10 * 60 * 1_000;
 
-/// How long after its newest activity a trace's window keeps ending at now.
-/// It outlasts the kernel's reach, so the last activity has fallen to rest
-/// before the window holds still.
-pub const TRACE_HOLD_MILLIS: i64 = TRACE_WINDOW_MILLIS / 4;
-
-/// Redraw cadence of a trace whose window ends at now: about one device pixel
-/// of drift at the widest pip on a 2x display.
+/// Redraw cadence of a non-empty trace: about one device pixel of drift at the
+/// widest pip on a 2x display.
 pub const TRACE_STEP_MILLIS: u32 = 4_000;
 
 /// Text length at which an activity reaches full weight.
@@ -79,7 +72,7 @@ impl TraceKind {
 pub struct TraceCurve {
     pub kind: TraceKind,
     /// Levels in `0..=1` at evenly spaced instants, the window's start first
-    /// and its end last.
+    /// and now last.
     pub levels: Vec<f64>,
 }
 
@@ -111,7 +104,7 @@ impl TraceMarkerKind {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TraceMarker {
     pub kind: TraceMarkerKind,
-    /// Fraction of the window, its start at 0 and its end at 1.
+    /// Fraction of the window, its start at 0 and now at 1.
     pub x: f64,
 }
 
@@ -192,51 +185,27 @@ fn hunk_bytes(source: &wire::rooms::TranscriptHunk) -> usize {
     usize::try_from(source.text.end.saturating_sub(source.text.start)).unwrap_or(usize::MAX)
 }
 
-/// The instant a trace's window ends: `now` until its newest activity is
-/// [`TRACE_HOLD_MILLIS`] old, then that long after the activity, where it
-/// holds. A trace without activity ends at now.
-#[must_use]
-pub fn trace_end(activities: &[TraceActivity], now: i64) -> i64 {
-    activities
-        .iter()
-        .map(|activity| activity.millis)
-        .max()
-        .map_or(now, |newest| {
-            now.min(newest.saturating_add(TRACE_HOLD_MILLIS))
-        })
-}
-
-/// Drop the activities no window can reach. Every window ends at or after the
-/// newest activity, so anything a whole window older than it is never drawn.
-pub fn retain_reachable(activities: &mut Vec<TraceActivity>) {
-    if let Some(newest) = activities.iter().map(|activity| activity.millis).max() {
-        activities.retain(|activity| activity.millis >= newest - TRACE_WINDOW_MILLIS);
-    }
-}
-
 /// Trace one lane's activities, given in any order, through the window ending
-/// at `end`, sampling each curve at no fewer than `samples` instants.
+/// at `now`, sampling each curve at no fewer than `samples` instants. An
+/// activity a whole window old or older is gone.
 ///
-/// The grid is always odd so the window start, midpoint, and end are shared
+/// The grid is always odd so the window start, midpoint, and now are shared
 /// samples at every browser-selected density. A sample's level is its kind's
 /// weighted rate near that instant: each activity spreads through a triangular
 /// kernel of fixed wall-time width, and where the window's edge cuts the kernel
-/// short the rate is taken from the part inside, so the level at the end
-/// reports the rate there rather than half of it.
+/// short the rate is taken from the part inside, so the level at now reports
+/// the current rate rather than half of it.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
-pub fn trace(activities: &[TraceActivity], end: i64, samples: usize) -> Trace {
+pub fn trace(activities: &[TraceActivity], now: i64, samples: usize) -> Trace {
     let samples = grid(samples);
-    let since = end - TRACE_WINDOW_MILLIS;
+    let since = now - TRACE_WINDOW_MILLIS;
     let window = TRACE_WINDOW_MILLIS as f64;
     let x_of = |millis: i64| ((millis - since) as f64 / window).clamp(0.0, 1.0);
     let half_width = KERNEL_HALF_WINDOW;
     let mut sums = [(); 3].map(|()| vec![0.0_f64; samples]);
     let mut markers = Vec::new();
-    for activity in activities
-        .iter()
-        .filter(|activity| activity.millis >= since)
-    {
+    for activity in activities.iter().filter(|activity| activity.millis > since) {
         let x = x_of(activity.millis);
         match placement(activity.kind) {
             Placement::Curve(kind) => {
@@ -293,7 +262,7 @@ fn text_weight(bytes: usize) -> f64 {
 }
 
 /// The odd sample count at or above `samples`, so the window start, midpoint,
-/// and end are shared samples at every density.
+/// and now are shared samples at every density.
 fn grid(samples: usize) -> usize {
     let samples = samples.max(2);
     samples + usize::from(samples.is_multiple_of(2))
@@ -308,8 +277,8 @@ pub struct TraceOff {
     pub until: Option<i64>,
 }
 
-/// Part of the window, as fractions from its start at 0 to its end at 1,
-/// through which the curves draw.
+/// Part of the window, as fractions from its start at 0 to now at 1, through
+/// which the curves draw.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TraceSpan {
     pub from: f64,
@@ -359,7 +328,7 @@ pub fn off_intervals(transitions: impl IntoIterator<Item = (i64, Occupancy)>) ->
     intervals
 }
 
-/// The spans of the window ending at `end` through which a lane's curves draw,
+/// The spans of the window ending at `now` through which a lane's curves draw,
 /// in time order, given the intervals it was `off` and the `samples` the
 /// curves are drawn at as [`trace`] draws them. An off interval shorter than
 /// the spacing between two samples would vanish at that density and leaves the
@@ -367,15 +336,15 @@ pub fn off_intervals(transitions: impl IntoIterator<Item = (i64, Occupancy)>) ->
 /// running ends the curves where the lane went off.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
-pub fn drawn_spans(off: &[TraceOff], end: i64, samples: usize) -> Vec<TraceSpan> {
-    let since = end - TRACE_WINDOW_MILLIS;
+pub fn drawn_spans(off: &[TraceOff], now: i64, samples: usize) -> Vec<TraceSpan> {
+    let since = now - TRACE_WINDOW_MILLIS;
     let window = TRACE_WINDOW_MILLIS as f64;
     let spacing = window / (grid(samples) - 1) as f64;
     let x_of = |millis: i64| ((millis.max(since) - since) as f64 / window).min(1.0);
     let mut gaps = off
         .iter()
         .filter_map(|off| {
-            let until = off.until.unwrap_or(end).min(end);
+            let until = off.until.unwrap_or(now).min(now);
             let from = off.from.unwrap_or(i64::MIN);
             (until.saturating_sub(from) as f64 >= spacing && until > since)
                 .then(|| (x_of(from), x_of(until)))
@@ -603,43 +572,37 @@ mod tests {
     }
 
     #[test]
-    fn a_quiet_trace_holds_its_window_a_quarter_window_after_its_newest_activity() {
-        let hold = TRACE_HOLD_MILLIS / 1_000;
-        let recent = [
-            at(AgentActivityKind::Tool, 900),
-            at(AgentActivityKind::Prose, hold),
+    fn activity_moves_left_and_leaves_exactly_a_window_after_it_happened() {
+        let activity = [
+            at(AgentActivityKind::Tool, 0),
+            at(AgentActivityKind::Turn, 0),
         ];
-        assert_eq!(trace_end(&recent, NOW), NOW);
-        // One second past the hold, the window stops one second short of now.
-        assert_eq!(
-            trace_end(&[at(AgentActivityKind::Prose, hold + 1)], NOW),
-            NOW - 1_000
-        );
-        let quiet = [
-            at(AgentActivityKind::Tool, hold + 3_720),
-            at(AgentActivityKind::Prose, hold + 3_600),
-        ];
-        let end = trace_end(&quiet, NOW);
-        assert_eq!(end, NOW - 3_600_000);
-        // The held window still draws the newest stretch of work.
-        let placed = trace(&quiet, end, SAMPLES);
-        assert!(
-            levels(&placed, TraceKind::Prose)
-                .iter()
-                .any(|level| *level > 0.0)
-        );
-        assert_eq!(trace_end(&[], NOW), NOW);
+        let fresh = trace(&activity, NOW, SAMPLES);
+        assert!((fresh.markers[0].x - 1.0).abs() < 1e-9);
+        let halfway = trace(&activity, NOW + TRACE_WINDOW_MILLIS / 2, SAMPLES);
+        assert!((halfway.markers[0].x - 0.5).abs() < 1e-9);
+        let last = trace(&activity, NOW + TRACE_WINDOW_MILLIS - 1, SAMPLES);
+        assert_eq!(last.markers.len(), 1);
+        assert_eq!(last.curves.len(), 1);
+        assert!(trace(&activity, NOW + TRACE_WINDOW_MILLIS, SAMPLES).is_empty());
     }
 
     #[test]
-    fn only_activity_within_a_window_of_the_newest_is_reachable() {
-        let mut activities = vec![
-            at(AgentActivityKind::Tool, 5_000),
-            at(AgentActivityKind::Tool, 5_600),
-            at(AgentActivityKind::Tool, 5_601),
-        ];
-        retain_reachable(&mut activities);
-        assert_eq!(activities.len(), 2);
+    fn three_runs_in_the_window_draw_three_areas_split_by_two_gaps() {
+        use Occupancy::{Started, Vacant};
+        let ago = |seconds: i64| NOW - seconds * 1_000;
+        let off = off_intervals([
+            (ago(600), Started),
+            (ago(480), Vacant),
+            (ago(360), Started),
+            (ago(240), Vacant),
+            (ago(120), Started),
+        ]);
+        let spans = drawn_spans(&off, NOW, SAMPLES)
+            .iter()
+            .map(|span| ((span.from * 600.0).round(), (span.to * 600.0).round()))
+            .collect::<Vec<_>>();
+        assert_eq!(spans, [(0.0, 120.0), (240.0, 360.0), (480.0, 600.0)]);
     }
 
     #[test]
