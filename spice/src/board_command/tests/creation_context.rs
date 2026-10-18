@@ -92,11 +92,11 @@ fn lane_creation_refuses_a_causal_session_that_disagrees_with_its_occupant() {
 }
 
 #[test]
-fn lane_creation_refuses_a_sole_unregistered_stream_without_rendering_a_command() {
+fn lane_creation_refuses_a_sole_unregistered_stream() {
     let (root, bus, epoch, seats) = fixture("creation-context-unregistered-stream", 1);
     let lane = seats[0].lane;
     declare_session(&bus, epoch, &seats[0], uuid(9_302), 302);
-    let unregistered = seed_creation_stream(&bus, lane, "stdout");
+    seed_creation_stream(&bus, lane, "stdout");
     let snapshot = validated_snapshot(
         &bus,
         Actor::Lane(lane),
@@ -111,11 +111,6 @@ fn lane_creation_refuses_a_sole_unregistered_stream_without_rendering_a_command(
             &snapshot,
         )),
         "task::creation-context-stream-unregistered"
-    );
-
-    assert_eq!(
-        task_creation_context_output(&unregistered).as_ref(),
-        "unavailable legacy-stream-unregistered"
     );
     clean(&root, bus);
 }

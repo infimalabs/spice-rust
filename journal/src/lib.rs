@@ -45,8 +45,10 @@
 /// task-claim witness when a predecessor recorded no successful completion.
 /// Schema 83 binds each invitation to its exact compaction-delimited context
 /// generation. Schema 84 records each invitation's supporting-work
-/// classification and bounded authored excerpt.
-pub const SCHEMA_VERSION: u32 = 84;
+/// classification and bounded authored excerpt. Schema 85 stores every task
+/// creation context on the registered transcript stream or a current
+/// unavailable reason.
+pub const SCHEMA_VERSION: u32 = 85;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.

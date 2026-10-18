@@ -360,15 +360,6 @@ pub(super) fn task_creation_context_output(context: &body::TaskCreationContext) 
         body::TaskCreationContext::Unavailable { reason } => {
             format!("unavailable {}", reason.as_str()).into_boxed_str()
         }
-        body::TaskCreationContext::Transcript { boundary, .. }
-            if boundary.stream != body::TASK_CREATION_CONTEXT_STREAM =>
-        {
-            format!(
-                "unavailable {}",
-                body::TaskCreationUnavailable::LegacyStreamUnregistered.as_str()
-            )
-            .into_boxed_str()
-        }
         body::TaskCreationContext::Transcript {
             session, boundary, ..
         } => shell_words::join([

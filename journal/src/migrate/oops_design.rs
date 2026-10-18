@@ -303,7 +303,7 @@ fn append_design(
         .parse::<wire::Phase>()
         .expect("design is a valid phase");
     let creation = wire::body::TaskCreationContext::unavailable(
-        wire::body::TaskCreationUnavailable::LegacyEvidenceMissing,
+        wire::body::TaskCreationUnavailable::SpiceActor,
     );
     let added = wire::body::TaskAdded {
         task: design.clone(),
