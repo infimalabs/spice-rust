@@ -95,6 +95,25 @@ fn only_execution_walls_wait_in_the_operator_danger_queue() {
 }
 
 #[test]
+fn a_claimed_task_the_operator_must_unblock_holds_its_dependents_in_one_wait() {
+    let mut iced = task(1, "queue.iced");
+    iced.statement.body.requirements = upgrade();
+    iced.claim = Some(claim(&iced, ClaimDisposition::Active));
+    let mut dependent = task(2, "queue.iced");
+    dependent.statement.body.dependencies = vec![stamp(1)];
+    let mut transitive = task(3, "queue.iced");
+    transitive.statement.body.dependencies = vec![stamp(2)];
+    let mut board = board(vec![iced, dependent, transitive]);
+    board.blocked.extend([stamp(2), stamp(3)]);
+    let work = WorkProjection::from_board(&board);
+    let queue = OperatorQueue::new(&work);
+
+    assert_eq!(queued(&queue), [0]);
+    assert!(queue.waits()[0].environment());
+    assert_eq!(queue.waits()[0].holds(), [1, 2]);
+}
+
+#[test]
 fn next_steps_through_the_queue_in_order_and_wraps() {
     let mut first = task(1, "queue.next");
     first.statement.body.requirements = upgrade();
