@@ -498,7 +498,7 @@ path.image-annotation-hit { fill: none; }
 /* The trailing total holds the right edge; tasks flow leftward from it between symmetric fades. */
 .team-toolbar > .team-task-rail {
   --team-task-fade: var(--mosaic-gap);
-  --team-task-screen: calc(var(--team-task-fade) + var(--mosaic-gap));
+  --team-task-screen: var(--team-task-fade);
   position: relative;
   display: grid;
   grid-area: tasks;
@@ -511,7 +511,7 @@ path.image-annotation-hit { fill: none; }
 .team-task-rail > :is(.team-tasks, [data-work-scope="team"], [data-work-scope="group"]) { align-self: end; }
 .team-task-rail > :is([data-work-scope="team"], [data-work-scope="group"]) { grid-column: 2; grid-row: 1; z-index: 2; }
 .team-task-rail > .team-tasks {
-  flex-direction: row-reverse;
+  flex-direction: row-reverse; gap: 0;
   grid-area: 1 / 1;
   z-index: 1;
   width: calc(100% + 2 * var(--team-task-fade));
