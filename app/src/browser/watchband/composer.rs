@@ -10,9 +10,11 @@ mod media;
 mod message_badges;
 mod message_boundary;
 mod message_controls;
+mod recall;
 pub(super) use drag::primary_composer_dragging;
 pub(in crate::browser) use drag::{PrimaryComposerDragState, use_primary_composer_drag_state};
 use message_boundary::render as render_agent_boundary;
+use recall::recall_arrow;
 
 pub(super) fn keyboard_submit(
     lane: CanonicalUuid,
@@ -174,41 +176,60 @@ pub(in crate::browser) fn composer_textarea(properties: &ComposerTextareaProps) 
     } else {
         "quote"
     };
+    let recall = use_mut_ref(crate::composer_history::Recall::default);
     {
         let root = root.clone();
-        use_effect_with(properties.onkeydown.clone(), move |onkeydown| {
-            let registration = root.cast::<web_sys::HtmlTextAreaElement>().map(|textarea| {
-                let onkeydown = onkeydown.clone();
-                let trace_textarea = textarea.clone();
-                let callback =
-                    Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
-                        let _trace = crate::browser::diagnostics::span("composer.keydown", || {
-                            crate::browser::diagnostics::Metadata {
-                                instance: Some(trace_instance),
-                                kind: Some(trace_kind),
-                                event: Some("keydown"),
-                                focused: trace_textarea.matches(":focus").ok(),
-                                selection_start: trace_textarea.selection_start().ok().flatten(),
-                                selection_end: trace_textarea.selection_end().ok().flatten(),
-                                ..crate::browser::diagnostics::Metadata::default()
+        let lane = properties.lane.clone();
+        use_effect_with(
+            (properties.onkeydown.clone(), lane),
+            move |(onkeydown, lane)| {
+                let registration = root.cast::<web_sys::HtmlTextAreaElement>().map(|textarea| {
+                    let onkeydown = onkeydown.clone();
+                    let lane = lane.clone();
+                    let trace_textarea = textarea.clone();
+                    let callback =
+                        Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
+                            let _trace =
+                                crate::browser::diagnostics::span("composer.keydown", || {
+                                    crate::browser::diagnostics::Metadata {
+                                        instance: Some(trace_instance),
+                                        kind: Some(trace_kind),
+                                        event: Some("keydown"),
+                                        focused: trace_textarea.matches(":focus").ok(),
+                                        selection_start: trace_textarea
+                                            .selection_start()
+                                            .ok()
+                                            .flatten(),
+                                        selection_end: trace_textarea
+                                            .selection_end()
+                                            .ok()
+                                            .flatten(),
+                                        ..crate::browser::diagnostics::Metadata::default()
+                                    }
+                                });
+                            if recall_arrow(&event, &trace_textarea, &lane, &recall) {
+                                return;
                             }
+                            onkeydown.emit(event);
                         });
-                        onkeydown.emit(event);
-                    });
-                textarea
-                    .add_event_listener_with_callback("keydown", callback.as_ref().unchecked_ref())
-                    .expect("composer textarea accepts its keyboard shortcut listener");
-                (textarea, callback)
-            });
-            move || {
-                if let Some((textarea, callback)) = registration {
-                    let _ = textarea.remove_event_listener_with_callback(
-                        "keydown",
-                        callback.as_ref().unchecked_ref(),
-                    );
+                    textarea
+                        .add_event_listener_with_callback(
+                            "keydown",
+                            callback.as_ref().unchecked_ref(),
+                        )
+                        .expect("composer textarea accepts its keyboard shortcut listener");
+                    (textarea, callback)
+                });
+                move || {
+                    if let Some((textarea, callback)) = registration {
+                        let _ = textarea.remove_event_listener_with_callback(
+                            "keydown",
+                            callback.as_ref().unchecked_ref(),
+                        );
+                    }
                 }
-            }
-        });
+            },
+        );
     }
     use_composer_diagnostics(root.clone(), trace_instance, trace_kind);
     {

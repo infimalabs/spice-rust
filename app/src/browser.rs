@@ -48,6 +48,7 @@ mod draft_handoff;
 mod drafts;
 mod image_media;
 mod image_viewer;
+mod input_history;
 mod mermaid;
 mod navigation;
 mod overlay;

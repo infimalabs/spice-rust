@@ -388,6 +388,26 @@ Each member heading resolves from that lane's newest eligible authored prose.
 When a history page has none, header demand continues to a newly exposed older
 frontier but never reissues the same frontier without fresh viewport demand.
 
+## Input history
+
+Each lane keeps one history of the text sent from its composers, its primary
+composer and every quote reply alike, in the browser's local storage under the
+lane's logical identity, so it survives reloads and occupant changes. A send
+records each nonblank text it carried, quote replies first; a text repeating
+the lane's newest entry adds nothing, and images are never kept. The retained
+document is bounded by the newest 200 entries per lane and 256 KiB across all
+lanes, trimming the oldest entries of the least recently used lanes first; a
+corrupt or oversized document is replaced by what fits.
+
+An unmodified ArrowUp with a collapsed caret on a composer's first line
+recalls the previous entry with the caret at its start, and ArrowDown on the
+last line moves forward with the caret at its end, finally restoring the
+unsent draft. Anywhere else in multiline text, with a selection, with a
+modifier, or while an input method is composing, the arrows move the caret as
+usual. Text edited in a recalled entry stays with that entry while walking, and
+stored history changes only when something is sent: the lane's next send ends
+every walk, and a sent edit is a new entry.
+
 ## Image runs
 
 A lone tool image renders as a cover card. In the message plane, two to four
