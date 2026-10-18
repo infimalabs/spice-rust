@@ -1,6 +1,6 @@
 //! A working group's toolbar, the team toolbar's twin read from Designs: an
 //! open-task total and one tab per agent currently working in the group's
-//! Designs, one standing light per Design, and a ticker of the newest words
+//! Designs, one traced pip per Design, and a ticker of the newest words
 //! said across them, as a team's ticker shows its newest words. Like a
 //! team toolbar it shows no name; this browser's placement of the console
 //! lives in the panel's arrangement menu, where a team's arrangement stands.
@@ -39,7 +39,7 @@ pub(super) fn render(render: &GroupRender<'_, '_>, view: &GroupView, channels: &
                     aria-label={format!("{} designs", channels.len())}
                     data-team-size={channels.len().to_string()}
                 >
-                    {for channels.iter().zip(&standings).map(|(channel, standing)| render_light(channel, *standing))}
+                    {for channels.iter().zip(&standings).map(|(channel, standing)| render_light(render, channel, *standing))}
                 </span>
             </div>
         </header>
@@ -154,20 +154,24 @@ fn render_worker(render: &GroupRender<'_, '_>, lane: wire::CanonicalUuid) -> Htm
     }
 }
 
-/// One Design's light: its accent, shaped by its standing.
-fn render_light(channel: &Channel, standing: DesignStanding) -> Html {
+/// One Design's pip, a team pip's twin: its standing on the rail and its room's
+/// recent activity traced inside.
+fn render_light(render: &GroupRender<'_, '_>, channel: &Channel, standing: DesignStanding) -> Html {
     let label = format!("{}: {}", channel.label, standing.label());
+    let activities = crate::browser::watchband::design_activities(render.runtime, &channel.stamp);
     html! {
         <span
             key={channel.stamp.to_string()}
-            class={classes!("app-presence-pip", "app-presence-pip--status", "group-design-pip", standing.key())}
+            class={classes!("app-presence-pip", "app-presence-pip--status", "app-presence-pip--trace", "group-design-pip", standing.key())}
             role="img"
             data-design={channel.stamp.to_string()}
             data-accent={channel.accent.to_string()}
             data-design-standing={standing.key()}
             aria-label={label.clone()}
             title={label}
-        ></span>
+        >
+            <crate::browser::watchband::ActivityTrace id={channel.stamp.to_string()} {activities} />
+        </span>
     }
 }
 

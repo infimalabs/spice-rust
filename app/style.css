@@ -381,73 +381,70 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-semantic-live) 14%, transparent);
 }
 .app-presence-pip--status:is(.bound, .unbound) { box-shadow: none; }
-/* A working group's lights are its design channels, each a square cell in its accent and
-   shaped by its standing: claimed burns, active dims, passive rings, an output
-   owing selection warns, and concluded, deleted, or unavailable fades. */
-.app-presence-pip--status.group-design-pip { --app-presence-color: var(--accent-slot); border-radius: 0; }
-.group-design-pip.active { --app-presence-opacity: .55; }
-.group-design-pip.passive { background: transparent; box-shadow: inset 0 0 0 2px var(--app-presence-color); }
+/* A working group's pips are its Design channels, each traced as a team's
+   lane is, its rail in its accent shaped by its standing: claimed burns, an
+   active pass dims, passive idles faint, an output owing selection warns,
+   and concluded, deleted, or unavailable fades. */
+.app-presence-pip--status.group-design-pip { --app-presence-color: var(--accent-slot); }
+.group-design-pip:is(.gathering-input, .ready-for-proposal, .waiting-on-selected-work) { --app-presence-opacity: .55; }
+.group-design-pip.passive { --app-presence-opacity: .3; }
 .group-design-pip.awaiting-decision { --app-presence-color: var(--warning); }
-.group-design-pip:is(.done, .collapsed, .deleted, .unavailable) { --app-presence-color: var(--muted); --app-presence-opacity: .35; box-shadow: none; }
+.group-design-pip:is(.done, .collapsed, .deleted, .unavailable) { --app-presence-color: var(--muted); --app-presence-opacity: .35; }
 .group-surface .ticker-age.awaiting-decision { color: var(--warning); }
 .group-surface .ticker-age:is(.done, .collapsed, .deleted, .unavailable) { color: var(--app-anchor-muted); opacity: .7; }
 
-/* A team cell is a hairline glass pane carrying its lane's activity trace. Its
-   status rides a 1px rail on the physical left, since the lights run right to
-   left, rounded by its own width like message cards. Tools wear the lane
-   accent, prose lifts toward ink, and reasoning sinks toward the page. */
+/* A team or group cell is an etched well carrying its lane's or Design's
+   activity trace: a darkened pane, a soft lip under the top edge, and a catch
+   along the bottom. Its status rides a quote rail on the physical left, since
+   the lights run right to left, rounded by its own width like message cards.
+   Tools wear the accent, prose lifts toward ink, and reasoning sinks toward
+   the page. */
 .team-lights > .app-presence-pip--trace {
   --trace-tool: var(--accent-slot);
   --trace-prose: color-mix(in srgb, var(--accent-slot) 45%, var(--ink));
   --trace-reasoning: color-mix(in srgb, var(--accent-slot) 45%, var(--page));
+  --well-top: color-mix(in srgb, var(--app-shadow-source) 6%, transparent);
+  --well-floor: color-mix(in srgb, var(--app-shadow-source) 2%, transparent);
+  --well-lip: color-mix(in srgb, var(--app-shadow-source) 18%, transparent);
+  --well-catch: color-mix(in srgb, var(--app-highlight-source) 85%, transparent);
   position: relative;
   overflow: hidden;
   opacity: 1;
   box-sizing: border-box;
-  border-left: 1px solid color-mix(in srgb, var(--app-presence-color) calc(var(--app-presence-opacity) * 100%), transparent);
-  border-radius: 1px;
-  background: linear-gradient(to bottom, color-mix(in srgb, var(--app-highlight-source) 8%, transparent), color-mix(in srgb, var(--app-highlight-source) 2%, transparent));
+  border-left: var(--quote-rail) solid color-mix(in srgb, var(--app-presence-color) calc(var(--app-presence-opacity) * 100%), transparent);
+  border-radius: var(--quote-rail);
+  background:
+    linear-gradient(to bottom, color-mix(in srgb, var(--app-highlight-source) 7%, transparent), transparent 50%),
+    linear-gradient(var(--well-top), var(--well-floor));
   box-shadow:
-    inset 0 0 0 .5px color-mix(in srgb, var(--ink) 14%, transparent),
-    inset 0 .5px 0 color-mix(in srgb, var(--app-highlight-source) 35%, transparent);
+    inset 0 2px 1px -1px var(--well-lip),
+    inset 0 -2px 1px -1px var(--well-catch);
+}
+:root[data-app-effective-theme="dark"] .team-lights > .app-presence-pip--trace {
+  --well-top: color-mix(in srgb, var(--app-shadow-source) 26%, transparent);
+  --well-floor: color-mix(in srgb, var(--app-shadow-source) 12%, transparent);
+  --well-lip: color-mix(in srgb, var(--app-shadow-source) 45%, transparent);
+  --well-catch: color-mix(in srgb, var(--app-highlight-source) 18%, transparent);
 }
 .activity-trace { position: absolute; inset: 1px; }
-.app-presence-pip--trace:is(.bound, .unbound) > .activity-trace { opacity: .55; }
+.app-presence-pip--trace:is(.bound, .unbound, .passive, .done, .collapsed, .deleted, .unavailable) > .activity-trace { opacity: .55; }
 .activity-trace > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-.activity-trace > svg > path { fill: none; stroke: color-mix(in srgb, var(--ink) 30%, transparent); stroke-width: .5px; vector-effect: non-scaling-stroke; }
-/* Rows are thirds; a note stops a pixel short of the next in its row, the gap the trace's two-pixel note pitch leaves, and never shrinks below a pixel. */
-.activity-trace > [data-trace-note] {
-  --trace-note-height: clamp(2px, (100% - 1px) * .4 / 3, 3px);
-  position: absolute;
-  left: calc(var(--x) * 1%);
-  top: calc((var(--row) + .5) * 100% / 3 - var(--trace-note-height) / 2);
-  width: max(1px, min(var(--length) * 1%, var(--room) * 1% - 1px));
-  height: var(--trace-note-height);
-  border-radius: .5px;
-  background: var(--trace-note-color);
+.activity-trace [data-trace-kind="tool"] { --trace-color: var(--trace-tool); }
+.activity-trace [data-trace-kind="prose"] { --trace-color: var(--trace-prose); }
+.activity-trace [data-trace-kind="reasoning"] { --trace-color: var(--trace-reasoning); }
+.activity-trace stop { stop-color: var(--trace-color); }
+.activity-trace .trace-fill { stroke: none; }
+.activity-trace .trace-line { fill: none; stroke: var(--trace-color); stroke-width: 1px; stroke-linecap: round; }
+.activity-trace .trace-now { fill: var(--trace-color); stroke: none; }
+/* Glow reads as light only in a dark well; a light theme keeps the crisp line. */
+:root[data-app-effective-theme="dark"] .activity-trace .trace-lit {
+  filter: drop-shadow(0 0 1px color-mix(in srgb, var(--accent-slot) 70%, transparent));
 }
-.activity-trace > [data-trace-note="prose"] { --trace-note-color: var(--trace-prose); }
-.activity-trace > [data-trace-note="tool"] { --trace-note-color: var(--trace-tool); }
-.activity-trace > [data-trace-note="reasoning"] { --trace-note-color: var(--trace-reasoning); }
-/* An overflow note stands for older notes too dense for the pane, so it fades in from the left bound they ran past. */
-.activity-trace > [data-trace-overflow] { background: linear-gradient(to right, transparent, var(--trace-note-color)); }
-/* Rules are half-pixel backgrounds: Chromium rounds thinner borders up to a whole pixel. */
-.activity-trace > [data-trace-marker] {
-  --trace-rule: color-mix(in srgb, var(--ink) 40%, transparent);
-  --trace-stroke: linear-gradient(var(--trace-rule), var(--trace-rule));
-  position: absolute;
-  inset-block: 0;
-  left: calc(var(--x) * 1%);
-  width: .5px;
-  background: var(--trace-rule);
-}
-.activity-trace > [data-trace-marker="turn"] { --trace-rule: color-mix(in srgb, var(--ink) 22%, transparent); }
-.activity-trace > [data-trace-marker="compaction"] { background: repeating-linear-gradient(to bottom, var(--trace-rule) 0 1px, transparent 1px 2px); }
-/* A fresh session ticks forward from its rule; a sign-out ticks back. */
-.activity-trace > [data-trace-marker="session"] { width: 2px; background: var(--trace-stroke) left / .5px 100% no-repeat, var(--trace-stroke) top / 100% .5px no-repeat; }
-.activity-trace > [data-trace-marker="sign-out"] { left: calc(var(--x) * 1% - 1.5px); width: 2px; background: var(--trace-stroke) right / .5px 100% no-repeat, var(--trace-stroke) top / 100% .5px no-repeat; }
-.activity-trace > [data-trace-marker="failure"] { width: 1px; background: var(--danger); }
-.activity-trace > [data-trace-marker="direction"] { inset-block: .25px auto; width: 2px; height: 2px; margin-left: -1px; border-radius: 50%; background: var(--ink); }
+.activity-trace [data-trace-marker] { fill: none; stroke: color-mix(in srgb, var(--ink) 40%, transparent); stroke-width: .5px; }
+.activity-trace [data-trace-marker="turn"] { stroke: color-mix(in srgb, var(--ink) 22%, transparent); }
+.activity-trace [data-trace-marker="compaction"] { stroke-dasharray: 1 1; }
+.activity-trace [data-trace-marker="failure"] { fill: var(--danger); stroke: none; }
+.activity-trace [data-trace-marker="direction"] { fill: var(--ink); stroke: none; }
 
 .app-presence-pip--work {
   width: var(--app-presence-pip-size);

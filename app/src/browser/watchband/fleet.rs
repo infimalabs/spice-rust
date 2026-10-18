@@ -232,7 +232,7 @@ fn render_team_toolbar(
                     aria-label={label.clone()}
                     title={label}
                 >
-                    <super::trace::ActivityTrace {activities} />
+                    <super::trace::ActivityTrace id={member.lane.to_string()} {activities} />
                 </span>
             })
         };
