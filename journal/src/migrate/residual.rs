@@ -32,6 +32,8 @@ const STEERING_SOURCE_RELEASE: &str = "cb609bd56";
 /// Release from which every claim, carry, completion, and review names its proven
 /// source boundary.
 const LIFECYCLE_SOURCE_RELEASE: &str = "b18f556c3";
+/// Retained envelopes rewritten in one bounded crossing step.
+const REWRITE_PAGE_ROWS: i64 = 256;
 /// Release from which peer-message steering heads retain their frozen room.
 const STEERING_ROOM_HEAD_RELEASE: &str = "400b421de";
 /// Release from which room packet records name their author occupant and the
@@ -445,52 +447,60 @@ pub(super) fn rewrite_facts(
     edit: impl Fn(i64, &mut Map<String, Value>) -> Result<(), String>,
 ) -> Result<(), OpenError> {
     let kind = kind.as_str();
-    let rows = {
-        let mut statement = transaction
-            .prepare(&format!(
-                "SELECT seq, envelope FROM fact_envelopes WHERE kind = ?1 AND ({predicate}) \
-                 ORDER BY seq"
-            ))
-            .map_err(OpenError::Sqlite)?;
-        let rows = statement
-            .query_map([kind], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
-            })
-            .map_err(OpenError::Sqlite)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(OpenError::Sqlite)?
-    };
-    for (seq, bytes) in rows {
-        let refuse = |detail: String| retained("fact_envelopes", seq.to_string(), release, detail);
-        let mut envelope: Value = serde_json::from_slice(&bytes)
-            .map_err(|error| refuse(format!("the stored envelope does not decode: {error}")))?;
-        let fact = envelope
-            .get_mut("fact")
-            .and_then(Value::as_object_mut)
-            .ok_or_else(|| refuse("the stored envelope carries no fact object".to_owned()))?;
-        edit(seq, fact).map_err(refuse)?;
-        let current = serde_json::to_vec(&envelope)
-            .map_err(|error| refuse(format!("the crossed envelope cannot encode: {error}")))
-            .and_then(|crossed| {
-                wire::decode::<wire::Envelope<wire::AnyFact>>(&crossed).map_err(|error| {
-                    refuse(format!("the crossed envelope is not current: {error}"))
+    let mut after = 0_i64;
+    loop {
+        let rows = {
+            let mut statement = transaction
+                .prepare(&format!(
+                    "SELECT seq, envelope FROM fact_envelopes \
+                     WHERE kind = ?1 AND seq > ?2 AND ({predicate}) \
+                     ORDER BY seq LIMIT ?3"
+                ))
+                .map_err(OpenError::Sqlite)?;
+            let rows = statement
+                .query_map(params![kind, after, REWRITE_PAGE_ROWS], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
                 })
-            })?;
-        let bytes = wire::encode(&current)
-            .map_err(|error| refuse(format!("the crossed envelope cannot encode: {error}")))?;
-        let changed = transaction
-            .execute(
-                "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = ?2 AND kind = ?3",
-                params![bytes, seq, kind],
-            )
-            .map_err(OpenError::Sqlite)?;
-        if changed != 1 {
-            return Err(refuse(
-                "the row changed under the exclusive crossing".to_owned(),
-            ));
+                .map_err(OpenError::Sqlite)?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(OpenError::Sqlite)?
+        };
+        let Some((last, _)) = rows.last() else {
+            return Ok(());
+        };
+        after = *last;
+        for (seq, bytes) in rows {
+            let refuse =
+                |detail: String| retained("fact_envelopes", seq.to_string(), release, detail);
+            let mut envelope: Value = serde_json::from_slice(&bytes)
+                .map_err(|error| refuse(format!("the stored envelope does not decode: {error}")))?;
+            let fact = envelope
+                .get_mut("fact")
+                .and_then(Value::as_object_mut)
+                .ok_or_else(|| refuse("the stored envelope carries no fact object".to_owned()))?;
+            edit(seq, fact).map_err(refuse)?;
+            let current = serde_json::to_vec(&envelope)
+                .map_err(|error| refuse(format!("the crossed envelope cannot encode: {error}")))
+                .and_then(|crossed| {
+                    wire::decode::<wire::Envelope<wire::AnyFact>>(&crossed).map_err(|error| {
+                        refuse(format!("the crossed envelope is not current: {error}"))
+                    })
+                })?;
+            let bytes = wire::encode(&current)
+                .map_err(|error| refuse(format!("the crossed envelope cannot encode: {error}")))?;
+            let changed = transaction
+                .execute(
+                    "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = ?2 AND kind = ?3",
+                    params![bytes, seq, kind],
+                )
+                .map_err(OpenError::Sqlite)?;
+            if changed != 1 {
+                return Err(refuse(
+                    "the row changed under the exclusive crossing".to_owned(),
+                ));
+            }
         }
     }
-    Ok(())
 }
 
 pub(super) fn retained(

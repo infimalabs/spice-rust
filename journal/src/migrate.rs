@@ -398,8 +398,8 @@ fn cross_predecessor(connection: &mut Connection) -> Result<Option<Migration>, O
     task_tags::cross_facts(&transaction, &taste_audits)?;
     taste_holds::cross_facts(&transaction, &taste_audits)?;
     settings_receipts::cross(&transaction)?;
-    awareness::cross(&transaction)?;
     design_invitations::cross(&transaction)?;
+    awareness::cross(&transaction)?;
     maturity::cross(&transaction)?;
     cross_retained_notes(&transaction, version)?;
     preparation_edges::cross(&transaction)?;

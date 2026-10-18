@@ -337,7 +337,9 @@ fn render_reason(runtime: &AppRuntime, reason: &ParticipantReason) -> Option<Htm
             "Invited",
             format!("A room packet addressed this lane under key {key}"),
         ),
-        ParticipantReason::Asked(DesignNoticeEvidence::Task { task, .. }) => (
+        ParticipantReason::Asked(
+            DesignNoticeEvidence::Task { task, .. } | DesignNoticeEvidence::TaskClaim { task, .. },
+        ) => (
             "invitation",
             "Asked",
             format!(

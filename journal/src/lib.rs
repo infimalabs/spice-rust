@@ -40,9 +40,9 @@
 /// that authorizes the same output. Schema 80 lets a task completion carry a
 /// Plan's no-construction disposition, which an older release would drop.
 /// Schema 81 lets a lane's room catch-up cursor pass a delivered Design request.
-/// Schema 82 targets Design invitations at continuing vendor sessions and
-/// separates their triggering opportunity from the retained evidence that
-/// supported the match.
+/// Schema 82 targets Design invitations at continuing vendor sessions, separates
+/// their triggering opportunity from retained evidence, and preserves an exact
+/// task-claim witness when a predecessor recorded no successful completion.
 pub const SCHEMA_VERSION: u32 = 82;
 
 /// How long a connection to the on-disk authority waits on a lock another

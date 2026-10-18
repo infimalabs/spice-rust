@@ -339,7 +339,8 @@ fn room_asks(bus: &Bus, room: &wire::TaskStamp) -> Result<Vec<RoomDuty>, Outcome
 
 fn notice_source(evidence: &wire::rooms::DesignNoticeEvidence) -> String {
     match evidence {
-        wire::rooms::DesignNoticeEvidence::Task { task, .. } => format!("task {task}"),
+        wire::rooms::DesignNoticeEvidence::Task { task, .. }
+        | wire::rooms::DesignNoticeEvidence::TaskClaim { task, .. } => format!("task {task}"),
         wire::rooms::DesignNoticeEvidence::Conversation { source } => {
             let locus = &source.locus;
             format!(

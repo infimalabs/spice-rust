@@ -65,12 +65,30 @@ fn residual_rows(journal: &Journal) -> (Vec<u8>, Vec<u8>) {
     (row(3), row(4))
 }
 
-fn plant_invitation_support(journal: &Journal) {
+fn plant_invitation_recipient(journal: &Journal) {
     insert_fact(
         journal,
         fact(
             3,
             Some(2),
+            FactKind::ClaimWon,
+            json!({
+                "task": "1kKRRsDP",
+                "actor": "operator",
+                "lane": FIXTURE_LANE,
+                "occupant": "018f82d4-6f59-7d06-92e3-bce913116307",
+                "epoch": "018f82d4-6f59-7d06-92e3-bce913116305",
+                "cell": {"project": "journal", "phase": "review"},
+                "until": "2030-04-12T18:44:09.271Z",
+                "source": {"proven": {"heads": []}},
+            }),
+        ),
+    );
+    insert_fact(
+        journal,
+        fact(
+            4,
+            Some(3),
             FactKind::LaneSessionDeclared,
             json!({
                 "lane": FIXTURE_LANE,
@@ -89,11 +107,15 @@ fn plant_invitation_support(journal: &Journal) {
             }),
         ),
     );
+}
+
+fn plant_invitation_support(journal: &Journal) {
+    plant_invitation_recipient(journal);
     insert_fact(
         journal,
         fact(
-            4,
-            Some(3),
+            5,
+            Some(4),
             FactKind::TaskDone,
             json!({
                 "task": "1kKRRsDP",
@@ -119,13 +141,13 @@ fn current_notice(design: &str) -> serde_json::Value {
         "opportunity": {
             "kind": "task-completion",
             "task": "1kKRRsDP",
-            "completed": 4,
+            "completed": 5,
         },
         "evidence": {
             "kind": "task",
             "task": "1kKRRsDP",
             "statement": 1,
-            "completed": 4,
+            "completed": 5,
         },
         "terms": ["rooms", "state", "tasks"],
     })
@@ -140,8 +162,8 @@ fn writable_open_binds_retained_design_notices_and_retires_provenance() {
     insert_fact(
         &journal,
         fact(
-            5,
-            Some(4),
+            6,
+            Some(5),
             FactKind::DesignNoticed,
             current_notice("1kKRRsDP"),
         ),
@@ -155,19 +177,20 @@ fn writable_open_binds_retained_design_notices_and_retires_provenance() {
                          json_set(CAST(envelope AS TEXT), '$.fact.provenance', 'organic'),
                          '$.fact.task', '1kKRRsDP'
                      ),
-                     '$.fact.claim', '2'
+                     '$.fact.claim', '3'
                  ),
                  '$.fact.statement',
                  '$.fact.session',
                  '$.fact.opportunity',
                  '$.fact.evidence'
-             ) AS BLOB) WHERE seq = 5;
+             ) AS BLOB) WHERE seq = 6;
              INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
                  (3, 'task:1kKRRsDP', 2, 1, 2),
                  (4, 'task:1kKRRsDP', 3, 1, 3),
-                 (5, 'task:1kKRRsDP', 4, 1, 4);
-             UPDATE cursor_head SET seq = 5, wake = 5 WHERE singleton = 1;
-             UPDATE steering_index SET indexed_seq = 5 WHERE singleton = 1;",
+                 (5, 'task:1kKRRsDP', 4, 1, 4),
+                 (6, 'task:1kKRRsDP', 5, 1, 5);
+             UPDATE cursor_head SET seq = 6, wake = 6 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 6 WHERE singleton = 1;",
         )
         .expect("retained notice cursor is planted");
     restore_predecessor(&journal, 81);
@@ -177,7 +200,7 @@ fn writable_open_binds_retained_design_notices_and_retires_provenance() {
     let envelope = crossed
         .connection
         .query_row(
-            "SELECT envelope FROM fact_envelopes WHERE seq = 5",
+            "SELECT envelope FROM fact_envelopes WHERE seq = 6",
             [],
             |row| row.get::<_, Vec<u8>>(0),
         )
@@ -197,9 +220,118 @@ fn writable_open_binds_retained_design_notices_and_retires_provenance() {
             completed,
         } if task == &"1kKRRsDP".parse().expect("task")
             && statement == seq(1)
-            && completed == seq(4)
+            && completed == seq(5)
     ));
     assert_eq!(notice.terms, ["rooms", "state", "tasks"]);
+}
+
+#[test]
+fn writable_open_preserves_claim_backed_notices_before_and_after_pending_handoff() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("claim-backed-design-notices.sqlite3");
+    let journal = authority_file_fixture(&path);
+    plant_invitation_recipient(&journal);
+    insert_fact(
+        &journal,
+        fact(
+            5,
+            Some(4),
+            FactKind::DesignNoticed,
+            current_notice("1kKRRsDP"),
+        ),
+    );
+    insert_fact(
+        &journal,
+        fact(
+            6,
+            Some(5),
+            FactKind::TaskDone,
+            json!({
+                "task": "1kKRRsDP",
+                "validation": "handoff",
+                "terminal": {
+                    "operation": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+                    "status": "pending",
+                    "next": "spice task next",
+                },
+                "source": {"proven": {"heads": []}},
+            }),
+        ),
+    );
+    insert_fact(
+        &journal,
+        fact(
+            7,
+            Some(6),
+            FactKind::DesignNoticed,
+            current_notice("1kKRRsDP"),
+        ),
+    );
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE fact_envelopes SET envelope = CAST(json_remove(
+                 json_set(
+                     json_set(CAST(envelope AS TEXT), '$.fact.task', '1kKRRsDP'),
+                     '$.fact.claim', '3'
+                 ),
+                 '$.fact.session',
+                 '$.fact.opportunity',
+                 '$.fact.evidence'
+             ) AS BLOB) WHERE seq IN (5, 7);
+             INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
+                 (3, 'task:1kKRRsDP', 2, 1, 2),
+                 (4, 'task:1kKRRsDP', 3, 1, 3),
+                 (5, 'task:1kKRRsDP', 4, 1, 4),
+                 (6, 'task:1kKRRsDP', 5, 1, 5),
+                 (7, 'task:1kKRRsDP', 6, 1, 6);
+             UPDATE cursor_head SET seq = 7, wake = 7 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 7 WHERE singleton = 1;",
+        )
+        .expect("claim-backed retained notices are planted");
+    restore_predecessor(&journal, 81);
+    drop(journal);
+
+    let crossed = Journal::open(&path).expect("claim-backed retained notices cross");
+    for (notice_seq, terminal) in [(5, None), (7, Some(seq(6)))] {
+        let envelope = crossed
+            .connection
+            .query_row(
+                "SELECT envelope FROM fact_envelopes WHERE seq = ?1",
+                [notice_seq],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .expect("crossed claim-backed notice reads");
+        let envelope: Envelope<AnyFact> =
+            wire::decode(&envelope).expect("crossed claim-backed notice decodes");
+        let notice = envelope
+            .fact
+            .read::<wire::rooms::DesignNoticed>()
+            .expect("crossed fact remains a notice");
+        assert_eq!(notice.session.identity, "fixture-session");
+        assert!(matches!(
+            notice.opportunity,
+            wire::rooms::DesignNoticeOpportunity::TaskClaim {
+                ref task,
+                claim,
+                terminal: found,
+            } if task == &"1kKRRsDP".parse().expect("task")
+                && claim == wire::SequenceCode::new(3)
+                && found == terminal
+        ));
+        assert!(matches!(
+            notice.evidence,
+            wire::rooms::DesignNoticeEvidence::TaskClaim {
+                ref task,
+                statement,
+                claim,
+                terminal: found,
+            } if task == &"1kKRRsDP".parse().expect("task")
+                && statement == seq(1)
+                && claim == wire::SequenceCode::new(3)
+                && found == terminal
+        ));
+    }
 }
 
 #[test]
@@ -211,8 +343,8 @@ fn writable_open_refuses_a_retained_notice_without_a_provable_statement() {
     insert_fact(
         &journal,
         fact(
-            5,
-            Some(4),
+            6,
+            Some(5),
             FactKind::DesignNoticed,
             current_notice("1kKRRsDQ"),
         ),
@@ -226,13 +358,13 @@ fn writable_open_refuses_a_retained_notice_without_a_provable_statement() {
                          json_set(CAST(envelope AS TEXT), '$.fact.provenance', 'organic'),
                          '$.fact.task', '1kKRRsDP'
                      ),
-                     '$.fact.claim', '2'
+                     '$.fact.claim', '3'
                  ),
                  '$.fact.statement',
                  '$.fact.session',
                  '$.fact.opportunity',
                  '$.fact.evidence'
-             ) AS BLOB) WHERE seq = 5",
+             ) AS BLOB) WHERE seq = 6",
             [],
         )
         .expect("unproved retained notice shape is planted");
@@ -247,7 +379,55 @@ fn writable_open_refuses_a_retained_notice_without_a_provable_statement() {
             row,
             release: "ROOMS-dW6GpYK65",
             ..
-        }) if row == "5"
+        }) if row == "6"
+    ));
+}
+
+#[test]
+fn writable_open_refuses_a_malformed_retained_notice_at_its_sequence() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("malformed-design-notice.sqlite3");
+    let journal = authority_file_fixture(&path);
+    plant_invitation_recipient(&journal);
+    insert_fact(
+        &journal,
+        fact(
+            5,
+            Some(4),
+            FactKind::DesignNoticed,
+            current_notice("1kKRRsDP"),
+        ),
+    );
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE fact_envelopes SET envelope = CAST(json_remove(
+                 json_set(CAST(envelope AS TEXT), '$.fact.claim', '3'),
+                 '$.fact.task',
+                 '$.fact.session',
+                 '$.fact.opportunity',
+                 '$.fact.evidence'
+             ) AS BLOB) WHERE seq = 5;
+             INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
+                 (3, 'task:1kKRRsDP', 2, 1, 2),
+                 (4, 'task:1kKRRsDP', 3, 1, 3),
+                 (5, 'task:1kKRRsDP', 4, 1, 4);
+             UPDATE cursor_head SET seq = 5, wake = 5 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 5 WHERE singleton = 1;",
+        )
+        .expect("malformed retained notice is planted");
+    restore_predecessor(&journal, 81);
+    drop(journal);
+
+    let error = Journal::open(&path).expect_err("a malformed retained notice must refuse");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::RetainedRow {
+            table: "fact_envelopes",
+            row,
+            release: "ROOMS-dWKcWx0xN",
+            detail,
+        }) if row == "5" && detail.contains("names no task")
     ));
 }
 
