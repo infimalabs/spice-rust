@@ -385,7 +385,9 @@ async fn assert_initial_stream(
         panic!("expected initial facts: {facts:?}");
     };
     let horizon = packed.horizon;
-    assert!(packed.rows.is_empty());
+    assert!(packed.rows.iter().all(|fact| {
+        wire::FactKind::LANE_OCCUPANCY.contains(&fact.kind()) && fact.seq() <= horizon
+    }));
     assert!(packed.overflow.is_none());
     assert!(matches!(
         trust,
@@ -497,7 +499,11 @@ async fn authenticated_socket_streams_bounded_bus_pages_updates_resume_and_typed
     assert!(matches!(
         stream_frame(&mut resumed).await,
         wire::StreamFrame::Facts { packed, .. }
-            if packed.rows.is_empty() && packed.horizon == seq(live_cursor)
+            if packed.horizon == seq(live_cursor)
+                && packed.rows.iter().all(|fact| {
+                    wire::FactKind::LANE_OCCUPANCY.contains(&fact.kind())
+                        && fact.seq() <= packed.horizon
+                })
     ));
 
     shutdown.send(()).expect("shutdown signals");

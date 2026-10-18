@@ -637,6 +637,21 @@ mod runtime {
                 .map_err(BusReadError::Head)
         }
 
+        /// Read the newest lane occupancy facts through a captured horizon.
+        pub fn app_occupancy(
+            &self,
+            horizon: journal::crossing::Seq,
+        ) -> Result<FactPage, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::Read(JournalRead::AppOccupancy { horizon, answer }))
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
         /// Read one bounded causal page directly through the thread index.
         pub fn app_thread(
             &self,
@@ -1041,6 +1056,10 @@ mod runtime {
             budget: journal::FactReadBudget,
             answer: SyncSender<Result<FactPage, GuardError>>,
         },
+        AppOccupancy {
+            horizon: journal::crossing::Seq,
+            answer: SyncSender<Result<FactPage, GuardError>>,
+        },
         AppRooms {
             start: journal::FactPageStart,
             horizon: journal::crossing::Seq,
@@ -1194,6 +1213,11 @@ mod runtime {
                 answer,
             } => {
                 let _ = answer.send(journal.read(|read| read.fact_page(start, horizon, budget)));
+            }
+            JournalRead::AppOccupancy { horizon, answer } => {
+                let _ = answer.send(journal.read(|read| {
+                    read.recent_lane_occupancy(horizon, journal::FactReadBudget::RETAINED)
+                }));
             }
             JournalRead::AppRooms {
                 start,

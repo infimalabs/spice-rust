@@ -947,8 +947,10 @@ fn assert_browser_seed(discovery: &serve::Discovery) {
         panic!("browser stream begins with seeded facts");
     };
     assert!(
-        packed.rows.is_empty(),
-        "a fresh operator starts at the current live barrier without replaying demo history"
+        packed.rows.iter().all(|fact| {
+            wire::FactKind::LANE_OCCUPANCY.contains(&fact.kind()) && fact.seq() <= packed.horizon
+        }),
+        "a fresh operator starts at the current live barrier, replaying only recent lane occupancy"
     );
     assert!(packed.overflow.is_none());
     stream.close(None).unwrap();

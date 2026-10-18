@@ -86,6 +86,13 @@ Live facts strictly after that horizon continue it, so the operator's
 live-start fact stream neither repeats nor misses authority. The projection is
 unavailable until its snapshot completes.
 
+The operator's fact stream starts live at the subscription horizon instead of
+replaying the journal, so its first `facts` page carries only the newest lane
+occupancy facts at or before that horizon (seats, occupant starts and renewals,
+and every way an occupancy ends), oldest first, at most one retained page of
+rows. The page has no continuation; the stream continues strictly after the
+horizon.
+
 Durable task stamps and room publication stamps key cards across reloads and
 unavailable source bytes. The current board snapshot resolves an anchor's
 displayed handle and terminal standing, an output's control, and whether a
@@ -449,13 +456,15 @@ markers over the curves. Where the lane was off, from an occupant's end or a
 vacant seat to the next occupant's start, every curve leaves a gap with no line
 or fill, and a lane off now ends its curves where it went off; an interruption
 shorter than the spacing between two of the pane's curve samples is too brief
-to see and leaves the curves whole. A reload retains no earlier occupancy, so
-before a lane's first retained transition it counts as on, except when that
-transition is an occupant's start: the seat was vacant until then, and the
-curves begin there. Quiet is not off: a running lane with no activity still
-draws its low line. The trace draws only state the browser already holds,
-issues no requests, and redraws on new activity and every few seconds while
-anything is drawn, so old activity leaves without a new frame.
+to see and leaves the curves whole. A reload keeps the gaps it had: the stream's
+first page carries recent occupancy from before the load. Before a lane's first
+retained transition it counts as on, except when that transition is an
+occupant's start: the seat was vacant until then, and the curves begin there.
+A lane with no retained transition has held its seat as it is now throughout,
+so a lane vacant now draws nothing. Quiet is not off: a running lane with no
+activity still draws its low line. The trace draws only state the browser
+already holds, issues no requests, and redraws on new activity and every few
+seconds while anything is drawn, so old activity leaves without a new frame.
 
 The app's `style-src 'self'` policy refuses inline style attributes, so the
 trace is SVG geometry in the pane's measured CSS pixels and every colour and

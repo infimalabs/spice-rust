@@ -283,9 +283,46 @@ fn packed_subscription_continues_exactly_then_becomes_live() {
     bus.shutdown().expect("bus shuts down");
 }
 
+fn commit_seats(bus: &Bus, lanes: std::ops::Range<u32>) -> JournalCommit {
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("resident:{}", epoch()).parse().expect("origin"),
+        "2030-04-12T18:44:09.272Z".parse().expect("instant"),
+        Producer::ResidentRecognition,
+    );
+    for index in lanes {
+        let lane = uuid(&format!("018f82d4-6f59-7d06-92e3-{index:012x}"));
+        let capability = uuid(&format!("018f82d4-6f59-7d06-93e3-{index:012x}"));
+        write
+            .fact(
+                body::LaneSeated {
+                    lane,
+                    team: lane,
+                    capability,
+                    name: None,
+                    worktree: format!("/tmp/serve-stream-lane-{index}"),
+                    life: "drive".to_owned(),
+                    vendor: "omp".parse().expect("vendor"),
+                    model: None,
+                    effort: None,
+                },
+                FactCause::Root,
+            )
+            .expect("seat fact builds");
+    }
+    match bus.commit(write).expect("commit answers") {
+        CommitOutcome::Committed(commit) => commit,
+        other => panic!("seat fixture commit failed: {other:?}"),
+    }
+}
+
 #[test]
-fn fresh_operator_fact_subscription_begins_live_without_history() {
-    let bus = fixture(5);
+fn fresh_operator_fact_subscription_carries_the_newest_occupancy_then_begins_live() {
+    let bus = fixture(2);
+    let older = commit_seats(&bus, 0..1);
+    commit_notes(&bus, 2, false);
+    let newer = commit_seats(&bus, 1..257);
+    commit_notes(&bus, 2, false);
     let source = Source::new(bus.reader(), epoch(), 2, presenter(), operator_book());
     let (subscription, frames) = source
         .begin(
@@ -294,10 +331,21 @@ fn fresh_operator_fact_subscription_begins_live_without_history() {
         )
         .expect("operator subscription begins");
 
-    assert!(facts(&frames[0]).rows.is_empty());
-    assert!(facts(&frames[0]).overflow.is_none());
-    assert_eq!(facts(&frames[0]).horizon, seq(6));
-    assert_eq!(subscription.cursor(), Some(seq(6)));
+    let page = facts(&frames[0]);
+    let horizon = subscription.cursor().expect("live cursor");
+    assert_eq!(page.horizon, horizon);
+    assert!(page.overflow.is_none());
+    assert!(
+        page.rows
+            .iter()
+            .all(|fact| fact.kind() == wire::FactKind::LaneSeated)
+    );
+    // The read is bounded, and the bound drops the oldest occupancy.
+    let carried = page.rows.iter().map(StreamFact::seq).collect::<Vec<_>>();
+    let expected = (newer.first()..=newer.last()).map(seq).collect::<Vec<_>>();
+    assert_eq!(carried.len(), journal::MAX_RETAINED_FACT_PAGE_ROWS);
+    assert_eq!(carried, expected[expected.len() - carried.len()..]);
+    assert!(!carried.contains(&seq(older.last())));
     assert!(subscription.is_live());
     drop(source);
     bus.shutdown().expect("bus shuts down");

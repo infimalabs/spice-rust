@@ -59,16 +59,24 @@ pub(super) fn lane_activities(
         .collect()
 }
 
-/// The intervals one lane was off, from its retained occupancy transitions.
-pub(super) fn lane_off(runtime: &crate::AppRuntime, lane: wire::CanonicalUuid) -> Rc<[TraceOff]> {
-    off_intervals(runtime.lane_presence_transitions(lane).map(|transition| {
-        let occupancy = match (transition.occupant(), transition.renewed()) {
-            (None, _) => Occupancy::Vacant,
-            (Some(_), false) => Occupancy::Started,
-            (Some(_), true) => Occupancy::Renewed,
-        };
-        (transition.display_millis(), occupancy)
-    }))
+/// The intervals one lane was off, from its retained occupancy transitions and
+/// whether it is `seated_now`.
+pub(super) fn lane_off(
+    runtime: &crate::AppRuntime,
+    lane: wire::CanonicalUuid,
+    seated_now: bool,
+) -> Rc<[TraceOff]> {
+    off_intervals(
+        runtime.lane_presence_transitions(lane).map(|transition| {
+            let occupancy = match (transition.occupant(), transition.renewed()) {
+                (None, _) => Occupancy::Vacant,
+                (Some(_), false) => Occupancy::Started,
+                (Some(_), true) => Occupancy::Renewed,
+            };
+            (transition.display_millis(), occupancy)
+        }),
+        seated_now,
+    )
     .into()
 }
 
