@@ -163,7 +163,8 @@ plum. Any other selection keeps the page's base.
 
 The toolbar has two rows: the team's task strip, then one status band led by
 the live ticker and closed by presence pips, which sit directly above the
-composer's control panel. The
+composer's control panel. The ticker's relative age sits in the column of the
+composer ages below it, at every width. The
 status band is the console's top edge, for a team and a working group alike.
 Where two consoles touch, each band rounds its touching top corner with the
 same radius as the lane-top tabs. Only the earlier console draws the dividing

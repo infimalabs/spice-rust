@@ -477,7 +477,7 @@ path.image-annotation-hit { fill: none; }
 }
 .team-toolbar > .team-status-row {
   grid-area: status; display: grid; grid-template-columns: minmax(0, 1fr) var(--team-control-inline-size);
-  box-sizing: border-box; min-width: 0; padding-inline: var(--team-toolbar-inline-inset) 0;
+  box-sizing: border-box; min-width: 0; padding-inline: 0;
 }
 .team-toolbar > .team-status-row:not(:has(> .team-lights)) { grid-template-columns: minmax(0, 1fr); padding-inline-end: var(--team-toolbar-inline-inset); }
 .team-status-row > .team-lights {
@@ -548,11 +548,11 @@ path.image-annotation-hit { fill: none; }
 .team-composer .team-send:focus-visible { outline-offset: -2px; }
 
 
-/* The shared status surface owns one top rule; text keeps its own live region. */
+/* One top rule; the composer heading's 8px start puts the ticker age over composer ages. */
 .team-status-row > .ticker {
   grid-column: 1; align-self: stretch; border-block-start: 0; background: transparent;
   min-width: 0;
-  padding: 0 var(--team-chamber-inset);
+  padding: 0 var(--team-chamber-inset) 0 var(--team-toolbar-inline-inset);
   line-height: calc(var(--team-status-band) - var(--app-control-edge-width));
 }
 .team-status-row > .ticker:is([data-lane-status="bound"], [data-lane-status="unbound"])
