@@ -57,50 +57,6 @@ fn constructs_work(phase: &str) -> bool {
     matches!(phase, "plan" | DESIGN_PHASE)
 }
 
-/// The Design a new statement was constructed directly under, if any.
-pub(super) fn constructing_design<'a>(
-    board: &'a BoardAnswer,
-    statement: &TaskHead,
-) -> Option<&'a BoardTask> {
-    let preparation = statement
-        .preparation
-        .as_ref()
-        .filter(|preparation| preparation.construction == statement.born)?;
-    board.tasks.iter().find(|heads| {
-        heads.statement.body.born == preparation.parent
-            && heads
-                .statement
-                .body
-                .intent
-                .is_some_and(wire::TaskIntent::is_design)
-    })
-}
-
-/// Refuse a gather route outside an open Design active under its working-group
-/// stance: it exists only to gather evidence for an active Design. Creation
-/// judges the authored route, before any taste hold waits it in plan.
-pub(super) fn admit_gather_design(
-    intent: Option<wire::TaskIntent>,
-    flow: &[wire::Phase],
-    design: Option<&BoardTask>,
-) -> Result<(), Outcome<CommandAnswer>> {
-    if !wire::gather_route(intent, flow) {
-        return Ok(());
-    }
-    if design.is_some_and(|design| {
-        design.design_active
-            && wire::intent::is_open_design(design.statement.body.intent, &design.workflow.body)
-    }) {
-        return Ok(());
-    }
-    Err(refusal(
-        "task::gather-design",
-        design.map(|design| design.statement.body.handle.to_string()),
-        "create a gather task directly under an open Design whose group stance is Explore or \
-         Converge, while holding it or by naming it with --preparation",
-    ))
-}
-
 pub(super) fn requires_construction(
     intent: Option<wire::TaskIntent>,
     flow: &[wire::Phase],
@@ -170,13 +126,11 @@ pub(super) fn preparation_parent<'a>(
     .then_some(parent))
 }
 
-/// Bind a created statement to its planning parent, then admit a gather task
-/// only directly under an active open Design.
+/// Bind a created statement to its planning parent.
 pub(super) fn admit_preparation(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     add: &TaskAdd,
-    flow: &[wire::Phase],
     statement: &mut TaskHead,
 ) -> Result<(), Outcome<CommandAnswer>> {
     if command.kind() != CommandKind::TaskAdd {
@@ -186,24 +140,17 @@ pub(super) fn admit_preparation(
         if add.preparation.is_none() {
             require_expected(command, &claim_witness(parent))?;
         }
-        bind_preparation(command, parent, statement, flow)?;
+        bind_preparation(command, parent, statement)?;
     }
-    admit_gather_design(
-        statement.intent,
-        flow,
-        constructing_design(&snapshot.answer, statement),
-    )
+    Ok(())
 }
 
-/// Bind a new statement to its pending planning parent under current policy.
-///
-/// Every non-gather construction root retains one ordinary dependency on its
-/// immediate gating parent.
+/// Every construction root retains one ordinary dependency on its immediate
+/// gating parent.
 pub(super) fn bind_preparation(
     command: &wire::AdmittedCommand,
     parent: &BoardTask,
     statement: &mut TaskHead,
-    flow: &[wire::Phase],
 ) -> Result<(), Outcome<CommandAnswer>> {
     require_expected(command, &statement_witness(parent))?;
     require_expected(command, &workflow_witness(parent))?;
@@ -232,9 +179,7 @@ pub(super) fn bind_preparation(
         ),
         construction: statement.born.clone(),
     });
-    if !wire::gather_route(statement.intent, flow)
-        && !statement.dependencies.contains(&parent.statement.body.born)
-    {
+    if !statement.dependencies.contains(&parent.statement.body.born) {
         statement
             .dependencies
             .push(parent.statement.body.born.clone());

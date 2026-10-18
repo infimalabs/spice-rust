@@ -102,8 +102,7 @@ name continuations.
   checkpoint/free; only the
   operator concludes. Outputs await exact `preparation decide`; dependencies,
   origin, closure, deletion, findings, and group movement never bypass it. No
-  reciprocal controller/output edge. Stop means checkpoint/free. `--flow
-  gather` experiments land nothing; candidates cite but never select them.
+  reciprocal controller/output edge. Stop means checkpoint/free.
 - Work incrementally; commit only under the matching claim. Never pull/push or
   alter harness attribution. Release unfinished work via `task free` or
   self-deferral, never stash/gate bypass; replayed parked edits still need the

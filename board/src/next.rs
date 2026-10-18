@@ -1,10 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use wire::rooms::DesignCycle;
-use wire::{
-    Actor, ClaimCell, ClaimDisposition, Instant, TaskIntent, TaskStamp, TeamSubscription,
-    gather_task,
-};
+use wire::{Actor, ClaimCell, ClaimDisposition, Instant, TaskIntent, TaskStamp, TeamSubscription};
 
 use crate::task::Entry;
 use crate::urgency::{Urgency, declared_priority};
@@ -13,13 +10,11 @@ use crate::urgency::{Urgency, declared_priority};
 ///
 /// Ordinary dependencies require settlement. Preparation control uses those
 /// same edges: a Design decision removes selected output edges, while a Plan's
-/// positive settlement satisfies its constructed work. Gather tasks carry no
-/// edge and instead run only while their Design is open and active.
+/// positive settlement satisfies its constructed work.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResolvedTasks {
     settled: BTreeMap<TaskStamp, bool>,
     designs: BTreeMap<TaskStamp, bool>,
-    active_designs: BTreeSet<TaskStamp>,
     working: BTreeSet<TaskStamp>,
 }
 
@@ -40,12 +35,6 @@ impl ResolvedTasks {
             .insert(task, intent.is_some_and(TaskIntent::is_design));
     }
 
-    /// Record that the working-group partition holds `task`. Only a known
-    /// Design reads as active; gather tasks under it run while it stays open.
-    pub fn group(&mut self, task: TaskStamp) {
-        self.active_designs.insert(task);
-    }
-
     /// Record each Design controller whose selected work is still in progress.
     /// A selected direct output has had its Design edge removed; a descendant
     /// becomes working after its ordinary preparation dependencies settle.
@@ -53,10 +42,8 @@ impl ResolvedTasks {
         let working = entries
             .into_iter()
             .filter(|entry| {
-                let workflow = entry.workflow();
                 entry.is_filed()
-                    && workflow.status.is_pending()
-                    && !gather_task(entry.statement(), workflow)
+                    && entry.workflow().status.is_pending()
                     && dependencies_satisfied(entry, self)
             })
             .filter_map(|entry| entry.statement().preparation.as_ref())
@@ -75,18 +62,11 @@ impl ResolvedTasks {
         self.designs.get(task).copied()
     }
 
-    /// Whether `task` is a known Design that is still open and that the
-    /// working-group partition holds.
-    fn open_active_design(&self, task: &TaskStamp) -> bool {
-        self.design(task) == Some(true) && !self.settled(task) && self.active_designs.contains(task)
-    }
-
     /// Whether this row remains Design-side speculative work rather than
     /// execution the allocator may expose in an agent-facing summary.
     ///
     /// Open Designs and direct outputs retaining their Design dependency stay
-    /// on the planning surface. Gather tasks remain Design-side while active
-    /// even though they carry no dependency edge.
+    /// on the planning surface.
     #[must_use]
     pub fn speculative_design_work(
         &self,
@@ -98,8 +78,7 @@ impl ResolvedTasks {
         }
         statement.preparation.as_ref().is_some_and(|preparation| {
             self.design(&preparation.parent) == Some(true)
-                && (gather_task(statement, workflow)
-                    || statement.dependencies.contains(&preparation.parent))
+                && statement.dependencies.contains(&preparation.parent)
         })
     }
 }
@@ -142,8 +121,7 @@ pub fn unaccepted_output_of<'a>(
     let preparation = statement.preparation.as_ref()?;
     (workflow.status.is_pending()
         && preparation.construction == statement.born
-        && statement.dependencies.contains(&preparation.parent)
-        && !gather_task(statement, workflow))
+        && statement.dependencies.contains(&preparation.parent))
     .then_some(&preparation.parent)
 }
 
@@ -1005,26 +983,14 @@ fn operational_without_assignment(entry: &Entry, completed: &ResolvedTasks) -> b
         && !passive_design(entry)
 }
 
-/// Every ordinary prerequisite has settled. Gather work carries no dependency
-/// edge and instead follows its open, active Design parent.
+/// Whether every ordinary prerequisite has settled.
 #[must_use]
 pub fn dependencies_satisfied(entry: &Entry, completed: &ResolvedTasks) -> bool {
-    let dependencies = entry
+    entry
         .statement()
         .dependencies
         .iter()
-        .all(|dependency| completed.settled(dependency));
-    if !dependencies {
-        return false;
-    }
-    if !gather_task(entry.statement(), entry.workflow()) {
-        return true;
-    }
-    entry
-        .statement()
-        .preparation
-        .as_ref()
-        .is_some_and(|preparation| completed.open_active_design(&preparation.parent))
+        .all(|dependency| completed.settled(dependency))
 }
 
 /// Whether no claim currently possesses the entry.
@@ -1156,9 +1122,6 @@ pub fn resolved_tasks(entries: &[Entry]) -> ResolvedTasks {
             );
         }
         resolved.know(candidate.born().clone(), candidate.statement().intent);
-        if candidate.design_is_active() {
-            resolved.group(candidate.born().clone());
-        }
     }
     resolved.hold_released_work(entries);
     resolved

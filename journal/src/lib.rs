@@ -47,7 +47,8 @@
 /// generation. Schema 84 records each invitation's supporting-work
 /// classification and bounded authored excerpt. Schema 85 stores every task
 /// creation context on the registered transcript stream or a current
-/// unavailable reason.
+/// unavailable reason, retires the gather route, and gates every retained
+/// pending direct Design output on its Design.
 pub const SCHEMA_VERSION: u32 = 85;
 
 /// How long a connection to the on-disk authority waits on a lock another

@@ -77,13 +77,14 @@ const PREPARED: &str = "prepared";
 /// recorded. Last, every retained task note that is not a taste-review audit
 /// joins its task's room projection at its own position, folded exactly as
 /// verification replays it. The final crossing replaces retained derived
-/// preparation authorization with ordinary dependency edges and closes every
-/// pending branch whose terminal or absent controller cannot release it.
-/// Before any current decoder sees a predecessor statement, the retired
-/// authorization field is lifted into transaction-local selection evidence,
-/// and each creation context holding a retired unavailable reason takes Spice
-/// authorship when Spice wrote the creating fact, refusing any other retired
-/// reason and any boundary on an unregistered transcript stream.
+/// preparation authorization with ordinary dependency edges, gates every
+/// pending output of an open Design, and closes every pending branch whose
+/// terminal or absent controller cannot release it. Before any current decoder
+/// sees a predecessor statement, the retired authorization field is lifted into
+/// transaction-local selection evidence, and each creation context holding a
+/// retired unavailable reason takes Spice authorship when Spice wrote the
+/// creating fact, refusing any other retired reason and any boundary on an
+/// unregistered transcript stream.
 const PREDECESSOR_SCHEMAS: [u32; 52] = [
     33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
     57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80,

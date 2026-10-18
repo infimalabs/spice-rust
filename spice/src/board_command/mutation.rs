@@ -344,13 +344,7 @@ fn admit_prepared(
     if filing.is_draft() {
         return Ok(());
     }
-    planning::admit_preparation(
-        snapshot,
-        command,
-        add,
-        &prepared.flow,
-        &mut prepared.statement,
-    )?;
+    planning::admit_preparation(snapshot, command, add, &mut prepared.statement)?;
     planning::refuse_disposed_construction(snapshot, &prepared.statement, &prepared.workflow)
 }
 

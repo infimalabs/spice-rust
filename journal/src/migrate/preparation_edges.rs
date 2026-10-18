@@ -108,7 +108,7 @@ pub(super) fn cross(transaction: &Transaction<'_>) -> Result<(), OpenError> {
             Some(intent) if intent.is_design() => {
                 if !wire::intent::is_open_design(parent.intent, parent_workflow) {
                     close.insert(stamp.clone());
-                } else if !wire::gather_task(statement, workflow) {
+                } else {
                     gated.insert(stamp.clone(), preparation.parent.clone());
                 }
             }
