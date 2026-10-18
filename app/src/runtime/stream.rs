@@ -230,37 +230,37 @@ impl AppRuntime {
 
     fn observe_presence_transition(&mut self, row: &wire::StreamFact) {
         let transition = match row.kind() {
-            FactKind::LaneSeated => row.lane_seated().map(|body| (body.lane, None)),
+            FactKind::LaneSeated => row.lane_seated().map(|body| (body.lane, None, false)),
             FactKind::LaneStarted => row
                 .read::<wire::body::LaneStarted>()
-                .map(|body| (body.lane, Some(body.occupant))),
+                .map(|body| (body.lane, Some(body.occupant), false)),
             FactKind::LaneRenewed => row
                 .read::<wire::body::LaneRenewed>()
-                .map(|body| (body.lane, Some(body.occupant))),
+                .map(|body| (body.lane, Some(body.occupant), true)),
             FactKind::LaneExited => row
                 .read::<wire::body::LaneExited>()
-                .map(|body| (body.lane, None)),
+                .map(|body| (body.lane, None, false)),
             FactKind::LaneTimedOut => row
                 .read::<wire::body::LaneTimedOut>()
-                .map(|body| (body.lane, None)),
+                .map(|body| (body.lane, None, false)),
             FactKind::LaneCancelled => row
                 .read::<wire::body::LaneCancelled>()
-                .map(|body| (body.lane, None)),
+                .map(|body| (body.lane, None, false)),
             FactKind::LaneSignalled => row
                 .read::<wire::body::LaneSignalled>()
-                .map(|body| (body.lane, None)),
+                .map(|body| (body.lane, None, false)),
             FactKind::LaneDrained => row
                 .read::<wire::body::LaneDrained>()
-                .map(|body| (body.lane, None)),
+                .map(|body| (body.lane, None, false)),
             FactKind::LaneKilled => row
                 .read::<wire::body::LaneKilled>()
-                .map(|body| (body.lane, None)),
+                .map(|body| (body.lane, None, false)),
             FactKind::LaneDegraded => row
                 .read::<wire::body::LaneDegraded>()
-                .map(|body| (body.lane, None)),
+                .map(|body| (body.lane, None, false)),
             _ => None,
         };
-        let Some((lane, occupant)) = transition else {
+        let Some((lane, occupant, renewed)) = transition else {
             return;
         };
         if self
@@ -274,6 +274,7 @@ impl AppRuntime {
             seq: row.seq(),
             lane,
             occupant,
+            renewed,
             observed: *row.at(),
         });
         self.presence_transitions

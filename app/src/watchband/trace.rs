@@ -1,22 +1,30 @@
 //! What one lane has been doing lately, as its team pip draws it.
 //!
-//! A trace is a fixed window of wall time ending at the instant it is drawn,
-//! shared by every lane so neighbouring pips compare honestly. Work becomes one
-//! curve per kind, reasoning, tool, and prose, whose height is that kind's
-//! recent rate on one fixed scale; lifecycle activity becomes markers. The
-//! curves are sampled at evenly spaced instants through a kernel that slides
-//! with time, so a redraw moves them smoothly instead of jumping between
-//! buckets. Positions and levels are fractions; the browser owns every pixel.
-//! Intervals the lane was off become gaps the curves do not cross, once they
-//! last at least the spacing between two samples.
+//! A trace is a fixed span of wall time, the same length for every lane so
+//! neighbouring pips compare honestly. It ends at the instant it is drawn while
+//! the lane is active; once the lane falls quiet the window holds a little past
+//! its newest activity, so a quiet lane keeps its last stretch of work in view
+//! instead of sliding it out. Work becomes one curve per kind, reasoning, tool,
+//! and prose, whose height is that kind's recent rate on one fixed scale;
+//! lifecycle activity becomes markers. The curves are sampled at evenly spaced
+//! instants through a kernel that slides with time, so a redraw moves them
+//! smoothly instead of jumping between buckets. Positions and levels are
+//! fractions; the browser owns every pixel. Intervals the lane was off become
+//! gaps the curves do not cross, once they last at least the spacing between
+//! two samples.
 
 use wire::AgentActivityKind;
 
-/// Wall time one trace spans, ending at the instant it is drawn.
+/// Wall time one trace spans.
 pub const TRACE_WINDOW_MILLIS: i64 = 10 * 60 * 1_000;
 
-/// Redraw cadence of a non-empty trace: about one device pixel of drift at the
-/// widest pip on a 2x display.
+/// How long after its newest activity a trace's window keeps ending at now.
+/// It outlasts the kernel's reach, so the last activity has fallen to rest
+/// before the window holds still.
+pub const TRACE_HOLD_MILLIS: i64 = TRACE_WINDOW_MILLIS / 4;
+
+/// Redraw cadence of a trace whose window ends at now: about one device pixel
+/// of drift at the widest pip on a 2x display.
 pub const TRACE_STEP_MILLIS: u32 = 4_000;
 
 /// Text length at which an activity reaches full weight.
@@ -71,7 +79,7 @@ impl TraceKind {
 pub struct TraceCurve {
     pub kind: TraceKind,
     /// Levels in `0..=1` at evenly spaced instants, the window's start first
-    /// and now last.
+    /// and its end last.
     pub levels: Vec<f64>,
 }
 
@@ -103,7 +111,7 @@ impl TraceMarkerKind {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TraceMarker {
     pub kind: TraceMarkerKind,
-    /// Fraction of the window, its start at 0 and now at 1.
+    /// Fraction of the window, its start at 0 and its end at 1.
     pub x: f64,
 }
 
@@ -184,20 +192,42 @@ fn hunk_bytes(source: &wire::rooms::TranscriptHunk) -> usize {
     usize::try_from(source.text.end.saturating_sub(source.text.start)).unwrap_or(usize::MAX)
 }
 
+/// The instant a trace's window ends: `now` until its newest activity is
+/// [`TRACE_HOLD_MILLIS`] old, then that long after the activity, where it
+/// holds. A trace without activity ends at now.
+#[must_use]
+pub fn trace_end(activities: &[TraceActivity], now: i64) -> i64 {
+    activities
+        .iter()
+        .map(|activity| activity.millis)
+        .max()
+        .map_or(now, |newest| {
+            now.min(newest.saturating_add(TRACE_HOLD_MILLIS))
+        })
+}
+
+/// Drop the activities no window can reach. Every window ends at or after the
+/// newest activity, so anything a whole window older than it is never drawn.
+pub fn retain_reachable(activities: &mut Vec<TraceActivity>) {
+    if let Some(newest) = activities.iter().map(|activity| activity.millis).max() {
+        activities.retain(|activity| activity.millis >= newest - TRACE_WINDOW_MILLIS);
+    }
+}
+
 /// Trace one lane's activities, given in any order, through the window ending
-/// at `now`, sampling each curve at no fewer than `samples` instants.
+/// at `end`, sampling each curve at no fewer than `samples` instants.
 ///
-/// The grid is always odd so the window start, midpoint, and now are shared
+/// The grid is always odd so the window start, midpoint, and end are shared
 /// samples at every browser-selected density. A sample's level is its kind's
 /// weighted rate near that instant: each activity spreads through a triangular
 /// kernel of fixed wall-time width, and where the window's edge cuts the kernel
-/// short the rate is taken from the part inside, so the level at now reports
-/// the current rate rather than half of it.
+/// short the rate is taken from the part inside, so the level at the end
+/// reports the rate there rather than half of it.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
-pub fn trace(activities: &[TraceActivity], now: i64, samples: usize) -> Trace {
+pub fn trace(activities: &[TraceActivity], end: i64, samples: usize) -> Trace {
     let samples = grid(samples);
-    let since = now - TRACE_WINDOW_MILLIS;
+    let since = end - TRACE_WINDOW_MILLIS;
     let window = TRACE_WINDOW_MILLIS as f64;
     let x_of = |millis: i64| ((millis - since) as f64 / window).clamp(0.0, 1.0);
     let half_width = KERNEL_HALF_WINDOW;
@@ -263,40 +293,57 @@ fn text_weight(bytes: usize) -> f64 {
 }
 
 /// The odd sample count at or above `samples`, so the window start, midpoint,
-/// and now are shared samples at every density.
+/// and end are shared samples at every density.
 fn grid(samples: usize) -> usize {
     let samples = samples.max(2);
     samples + usize::from(samples.is_multiple_of(2))
 }
 
-/// One interval through which a lane had no occupant, in epoch milliseconds;
-/// an interval still running has no end.
+/// One interval through which a lane had no occupant, in epoch milliseconds.
+/// One that began before the retained record has no start, and one still
+/// running has no end.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TraceOff {
-    pub from: i64,
+    pub from: Option<i64>,
     pub until: Option<i64>,
 }
 
-/// Part of the window, as fractions from its start at 0 to now at 1, through
-/// which the curves draw.
+/// Part of the window, as fractions from its start at 0 to its end at 1,
+/// through which the curves draw.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TraceSpan {
     pub from: f64,
     pub to: f64,
 }
 
+/// What one occupancy transition did to a lane's seat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Occupancy {
+    /// An occupant started in the vacant seat.
+    Started,
+    /// A new occupant took over from the one before.
+    Renewed,
+    /// The seat was left without an occupant: seated empty or ended.
+    Vacant,
+}
+
 /// The intervals a lane was off, from its occupancy transitions in journal
-/// order, each its instant and whether an occupant then sat in the lane. An
-/// ending or a vacant seat turns the lane off and an occupant's start turns it
-/// on. Before its first retained transition a lane counts as on, so no gap is
-/// drawn that the record cannot date.
-pub fn off_intervals(transitions: impl IntoIterator<Item = (i64, bool)>) -> Vec<TraceOff> {
+/// order, each its instant and what it did to the seat. A vacancy turns the
+/// lane off and an occupant's start or renewal turns it on. Before its first
+/// retained transition a lane counts as on, so no gap is drawn that the record
+/// cannot date, unless that transition is a start: the seat was vacant until
+/// then.
+pub fn off_intervals(transitions: impl IntoIterator<Item = (i64, Occupancy)>) -> Vec<TraceOff> {
     let mut intervals = Vec::new();
-    let mut open = None;
-    for (millis, occupied) in transitions {
-        match (occupied, open) {
-            (false, None) => open = Some(millis),
-            (true, Some(from)) => {
+    let mut transitions = transitions.into_iter().peekable();
+    let mut open = match transitions.peek() {
+        Some((_, Occupancy::Started)) => Some(None),
+        _ => None,
+    };
+    for (millis, occupancy) in transitions {
+        match (occupancy, open) {
+            (Occupancy::Vacant, None) => open = Some(Some(millis)),
+            (Occupancy::Started | Occupancy::Renewed, Some(from)) => {
                 intervals.push(TraceOff {
                     from,
                     until: Some(millis),
@@ -312,7 +359,7 @@ pub fn off_intervals(transitions: impl IntoIterator<Item = (i64, bool)>) -> Vec<
     intervals
 }
 
-/// The spans of the window ending at `now` through which a lane's curves draw,
+/// The spans of the window ending at `end` through which a lane's curves draw,
 /// in time order, given the intervals it was `off` and the `samples` the
 /// curves are drawn at as [`trace`] draws them. An off interval shorter than
 /// the spacing between two samples would vanish at that density and leaves the
@@ -320,17 +367,18 @@ pub fn off_intervals(transitions: impl IntoIterator<Item = (i64, bool)>) -> Vec<
 /// running ends the curves where the lane went off.
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
-pub fn drawn_spans(off: &[TraceOff], now: i64, samples: usize) -> Vec<TraceSpan> {
-    let since = now - TRACE_WINDOW_MILLIS;
+pub fn drawn_spans(off: &[TraceOff], end: i64, samples: usize) -> Vec<TraceSpan> {
+    let since = end - TRACE_WINDOW_MILLIS;
     let window = TRACE_WINDOW_MILLIS as f64;
     let spacing = window / (grid(samples) - 1) as f64;
-    let x_of = |millis: i64| ((millis - since) as f64 / window).clamp(0.0, 1.0);
+    let x_of = |millis: i64| ((millis.max(since) - since) as f64 / window).min(1.0);
     let mut gaps = off
         .iter()
         .filter_map(|off| {
-            let until = off.until.unwrap_or(now).min(now);
-            ((until - off.from) as f64 >= spacing && until > since)
-                .then(|| (x_of(off.from), x_of(until)))
+            let until = off.until.unwrap_or(end).min(end);
+            let from = off.from.unwrap_or(i64::MIN);
+            (until.saturating_sub(from) as f64 >= spacing && until > since)
+                .then(|| (x_of(from), x_of(until)))
         })
         .collect::<Vec<_>>();
     gaps.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -498,24 +546,25 @@ mod tests {
     }
 
     #[test]
-    fn occupancy_transitions_pair_each_ending_with_the_next_start() {
+    fn occupancy_transitions_pair_each_vacancy_with_the_next_occupant() {
+        use Occupancy::{Renewed, Started, Vacant};
         let intervals = off_intervals([
-            (10, true),
-            (20, false),
-            (25, false),
-            (30, true),
-            (40, true),
-            (50, false),
+            (10, Renewed),
+            (20, Vacant),
+            (25, Vacant),
+            (30, Started),
+            (40, Renewed),
+            (50, Vacant),
         ]);
         assert_eq!(
             intervals,
             [
                 TraceOff {
-                    from: 20,
+                    from: Some(20),
                     until: Some(30)
                 },
                 TraceOff {
-                    from: 50,
+                    from: Some(50),
                     until: None
                 },
             ]
@@ -523,9 +572,80 @@ mod tests {
     }
 
     #[test]
+    fn a_lane_is_off_before_its_first_retained_transition_only_when_that_is_a_start() {
+        use Occupancy::{Renewed, Started, Vacant};
+        assert_eq!(
+            off_intervals([(30, Started), (50, Vacant)]),
+            [
+                TraceOff {
+                    from: None,
+                    until: Some(30)
+                },
+                TraceOff {
+                    from: Some(50),
+                    until: None
+                },
+            ]
+        );
+        assert_eq!(off_intervals([(30, Renewed)]), []);
+        assert_eq!(
+            off_intervals([(30, Vacant)]),
+            [TraceOff {
+                from: Some(30),
+                until: None
+            }]
+        );
+        // A start before the window leaves only the time since it drawn.
+        let started = off_intervals([(NOW - 200_000, Started)]);
+        let spans = drawn_spans(&started, NOW, SAMPLES);
+        assert_eq!(spans.len(), 1);
+        assert!((spans[0].from * 600.0 - 400.0).abs() < 1e-6 && spans[0].to == 1.0);
+    }
+
+    #[test]
+    fn a_quiet_trace_holds_its_window_a_quarter_window_after_its_newest_activity() {
+        let hold = TRACE_HOLD_MILLIS / 1_000;
+        let recent = [
+            at(AgentActivityKind::Tool, 900),
+            at(AgentActivityKind::Prose, hold),
+        ];
+        assert_eq!(trace_end(&recent, NOW), NOW);
+        // One second past the hold, the window stops one second short of now.
+        assert_eq!(
+            trace_end(&[at(AgentActivityKind::Prose, hold + 1)], NOW),
+            NOW - 1_000
+        );
+        let quiet = [
+            at(AgentActivityKind::Tool, hold + 3_720),
+            at(AgentActivityKind::Prose, hold + 3_600),
+        ];
+        let end = trace_end(&quiet, NOW);
+        assert_eq!(end, NOW - 3_600_000);
+        // The held window still draws the newest stretch of work.
+        let placed = trace(&quiet, end, SAMPLES);
+        assert!(
+            levels(&placed, TraceKind::Prose)
+                .iter()
+                .any(|level| *level > 0.0)
+        );
+        assert_eq!(trace_end(&[], NOW), NOW);
+    }
+
+    #[test]
+    fn only_activity_within_a_window_of_the_newest_is_reachable() {
+        let mut activities = vec![
+            at(AgentActivityKind::Tool, 5_000),
+            at(AgentActivityKind::Tool, 5_600),
+            at(AgentActivityKind::Tool, 5_601),
+        ];
+        retain_reachable(&mut activities);
+        assert_eq!(activities.len(), 2);
+    }
+
+    #[test]
     fn only_off_intervals_spanning_a_sample_spacing_break_the_curves() {
         let off = |from_ago: i64, until_ago: Option<i64>| TraceOff {
-            from: NOW - from_ago * 1_000,
+            from: Some(NOW - from_ago * 1_000),
             until: until_ago.map(|seconds| NOW - seconds * 1_000),
         };
         // Seconds into the window through which the curves draw.

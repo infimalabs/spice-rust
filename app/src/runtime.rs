@@ -264,6 +264,7 @@ pub struct LanePresenceTransition {
     seq: Seq,
     lane: CanonicalUuid,
     occupant: Option<CanonicalUuid>,
+    renewed: bool,
     observed: wire::Instant,
 }
 
@@ -276,6 +277,13 @@ impl LanePresenceTransition {
     #[must_use]
     pub const fn occupant(&self) -> Option<CanonicalUuid> {
         self.occupant
+    }
+
+    /// Whether the occupant took over from another one rather than starting
+    /// in a vacant seat.
+    #[must_use]
+    pub const fn renewed(&self) -> bool {
+        self.renewed
     }
 
     #[must_use]
