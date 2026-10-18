@@ -286,7 +286,8 @@ fn render_team_toolbar(
 }
 
 /// The fixed team total and active-task scroller remain independent of the
-/// status row.
+/// status row. The total holds the rail's right edge and the tasks flow
+/// leftward from it in their canonical order.
 fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     let tasks = render
         .work
@@ -304,7 +305,7 @@ fn render_team_rail(team: CanonicalUuid, render: &FleetRender<'_, '_>) -> Html {
     }
 }
 
-/// The leading tab: only a badge counting every active task the rail shows,
+/// The trailing tab: only a badge counting every active task the rail shows,
 /// opening the unified overview with exactly that current selection.
 fn render_team_total(
     team: CanonicalUuid,

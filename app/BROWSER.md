@@ -180,12 +180,13 @@ newest thing said in any of the group's designs, a contribution named by its
 lane and kind, and no group name; a listener transition or coordination never
 displaces it.
 
-As on a team's rail, the group's total leads its tab rail and opens the group's
-work overview. After it, toward the end, the rail lists each lane that holds an
-active claim on an open task associated with any of the group's designs: the
-Design itself, or a task with a direct dependency on that Design. Removing one
-Design edge releases the task only from that Design; another Design edge keeps
-the task on its other group rail. A lane enters and leaves the rail exactly as
+As on a team's rail, the group's total holds the right edge of its tab rail and
+opens the group's work overview. Leftward from it, the rail lists each lane
+that holds an active claim on an open task associated with any of the group's
+designs: the Design itself, or a task with a direct dependency on that Design.
+Removing one Design edge releases the task only from that Design; another
+Design edge keeps the task on its other group rail. A lane enters and leaves
+the rail exactly as
 a task enters and leaves a team's rail as board facts change, appears once in
 its canonical team accent, and replaces
 the associated task handle. Activating an admitted lane opens its composer in

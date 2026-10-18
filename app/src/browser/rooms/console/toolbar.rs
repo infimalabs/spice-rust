@@ -58,7 +58,7 @@ fn scope(view: &GroupView, channels: &[Channel]) -> WorkScope {
 }
 
 /// The fixed total and active-agent scroller. As on a team rail, the total
-/// leads and the agents follow it toward the end.
+/// holds the right edge and the agents flow leftward from it.
 fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Channel]) -> Html {
     let (counts, workers) = render
         .work
@@ -76,7 +76,7 @@ fn render_rail(render: &GroupRender<'_, '_>, view: &GroupView, channels: &[Chann
     }
 }
 
-/// The leading tab: a badge counting every active task the rail shows, opening
+/// The trailing tab: a badge counting every active task the rail shows, opening
 /// the overview with exactly that current selection.
 fn render_total(
     render: &GroupRender<'_, '_>,
