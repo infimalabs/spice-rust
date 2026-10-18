@@ -59,8 +59,8 @@ const PREPARED: &str = "prepared";
 /// restates every live team's formation instant from immutable topology facts,
 /// binds retained Design notices to their exact statement while retiring
 /// superseded selection provenance, records each retained task-backed notice's
-/// claim-phase classification and bounded excerpt while refusing a retained
-/// conversation notice that kept no prose, and creates the room-authority projection,
+/// claim-phase classification and bounded excerpt and elides the excerpt of a
+/// retained conversation notice that kept no prose, and creates the room-authority projection,
 /// room catch-up cursors and horizons, room coordination heads, room
 /// conversation heads, operator items, required task evidence, relevance
 /// shadow records, the working-group partition, the empty principal head

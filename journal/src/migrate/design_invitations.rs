@@ -22,6 +22,11 @@ const DESIGN_INVITATION_RELEASE: &str = "ROOMS-dWKcWx0xN";
 const CONTEXT_RELEASE: &str = "ROOMS-dWKwb7jw9";
 /// Release that recorded an invitation's supporting-work presentation.
 const PRESENTATION_RELEASE: &str = "ROOMS-dWL301SYq";
+/// Excerpt of a retained conversation notice whose writer kept no prose. The
+/// cleaned prose lived only in the resident's session profile, so the excerpt
+/// is its own elision mark: the card quotes nothing it cannot prove and still
+/// names the exact transcript source holding the prose.
+const ELIDED_CONVERSATION_EXCERPT: &str = "…";
 /// Retained envelopes decoded in one bounded crossing step.
 const FACT_PAGE_ROWS: i64 = 256;
 
@@ -199,13 +204,26 @@ fn cross_notice(
 
 /// Record the supporting work's classification and bounded excerpt from the
 /// claim and terminal operation the evidence names, or from the task's
-/// current title when its claim reached no terminal operation.
+/// current title when its claim reached no terminal operation. Conversation
+/// evidence kept no prose in retained authority, so its excerpt is elided.
 fn bind_presentation(
     transaction: &Transaction<'_>,
     seq: i64,
     fact: &mut Map<String, Value>,
     witnesses: &Witnesses,
 ) -> Result<(), OpenError> {
+    let conversation = fact
+        .get("evidence")
+        .and_then(|evidence| evidence.get("kind"))
+        .and_then(Value::as_str)
+        == Some("conversation");
+    if conversation {
+        fact.insert(
+            "excerpt".to_owned(),
+            Value::from(ELIDED_CONVERSATION_EXCERPT),
+        );
+        return Ok(());
+    }
     let evidence = fact
         .get_mut("evidence")
         .and_then(Value::as_object_mut)
@@ -254,7 +272,7 @@ fn bind_presentation(
         _ => {
             return Err(presentation_refusal(
                 seq,
-                "retained conversation evidence keeps no authored prose to excerpt",
+                "the retained notice names no supporting evidence kind",
             ));
         }
     };

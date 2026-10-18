@@ -428,6 +428,75 @@ fn writable_open_binds_a_retained_notice_to_its_latest_compaction() {
 }
 
 #[test]
+fn writable_open_elides_a_retained_conversation_notice_excerpt() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("retained-conversation-notice.sqlite3");
+    let journal = authority_file_fixture(&path);
+    plant_invitation_recipient(&journal);
+    let mut notice = current_notice("1kKRRsDP");
+    notice["opportunity"] = json!({"kind": "design-statement"});
+    notice["evidence"] = json!({
+        "kind": "conversation",
+        "source": {
+            "digest": "ab".repeat(32),
+            "locus": {
+                "source": "018f82d4-6f59-7d06-92e3-bce913116306",
+                "member": 1,
+                "offset": 40,
+                "length": 12,
+                "line": 3,
+                "column": 1,
+                "event": 2,
+            },
+        },
+    });
+    insert_fact(
+        &journal,
+        fact(5, Some(4), FactKind::DesignNoticed, notice.clone()),
+    );
+    journal
+        .connection
+        .execute_batch(
+            "UPDATE fact_envelopes SET envelope = CAST(json_remove(
+                 CAST(envelope AS TEXT),
+                 '$.fact.excerpt'
+             ) AS BLOB) WHERE seq = 5;
+             INSERT INTO thread_index(seq, origin, cause, root, depth) VALUES
+                 (3, 'task:1kKRRsDP', 2, 1, 2),
+                 (4, 'task:1kKRRsDP', 3, 1, 3),
+                 (5, 'task:1kKRRsDP', 4, 1, 4);
+             UPDATE cursor_head SET seq = 5, wake = 5 WHERE singleton = 1;
+             UPDATE steering_index SET indexed_seq = 5 WHERE singleton = 1;",
+        )
+        .expect("retained conversation notice is planted");
+    restore_predecessor(&journal, 83);
+    drop(journal);
+
+    let crossed = Journal::open(&path).expect("retained conversation notice crosses");
+    let envelope = crossed
+        .connection
+        .query_row(
+            "SELECT envelope FROM fact_envelopes WHERE seq = 5 AND kind = 'room::noticed'",
+            [],
+            |row| row.get::<_, Vec<u8>>(0),
+        )
+        .expect("crossed conversation notice keeps its seq");
+    let envelope: Envelope<AnyFact> = wire::decode(&envelope).expect("crossed notice decodes");
+    let crossed_notice = envelope
+        .fact
+        .read::<wire::rooms::DesignNoticed>()
+        .expect("crossed fact remains a notice");
+    let planted: wire::rooms::DesignNoticeEvidence =
+        serde_json::from_value(notice["evidence"].clone()).expect("planted evidence decodes");
+    assert_eq!(crossed_notice.evidence, planted);
+    assert_eq!(crossed_notice.excerpt, "…");
+    assert_eq!(
+        wire::rooms::design_excerpt(&crossed_notice.excerpt),
+        crossed_notice.excerpt
+    );
+}
+
+#[test]
 fn writable_open_refuses_a_retained_notice_without_a_provable_statement() {
     let scratch = Scratch::new();
     let path = scratch.path().join("unproved-design-notice.sqlite3");
