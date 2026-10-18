@@ -439,11 +439,14 @@ reasoning notes in three rows at their display instants, joined in time order
 by one faint step thread, with full-height markers for turn, operator
 direction, provider failure, compaction, fresh session, and sign-out. A note's
 length grows with its text, and it stops a pixel short of the next note in its
-row. Neighbouring notes in a row stand at least two pixels apart: a closer
-burst keeps its newest note at its instant and steps older ones back, so every
-call stays countable even in a six-agent team. The trace draws only retained
-lane activity and direction cards, issues no requests, and redraws on new
-activity and every few seconds, so old activity leaves without a new frame.
+row. Neighbouring notes in a row stand at least two pixels apart and never leave
+the pane: a closer burst keeps its newest note at its instant, steps older ones
+back, and packs against the pane's left edge. A row holding more notes than its
+width fits at that pitch folds the oldest into one wider overflow note fading in
+from the left edge, so its newest calls stay countable even in a six-agent team.
+The trace draws only retained lane activity and direction cards, issues no
+requests, and redraws on new activity and every few seconds, so old activity
+leaves without a new frame.
 
 The app's `style-src 'self'` policy refuses inline style attributes, so trace
 positions reach CSS as custom properties written through the CSSOM. A
