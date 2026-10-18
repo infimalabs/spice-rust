@@ -35,7 +35,9 @@ pub(super) async fn establish_connection(
 /// Discover the resident endpoint and open the socket its bootstrap names.
 ///
 /// `served_app` names the generation this resident serves whenever it is not
-/// the loaded document's, even when the attempt then fails.
+/// the loaded document's, even when the attempt then fails. Such a document
+/// reloads into it before any session opens; one that cannot leave keeps its
+/// update offer.
 async fn open_socket(
     identity: &UseStateHandle<Option<AppIdentity>>,
     app_update: &UseStateHandle<Option<AppUpdate>>,
@@ -75,6 +77,12 @@ async fn open_socket(
     });
     *served_app = update.as_ref().map(|update| update.generation.clone());
     app_update.set(update);
+    if let Some(served) = served_app.as_ref()
+        && *served != loaded_generation
+        && super::leave_for_served_app(served)
+    {
+        return Err(format!("reloading into served app generation {served}"));
+    }
     if let Err(fault) = Session::admit_app_protocol(app_protocol) {
         return Err(format!(
             "{}: {}; explicit app update required",
