@@ -9,7 +9,8 @@ use std::path::{Component, Path, PathBuf, Prefix};
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{
-    GENERIC_ALL, GENERIC_EXECUTE, GENERIC_READ, GENERIC_WRITE, HANDLE, LocalFree,
+    GENERIC_ALL, GENERIC_EXECUTE, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+    LocalFree,
 };
 use windows_sys::Win32::Security::Authorization::{
     GetSecurityInfo, SE_FILE_OBJECT, SetSecurityInfo,
@@ -24,14 +25,14 @@ use windows_sys::Win32::Security::{
     TOKEN_QUERY, TOKEN_USER, TokenOwner, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateDirectoryW, DELETE, FILE_APPEND_DATA, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
-    FILE_DELETE_CHILD, FILE_EXECUTE, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO,
-    FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_READ_DATA,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
-    FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FileBasicInfo, FileIdInfo, FileStandardInfo,
-    GetFileInformationByHandleEx, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-    READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
+    CREATE_NEW, CreateDirectoryW, CreateFileW, DELETE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL,
+    FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_DELETE_CHILD, FILE_EXECUTE,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_EXECUTE,
+    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS,
+    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FileBasicInfo,
+    FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx, MOVEFILE_REPLACE_EXISTING,
+    MOVEFILE_WRITE_THROUGH, MoveFileExW, READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER,
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 use windows_sys::Win32::System::Ioctl::FSCTL_SET_REPARSE_POINT;
@@ -136,27 +137,11 @@ fn protect(file: &File, mode: u32) -> io::Result<()> {
 }
 
 pub(super) fn create_private_directory(path: &Path) -> io::Result<()> {
-    let principal = Principal::current()?;
-    let acl = owner_acl(principal.user(), ALL_BITS, true)?;
-    let mut descriptor = SECURITY_DESCRIPTOR::default();
-    let raw: PSECURITY_DESCRIPTOR = (&raw mut descriptor).cast();
-    // SAFETY: `raw` addresses a writable descriptor-sized buffer, and the DACL
-    // it references outlives `CreateDirectoryW`.
-    let prepared = unsafe {
-        InitializeSecurityDescriptor(raw, SECURITY_DESCRIPTOR_REVISION) != 0
-            && SetSecurityDescriptorDacl(raw, 1, acl.as_ptr().cast::<ACL>(), 0) != 0
-            && SetSecurityDescriptorControl(raw, SE_DACL_PROTECTED, SE_DACL_PROTECTED) != 0
-    };
-    if !prepared {
-        return Err(io::Error::last_os_error());
-    }
-    let attributes = SECURITY_ATTRIBUTES {
-        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: raw,
-        bInheritHandle: 0,
-    };
+    let mut security = ProtectedSecurity::new(ALL_BITS, true)?;
+    let attributes = security.attributes();
     let path = wide(path)?;
-    // SAFETY: `path` is NUL-terminated and `attributes` outlives the call.
+    // SAFETY: `path` is NUL-terminated and `security` keeps every pointer in
+    // `attributes` alive through the call.
     if unsafe { CreateDirectoryW(path.as_ptr(), &raw const attributes) } == 0 {
         return Err(io::Error::last_os_error());
     }
@@ -319,27 +304,34 @@ pub(super) fn hold_directory(path: &Path) -> io::Result<File> {
 }
 
 pub(super) fn create_private_file(path: &Path) -> io::Result<File> {
-    let created = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | WRITE_DAC)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path);
-    let file = match created {
-        Ok(file) => file,
-        // An existing directory or directory link refuses `CREATE_NEW` as
-        // access denied rather than as a collision.
-        Err(error)
-            if error.kind() == io::ErrorKind::PermissionDenied
-                && fs::symlink_metadata(path).is_ok() =>
-        {
+    let mut security = ProtectedSecurity::new(READ_BITS | WRITE_BITS, false)?;
+    let attributes = security.attributes();
+    let path_wide = wide(path)?;
+    // SAFETY: `path_wide` is NUL-terminated and `security` keeps the protected
+    // owner DACL alive through object creation. `CREATE_NEW` is the exclusive
+    // no-replace boundary.
+    let handle = unsafe {
+        CreateFileW(
+            path_wide.as_ptr(),
+            FILE_GENERIC_READ | FILE_GENERIC_WRITE | WRITE_DAC,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            &raw const attributes,
+            CREATE_NEW,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+            ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        let error = io::Error::last_os_error();
+        // An existing directory or directory link reports access denied rather
+        // than the collision that CREATE_NEW reports for a regular file.
+        if error.kind() == io::ErrorKind::PermissionDenied && fs::symlink_metadata(path).is_ok() {
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, error));
         }
-        Err(error) => return Err(error),
-    };
-    protect(&file, 0o600)?;
-    Ok(file)
+        return Err(error);
+    }
+    // SAFETY: `CreateFileW` returned one newly owned file handle.
+    Ok(unsafe { File::from_raw_handle(handle) })
 }
 
 pub(super) fn create_private_entry(
@@ -417,6 +409,44 @@ fn open(path: &Path, access: u32) -> io::Result<File> {
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
+}
+
+/// Security attributes whose protected owner DACL is valid for this value's
+/// lifetime.
+struct ProtectedSecurity {
+    descriptor: Box<SECURITY_DESCRIPTOR>,
+    _acl: Vec<u32>,
+}
+
+impl ProtectedSecurity {
+    fn new(bits: u32, directory: bool) -> io::Result<Self> {
+        let principal = Principal::current()?;
+        let acl = owner_acl(principal.user(), bits, directory)?;
+        let mut descriptor = Box::new(SECURITY_DESCRIPTOR::default());
+        let raw: PSECURITY_DESCRIPTOR = (&raw mut *descriptor).cast();
+        // SAFETY: `raw` addresses a writable descriptor-sized allocation, and
+        // `acl` remains allocated in the returned value.
+        let prepared = unsafe {
+            InitializeSecurityDescriptor(raw, SECURITY_DESCRIPTOR_REVISION) != 0
+                && SetSecurityDescriptorDacl(raw, 1, acl.as_ptr().cast::<ACL>(), 0) != 0
+                && SetSecurityDescriptorControl(raw, SE_DACL_PROTECTED, SE_DACL_PROTECTED) != 0
+        };
+        if !prepared {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self {
+            descriptor,
+            _acl: acl,
+        })
+    }
+
+    fn attributes(&mut self) -> SECURITY_ATTRIBUTES {
+        SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: (&raw mut *self.descriptor).cast(),
+            bInheritHandle: 0,
+        }
+    }
 }
 
 /// The current token's user and default owner.
