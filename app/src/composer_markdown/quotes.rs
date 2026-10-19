@@ -9,12 +9,15 @@ use wire::{Disposition, QuoteAttribution, QuoteAuthor, QuotePresentation, QuoteT
 /// The name an agent wears when its lane is absent from the roster.
 const UNAVAILABLE: &str = "unavailable";
 
+/// Replace each structural quote link with its card. `speaker` is the lane the
+/// surrounding signoff names, which a quote addressed only to it leaves implied.
 pub(super) fn expand<'a>(
     events: Vec<MarkdownEvent<'a>>,
     presentations: &[QuotePresentation],
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
     quote_depth: usize,
+    speaker: Option<wire::CanonicalUuid>,
 ) -> Vec<MarkdownEvent<'a>> {
     if presentations.is_empty() {
         return events;
@@ -42,7 +45,14 @@ pub(super) fn expand<'a>(
             continue;
         };
         expanded.push(MarkdownEvent::InlineHtml(
-            render(node, agents, sources, quote_depth + raw_quote_depth + 1).into(),
+            render(
+                node,
+                agents,
+                sources,
+                quote_depth + raw_quote_depth + 1,
+                speaker,
+            )
+            .into(),
         ));
         event += 3;
         presentation += 1;
@@ -161,14 +171,7 @@ pub(crate) fn referenced_quote_tasks(
 fn attribution_lanes(
     attribution: &QuoteAttribution,
 ) -> impl Iterator<Item = wire::CanonicalUuid> + '_ {
-    let author = match attribution.author {
-        QuoteAuthor::Agent { lane, .. }
-        | QuoteAuthor::Directive {
-            actor: wire::Actor::Lane(lane),
-        } => Some(lane),
-        QuoteAuthor::Directive { .. } => None,
-    };
-    author.into_iter().chain(
+    author_lane(&attribution.author).into_iter().chain(
         attribution
             .recipients
             .iter()
@@ -176,13 +179,28 @@ fn attribution_lanes(
     )
 }
 
+/// The lane an author speaks for; the operator speaks for none.
+const fn author_lane(author: &QuoteAuthor) -> Option<wire::CanonicalUuid> {
+    match *author {
+        QuoteAuthor::Agent { lane, .. }
+        | QuoteAuthor::Directive {
+            actor: wire::Actor::Lane(lane),
+        } => Some(lane),
+        QuoteAuthor::Directive { .. } => None,
+    }
+}
+
 /// The lead of each hunk of quoted words, the same wherever the source
 /// appears: source age, author name, then every recipient its record proves.
+/// Where `speaker`, the lane the surrounding signoff names, is the sole
+/// recipient, the arrow and receiver are left to that context: they stay in
+/// the accessible name and the hover title but take no visible space.
 pub(super) fn signoff_html(
     attribution: &QuoteAttribution,
     target: &str,
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
+    speaker: Option<wire::CanonicalUuid>,
 ) -> String {
     let Some(source) = sources.get(target) else {
         return String::new();
@@ -194,7 +212,26 @@ pub(super) fn signoff_html(
         push_recipient_separator(&mut destination);
         destination.push_str(&recipient_html(recipient, agents));
     }
-    packet_signoff_html(&age, &name, &destination, "incoming")
+    let implied = speaker.and_then(|lane| implied_recipient(attribution, lane, agents));
+    packet_signoff_html(&age, &name, &destination, "incoming", implied)
+}
+
+/// The sole recipient's name when it is `lane` under the name that lane's
+/// own signoff wears; any other recipient set stays visible.
+fn implied_recipient<'a>(
+    attribution: &QuoteAttribution,
+    lane: wire::CanonicalUuid,
+    agents: &'a super::QuoteAgents,
+) -> Option<&'a str> {
+    let [recipient] = attribution.recipients.as_slice() else {
+        return None;
+    };
+    let member = lane_member_agent(agents, lane).filter(|_| recipient.lane == lane)?;
+    let label = match recipient.occupant {
+        Some(occupant) => &occupant_agent(agents, lane, occupant)?.0.label,
+        None => &member.label,
+    };
+    (*label == member.label).then_some(label.as_str())
 }
 
 /// One recipient: the exact occupant its record proves, else its lane.
@@ -220,14 +257,34 @@ pub(super) fn recipient_accent(
     }
 }
 
-fn packet_signoff_html(age: &str, sender: &str, recipients: &str, direction: &str) -> String {
+/// A signoff whose `implied` receiver is already named around it keeps the
+/// arrow and recipients for assistive technology and names the receiver in
+/// its hover title, but shows only the age and sender.
+fn packet_signoff_html(
+    age: &str,
+    sender: &str,
+    recipients: &str,
+    direction: &str,
+    implied: Option<&str>,
+) -> String {
     if recipients.is_empty() {
         return format!("<span class=\"message-quote-signoff\">{age}{sender}</span>");
     }
+    let destination = format!(
+        "<span class=\"message-quote-direction\" role=\"img\" aria-label=\"sent to\">→</span>\
+         <span class=\"message-quote-recipients\">{recipients}</span>"
+    );
+    let Some(receiver) = implied else {
+        return format!(
+            "<span class=\"message-quote-signoff\" data-quote-direction=\"{direction}\">\
+             {age}{sender}{destination}</span>"
+        );
+    };
     format!(
-        "<span class=\"message-quote-signoff\" data-quote-direction=\"{direction}\">{age}{sender}\
-         <span class=\"message-quote-direction\" role=\"img\" aria-label=\"sent to\">→</span>\
-         <span class=\"message-quote-recipients\">{recipients}</span></span>"
+        "<span class=\"message-quote-signoff\" data-quote-direction=\"{direction}\" \
+         data-quote-receiver=\"implied\" title=\"Sent to {}\">{age}{sender}\
+         <span class=\"visually-hidden\">{destination}</span></span>",
+        super::escape_html_attribute(receiver)
     )
 }
 
@@ -378,7 +435,7 @@ fn send_signoff_html(
         quote_age_slot_html(&author, agents, card)
     });
     lead.push_str(&packet_kind_html(send.kind, send.result.as_ref()));
-    packet_signoff_html(&lead, &sender, &recipients, "outgoing")
+    packet_signoff_html(&lead, &sender, &recipients, "outgoing", None)
 }
 
 /// The pill a packet's kind wears when not MSG, with the result an ANS names.
@@ -456,11 +513,12 @@ pub(super) fn directive_attribution(
     context: &wire::MessageDirective,
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
+    speaker: Option<wire::CanonicalUuid>,
 ) -> super::image_flow::Attribution {
     let target = context.quote_target.to_string();
     super::image_flow::Attribution {
         controls_target: target.clone(),
-        signoff: signoff_html(&context.attribution, &target, agents, sources),
+        signoff: signoff_html(&context.attribution, &target, agents, sources, speaker),
         disposition: String::new(),
         badge: directive_badges_html(context),
         task_tail: task_tail_html(&target),
@@ -562,11 +620,14 @@ fn presentation_target(presentation: &QuotePresentation) -> &str {
     }
 }
 
+/// One quote card. Its signoff leaves a receiver implied by the surrounding
+/// `speaker`; its own words surround nested quotes as its author's.
 fn render(
     presentation: &QuotePresentation,
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
     quote_depth: usize,
+    speaker: Option<wire::CanonicalUuid>,
 ) -> String {
     match presentation {
         QuotePresentation::Resolved {
@@ -578,7 +639,7 @@ fn render(
             media_quotes,
         } => {
             let disposition = disposition.map(disposition_html).unwrap_or_default();
-            let signoff = signoff_html(attribution, target, agents, sources);
+            let signoff = signoff_html(attribution, target, agents, sources, speaker);
             let task_tail = task_tail_html(target);
             let body = super::render_quote_card_body(
                 text,
@@ -586,14 +647,17 @@ fn render(
                 agents,
                 sources,
                 media_quotes,
-                super::image_flow::Attribution {
-                    controls_target: target.clone(),
-                    signoff,
-                    disposition,
-                    badge: packet_group_html(attribution),
-                    task_tail,
+                super::Finish::QuoteCard {
+                    attribution: super::image_flow::Attribution {
+                        controls_target: target.clone(),
+                        signoff,
+                        disposition,
+                        badge: packet_group_html(attribution),
+                        task_tail,
+                    },
+                    quote_depth,
+                    speaker: author_lane(&attribution.author),
                 },
-                quote_depth,
             );
             let accent = speaker_accent(&attribution.author, target, agents, sources)
                 .map_or_else(String::new, |accent| format!(" data-accent=\"{accent}\""));
@@ -611,7 +675,7 @@ fn render(
             disposition,
         } => {
             let disposition = disposition.map(disposition_html).unwrap_or_default();
-            let signoff = signoff_html(attribution, target, agents, sources);
+            let signoff = signoff_html(attribution, target, agents, sources, speaker);
             let task_tail = task_tail_html(target);
             let own_quote = target.parse().ok().map(|target| wire::MediaQuote {
                 target,
@@ -626,14 +690,17 @@ fn render(
                 agents,
                 sources,
                 own_quote.as_slice(),
-                super::image_flow::Attribution {
-                    controls_target: target.clone(),
-                    signoff,
-                    disposition,
-                    badge: packet_group_html(attribution),
-                    task_tail,
+                super::Finish::QuoteCard {
+                    attribution: super::image_flow::Attribution {
+                        controls_target: target.clone(),
+                        signoff,
+                        disposition,
+                        badge: packet_group_html(attribution),
+                        task_tail,
+                    },
+                    quote_depth,
+                    speaker: author_lane(&attribution.author),
                 },
-                quote_depth,
             );
             let accent = speaker_accent(&attribution.author, target, agents, sources)
                 .map_or_else(String::new, |accent| format!(" data-accent=\"{accent}\""));

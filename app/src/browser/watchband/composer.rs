@@ -854,8 +854,6 @@ fn agent_message_presentation<'a>(
 ) -> AgentMessagePresentation<'a> {
     let member = &props.member;
     let message = &props.message;
-    let quote_agents = &props.quote_agents;
-    let quote_sources = &props.quote_sources;
     let quote_tasks = props.quote_tasks.clone();
     let attribution = watchband::agent_message_attribution(
         message.author,
@@ -875,8 +873,7 @@ fn agent_message_presentation<'a>(
     let media_description = (is_tool && !message.text.trim().is_empty())
         .then(|| watchband::tool_media_description(&message.text));
     let is_prose = message.activity == wire::AgentActivityKind::Prose;
-    let (shown_text, rendered_markdown) =
-        render_agent_markdown(message, is_tool, is_prose, quote_agents, quote_sources);
+    let (shown_text, rendered_markdown) = render_agent_markdown(props, is_tool, is_prose);
     let card_label = agent_message_card_label(
         message,
         media_description.as_deref(),
@@ -940,18 +937,18 @@ fn agent_message_presentation<'a>(
 
 /// Expand a card's media and render its Markdown: the shown text, then its
 /// rendering. Prose cards split into attributed hunks around every quote and
-/// sent MSG; tool, reasoning, and boundary cards render verbatim, and a tool
-/// card shows no words.
-fn render_agent_markdown<'m>(
-    message: &'m wire::AgentMessage,
+/// sent MSG, speaking for the card's lane; tool, reasoning, and boundary cards
+/// render verbatim, and a tool card shows no words.
+fn render_agent_markdown(
+    props: &AgentMessageCardProps,
     is_tool: bool,
     is_prose: bool,
-    quote_agents: &crate::composer_markdown::QuoteAgents,
-    quote_sources: &crate::composer_markdown::QuoteSources,
 ) -> (
-    std::borrow::Cow<'m, str>,
+    std::borrow::Cow<'_, str>,
     crate::composer_markdown::RenderedMarkdown,
 ) {
+    let message = &props.message;
+    let (quote_agents, quote_sources) = (&*props.quote_agents, &*props.quote_sources);
     let shown_text = if is_tool { "" } else { message.text.as_str() };
     let shown = crate::composer_markdown::expand_media_payloads(
         shown_text,
@@ -974,7 +971,12 @@ fn render_agent_markdown<'m>(
             &shown.directives,
             &shown.sends,
             &message.quotes,
-            crate::composer_markdown::QuoteRenderContext::new(quote_agents, quote_sources, &card),
+            crate::composer_markdown::QuoteRenderContext::new(
+                quote_agents,
+                quote_sources,
+                &card,
+                Some(props.member.lane),
+            ),
             &message.media_quotes,
         )
     } else {
