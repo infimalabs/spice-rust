@@ -21,7 +21,10 @@ const USAGE: &str = concat!(
     "proof-image <build [ARCHIVE]|load ARCHIVE|verify [ARCHIVE]>|",
     "report <acquire UPPER PRIVATE BOARD-ORACLE|analyze PRIVATE|",
     "render PRIVATE PUBLIC FONTS LPPL>|",
-    "stage-target TARGET|windows-msvc|windows-hosted -- PROGRAM [ARG...]>"
+    "stage-target TARGET|windows-msvc|windows-hosted -- PROGRAM [ARG...]|",
+    "windows-guest <provision [--replace]|start|stop|status|reset|",
+    "sync [--artifact PATH]... [--source PATH]...|",
+    "run [--timeout SECONDS] [--output-bytes BYTES] -- PROGRAM [ARG...]>>"
 );
 
 fn help() -> String {
@@ -92,6 +95,11 @@ fn main() -> ExitCode {
         Some(value) if value == OsStr::new("windows-hosted") => {
             drop(output);
             return run_windows_hosted(arguments.collect());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(value) if value == OsStr::new("windows-guest") => {
+            drop(output);
+            return run_windows_guest(arguments.collect());
         }
         _ => {
             eprintln!("{}", help());
@@ -428,6 +436,19 @@ fn run_windows_hosted(mut arguments: Vec<OsString>) -> ExitCode {
         Err(error) => {
             let _ = writeln!(stderr, "{error}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_windows_guest(arguments: Vec<OsString>) -> ExitCode {
+    let mut stdout = io::stdout().lock();
+    let mut stderr = io::stderr().lock();
+    match xtask::windows_guest(arguments, &mut stdout, &mut stderr) {
+        Ok(code) => u8::try_from(code).map_or_else(|_| ExitCode::FAILURE, ExitCode::from),
+        Err(error) => {
+            let _ = writeln!(stderr, "{error}");
+            ExitCode::from(error.exit_code())
         }
     }
 }

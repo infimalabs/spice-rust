@@ -24,10 +24,13 @@ pub const WORKFLOW: &str = ".github/workflows/windows-hosted.yml";
 
 const DIGEST_HEX_LENGTH: usize = 64;
 const SOURCE_REF_CHALLENGE_LENGTH: usize = 24;
-const MAX_RUNTIME_SECONDS: u32 = 60 * 60;
-const MAX_OUTPUT_BYTES: u32 = 8 * 1024 * 1024;
+/// Longest runtime one command may be granted.
+pub const MAX_RUNTIME_SECONDS: u32 = 60 * 60;
+/// Largest combined stdout and stderr capture one command may be granted.
+pub const MAX_OUTPUT_BYTES: u32 = 8 * 1024 * 1024;
 const MAX_COMMANDS: usize = 8;
-const MAX_ARGUMENTS: usize = 256;
+/// Most arguments one argv may carry after its program.
+pub const MAX_ARGUMENTS: usize = 256;
 const MAX_ARTIFACTS: usize = 256;
 const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 
@@ -158,6 +161,18 @@ impl Request {
 pub enum Completion {
     Exited { code: i32 },
     TimedOut,
+}
+
+impl Completion {
+    /// Exit status a host reports for this completion: the guest's exact code,
+    /// or 124 when the runtime limit stopped the process tree.
+    #[must_use]
+    pub fn exit_code(&self) -> i32 {
+        match self {
+            Self::Exited { code } => *code,
+            Self::TimedOut => 124,
+        }
+    }
 }
 
 /// Bounded byte capture encoded without requiring process output to be UTF-8.

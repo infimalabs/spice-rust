@@ -20,7 +20,7 @@ const STORE: &str = "spice/windows-msvc-v1";
 const RECEIPT: &str = "receipt.json";
 const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
 const SCHEMA: u64 = 2;
-const LAYOUT_VERSION: u64 = 4;
+const LAYOUT_VERSION: u64 = 5;
 const SHA256_HEX_LENGTH: usize = 64;
 const HOST_CLOSURE_REASON: &str = "cargo-isolation::windows-msvc-host-closure-altered";
 const LICENSE_ACCEPTANCE_PHRASES: [&str; 3] = [
@@ -369,7 +369,10 @@ fn write_wrappers(declaration: &Declaration, directory: &Path) -> Result<(), Iso
         ("lib.exe", wrapper(&shell_path(&declaration.llvm_lib.path)?)),
         (
             "link.exe",
-            wrapper(&shell_path(&declaration.lld_link.path)?),
+            format!(
+                "#!/bin/sh\nexec '{}' /winsysroot:\"{relative_sysroot}\" \"$@\"\n",
+                shell_path(&declaration.lld_link.path)?
+            ),
         ),
     ] {
         let path = directory.join(name);

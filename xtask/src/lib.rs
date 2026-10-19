@@ -20,6 +20,8 @@ mod test_evidence;
 mod verify_error;
 mod verify_execution;
 mod verify_timing;
+#[cfg(not(target_arch = "wasm32"))]
+mod windows_guest;
 mod windows_hosted;
 mod windows_msvc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -49,6 +51,8 @@ pub use release::{
 pub use report::report;
 #[cfg(not(target_arch = "wasm32"))]
 pub use test_evidence::{TestEvidenceRunError, run as run_test_evidence};
+#[cfg(not(target_arch = "wasm32"))]
+pub use windows_guest::{WindowsGuestError, windows_guest};
 pub use windows_hosted::{
     HostedExecution, WindowsHostedError, windows_hosted, windows_hosted_stage,
 };

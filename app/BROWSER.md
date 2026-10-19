@@ -238,45 +238,6 @@ carries a separate receipt. None of these is styled as review evidence or
 output authorization, which stay on their exact proposal version and in
 immutable preparation authority.
 
-A Design's read view groups its [typed contributions](DESIGNS.md#design-contributions)
-by kind above the room history, which keeps them in journal order among the
-conversation. Each cited source's availability comes from the
-`room::contribution-sources` read, which any authenticated session may issue
-and the app issues once per cited contribution of a shown Design, at most
-eight in flight, and again after a reconnect; it resolves through the same
-resident path as `spice room history`. This read-only surface never creates or
-answers the session-profile Design requests delivered through a lane's own
-session.
-
-The read view derives its **Design maturity** panel from the bounded per-Design
-measure the room projection folds incrementally from streamed requests and
-contributions, never by folding rendered room history. It shows contribution
-kinds and distinct lanes, requested reach, recent statement-head request
-yield, folded older-head and unattributed historical totals, and every missing
-substantive dimension. Fresh has no contributions; steeped requires
-reason-for, reason-against, evidence, and three contributing lanes. Questions
-and broad requested reach cannot satisfy it. Steeped maturity makes the
-Design's first pass ready for a lane, which the standing's pass cycle shows;
-it is not a danger or workflow state, and maturity never blocks or authorizes
-a Design decision.
-
-The same read view lists every immutable proposal version. An operator uses
-native radios and text fields to accept or reject every output, optionally
-comment on each verdict and the version overall, then preview and submit one
-exact decision; Collapse remains the reason-bearing alternative. Output cards
-identify declared Plans and Designs by intent, and undeclared work as a task
-with its authored flow. Every work output starts visibly **Rejected**, the
-conservative default that grants no authorization until the operator selects
-**Accept**. The decision and accepted-output authorization are one command,
-while every rejected output stays gated. A decided version is read-only. While
-a command is pending, the version cannot submit again, and only committed room
-and board authority
-changes its standing. A version its author withdrew leaves the open list and
-the open count for a separate **Withdrawn versions** history that names its
-author, age, reason, and withdrawal fact and offers no decision control, so the
-remaining open version is the one to decide; the view never picks among open
-versions by recency.
-
 The operator's inbox sits in the Spice sidebar's Principals section, inside
 their own principal row beneath its avatar, name, and email, above Jobs, and
 not in the shared Working groups catalog. Its

@@ -3981,6 +3981,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows-guest"
+version = "0.0.0"
+dependencies = [
+ "hosted-windows",
+ "serde",
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4113,6 +4123,7 @@ dependencies = [
  "atomic",
  "dist",
  "gate",
+ "getrandom 0.3.4",
  "hosted-windows",
  "jiff",
  "libc",
@@ -4123,6 +4134,8 @@ dependencies = [
  "signal-hook",
  "sill",
  "spice",
+ "toml",
+ "windows-guest",
  "wire",
 ]
 

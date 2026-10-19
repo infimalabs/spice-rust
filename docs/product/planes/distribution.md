@@ -222,6 +222,161 @@ is removed and scratch teardown succeeds. Provider cancellation or the
 and billing limits are the account's cost boundary; the repository requests
 one machine per dispatch and defines no persistent or autoscaling fleet.
 
+### Persistent Windows 11 ARM developer guest
+
+Windows work iterates on the Apple-silicon development host before it reaches
+the hosted boundary. One persistent Windows 11 Pro ARM64 guest runs the pinned
+x64 cross-build under Windows' x64 emulation, so NTFS, Job Object, named-pipe,
+process-tree, and install behavior come from a real Windows kernel. Its results
+are developer evidence only: the guest publishes no receipt, satisfies no
+release, sealing, or package-replay claim, and no gate or release path executes
+or trusts it. Permanent tests stay fast and in process; every guest run is a
+throwaway smoke.
+
+**Hypervisor.** The guest runs under Homebrew QEMU (`qemu-system-aarch64
+-machine virt -accel hvf`) with edk2 UEFI firmware. QEMU is driven entirely
+from argv and its QMP control socket, so the repository owns the whole machine
+definition, and its open-source binaries and firmware are pinned by digest.
+qcow2 overlays make the recorded clean state a file operation. It boots Windows
+11 ARM through Hypervisor.framework. Apple Virtualization.framework, and so
+tart, cannot boot Windows. UTM is a GUI front end to the same QEMU, and
+executing commands through it needs a guest agent. VMware Fusion's `vmrun`
+needs an account-gated download plus VMware Tools in the guest, and
+Parallels' `prlctl` needs a paid edition. Each of those adds an opaque control
+layer without adding Windows support.
+
+**First-time setup.** Install the pinned bottles once with
+`brew install qemu wimlib`, then run:
+
+```sh
+spice dev xtask -- windows-guest provision
+```
+
+`dist/windows-guest.toml` is the recorded configuration. It pins:
+- each host tool and firmware file by path and SHA-256;
+- the machine shape;
+- the Windows 11 Pro ARM64 ESD from Microsoft's Media Creation Tool catalog;
+- the virtio-win NetKVM driver ISO;
+- the Win32-OpenSSH ARM64 MSI;
+- the x64 VC++ runtime installer named by the package manifest that
+  `dist/windows-msvc.toml` pins. It supplies the `VCRUNTIME140.dll` that
+  Rust MSVC executables load and that the hosted image gets from Visual Studio.
+
+Provisioning:
+1. Fetches each download over its pinned URL and refuses any size or digest
+   mismatch.
+2. Builds read-only FAT32 Setup media with wimlib. The media carries Windows
+   PE, Setup, the Pro image, the network driver, OpenSSH, the x64 runtime, the
+   host's guest SSH public key, `dist/windows-guest/setup.ps1`, and
+   `dist/windows-guest/autounattend.xml` with a random local password.
+3. Installs Windows unattended (this takes tens of minutes).
+4. Seals the installed disk and UEFI variables read-only as the clean base.
+5. Learns the guest's SSH host key on first boot.
+
+Updating a pin means changing it in the declaration and running
+`provision --replace`; a guest provisioned from other pins or templates is
+refused until then. Machine-local state lives in the shared
+`.spice-rs/windows-guest/` directory and is never tracked. Sizing is 4 vCPUs,
+8 GiB RAM, and a sparse 64 GiB NVMe disk. Provisioning needs about 25 GB of host
+space for the download cache and media, and a working guest needs 10–20 GB.
+
+**Commands.** Each subcommand runs as
+`spice dev xtask -- windows-guest <subcommand>`:
+
+| Subcommand | Effect |
+| --- | --- |
+| `provision [--replace]` | Build the clean base from the recorded configuration. |
+| `start` | Boot the persistent overlay in the background; returns once SSH answers. |
+| `stop` | Shut Windows down cleanly; QEMU is stopped forcibly only if shutdown stalls. |
+| `status` | Report whether the guest is provisioned from the current pins and whether it is running. |
+| `reset` | While stopped, return the disk and UEFI variables to the clean base. |
+| `sync [--artifact PATH]... [--source PATH]...` | Replace `C:\spice\work` with the named artifacts in `bin\` and the named tracked source in `source\`. |
+| `run [--timeout S] [--output-bytes N] -- PROGRAM [ARG...]` | Run one argv in `C:\spice\work`. |
+
+The guest persists across `stop` and `start` until `reset`. It reaches the
+host only through loopback forwards: SSH on 22622 (key-only, pinned host key)
+and QMP on 22623. QEMU's `restrict=on` networking gives the guest no outbound
+network once it is installed.
+
+`sync` admits only regular files beneath `target/x86_64-pc-windows-msvc/` whose
+PE machine is x86-64. A native ARM64 build would run outside emulation and
+bypass the pinned x64 cross-build, so it is refused. `--source` admits only
+paths `git ls-files` tracks. Every sync also installs the guest executor, which
+is built by
+`spice dev cargo -- build --locked --release --target x86_64-pc-windows-msvc -p windows-guest`.
+
+**Shared protocol with the hosted runner.** `run` reuses the hosted
+boundary's types and bounds: the program-plus-arguments `Command`, the 3600 s
+and 8 MiB defaults (also the maxima), the 256-argument limit, the base64
+`Capture` of stdout and stderr with truncation flags, and the `Completion` exit
+mapping (timeout reports 124). The command prints the captured bytes, reports
+the exact Windows exit code on stderr, and exits with it, as
+`windows-hosted` does.
+
+The executor runs that argv like the hosted runner does:
+- straight through `CreateProcess`, with no shell;
+- with a cleared environment, keeping only a fixed Windows system allowlist,
+  plus a `PATH` of `bin\` and the system directories and a private
+  `TEMP`/`TMP`;
+- inside a kill-on-close Job Object that bounds output and runtime and ends
+  every descendant on timeout.
+
+The hosted runner's own `--smoke-argv` mode runs unchanged in the guest after
+`sync --artifact target/x86_64-pc-windows-msvc/release/hosted-windows.exe`. Its
+attested batch mode does not run there: it requires GitHub's run identity and
+an in-guest toolchain, and the guest must never imitate the former.
+
+**Port smokes.** Cross-build the port's in-process test binary and run it under
+the real Windows kernel. Cargo prints each test executable's path as
+`target/x86_64-pc-windows-msvc/debug/deps/NAME-HASH.exe`. `spice` and `sill`
+build for this target only once the corresponding port lands. Until then,
+these are the commands each port's native developer smoke must pass.
+
+```sh
+spice dev cargo -- build --locked --release --target x86_64-pc-windows-msvc -p windows-guest
+spice dev xtask -- windows-guest start
+
+# Filesystem and Cargo isolation (PLATFOR-dWJhTHGms)
+spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p spice --lib
+spice dev cargo -- build --locked --target x86_64-pc-windows-msvc -p spice
+spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/spice-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/spice.exe
+spice dev xtask -- windows-guest run -- bin/spice-HASH.exe cargo_isolation
+
+# Job Object process ownership (PLATFOR-dWJhVJ7Sd)
+spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p sill
+spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/sill-HASH.exe
+spice dev xtask -- windows-guest run -- bin/sill-HASH.exe spawn
+
+# Local IPC with daemon handoff (PLATFOR-dWJhWMJFc)
+spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p spice --lib
+spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/spice-HASH.exe
+spice dev xtask -- windows-guest run -- bin/spice-HASH.exe resident::
+spice dev xtask -- windows-guest run -- bin/spice-HASH.exe supervisor::
+
+spice dev xtask -- windows-guest stop
+spice dev xtask -- windows-guest reset
+```
+
+Each port adds its end-to-end smoke by syncing its built `spice.exe` or
+`sill` consumer next to the tests and running that argv the same way:
+- one prepare/select/cleanup cycle;
+- the descendant, console-interrupt, forced-tree, and reap cycle;
+- the resident start, lane-control round trip, and shutdown.
+
+`reset` between ports keeps each run starting from the same clean state.
+
+**Differences from the hosted job.** Each one keeps guest evidence below the
+hosted boundary:
+
+| Aspect | Guest | Hosted job |
+| --- | --- | --- |
+| Emulation | x64 code runs under Windows 11 ARM's x64 emulation (Prism) on an ARM64 kernel | Native x86-64 |
+| CPU features | Emulation exposes a subset of x86-64 extensions and reports a different CPU identity; feature detection, intrinsics, and floating-point corner cases may differ | Real x86-64 |
+| Timing | Translation warm-up, nested virtualization, and laptop power state skew durations, timeouts, and scheduling, so deadlines must not be calibrated from the guest | Provider timing |
+| Installer architecture | Windows 11 Pro client build 26100.4349 with an ARM64 OS and ARM64 system components; x64 installers may select ARM64 or emulated paths | Windows Server 2025 Datacenter 26100 x64 |
+| Attestation | No provider run identity, Sigstore attestation, challenge, or receipt; results are machine-local developer output | Attested and receipted |
+| Configuration | Unactivated, with TPM and Secure Boot checks bypassed for Setup and no in-guest toolchain; networking is loopback only | Pinned image, toolchain, and firewall rule |
+
 ### Notes are read out of the ledger
 
 **Invariant —** Notes derive from the ledger; there is no maintained changelog.

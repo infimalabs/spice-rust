@@ -23,6 +23,7 @@ members = [
     "taste",
     "vendor",
     "wire",
+    "windows-guest",
     "xtask",
 ]
 resolver = "3"

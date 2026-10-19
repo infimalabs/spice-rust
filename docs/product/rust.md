@@ -119,9 +119,15 @@ load closure, and clang's complete builtin include tree before launch. macOS
 platform libraries remain covered by the signed system volume and dyld shared
 cache rather than mutable Homebrew paths. Only that target gets the `cl.exe`,
 `ml64.exe`, `lib.exe`, and `link.exe` wrappers: they resolve to the admitted
-clang-cl, llvm-ml, llvm-lib, and lld-link bytes, and clang-cl receives the
-admitted xwin `/winsysroot`. Missing or changed bytes refuse instead of falling
-back to Apple's compiler, ambient headers, or another toolchain.
+clang-cl, llvm-ml, llvm-lib, and lld-link bytes, and both clang-cl and lld-link
+receive the admitted xwin `/winsysroot`, so final x64 executables link against
+the admitted CRT and SDK import libraries. Missing or changed bytes refuse
+instead of falling back to Apple's compiler, ambient headers, or another
+toolchain.
+
+Those x64 executables run on the development host only inside the persistent
+Windows 11 ARM developer guest, as non-authoritative developer evidence; see
+[Persistent Windows 11 ARM developer guest](planes/distribution.md#persistent-windows-11-arm-developer-guest).
 
 Owners: [`spice/src/cargo_isolation/windows_msvc.rs`](../../spice/src/cargo_isolation/windows_msvc.rs)
 for recorded-acceptance admission, materialization, verification, and Cargo
