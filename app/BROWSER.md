@@ -389,6 +389,12 @@ quote starts another hunk with its source's controls and attribution; the
 rule applies recursively to agent prose and resolved operator, agent, and peer
 quotes.
 
+Every visible inline atom keeps its hunk's `1.25` line pitch: links, task
+handles, emphasis, emoji, superscript and subscript, inline math, and quote
+attribution never enlarge a line box. The image row therefore begins after
+exactly two lines, and its status stays inside the image grid rather than
+changing prose leading.
+
 Acknowledgment is an authenticated message disposition, not source text. Every
 direct hunk of the answering speaker wears the same ACK or NAK segment, quoted
 hunks never inherit it, and pending settlement revises those segments in place.
