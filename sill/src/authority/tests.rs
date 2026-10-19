@@ -5,9 +5,10 @@ use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{
-    Directory, Entry, create_private_directory, create_private_file, directory_link_form,
-    file_identity, is_link_like, link_directory, open_unfollowed, owned_by_current_user,
-    owner_mode, path_identity, read_directory_link, rename_no_replace, set_owner_mode,
+    Directory, Entry, EntryKind, create_private_directories, create_private_directory,
+    create_private_file, directory_link_form, file_identity, file_mode, is_link_like,
+    link_directory, open_unfollowed, owned_by_current_user, owner_mode, path_identity,
+    read_directory_link, rename_no_replace, set_file_mode, set_owner_mode,
 };
 
 struct Scratch(PathBuf);
@@ -89,6 +90,26 @@ fn private_directories_are_owner_only_and_never_reused() {
     fs::write(&file, b"").expect("create file");
     let over_file = create_private_directory(&file).expect_err("name exists");
     assert_eq!(over_file.kind(), io::ErrorKind::AlreadyExists);
+}
+
+#[test]
+fn private_directory_trees_create_every_missing_level_owner_only() {
+    let scratch = Scratch::new("private-tree");
+    let existing = scratch.path("existing");
+    fs::create_dir(&existing).expect("create existing level");
+    let before = owner_mode(&existing).expect("existing mode");
+    let leaf = existing.join("a").join("b");
+
+    create_private_directories(&leaf).expect("create missing levels");
+    for level in [existing.join("a"), leaf.clone()] {
+        assert_eq!(owner_mode(&level).expect("level mode"), 0o700);
+    }
+    assert_eq!(
+        owner_mode(&existing).expect("existing mode"),
+        before,
+        "an existing level is kept as it is"
+    );
+    create_private_directories(&leaf).expect("an existing tree is kept");
 }
 
 #[test]
@@ -350,8 +371,87 @@ fn held_directories_refuse_links_and_files() {
     fs::create_dir(scratch.path("target")).expect("create target");
     link_directory(&scratch.path("target"), &scratch.path("link")).expect("create link");
     fs::write(scratch.path("file"), b"").expect("create file");
-    Directory::open(&scratch.path("link")).expect_err("a link is not held");
-    Directory::open(&scratch.path("file")).expect_err("a file is not held");
+    for refused in ["link", "file"] {
+        let error = Directory::open(&scratch.path(refused)).expect_err("not held");
+        assert_eq!(error.kind(), io::ErrorKind::NotADirectory, "{refused}");
+    }
+}
+
+#[test]
+fn held_directories_list_and_descend_without_following_links() {
+    let scratch = Scratch::new("held-listing");
+    let root = scratch.path("root");
+    fs::create_dir_all(root.join("child")).expect("create child");
+    fs::create_dir(scratch.path("outside")).expect("create outside");
+    fs::write(root.join("file"), b"").expect("create file");
+    fs::write(root.join("child").join("nested"), b"nested").expect("create nested");
+    link_directory(&scratch.path("outside"), &root.join("link")).expect("create link");
+    let held = Directory::open(&root).expect("hold root");
+
+    let mut listed = held
+        .entries()
+        .expect("list root")
+        .collect::<io::Result<Vec<_>>>()
+        .expect("list every entry");
+    listed.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_eq!(
+        listed,
+        [
+            ("child".into(), EntryKind::Directory),
+            ("file".into(), EntryKind::File),
+            ("link".into(), EntryKind::Other),
+        ]
+    );
+
+    let child = held.open_directory("child".as_ref()).expect("hold child");
+    assert_eq!(child.path(), root.join("child"));
+    let Entry::Opened(mut nested) = child.open_entry("nested".as_ref(), false).expect("nested")
+    else {
+        panic!("the nested file opens");
+    };
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(&mut nested, &mut bytes).expect("read nested");
+    assert_eq!(bytes, b"nested");
+    for refused in ["link", "file"] {
+        let error = held
+            .open_directory(refused.as_ref())
+            .expect_err("only a real directory is held");
+        assert_eq!(error.kind(), io::ErrorKind::NotADirectory, "{refused}");
+    }
+    let missing = held
+        .open_directory("missing".as_ref())
+        .expect_err("nothing is named");
+    assert_eq!(missing.kind(), io::ErrorKind::NotFound);
+}
+
+#[test]
+fn file_modes_round_trip_through_the_open_handle() {
+    let scratch = Scratch::new("file-mode");
+    let path = scratch.path("file");
+    let created = create_private_file(&path).expect("create private file");
+    assert_eq!(file_mode(&created).expect("created mode"), 0o600);
+    for mode in [0o400, 0o700, 0o600] {
+        set_file_mode(&created, mode).expect("owner-only modes cross every platform");
+        assert_eq!(file_mode(&created).expect("handle mode"), mode);
+    }
+    let outside = set_file_mode(&created, 0o20000).expect_err("outside the POSIX mask");
+    assert_eq!(outside.kind(), io::ErrorKind::InvalidInput);
+
+    let shared = set_file_mode(&created, 0o644);
+    if cfg!(windows) {
+        let refused = shared.expect_err("Windows refuses a mode it cannot express");
+        assert_eq!(refused.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(file_mode(&created).expect("unchanged mode"), 0o600);
+    } else {
+        shared.expect("Unix applies the exact mode");
+        assert_eq!(file_mode(&created).expect("shared mode"), 0o644);
+    }
+    drop(created);
+    set_owner_mode(&path, 0o400).expect("seal file");
+    let reopened = open_unfollowed(&path).expect("open sealed file");
+    assert_eq!(file_mode(&reopened).expect("sealed mode"), 0o400);
+    drop(reopened);
+    set_owner_mode(&path, 0o600).expect("unseal file");
 }
 
 #[cfg(windows)]

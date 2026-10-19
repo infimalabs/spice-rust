@@ -1,10 +1,11 @@
 use std::ffi::OsString;
-use std::fs::{self, File, Metadata, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use crate::journal_lock::JournalLock;
 use serde::Serialize;
+use sill::authority::{self, FileIdentity};
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::{
     Actor, Digest, Domain, Fault, FaultClass, JournalRestore, Outcome, Producer, Refusal, Reply,
@@ -60,16 +61,6 @@ struct PreparedRestore {
     artifacts: artifact::BackupGeneration,
     previous_artifacts: artifact::BackupGeneration,
     plan: Digest,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct AuthorityIdentity {
-    bytes: u64,
-    modified: Option<std::time::SystemTime>,
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
 }
 
 struct CapturedAuthority {
@@ -301,7 +292,13 @@ where
             error.to_string(),
         )
     })?;
-    set_private(staged.temporary_path())?;
+    authority::set_owner_mode(staged.temporary_path(), 0o600).map_err(|error| {
+        fault(
+            FaultClass::Environment,
+            "restore::stage-mode-failed",
+            format!("{}: {error}", staged.temporary_path().display()),
+        )
+    })?;
     write(&mut staged).map_err(|error| {
         fault(
             FaultClass::Environment,
@@ -315,8 +312,7 @@ where
             "restore::publish-failed",
             error.to_string(),
         )
-    })?;
-    sync_parent(destination)
+    })
 }
 
 fn verify_published(prepared: &PreparedRestore) -> Result<(), Failure> {
@@ -440,8 +436,8 @@ fn sync_parent(path: &Path) -> Result<(), Failure> {
     let parent = path
         .parent()
         .expect("repository journal path has a data parent");
-    fs::File::open(parent)
-        .and_then(|directory| directory.sync_all())
+    authority::Directory::open(parent)
+        .and_then(|directory| directory.sync())
         .map_err(|error| {
             fault(
                 FaultClass::Environment,
@@ -533,7 +529,7 @@ fn current_identity(path: &Path) -> Result<Option<Digest>, Failure> {
     let (bytes, digest) = Digest::compute_reader(
         Domain::JournalBackupMember,
         &mut file,
-        expected.bytes.max(1),
+        expected.bytes().max(1),
     )
     .map_err(|error| authority_read_failure(path, error))?;
     require_current_authority(path, &file, &expected, bytes)?;
@@ -549,7 +545,7 @@ fn capture_current_authority(path: &Path) -> Result<Option<CapturedAuthority>, F
         Domain::JournalBackupMember,
         &mut source,
         &mut target,
-        expected.bytes.max(1),
+        expected.bytes().max(1),
     )
     .map_err(|error| authority_read_failure(path, error))?;
     require_current_authority(path, &source, &expected, bytes)?;
@@ -560,14 +556,8 @@ fn capture_current_authority(path: &Path) -> Result<Option<CapturedAuthority>, F
             error.to_string(),
         )
     })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        target
-            .set_permissions(fs::Permissions::from_mode(0o400))
-            .map_err(|error| authority_capture_failure(&temporary.0, error))?;
-    }
+    authority::set_file_mode(&target, 0o400)
+        .map_err(|error| authority_capture_failure(&temporary.0, error))?;
     drop(target);
     let file =
         File::open(&temporary.0).map_err(|error| authority_capture_failure(&temporary.0, error))?;
@@ -579,15 +569,11 @@ fn capture_current_authority(path: &Path) -> Result<Option<CapturedAuthority>, F
     }))
 }
 
-fn current_authority(path: &Path) -> Result<Option<(File, AuthorityIdentity)>, Failure> {
+fn current_authority(path: &Path) -> Result<Option<(File, FileIdentity)>, Failure> {
     match fs::symlink_metadata(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(fault(
-            FaultClass::Environment,
-            "restore::authority-unreadable",
-            format!("{}: {error}", path.display()),
-        )),
-        Ok(metadata) if !metadata.file_type().is_file() => Err(refusal(
+        Err(error) => Err(authority_unreadable(path, error)),
+        Ok(metadata) if !metadata.is_file() || authority::is_link_like(&metadata) => Err(refusal(
             "restore::authority-refused",
             "an absent or regular-file authority destination",
             path.display().to_string(),
@@ -602,17 +588,14 @@ fn current_authority(path: &Path) -> Result<Option<(File, AuthorityIdentity)>, F
             format!("{} bytes", metadata.len()),
             "quiesce or repair the oversized authority before previewing restore",
         )),
-        Ok(metadata) => {
-            let expected = AuthorityIdentity::from_metadata(&metadata);
-            let file = open_authority(path)?;
-            let opened = file.metadata().map_err(|error| {
-                fault(
-                    FaultClass::Environment,
-                    "restore::authority-unreadable",
-                    format!("{}: {error}", path.display()),
-                )
-            })?;
-            if AuthorityIdentity::from_metadata(&opened) == expected {
+        Ok(_) => {
+            let expected = authority::path_identity(path)
+                .map_err(|error| authority_unreadable(path, error))?;
+            let file = authority::open_unfollowed(path)
+                .map_err(|error| authority_unreadable(path, error))?;
+            let opened = authority::file_identity(&file)
+                .map_err(|error| authority_unreadable(path, error))?;
+            if opened == expected {
                 Ok(Some((file, expected)))
             } else {
                 Err(authority_changed(path))
@@ -621,47 +604,25 @@ fn current_authority(path: &Path) -> Result<Option<(File, AuthorityIdentity)>, F
     }
 }
 
-fn open_authority(path: &Path) -> Result<File, Failure> {
-    #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    options.open(path).map_err(|error| {
-        fault(
-            FaultClass::Environment,
-            "restore::authority-unreadable",
-            format!("{}: {error}", path.display()),
-        )
-    })
+fn authority_unreadable(path: &Path, error: io::Error) -> Failure {
+    fault(
+        FaultClass::Environment,
+        "restore::authority-unreadable",
+        format!("{}: {error}", path.display()),
+    )
 }
 
 fn require_current_authority(
     path: &Path,
     source: &File,
-    expected: &AuthorityIdentity,
+    expected: &FileIdentity,
     observed: u64,
 ) -> Result<(), Failure> {
-    let named = fs::symlink_metadata(path).map_err(|error| {
-        fault(
-            FaultClass::Environment,
-            "restore::authority-unreadable",
-            format!("{}: {error}", path.display()),
-        )
-    })?;
-    let handle = source.metadata().map_err(|error| {
-        fault(
-            FaultClass::Environment,
-            "restore::authority-unreadable",
-            format!("{}: {error}", path.display()),
-        )
-    })?;
-    if AuthorityIdentity::from_metadata(&handle) == *expected
-        && AuthorityIdentity::from_metadata(&named) == *expected
-        && observed == expected.bytes
-    {
+    let named =
+        authority::path_identity(path).map_err(|error| authority_unreadable(path, error))?;
+    let handle =
+        authority::file_identity(source).map_err(|error| authority_unreadable(path, error))?;
+    if handle == *expected && named == *expected && observed == expected.bytes() {
         Ok(())
     } else {
         Err(authority_changed(path))
@@ -681,43 +642,14 @@ fn authority_read_failure(path: &Path, error: io::Error) -> Failure {
     if error.kind() == io::ErrorKind::InvalidData {
         authority_changed(path)
     } else {
-        fault(
-            FaultClass::Environment,
-            "restore::authority-unreadable",
-            format!("{}: {error}", path.display()),
-        )
-    }
-}
-
-impl AuthorityIdentity {
-    fn from_metadata(metadata: &Metadata) -> Self {
-        #[cfg(unix)]
-        use std::os::unix::fs::MetadataExt;
-
-        Self {
-            bytes: metadata.len(),
-            modified: metadata.modified().ok(),
-            #[cfg(unix)]
-            device: metadata.dev(),
-            #[cfg(unix)]
-            inode: metadata.ino(),
-        }
+        authority_unreadable(path, error)
     }
 }
 
 fn create_temporary_authority() -> Result<(TemporaryAuthority, File), Failure> {
     let path =
         std::env::temp_dir().join(format!(".spice-restore-previous-{}", uuid::Uuid::new_v4()));
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        options.mode(0o600);
-    }
-    let file = options
-        .open(&path)
+    let file = authority::create_private_file(&path)
         .map_err(|error| authority_capture_failure(&path, error))?;
     Ok((TemporaryAuthority(path), file))
 }
@@ -769,24 +701,6 @@ fn refuse_sidecars(destination: &Path) -> Result<(), Failure> {
             }
         }
     }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn set_private(path: &Path) -> Result<(), Failure> {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| {
-        fault(
-            FaultClass::Environment,
-            "restore::stage-mode-failed",
-            format!("{}: {error}", path.display()),
-        )
-    })
-}
-
-#[cfg(not(unix))]
-fn set_private(_path: &Path) -> Result<(), Failure> {
     Ok(())
 }
 

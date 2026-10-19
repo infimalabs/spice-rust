@@ -27,15 +27,12 @@ impl Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        #[cfg(unix)]
         for directory in [
             self.0.clone(),
             self.0.join("backup"),
             self.0.join("backup/tape"),
         ] {
-            use std::os::unix::fs::PermissionsExt;
-
-            let _ = fs::set_permissions(directory, fs::Permissions::from_mode(0o755));
+            let _ = authority::set_owner_mode(&directory, 0o700);
         }
         let _ = fs::remove_dir_all(&self.0);
     }
@@ -233,7 +230,7 @@ fn corrupt_or_inconsistent_bundles_fault_as_store_evidence_without_mutation() {
     assert_store_fault(&member.verify());
 
     let mode = Bundle::new("mode");
-    set_mode(&mode.bundle.join("tape/lane-a"), 0o600);
+    set_mode(&mode.bundle.join("tape/lane-a"), 0o400);
     assert_store_fault(&mode.verify());
 
     let declared_mode = Bundle::new("declared-mode");
@@ -279,7 +276,7 @@ fn corrupt_or_inconsistent_bundles_fault_as_store_evidence_without_mutation() {
 fn a_manifest_bound_truncated_authority_is_refused_at_captured_byte_admission() {
     let fixture = Bundle::new("truncated-authority");
     let authority = fixture.bundle.join(AUTHORITY);
-    OpenOptions::new()
+    fs::OpenOptions::new()
         .write(true)
         .open(&authority)
         .expect("authority opens for truncation")
@@ -305,16 +302,19 @@ fn a_manifest_bound_truncated_authority_is_refused_at_captured_byte_admission() 
     );
 }
 
+#[test]
+fn links_inside_a_bundle_are_store_evidence() {
+    let linked = Bundle::new("link");
+    fs::remove_file(linked.bundle.join("tape/lane-a")).expect("member removes");
+    authority::link_directory(&linked.bundle, &linked.bundle.join("tape/lane-a"))
+        .expect("link creates");
+    assert_store_fault(&linked.verify());
+}
+
 #[cfg(unix)]
 #[test]
-fn links_and_special_files_inside_a_bundle_are_store_evidence() {
-    use std::os::unix::fs::symlink;
+fn special_files_inside_a_bundle_are_store_evidence() {
     use std::os::unix::net::UnixListener;
-
-    let linked = Bundle::new("symlink");
-    fs::remove_file(linked.bundle.join("tape/lane-a")).expect("member removes");
-    symlink("../spicejournal.sqlite3", linked.bundle.join("tape/lane-a")).expect("symlink creates");
-    assert_store_fault(&linked.verify());
 
     let special = Bundle::new("special");
     let _socket =
@@ -322,16 +322,15 @@ fn links_and_special_files_inside_a_bundle_are_store_evidence() {
     assert_store_fault(&special.verify());
 }
 
-#[cfg(unix)]
 #[test]
 fn a_read_only_bundle_verifies_without_changing_bytes_or_modes() {
     let fixture = Bundle::new("read-only");
-    set_mode(&fixture.bundle.join(AUTHORITY), 0o444);
-    set_mode(&fixture.bundle.join("tape/lane-a"), 0o444);
+    set_mode(&fixture.bundle.join(AUTHORITY), 0o400);
+    set_mode(&fixture.bundle.join("tape/lane-a"), 0o400);
     fixture.write_manifest(JOURNAL_BACKUP_VERSION, journal::SCHEMA_VERSION);
-    set_mode(&fixture.bundle.join("manifest.json"), 0o444);
-    set_mode(&fixture.bundle.join("tape"), 0o555);
-    set_mode(&fixture.bundle, 0o555);
+    set_mode(&fixture.bundle.join("manifest.json"), 0o400);
+    set_mode(&fixture.bundle.join("tape"), 0o500);
+    set_mode(&fixture.bundle, 0o500);
     let before = tree(fixture.root());
 
     assert!(
@@ -411,34 +410,11 @@ fn assert_store_fault(outcome: &Outcome<RestoreVerification>) {
 }
 
 fn mode_of(path: &Path) -> u32 {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        fs::metadata(path)
-            .expect("member metadata reads")
-            .permissions()
-            .mode()
-            & 0o7777
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        0
-    }
+    authority::owner_mode(path).expect("fixture mode reads")
 }
 
 fn set_mode(path: &Path, mode: u32) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("fixture mode changes");
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (path, mode);
-    }
+    authority::set_owner_mode(path, mode).expect("fixture mode changes");
 }
 
 fn tree(root: &Path) -> BTreeMap<String, (u32, Option<Vec<u8>>)> {

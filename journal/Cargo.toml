@@ -14,9 +14,7 @@ wire = { path = "../wire" }
 rusqlite = { version = "0.40.1", default-features = false, features = ["backup", "bundled"] }
 serde = "1.0.229"
 serde_json = "1.0.151"
-
-[target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.4", features = ["fs"] }
+sill = { path = "../sill" }
 
 [lints]
 workspace = true

@@ -28,7 +28,10 @@ pub const JOURNAL_BACKUP_MAX_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 pub struct JournalBackupMember {
     /// Canonical slash-separated path relative to the bundle root.
     pub path: String,
-    /// POSIX permission bits, masked to `0o7777`.
+    /// POSIX permission bits, masked to `0o7777`, on every platform. Windows
+    /// observes them as the projection of the member's DACL onto owner, group,
+    /// and other, and restores only owner-only modes; it refuses a member whose
+    /// mode grants group, other, or special bits rather than change it.
     pub mode: u32,
     /// Exact byte length of the member.
     pub bytes: u64,

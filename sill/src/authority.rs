@@ -14,7 +14,7 @@
 //!
 //! None of these operations requires elevation or Windows Developer Mode.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs::{File, Metadata};
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -60,6 +60,27 @@ pub fn set_owner_mode(path: &Path, mode: u32) -> io::Result<()> {
     platform::set_owner_mode(path, mode)
 }
 
+/// Give the file `file` holds open exactly the POSIX permission bits `mode`.
+///
+/// Unix applies the full `0o7777` mode. Windows expresses only owner-only
+/// modes, as a protected owner-only DACL, and refuses any group, other, or
+/// special bit rather than tighten it silently; the handle must hold write-DAC
+/// access, as one [`create_private_file`] returns does.
+///
+/// # Errors
+///
+/// Returns `InvalidInput` for a mode outside `0o7777` or, on Windows, beyond
+/// the owner, or an operating-system refusal applying the permissions.
+pub fn set_file_mode(file: &File, mode: u32) -> io::Result<()> {
+    if mode & !0o7777 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("mode {mode:#o} is outside the POSIX 0o7777 mask"),
+        ));
+    }
+    platform::set_file_mode(file, mode)
+}
+
 /// Create one directory that only its owner can reach (mode `0700`).
 ///
 /// # Errors
@@ -68,6 +89,32 @@ pub fn set_owner_mode(path: &Path, mode: u32) -> io::Result<()> {
 /// operating-system refusal creating it.
 pub fn create_private_directory(path: &Path) -> io::Result<()> {
     platform::create_private_directory(path)
+}
+
+/// Create `path` and each missing ancestor owner-only (mode `0700`) from
+/// creation, keeping every directory that already exists.
+///
+/// An existing entry is kept as it is, so the caller must admit the result:
+/// `path` may already name a link or a non-directory.
+///
+/// # Errors
+///
+/// Returns the operating-system refusal creating `path` or an ancestor.
+pub fn create_private_directories(path: &Path) -> io::Result<()> {
+    let created = match create_private_directory(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let Some(parent) = path.parent() else {
+                return Err(error);
+            };
+            create_private_directories(parent)?;
+            create_private_directory(path)
+        }
+        created => created,
+    };
+    match created {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        created => created,
+    }
 }
 
 /// Create `path` exclusively as an owner-only (`0o600`) file open for reading
@@ -238,6 +285,21 @@ pub fn open_unfollowed(path: &Path) -> io::Result<File> {
     platform::open_unfollowed(path)
 }
 
+/// Permission bits of the object `file` holds open.
+///
+/// Unix reports the full `0o7777` mode, including set-ID and sticky bits.
+/// Windows reports the owner, group, and other projection [`owner_mode`]
+/// describes, which never carries the special bits.
+///
+/// # Errors
+///
+/// Returns an operating-system refusal reading the object's metadata or
+/// security descriptor. Windows reads the descriptor through the handle, which
+/// every read or write open of a file can do.
+pub fn file_mode(file: &File) -> io::Result<u32> {
+    platform::file_mode(file)
+}
+
 /// One entry opened by name through a held [`Directory`].
 #[derive(Debug)]
 pub enum Entry {
@@ -247,6 +309,30 @@ pub enum Entry {
     Link,
     /// The named object itself, which may still be any non-link kind.
     Opened(File),
+}
+
+/// The kind of one directory entry, observed without following it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EntryKind {
+    /// A regular file.
+    File,
+    /// A directory that is not a link or reparse point.
+    Directory,
+    /// A link, reparse point, or special file; none is content the directory
+    /// owns.
+    Other,
+}
+
+/// The entries of one held [`Directory`], excluding `.` and `..`, in no
+/// particular order.
+pub struct Entries(platform::Entries);
+
+impl Iterator for Entries {
+    type Item = io::Result<(OsString, EntryKind)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
 }
 
 /// A held directory whose entries are reached by name without resolving the
@@ -270,12 +356,38 @@ impl Directory {
     /// # Errors
     ///
     /// Refuses a final link or reparse point and any object that is not a
-    /// directory, or returns the operating-system refusal opening it.
+    /// directory with `NotADirectory`, or returns the operating-system refusal
+    /// opening it.
     pub fn open(path: &Path) -> io::Result<Self> {
         Ok(Self {
             handle: platform::hold_directory(path)?,
             path: path.to_path_buf(),
         })
+    }
+
+    /// Hold the directory `name` within this one.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a `name` that is not one plain path component, refuses a link,
+    /// reparse point, or non-directory with `NotADirectory`, or returns the
+    /// operating-system refusal opening it.
+    pub fn open_directory(&self, name: &OsStr) -> io::Result<Self> {
+        let name = entry_name(name)?;
+        Ok(Self {
+            handle: platform::open_directory_entry(&self.handle, &self.path, name)?,
+            path: self.path.join(name),
+        })
+    }
+
+    /// Every entry of this directory with its unfollowed kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns the operating-system refusal listing the directory; each
+    /// entry's own refusal arrives through the iterator.
+    pub fn entries(&self) -> io::Result<Entries> {
+        platform::entries(&self.handle, &self.path).map(Entries)
     }
 
     /// The path the directory was held at.

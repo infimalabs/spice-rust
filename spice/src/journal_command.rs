@@ -1,10 +1,11 @@
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::cli::Contract;
 use crate::journal_lock::JournalLock;
+use sill::authority;
 use spice::repository::{Repository, StateError, StatePaths};
 use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
 use wire::{
@@ -18,8 +19,6 @@ use crate::read_page::Page;
 const AUTHORITY_MEMBER: &str = "spicejournal.sqlite3";
 const ARTIFACT_MEMBERS: &str = "artifacts/tasks";
 const MANIFEST: &str = "manifest.json";
-const PRIVATE_FILE: u32 = 0o600;
-const PRIVATE_DIRECTORY: u32 = 0o700;
 static NEXT_BACKUP: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn backup(matches: &clap::ArgMatches) -> Outcome<JournalBackup> {
@@ -666,13 +665,7 @@ fn require_absent(path: &Path) -> Result<(), Failure> {
 }
 
 fn publish_backup(source: &Path, destination: &Path) -> Result<(), Failure> {
-    match rustix::fs::renameat_with(
-        rustix::fs::CWD,
-        source,
-        rustix::fs::CWD,
-        destination,
-        rustix::fs::RenameFlags::NOREPLACE,
-    ) {
+    match authority::rename_no_replace(source, destination) {
         Ok(()) => Ok(()),
         Err(error) => match require_absent(destination) {
             Err(failure) => Err(failure),
@@ -730,7 +723,7 @@ fn create_staging_directory(parent: &Path) -> Result<(PathBuf, DirectoryCleanup)
             std::process::id(),
             NEXT_BACKUP.fetch_add(1, Ordering::Relaxed)
         ));
-        match create_private_directory(&path) {
+        match authority::create_private_directory(&path) {
             Ok(()) => {
                 return Ok((path.clone(), DirectoryCleanup(Some(path))));
             }
@@ -750,14 +743,7 @@ fn create_staging_directory(parent: &Path) -> Result<(PathBuf, DirectoryCleanup)
 }
 
 fn create_private_directories(path: &Path) -> Result<(), Failure> {
-    #[cfg(unix)]
-    use std::os::unix::fs::DirBuilderExt;
-
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    builder.mode(PRIVATE_DIRECTORY);
-    builder.create(path).map_err(|error| {
+    authority::create_private_directories(path).map_err(|error| {
         Failure::environment(
             "backup::stage-failed",
             format!("{}: {error}", path.display()),
@@ -765,29 +751,8 @@ fn create_private_directories(path: &Path) -> Result<(), Failure> {
     })
 }
 
-#[cfg(unix)]
-fn create_private_directory(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-
-    let mut builder = fs::DirBuilder::new();
-    builder.mode(PRIVATE_DIRECTORY).create(path)
-}
-
-#[cfg(not(unix))]
-fn create_private_directory(path: &Path) -> io::Result<()> {
-    fs::create_dir(path)
-}
-
 fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        options.mode(PRIVATE_FILE);
-    }
-    let mut file = options.open(path).map_err(|error| {
+    let mut file = authority::create_private_file(path).map_err(|error| {
         Failure::environment(
             "backup::write-failed",
             format!("{}: {error}", path.display()),
@@ -811,14 +776,7 @@ fn write_backup_member(
     path: &Path,
     member: &artifact::BackupMember,
 ) -> Result<(u64, Digest), Failure> {
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(PRIVATE_FILE);
-    }
-    let mut target = options.open(path).map_err(|error| {
+    let mut target = authority::create_private_file(path).map_err(|error| {
         Failure::environment(
             "backup::write-failed",
             format!("{}: {error}", path.display()),
@@ -840,33 +798,18 @@ fn write_backup_member(
             ),
         ));
     }
+    authority::set_file_mode(&target, member.mode()).map_err(|error| {
+        Failure::environment(
+            "backup::mode-failed",
+            format!("{}: {error}", path.display()),
+        )
+    })?;
     target.sync_all().map_err(|error| {
         Failure::environment(
             "backup::sync-failed",
             format!("{}: {error}", path.display()),
         )
     })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        fs::set_permissions(path, fs::Permissions::from_mode(member.mode())).map_err(|error| {
-            Failure::environment(
-                "backup::mode-failed",
-                format!("{}: {error}", path.display()),
-            )
-        })?;
-        File::open(path)
-            .and_then(|file| file.sync_all())
-            .map_err(|error| {
-                Failure::environment(
-                    "backup::mode-failed",
-                    format!("{}: {error}", path.display()),
-                )
-            })?;
-    }
-    #[cfg(not(unix))]
-    let _ = member.mode();
     let file = File::open(path).map_err(|error| {
         Failure::environment(
             "backup::digest-failed",
@@ -965,8 +908,8 @@ fn artifact_failure(error: artifact::Error) -> Failure {
 }
 
 fn sync_directory(path: &Path) -> Result<(), Failure> {
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
+    authority::Directory::open(path)
+        .and_then(|directory| directory.sync())
         .map_err(|error| {
             Failure::environment(
                 "backup::sync-failed",
@@ -975,26 +918,15 @@ fn sync_directory(path: &Path) -> Result<(), Failure> {
         })
 }
 
-#[cfg(unix)]
 fn mode(path: &Path) -> Result<u32, Failure> {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::metadata(path)
-        .map(|metadata| metadata.permissions().mode() & 0o7777)
+    File::open(path)
+        .and_then(|file| authority::file_mode(&file))
         .map_err(|error| {
             Failure::environment(
                 "backup::metadata-failed",
                 format!("{}: {error}", path.display()),
             )
         })
-}
-
-#[cfg(not(unix))]
-fn mode(path: &Path) -> Result<u32, Failure> {
-    Err(Failure::environment(
-        "backup::mode-unavailable",
-        path.display().to_string(),
-    ))
 }
 
 struct DirectoryCleanup(Option<PathBuf>);

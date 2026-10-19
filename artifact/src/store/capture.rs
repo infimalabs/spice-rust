@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File, Metadata, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use sill::authority;
 use wire::manifest::{JOURNAL_BACKUP_MAX_BYTES, JOURNAL_BACKUP_MAX_MEMBERS};
 use wire::{Digest, Domain, TaskStamp};
 
@@ -250,13 +251,8 @@ fn capture_source(
             "streamed artifact member changed while hashing",
         ));
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        target
-            .set_permissions(fs::Permissions::from_mode(0o400))
-            .map_err(|error| Error::io("seal streamed artifact member", &captured, error))?;
-    }
+    authority::set_file_mode(&target, 0o400)
+        .map_err(|error| Error::io("seal streamed artifact member", &captured, error))?;
     Ok(BackupMember {
         path: plan.path.clone(),
         mode: plan.mode,
@@ -372,7 +368,6 @@ pub(super) fn capture(root: &Path) -> Result<BackupGeneration, Error> {
 pub(super) struct CapturePlan {
     source: PathBuf,
     path: String,
-    mode: u32,
     identity: FileIdentity,
 }
 
@@ -424,8 +419,9 @@ fn preflight_capture_member(
             "artifact backup member is not a regular file",
         ));
     }
-    let identity = FileIdentity::from_metadata(&metadata);
-    *aggregate = admit_backup_bytes(*aggregate, identity.len).ok_or_else(|| {
+    let identity = FileIdentity::observe(&file)
+        .map_err(|source| Error::io("inspect artifact backup member", path, source))?;
+    *aggregate = admit_backup_bytes(*aggregate, identity.len()).ok_or_else(|| {
         Error::corrupt(
             "artifact backup inventory",
             format!("capture exceeds {JOURNAL_BACKUP_MAX_BYTES} aggregate bytes"),
@@ -434,7 +430,6 @@ fn preflight_capture_member(
     plans.push(CapturePlan {
         source: path.to_path_buf(),
         path: spelling,
-        mode: file_mode(path, &metadata)?,
         identity,
     });
     Ok(())
@@ -448,14 +443,13 @@ fn capture_member(
 ) -> Result<BackupMember, Error> {
     let mut source = open_regular_file(&plan.source)
         .map_err(|error| Error::io("open artifact backup member", &plan.source, error))?;
-    let opened = source
-        .metadata()
+    let opened = FileIdentity::observe(&source)
         .map_err(|error| Error::io("inspect artifact backup member", &plan.source, error))?;
-    if FileIdentity::from_metadata(&opened) != plan.identity {
+    if opened != plan.identity {
         return Err(changed_capture_source(&plan.source));
     }
     let (captured, mut target) = generation.create_member(index)?;
-    let (bytes, digest) = if plan.identity.len == 0 {
+    let (bytes, digest) = if plan.identity.len() == 0 {
         let mut probe = [0_u8; 1];
         if source
             .read(&mut probe)
@@ -470,7 +464,7 @@ fn capture_member(
             Domain::TaskArtifactPayload,
             &mut source,
             &mut target,
-            plan.identity.len,
+            plan.identity.len(),
         )
         .map_err(|error| {
             if error.kind() == io::ErrorKind::InvalidData {
@@ -490,16 +484,11 @@ fn capture_member(
     target
         .sync_all()
         .map_err(|error| Error::io("synchronize captured artifact member", &captured, error))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        target
-            .set_permissions(fs::Permissions::from_mode(0o400))
-            .map_err(|error| Error::io("seal captured artifact member", &captured, error))?;
-    }
+    authority::set_file_mode(&target, 0o400)
+        .map_err(|error| Error::io("seal captured artifact member", &captured, error))?;
     Ok(BackupMember {
         path: plan.path.clone(),
-        mode: plan.mode,
+        mode: plan.identity.mode,
         bytes,
         digest,
         captured,
@@ -512,16 +501,12 @@ fn require_unchanged_capture_source(
     expected: &FileIdentity,
     observed: u64,
 ) -> Result<(), Error> {
-    let handle = source
-        .metadata()
+    let handle = FileIdentity::observe(source)
         .map_err(|error| Error::io("inspect captured artifact member", path, error))?;
     let reopened = open_regular_file(path)
-        .and_then(|file| file.metadata())
+        .and_then(|file| FileIdentity::observe(&file))
         .map_err(|error| Error::io("reopen captured artifact member", path, error))?;
-    if FileIdentity::from_metadata(&handle) == *expected
-        && FileIdentity::from_metadata(&reopened) == *expected
-        && observed == expected.len
-    {
+    if handle == *expected && reopened == *expected && observed == expected.len() {
         Ok(())
     } else {
         Err(changed_capture_source(path))
@@ -713,98 +698,43 @@ impl CapturedGeneration {
     }
 
     fn create_member(&self, index: usize) -> Result<(PathBuf, File), Error> {
-        #[cfg(unix)]
-        use std::os::unix::fs::OpenOptionsExt;
-
         let path = self.root.join(index.to_string());
-        let mut options = OpenOptions::new();
-        options.read(true).write(true).create_new(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        let file = options
-            .open(&path)
+        let file = authority::create_private_file(&path)
             .map_err(|error| Error::io("create captured artifact member", &path, error))?;
         Ok((path, file))
     }
 
     fn seal(&self) -> Result<(), Error> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&self.root, fs::Permissions::from_mode(0o500))
-                .map_err(|error| Error::io("seal artifact capture", &self.root, error))?;
-        }
-        Ok(())
+        authority::set_owner_mode(&self.root, 0o500)
+            .map_err(|error| Error::io("seal artifact capture", &self.root, error))
     }
 }
 
 impl Drop for CapturedGeneration {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&self.root, fs::Permissions::from_mode(0o700));
-        }
+        let _ = authority::set_owner_mode(&self.root, 0o700);
         let _ = fs::remove_dir_all(&self.root);
     }
 }
 
+/// One member object and the state it was observed in: its filesystem
+/// identity and its permission bits, so a mode change during capture is a
+/// change.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FileIdentity {
-    len: u64,
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-    #[cfg(unix)]
+    object: authority::FileIdentity,
     mode: u32,
-    #[cfg(unix)]
-    modified_seconds: i64,
-    #[cfg(unix)]
-    modified_nanoseconds: i64,
-    #[cfg(unix)]
-    changed_seconds: i64,
-    #[cfg(unix)]
-    changed_nanoseconds: i64,
 }
 
 impl FileIdentity {
-    fn from_metadata(metadata: &Metadata) -> Self {
-        #[cfg(unix)]
-        use std::os::unix::fs::MetadataExt;
-
-        Self {
-            len: metadata.len(),
-            #[cfg(unix)]
-            device: metadata.dev(),
-            #[cfg(unix)]
-            inode: metadata.ino(),
-            #[cfg(unix)]
-            mode: metadata.mode(),
-            #[cfg(unix)]
-            modified_seconds: metadata.mtime(),
-            #[cfg(unix)]
-            modified_nanoseconds: metadata.mtime_nsec(),
-            #[cfg(unix)]
-            changed_seconds: metadata.ctime(),
-            #[cfg(unix)]
-            changed_nanoseconds: metadata.ctime_nsec(),
-        }
+    fn observe(file: &File) -> io::Result<Self> {
+        Ok(Self {
+            object: authority::file_identity(file)?,
+            mode: authority::file_mode(file)?,
+        })
     }
-}
 
-fn file_mode(_path: &Path, metadata: &Metadata) -> Result<u32, Error> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        Ok(metadata.permissions().mode() & 0o7777)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = metadata;
-        Err(Error::environment(
-            "read artifact member mode",
-            _path.display().to_string(),
-        ))
+    fn len(&self) -> u64 {
+        self.object.bytes()
     }
 }

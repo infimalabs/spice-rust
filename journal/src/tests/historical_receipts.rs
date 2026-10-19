@@ -185,10 +185,8 @@ fn a_retired_tell_receipt_verifies_in_place_with_its_exact_request() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn authenticated_restore_keeps_and_verifies_historical_receipt_evidence() {
-    use std::os::unix::fs::PermissionsExt;
     use wire::manifest::{JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember};
 
     let scratch = Scratch::new();
@@ -206,11 +204,8 @@ fn authenticated_restore_keeps_and_verifies_historical_receipt_evidence() {
         authority: "spicejournal.sqlite3".to_owned(),
         members: vec![JournalBackupMember {
             path: "spicejournal.sqlite3".to_owned(),
-            mode: fs::metadata(&authority)
-                .expect("metadata")
-                .permissions()
-                .mode()
-                & 0o7777,
+            mode: sill::authority::file_mode(&fs::File::open(&authority).expect("opens"))
+                .expect("mode reads"),
             bytes: u64::try_from(bytes.len()).expect("byte count"),
             digest: Digest::compute(wire::Domain::JournalBackupMember, &bytes),
         }],

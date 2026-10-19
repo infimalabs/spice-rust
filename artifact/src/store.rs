@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, Metadata};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sill::{LockFile, LockName, Possession};
+use sill::{LockFile, LockName, Possession, authority};
 use wire::{Digest, Domain, Instant, TaskHandle, TaskStamp};
 
 use crate::model::{
@@ -22,8 +22,6 @@ const SOURCE: &str = "spice task artifact add";
 const MAX_ARTIFACT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ARTIFACTS_PER_TASK: usize = 32;
 const MAX_NAME_CHARS: usize = 96;
-#[cfg(unix)]
-const PRIVATE_DIRECTORY: u32 = 0o700;
 const CREATE_ATTEMPTS: usize = 128;
 
 static NEXT_REPLACEMENT: AtomicU64 = AtomicU64::new(0);
@@ -600,20 +598,28 @@ fn read_regular(path: &Path, subject: &str) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 
+/// Open `path` without following it, refusing a link or reparse point.
 fn open_regular_file(path: &Path) -> io::Result<File> {
-    #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut options = OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    options.custom_flags(libc_flags());
-    options.open(path)
+    let file = authority::open_unfollowed(path)?;
+    if authority::is_link_like(&file.metadata()?) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is a link or reparse point", path.display()),
+        ));
+    }
+    Ok(file)
 }
 
-#[cfg(unix)]
-const fn libc_flags() -> i32 {
-    libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK
+/// Whether unfollowed `metadata` is a regular file that is no link or reparse
+/// point.
+fn real_file(metadata: &Metadata) -> bool {
+    metadata.is_file() && !authority::is_link_like(metadata)
+}
+
+/// Whether unfollowed `metadata` is a directory that is no link or reparse
+/// point.
+fn real_directory(metadata: &Metadata) -> bool {
+    metadata.is_dir() && !authority::is_link_like(metadata)
 }
 
 fn infer_media_type(name: &str, bytes: &[u8]) -> Result<MediaType, Error> {
@@ -677,7 +683,7 @@ fn artifact_name(raw: &str) -> String {
 fn publish_object(object_dir: &Path, digest: &Digest, bytes: &[u8]) -> Result<(), Error> {
     let payload = object_dir.join(PAYLOAD);
     match fs::symlink_metadata(&payload) {
-        Ok(metadata) if metadata.file_type().is_file() => {
+        Ok(metadata) if real_file(&metadata) => {
             let existing = read_regular(&payload, "artifact payload")?;
             let observed = Digest::compute(Domain::TaskArtifactPayload, &existing);
             if observed != *digest || existing != bytes {
@@ -730,7 +736,7 @@ fn read_manifest(task_dir: &Path, task: &TaskStamp) -> Result<Manifest, Error> {
             Ok(Manifest::empty(task.clone()))
         }
         Err(source) => Err(Error::io("inspect artifact manifest", &path, source)),
-        Ok(metadata) if !metadata.file_type().is_file() => Err(Error::corrupt(
+        Ok(metadata) if !real_file(&metadata) => Err(Error::corrupt(
             path.display().to_string(),
             "manifest is not a regular file",
         )),
@@ -955,10 +961,10 @@ fn task_directories_with_limit(root: &Path, limit: Option<usize>) -> Result<Vec<
     for entry in entries {
         let entry = entry.map_err(|source| Error::io("read artifact root entry", root, source))?;
         let path = entry.path();
-        let kind = entry
-            .file_type()
+        let metadata = entry
+            .metadata()
             .map_err(|source| Error::io("inspect artifact root entry", &path, source))?;
-        if !kind.is_dir() {
+        if !real_directory(&metadata) {
             return Err(Error::corrupt(
                 path.display().to_string(),
                 "artifact root entry is not a directory",
@@ -973,7 +979,7 @@ fn task_directories_with_limit(root: &Path, limit: Option<usize>) -> Result<Vec<
         let task = parse_task_key(&text, &path.display().to_string())?;
         let manifest = manifest_path(&path);
         match fs::symlink_metadata(&manifest) {
-            Ok(metadata) if metadata.file_type().is_file() => {
+            Ok(metadata) if real_file(&metadata) => {
                 if let Some(maximum) = limit
                     && tasks.len() >= maximum
                 {
@@ -1066,13 +1072,9 @@ fn sync_tree_directories(root: &Path) -> Result<(), Error> {
             let entry = entry.map_err(|source| {
                 Error::io("read restored artifact directory", &directory, source)
             })?;
-            if entry
-                .file_type()
-                .map_err(|source| {
-                    Error::io("inspect restored artifact entry", entry.path(), source)
-                })?
-                .is_dir()
-            {
+            if real_directory(&entry.metadata().map_err(|source| {
+                Error::io("inspect restored artifact entry", entry.path(), source)
+            })?) {
                 directories.push(entry.path());
             }
         }
@@ -1089,7 +1091,7 @@ fn admitted_directory(path: &Path, absent_ok: bool) -> Result<bool, Error> {
     match fs::symlink_metadata(path) {
         Err(source) if absent_ok && source.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(source) => Err(Error::io("inspect artifact directory", path, source)),
-        Ok(metadata) if metadata.file_type().is_dir() => Ok(true),
+        Ok(metadata) if real_directory(&metadata) => Ok(true),
         Ok(_) => Err(Error::corrupt(
             path.display().to_string(),
             "artifact path is not a real directory",
@@ -1098,31 +1100,13 @@ fn admitted_directory(path: &Path, absent_ok: bool) -> Result<bool, Error> {
 }
 
 fn create_private_directories(path: &Path) -> Result<(), Error> {
-    #[cfg(unix)]
-    use std::os::unix::fs::DirBuilderExt;
-
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    builder.mode(PRIVATE_DIRECTORY);
-    builder
-        .create(path)
+    authority::create_private_directories(path)
         .map_err(|source| Error::io("create artifact directory", path, source))?;
     admitted_directory(path, false).map(|_| ())
 }
 
 fn write_backup_member(path: &Path, member: &BackupMember) -> Result<(), Error> {
-    #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    options.mode(member.mode());
-    #[cfg(not(unix))]
-    let _ = member.mode();
-    let mut file = options
-        .open(path)
+    let mut file = authority::create_private_file(path)
         .map_err(|source| Error::io("create restored artifact member", path, source))?;
     let copied = member
         .copy_to(&mut file)
@@ -1133,12 +1117,8 @@ fn write_backup_member(path: &Path, member: &BackupMember) -> Result<(), Error> 
             "captured artifact member changed length while staging",
         ));
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(fs::Permissions::from_mode(member.mode()))
-            .map_err(|source| Error::io("set restored artifact member mode", path, source))?;
-    }
+    authority::set_file_mode(&file, member.mode())
+        .map_err(|source| Error::io("set restored artifact member mode", path, source))?;
     file.sync_all()
         .map_err(|source| Error::io("write restored artifact member", path, source))
 }
@@ -1146,7 +1126,7 @@ fn write_backup_member(path: &Path, member: &BackupMember) -> Result<(), Error> 
 fn create_replacement_directory(parent: &Path, role: &str) -> Result<PathBuf, Error> {
     for _ in 0..CREATE_ATTEMPTS {
         let path = create_replacement_name(parent, role)?;
-        match create_private_directory(&path) {
+        match authority::create_private_directory(&path) {
             Ok(()) => return Ok(path),
             Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {}
             Err(source) => {
@@ -1169,18 +1149,6 @@ fn create_replacement_name(parent: &Path, role: &str) -> Result<PathBuf, Error> 
     Ok(parent.join(format!(".tasks-{role}-{}-{suffix}", std::process::id())))
 }
 
-fn create_private_directory(path: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        let mut builder = fs::DirBuilder::new();
-        builder.mode(PRIVATE_DIRECTORY);
-        builder.create(path)
-    }
-    #[cfg(not(unix))]
-    fs::create_dir(path)
-}
-
 fn remove_object(task_dir: &Path, digest: &Digest) -> Result<(), Error> {
     let path = object_dir(task_dir, digest);
     match fs::remove_dir_all(&path) {
@@ -1191,8 +1159,8 @@ fn remove_object(task_dir: &Path, digest: &Digest) -> Result<(), Error> {
 }
 
 fn sync_directory(path: &Path) -> Result<(), Error> {
-    File::open(path)
-        .and_then(|directory| directory.sync_all())
+    authority::Directory::open(path)
+        .and_then(|directory| directory.sync())
         .map_err(|source| Error::io("synchronize artifact directory", path, source))
 }
 

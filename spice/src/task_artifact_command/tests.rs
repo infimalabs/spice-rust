@@ -1,7 +1,6 @@
 //! Bounded artifact reads against a real store in a scratch directory.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use artifact::AddBytesRequest;
@@ -357,7 +356,7 @@ fn a_payload_that_no_longer_matches_its_digest_is_neither_shown_nor_extracted() 
     let fixture = Fixture::new();
     let artifact = fixture.add("evidence.txt", b"the retained bytes\n", "text/plain");
     let payload = payload_path(fixture.store.root(), &fixture.born, &artifact.digest);
-    fs::set_permissions(&payload, fs::Permissions::from_mode(0o600)).expect("payload writable");
+    sill::authority::set_owner_mode(&payload, 0o600).expect("payload writable");
     fs::write(&payload, b"tampered bytes here\n").expect("payload tampered");
     let output = fixture.base.join("evidence-copy.txt");
     let output_text = output.display().to_string();

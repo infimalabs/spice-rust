@@ -367,6 +367,15 @@ spice dev xtask -- windows-guest run -- bin/sill-HASH.exe authority lock
 spice dev xtask -- windows-guest run -- bin/atomic-HASH.exe
 spice dev xtask -- windows-guest run -- bin/serve-HASH.exe discovery
 
+# Journal backup, restore, and artifact member modes (PLATFOR-dWRp5cYTK)
+spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p sill -p journal -p artifact --lib
+spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p spice --bin spice
+spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/sill-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/journal-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/artifact-HASH.exe --artifact target/x86_64-pc-windows-msvc/debug/deps/spice-HASH.exe
+spice dev xtask -- windows-guest run -- bin/sill-HASH.exe authority
+spice dev xtask -- windows-guest run -- bin/journal-HASH.exe
+spice dev xtask -- windows-guest run -- bin/artifact-HASH.exe
+spice dev xtask -- windows-guest run -- bin/spice-HASH.exe restore_command journal_command task_artifact_command
+
 # Job Object process ownership (PLATFOR-dWJhVJ7Sd)
 spice dev cargo -- test --locked --no-run --target x86_64-pc-windows-msvc -p sill
 spice dev xtask -- windows-guest sync --artifact target/x86_64-pc-windows-msvc/debug/deps/sill-HASH.exe
