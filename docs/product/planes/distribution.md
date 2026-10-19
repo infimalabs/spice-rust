@@ -181,15 +181,20 @@ the corresponding SSH key through GitHub and the local keychain.
 `windows-2025` label, image version, OS build, and `X64` architecture; and
 `[toolchain]` pins Rust, Cargo, Git, MSVC, Windows SDK, Trunk and
 `cargo-mutants`, plus every executable, `PATH`, include, and library location.
-The workflow pins every third-party action by full commit. Updating the image
+The bootstrap Cargo invokes the pinned `RUSTC` path under the same pinned
+`RUSTUP_TOOLCHAIN`; workflow-step scope never lets it fall back to the runner
+image's mutable stable proxy. The workflow pins every third-party action by
+full commit. Updating the image
 means reviewing the matching `actions/runner-images` release manifest,
 changing every affected tool/path pin together, and proving the runner smoke
 before landing.
 
-The sealing step builds the guest from the selected source, signs that exact
-`hosted-windows.exe` with GitHub's workload identity, and signs its result
-separately. Verification rejects self-hosted attestations and binds both
-subjects to the one-use source ref and commit. The guest hashes itself under
+The sealing step builds the guest from the selected source and executes the
+sealed request in the disposable VM, then signs that exact
+`hosted-windows.exe` and its result separately with GitHub's workload identity.
+Nothing publishes unless both attestations succeed. Verification rejects
+self-hosted attestations and binds both subjects to the one-use source ref and
+commit. The guest hashes itself under
 `spice.proof.native-runner.v1`; the client verifies both attestations, hashes
 the downloaded runner, and refuses unless that independent identity equals the
 one in the result. Runner or pin changes require the same native smoke before
