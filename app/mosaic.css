@@ -396,7 +396,6 @@ path.image-annotation-hit { fill: none; }
   text-align: center;
 }
 
-
 /* Chat runs to the viewport's edges: only a real device safe-area inset keeps
    a team clear of them. */
 .mosaic-workspace .content {
@@ -543,7 +542,6 @@ path.image-annotation-hit { fill: none; }
   outline-offset: -2px;
 }
 .team-composer .team-send:focus-visible { outline-offset: -2px; }
-
 
 /* One top rule; the composer heading's 8px start puts the ticker age over composer ages. */
 .team-status-row > .ticker {
