@@ -458,6 +458,31 @@ fn a_linked_manifest_is_corruption_not_an_omitted_backup_task() {
 }
 
 #[test]
+fn capture_refuses_a_linked_object_directory() {
+    let fixture = Fixture::new();
+    let task = task("ARTIFACT-l3");
+    let source = fixture.source("proof.txt", b"outside proof");
+    let artifact = add(
+        &fixture.store,
+        &task,
+        &source,
+        Retention::Permanent,
+        instant("2030-01-01T00:00:00.000Z"),
+    );
+    let task_dir = fixture.store.root().join(task.as_str());
+    let object = object_dir(&task_dir, &artifact.digest);
+    let outside = fixture.base.join("outside-object");
+    fs::rename(&object, &outside).expect("move object outside artifact store");
+    sill::authority::link_directory(&outside, &object).expect("plant linked object directory");
+
+    let failure = fixture
+        .store
+        .capture()
+        .expect_err("capture must not follow an intermediate object link");
+    assert_eq!(failure.class(), ErrorClass::Corrupt);
+}
+
+#[test]
 fn rendered_handle_directories_are_refused_as_release_one_not_read_as_a_fallback() {
     let fixture = Fixture::new();
     let legacy = fixture

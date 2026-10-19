@@ -337,6 +337,13 @@ The hosted runner's own `--smoke-argv` mode runs unchanged in the guest after
 attested batch mode does not run there: it requires GitHub's run identity and
 an in-guest toolchain, and the guest must never imitate the former.
 
+Journal restore and artifact backup treat their roots as filesystem authority,
+not path prefixes. Every intermediate directory is held and opened relative to
+its held parent; a link, reparse point, or non-directory at any component is
+corruption. Preflight, copy, and the post-copy identity check all repeat that
+confined descent, so replacing an intermediate component cannot redirect bytes
+into or out of a bundle.
+
 **Port smokes.** Cross-build the port's in-process test binary and run it under
 the real Windows kernel. Cargo prints each test executable's path as
 `target/x86_64-pc-windows-msvc/debug/deps/NAME-HASH.exe`. `spice` and `sill`
