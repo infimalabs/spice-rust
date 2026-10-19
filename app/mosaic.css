@@ -85,10 +85,11 @@
 }
 .markdown-body :is(sup, sub) { line-height: 0; }
 .markdown-body .math-inline { display: inline; white-space: normal; }
+/* A formula keeps its 1.25em height; negative block margins keep its line one pitch tall. */
 .markdown-body .math-inline > .math-render {
-  display: inline-flex; max-width: 100%; overflow-x: auto; vertical-align: baseline; translate: 0 .2em;
+  display: inline-flex; max-width: 100%; overflow-x: auto; margin-block: -.125em; vertical-align: -.2em;
 }
-.markdown-body .math-inline .math-render img { display: block; width: auto; height: 1em; }
+.markdown-body .math-inline .math-render img { display: block; width: auto; height: 1.25em; }
 .markdown-body .math-display {
   display: block; max-width: 100%; margin: .5em 0; overflow-x: auto; text-align: center;
 }
