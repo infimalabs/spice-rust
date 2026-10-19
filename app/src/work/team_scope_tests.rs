@@ -396,7 +396,6 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
     activate(&mut active_design);
     let mut active_output = task(2, "rooms.active");
     active_output.statement.body.preparation = Some(preparation());
-    active_output.statement.body.dependencies = vec![design_born.clone()];
     activate(&mut active_output);
     active_output
         .claim
@@ -405,7 +404,6 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
         .body
         .lane = second_lane;
     let mut second_active_output = task(5, "rooms.active");
-    second_active_output.statement.body.preparation = Some(preparation());
     second_active_output.statement.body.dependencies = vec![design_born.clone()];
     activate(&mut second_active_output);
     let mut inactive_output = task(3, "rooms.inactive");
@@ -413,6 +411,14 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
     inactive_output.statement.body.dependencies = vec![design_born.clone()];
     let mut unrelated = task(4, "rooms.unrelated");
     activate(&mut unrelated);
+    let other_design = design(6, "rooms.other-design");
+    let mut other_selected_output = task(7, "rooms.other-selected");
+    other_selected_output.statement.body.preparation = Some(wire::TaskPreparation {
+        parent: stamp(6),
+        controller: stamp(6),
+        construction: stamp(7),
+    });
+    activate(&mut other_selected_output);
 
     let board = board(vec![
         active_design,
@@ -420,6 +426,8 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
         inactive_output,
         unrelated,
         second_active_output,
+        other_design,
+        other_selected_output,
     ]);
     let projection = WorkProjection::from_board(&board);
     let scope = WorkScope::Group {
@@ -433,7 +441,7 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
             .into_iter()
             .collect::<BTreeSet<_>>(),
         BTreeSet::from([stamp(1), stamp(2), stamp(5)]),
-        "association without active work does not dock a group tab, and an unrelated claim does not enter",
+        "selected and currently gated work enter only their controller's group, and inactive work does not dock a tab",
     );
     assert_eq!(group_counts.open(), 3);
     assert_eq!(
@@ -452,7 +460,7 @@ fn group_scope_docks_only_active_work_associated_with_its_designs() {
             .scope_tasks(&WorkScope::planning())
             .into_iter()
             .collect::<BTreeSet<_>>(),
-        BTreeSet::from([stamp(1), stamp(2), stamp(3), stamp(5)]),
-        "active and inactive Design work remain in the global planning namespace",
+        BTreeSet::from([stamp(1), stamp(3), stamp(5), stamp(6)]),
+        "only current dependency reachability remains in the global planning namespace",
     );
 }

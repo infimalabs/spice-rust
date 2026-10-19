@@ -410,6 +410,18 @@ impl From<&crate::TaskHead> for BoardStatement {
 }
 
 impl BoardStatement {
+    /// Whether this task is the Design itself, currently waits on it, or
+    /// retains it as the preparation controller after selection.
+    #[must_use]
+    pub fn is_associated_with_design(&self, design: &crate::TaskStamp) -> bool {
+        crate::head::design_associated(
+            &self.born,
+            &self.dependencies,
+            self.preparation.as_ref(),
+            design,
+        )
+    }
+
     /// Reconstruct a client-side statement from this row and its title.
     ///
     /// This actor view predates environmental standing, so its client-side

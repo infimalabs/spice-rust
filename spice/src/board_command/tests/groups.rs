@@ -583,7 +583,7 @@ fn set_fast(
 }
 
 #[test]
-fn a_fast_flagged_group_runs_exactly_the_live_claimants_of_its_designs() {
+fn a_fast_flagged_group_runs_claimants_of_its_design_associated_work() {
     let (root, bus, epoch, seats) = fixture("group-fast", 4);
     let design = |name| add_controller(&bus, epoch, name, wire::TaskIntent::Design, None);
     let controller = design("Fast controller");
@@ -629,8 +629,8 @@ fn a_fast_flagged_group_runs_exactly_the_live_claimants_of_its_designs() {
     capture_for(&bus, epoch, &seats[2], &plan);
     assert_eq!(
         fast_lanes(),
-        [seats[0].lane].into(),
-        "neither an unflagged group's claimant, a Plan's claimant, nor an idle lane runs fast"
+        [seats[0].lane, seats[2].lane].into(),
+        "the flagged Design and its selected Plan run fast while another group's claimant and an idle lane do not"
     );
 
     assert_committed(set_fast(&bus, epoch, &fast, false));

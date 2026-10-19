@@ -190,10 +190,12 @@ displaces it.
 As on a team's rail, the group's total holds the right edge of its tab rail and
 opens the group's work overview. Leftward from it, the rail lists each lane
 that holds an active claim on an open task associated with any of the group's
-designs: the Design itself, or a task with a direct dependency on that Design.
-Removing one Design edge releases the task only from that Design; another
-Design edge keeps the task on its other group rail. A lane enters and leaves
-the rail exactly as
+Designs: the Design itself, a task with a direct dependency on that Design, or
+selected work that retains the Design as its preparation controller. Removing
+one Design edge releases an unselected task only from that Design; persistent
+controller identity keeps selected work on its group rail. Another current
+Design edge can associate the same task with another group. A lane enters and
+leaves the rail exactly as
 a task enters and leaves a team's rail as board facts change, appears once in
 its canonical team accent, and replaces
 the associated task handle. Activating an admitted lane opens its composer in

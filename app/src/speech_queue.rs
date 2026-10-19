@@ -98,8 +98,8 @@ impl SpeechMode {
 }
 
 /// The loudest posture of every working group covering each lane, given each
-/// group's posture and the lanes holding a live claim on its designs. A Quiet
-/// group covers nothing.
+/// group's posture and the lanes holding a live claim on its Design-associated
+/// work. A Quiet group covers nothing.
 #[must_use]
 pub fn group_speech<'a>(
     groups: impl IntoIterator<Item = (SpeechMode, &'a BTreeSet<CanonicalUuid>)>,
