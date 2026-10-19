@@ -102,9 +102,10 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
             WorkAvailability::InFlight
             | WorkAvailability::Ready
             | WorkAvailability::Review
-            | WorkAvailability::Waiting
-            | WorkAvailability::Selection => return None,
-            WorkAvailability::Stale | WorkAvailability::Passive => return self.underlying(index),
+            | WorkAvailability::Waiting => return None,
+            WorkAvailability::Stale | WorkAvailability::Passive | WorkAvailability::Selection => {
+                return self.underlying(index);
+            }
             WorkAvailability::Held => DependencyWall::Environment(born),
             WorkAvailability::Deferred => DependencyWall::Deferred(born),
             WorkAvailability::Parked | WorkAvailability::Draft => DependencyWall::Parked(born),
@@ -122,9 +123,9 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
         Some((index, wall))
     }
 
-    /// A lapsed claim or passive Design changes only the row's own standing.
-    /// Follow the task's underlying gate so its dependents see the same wall
-    /// they would if that standing were absent.
+    /// A lapsed claim, passive Design, or operator selection changes only the
+    /// row's own standing. Follow the task's underlying gate so its dependents
+    /// see the same wall they would if that standing were absent.
     fn underlying(&mut self, index: usize) -> Option<(usize, DependencyWall<'a>)> {
         let work = self.work;
         let task = &work.tasks()[index];
@@ -134,9 +135,6 @@ impl<'p, 'a> DependencyWalls<'p, 'a> {
         }
         if task.environment_blocked() {
             return Some((index, DependencyWall::Environment(born)));
-        }
-        if task.awaiting_selection() {
-            return None;
         }
         self.on_path[index] = true;
         let wall = task.dependencies().iter().find_map(|dependency| {
