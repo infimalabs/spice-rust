@@ -131,8 +131,9 @@ the new complete seal, never a pointer to missing proof.
 ### Ephemeral native Windows execution
 
 The repository's Windows execution boundary is a fresh GitHub-hosted
-`windows-2025` x86-64 machine running Windows Server 2025 Datacenter. No
-dedicated Windows host is owned, kept running, or administered. Wine, the
+`windows-2025` x86-64 machine running Windows Server 2025 Datacenter on the
+provider's Visual Studio 2026 image. No dedicated Windows host is owned, kept
+running, or administered. Wine, the
 Darwin-to-MSVC cross-toolchain, Linux containers, and synthetic PE fixtures
 remain useful format/build checks but never substitute for this native
 execution.
@@ -154,10 +155,11 @@ spice dev xtask -- stage-target x86_64-pc-windows-msvc
 token: `@runner`, `@cargo`, `@rustc`, `@git`, `@cl`, or `@rc`. Proof replay
 sends its five commands as one bounded batch, so one signed provider run
 identity covers the complete battery. The client materializes the selected
-worktree in a temporary Git index, creates a one-use commit, computes the exact
-source archive's SHA-256 identity, and pushes only a temporary
-`refs/tags/spice-hosted-*` ref. It never pushes or moves a branch. It deletes
-that ref and the result artifact after the run.
+worktree in a temporary Git index, creates a one-use commit, computes a
+cross-platform SHA-256 identity from the exact source tree's recursive Git
+listing, and pushes only a temporary `refs/tags/spice-hosted-*` ref. It never
+pushes or moves a branch. It deletes that ref and the result artifact after the
+run.
 
 GitHub registers `workflow_dispatch` only from the default branch. The
 repository command therefore becomes live only after
@@ -181,15 +183,20 @@ the corresponding SSH key through GitHub and the local keychain.
 `windows-2025` label, image version, OS build, and `X64` architecture; and
 `[toolchain]` pins Rust, Cargo, Git, MSVC, Windows SDK, Trunk and
 `cargo-mutants`, plus every executable, `PATH`, include, and library location.
-The workflow pins every third-party action by full commit. Updating the image
+The bootstrap Cargo invokes the pinned `RUSTC` path under the same pinned
+`RUSTUP_TOOLCHAIN`; workflow-step scope never lets it fall back to the runner
+image's mutable stable proxy. The workflow pins every third-party action by
+full commit. Updating the image
 means reviewing the matching `actions/runner-images` release manifest,
 changing every affected tool/path pin together, and proving the runner smoke
 before landing.
 
-The sealing step builds the guest from the selected source, signs that exact
-`hosted-windows.exe` with GitHub's workload identity, and signs its result
-separately. Verification rejects self-hosted attestations and binds both
-subjects to the one-use source ref and commit. The guest hashes itself under
+The sealing step builds the guest from the selected source and executes the
+sealed request in the disposable VM, then signs that exact
+`hosted-windows.exe` and its result separately with GitHub's workload identity.
+Nothing publishes unless both attestations succeed. Verification rejects
+self-hosted attestations and binds both subjects to the one-use source ref and
+commit. The guest hashes itself under
 `spice.proof.native-runner.v1`; the client verifies both attestations, hashes
 the downloaded runner, and refuses unless that independent identity equals the
 one in the result. Runner or pin changes require the same native smoke before

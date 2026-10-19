@@ -82,7 +82,7 @@ mod windows {
         let source = source_digest(&request.toolchain.git_path, &workspace)?;
         if source != request.source {
             return Err(format!(
-                "source archive changed: expected {}, observed {}",
+                "source tree changed: expected {}, observed {}",
                 request.source, source
             ));
         }
@@ -275,7 +275,7 @@ mod windows {
         )?;
         exact_version(
             &request.toolchain.cargo_mutants_path,
-            &["--version"],
+            &["mutants", "--version"],
             &request.toolchain.cargo_mutants,
         )?;
         path_carries(&request.toolchain.cl_path, &request.toolchain.msvc, "MSVC")?;
@@ -342,22 +342,22 @@ mod windows {
     fn source_digest(git: &str, workspace: &Path) -> Result<String, String> {
         let mut child = ProcessCommand::new(git)
             .current_dir(workspace)
-            .args(["archive", "--format=tar", "HEAD"])
+            .args(["ls-tree", "-r", "-z", "--full-tree", "HEAD"])
             .env_clear()
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| format!("cannot archive selected source: {error}"))?;
-        let mut archive = child
+            .map_err(|error| format!("cannot inspect selected source tree: {error}"))?;
+        let mut listing = child
             .stdout
             .take()
-            .ok_or_else(|| "selected source archive has no stdout".to_owned())?;
+            .ok_or_else(|| "selected source tree has no stdout".to_owned())?;
         let mut digest = Sha256::new();
         let mut buffer = [0_u8; 64 * 1024];
         loop {
-            let read = archive
+            let read = listing
                 .read(&mut buffer)
-                .map_err(|error| format!("cannot read selected source archive: {error}"))?;
+                .map_err(|error| format!("cannot read selected source tree: {error}"))?;
             if read == 0 {
                 break;
             }
@@ -365,10 +365,10 @@ mod windows {
         }
         let output = child
             .wait_with_output()
-            .map_err(|error| format!("cannot finish selected source archive: {error}"))?;
+            .map_err(|error| format!("cannot finish selected source tree: {error}"))?;
         if !output.status.success() {
             return Err(format!(
-                "selected source archive failed: {}",
+                "selected source tree inspection failed: {}",
                 String::from_utf8_lossy(&output.stderr)
             ));
         }

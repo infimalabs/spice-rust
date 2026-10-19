@@ -462,7 +462,7 @@ fn snapshot(root: &Path, scratch: &Path, challenge: &str) -> Result<String, Wind
 fn source_digest(root: &Path, commit: &str) -> Result<String, WindowsHostedError> {
     let mut child = Command::new("git")
         .current_dir(root)
-        .args(["archive", "--format=tar", commit])
+        .args(["ls-tree", "-r", "-z", "--full-tree", commit])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -470,13 +470,13 @@ fn source_digest(root: &Path, commit: &str) -> Result<String, WindowsHostedError
             program: "git".to_owned(),
             source,
         })?;
-    let mut archive = child.stdout.take().ok_or_else(|| {
-        WindowsHostedError::ProviderResponse("git archive stdout is unavailable".to_owned())
+    let mut listing = child.stdout.take().ok_or_else(|| {
+        WindowsHostedError::ProviderResponse("git tree stdout is unavailable".to_owned())
     })?;
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
     loop {
-        let read = archive
+        let read = listing
             .read(&mut buffer)
             .map_err(WindowsHostedError::Output)?;
         if read == 0 {
@@ -490,7 +490,7 @@ fn source_digest(root: &Path, commit: &str) -> Result<String, WindowsHostedError
             program: "git".to_owned(),
             source,
         })?;
-    successful("source archive", output)?;
+    successful("source tree", output)?;
     Ok(format!("{:x}", digest.finalize()))
 }
 
