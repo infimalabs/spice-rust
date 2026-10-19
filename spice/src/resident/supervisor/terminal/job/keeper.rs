@@ -8,13 +8,13 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant as Monotonic};
 
+use sill::{GroupSignal, signal_group};
 use wire::CanonicalUuid;
 
 use super::super::super::super::daemon::observer;
 use super::{
     DELIVERED, DELIVERY_GRACE, Ended, Ending, LOG, OPERATOR_STOP, REQUEST_BYTES, Request, STATE,
     STOP, State, TERMINATE_GRACE, VERSION, WAKE, events, now_millis, publish_json, read_json,
-    signal_group,
 };
 /// What the keeper's loop waits on.
 enum Keep {
@@ -62,13 +62,14 @@ pub(in crate::resident::supervisor) fn keep(request_path: &Path) -> io::Result<(
     publish_json(&state_path, &state)?;
     let (sender, receiver) = mpsc::channel();
     state.ending = Some(match spawn(directory, &request, sender.clone()) {
-        Ok((child, pump)) => {
+        Ok((group, pump)) => {
             let stop = directory.join(STOP);
             let ending = tend(
-                child,
                 &receiver,
                 request.timeout_millis.map(Duration::from_millis),
+                TERMINATE_GRACE,
                 || watch(directory, &sender, Keep::woke).map(|()| stop.exists()),
+                |signal| signal_group(group, signal),
             );
             if let Some(pump) = pump {
                 pump.settle(TERMINATE_GRACE);
@@ -208,15 +209,14 @@ fn spawn(
                 .map_err(|error| format!("log unavailable: {error}"))?,
         );
     }
-    detach(&mut command);
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let mut child = spawn_group(&mut command).map_err(|error| error.to_string())?;
     let pid = child.id();
     let pump = match (child.stdout.take(), published) {
         (Some(stdout), Some(published)) => {
             match events::pump(stdout, log, directory.to_path_buf(), published) {
                 Ok(pump) => Some(pump),
                 Err(error) => {
-                    let _ = signal_group(pid, libc::SIGKILL);
+                    let _ = signal_group(pid, GroupSignal::Kill);
                     return Err(format!("event pump unavailable: {error}"));
                 }
             }
@@ -236,18 +236,19 @@ fn spawn(
 }
 
 /// Wait for the command to end, ending it at its deadline or on request:
-/// the group is asked to leave, then killed once the grace elapses. Without
+/// the group is asked to leave, then killed once `grace` elapses. Without
 /// a deadline the command runs until it ends or a stop is asked.
 ///
 /// `stop_asked` arms one watch on the job's directory and says whether a
 /// stop has been asked by now; it is consulted on every wake, so an
 /// unwatchable directory is read as a stop rather than as a command nobody
-/// can reach.
+/// can reach. `signal` reaches the command's whole group.
 fn tend(
-    group: u32,
     receiver: &mpsc::Receiver<Keep>,
     timeout: Option<Duration>,
+    grace: Duration,
     stop_asked: impl Fn() -> io::Result<bool>,
+    signal: impl Fn(GroupSignal) -> io::Result<()>,
 ) -> Ending {
     let mut deadline = timeout.map(|timeout| Monotonic::now() + timeout);
     let mut pending: Option<Ending> = None;
@@ -255,8 +256,8 @@ fn tend(
     loop {
         if changed && pending.is_none() && stop_asked().unwrap_or(true) {
             pending = Some(Ending::Stopped);
-            let _ = signal_group(group, libc::SIGTERM);
-            deadline = Some(Monotonic::now() + TERMINATE_GRACE);
+            let _ = signal(GroupSignal::Terminate);
+            deadline = Some(Monotonic::now() + grace);
         }
         changed = false;
         let remaining = deadline.map_or(Duration::MAX, |deadline| {
@@ -265,7 +266,7 @@ fn tend(
         match receiver.recv_timeout(remaining) {
             Ok(Keep::Exited(status)) => {
                 return match pending {
-                    Some(ending) => swept(group, ending),
+                    Some(ending) => swept(ending, grace, &signal),
                     None => exited(status),
                 };
             }
@@ -273,14 +274,14 @@ fn tend(
             Ok(Keep::Changed) => changed = true,
             Err(mpsc::RecvTimeoutError::Timeout) if pending.is_none() => {
                 pending = Some(Ending::TimedOut);
-                let _ = signal_group(group, libc::SIGTERM);
-                deadline = Some(Monotonic::now() + TERMINATE_GRACE);
+                let _ = signal(GroupSignal::Terminate);
+                deadline = Some(Monotonic::now() + grace);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                let _ = signal_group(group, libc::SIGKILL);
+                let _ = signal(GroupSignal::Kill);
                 return match receiver.recv() {
                     Ok(Keep::Failed(reason)) => Ending::Failed { reason },
-                    Ok(_) | Err(_) => swept(group, pending.unwrap_or(Ending::Stopped)),
+                    Ok(_) | Err(_) => swept(pending.unwrap_or(Ending::Stopped), grace, &signal),
                 };
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -296,10 +297,14 @@ fn tend(
 /// signalled mid-fork leaves a child the signal never reached, so whoever
 /// is left in the group is asked to leave and, after the grace, killed. An
 /// empty group refuses the first signal, so the common case waits nothing.
-fn swept(group: u32, ending: Ending) -> Ending {
-    if signal_group(group, libc::SIGTERM).is_ok() {
-        thread::sleep(TERMINATE_GRACE);
-        let _ = signal_group(group, libc::SIGKILL);
+fn swept(
+    ending: Ending,
+    grace: Duration,
+    signal: impl Fn(GroupSignal) -> io::Result<()>,
+) -> Ending {
+    if signal(GroupSignal::Terminate).is_ok() {
+        thread::sleep(grace);
+        let _ = signal(GroupSignal::Kill);
     }
     ending
 }
@@ -326,14 +331,19 @@ fn exited(status: std::process::ExitStatus) -> Ending {
     }
 }
 
+/// The command as the leader of its own group. On Windows the group is the
+/// kill-on-close Job the spawn names for it, so whatever the leader leaves
+/// behind ends once the waiter lets go of it rather than outliving the job.
 #[cfg(unix)]
-pub(super) fn detach(command: &mut ProcessCommand) {
-    use std::os::unix::process::CommandExt as _;
-    command.process_group(0);
+fn spawn_group(command: &mut ProcessCommand) -> io::Result<std::process::Child> {
+    super::detach(command);
+    command.spawn()
 }
 
-#[cfg(not(unix))]
-pub(super) fn detach(_command: &mut ProcessCommand) {}
+#[cfg(windows)]
+fn spawn_group(command: &mut ProcessCommand) -> io::Result<sill::OwnedChild> {
+    sill::spawn_owned_command(command, sill::ProcessGroup::New)
+}
 
 /// Send what `signal` makes of the next change to `path`, a directory or a
 /// file; the watch is armed before the reader looks.
@@ -433,4 +443,125 @@ pub(in crate::resident) enum Observed {
     Cancelled,
     Interrupted,
     Elapsed,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::{Cell, RefCell};
+    use std::process::ExitStatus;
+
+    use super::*;
+
+    const GRACE: Duration = Duration::from_millis(20);
+
+    /// A process group as the keeper reaches it: a kill always ends it, a
+    /// request to leave ends it only when it obeys, and once ended it refuses
+    /// every signal the way an empty group does.
+    struct Group {
+        waiter: mpsc::Sender<Keep>,
+        obeys: bool,
+        alive: Cell<bool>,
+        heard: RefCell<Vec<GroupSignal>>,
+    }
+
+    impl Group {
+        fn new(waiter: mpsc::Sender<Keep>, obeys: bool) -> Self {
+            Self {
+                waiter,
+                obeys,
+                alive: Cell::new(true),
+                heard: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn signal(&self, signal: GroupSignal) -> io::Result<()> {
+            self.heard.borrow_mut().push(signal);
+            if !self.alive.get() {
+                return Err(io::Error::from(ErrorKind::NotFound));
+            }
+            if signal == GroupSignal::Kill || self.obeys {
+                self.alive.set(false);
+                let _ = self.waiter.send(Keep::Exited(ExitStatus::default()));
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_stopped_group_that_leaves_is_never_killed() {
+        let (sender, receiver) = mpsc::channel();
+        let group = Group::new(sender, true);
+
+        let ending = tend(
+            &receiver,
+            None,
+            GRACE,
+            || Ok(true),
+            |signal| group.signal(signal),
+        );
+
+        assert_eq!(ending, Ending::Stopped);
+        assert_eq!(group.heard.borrow()[0], GroupSignal::Terminate);
+        assert!(!group.heard.borrow().contains(&GroupSignal::Kill));
+    }
+
+    #[test]
+    fn a_deadline_asks_first_and_kills_a_group_that_stays_past_the_grace() {
+        let (sender, receiver) = mpsc::channel();
+        let group = Group::new(sender, false);
+
+        let ending = tend(
+            &receiver,
+            Some(Duration::ZERO),
+            GRACE,
+            || Ok(false),
+            |signal| group.signal(signal),
+        );
+
+        assert_eq!(ending, Ending::TimedOut);
+        assert_eq!(
+            group.heard.borrow()[..2],
+            [GroupSignal::Terminate, GroupSignal::Kill]
+        );
+    }
+
+    #[test]
+    fn an_unwatchable_job_directory_is_read_as_a_stop() {
+        let (sender, receiver) = mpsc::channel();
+        let group = Group::new(sender, false);
+
+        let ending = tend(
+            &receiver,
+            None,
+            GRACE,
+            || Err(io::Error::from(ErrorKind::PermissionDenied)),
+            |signal| group.signal(signal),
+        );
+
+        assert_eq!(ending, Ending::Stopped);
+        assert_eq!(
+            group.heard.borrow()[..2],
+            [GroupSignal::Terminate, GroupSignal::Kill]
+        );
+    }
+
+    #[test]
+    fn a_command_that_ends_on_its_own_keeps_its_status_and_hears_nothing() {
+        let (sender, receiver) = mpsc::channel();
+        let group = Group::new(sender.clone(), false);
+        sender
+            .send(Keep::Exited(ExitStatus::default()))
+            .expect("the receiver is held");
+
+        let ending = tend(
+            &receiver,
+            Some(Duration::from_secs(60)),
+            GRACE,
+            || Ok(false),
+            |signal| group.signal(signal),
+        );
+
+        assert_eq!(ending, Ending::Exited { code: 0 });
+        assert!(group.heard.borrow().is_empty());
+    }
 }

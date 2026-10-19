@@ -120,7 +120,7 @@ where
         }
     };
     if interrupt_after_launch {
-        let _ = events.send(Event::Signal(signal_hook::consts::signal::SIGINT));
+        let _ = events.send(Event::Signal);
     }
     let completion = wait_for_resident(&environment, &receiver);
     drop(relay);
@@ -200,11 +200,13 @@ pub(super) fn is_known_journal_sidecar(path: &Path, journal: &Path) -> bool {
 pub(super) fn signal_relay(
     signals: bool,
     events: Sender<Event>,
-) -> DemoResult<Option<SignalRelay>> {
+) -> DemoResult<Option<ControlRelay>> {
     if signals {
-        SignalRelay::install(events).map(Some).map_err(|error| {
-            environment_fault("demo::signals-unavailable", error.to_string()).into()
+        ControlRelay::install(move || {
+            let _ = events.send(Event::Signal);
         })
+        .map(Some)
+        .map_err(|error| environment_fault("demo::signals-unavailable", error.to_string()).into())
     } else {
         Ok(None)
     }
@@ -275,7 +277,7 @@ pub(super) fn wait_for_discovery(
                 .into());
             }
             Ok(Event::Resident(outcome)) => return Err(rebody(outcome).into()),
-            Ok(Event::Signal(_)) => return Ok(true),
+            Ok(Event::Signal) => return Ok(true),
             Err(RecvTimeoutError::Timeout) => {
                 return Err(environment_fault(
                     "demo::resident-readiness-timeout",
@@ -303,7 +305,7 @@ pub(super) fn wait_for_resident(
             Ok(Event::Changed(_)) => {}
             Ok(Event::Resident(Outcome::Reply(_))) => return Ok(false),
             Ok(Event::Resident(outcome)) => return Err(rebody(outcome).into()),
-            Ok(Event::Signal(_signal)) => {
+            Ok(Event::Signal) => {
                 stop_resident(environment, receiver)?;
                 return Ok(true);
             }
@@ -335,7 +337,7 @@ pub(super) fn stop_resident(
     loop {
         let remaining = deadline.saturating_duration_since(Monotonic::now());
         match receiver.recv_timeout(remaining) {
-            Ok(Event::Changed(_)) | Ok(Event::Signal(_)) => {}
+            Ok(Event::Changed(_)) | Ok(Event::Signal) => {}
             Ok(Event::Resident(Outcome::Reply(_))) => return Ok(()),
             Ok(Event::Resident(outcome)) => return Err(rebody(outcome).into()),
             Err(RecvTimeoutError::Timeout) => {

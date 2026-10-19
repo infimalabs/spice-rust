@@ -4,9 +4,9 @@ use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
 use std::process::ExitStatus;
-use std::thread::JoinHandle;
 use std::time::Duration;
 
+use crate::control_signal::ControlRelay;
 use sill::{
     Argv, Cancellation, Completion, Contention, Deadlines, Environment, LockAttempt, LockReport,
     LockSurfaceError, LockTopology, Output, ProcessGroup, Redaction, RestartDisposition, Spec,
@@ -24,40 +24,6 @@ const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 pub(crate) enum RunResult {
     Child(ExitStatus),
     Rejected { outcome: Outcome<()>, code: i32 },
-}
-
-struct SignalRelay {
-    handle: signal_hook::iterator::Handle,
-    worker: Option<JoinHandle<()>>,
-}
-
-impl SignalRelay {
-    fn install(token: sill::CancellationToken) -> io::Result<Self> {
-        use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGTERM};
-
-        let mut signals = signal_hook::iterator::Signals::new([SIGHUP, SIGINT, SIGTERM])?;
-        let handle = signals.handle();
-        let worker = std::thread::Builder::new()
-            .name("spice-lock-signals".to_owned())
-            .spawn(move || {
-                for _signal in signals.forever() {
-                    token.cancel();
-                }
-            })?;
-        Ok(Self {
-            handle,
-            worker: Some(worker),
-        })
-    }
-}
-
-impl Drop for SignalRelay {
-    fn drop(&mut self) {
-        self.handle.close();
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
 }
 
 /// Report the effective configured topology without opening or creating it.
@@ -132,7 +98,11 @@ fn run_inner(
         .split_first()
         .expect("the generated parser requires a nonempty command");
     let cancellation = sill::CancellationToken::new();
-    let relay = SignalRelay::install(cancellation.clone()).map_err(|error| {
+    let relay = ControlRelay::install({
+        let cancellation = cancellation.clone();
+        move || cancellation.cancel()
+    })
+    .map_err(|error| {
         Failure::fault(
             FaultClass::Environment,
             "lock::signals-unavailable",

@@ -27,6 +27,8 @@ mod config_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod consent_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod control_signal;
+#[cfg(not(target_arch = "wasm32"))]
 mod demo_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod doctor;

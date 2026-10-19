@@ -15,7 +15,7 @@ use sill::Environment;
 
 #[cfg(test)]
 use super::Jobs;
-use super::keeper::detach;
+use super::detach;
 use super::{ENTRY, LOG};
 
 /// What one job start records before its keeper launches.

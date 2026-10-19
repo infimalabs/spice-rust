@@ -33,9 +33,9 @@ use wire::{CanonicalUuid, TaskStamp};
 
 use super::super::super::RuntimePaths;
 use super::super::super::daemon::observer;
+use super::super::handle::process_exists_raw;
 use super::super::{
-    REQUEST_BYTES, STATE_BYTES, millis_since_epoch, now_millis, process_exists_raw, publish_json,
-    read_json, signal_group,
+    REQUEST_BYTES, STATE_BYTES, detach, millis_since_epoch, now_millis, publish_json, read_json,
 };
 
 mod events;

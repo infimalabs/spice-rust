@@ -29,6 +29,8 @@ use unix as platform;
 mod windows;
 #[cfg(windows)]
 use windows as platform;
+#[cfg(windows)]
+pub(crate) use windows::ProtectedSecurity;
 
 /// Owner, group, and other permission bits of `path`, without following a
 /// final link.

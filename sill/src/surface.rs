@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Acquisition, Availability, ExitCode, LockConfig, LockFile, LockName, LockTarget, Possession,
 };
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::{Running, Spec};
 
 #[cfg(unix)]
@@ -703,6 +703,16 @@ impl HeldShard {
         self.protected = Some((running.id(), guardian));
         self.possession.retain_until_last_close();
         Ok(running)
+    }
+
+    /// Spawn a child whose process tree never runs without this possession.
+    ///
+    /// The tree belongs to a kill-on-close Job Object this process holds, so
+    /// it ends no later than this process and the lock handle it owns; no
+    /// member can outlive the possession, and nothing needs a guardian.
+    #[cfg(windows)]
+    pub fn spawn_protected(&mut self, spec: Spec) -> io::Result<Running> {
+        crate::spawn(spec)
     }
 }
 

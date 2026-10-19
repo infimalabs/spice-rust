@@ -465,7 +465,7 @@ fn open(path: &Path, access: u32) -> io::Result<File> {
 
 /// Security attributes whose protected owner DACL is valid for this value's
 /// lifetime.
-struct ProtectedSecurity {
+pub(crate) struct ProtectedSecurity {
     descriptor: Box<SECURITY_DESCRIPTOR>,
     _acl: Vec<u32>,
 }
@@ -473,7 +473,17 @@ struct ProtectedSecurity {
 impl ProtectedSecurity {
     fn new(bits: u32, directory: bool) -> io::Result<Self> {
         let principal = Principal::current()?;
-        let acl = owner_acl(principal.user(), bits, directory)?;
+        Self::with_acl(owner_acl(principal.user(), bits, directory)?)
+    }
+
+    /// Security for a named kernel object that grants exactly `access` to
+    /// this token's user and nothing to anyone else.
+    pub(crate) fn object(access: u32) -> io::Result<Self> {
+        let principal = Principal::current()?;
+        Self::with_acl(grant_acl(principal.user(), &[(0, access)])?)
+    }
+
+    fn with_acl(acl: Vec<u32>) -> io::Result<Self> {
         let mut descriptor = Box::new(SECURITY_DESCRIPTOR::default());
         let raw: PSECURITY_DESCRIPTOR = (&raw mut *descriptor).cast();
         // SAFETY: `raw` addresses a writable descriptor-sized allocation, and
@@ -492,7 +502,7 @@ impl ProtectedSecurity {
         })
     }
 
-    fn attributes(&mut self) -> SECURITY_ATTRIBUTES {
+    pub(crate) fn attributes(&mut self) -> SECURITY_ATTRIBUTES {
         SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: (&raw mut *self.descriptor).cast(),
@@ -639,6 +649,11 @@ fn owner_acl(user: PSID, bits: u32, directory: bool) -> io::Result<Vec<u32>> {
     } else {
         &[object]
     };
+    grant_acl(user, entries)
+}
+
+/// A DACL whose only entries allow `user` each flagged access mask.
+fn grant_acl(user: PSID, entries: &[(ACE_FLAGS, u32)]) -> io::Result<Vec<u32>> {
     // SAFETY: `user` is a valid SID.
     let sid_bytes = unsafe { GetLengthSid(user) } as usize;
     let ace_bytes = size_of::<ACCESS_ALLOWED_ACE>() - size_of::<u32>() + sid_bytes;

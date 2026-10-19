@@ -1,4 +1,4 @@
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -6,14 +6,14 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::{Mutex, Weak};
 use std::time::Duration;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -87,8 +87,9 @@ impl Environment {
 
 /// An environment on record is its entries in order, each key and value the
 /// text itself, so the record reads as the shell would show it and parses at
-/// the speed of a string; a value that is not UTF-8 is kept as its bytes.
-#[cfg(unix)]
+/// the speed of a string; a value that is not Unicode is kept as its native
+/// units: bytes on Unix, UTF-16 code units on Windows.
+#[cfg(any(unix, windows))]
 impl Serialize for Environment {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.0
@@ -99,7 +100,7 @@ impl Serialize for Environment {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl<'de> Deserialize<'de> for Environment {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let entries = Vec::<(Text, Text)>::deserialize(deserializer)?;
@@ -113,12 +114,19 @@ impl<'de> Deserialize<'de> for Environment {
 }
 
 /// One environment key or value on record.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[derive(Deserialize, Serialize)]
 #[serde(untagged)]
 enum Text {
     Utf8(String),
-    Bytes { bytes: Vec<u8> },
+    #[cfg(unix)]
+    Bytes {
+        bytes: Vec<u8>,
+    },
+    #[cfg(windows)]
+    Wide {
+        wide: Vec<u16>,
+    },
 }
 
 #[cfg(unix)]
@@ -134,6 +142,19 @@ impl From<&OsStr> for Text {
     }
 }
 
+#[cfg(windows)]
+impl From<&OsStr> for Text {
+    fn from(text: &OsStr) -> Self {
+        use std::os::windows::ffi::OsStrExt;
+        text.to_str().map_or_else(
+            || Self::Wide {
+                wide: text.encode_wide().collect(),
+            },
+            |utf8| Self::Utf8(utf8.to_owned()),
+        )
+    }
+}
+
 #[cfg(unix)]
 impl From<Text> for OsString {
     fn from(text: Text) -> Self {
@@ -141,6 +162,17 @@ impl From<Text> for OsString {
         match text {
             Text::Utf8(utf8) => Self::from(utf8),
             Text::Bytes { bytes } => Self::from_vec(bytes),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl From<Text> for OsString {
+    fn from(text: Text) -> Self {
+        use std::os::windows::ffi::OsStringExt;
+        match text {
+            Text::Utf8(utf8) => Self::from(utf8),
+            Text::Wide { wide } => Self::from_wide(&wide),
         }
     }
 }
@@ -223,9 +255,9 @@ pub struct CancellationToken(Arc<CancellationState>);
 
 struct CancellationState {
     cancelled: AtomicBool,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     next_waker: AtomicU64,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     wakers: Mutex<BTreeMap<u64, Arc<dyn Fn() + Send + Sync>>>,
 }
 
@@ -233,9 +265,9 @@ impl CancellationToken {
     pub fn new() -> Self {
         Self(Arc::new(CancellationState {
             cancelled: AtomicBool::new(false),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             next_waker: AtomicU64::new(0),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             wakers: Mutex::new(BTreeMap::new()),
         }))
     }
@@ -253,7 +285,7 @@ impl CancellationToken {
     /// Only the first caller of [`Self::cancel`] gets here, and it takes the
     /// map, so a waker registered before cancellation is called once and a
     /// waker registered after it never lands in the map at all.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn wake_registered(&self) {
         let wakers = self
             .0
@@ -270,12 +302,13 @@ impl CancellationToken {
         }
     }
 
-    /// Off unix nothing registers a waker, so cancellation is the flag alone.
+    /// On the browser target nothing registers a waker, so cancellation is
+    /// the flag alone.
     ///
     /// This exists so `cancel` keeps a statement after its early return on
-    /// every target. Inlining the wake under `#[cfg(unix)]` left the return as
+    /// every target. Inlining the wake under a native gate left the return as
     /// the whole body elsewhere, which is a lint the browser build now runs.
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     fn wake_registered(&self) {}
 
     pub fn is_cancelled(&self) -> bool {
@@ -288,7 +321,7 @@ impl CancellationToken {
     /// yields no registration. Otherwise the waker stays registered until the
     /// returned registration drops, so a caller that stops waiting withdraws
     /// it.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[must_use = "dropping the registration withdraws the waker"]
     pub fn register_waker(
         &self,
@@ -318,13 +351,13 @@ impl CancellationToken {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub struct CancellationRegistration {
     state: Weak<CancellationState>,
     id: u64,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 impl Drop for CancellationRegistration {
     fn drop(&mut self) {
         if let Some(state) = self.state.upgrade()
@@ -543,5 +576,28 @@ mod tests {
             serde_json::from_str::<Environment>(r#"[["ONE","1"],["ONE","2"]]"#).is_err(),
             "a record with a duplicate key is refused as the constructor refuses it"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn environment_records_as_text_and_keeps_wide_units_that_are_not() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt;
+
+        // An unpaired surrogate is a valid Windows name but not Unicode.
+        let raw = OsString::from_wide(&[u16::from(b'r'), 0xd800, u16::from(b'w')]);
+        let environment = Environment::new([
+            (OsString::from("PATH"), OsString::from(r"C:\bin")),
+            (OsString::from("RAW"), raw),
+        ])
+        .expect("distinct keys");
+
+        let recorded = serde_json::to_string(&environment).expect("an environment records");
+        assert_eq!(
+            recorded,
+            r#"[["PATH","C:\\bin"],["RAW",{"wide":[114,55296,119]}]]"#
+        );
+        let read: Environment = serde_json::from_str(&recorded).expect("the record reads back");
+        assert_eq!(read, environment);
     }
 }
