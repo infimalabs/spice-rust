@@ -275,7 +275,7 @@ mod windows {
         )?;
         exact_version(
             &request.toolchain.cargo_mutants_path,
-            &["--version"],
+            &["mutants", "--version"],
             &request.toolchain.cargo_mutants,
         )?;
         path_carries(&request.toolchain.cl_path, &request.toolchain.msvc, "MSVC")?;
