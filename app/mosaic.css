@@ -101,6 +101,7 @@
   padding: 0; background: transparent;
   font: var(--app-type-status)/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.markdown-body :not(pre) > code { line-height: 0; }
 .markdown-body pre {
   max-width: 100%; margin: .55em 0; padding: .65em .75em; overflow: auto;
   border: var(--app-edge); border-radius: var(--app-radius-control); background: var(--page);
