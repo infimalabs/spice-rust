@@ -2,6 +2,8 @@ use super::{
     CapturedOutput, Completion, PendingAction, ProcessUsage, WaitError, WaitOutcome, WaitStep,
     pending_action,
 };
+use crate::authority::ProtectedSecurity;
+use crate::group::GroupSignal;
 use crate::observe::{
     Observation, ObservationFailure, ObservationStall, ObservedRecord, OutputStream,
     RecordBoundary, RecordObserver,
@@ -16,7 +18,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_ALREADY_EXISTS, GENERIC_ALL, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+};
 use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
@@ -24,9 +28,10 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation, OpenJobObjectW,
     QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
+use windows_sys::Win32::System::SystemServices::{JOB_OBJECT_QUERY, JOB_OBJECT_TERMINATE};
 use windows_sys::Win32::System::Threading::{
     CREATE_NEW_PROCESS_GROUP, CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
 };
@@ -147,25 +152,67 @@ unsafe impl Send for Job {}
 unsafe impl Sync for Job {}
 
 impl Job {
-    fn create() -> io::Result<Self> {
-        unsafe {
-            let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if handle.is_null() {
-                return Err(io::Error::last_os_error());
-            }
-            let mut information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if SetInformationJobObject(
-                handle,
+    /// A kill-on-close Job Object. The job of a new process group is named
+    /// for the group, so a process holding only the group's id can open it;
+    /// the name grants access to this user alone, and an object already
+    /// holding the name is refused rather than joined.
+    fn create(group: Option<u32>) -> io::Result<Self> {
+        let mut security = group
+            .map(|_| ProtectedSecurity::object(GENERIC_ALL))
+            .transpose()?;
+        let attributes = security.as_mut().map(ProtectedSecurity::attributes);
+        let name = group.map(group_job_name);
+        // SAFETY: both pointers are null or address values that outlive the
+        // call: `attributes` points into `security`, and `name` is
+        // NUL-terminated.
+        let handle = unsafe {
+            CreateJobObjectW(
+                attributes
+                    .as_ref()
+                    .map_or(std::ptr::null(), std::ptr::from_ref),
+                name.as_ref().map_or(std::ptr::null(), |name| name.as_ptr()),
+            )
+        };
+        if handle.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: reads the calling thread's last error, which the successful
+        // `CreateJobObjectW` above set to say whether the name was taken.
+        let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+        let job = Self(handle);
+        if existed {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "another Job Object already holds this process group's name",
+            ));
+        }
+        let mut information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // SAFETY: `information` is a fully initialized limit structure of the
+        // size passed, and `job` holds a live Job Object handle.
+        if unsafe {
+            SetInformationJobObject(
+                job.0,
                 JobObjectExtendedLimitInformation,
                 std::ptr::from_ref(&information).cast(),
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            ) == 0
-            {
-                let error = io::Error::last_os_error();
-                CloseHandle(handle);
-                return Err(error);
-            }
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(job)
+    }
+
+    /// The job a new process group's spawn named for `group`.
+    fn open(group: u32) -> io::Result<Self> {
+        let name = group_job_name(group);
+        // SAFETY: `name` is NUL-terminated and outlives the call.
+        let handle =
+            unsafe { OpenJobObjectW(JOB_OBJECT_QUERY | JOB_OBJECT_TERMINATE, 0, name.as_ptr()) };
+        if handle.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
             Ok(Self(handle))
         }
     }
@@ -289,9 +336,18 @@ pub(super) fn spawn_command(command: &mut Command, group: ProcessGroup) -> io::R
         0
     };
     command.creation_flags(CREATE_SUSPENDED | creation_group);
-    let job = Arc::new(Job::create()?);
     let mut child = command.spawn()?;
     let pid = child.id();
+    // The child stays suspended until it is in the job, so nothing it starts
+    // escapes; a new group's job takes its name from the root's id.
+    let job = match Job::create((group == ProcessGroup::New).then_some(pid)) {
+        Ok(job) => Arc::new(job),
+        Err(error) => {
+            let _killed = child.kill();
+            let _reaped = child.wait();
+            return Err(error);
+        }
+    };
     if let Err(error) = job.assign(&child) {
         let _killed = child.kill();
         let _reaped = child.wait();
@@ -307,6 +363,37 @@ pub(super) fn spawn_command(command: &mut Command, group: ProcessGroup) -> io::R
         child: Some(child),
         job,
     })
+}
+
+/// Deliver `signal` to the group a [`ProcessGroup::New`] spawn rooted at
+/// `group`, through the job it named for the group.
+pub(crate) fn signal_group(group: u32, signal: GroupSignal) -> io::Result<()> {
+    let job = Job::open(group)?;
+    if job.active_processes()? == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "process group has no remaining process",
+        ));
+    }
+    match signal {
+        GroupSignal::Terminate => {
+            // SAFETY: the event addresses only the console process group `group`.
+            if unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, group) } == 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        }
+        GroupSignal::Kill => job.terminate(),
+    }
+}
+
+/// The session-local name of the job rooting process group `group`.
+fn group_job_name(group: u32) -> Vec<u16> {
+    format!(r"Local\sill-process-group-{group}")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 pub(super) fn spawn(spec: Spec, observation: Option<Observation>) -> io::Result<Running> {

@@ -34,6 +34,8 @@ use capture::{CaptureHandle, FailureContext};
 #[cfg(unix)]
 use launch::spawn_inner;
 #[cfg(windows)]
+pub(crate) use windows::signal_group;
+#[cfg(windows)]
 pub use windows::{OwnedChild, Running};
 
 #[derive(Clone, Debug, Eq, PartialEq)]

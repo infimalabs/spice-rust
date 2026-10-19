@@ -15,6 +15,8 @@ compile_error!(
 pub mod authority;
 pub mod config;
 #[cfg(any(unix, windows))]
+mod group;
+#[cfg(any(unix, windows))]
 mod interface;
 mod lock;
 mod observe;
@@ -28,6 +30,8 @@ mod surface;
 pub use config::{
     ConfigError, ConfiguredPath, ExitCode, ExitStatuses, LockConfig, LockTarget, ShardCount,
 };
+#[cfg(any(unix, windows))]
+pub use group::{GroupSignal, signal_group};
 #[cfg(any(unix, windows))]
 pub use interface::local_addresses;
 pub use lock::{Acquisition, Availability, LockFile, LockName, LockNameError, Possession};
@@ -45,7 +49,7 @@ pub use spawn::{
 };
 #[cfg(windows)]
 pub use spawn::{OwnedChild, spawn_owned_command};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub use spec::CancellationRegistration;
 pub use spec::{
     Argv, Cancellation, CancellationToken, Deadlines, Environment, Output, ProcessGroup, Redaction,
