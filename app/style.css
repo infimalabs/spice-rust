@@ -418,6 +418,9 @@ a.app-horn-tab { text-decoration: none; cursor: pointer; }
   --well-top: color-mix(in srgb, var(--app-shadow-source) 26%, transparent);
   --well-floor: color-mix(in srgb, var(--app-shadow-source) 12%, transparent);
 }
+/* A lane with nobody in its seat drains to gray, as the Spice chili does while
+   Spice is disconnected, so only running lanes wear their accent. */
+.team-lights > .app-presence-pip--trace[data-lane-seated="false"] { filter: grayscale(1); }
 /* Half a CSS pixel rasterizes to one device pixel at 2x and a single
    antialiased device pixel at 1x, returning the rest to the curve. */
 .activity-trace { position: absolute; inset: .5px; }

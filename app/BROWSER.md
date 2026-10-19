@@ -458,6 +458,9 @@ so a lane vacant now draws nothing. Quiet is not off: a running lane with no
 activity still draws its low line. The trace draws only state the browser
 already holds, issues no requests, and redraws on new activity and every few
 seconds while anything is drawn, so old activity leaves without a new frame.
+A team lane whose seat is empty now drains its whole pip to gray, as the Spice
+pepper does while Spice is disconnected, whatever its status says, and wears
+its accent again once an occupant holds the seat.
 
 The app's `style-src 'self'` policy refuses inline style attributes, so the
 trace is SVG geometry in the pane's measured CSS pixels and every colour and
