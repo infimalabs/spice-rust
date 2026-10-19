@@ -83,18 +83,17 @@ links its app ZIP. The Darwin, Linux, and Windows release builds, and
 `spice dev xtask -- install` on supported macOS, Linux, and x86-64 Windows
 hosts, read the staged `generations/G.zip` once and admit it as G. Worktree
 dSYMs exist only on macOS, so elsewhere that command publishes without them.
-Each links it as one retained read-only section: `__TEXT,__spice_app_zip` on
-Mach-O, `spice_app_zip` on ELF, and `spiceapp` on PE32+. Mach-O and ELF follow
-their platform naming conventions: Mach-O sections are lowercase after two
-underscores, and the System V gABI reserves dot-prefixed ELF section names for
-the system.
+Each links it as one retained read-only section named `spiceapp`:
+`__TEXT,__spiceapp` on Mach-O and `spiceapp` on ELF and PE32+. The Mach-O
+section follows Apple's two-underscore convention, ELF remains undotted because
+the System V gABI reserves dot-prefixed names for the system, and the shared
+name fits PE's eight-byte section-name limit.
 
-The Windows release build's COFF object defines `spice_app_zip` and
-`spice_app_zip_len`; its PE32+ final-image reader locates exactly one
-`spiceapp` section using the header's virtual and raw lengths. The section name
-fits PE's eight-byte limit. Its target inventory names `bin/spice.exe` and the
-matching `symbols/spice.pdb`; both are package members, while `proof.json` is
-the package's detached signature artifact.
+Every target's relocatable object defines `spiceapp` and `spiceapp_len`; the
+final-image readers locate exactly one `spiceapp` section and recover the
+staged ZIP bytes from it. The Windows target inventory names `bin/spice.exe`
+and the matching `symbols/spice.pdb`; both are package members, while
+`proof.json` is the package's detached signature artifact.
 
 Windows deliberately admits no embedded Authenticode certificate. The
 executable, PDB, payload, linked app archive, build pins, provider run, runner

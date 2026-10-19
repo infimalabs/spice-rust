@@ -99,7 +99,7 @@ fn canvas() -> Canvas {
     )
 }
 
-/// A minimal 64-bit Mach-O image whose `__TEXT,__spice_app_zip` holds `archive`.
+/// A minimal 64-bit Mach-O image whose `__TEXT,__spiceapp` holds `archive`.
 fn macho(archive: &[u8]) -> Vec<u8> {
     let name = |text: &str| {
         let mut field = [0_u8; 16];
@@ -117,7 +117,7 @@ fn macho(archive: &[u8]) -> Vec<u8> {
     image.extend([0; 40]);
     image.extend(1_u32.to_le_bytes());
     image.extend(0_u32.to_le_bytes());
-    image.extend(name("__spice_app_zip"));
+    image.extend(name("__spiceapp"));
     image.extend(name("__TEXT"));
     image.extend(0_u64.to_le_bytes());
     image.extend((archive.len() as u64).to_le_bytes());
@@ -127,9 +127,9 @@ fn macho(archive: &[u8]) -> Vec<u8> {
     image
 }
 
-/// A minimal 64-bit ELF image whose `spice_app_zip` section holds `archive`.
+/// A minimal 64-bit ELF image whose `spiceapp` section holds `archive`.
 fn elf(archive: &[u8]) -> Vec<u8> {
-    let names = b"\0.shstrtab\0spice_app_zip\0";
+    let names = b"\0.shstrtab\0spiceapp\0";
     let canvas_at = 64 + names.len();
     let table = canvas_at + archive.len();
     let mut image = vec![0_u8; 64];
